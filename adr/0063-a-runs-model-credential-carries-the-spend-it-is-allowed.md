@@ -34,11 +34,15 @@ and the gateway refuses the run's calls once its spend reaches that amount.
 
 - **A per-run cap is granted as is.** It is the run's own and shares nothing.
 - **A spend account is reserved, then settled.** When it mints the credential,
-  the door reserves from each account the run names the most the run could
-  spend (its ceiling, or the account's balance if lower), grants the least of
-  those reservations and the run's cap, and holds the reservations until the run
-  ends. It then debits what the run spent and releases the rest. The ledger stays
-  the runtime's, and no other process reads or writes it.
+  the door reserves from each account the run names its share: the balance
+  divided by the most runs that may draw on the account at once, priced at the
+  model's dearest rates for a `usd` account. The source that names an account
+  states that number beside it (a batch, its concurrency), since the door never
+  interprets an account's id; an account that states none is shared by no other
+  run. It grants the least of those reservations and the run's
+  cap, and holds the reservations until the run ends, then debits what the run
+  spent and releases the rest. The ledger stays the runtime's, and no other
+  process reads or writes it.
 - **The grant never exceeds what is held.** Where the gateway counts spend per
   replica, or can enforce only fixed amounts, the runtime divides by the replica
   count and rounds down to an amount the gateway can enforce. A run may be held
@@ -55,23 +59,35 @@ output to what remains.
 
 - Budgeted and capped work runs on external runtimes with no change to any
   agent, and the gateway keeps no dependency on the runtime.
-- A run on a shared account holds its whole reservation for its whole run, so
-  concurrent runs on one account start with less, and a run may stop with
-  balance left that another run held.
+- A run on a shared account holds its share for its whole run, so a run that
+  needs more than its share stops early even when the account has balance that
+  other runs hold but will not use. The batch driver already waits for running
+  runs to settle before it asks again.
 - The gateway cannot shrink a call to what is left, so a run can overrun its
   grant by the output of its last call. The native engine keeps its exact clamp.
-- Settlement needs what the run spent, and an agent's report of its own usage is
-  not trusted to decide that: an agent that under-reports would return spend to
-  the account it never released. Settlement reads the gateway's count for the
-  run. Until that count is readable, the runtime debits the whole grant of a run
-  on an external runtime, which overcharges a run that stopped early and never
-  undercharges one.
+- Settlement debits the usage the agent reports, the same report the usage
+  ledger prices. The gateway's grant is the hard bound on each run whatever the
+  agent reports, so an agent that under-reports can misstate a shared account by
+  at most one grant per run. The gateway's access log records each call's tokens
+  under the run's id, but a log is not an interface to settle money from.
 
-## Open before acceptance
+## Evidence
 
-- Whether the gateway can select a fixed limit by a credential claim and key it
-  by run, in the release the platform runs, or needs the amount itself to come
-  from the claim (an upstream change).
-- How the runtime reads the gateway's count for one run (its access log carries
-  the run id and each call's tokens).
-- How much reservations starve concurrent runs on a batch's shared account.
+Measured before this was proposed for acceptance:
+
+- **The gateway enforces a grant chosen by a credential claim, per run.** On the
+  gateway release the platform runs, a route's token limit takes a list of
+  fixed-size variants, each selected by a condition on the credential's claims
+  and keyed by its `sub`. Runs holding the same grant keep separate counts; a
+  credential with no grant falls through to the existing per-run ceiling. A list
+  holds up to 64 variants, so the runtime grants from a fixed scale of sizes,
+  rounding down, and a run is held to at most one step below its terms.
+- **It checks before a call and charges after.** A call is admitted while the
+  run's count is below its grant and charged the input and output tokens the
+  provider reported, so a run overshoots its grant by at most its last call. A
+  refused call answers `429` with the body the runtime already maps to
+  `spend_limit`.
+- **A share of balance over concurrency starves almost no batch.** Across one
+  installation's batches, the median share was about eighteen times the median
+  cost of an item, and fewer than one in eighty batches had a share below its
+  average item cost.
