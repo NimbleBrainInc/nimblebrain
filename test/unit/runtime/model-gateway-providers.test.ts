@@ -78,4 +78,32 @@ describe("watchGatewayProviders", () => {
     expect(watches.map((w) => w.enforcesGrants())).toEqual([true, false, false]);
     for (const w of watches) w.stop();
   });
+
+  it("asks again, and learns a change the gateway made after the runtime started", async () => {
+    const gw = gatewayAnswering([
+      () => Response.json({ providers: ["anthropic"] }),
+      () => Response.json({ providers: ["anthropic", "openai"], grants: true }),
+    ]);
+    const watch = watchGatewayProviders({ url: GATEWAY, fetch: gw.fetch }, { refreshMs: 5 });
+    await until(() => watch.served() !== undefined);
+    expect(watch.enforcesGrants()).toBe(false);
+    await until(() => watch.enforcesGrants());
+    expect(watch.served()).toEqual(["anthropic", "openai"]);
+    watch.stop();
+  });
+
+  it("keeps the last answer while the gateway cannot be reached", async () => {
+    const gw = gatewayAnswering([
+      () => Response.json({ providers: ["anthropic"], grants: true }),
+      () => new Response(null, { status: 503 }),
+    ]);
+    const watch = watchGatewayProviders(
+      { url: GATEWAY, fetch: gw.fetch },
+      { refreshMs: 5, retryInitialMs: 5, retryMaxMs: 5 },
+    );
+    await until(() => gw.urls.length >= 4);
+    expect(watch.served()).toEqual(["anthropic"]);
+    expect(watch.enforcesGrants()).toBe(true);
+    watch.stop();
+  });
 });
