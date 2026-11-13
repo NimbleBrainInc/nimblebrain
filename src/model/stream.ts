@@ -9,7 +9,7 @@ import type {
 } from "@ai-sdk/provider";
 import { isProviderStreamError } from "@ai-sdk/provider-utils";
 import { withSpan } from "../observability/index.ts";
-import { log } from "../observability/log.ts";
+import { type LogFields, log } from "../observability/log.ts";
 import { registerLiveness, unregisterLiveness } from "./fetch-liveness.ts";
 import { gatewayGaveNoResponse, ModelGatewayNoResponseError } from "./gateway-no-response.ts";
 
@@ -343,13 +343,38 @@ async function pumpStream(
  * server error; marked by the SDK's `createProviderStreamError`) fails the call
  * now. Anything else is a chunk that did not parse or a malformed stream, which
  * providers follow with more parts and often a valid finish, so it is recorded
- * and only fails the call if the stream ends without one. The log line names
- * the error only: its message can quote the chunk, which is model output.
+ * and only fails the call if the stream ends without one.
  */
 function recordStreamError(state: StreamState, error: unknown, sawOutput: boolean): void {
   if (isProviderStreamError(error)) throw new ModelStreamError(error, { sawOutput });
-  log.warn(`[model] stream error part: ${error instanceof Error ? error.name : typeof error}`);
+  log.warn(
+    `[model] stream error part: ${error instanceof Error ? error.name : typeof error}`,
+    providerErrorBodyFields(error),
+  );
   if (state.streamError === undefined) state.streamError = error;
+}
+
+/** Longest provider error message a log line carries. */
+const PROVIDER_ERROR_MESSAGE_MAX = 300;
+
+/**
+ * Log fields for an error body the provider sent inside the stream
+ * (`data: {"error":{...}}`), which the OpenAI-compatible adapter passes on as
+ * a plain object. The provider wrote these fields, and the same message
+ * becomes the run's error, so logging them exposes nothing new. An `Error`
+ * gets none: a chunk that failed to parse is quoted in its message, and the
+ * chunk is model output.
+ */
+function providerErrorBodyFields(error: unknown): LogFields | undefined {
+  if (error instanceof Error || typeof error !== "object" || error === null) return undefined;
+  const { message, code, type } = error as { message?: unknown; code?: unknown; type?: unknown };
+  const fields: LogFields = {};
+  if (typeof message === "string") {
+    fields.providerMessage = message.slice(0, PROVIDER_ERROR_MESSAGE_MAX);
+  }
+  if (typeof code === "string" || typeof code === "number") fields.providerCode = code;
+  if (typeof type === "string") fields.providerType = type;
+  return Object.keys(fields).length > 0 ? fields : undefined;
 }
 
 /**

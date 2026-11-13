@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import type {
   LanguageModelV4,
   LanguageModelV4CallOptions,
@@ -12,6 +12,7 @@ import {
   ModelStreamStallError,
   NO_FINISH_PART_RAW,
 } from "../../src/model/stream.ts";
+import { log } from "../../src/observability/log.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 function userPrompt(text: string): LanguageModelV4CallOptions {
@@ -729,5 +730,61 @@ describe("callModel — error parts", () => {
     expect(result.content).toEqual([{ type: "text", text: "hi" }]);
     expect(result.usage).toEqual(USAGE);
     expect(result.finishReason.unified).toBe("error");
+  });
+
+  it("test_provider_error_body_log_names_message_code_and_type", async () => {
+    // The OpenAI-compatible adapter passes an in-stream `{"error":{...}}` body
+    // on as this plain object.
+    const body = {
+      message: "Unable to process request. Repeat the request later.",
+      type: "internal_error",
+      code: 500,
+    };
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const model = scriptedModel([() => partsStream([{ type: "error", error: body }])]);
+      const err = await streamError(callModel(model, userPrompt("x"), () => {}));
+      expect(err.message).toBe(body.message);
+      expect(warn).toHaveBeenCalledWith("[model] stream error part: object", {
+        providerMessage: body.message,
+        providerCode: 500,
+        providerType: "internal_error",
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("test_provider_error_body_log_bounds_the_message", async () => {
+    const body = { message: "x".repeat(350) };
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const model = scriptedModel([() => partsStream([{ type: "error", error: body }])]);
+      const err = await streamError(callModel(model, userPrompt("x"), () => {}));
+      expect(err.message).toBe(body.message);
+      expect(warn).toHaveBeenCalledWith("[model] stream error part: object", {
+        providerMessage: body.message.slice(0, 300),
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("test_parse_failure_log_omits_its_message", async () => {
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const model = scriptedModel([
+        () =>
+          partsStream([
+            { type: "error", error: parseFailure },
+            ...textParts,
+            { type: "finish", usage: USAGE, finishReason: { unified: "stop", raw: "end_turn" } },
+          ]),
+      ]);
+      await callModel(model, userPrompt("x"), () => {});
+      expect(warn).toHaveBeenCalledWith("[model] stream error part: TypeError", undefined);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
