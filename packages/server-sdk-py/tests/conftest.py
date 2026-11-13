@@ -1,4 +1,4 @@
-"""Shared fixtures for the bundle-sdk tests.
+"""Shared fixtures for the server SDK tests.
 
 The SDK is a thin wrapper over `fastmcp`'s `Context` and the underlying
 `mcp` Python SDK. Rather than spin up a real MCP server/client pair

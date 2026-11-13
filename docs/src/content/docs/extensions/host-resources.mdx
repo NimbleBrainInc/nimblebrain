@@ -143,13 +143,13 @@ The error codes are the specification's where one exists, so a future upstream v
 Design the tool so it works on any host. Accept a URI, accept inline content as the fallback, and let the capability decide which one is used.
 
 <Tabs>
-<TabItem label="Python (bundle SDK)">
+<TabItem label="Python (server SDK)">
 
-The [`nimblebrain-bundle-sdk`](https://pypi.org/project/nimblebrain-bundle-sdk/) package wraps the capability check, the method names, and the result types for FastMCP servers.
+The [`nimblebrain-server-sdk`](https://pypi.org/project/nimblebrain-server-sdk/) package wraps the capability check, the method names, and the result types for FastMCP servers.
 
 ```python
 from fastmcp import Context
-from nimblebrain_bundle_sdk import host
+from nimblebrain_server_sdk import host
 
 @mcp.tool
 async def summarize(file_uri: str | None = None, text: str | None = None, ctx: Context = None) -> dict:

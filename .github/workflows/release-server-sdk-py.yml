@@ -1,28 +1,20 @@
-name: Release bundle-sdk-py
+name: Release server-sdk-py
 
-# Triggered by tags matching `bundle-sdk-py/v*` (e.g. `bundle-sdk-py/v0.1.0`).
-# Builds the wheel + sdist, publishes to PyPI via Trusted Publishing
-# (OIDC — no long-lived API token in repo secrets), creates a GitHub
-# Release. The platform release workflow (`release.yml`) is unchanged;
-# tags glob `v*` don't match the prefixed pattern here, so the two
-# pipelines stay independent.
+# Triggered by tags matching `server-sdk-py/v*` (e.g. `server-sdk-py/v0.3.0`).
+# Tests, builds the wheel + sdist, publishes to PyPI via Trusted Publishing
+# (OIDC: no long-lived API token in repo secrets), and creates a GitHub
+# Release. The runtime release workflow (`release.yml`) globs `v*`, which
+# does not match this prefix, so the two pipelines stay independent.
 #
-# First-time PyPI setup (one-time per package, by an operator):
-#   1. Create the `nimblebrain-bundle-sdk` project on PyPI (manual
-#      upload of the first sdist or via `uv publish` with a token).
-#   2. On PyPI, add a Trusted Publisher pointing at:
-#        - repo: NimbleBrainInc/nimblebrain
-#        - workflow: release-bundle-sdk-py.yml
-#        - environment: pypi
-#   3. Configure the `pypi` environment in this repo's GitHub settings
-#      (Actions → Environments → New) for the same name. Optional
-#      reviewer approval gate before publish.
-# After that, every `bundle-sdk-py/v*` tag publishes automatically.
+# PyPI side, one-time per package: a trusted publisher for project
+# `nimblebrain-server-sdk` with owner NimbleBrainInc, repository
+# `nimblebrain`, workflow `release-server-sdk-py.yml`, environment `pypi`.
+# The `pypi` environment in this repo's settings must carry the same name.
 
 on:
   push:
     tags:
-      - 'bundle-sdk-py/v*'
+      - 'server-sdk-py/v*'
 
 permissions:
   contents: write   # for GitHub Release creation
@@ -34,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/bundle-sdk-py
+        working-directory: packages/server-sdk-py
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
@@ -53,6 +45,8 @@ jobs:
         run: uv run ruff check src/ tests/
       - name: Format check
         run: uv run ruff format --check src/ tests/
+      - name: Type check
+        run: uv run ty check src/ tests/
       - name: Test
         run: uv run pytest tests/ -v
 
@@ -62,21 +56,21 @@ jobs:
     needs: verify
     environment:
       name: pypi
-      url: https://pypi.org/p/nimblebrain-bundle-sdk
+      url: https://pypi.org/p/nimblebrain-server-sdk
     defaults:
       run:
-        working-directory: packages/bundle-sdk-py
+        working-directory: packages/server-sdk-py
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
       - name: Verify tag matches package version
-        # Catches `bundle-sdk-py/v0.1.0` tagged against a pyproject.toml
+        # Catches `server-sdk-py/v0.1.0` tagged against a pyproject.toml
         # still on `0.0.x`. Tag is the source of truth for version
         # numbers, but the pyproject.toml has to match because that's
         # what gets baked into the wheel.
         run: |
-          TAG="${GITHUB_REF#refs/tags/bundle-sdk-py/v}"
+          TAG="${GITHUB_REF#refs/tags/server-sdk-py/v}"
           PKG_VERSION="$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')"
           if [ "$TAG" != "$PKG_VERSION" ]; then
             echo "Tag version ($TAG) does not match pyproject.toml version ($PKG_VERSION)"
@@ -90,14 +84,14 @@ jobs:
         # permission authenticates against the PyPI publisher config.
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: packages/bundle-sdk-py/dist
+          packages-dir: packages/server-sdk-py/dist
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: bundle-sdk-py ${{ github.ref_name }}
+          name: server-sdk-py ${{ github.ref_name }}
           body: |
-            Published to PyPI: https://pypi.org/project/nimblebrain-bundle-sdk/
-            See `packages/bundle-sdk-py/CHANGELOG.md` for changes.
+            Published to PyPI: https://pypi.org/project/nimblebrain-server-sdk/
+            See `packages/server-sdk-py/CHANGELOG.md` for changes.
           files: |
-            packages/bundle-sdk-py/dist/*.whl
-            packages/bundle-sdk-py/dist/*.tar.gz
+            packages/server-sdk-py/dist/*.whl
+            packages/server-sdk-py/dist/*.tar.gz

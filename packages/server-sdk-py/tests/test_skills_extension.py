@@ -23,7 +23,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.shared.exceptions import MCPError
 from pydantic import TypeAdapter
 
-from nimblebrain_bundle_sdk.skills import (
+from nimblebrain_server_sdk.skills import (
     SKILLS_EXTENSION_ID,
     GetSkillParams,
     ListSkillsParams,

@@ -1,0 +1,55 @@
+name: server-sdk-py
+
+# The Python server SDK's own gate: lint, format, type check and tests, on the oldest and
+# newest Python it supports. It runs on a ready pull request that touches the package, so a
+# dependency bound or an upstream minor is checked before it merges rather than on the release
+# tag. A draft runs nothing, as in CI (`ci.yml`). The release workflow runs the same checks again
+# before it publishes.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'packages/server-sdk-py/**'
+      - '.github/workflows/server-sdk-py.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.draft }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: server-sdk-py (Python ${{ matrix.python }})
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13']
+    defaults:
+      run:
+        working-directory: packages/server-sdk-py
+    env:
+      PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install "$PYTHON"
+      - name: Install dependencies
+        run: uv sync --frozen --python "$PYTHON"
+      - name: Lint
+        run: uv run --frozen ruff check src/ tests/
+      - name: Format check
+        run: uv run --frozen ruff format --check src/ tests/
+      - name: Type check
+        run: uv run --frozen ty check src/ tests/
+      - name: Test
+        run: uv run --frozen pytest tests/ -v

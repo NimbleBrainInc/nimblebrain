@@ -705,17 +705,19 @@ wheels = [
 ]
 
 [[package]]
-name = "nimblebrain-bundle-sdk"
-version = "0.2.0"
+name = "nimblebrain-server-sdk"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
     { name = "mcp" },
+    { name = "pydantic" },
     { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "httpx2" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -724,13 +726,15 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastmcp", specifier = ">=4.0.0,<5" },
+    { name = "fastmcp", specifier = ">=4.0.0" },
     { name = "mcp", specifier = ">=2.0.0,<2.4.0" },
+    { name = "pydantic", specifier = ">=2.12" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "httpx2", specifier = ">=2.13" },
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "pytest-asyncio", specifier = ">=0.24.0" },
     { name = "ruff", specifier = ">=0.13.1" },

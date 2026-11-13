@@ -1,0 +1,363 @@
+{
+  "2025-11-25": {
+    "calls": {
+      "add_thing {}": {
+        "notifications": [
+          "notifications/resources/list_changed"
+        ],
+        "text": [
+          "added"
+        ]
+      },
+      "change_thing {}": {
+        "notifications": [
+          "notifications/resources/list_changed"
+        ],
+        "text": [
+          "changed"
+        ]
+      },
+      "read_thing {}": {
+        "notifications": [],
+        "text": [
+          "read"
+        ]
+      },
+      "scope_ready {\"reason\": \"install\"}": {
+        "notifications": [],
+        "text": [
+          "ready: install"
+        ]
+      },
+      "scope_ready {}": {
+        "notifications": [],
+        "text": [
+          "ready: None"
+        ]
+      },
+      "scope_removing {}": {
+        "notifications": [],
+        "text": [
+          "removing"
+        ]
+      }
+    },
+    "extensions": null,
+    "facet_read": [
+      {
+        "mimeType": "application/json",
+        "text": "{\"count\": 3}"
+      }
+    ],
+    "resources": [
+      {
+        "_meta": {},
+        "mimeType": "text/markdown",
+        "name": "probe",
+        "title": null,
+        "uri": "skill://probe/SKILL.md"
+      },
+      {
+        "_meta": {},
+        "mimeType": "text/markdown",
+        "name": "probe/references/more.md",
+        "title": null,
+        "uri": "skill://probe/references/more.md"
+      },
+      {
+        "_meta": {
+          "ai.nimblebrain/facets": {
+            "level": "critical"
+          }
+        },
+        "mimeType": "application/json",
+        "name": "probe-stuck",
+        "title": "Things stuck",
+        "uri": "probe://facets/stuck"
+      }
+    ],
+    "skill_reference_read": [
+      {
+        "mimeType": "text/markdown",
+        "text": "More.\n",
+        "uri": "skill://probe/references/more.md"
+      }
+    ],
+    "skills": [
+      {
+        "frontmatter": {
+          "description": "Works the probe's records.",
+          "metadata": {
+            "nimblebrain": {
+              "loading-strategy": "dynamic",
+              "tool-affinity": [
+                "read_thing"
+              ]
+            }
+          },
+          "name": "probe"
+        },
+        "resources": [
+          {
+            "digest": "sha256:67b4276c6d58212964bdaaa372257d3413dcd7a578a8b99d6734c3e66bf5fbc0",
+            "size": 171,
+            "uri": "skill://probe/SKILL.md"
+          },
+          {
+            "digest": "sha256:a6511d3c4c0155a7c5e5e719ad513a93df6ae76f4a3a89fc3952914a0fa76439",
+            "size": 6,
+            "uri": "skill://probe/references/more.md"
+          }
+        ],
+        "uri": "skill://probe/SKILL.md"
+      }
+    ],
+    "templates": [
+      {
+        "_meta": {
+          "ai.nimblebrain/view": "ui://probe/things"
+        },
+        "name": "thing",
+        "uriTemplate": "probe://things/{thing_id}"
+      }
+    ],
+    "tools": {
+      "add_thing": {
+        "_meta": {},
+        "annotations": {
+          "destructiveHint": false,
+          "readOnlyHint": false
+        },
+        "required": []
+      },
+      "change_thing": {
+        "_meta": {},
+        "annotations": {
+          "destructiveHint": true,
+          "readOnlyHint": false
+        },
+        "required": []
+      },
+      "read_thing": {
+        "_meta": {},
+        "annotations": {
+          "readOnlyHint": true
+        },
+        "required": []
+      },
+      "scope_ready": {
+        "_meta": {
+          "ai.nimblebrain/lifecycle": {
+            "event": "ready"
+          }
+        },
+        "annotations": {
+          "destructiveHint": true,
+          "readOnlyHint": false
+        },
+        "required": []
+      },
+      "scope_removing": {
+        "_meta": {
+          "ai.nimblebrain/lifecycle": {
+            "event": "removing"
+          },
+          "ui": {
+            "visibility": [
+              "app"
+            ]
+          }
+        },
+        "annotations": {
+          "destructiveHint": true,
+          "readOnlyHint": false
+        },
+        "required": []
+      }
+    }
+  },
+  "2026-07-28": {
+    "calls": {
+      "add_thing {}": {
+        "notifications": [
+          "notifications/resources/list_changed"
+        ],
+        "text": [
+          "added"
+        ]
+      },
+      "change_thing {}": {
+        "notifications": [
+          "notifications/resources/list_changed"
+        ],
+        "text": [
+          "changed"
+        ]
+      },
+      "read_thing {}": {
+        "notifications": [],
+        "text": [
+          "read"
+        ]
+      },
+      "scope_ready {\"reason\": \"install\"}": {
+        "notifications": [],
+        "text": [
+          "ready: install"
+        ]
+      },
+      "scope_ready {}": {
+        "notifications": [],
+        "text": [
+          "ready: None"
+        ]
+      },
+      "scope_removing {}": {
+        "notifications": [],
+        "text": [
+          "removing"
+        ]
+      }
+    },
+    "extensions": {
+      "ai.example/probe": {
+        "version": 1
+      },
+      "ai.nimblebrain/facets": {},
+      "ai.nimblebrain/lifecycle": {},
+      "io.modelcontextprotocol/skills": {}
+    },
+    "facet_read": [
+      {
+        "mimeType": "application/json",
+        "text": "{\"count\": 3}"
+      }
+    ],
+    "resources": [
+      {
+        "_meta": {},
+        "mimeType": "text/markdown",
+        "name": "probe",
+        "title": null,
+        "uri": "skill://probe/SKILL.md"
+      },
+      {
+        "_meta": {},
+        "mimeType": "text/markdown",
+        "name": "probe/references/more.md",
+        "title": null,
+        "uri": "skill://probe/references/more.md"
+      },
+      {
+        "_meta": {
+          "ai.nimblebrain/facets": {
+            "level": "critical"
+          }
+        },
+        "mimeType": "application/json",
+        "name": "probe-stuck",
+        "title": "Things stuck",
+        "uri": "probe://facets/stuck"
+      }
+    ],
+    "skill_reference_read": [
+      {
+        "mimeType": "text/markdown",
+        "text": "More.\n",
+        "uri": "skill://probe/references/more.md"
+      }
+    ],
+    "skills": [
+      {
+        "frontmatter": {
+          "description": "Works the probe's records.",
+          "metadata": {
+            "nimblebrain": {
+              "loading-strategy": "dynamic",
+              "tool-affinity": [
+                "read_thing"
+              ]
+            }
+          },
+          "name": "probe"
+        },
+        "resources": [
+          {
+            "digest": "sha256:67b4276c6d58212964bdaaa372257d3413dcd7a578a8b99d6734c3e66bf5fbc0",
+            "size": 171,
+            "uri": "skill://probe/SKILL.md"
+          },
+          {
+            "digest": "sha256:a6511d3c4c0155a7c5e5e719ad513a93df6ae76f4a3a89fc3952914a0fa76439",
+            "size": 6,
+            "uri": "skill://probe/references/more.md"
+          }
+        ],
+        "uri": "skill://probe/SKILL.md"
+      }
+    ],
+    "templates": [
+      {
+        "_meta": {
+          "ai.nimblebrain/view": "ui://probe/things"
+        },
+        "name": "thing",
+        "uriTemplate": "probe://things/{thing_id}"
+      }
+    ],
+    "tools": {
+      "add_thing": {
+        "_meta": {},
+        "annotations": {
+          "destructiveHint": false,
+          "readOnlyHint": false
+        },
+        "required": []
+      },
+      "change_thing": {
+        "_meta": {},
+        "annotations": {
+          "destructiveHint": true,
+          "readOnlyHint": false
+        },
+        "required": []
+      },
+      "read_thing": {
+        "_meta": {},
+        "annotations": {
+          "readOnlyHint": true
+        },
+        "required": []
+      },
+      "scope_ready": {
+        "_meta": {
+          "ai.nimblebrain/lifecycle": {
+            "event": "ready"
+          }
+        },
+        "annotations": {
+          "destructiveHint": true,
+          "readOnlyHint": false
+        },
+        "required": []
+      },
+      "scope_removing": {
+        "_meta": {
+          "ai.nimblebrain/lifecycle": {
+            "event": "removing"
+          },
+          "ui": {
+            "visibility": [
+              "app"
+            ]
+          }
+        },
+        "annotations": {
+          "destructiveHint": true,
+          "readOnlyHint": false
+        },
+        "required": []
+      }
+    }
+  }
+}

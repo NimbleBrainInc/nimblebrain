@@ -17,17 +17,31 @@ The SDK is a thin wrapper. The contract these tests pin:
 
 from __future__ import annotations
 
-import pytest
-from mcp.types import ClientCapabilities, InitializeRequestParams, ReadResourceResult
+from typing import Any
 
-from nimblebrain_bundle_sdk import (
+import pytest
+from mcp.types import (
+    ClientCapabilities,
+    InitializeRequestParams,
+    ReadResourceResult,
+    TextResourceContents,
+)
+
+from nimblebrain_server_sdk import (
     HOST_RESOURCES_CAPABILITY_KEY,
     HOST_RESOURCES_LIST_METHOD,
     HOST_RESOURCES_READ_METHOD,
     HostCapabilityMissing,
-    host,
+    HostResources,
 )
+from nimblebrain_server_sdk import host as sdk_host
 from tests.conftest import StubContext, StubSession, make_ctx
+
+
+def host(ctx: Any) -> HostResources:
+    """``host`` over a stub context, which stands in for FastMCP's ``Context``."""
+    return sdk_host(ctx)
+
 
 # ---------------------------------------------------------------------------
 # Capability detection
@@ -211,7 +225,9 @@ async def test_read_dispatches_namespaced_method(host_resources_v1_extensions, r
     result = await host(ctx).read("files://fl_abc")
 
     assert isinstance(result, ReadResourceResult)
-    assert result.contents[0].text == "company,email\nfoo,foo@x"
+    (content,) = result.contents
+    assert isinstance(content, TextResourceContents)
+    assert content.text == "company,email\nfoo,foo@x"
 
     # Exactly one wire call, with the right method + params shape.
     assert len(ctx.session.calls) == 1
