@@ -75,6 +75,7 @@ import {
 } from "./mcp-task-client.ts";
 import { promoteHiddenErrors } from "./promote-hidden-errors.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
+import { RemoteResponseTooLargeError } from "./response-budget.ts";
 import { scrubArgsForDispatch } from "./scrub-args.ts";
 import {
   RELAYED_SERVER_NOTIFICATIONS,
@@ -3622,9 +3623,10 @@ function isClientActionable(err: unknown): boolean {
  * - **transport-dead** — a RECOGNIZED torn-transport shape (closed / refused /
  *   reset / timed out / fetch error / broken pipe).
  * - **none** — the server answered with a standard JSON-RPC *protocol* error
- *   (parse/invalid-request/method/params/internal, or resource-not-found), or a
- *   non-object throw. A restart won't change the answer; surface it. App-level
- *   tool failures don't reach here at all — they come back as `isError` *results*.
+ *   (parse/invalid-request/method/params/internal, or resource-not-found), an
+ *   answer larger than the host budget, or a non-object throw. A restart won't
+ *   change the answer; surface it. App-level tool failures don't reach here at
+ *   all — they come back as `isError` *results*.
  * - **unknown** — a throw we can't positively classify. The caller decides: the
  *   tool path treats it as recoverable (old "restart on any throw" robustness,
  *   now capped); the read path surfaces it (a malformed result / server code
@@ -3632,7 +3634,9 @@ function isClientActionable(err: unknown): boolean {
  *   distinct from `transport-dead` — see `recover`'s `recoverUnknown`.
  */
 export function classifyConnectionFailure(err: unknown): ConnectionFailure {
-  if (err === null || typeof err !== "object") return "none";
+  if (err === null || typeof err !== "object" || err instanceof RemoteResponseTooLargeError) {
+    return "none";
+  }
   const code = (err as { code?: unknown }).code;
   // An HTTP status: the SDK's HTTP failures carry it beside a string code; a
   // numeric code in the HTTP range is one a caller's own throw carried.

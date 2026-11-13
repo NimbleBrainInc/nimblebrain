@@ -12,6 +12,9 @@ import type {
 } from "@modelcontextprotocol/client";
 import {
   auth,
+  Client,
+  ProtocolError,
+  SdkErrorCode,
   SSEClientTransport,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
@@ -23,7 +26,12 @@ import {
   FileCredentialStore,
   setCredentialStore,
 } from "../../src/tools/credential-store.ts";
+import { classifyConnectionFailure } from "../../src/tools/mcp-source.ts";
 import { createRemoteTransport } from "../../src/tools/remote-transport.ts";
+import {
+  MAX_REMOTE_RESPONSE_BYTES,
+  RemoteResponseTooLargeError,
+} from "../../src/tools/response-budget.ts";
 import { payloadsOf } from "../helpers/engine-events.ts";
 import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
@@ -140,6 +148,263 @@ describe("createRemoteTransport", () => {
       throw new Error("expected a StreamableHTTPClientTransport");
     }
     expect(t.sessionId).toBe("session-abc");
+  });
+});
+
+describe("createRemoteTransport — a connector's answer stays within the host budget", () => {
+  const MIB = 1024 * 1024;
+  const budgetMib = MAX_REMOTE_RESPONSE_BYTES / MIB;
+  // Four MiB past the budget, then the end: a transport without the budget
+  // reads it all, fails to parse it and fails the test, without hanging.
+  const sentMib = budgetMib + 4;
+  let originalFetch: typeof fetch;
+  let pulled: number;
+  let cancelled: boolean;
+  let answer: { status: number; contentType: string };
+
+  beforeEach(() => {
+    pulled = 0;
+    cancelled = false;
+    answer = { status: 200, contentType: "application/json" };
+    originalFetch = globalThis.fetch;
+    const mib = new Uint8Array(MIB).fill(0x20);
+    globalThis.fetch = fakeFetch(async () => {
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (pulled >= sentMib) return controller.close();
+          pulled++;
+          controller.enqueue(mib);
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      return new Response(body, {
+        status: answer.status,
+        headers: { "content-type": answer.contentType },
+      });
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("an oversized answer fails the call and stops the read at the budget", async () => {
+    const t = await createRemoteTransport(new URL("https://example.com/mcp"));
+    await t.start();
+    await expect(
+      t.send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "big" } }),
+    ).rejects.toBeInstanceOf(RemoteResponseTooLargeError);
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThanOrEqual(budgetMib + 2);
+    await t.close();
+  });
+
+  test("an oversized error page fails the call with its HTTP status, without its text", async () => {
+    // The SDK reads an error page's text only to quote it, so the size error
+    // ends that read and the call fails on the status alone.
+    answer = { status: 502, contentType: "text/html" };
+    const t = await createRemoteTransport(new URL("https://example.com/mcp"));
+    await t.start();
+    await expect(
+      t.send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "big" } }),
+    ).rejects.toMatchObject({ data: { status: 502, text: null } });
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThanOrEqual(budgetMib + 2);
+    await t.close();
+  });
+
+  test("an OAuth token answer is held to the same budget", async () => {
+    const provider: OAuthClientProvider = {
+      redirectUrl: "http://localhost/callback",
+      clientMetadata: { redirect_uris: ["http://localhost/callback"] },
+      clientInformation: () => undefined,
+      saveClientInformation: () => {},
+      tokens: () => undefined,
+      saveTokens: () => {},
+      redirectToAuthorization: () => {},
+      saveCodeVerifier: () => {},
+      codeVerifier: () => "",
+    };
+    const t = await createRemoteTransport(new URL("https://example.com/mcp"), {}, provider);
+    // biome-ignore lint/complexity/useLiteralKeys: `_fetchWithInit` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
+    const oauthFetch: FetchLike = sdkTransport(t)["_fetchWithInit"];
+    await expect(
+      oauthFetch("https://auth.example.com/token", {
+        method: "POST",
+        body: "grant_type=refresh_token&refresh_token=rt-oversized",
+      }),
+    ).rejects.toBeInstanceOf(RemoteResponseTooLargeError);
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThanOrEqual(budgetMib + 2);
+  });
+});
+
+describe("createRemoteTransport — an oversized event-stream answer fails its call", () => {
+  const MIB = 1024 * 1024;
+  const budgetMib = MAX_REMOTE_RESPONSE_BYTES / MIB;
+  const sentMib = budgetMib + 4;
+  let originalFetch: typeof fetch;
+  let pulled: number;
+  let cancelled: boolean;
+  let resumes: number;
+
+  beforeEach(() => {
+    pulled = 0;
+    cancelled = false;
+    resumes = 0;
+    originalFetch = globalThis.fetch;
+    const encoder = new TextEncoder();
+    const mib = new Uint8Array(MIB).fill(0x78);
+    globalThis.fetch = fakeFetch(async (_input, init) => {
+      if (init?.method !== "POST") {
+        // A GET naming the last event id is the SDK resuming a stream that
+        // ended without its answer; any other GET is the optional standalone stream.
+        if (new Headers(init?.headers).has("last-event-id")) resumes++;
+        return new Response(null, { status: 405 });
+      }
+      const message = JSON.parse(String(init.body));
+      if (message.method === "initialize") {
+        const result = {
+          protocolVersion: message.params.protocolVersion,
+          capabilities: { tools: {} },
+          serverInfo: { name: "big", version: "1.0.0" },
+        };
+        return Response.json({ jsonrpc: "2.0", id: message.id, result });
+      }
+      if (message.method !== "tools/call") return new Response(null, { status: 202 });
+      // A priming event with an id first, which makes the stream resumable,
+      // then one event that never ends inside the budget.
+      const head = [encoder.encode("id: prime-1\ndata: \n\n"), encoder.encode("data: ")];
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const next = head.shift();
+          if (next) return controller.enqueue(next);
+          if (pulled >= sentMib) return controller.close();
+          pulled++;
+          controller.enqueue(mib);
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("the call fails at once with the size error, which classifies as none, and the stream is not resumed", async () => {
+    // A zero reconnection delay, so a resume the SDK scheduled would reach
+    // fetch within the 200 ms wait at the end instead of a second later.
+    const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
+      reconnection: { initialReconnectionDelay: 0, maxRetries: 1 },
+    });
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await client.connect(t);
+    const started = Date.now();
+    const failure = await client.callTool({ name: "big", arguments: {} }, { timeout: 10_000 }).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(failure).toBeInstanceOf(ProtocolError);
+    expect(failure).toMatchObject({
+      code: -32603,
+      message: expect.stringContaining(
+        new RemoteResponseTooLargeError(MAX_REMOTE_RESPONSE_BYTES).message,
+      ),
+    });
+    expect(classifyConnectionFailure(failure)).toBe("none");
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThanOrEqual(budgetMib + 2);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(resumes).toBe(0);
+    await client.close();
+  }, 15_000);
+});
+
+describe("createRemoteTransport — an oversized answer on the legacy sse transport", () => {
+  const MIB = 1024 * 1024;
+  const budgetMib = MAX_REMOTE_RESPONSE_BYTES / MIB;
+  const sentMib = budgetMib + 4;
+  let originalFetch: typeof fetch;
+  let pulled: number;
+  let cancelled: boolean;
+
+  beforeEach(() => {
+    pulled = 0;
+    cancelled = false;
+    originalFetch = globalThis.fetch;
+    const encoder = new TextEncoder();
+    const mib = new Uint8Array(MIB).fill(0x78);
+    // The server's one GET stream carries every answer; a POST is only accepted.
+    const queued: Uint8Array[] = [encoder.encode("event: endpoint\ndata: /messages\n\n")];
+    let oversized = 0;
+    let wake = () => {};
+    const push = (text: string) => {
+      queued.push(encoder.encode(text));
+      wake();
+    };
+    let streams = 0;
+    globalThis.fetch = fakeFetch(async (_input, init) => {
+      if (init?.method !== "POST") {
+        if (streams++ > 0) return new Response(null, { status: 405 });
+        const body = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            while (queued.length === 0 && oversized === 0) {
+              await new Promise<void>((resolve) => {
+                wake = resolve;
+              });
+            }
+            const next = queued.shift();
+            if (next) return controller.enqueue(next);
+            oversized--;
+            pulled++;
+            controller.enqueue(mib);
+          },
+          cancel() {
+            cancelled = true;
+          },
+        });
+        return new Response(body, { headers: { "content-type": "text/event-stream" } });
+      }
+      const message = JSON.parse(String(init.body));
+      if (message.method === "initialize") {
+        const result = {
+          protocolVersion: message.params.protocolVersion,
+          capabilities: { tools: {} },
+          serverInfo: { name: "big", version: "1.0.0" },
+        };
+        push(
+          `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: message.id, result })}\n\n`,
+        );
+      } else if (message.method === "tools/call") {
+        push("event: message\ndata: ");
+        oversized = sentMib;
+      }
+      return new Response(null, { status: 202 });
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("the read stops at the budget and the call fails at its request timeout", async () => {
+    const t = await createRemoteTransport(new URL("https://example.com/mcp"), { type: "sse" });
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await client.connect(t);
+    const started = Date.now();
+    const call = client.callTool({ name: "big", arguments: {} }, { timeout: 300 });
+    await expect(call).rejects.toMatchObject({ code: SdkErrorCode.RequestTimeout });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(250);
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThanOrEqual(budgetMib + 2);
+    await client.close();
   });
 });
 

@@ -249,6 +249,19 @@ What is left to evaluate at install time is the **connection**:
 - **What it is granted.** OAuth scopes are declared on the catalog entry and shown on the consent screen. Credentials are workspace-scoped: a connector authorized in one workspace is not reachable from another.
 - **What its tools may do.** The per-connector permission table (Configure → Tools) is the place to disallow a tool the workspace should not expose to the agent.
 
+Each answer a connector sends over its MCP connection, a token refresh included,
+is read up to 64 MiB: a JSON reply, an error page or a token answer as a whole,
+an event stream per event. Past that the runtime stops reading the answer, and:
+
+- A JSON reply fails its call at once with a size error.
+- An event stream answering a call ends with a JSON-RPC error that carries the
+  size error, so the call fails at once.
+- An error page fails its call at once with its HTTP status, without the page text.
+- A token answer fails its token request with a size error.
+- On a connector using the legacy `sse` transport, whose answers arrive on one
+  shared stream, the call does not fail at once: it fails when its request
+  times out.
+
 ## How a tool call gets authorized
 
 Every tool call reaches a tool through one of three doors, and all three run the
