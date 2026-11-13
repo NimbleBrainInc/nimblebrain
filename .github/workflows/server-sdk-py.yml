@@ -1,35 +1,78 @@
 name: server-sdk-py
 
-# The Python server SDK's own gate: lint, format, type check and tests, on the oldest and
-# newest Python it supports. It runs on a ready pull request that touches the package, so a
-# dependency bound or an upstream minor is checked before it merges rather than on the release
-# tag. A draft runs nothing, as in CI (`ci.yml`). The release workflow runs the same checks again
-# before it publishes.
+# The Python server SDK's own gate: lint, format, type check and tests on every Python it
+# supports, then a build whose wheel and sdist are inspected. It checks a dependency bound or an
+# upstream minor before it merges rather than on the release tag; the release workflow checks
+# again before it publishes.
+#
+# One job, `server-sdk-py`, always reports, so it can be a required check. The workflow has no
+# path filter: a filtered workflow that does not run never reports, and a required check that
+# never reports blocks the merge queue. `changes` decides whether this change touches the SDK;
+# when it does not, the checks skip and the gate passes.
+#
+#   - draft PR: nothing, as in CI (`ci.yml`).
+#   - ready PR and merge_group: the checks, when the change touches the SDK.
+#   - weekly: the checks on the newest dependency versions that resolve (the lockfile moved
+#     forward in the runner only), so an upstream release that breaks the SDK shows up within a
+#     week instead of at the next lockfile bump.
 on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - 'packages/server-sdk-py/**'
-      - '.github/workflows/server-sdk-py.yml'
+  merge_group:
+    types: [checks_requested]
+  schedule:
+    - cron: '23 16 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.draft }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.pull_request.draft }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Does this change touch the SDK?
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sdk: ${{ steps.diff.outputs.sdk }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          case "$EVENT" in
+            pull_request) BASE="$PR_BASE" ;;
+            merge_group) BASE="$QUEUE_BASE" ;;
+            *) echo "sdk=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          git fetch --no-tags --depth=1 origin "$BASE"
+          if git diff --name-only "$BASE" HEAD | grep -E -q \
+            '^(packages/server-sdk-py/|\.github/workflows/(server-sdk-py|release-server-sdk-py)\.yml$)'; then
+            echo "sdk=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sdk=false" >> "$GITHUB_OUTPUT"
+          fi
+
   verify:
     name: server-sdk-py (Python ${{ matrix.python }})
-    if: ${{ !github.event.pull_request.draft }}
+    needs: changes
+    if: ${{ needs.changes.outputs.sdk == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.13']
+        python: ['3.11', '3.13', '3.14']
     defaults:
       run:
         working-directory: packages/server-sdk-py
@@ -37,19 +80,66 @@ jobs:
       PYTHON: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
         with:
           enable-cache: true
       - name: Install Python
         run: uv python install "$PYTHON"
+      - name: Move the lockfile to the newest versions (weekly run only)
+        if: ${{ github.event_name == 'schedule' }}
+        run: uv lock --upgrade
       - name: Install dependencies
         run: uv sync --frozen --python "$PYTHON"
       - name: Lint
-        run: uv run --frozen ruff check src/ tests/
+        run: uv run --frozen ruff check src/ tests/ scripts/
       - name: Format check
-        run: uv run --frozen ruff format --check src/ tests/
+        run: uv run --frozen ruff format --check src/ tests/ scripts/
       - name: Type check
         run: uv run --frozen ty check src/ tests/
       - name: Test
         run: uv run --frozen pytest tests/ -v
+
+  package:
+    name: server-sdk-py (build and inspect)
+    needs: changes
+    if: ${{ needs.changes.outputs.sdk == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/server-sdk-py
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
+      - name: Build sdist + wheel
+        run: uv build
+      - name: Inspect what ships
+        run: uv run --no-project --python 3.13 python scripts/check_dist.py dist
+
+  server-sdk-py:
+    name: server-sdk-py
+    needs: [changes, verify, package]
+    if: ${{ always() && !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every check that ran passed
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          VERIFY: ${{ needs.verify.result }}
+          PACKAGE: ${{ needs.package.result }}
+        run: |
+          echo "changes=$CHANGES verify=$VERIFY package=$PACKAGE"
+          [ "$CHANGES" = success ] || { echo "change detection did not succeed"; exit 1; }
+          for result in "$VERIFY" "$PACKAGE"; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "a check did not pass: $result"; exit 1 ;;
+            esac
+          done

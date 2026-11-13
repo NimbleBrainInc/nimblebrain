@@ -11,6 +11,7 @@ host reads them.
 
 from __future__ import annotations
 
+import importlib.metadata
 import inspect
 import logging
 import re
@@ -132,6 +133,22 @@ def test_wire_constants() -> None:
     assert typing.get_args(sdk.LifecycleEvent) == sdk.LIFECYCLE_EVENTS
     assert ids.CROCKFORD_ALPHABET == "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
     assert ids.ULID_LENGTH == 26
+
+
+def test_host_resources_wire_constants() -> None:
+    # The host matches these strings and codes exactly, so they are pinned as literals rather
+    # than compared against the constants they come from.
+    assert sdk.HOST_RESOURCES_CAPABILITY_KEY == "ai.nimblebrain/host-resources"
+    assert sdk.HOST_RESOURCES_READ_METHOD == "ai.nimblebrain/resources/read"
+    assert sdk.HOST_RESOURCES_LIST_METHOD == "ai.nimblebrain/resources/list"
+    assert sdk.RESOURCE_NOT_FOUND == -32002
+    assert sdk.RATE_LIMITED == -32004
+    assert sdk.RESPONSE_TOO_LARGE == -32005
+    assert sdk.INVALID_PARAMS == -32602
+
+
+def test_version_matches_the_installed_distribution() -> None:
+    assert sdk.__version__ == importlib.metadata.version("nimblebrain-server-sdk")
 
 
 def test_annotations() -> None:

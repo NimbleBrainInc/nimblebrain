@@ -41,8 +41,8 @@ from mcp.server.extension import Extension, ResourceBinding
 from mcp.server.extension import MethodBinding as MCPMethodBinding
 from mcp.server.mcpserver.resources import BinaryResource, TextResource
 from mcp.shared.exceptions import MCPError
-from mcp_types import INVALID_PARAMS, PaginatedRequestParams, RequestParams
-from mcp_types.version import MODERN_PROTOCOL_VERSIONS
+from mcp.types import INVALID_PARAMS, PaginatedRequestParams, RequestParams
+from mcp.types.version import MODERN_PROTOCOL_VERSIONS
 from pydantic import AnyUrl, ValidationError
 
 SKILLS_EXTENSION_ID = "io.modelcontextprotocol/skills"

@@ -166,7 +166,7 @@ async def summarize(file_uri: str | None = None, text: str | None = None, ctx: C
     ...
 ```
 
-`h.available` is true when `read` is enabled, and `h.list_available` is true when `list` is enabled. `h.supports_scheme("files")` checks the scheme allowlist.
+`h.available` is true when `read` is enabled, and `h.list_available` is true when `list` is enabled. `h.supports_scheme("files")` checks the scheme allowlist. On a `2026-07-28` connection both are false, whatever the client advertised, because the methods cannot be reached there.
 
 </TabItem>
 <TabItem label="Wire (any SDK)">

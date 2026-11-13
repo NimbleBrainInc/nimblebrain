@@ -1,6 +1,21 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.1]
+
+### Fixed
+
+- **Host resources on 2026-07-28:** `available` and `list_available` are `False` and `read`/`list`
+  raise `HostCapabilityMissing` on a 2026-07-28 connection, which has no channel for the host
+  request; `read` used to fail on the wire there.
+- **Typed package:** the wheel ships `py.typed`, so type checkers read the SDK's annotations.
+- **Docs** name `mcp.shared.exceptions.MCPError`, the class `mcp` 2 raises.
+
+### Changed
+
+- `__version__` comes from the installed distribution.
+- Supports Python 3.14.
+
+## [0.3.0]
 
 ### Highlights
 
@@ -29,7 +44,8 @@
 
 ### Changed
 
-- **Requires `fastmcp>=4.0.0`** with no upper bound, and `pydantic>=2.12`.
+- **Requires `fastmcp>=4.0.0`** with no upper bound, `mcp>=2.0.0,<2.4.0` (was `<2.3.0`), and
+  `pydantic>=2.12`.
 - **Licensed under Apache-2.0**, the license of the repository it ships from. Releases up to
   and including 0.2.0 remain available under MIT.
 

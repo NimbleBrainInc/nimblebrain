@@ -1,10 +1,18 @@
 # nimblebrain-server-sdk
 
 The Python SDK for building MCP servers that run on NimbleBrain, whether the server ships its
-own interface (an MCP app) or only tools (a connector). It is the server half: an app's
-interface is built with [Synapse](https://github.com/NimbleBrainInc/synapse)
-(`@nimblebrain/synapse`), and a program that calls NimbleBrain uses the `@nimblebrain/sdk` API
-client. The MCP protocol itself comes from the `mcp` package, through FastMCP.
+own interface (an MCP app) or only tools (a connector). It covers what a server shares with the
+NimbleBrain host it runs in. The MCP protocol itself comes from the `mcp` package, through
+FastMCP.
+
+| Package | What it is for |
+| --- | --- |
+| `nimblebrain-server-sdk` (this package) | A server's NimbleBrain host features: annotations, change announcements, the `ai.nimblebrain` extensions, skills, listing rows, record ids, host resources |
+| [`nimblebrain-synapse`](https://pypi.org/project/nimblebrain-synapse/) (PyPI) | Serving a server's interface: one `ui://` component declared once, rendered in any MCP Apps host |
+| [`@nimblebrain/synapse`](https://github.com/NimbleBrainInc/synapse) (npm) | Writing that interface, the half that runs in the browser |
+| `@nimblebrain/sdk` (npm) | A program that calls NimbleBrain's API |
+
+A server with an interface uses this package and `nimblebrain-synapse` together.
 
 ```bash
 uv add nimblebrain-server-sdk
@@ -307,6 +315,12 @@ This SDK wraps that protocol. You write `await host(ctx).read(uri)` and
 get bytes; the SDK takes care of capability detection, method names,
 and Pydantic result types.
 
+**Host resources work on 2025-era (`initialize`) connections only.** A read is a request from
+the server to the client, and the 2026-07-28 protocol has no channel for one. On a 2026-07-28
+connection `available` and `list_available` are `False` and `read`/`list` raise
+`HostCapabilityMissing`, whatever the client advertised, so a server takes its fallback path
+instead of failing on the wire.
+
 ### Quick start
 
 ```python
@@ -359,7 +373,8 @@ h.supports_scheme("files")
 
 # Read a single resource. Returns the MCP-standard `ReadResourceResult`.
 # Raises `HostCapabilityMissing` when the host doesn't advertise the
-# extension. Raises `McpError` for `-32004` (rate limited), `-32005`
+# extension. Raises `mcp.shared.exceptions.MCPError` (match on `.code`)
+# for `-32004` (rate limited), `-32005`
 # (response too large), `-32002` (resource not found), `-32602`
 # (invalid params, e.g. unsupported scheme).
 result = await h.read("files://fl_abc123")

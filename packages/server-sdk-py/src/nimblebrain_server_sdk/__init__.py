@@ -7,6 +7,8 @@ view a record opens in), skills served through the MCP Skills extension
 mints, and reads of workspace files through ``ai.nimblebrain/host-resources``.
 """
 
+from importlib.metadata import version as _version
+
 from nimblebrain_server_sdk.annotations import ADDS, CHANGES, READS
 from nimblebrain_server_sdk.announce import announce_resource_list_changed
 from nimblebrain_server_sdk.errors import HostCapabilityMissing
@@ -89,4 +91,4 @@ __all__ = [
     "record_view_meta",
 ]
 
-__version__ = "0.3.0"
+__version__ = _version("nimblebrain-server-sdk")

@@ -1,6 +1,6 @@
 [project]
 name = "nimblebrain-server-sdk"
-version = "0.3.0"
+version = "0.3.1"
 description = "The SDK for building MCP servers that run on NimbleBrain: tool annotations, change announcements, the ai.nimblebrain platform extensions (facets, lifecycle, record views), skills over the MCP Skills extension, bounded listing rows, record ids, and host-resources reads."
 readme = "README.md"
 license = "Apache-2.0"
@@ -15,6 +15,8 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
     "Topic :: Software Development :: Libraries",
 ]
 
@@ -23,8 +25,9 @@ dependencies = [
     # the tool registry come from there. The floor is 4 because fastmcp-slim 4
     # needs mcp>=2 and 3 needs mcp<2, so a consumer still on FastMCP 3 fails to
     # resolve visibly instead of being moved across a major. No ceiling: the
-    # SDK uses FastMCP's public API only, and this package's CI runs its suite
-    # against what resolves.
+    # SDK uses FastMCP's public API only. Pull requests test the locked
+    # versions (`uv.lock`); a weekly run tests the newest versions that resolve,
+    # so a new FastMCP release that breaks the SDK shows up within a week.
     "fastmcp>=4.0.0",
     # The underlying MCP types (ReadResourceResult, ListResourcesResult,
     # ClientCapabilities) and the SEP-2133 `Extension` API the skills
@@ -43,8 +46,9 @@ dependencies = [
     #
     # That is why the ceiling is a minor, not the major: each upstream
     # minor is admitted by a bump here, after diffing `mcp/server/session.py`
-    # and `mcp/server/extension.py`, and the pull-request job runs the suite
-    # on it. Cut an SDK major if the dispatch shape itself has to change.
+    # and `mcp/server/extension.py`, with `uv.lock` moved to it in the same
+    # change so the pull-request job runs the suite on it. Cut an SDK major if
+    # the dispatch shape itself has to change.
     "mcp>=2.0.0,<2.4.0",
     # Imported directly (the skills request models, the testing helpers).
     "pydantic>=2.12",
@@ -63,6 +67,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nimblebrain_server_sdk"]
+
+# The sdist carries what builds and tests the package, not the repository's
+# tooling around it (the lockfile, uv's settings). Hatchling adds .gitignore
+# to every sdist on its own, so that one stays.
+[tool.hatch.build.targets.sdist]
+only-include = ["src", "tests", "scripts", "README.md", "CHANGELOG.md", "LICENSE"]
 
 [dependency-groups]
 dev = [

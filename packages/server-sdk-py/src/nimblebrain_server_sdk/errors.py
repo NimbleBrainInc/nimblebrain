@@ -1,7 +1,7 @@
 """SDK-specific exceptions.
 
 Wire-level errors from the platform come through as
-`mcp.shared.exceptions.McpError` — the SDK does not wrap those, so
+`mcp.shared.exceptions.MCPError` — the SDK does not wrap those, so
 bundle authors can match on the JSON-RPC error code via the standard
 exception path. `HostCapabilityMissing` is the only error the SDK
 itself raises, and it signals a local condition ("this host hasn't
