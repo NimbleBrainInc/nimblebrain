@@ -5,7 +5,7 @@
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun)](https://bun.sh)
 [![MCP](https://img.shields.io/badge/protocol-MCP-8A2BE2)](https://modelcontextprotocol.io)
 
-A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent tasks. Install an MCP connector and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition.
+NimbleBrain Platform is the open-source runtime that runs agents and [MCP apps](https://modelcontextprotocol.io/extensions/apps/overview) on your systems, in your own infrastructure, with any model. Install an MCP app and you get more than tools: an interactive UI in the sidebar with live agent-UI data sync. Run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition.
 
 Ships as container images on GHCR (`ghcr.io/nimblebraininc/nimblebrain`, `ghcr.io/nimblebraininc/nimblebrain-web`). Also exposes itself as an MCP server via Streamable HTTP so external MCP clients can consume the aggregated toolset.
 
