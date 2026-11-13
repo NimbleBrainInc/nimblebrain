@@ -73,7 +73,7 @@ Docker Compose runs the platform and web UI as two containers. This is the recom
    The platform image runs on Bun. Connectors are remote MCP servers, so nothing you install runs inside this container. The runtime working directory inside the container is `/data` (set via `NB_WORK_DIR`), so the config mount lands at `/data/nimblebrain.json`.
 
    <Aside type="caution">
-   The published images are `linux/amd64` only. On Apple Silicon or another arm64 host this file fails at the pull with `no matching manifest for linux/arm64/v8`. Clone the [repository](https://github.com/NimbleBrainInc/nimblebrain) and follow the Docker quick start in its README instead: the repository's `docker-compose.yml` builds both images from source when the pull finds no arm64 image. The first build takes about six minutes and needs the Docker buildx plugin, which Docker Desktop and OrbStack include. Without buildx the build stops at `COPY --parents`.
+   The published images are `linux/amd64` only. On Apple Silicon or another arm64 host this file fails at the pull with `no matching manifest for linux/arm64/v8`. Clone the [repository](https://github.com/NimbleBrainInc/nimblebrain) and either follow the Docker quick start in its README or add the `build:` keys from [Build from local source](#build-from-local-source) below. The repository's `docker-compose.yml` already has them, so it builds both images from source when the pull finds no arm64 image. The first build takes about six minutes and needs the Docker buildx plugin, which Docker Desktop and OrbStack include. Without buildx the build stops at `COPY --parents`.
    </Aside>
 
 4. **Start the services**
