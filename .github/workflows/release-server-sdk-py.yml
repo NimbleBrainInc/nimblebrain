@@ -78,7 +78,7 @@ jobs:
       - name: Install Python
         run: uv python install 3.13
       - name: Install dependencies
-        run: uv sync --frozen --python 3.13
+        run: uv sync --frozen --all-extras --python 3.13
       - name: Lint
         run: uv run --frozen ruff check src/ tests/ scripts/
       - name: Format check
@@ -118,12 +118,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.13', '3.14']
+        python: ['3.13', '3.14']
     defaults:
       run:
         working-directory: packages/server-sdk-py
+    # The `[db]` suites need a real Postgres (see server-sdk-py.yml).
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 25
     env:
       PYTHON: ${{ matrix.python }}
+      DB_TEST_URL: postgresql+asyncpg://postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v7
         with:
@@ -134,10 +148,17 @@ jobs:
         with:
           name: dist
           path: packages/server-sdk-py/dist/
-      - name: Install the built wheel, not the source
+      - name: The built wheel with neither extra
+        run: |
+          uv venv --python "$PYTHON" .venv-core
+          uv pip install --python .venv-core dist/*.whl
+          .venv-core/bin/python scripts/check_core_only.py
+      - name: Install the built wheel with both extras, not the source
         run: |
           uv venv --python "$PYTHON" .venv-dist
-          uv pip install --python .venv-dist dist/*.whl pytest pytest-asyncio httpx2
+          WHEEL="$(ls dist/*.whl)"
+          uv pip install --python .venv-dist "${WHEEL}[db,observability]" \
+            pytest pytest-asyncio httpx2 fastapi httpx
       - name: The suite imports the installed wheel
         run: .venv-dist/bin/python -c "import nimblebrain_server_sdk as m, sys; assert 'site-packages' in m.__file__, m.__file__; print(m.__file__, m.__version__)"
       - name: Test

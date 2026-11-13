@@ -1,19 +1,30 @@
 [project]
 name = "nimblebrain-server-sdk"
 version = "0.3.1"
-description = "The SDK for building MCP servers that run on NimbleBrain: tool annotations, change announcements, the ai.nimblebrain platform extensions (facets, lifecycle, record views), skills over the MCP Skills extension, bounded listing rows, record ids, and host-resources reads."
+description = "The SDK for building MCP servers that run on NimbleBrain: tool annotations, change announcements, the ai.nimblebrain platform extensions (facets, lifecycle, record views), skills over the MCP Skills extension, bounded listing rows, record ids, host-resources reads, and the service error contract; with tenant- and workspace-isolated Postgres access ([db]) and metrics, logs and traces ([observability])."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 authors = [{ name = "NimbleBrain" }]
-keywords = ["mcp", "nimblebrain", "mcp-server", "fastmcp", "host-resources", "skills"]
+keywords = [
+    "mcp",
+    "nimblebrain",
+    "mcp-server",
+    "fastmcp",
+    "host-resources",
+    "skills",
+    "row-level-security",
+    "postgres",
+    "multi-tenant",
+    "observability",
+    "opentelemetry",
+    "prometheus",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
@@ -56,6 +67,27 @@ dependencies = [
     "pyyaml>=6.0",
 ]
 
+# Optional halves a server installs only when it uses them. The core imports neither; importing
+# `nimblebrain_server_sdk.db` or `.observability` without its extra raises an ImportError that
+# names the extra.
+[project.optional-dependencies]
+db = [
+    # The generic core (policy rendering, sessions, pool, admission). Pinned exactly: the golden
+    # SQL tests hold `db` to the SQL that replayed migrations build, so a core upgrade is a
+    # deliberate, reviewed change.
+    "pgbulkhead==0.1.1",
+    "sqlalchemy[asyncio]>=2.0.36",
+    # The driver `create_pooled_engine` URLs name (`postgresql+asyncpg://`).
+    "asyncpg>=0.30",
+]
+observability = [
+    "prometheus-client>=0.21",
+    "structlog>=24.4",
+    "opentelemetry-sdk>=1.29",
+    "opentelemetry-exporter-otlp-proto-http>=1.29",
+    "opentelemetry-instrumentation-fastapi>=0.50b0",
+]
+
 [project.urls]
 Homepage = "https://nimblebrain.ai"
 Documentation = "https://docs.nimblebrain.ai"
@@ -81,10 +113,13 @@ dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=0.24.0",
     "httpx2>=2.13",
+    # The observability tests instrument a FastAPI app and drive it with Starlette's TestClient.
+    "fastapi>=0.133",
+    "httpx>=0.28",
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py313"
 line-length = 100
 
 [tool.ruff.lint]

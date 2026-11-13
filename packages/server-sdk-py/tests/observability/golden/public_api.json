@@ -1,0 +1,401 @@
+{
+  "ErrorCode": [
+    [
+      "BAD_INPUT",
+      "bad_input"
+    ],
+    [
+      "AUTH_REQUIRED",
+      "auth_required"
+    ],
+    [
+      "FORBIDDEN",
+      "forbidden"
+    ],
+    [
+      "NOT_FOUND",
+      "not_found"
+    ],
+    [
+      "CONFLICT",
+      "conflict"
+    ],
+    [
+      "QUOTA_EXHAUSTED",
+      "quota_exhausted"
+    ],
+    [
+      "RATE_LIMITED",
+      "rate_limited"
+    ],
+    [
+      "UPSTREAM_REJECTED",
+      "upstream_rejected"
+    ],
+    [
+      "UPSTREAM_UNAVAILABLE",
+      "upstream_unavailable"
+    ],
+    [
+      "UPSTREAM_TIMEOUT",
+      "upstream_timeout"
+    ],
+    [
+      "INTERNAL",
+      "internal"
+    ]
+  ],
+  "ServiceError": {
+    "__init__": [
+      {
+        "default": "<required>",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": "<required>",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "code"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "message"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "upstream_status"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "retryable"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "detail"
+      }
+    ],
+    "from_upstream": [
+      {
+        "default": "<required>",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "status"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "message"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "detail"
+      }
+    ],
+    "instance_attributes": [
+      "code",
+      "detail",
+      "http_status",
+      "message",
+      "retryable",
+      "upstream_status"
+    ],
+    "metric_code_is_property": true,
+    "to_envelope": []
+  },
+  "names": {
+    ":CapacityRefusal": {
+      "bases": [
+        "Protocol"
+      ],
+      "fields": [
+        "message",
+        "next_step"
+      ],
+      "kind": "class"
+    },
+    ":ErrorCode": {
+      "bases": [
+        "StrEnum"
+      ],
+      "kind": "class"
+    },
+    ":ServiceError": {
+      "bases": [
+        "Exception"
+      ],
+      "kind": "class"
+    },
+    ":configure_logging": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "service"
+        },
+        {
+          "default": "'INFO'",
+          "kind": "KEYWORD_ONLY",
+          "name": "level"
+        }
+      ]
+    },
+    ":counter": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "name"
+        },
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "documentation"
+        },
+        {
+          "default": "()",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "labelnames"
+        }
+      ]
+    },
+    ":gauge": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "name"
+        },
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "documentation"
+        },
+        {
+          "default": "()",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "labelnames"
+        }
+      ]
+    },
+    ":get_logger": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "name"
+        }
+      ]
+    },
+    ":histogram": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "name"
+        },
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "documentation"
+        },
+        {
+          "default": "()",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "labelnames"
+        },
+        {
+          "default": "(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0)",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "buckets"
+        }
+      ]
+    },
+    ":inject_trace_headers": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "headers"
+        }
+      ]
+    },
+    ":instrument_app": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "app"
+        },
+        {
+          "default": "<required>",
+          "kind": "KEYWORD_ONLY",
+          "name": "service"
+        },
+        {
+          "default": "'/metrics'",
+          "kind": "KEYWORD_ONLY",
+          "name": "metrics_path"
+        },
+        {
+          "default": "'INFO'",
+          "kind": "KEYWORD_ONLY",
+          "name": "log_level"
+        },
+        {
+          "default": "None",
+          "kind": "KEYWORD_ONLY",
+          "name": "caller_resolver"
+        }
+      ]
+    },
+    ":rate_limited_tool_error": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "refusal"
+        }
+      ]
+    },
+    ":render": {
+      "kind": "function",
+      "parameters": []
+    },
+    ":service_version": {
+      "kind": "function",
+      "parameters": []
+    },
+    ":start_metrics_server": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "port"
+        }
+      ]
+    },
+    ":to_tool_error": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "err"
+        }
+      ]
+    },
+    "logging:get_logger": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "name"
+        }
+      ]
+    },
+    "metrics:REGISTRY": {
+      "kind": "object",
+      "type": "CollectorRegistry"
+    },
+    "metrics:counter": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "name"
+        },
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "documentation"
+        },
+        {
+          "default": "()",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "labelnames"
+        }
+      ]
+    },
+    "metrics:gauge": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "name"
+        },
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "documentation"
+        },
+        {
+          "default": "()",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "labelnames"
+        }
+      ]
+    },
+    "metrics:histogram": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "name"
+        },
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "documentation"
+        },
+        {
+          "default": "()",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "labelnames"
+        },
+        {
+          "default": "(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0)",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "buckets"
+        }
+      ]
+    },
+    "metrics:record_service_error": {
+      "kind": "function",
+      "parameters": [
+        {
+          "default": "<required>",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "code"
+        },
+        {
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "upstream_status"
+        }
+      ]
+    }
+  },
+  "same_object": {
+    "logging:get_logger is :get_logger": true,
+    "metrics:counter is :counter": true,
+    "metrics:gauge is :gauge": true,
+    "metrics:histogram is :histogram": true
+  }
+}

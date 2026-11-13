@@ -1,0 +1,1246 @@
+{
+  "codes": [
+    {
+      "code": "bad_input",
+      "envelope": {
+        "code": "bad_input",
+        "message": "The request arguments were invalid.",
+        "retryable": false
+      },
+      "http_status": 400,
+      "message": "The request arguments were invalid.",
+      "metric_code": "bad_input",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "bad_input",
+          "upstream_status": ""
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "The request arguments were invalid.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "bad_input",
+            "message": "The request arguments were invalid.",
+            "retryable": false
+          }
+        }
+      },
+      "upstream_status": null
+    },
+    {
+      "code": "auth_required",
+      "envelope": {
+        "code": "auth_required",
+        "message": "Authorization with an upstream service is required.",
+        "retryable": false
+      },
+      "http_status": 401,
+      "message": "Authorization with an upstream service is required.",
+      "metric_code": "auth_required",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "auth_required",
+          "upstream_status": ""
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "Authorization with an upstream service is required.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "auth_required",
+            "message": "Authorization with an upstream service is required.",
+            "retryable": false
+          }
+        }
+      },
+      "upstream_status": null
+    },
+    {
+      "code": "forbidden",
+      "envelope": {
+        "code": "forbidden",
+        "message": "The operation is not permitted.",
+        "retryable": false
+      },
+      "http_status": 403,
+      "message": "The operation is not permitted.",
+      "metric_code": "forbidden",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "forbidden",
+          "upstream_status": ""
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "The operation is not permitted.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "forbidden",
+            "message": "The operation is not permitted.",
+            "retryable": false
+          }
+        }
+      },
+      "upstream_status": null
+    },
+    {
+      "code": "not_found",
+      "envelope": {
+        "code": "not_found",
+        "message": "The requested resource was not found.",
+        "retryable": false
+      },
+      "http_status": 404,
+      "message": "The requested resource was not found.",
+      "metric_code": "not_found",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "not_found",
+          "upstream_status": ""
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "The requested resource was not found.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "not_found",
+            "message": "The requested resource was not found.",
+            "retryable": false
+          }
+        }
+      },
+      "upstream_status": null
+    },
+    {
+      "code": "conflict",
+      "envelope": {
+        "code": "conflict",
+        "message": "The request conflicts with the current state.",
+        "retryable": false
+      },
+      "http_status": 409,
+      "message": "The request conflicts with the current state.",
+      "metric_code": "conflict",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "conflict",
+          "upstream_status": ""
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "The request conflicts with the current state.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "conflict",
+            "message": "The request conflicts with the current state.",
+            "retryable": false
+          }
+        }
+      },
+      "upstream_status": null
+    },
+    {
+      "code": "quota_exhausted",
+      "envelope": {
+        "code": "quota_exhausted",
+        "message": "A third-party service rejected the request (usage quota or credits exhausted).",
+        "retryable": false
+      },
+      "http_status": 502,
+      "message": "A third-party service rejected the request (usage quota or credits exhausted).",
+      "metric_code": "quota_exhausted",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "quota_exhausted",
+          "upstream_status": ""
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service rejected the request (usage quota or credits exhausted).",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "quota_exhausted",
+            "message": "A third-party service rejected the request (usage quota or credits exhausted).",
+            "retryable": false
+          }
+        }
+      },
+      "upstream_status": null
+    },
+    {
+      "code": "rate_limited",
+      "envelope": {
+        "code": "rate_limited",
+        "message": "Rate limited by an upstream service; retry shortly.",
+        "retryable": true
+      },
+      "http_status": 429,
+      "message": "Rate limited by an upstream service; retry shortly.",
+      "metric_code": "rate_limited",
+      "retryable": true,
+      "service_errors_total": [
+        {
+          "code": "rate_limited",
+          "upstream_status": ""
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "Rate limited by an upstream service; retry shortly.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "rate_limited",
+            "message": "Rate limited by an upstream service; retry shortly.",
+            "retryable": true
+          }
+        }
+      },
+      "upstream_status": null
+    },
+    {
+      "code": "upstream_rejected",
+      "envelope": {
+        "code": "upstream_rejected",
+        "message": "A third-party service rejected the request.",
+        "retryable": false
+      },
+      "http_status": 502,
+      "message": "A third-party service rejected the request.",
+      "metric_code": "upstream_rejected",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "upstream_rejected",
+          "upstream_status": ""
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service rejected the request.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_rejected",
+            "message": "A third-party service rejected the request.",
+            "retryable": false
+          }
+        }
+      },
+      "upstream_status": null
+    },
+    {
+      "code": "upstream_unavailable",
+      "envelope": {
+        "code": "upstream_unavailable",
+        "message": "A third-party service is temporarily unavailable.",
+        "retryable": true
+      },
+      "http_status": 503,
+      "message": "A third-party service is temporarily unavailable.",
+      "metric_code": "upstream_unavailable",
+      "retryable": true,
+      "service_errors_total": [
+        {
+          "code": "upstream_unavailable",
+          "upstream_status": ""
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service is temporarily unavailable.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_unavailable",
+            "message": "A third-party service is temporarily unavailable.",
+            "retryable": true
+          }
+        }
+      },
+      "upstream_status": null
+    },
+    {
+      "code": "upstream_timeout",
+      "envelope": {
+        "code": "upstream_timeout",
+        "message": "A third-party service did not respond in time.",
+        "retryable": true
+      },
+      "http_status": 504,
+      "message": "A third-party service did not respond in time.",
+      "metric_code": "upstream_timeout",
+      "retryable": true,
+      "service_errors_total": [
+        {
+          "code": "upstream_timeout",
+          "upstream_status": ""
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service did not respond in time.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_timeout",
+            "message": "A third-party service did not respond in time.",
+            "retryable": true
+          }
+        }
+      },
+      "upstream_status": null
+    },
+    {
+      "code": "internal",
+      "envelope": {
+        "code": "internal",
+        "message": "The service encountered an internal error.",
+        "retryable": false
+      },
+      "http_status": 500,
+      "message": "The service encountered an internal error.",
+      "metric_code": "internal",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "internal",
+          "upstream_status": ""
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "The service encountered an internal error.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "internal",
+            "message": "The service encountered an internal error.",
+            "retryable": false
+          }
+        }
+      },
+      "upstream_status": null
+    }
+  ],
+  "from_upstream": {
+    "200": {
+      "code": "upstream_rejected",
+      "envelope": {
+        "code": "upstream_rejected",
+        "message": "A third-party service rejected the request.",
+        "retryable": false,
+        "upstream_status": 200
+      },
+      "http_status": 502,
+      "message": "A third-party service rejected the request.",
+      "metric_code": "upstream_rejected",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "upstream_rejected",
+          "upstream_status": "200"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service rejected the request.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_rejected",
+            "message": "A third-party service rejected the request.",
+            "retryable": false,
+            "upstream_status": 200
+          }
+        }
+      },
+      "upstream_status": 200
+    },
+    "302": {
+      "code": "upstream_rejected",
+      "envelope": {
+        "code": "upstream_rejected",
+        "message": "A third-party service rejected the request.",
+        "retryable": false,
+        "upstream_status": 302
+      },
+      "http_status": 502,
+      "message": "A third-party service rejected the request.",
+      "metric_code": "upstream_rejected",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "upstream_rejected",
+          "upstream_status": "302"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service rejected the request.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_rejected",
+            "message": "A third-party service rejected the request.",
+            "retryable": false,
+            "upstream_status": 302
+          }
+        }
+      },
+      "upstream_status": 302
+    },
+    "400": {
+      "code": "upstream_rejected",
+      "envelope": {
+        "code": "upstream_rejected",
+        "message": "A third-party service rejected the request.",
+        "retryable": false,
+        "upstream_status": 400
+      },
+      "http_status": 502,
+      "message": "A third-party service rejected the request.",
+      "metric_code": "upstream_rejected",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "upstream_rejected",
+          "upstream_status": "400"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service rejected the request.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_rejected",
+            "message": "A third-party service rejected the request.",
+            "retryable": false,
+            "upstream_status": 400
+          }
+        }
+      },
+      "upstream_status": 400
+    },
+    "401": {
+      "code": "auth_required",
+      "envelope": {
+        "code": "auth_required",
+        "message": "Authorization with an upstream service is required.",
+        "retryable": false,
+        "upstream_status": 401
+      },
+      "http_status": 401,
+      "message": "Authorization with an upstream service is required.",
+      "metric_code": "auth_required",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "auth_required",
+          "upstream_status": "401"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "Authorization with an upstream service is required.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "auth_required",
+            "message": "Authorization with an upstream service is required.",
+            "retryable": false,
+            "upstream_status": 401
+          }
+        }
+      },
+      "upstream_status": 401
+    },
+    "402": {
+      "code": "quota_exhausted",
+      "envelope": {
+        "code": "quota_exhausted",
+        "message": "A third-party service rejected the request (usage quota or credits exhausted).",
+        "retryable": false,
+        "upstream_status": 402
+      },
+      "http_status": 502,
+      "message": "A third-party service rejected the request (usage quota or credits exhausted).",
+      "metric_code": "quota_exhausted",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "quota_exhausted",
+          "upstream_status": "402"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service rejected the request (usage quota or credits exhausted).",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "quota_exhausted",
+            "message": "A third-party service rejected the request (usage quota or credits exhausted).",
+            "retryable": false,
+            "upstream_status": 402
+          }
+        }
+      },
+      "upstream_status": 402
+    },
+    "403": {
+      "code": "forbidden",
+      "envelope": {
+        "code": "forbidden",
+        "message": "The operation is not permitted.",
+        "retryable": false,
+        "upstream_status": 403
+      },
+      "http_status": 403,
+      "message": "The operation is not permitted.",
+      "metric_code": "forbidden",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "forbidden",
+          "upstream_status": "403"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "The operation is not permitted.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "forbidden",
+            "message": "The operation is not permitted.",
+            "retryable": false,
+            "upstream_status": 403
+          }
+        }
+      },
+      "upstream_status": 403
+    },
+    "404": {
+      "code": "not_found",
+      "envelope": {
+        "code": "not_found",
+        "message": "The requested resource was not found.",
+        "retryable": false,
+        "upstream_status": 404
+      },
+      "http_status": 404,
+      "message": "The requested resource was not found.",
+      "metric_code": "not_found",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "not_found",
+          "upstream_status": "404"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "The requested resource was not found.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "not_found",
+            "message": "The requested resource was not found.",
+            "retryable": false,
+            "upstream_status": 404
+          }
+        }
+      },
+      "upstream_status": 404
+    },
+    "405": {
+      "code": "upstream_rejected",
+      "envelope": {
+        "code": "upstream_rejected",
+        "message": "A third-party service rejected the request.",
+        "retryable": false,
+        "upstream_status": 405
+      },
+      "http_status": 502,
+      "message": "A third-party service rejected the request.",
+      "metric_code": "upstream_rejected",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "upstream_rejected",
+          "upstream_status": "405"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service rejected the request.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_rejected",
+            "message": "A third-party service rejected the request.",
+            "retryable": false,
+            "upstream_status": 405
+          }
+        }
+      },
+      "upstream_status": 405
+    },
+    "408": {
+      "code": "upstream_timeout",
+      "envelope": {
+        "code": "upstream_timeout",
+        "message": "A third-party service did not respond in time.",
+        "retryable": true,
+        "upstream_status": 408
+      },
+      "http_status": 504,
+      "message": "A third-party service did not respond in time.",
+      "metric_code": "upstream_timeout",
+      "retryable": true,
+      "service_errors_total": [
+        {
+          "code": "upstream_timeout",
+          "upstream_status": "408"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service did not respond in time.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_timeout",
+            "message": "A third-party service did not respond in time.",
+            "retryable": true,
+            "upstream_status": 408
+          }
+        }
+      },
+      "upstream_status": 408
+    },
+    "409": {
+      "code": "conflict",
+      "envelope": {
+        "code": "conflict",
+        "message": "The request conflicts with the current state.",
+        "retryable": false,
+        "upstream_status": 409
+      },
+      "http_status": 409,
+      "message": "The request conflicts with the current state.",
+      "metric_code": "conflict",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "conflict",
+          "upstream_status": "409"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "The request conflicts with the current state.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "conflict",
+            "message": "The request conflicts with the current state.",
+            "retryable": false,
+            "upstream_status": 409
+          }
+        }
+      },
+      "upstream_status": 409
+    },
+    "410": {
+      "code": "upstream_rejected",
+      "envelope": {
+        "code": "upstream_rejected",
+        "message": "A third-party service rejected the request.",
+        "retryable": false,
+        "upstream_status": 410
+      },
+      "http_status": 502,
+      "message": "A third-party service rejected the request.",
+      "metric_code": "upstream_rejected",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "upstream_rejected",
+          "upstream_status": "410"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service rejected the request.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_rejected",
+            "message": "A third-party service rejected the request.",
+            "retryable": false,
+            "upstream_status": 410
+          }
+        }
+      },
+      "upstream_status": 410
+    },
+    "418": {
+      "code": "upstream_rejected",
+      "envelope": {
+        "code": "upstream_rejected",
+        "message": "A third-party service rejected the request.",
+        "retryable": false,
+        "upstream_status": 418
+      },
+      "http_status": 502,
+      "message": "A third-party service rejected the request.",
+      "metric_code": "upstream_rejected",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "upstream_rejected",
+          "upstream_status": "418"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service rejected the request.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_rejected",
+            "message": "A third-party service rejected the request.",
+            "retryable": false,
+            "upstream_status": 418
+          }
+        }
+      },
+      "upstream_status": 418
+    },
+    "422": {
+      "code": "upstream_rejected",
+      "envelope": {
+        "code": "upstream_rejected",
+        "message": "A third-party service rejected the request.",
+        "retryable": false,
+        "upstream_status": 422
+      },
+      "http_status": 502,
+      "message": "A third-party service rejected the request.",
+      "metric_code": "upstream_rejected",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "upstream_rejected",
+          "upstream_status": "422"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service rejected the request.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_rejected",
+            "message": "A third-party service rejected the request.",
+            "retryable": false,
+            "upstream_status": 422
+          }
+        }
+      },
+      "upstream_status": 422
+    },
+    "429": {
+      "code": "rate_limited",
+      "envelope": {
+        "code": "rate_limited",
+        "message": "Rate limited by an upstream service; retry shortly.",
+        "retryable": true,
+        "upstream_status": 429
+      },
+      "http_status": 429,
+      "message": "Rate limited by an upstream service; retry shortly.",
+      "metric_code": "rate_limited",
+      "retryable": true,
+      "service_errors_total": [
+        {
+          "code": "rate_limited",
+          "upstream_status": "429"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "Rate limited by an upstream service; retry shortly.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "rate_limited",
+            "message": "Rate limited by an upstream service; retry shortly.",
+            "retryable": true,
+            "upstream_status": 429
+          }
+        }
+      },
+      "upstream_status": 429
+    },
+    "499": {
+      "code": "upstream_rejected",
+      "envelope": {
+        "code": "upstream_rejected",
+        "message": "A third-party service rejected the request.",
+        "retryable": false,
+        "upstream_status": 499
+      },
+      "http_status": 502,
+      "message": "A third-party service rejected the request.",
+      "metric_code": "upstream_rejected",
+      "retryable": false,
+      "service_errors_total": [
+        {
+          "code": "upstream_rejected",
+          "upstream_status": "499"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service rejected the request.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_rejected",
+            "message": "A third-party service rejected the request.",
+            "retryable": false,
+            "upstream_status": 499
+          }
+        }
+      },
+      "upstream_status": 499
+    },
+    "500": {
+      "code": "upstream_unavailable",
+      "envelope": {
+        "code": "upstream_unavailable",
+        "message": "A third-party service is temporarily unavailable.",
+        "retryable": true,
+        "upstream_status": 500
+      },
+      "http_status": 503,
+      "message": "A third-party service is temporarily unavailable.",
+      "metric_code": "upstream_unavailable",
+      "retryable": true,
+      "service_errors_total": [
+        {
+          "code": "upstream_unavailable",
+          "upstream_status": "500"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service is temporarily unavailable.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_unavailable",
+            "message": "A third-party service is temporarily unavailable.",
+            "retryable": true,
+            "upstream_status": 500
+          }
+        }
+      },
+      "upstream_status": 500
+    },
+    "501": {
+      "code": "upstream_unavailable",
+      "envelope": {
+        "code": "upstream_unavailable",
+        "message": "A third-party service is temporarily unavailable.",
+        "retryable": true,
+        "upstream_status": 501
+      },
+      "http_status": 503,
+      "message": "A third-party service is temporarily unavailable.",
+      "metric_code": "upstream_unavailable",
+      "retryable": true,
+      "service_errors_total": [
+        {
+          "code": "upstream_unavailable",
+          "upstream_status": "501"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service is temporarily unavailable.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_unavailable",
+            "message": "A third-party service is temporarily unavailable.",
+            "retryable": true,
+            "upstream_status": 501
+          }
+        }
+      },
+      "upstream_status": 501
+    },
+    "502": {
+      "code": "upstream_unavailable",
+      "envelope": {
+        "code": "upstream_unavailable",
+        "message": "A third-party service is temporarily unavailable.",
+        "retryable": true,
+        "upstream_status": 502
+      },
+      "http_status": 503,
+      "message": "A third-party service is temporarily unavailable.",
+      "metric_code": "upstream_unavailable",
+      "retryable": true,
+      "service_errors_total": [
+        {
+          "code": "upstream_unavailable",
+          "upstream_status": "502"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service is temporarily unavailable.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_unavailable",
+            "message": "A third-party service is temporarily unavailable.",
+            "retryable": true,
+            "upstream_status": 502
+          }
+        }
+      },
+      "upstream_status": 502
+    },
+    "503": {
+      "code": "upstream_unavailable",
+      "envelope": {
+        "code": "upstream_unavailable",
+        "message": "A third-party service is temporarily unavailable.",
+        "retryable": true,
+        "upstream_status": 503
+      },
+      "http_status": 503,
+      "message": "A third-party service is temporarily unavailable.",
+      "metric_code": "upstream_unavailable",
+      "retryable": true,
+      "service_errors_total": [
+        {
+          "code": "upstream_unavailable",
+          "upstream_status": "503"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service is temporarily unavailable.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_unavailable",
+            "message": "A third-party service is temporarily unavailable.",
+            "retryable": true,
+            "upstream_status": 503
+          }
+        }
+      },
+      "upstream_status": 503
+    },
+    "504": {
+      "code": "upstream_timeout",
+      "envelope": {
+        "code": "upstream_timeout",
+        "message": "A third-party service did not respond in time.",
+        "retryable": true,
+        "upstream_status": 504
+      },
+      "http_status": 504,
+      "message": "A third-party service did not respond in time.",
+      "metric_code": "upstream_timeout",
+      "retryable": true,
+      "service_errors_total": [
+        {
+          "code": "upstream_timeout",
+          "upstream_status": "504"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service did not respond in time.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_timeout",
+            "message": "A third-party service did not respond in time.",
+            "retryable": true,
+            "upstream_status": 504
+          }
+        }
+      },
+      "upstream_status": 504
+    },
+    "599": {
+      "code": "upstream_unavailable",
+      "envelope": {
+        "code": "upstream_unavailable",
+        "message": "A third-party service is temporarily unavailable.",
+        "retryable": true,
+        "upstream_status": 599
+      },
+      "http_status": 503,
+      "message": "A third-party service is temporarily unavailable.",
+      "metric_code": "upstream_unavailable",
+      "retryable": true,
+      "service_errors_total": [
+        {
+          "code": "upstream_unavailable",
+          "upstream_status": "599"
+        }
+      ],
+      "tool_result": {
+        "content": [
+          {
+            "text": "A third-party service is temporarily unavailable.",
+            "type": "text"
+          }
+        ],
+        "is_error": true,
+        "meta": null,
+        "structured_content": {
+          "error": {
+            "code": "upstream_unavailable",
+            "message": "A third-party service is temporarily unavailable.",
+            "retryable": true,
+            "upstream_status": 599
+          }
+        }
+      },
+      "upstream_status": 599
+    }
+  },
+  "overrides": {
+    "from_upstream_with_message": {
+      "code": "upstream_unavailable",
+      "envelope": {
+        "code": "upstream_unavailable",
+        "message": "Search is down.",
+        "retryable": true,
+        "upstream_status": 503
+      },
+      "http_status": 503,
+      "message": "Search is down.",
+      "metric_code": "upstream_unavailable",
+      "retryable": true,
+      "upstream_status": 503
+    },
+    "message_and_retryable": {
+      "code": "upstream_rejected",
+      "envelope": {
+        "code": "upstream_rejected",
+        "message": "Custom host-safe text.",
+        "retryable": true
+      },
+      "http_status": 502,
+      "message": "Custom host-safe text.",
+      "metric_code": "upstream_rejected",
+      "retryable": true,
+      "upstream_status": null
+    }
+  },
+  "rate_limited_tool_error": {
+    "content": [
+      {
+        "text": "The workspace is at capacity. Nothing was run. Retry shortly.",
+        "type": "text"
+      }
+    ],
+    "is_error": true,
+    "meta": null,
+    "structured_content": {
+      "error": {
+        "code": "rate_limited",
+        "message": "The workspace is at capacity. Nothing was run. Retry shortly.",
+        "retryable": true
+      }
+    }
+  }
+}

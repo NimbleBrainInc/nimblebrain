@@ -1,0 +1,823 @@
+{
+  "exposition": {
+    "content_type": "text/plain; version=1.0.0; charset=utf-8",
+    "families": [
+      {
+        "name": "http_in_flight_requests",
+        "series": [
+          {
+            "labels": {
+              "method": "GET"
+            },
+            "name": "http_in_flight_requests"
+          }
+        ],
+        "type": "gauge"
+      },
+      {
+        "name": "http_request_duration_seconds",
+        "series": [
+          {
+            "labels": {
+              "le": "+Inf",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "+Inf",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "+Inf",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "+Inf",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.005",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.005",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.005",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.005",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.01",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.01",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.01",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.01",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.025",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.025",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.025",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.025",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.05",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.05",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.05",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.05",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.1",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.1",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.1",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.1",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.25",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.25",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.25",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.25",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.5",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.5",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.5",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "0.5",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "1.0",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "1.0",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "1.0",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "1.0",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "10.0",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "10.0",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "10.0",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "10.0",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "120.0",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "120.0",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "120.0",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "120.0",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "2.5",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "2.5",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "2.5",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "2.5",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "30.0",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "30.0",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "30.0",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "30.0",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "5.0",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "5.0",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "5.0",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "5.0",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "60.0",
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "60.0",
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "60.0",
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "le": "60.0",
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_bucket"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_count"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_sum"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_count"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_sum"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_count"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_sum"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_count"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_sum"
+          }
+        ],
+        "type": "histogram"
+      },
+      {
+        "name": "http_request_duration_seconds_created",
+        "series": [
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/fail"
+            },
+            "name": "http_request_duration_seconds_created"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}"
+            },
+            "name": "http_request_duration_seconds_created"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/tool-error"
+            },
+            "name": "http_request_duration_seconds_created"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "__unmatched__"
+            },
+            "name": "http_request_duration_seconds_created"
+          }
+        ],
+        "type": "gauge"
+      },
+      {
+        "name": "http_requests",
+        "series": [
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/fail",
+              "status": "500"
+            },
+            "name": "http_requests_total"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}",
+              "status": "200"
+            },
+            "name": "http_requests_total"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/tool-error",
+              "status": "200"
+            },
+            "name": "http_requests_total"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "__unmatched__",
+              "status": "404"
+            },
+            "name": "http_requests_total"
+          }
+        ],
+        "type": "counter"
+      },
+      {
+        "name": "http_requests_created",
+        "series": [
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/fail",
+              "status": "500"
+            },
+            "name": "http_requests_created"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/items/{item_id}",
+              "status": "200"
+            },
+            "name": "http_requests_created"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "/golden-metrics/tool-error",
+              "status": "200"
+            },
+            "name": "http_requests_created"
+          },
+          {
+            "labels": {
+              "method": "GET",
+              "route": "__unmatched__",
+              "status": "404"
+            },
+            "name": "http_requests_created"
+          }
+        ],
+        "type": "gauge"
+      },
+      {
+        "name": "service_errors",
+        "series": [
+          {
+            "labels": {
+              "code": "not_found",
+              "service": "golden-metrics-svc",
+              "upstream_status": ""
+            },
+            "name": "service_errors_total"
+          },
+          {
+            "labels": {
+              "code": "rate_limited",
+              "service": "golden-metrics-svc",
+              "upstream_status": "429"
+            },
+            "name": "service_errors_total"
+          }
+        ],
+        "type": "counter"
+      },
+      {
+        "name": "service_errors_created",
+        "series": [
+          {
+            "labels": {
+              "code": "not_found",
+              "service": "golden-metrics-svc",
+              "upstream_status": ""
+            },
+            "name": "service_errors_created"
+          },
+          {
+            "labels": {
+              "code": "rate_limited",
+              "service": "golden-metrics-svc",
+              "upstream_status": "429"
+            },
+            "name": "service_errors_created"
+          }
+        ],
+        "type": "gauge"
+      }
+    ]
+  },
+  "factories": [
+    {
+      "labels": [
+        "kind"
+      ],
+      "name": "golden_factory_counter",
+      "type": "counter"
+    },
+    {
+      "labels": [],
+      "name": "golden_factory_unlabelled",
+      "type": "counter"
+    },
+    {
+      "labels": [
+        "kind"
+      ],
+      "name": "golden_factory_gauge",
+      "type": "gauge"
+    },
+    {
+      "buckets": [
+        "0.005",
+        "0.01",
+        "0.025",
+        "0.05",
+        "0.1",
+        "0.25",
+        "0.5",
+        "1.0",
+        "2.5",
+        "5.0",
+        "10.0",
+        "30.0",
+        "60.0",
+        "120.0",
+        "inf"
+      ],
+      "labels": [
+        "kind"
+      ],
+      "name": "golden_factory_seconds",
+      "type": "histogram"
+    },
+    {
+      "buckets": [
+        "1.0",
+        "10.0",
+        "100.0",
+        "inf"
+      ],
+      "labels": [],
+      "name": "golden_factory_sizes",
+      "type": "histogram"
+    }
+  ],
+  "registered": [
+    {
+      "labels": [
+        "method"
+      ],
+      "name": "http_in_flight_requests",
+      "type": "gauge"
+    },
+    {
+      "buckets": [
+        "0.005",
+        "0.01",
+        "0.025",
+        "0.05",
+        "0.1",
+        "0.25",
+        "0.5",
+        "1.0",
+        "2.5",
+        "5.0",
+        "10.0",
+        "30.0",
+        "60.0",
+        "120.0",
+        "inf"
+      ],
+      "labels": [
+        "method",
+        "route"
+      ],
+      "name": "http_request_duration_seconds",
+      "type": "histogram"
+    },
+    {
+      "labels": [
+        "method",
+        "route",
+        "status"
+      ],
+      "name": "http_requests",
+      "type": "counter"
+    },
+    {
+      "labels": [
+        "service",
+        "code",
+        "upstream_status"
+      ],
+      "name": "service_errors",
+      "type": "counter"
+    }
+  ]
+}

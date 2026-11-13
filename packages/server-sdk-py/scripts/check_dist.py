@@ -17,6 +17,9 @@ from pathlib import Path
 
 PACKAGE = "nimblebrain_server_sdk"
 LICENSE = "Apache-2.0"
+REQUIRES_PYTHON = ">=3.13"
+# The optional halves: `db` and `observability`, each a subpackage the core never imports.
+EXTRAS = {"db", "observability"}
 # The repository's tooling around the package, not part of it. (Hatchling adds .gitignore to
 # every sdist itself, so it is not listed.)
 SDIST_EXCLUDED = ("uv.lock", "uv.toml")
@@ -45,6 +48,11 @@ def main(dist: Path) -> list[str]:
             problems.append(f"wheel: Version {metadata['Version']} != pyproject {version}")
         if metadata["License-Expression"] != LICENSE:
             problems.append(f"wheel: License-Expression {metadata['License-Expression']!r}")
+        if metadata["Requires-Python"] != REQUIRES_PYTHON:
+            problems.append(f"wheel: Requires-Python {metadata['Requires-Python']!r}")
+        extras = set(metadata.get_all("Provides-Extra") or ())
+        if extras != EXTRAS:
+            problems.append(f"wheel: Provides-Extra {sorted(extras)} != {sorted(EXTRAS)}")
 
     with tarfile.open(sdists[0]) as sdist:
         members = {Path(m.name).relative_to(Path(m.name).parts[0]).as_posix() for m in sdist}

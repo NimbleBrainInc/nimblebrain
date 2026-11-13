@@ -1,0 +1,84 @@
+{
+  "correlation_header": {
+    "from_traceparent": [
+      "0af7651916cd43dd8448eb211c80319c"
+    ],
+    "from_x_correlation_id": [
+      "corr-a"
+    ]
+  },
+  "exception": [
+    {
+      "event": "golden_exception",
+      "exception": "<traceback>",
+      "level": "error",
+      "service": "golden-svc",
+      "tenant_id": "tenant-a",
+      "timestamp": "<timestamp>",
+      "trace_id": "0af7651916cd43dd8448eb211c80319c",
+      "workspace_id": "ws-a"
+    }
+  ],
+  "infra_plane_caller": [
+    {
+      "caller": "caller-a",
+      "count": 2,
+      "event": "golden_structured",
+      "item_id": "item-1",
+      "level": "info",
+      "service": "golden-svc",
+      "timestamp": "<timestamp>",
+      "trace_id": "0af7651916cd43dd8448eb211c80319c"
+    }
+  ],
+  "outside_request": [
+    {
+      "event": "golden_outside_request",
+      "item_id": "item-1",
+      "level": "info",
+      "service": "golden-svc",
+      "timestamp": "<timestamp>"
+    }
+  ],
+  "service_error": [
+    {
+      "code": "quota_exhausted",
+      "detail": "operator-only text",
+      "event": "service_error",
+      "http_status": 502,
+      "level": "error",
+      "retryable": false,
+      "service": "golden-svc",
+      "tenant_id": "tenant-a",
+      "timestamp": "<timestamp>",
+      "trace_id": "0af7651916cd43dd8448eb211c80319c",
+      "upstream_status": 402,
+      "workspace_id": "ws-a"
+    }
+  ],
+  "stdlib_extra": [
+    {
+      "event": "golden_stdlib",
+      "item_id": "item-1",
+      "level": "warning",
+      "service": "golden-svc",
+      "tenant_id": "tenant-a",
+      "timestamp": "<timestamp>",
+      "trace_id": "0af7651916cd43dd8448eb211c80319c",
+      "workspace_id": "ws-a"
+    }
+  ],
+  "structured": [
+    {
+      "count": 2,
+      "event": "golden_structured",
+      "item_id": "item-1",
+      "level": "info",
+      "service": "golden-svc",
+      "tenant_id": "tenant-a",
+      "timestamp": "<timestamp>",
+      "trace_id": "0af7651916cd43dd8448eb211c80319c",
+      "workspace_id": "ws-a"
+    }
+  ]
+}
