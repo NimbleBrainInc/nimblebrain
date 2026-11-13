@@ -2,7 +2,7 @@
   "name": "nimblebrain",
   "packageManager": "bun@1.4.3",
   "version": "0.0.0-dev",
-  "description": "Self-hosted platform for MCP Apps and agent tasks — tools, interactive UIs, scheduled runs",
+  "description": "Open-source runtime that runs agents and MCP apps on your systems, with any model",
   "license": "Apache-2.0",
   "author": "NimbleBrain, Inc. <oss@nimblebrain.ai>",
   "repository": {

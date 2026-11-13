@@ -2,7 +2,7 @@
 
 > This file is read by agents. Keep edits terse, imperative, token-aware. No long-form prose; bullets with concrete triggers and examples.
 
-Self-hosted platform for MCP Apps and agent tasks, built on Bun. Agentic loop + MCP connector management + interactive UI host + scheduled tasks + skill-driven prompt composition + HTTP API + web client.
+Open-source runtime that runs agents and MCP apps on your systems, with any model, built on Bun. Agentic loop + MCP connector management + interactive UI host + scheduled tasks + skill-driven prompt composition + HTTP API + web client.
 
 > This file is the operating manual — *how to work here* (build, conventions, gotchas).
 > The domain model — *what the nouns mean and the invariants* — lives in
