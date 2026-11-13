@@ -23,7 +23,7 @@ import type {
   ToolSchema,
 } from "../../src/engine/types.ts";
 import { DEFAULT_THINKING_EFFORT, SKILL_ACTIVATED_META_KEY } from "../../src/engine/types.ts";
-import { MAX_ITERATIONS } from "../../src/limits.ts";
+import { MAX_ITERATIONS, MAX_PROMOTED_TOOLS } from "../../src/limits.ts";
 import { log } from "../../src/observability/log.ts";
 import {
   getRequestContext,
@@ -897,374 +897,63 @@ describe("AgentEngine", () => {
     expect(events.some((e) => e.type === "tool.released")).toBe(false);
   });
 
-  // ── LRU eviction backstop ─────────────────────────────────────────
+  // ── Promotion cap ─────────────────────────────────────────────────
 
-  it("LRU eviction: respects maxActiveTools and evicts oldest agent-promoted tool", async () => {
-    // 5 promotable tools, cap=4 (one initial + 3 promoted slots). Promoting
-    // all 5 in one batch should evict the two earliest (a, b).
-    const toolSchemas: ToolSchema[] = [
-      {
-        name: "nb__manage_tools",
-        description: "Patch tool list",
-        inputSchema: MANAGE_TOOLS_INPUT,
-      },
-      { name: "app__a", description: "A", inputSchema: { type: "object", properties: {} } },
-      { name: "app__b", description: "B", inputSchema: { type: "object", properties: {} } },
-      { name: "app__c", description: "C", inputSchema: { type: "object", properties: {} } },
-      { name: "app__d", description: "D", inputSchema: { type: "object", properties: {} } },
-      { name: "app__e", description: "E", inputSchema: { type: "object", properties: {} } },
-    ];
-
-    let callCount = 0;
-    let activeControls: ToolPromotionControls | null = null;
-    const events: EngineEvent[] = [];
-
-    const model = createMockModel(() => {
-      callCount++;
-      if (callCount === 1) {
-        return {
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: "promote_all",
-              toolName: "nb__manage_tools",
-              input: JSON.stringify({ add: ["app__a", "app__b", "app__c", "app__d", "app__e"] }),
-            },
-          ],
-          inputTokens: 10,
-          outputTokens: 5,
-        };
-      }
-      return { content: [{ type: "text", text: "Done!" }], inputTokens: 10, outputTokens: 5 };
-    });
-
-    const engine = new AgentEngine(
-      model,
-      new StaticToolRouter(toolSchemas, async (call) => {
-        if (call.name === "nb__manage_tools") {
-          const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted: ToolPromotionResult[] = [];
-          for (const n of add) promoted.push(await activeControls!.addTool(n));
-          return {
-            content: textContent("ok"),
-            structuredContent: { promoted, released: [] },
-            isError: false,
-          };
-        }
-        return { content: textContent(""), isError: false };
-      }),
-      { emit: (event) => events.push(event) },
-    );
-
-    await engine.run(
-      {
-        ...defaultConfig,
-        maxActiveTools: 4, // initial nb__manage_tools + 3 promoted slots
-        toolPromotion: {
-          isToolEligible: () => true,
-          registerControls: (controls) => {
-            activeControls = controls;
-            return () => {
-              activeControls = null;
-            };
-          },
-        },
-      },
-      "",
-      [{ role: "user", content: [{ type: "text", text: "Promote five" }] }],
-      [toolSchemas[0]!],
-    );
-
-    expect(events.filter((e) => e.type === "tool.promoted")).toHaveLength(5);
-    const evicted = events
-      .filter(
-        (e) => e.type === "tool.released" && (e.data as { reason?: string }).reason === "evicted",
-      )
-      .map((e) => (e.data as { toolName: string }).toolName);
-    expect(evicted).toEqual(["app__a", "app__b"]);
-  });
-
-  it("LRU eviction: never evicts initial tools even when cap is exceeded", async () => {
-    const toolSchemas: ToolSchema[] = [
-      {
-        name: "nb__manage_tools",
-        description: "Patch tool list",
-        inputSchema: MANAGE_TOOLS_INPUT,
-      },
-      {
-        name: "initial__a",
-        description: "Initial A",
-        inputSchema: { type: "object", properties: {} },
-      },
-      {
-        name: "initial__b",
-        description: "Initial B",
-        inputSchema: { type: "object", properties: {} },
-      },
-      {
-        name: "promoted__x",
-        description: "Promoted X",
-        inputSchema: { type: "object", properties: {} },
-      },
-      {
-        name: "promoted__y",
-        description: "Promoted Y",
-        inputSchema: { type: "object", properties: {} },
-      },
-    ];
-
-    let callCount = 0;
-    let activeControls: ToolPromotionControls | null = null;
-    const events: EngineEvent[] = [];
-
-    const model = createMockModel(() => {
-      callCount++;
-      if (callCount === 1) {
-        return {
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: "promote",
-              toolName: "nb__manage_tools",
-              input: JSON.stringify({ add: ["promoted__x", "promoted__y"] }),
-            },
-          ],
-          inputTokens: 10,
-          outputTokens: 5,
-        };
-      }
-      return { content: [{ type: "text", text: "Done!" }], inputTokens: 10, outputTokens: 5 };
-    });
-
-    const engine = new AgentEngine(
-      model,
-      new StaticToolRouter(toolSchemas, async (call) => {
-        if (call.name === "nb__manage_tools") {
-          const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted: ToolPromotionResult[] = [];
-          for (const n of add) promoted.push(await activeControls!.addTool(n));
-          return {
-            content: textContent("ok"),
-            structuredContent: { promoted, released: [] },
-            isError: false,
-          };
-        }
-        return { content: textContent(""), isError: false };
-      }),
-      { emit: (event) => events.push(event) },
-    );
-
-    await engine.run(
-      {
-        ...defaultConfig,
-        // Cap=3: initial set already fills it. Each promotion overflows;
-        // initial tools are exempt from eviction; the just-added tool is
-        // also exempt (defensive self-eviction guard). Result: x is
-        // evictable when y is added (x is now older than the just-added y),
-        // y survives as the last-promoted entry.
-        maxActiveTools: 3,
-        toolPromotion: {
-          isToolEligible: () => true,
-          registerControls: (controls) => {
-            activeControls = controls;
-            return () => {
-              activeControls = null;
-            };
-          },
-        },
-      },
-      "",
-      [{ role: "user", content: [{ type: "text", text: "Promote past cap" }] }],
-      [toolSchemas[0]!, toolSchemas[1]!, toolSchemas[2]!],
-    );
-
-    const evictedNames = events
-      .filter(
-        (e) => e.type === "tool.released" && (e.data as { reason?: string }).reason === "evicted",
-      )
-      .map((e) => (e.data as { toolName: string }).toolName);
-    // Initial tools never evicted (they're not in promotedLastUsed).
-    expect(evictedNames).not.toContain("initial__a");
-    expect(evictedNames).not.toContain("initial__b");
-    expect(evictedNames).not.toContain("nb__manage_tools");
-    // promoted__x is evicted when promoted__y arrives (x is older, y is
-    // the just-added and protected by the self-eviction guard).
-    expect(evictedNames).toContain("promoted__x");
-    // promoted__y stays — it was the last-promoted entry and the guard
-    // refused to undo the agent's intentional addition.
-    expect(evictedNames).not.toContain("promoted__y");
-  });
-
-  it("LRU eviction: tool execution refreshes the eviction stamp", async () => {
-    // Promote a, b, c, then call a (refreshes its stamp), then promote d.
-    // Without refresh, a would be the oldest and evicted. With refresh,
-    // b is the LRU victim.
-    const toolSchemas: ToolSchema[] = [
-      {
-        name: "nb__manage_tools",
-        description: "Patch tool list",
-        inputSchema: MANAGE_TOOLS_INPUT,
-      },
-      { name: "app__a", description: "A", inputSchema: { type: "object", properties: {} } },
-      { name: "app__b", description: "B", inputSchema: { type: "object", properties: {} } },
-      { name: "app__c", description: "C", inputSchema: { type: "object", properties: {} } },
-      { name: "app__d", description: "D", inputSchema: { type: "object", properties: {} } },
-    ];
-
-    let callCount = 0;
-    let activeControls: ToolPromotionControls | null = null;
-    const events: EngineEvent[] = [];
-
-    const model = createMockModel(() => {
-      callCount++;
-      if (callCount === 1) {
-        return {
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: "p1",
-              toolName: "nb__manage_tools",
-              input: JSON.stringify({ add: ["app__a", "app__b", "app__c"] }),
-            },
-          ],
-          inputTokens: 10,
-          outputTokens: 5,
-        };
-      }
-      if (callCount === 2) {
-        return {
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: "use_a",
-              toolName: "app__a",
-              input: JSON.stringify({}),
-            },
-          ],
-          inputTokens: 10,
-          outputTokens: 5,
-        };
-      }
-      if (callCount === 3) {
-        return {
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: "p2",
-              toolName: "nb__manage_tools",
-              input: JSON.stringify({ add: ["app__d"] }),
-            },
-          ],
-          inputTokens: 10,
-          outputTokens: 5,
-        };
-      }
-      return { content: [{ type: "text", text: "Done!" }], inputTokens: 10, outputTokens: 5 };
-    });
-
-    const engine = new AgentEngine(
-      model,
-      new StaticToolRouter(toolSchemas, async (call) => {
-        if (call.name === "nb__manage_tools") {
-          const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted: ToolPromotionResult[] = [];
-          for (const n of add) promoted.push(await activeControls!.addTool(n));
-          return {
-            content: textContent("ok"),
-            structuredContent: { promoted, released: [] },
-            isError: false,
-          };
-        }
-        return { content: textContent("ok"), isError: false };
-      }),
-      { emit: (event) => events.push(event) },
-    );
-
-    await engine.run(
-      {
-        ...defaultConfig,
-        // Cap=4: nb__manage_tools (initial) + 3 promoted slots. Promoting
-        // a 4th forces eviction of the LRU promoted entry.
-        maxActiveTools: 4,
-        toolPromotion: {
-          isToolEligible: () => true,
-          registerControls: (controls) => {
-            activeControls = controls;
-            return () => {
-              activeControls = null;
-            };
-          },
-        },
-      },
-      "",
-      [{ role: "user", content: [{ type: "text", text: "LRU dance" }] }],
-      [toolSchemas[0]!],
-    );
-
-    const evictedNames = events
-      .filter(
-        (e) => e.type === "tool.released" && (e.data as { reason?: string }).reason === "evicted",
-      )
-      .map((e) => (e.data as { toolName: string }).toolName);
-    expect(evictedNames).toEqual(["app__b"]);
-  });
-
-  it("LRU eviction: when initial > cap, agent additions stick (cap goes soft)", async () => {
-    // Pathological config: 5 initial tools but cap=3. Without the defensive
-    // guard, the first addTool would push length=6, find the just-added
-    // tool as the only entry in promotedLastUsed, and self-evict — silently
-    // undoing the agent's intentional promotion. With the guard, the
-    // promotion sticks and the cap is "soft" for this run.
-    const toolSchemas: ToolSchema[] = [
-      {
-        name: "nb__manage_tools",
-        description: "Patch tool list",
-        inputSchema: MANAGE_TOOLS_INPUT,
-      },
-      { name: "init__a", description: "A", inputSchema: { type: "object", properties: {} } },
-      { name: "init__b", description: "B", inputSchema: { type: "object", properties: {} } },
-      { name: "init__c", description: "C", inputSchema: { type: "object", properties: {} } },
-      { name: "init__d", description: "D", inputSchema: { type: "object", properties: {} } },
-      { name: "promoted__x", description: "X", inputSchema: { type: "object", properties: {} } },
-    ];
-
-    let callCount = 0;
+  /**
+   * Run a scripted session: call N makes call N's `nb__manage_tools` request
+   * (removes before adds, as the real tool does), and the run ends after the
+   * last. Returns each call's tool list, every promotion result, and the
+   * release events.
+   */
+  async function runPromotions(opts: {
+    initial: string[];
+    promotable: string[];
+    maxPromotedTools?: number;
+    calls: Array<{ add?: string[]; remove?: string[] }>;
+  }) {
+    const schema = (name: string): ToolSchema =>
+      name === "nb__manage_tools"
+        ? { name, description: "Patch tool list", inputSchema: MANAGE_TOOLS_INPUT }
+        : { name, description: name, inputSchema: { type: "object", properties: {} } };
+    const toolSchemas = [...opts.initial, ...opts.promotable].map(schema);
     let activeControls: ToolPromotionControls | null = null;
     const events: EngineEvent[] = [];
     const seenToolLists: string[][] = [];
+    const results: ToolPromotionResult[] = [];
+    let callCount = 0;
 
     const model = createMockModel((options) => {
       seenToolLists.push((options.tools ?? []).map((t) => t.name));
+      const request = opts.calls[callCount];
       callCount++;
-      if (callCount === 1) {
-        return {
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: "p",
-              toolName: "nb__manage_tools",
-              input: JSON.stringify({ add: ["promoted__x"] }),
-            },
-          ],
-          inputTokens: 10,
-          outputTokens: 5,
-        };
+      if (!request) {
+        return { content: [{ type: "text", text: "Done!" }], inputTokens: 10, outputTokens: 5 };
       }
-      return { content: [{ type: "text", text: "Done!" }], inputTokens: 10, outputTokens: 5 };
+      return {
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: `manage_${callCount}`,
+            toolName: "nb__manage_tools",
+            input: JSON.stringify(request),
+          },
+        ],
+        inputTokens: 10,
+        outputTokens: 5,
+      };
     });
 
     const engine = new AgentEngine(
       model,
       new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
-          const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted: ToolPromotionResult[] = [];
-          for (const n of add) promoted.push(await activeControls!.addTool(n));
-          return {
-            content: textContent("ok"),
-            structuredContent: { promoted, released: [] },
-            isError: false,
-          };
+          for (const n of (call.input.remove as string[] | undefined) ?? []) {
+            results.push(activeControls!.removeTool(n));
+          }
+          for (const n of (call.input.add as string[] | undefined) ?? []) {
+            results.push(await activeControls!.addTool(n));
+          }
+          return { content: textContent("ok"), isError: false };
         }
         return { content: textContent(""), isError: false };
       }),
@@ -1274,7 +963,7 @@ describe("AgentEngine", () => {
     await engine.run(
       {
         ...defaultConfig,
-        maxActiveTools: 3, // 5 initial > cap=3
+        ...(opts.maxPromotedTools !== undefined ? { maxPromotedTools: opts.maxPromotedTools } : {}),
         toolPromotion: {
           isToolEligible: () => true,
           registerControls: (controls) => {
@@ -1286,21 +975,85 @@ describe("AgentEngine", () => {
         },
       },
       "",
-      [{ role: "user", content: [{ type: "text", text: "Promote past initial" }] }],
-      [toolSchemas[0]!, toolSchemas[1]!, toolSchemas[2]!, toolSchemas[3]!, toolSchemas[4]!],
+      [{ role: "user", content: [{ type: "text", text: "Promote" }] }],
+      opts.initial.map(schema),
     );
 
-    // Crucial: promoted__x is visible in the agent's tool list on iter 2.
-    // It was NOT silently self-evicted by the LRU loop.
-    expect(seenToolLists[1]).toContain("promoted__x");
-    // No tools were evicted — the only entry in promotedLastUsed (promoted__x
-    // itself) was protected by the self-eviction guard.
-    const evictedNames = events
-      .filter(
-        (e) => e.type === "tool.released" && (e.data as { reason?: string }).reason === "evicted",
-      )
+    const released = events
+      .filter((e) => e.type === "tool.released")
       .map((e) => (e.data as { toolName: string }).toolName);
-    expect(evictedNames).toHaveLength(0);
+    return { seenToolLists, results, released };
+  }
+
+  it("test_promotion_cap_ignores_initial_tools_so_every_promotion_in_a_call_sticks", async () => {
+    // A Tier-2 run starts with more tools than the default cap. Every tool one
+    // call promotes must reach the next call's tool list.
+    const initialAppTools = Array.from({ length: MAX_PROMOTED_TOOLS + 5 }, (_, i) => `init__t${i}`);
+    const { seenToolLists, results, released } = await runPromotions({
+      initial: ["nb__manage_tools", ...initialAppTools],
+      promotable: ["promoted__x", "promoted__y", "promoted__z"],
+      calls: [{ add: ["promoted__x", "promoted__y", "promoted__z"] }],
+    });
+
+    expect(results.map((r) => [r.toolName, r.ok, r.changed])).toEqual([
+      ["promoted__x", true, true],
+      ["promoted__y", true, true],
+      ["promoted__z", true, true],
+    ]);
+    for (const name of ["promoted__x", "promoted__y", "promoted__z", ...initialAppTools]) {
+      expect(seenToolLists[1]).toContain(name);
+    }
+    expect(released).toEqual([]);
+  });
+
+  it("test_promotion_past_the_cap_is_refused_with_cap_reached", async () => {
+    const { seenToolLists, results, released } = await runPromotions({
+      initial: ["nb__manage_tools"],
+      promotable: ["app__a", "app__b", "app__c"],
+      maxPromotedTools: 2,
+      calls: [{ add: ["app__a", "app__b", "app__c"] }],
+    });
+
+    expect(results.map((r) => [r.toolName, r.ok])).toEqual([
+      ["app__a", true],
+      ["app__b", true],
+      ["app__c", false],
+    ]);
+    expect(results[2]!.reason).toBe("cap_reached");
+    expect(results[2]!.message).toContain("remove");
+    expect(seenToolLists[1]).toContain("app__a");
+    expect(seenToolLists[1]).toContain("app__b");
+    expect(seenToolLists[1]).not.toContain("app__c");
+    expect(released).toEqual([]);
+  });
+
+  it("test_promotion_cap_releasing_a_tool_frees_its_slot_in_the_same_call", async () => {
+    const { seenToolLists, results } = await runPromotions({
+      initial: ["nb__manage_tools"],
+      promotable: ["app__a", "app__b", "app__c"],
+      maxPromotedTools: 2,
+      calls: [{ add: ["app__a", "app__b"] }, { remove: ["app__a"], add: ["app__c"] }],
+    });
+
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(seenToolLists[2]).toContain("app__b");
+    expect(seenToolLists[2]).toContain("app__c");
+    expect(seenToolLists[2]).not.toContain("app__a");
+  });
+
+  it("test_promotion_cap_repromoting_an_active_tool_takes_no_slot", async () => {
+    const { results } = await runPromotions({
+      initial: ["nb__manage_tools"],
+      promotable: ["app__a", "app__b"],
+      maxPromotedTools: 2,
+      calls: [{ add: ["app__a"] }, { add: ["app__a", "app__b"] }],
+    });
+
+    expect(results.map((r) => [r.toolName, r.ok, r.changed])).toEqual([
+      ["app__a", true, true],
+      ["app__a", true, false],
+      ["app__b", true, true],
+    ]);
   });
 
   // ── Nested-engine isolation ──────────────────────────────────────

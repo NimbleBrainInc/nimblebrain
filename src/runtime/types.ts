@@ -411,8 +411,7 @@ export interface ChatResult {
  * task-mode system prompt; callers supply only the task description.
  *
  * Two ways to scope tool reach (mirrors chat's active-vs-discoverable
- * pattern — progressive disclosure keeps the active set under
- * `maxActiveTools`):
+ * pattern — progressive disclosure):
  *  - `workspaceId` set      → active tools are that workspace's tools
  *                             + identity tools; the system prompt's
  *                             workspace briefing names that workspace.

@@ -93,16 +93,6 @@ describe("event schemas — accept representative payloads", () => {
     ).toBe(true);
   });
 
-  test("tool.released — accepts optional reason for engine-driven evictions", () => {
-    expect(
-      Value.Check(ToolPromotionChangedPayload, {
-        runId: "run-abc",
-        toolName: "app__tool",
-        reason: "evicted",
-      }),
-    ).toBe(true);
-  });
-
   test("connector.skill.injected — full payload", () => {
     expect(
       Value.Check(ConnectorSkillInjectedPayload, {

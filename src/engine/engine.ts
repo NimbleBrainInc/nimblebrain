@@ -8,7 +8,7 @@ import type {
   LanguageModelV4ToolResultPart,
   SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
-import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS } from "../limits.ts";
+import { MAX_ITERATIONS, MAX_PROMOTED_TOOLS } from "../limits.ts";
 import { applyCachePolicy } from "../model/cache-policy.ts";
 import {
   GOOGLE_THINKING_LEVELS,
@@ -1108,8 +1108,6 @@ interface ToolExecContext {
   toolSchemaMap: Map<string, ToolSchema>;
   /** Every router tool's schema: validates a call to a tool promoted in the same message. */
   allToolSchemaMap: Map<string, ToolSchema>;
-  promotedLastUsed: Map<string, number>;
-  bumpUseCounter: () => number;
   supervisor: RunSupervisor;
 }
 
@@ -1205,18 +1203,12 @@ export class AgentEngine {
 
     const directTools = [...tools];
     const directToolNames = new Set(directTools.map((t) => t.name));
-    // LRU bookkeeping for agent-promoted tools. Initial tools (passed in
-    // `tools`) are NEVER tracked here, so the eviction loop can never
-    // touch them — they're operator-opted-in. Counter is monotonic so
-    // smaller stamp = older, regardless of clock skew or test parallelism.
-    const promotedLastUsed = new Map<string, number>();
-    let useCounter = 0;
-    const bumpUseCounter = () => ++useCounter;
-    const maxActiveTools = config.maxActiveTools ?? DEFAULT_MAX_DIRECT_TOOLS;
-    // No warning when the initial set exceeds the cap: the always-direct kernel
-    // tools alone exceed it, so this is the expected steady state, not a
-    // misconfiguration. The cap only bounds agent-promoted tools — an over-cap
-    // initial set just makes eviction soft (see evictPromotedToolsToCap).
+    // The tools the agent promoted this run. The cap counts only these: the
+    // initial tools are the operator's set and never compete with promotions.
+    // A promotion past the cap is refused, not made room for, so every tool
+    // `nb__manage_tools` reports as added is in the next call's tool list.
+    const promotedTools = new Set<string>();
+    const maxPromotedTools = config.maxPromotedTools ?? MAX_PROMOTED_TOOLS;
 
     const toolControls = {
       addTool: async (toolName: string) => {
@@ -1226,11 +1218,6 @@ export class AgentEngine {
           await refreshToolLookups();
         }
         if (directToolNames.has(toolName)) {
-          // Already-active tool counts as a "use" — refresh LRU stamp so
-          // re-promoting a recently-used tool doesn't make it look stale.
-          if (promotedLastUsed.has(toolName)) {
-            promotedLastUsed.set(toolName, ++useCounter);
-          }
           return {
             ok: true,
             toolName,
@@ -1266,9 +1253,18 @@ export class AgentEngine {
             message: `${toolName} is not available in the current run.`,
           };
         }
+        if (promotedTools.size >= maxPromotedTools) {
+          return {
+            ok: false,
+            toolName,
+            changed: false,
+            reason: "cap_reached",
+            message: `${toolName} was not added: ${maxPromotedTools} promoted tools is the limit for this run. Release a tool you no longer need with \`remove\` in the same call.`,
+          };
+        }
         directTools.push(schema);
         directToolNames.add(toolName);
-        promotedLastUsed.set(toolName, ++useCounter);
+        promotedTools.add(toolName);
         this.events.emit({ type: "tool.promoted", data: { runId, toolName } });
 
         // A promoted tool makes its server's capability live mid-turn — surface that
@@ -1278,17 +1274,6 @@ export class AgentEngine {
         // lands in this iteration's tool results, so the guidance is in context for
         // the model's next action in THIS run.
         skills.claimFor(toolName);
-
-        // Backstop: cap active tools by evicting LRU agent-promoted entries.
-        // Initial tools are exempt because they're not in `promotedLastUsed`.
-        this.evictPromotedToolsToCap(
-          runId,
-          directTools,
-          directToolNames,
-          promotedLastUsed,
-          maxActiveTools,
-          toolName,
-        );
         return {
           ok: true,
           toolName,
@@ -1317,7 +1302,7 @@ export class AgentEngine {
         const idx = directTools.findIndex((t) => t.name === toolName);
         if (idx >= 0) directTools.splice(idx, 1);
         directToolNames.delete(toolName);
-        promotedLastUsed.delete(toolName);
+        promotedTools.delete(toolName);
         this.events.emit({ type: "tool.released", data: { runId, toolName } });
         return {
           ok: true,
@@ -1648,8 +1633,6 @@ export class AgentEngine {
           skills,
           toolSchemaMap,
           allToolSchemaMap,
-          promotedLastUsed,
-          bumpUseCounter,
           supervisor,
         };
         const toolResults = await this.executeToolCallsBounded(toolCalls, toolExecContext);
@@ -1994,45 +1977,6 @@ export class AgentEngine {
     }
 
     return { modelTools, toolSchemaMap };
-  }
-
-  /**
-   * Backstop for the active-tool cap: evict LRU agent-promoted entries until the
-   * set fits `maxActiveTools`. Initial tools are exempt because they're not in
-   * `promotedLastUsed`. Defensive guard: if the just-added tool would be its own
-   * eviction victim (only possible when initial tools alone already exceed the
-   * cap, so promotedLastUsed has only this one entry), break out. Cap is "soft"
-   * in that pathological config — the alternative would be silently undoing the
-   * agent's intentional promotion, which is worse than letting the cap stretch
-   * by one.
-   */
-  private evictPromotedToolsToCap(
-    runId: string,
-    directTools: ToolSchema[],
-    directToolNames: Set<string>,
-    promotedLastUsed: Map<string, number>,
-    maxActiveTools: number,
-    justAddedToolName: string,
-  ): void {
-    while (directTools.length > maxActiveTools && promotedLastUsed.size > 0) {
-      let oldestName: string | null = null;
-      let oldestStamp = Number.POSITIVE_INFINITY;
-      for (const [name, stamp] of promotedLastUsed) {
-        if (stamp < oldestStamp) {
-          oldestStamp = stamp;
-          oldestName = name;
-        }
-      }
-      if (!oldestName || oldestName === justAddedToolName) break;
-      const idx = directTools.findIndex((t) => t.name === oldestName);
-      if (idx >= 0) directTools.splice(idx, 1);
-      directToolNames.delete(oldestName);
-      promotedLastUsed.delete(oldestName);
-      this.events.emit({
-        type: "tool.released",
-        data: { runId, toolName: oldestName, reason: "evicted" },
-      });
-    }
   }
 
   /**
@@ -2485,13 +2429,6 @@ export class AgentEngine {
           isError: true,
         };
       }
-    }
-
-    // LRU refresh: a promoted tool that's actively being called
-    // moves to the back of the eviction queue. Initial tools aren't
-    // in the map and are exempt from eviction either way.
-    if (ctx.promotedLastUsed.has(gatedCall.name)) {
-      ctx.promotedLastUsed.set(gatedCall.name, ctx.bumpUseCounter());
     }
 
     // Guard: reject oversized tool results before event emission or history accumulation
