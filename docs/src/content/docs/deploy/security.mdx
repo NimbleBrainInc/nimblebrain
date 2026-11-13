@@ -214,7 +214,7 @@ Caddy handles TLS automatically via Let's Encrypt.
 </Tabs>
 
 <Aside type="caution">
-The `Secure` flag on the `nb_session` cookie is only set when the server detects a non-localhost hostname. Behind a reverse proxy that terminates TLS, this works correctly because the platform binds to `0.0.0.0`. If you test over plain HTTP on a non-localhost address, the cookie will be set with `Secure` but your browser will reject it.
+The `Secure` flag on the `nb_session` cookie is only set when the server detects a non-localhost hostname. Behind a reverse proxy that terminates TLS, this works correctly because the browser reaches the proxy over HTTPS. If you test over plain HTTP on a non-localhost address, the cookie will be set with `Secure` but your browser will reject it.
 </Aside>
 
 ## MCP OAuth: the resource URL
