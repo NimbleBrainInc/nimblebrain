@@ -30,8 +30,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from nimblebrain_server_sdk.outbox.cursor import MAX_CURSOR_LENGTH
-
 #: The reverse-DNS ``_meta`` key carrying everything the host renders and
 #: routes on. Adopters never write it by hand — pass the presentation fields to
 #: :func:`nimblebrain_server_sdk.outbox.core.emit` and it builds the block.
@@ -67,11 +65,6 @@ ENVELOPE_MAX_BYTES = 64 * 1024
 FORBIDDEN_LINK_SCHEMES = frozenset({"javascript", "data", "vbscript", "file", "blob"})
 
 _URI_WITH_SCHEME = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.\-]*):")
-
-# What the host's `/\s/` refuses in a name. Python's `\s` covers every JavaScript
-# whitespace character except U+FEFF; the extras it adds are control characters
-# or U+0085, which are refused here at no cost.
-_WHITESPACE = re.compile(r"[\s\ufeff]")
 
 
 class EnvelopeError(ValueError):
@@ -113,8 +106,6 @@ def validate(
 
     event_id = _required_text(envelope.get("eventId"), "eventId", EVENT_ID_MAX)
     name = _required_text(envelope.get("name"), "name", NAME_MAX)
-    if _WHITESPACE.search(name):
-        raise EnvelopeError("name carries whitespace")
     timestamp = _timestamp(envelope.get("timestamp"))
 
     data = envelope.get("data")
@@ -217,7 +208,7 @@ def _check_presentation(block: object) -> None:
 def _check_link(resource: object) -> None:
     if not isinstance(resource, str) or not resource:
         raise EnvelopeError("link.resource must be a non-empty string")
-    if _utf16_len(resource) > LINK_MAX:
+    if len(resource) > LINK_MAX:
         raise EnvelopeError(f"link.resource is longer than {LINK_MAX} characters")
     if _has_control_chars(resource):
         raise EnvelopeError("link.resource carries control characters")
@@ -231,7 +222,7 @@ def _check_link(resource: object) -> None:
 def _required_text(value: object, field: str, maximum: int) -> str:
     if not isinstance(value, str) or not value:
         raise EnvelopeError(f"{field} is required and must be a non-empty string")
-    if _utf16_len(value) > maximum:
+    if len(value) > maximum:
         raise EnvelopeError(f"{field} is longer than {maximum} characters")
     if _has_control_chars(value):
         raise EnvelopeError(f"{field} carries control characters")
@@ -250,15 +241,10 @@ def _plain_text(value: object, field: str, maximum: int) -> None:
         return
     if not isinstance(value, str):
         raise EnvelopeError(f"{field} must be a string")
-    if _utf16_len(value) > maximum:
+    if len(value) > maximum:
         raise EnvelopeError(f"{field} is longer than {maximum} characters")
     if _has_control_chars(value):
         raise EnvelopeError(f"{field} carries control characters; it renders as one line")
-
-
-def _utf16_len(value: str) -> int:
-    """Length as the host counts it: UTF-16 code units, so a character past U+FFFF is two."""
-    return len(value.encode("utf-16-le", "surrogatepass")) // 2
 
 
 def _has_control_chars(value: str) -> bool:
@@ -293,13 +279,6 @@ def _check_size(
 ) -> None:
     """Refuse an envelope larger than the host's inbox will admit.
 
-    The host measures the occurrence it stores, not the one written here: the
-    poll adds a per-event cursor, and the host fills in the presentation
-    block's ``level`` and ``title`` when they are absent. Both are counted at
-    their largest — a cursor of the host's maximum length, and the longer of
-    the written title and the name — so an envelope accepted here is never
-    over the limit there.
-
     Serializing is also the only honest check that ``data`` is JSON: a dict of
     arbitrary Python objects is not, and the failure belongs at the emit rather
     than at the ``json.dumps`` inside the poll that answers three hours later.
@@ -309,14 +288,9 @@ def _check_size(
         "name": name,
         "timestamp": timestamp.isoformat(),
         "data": data,
-        "cursor": "x" * MAX_CURSOR_LENGTH,
     }
-    presentation = dict(meta.get(NOTIFICATION_META_KEY) or {})
-    presentation.setdefault("level", DEFAULT_LEVEL)
-    presentation["title"] = max(
-        presentation.get("title") or "", name, key=lambda text: len(json.dumps(text))
-    )
-    body["_meta"] = {**meta, NOTIFICATION_META_KEY: presentation}
+    if meta:
+        body["_meta"] = meta
     try:
         encoded = json.dumps(body, separators=(",", ":")).encode("utf-8")
     except (TypeError, ValueError) as exc:
