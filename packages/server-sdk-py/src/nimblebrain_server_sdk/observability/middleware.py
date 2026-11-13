@@ -42,7 +42,13 @@ def _header(headers: list[tuple[bytes, bytes]], name: str) -> str | None:
     target = name.encode()
     for k, v in headers:
         if k.lower() == target:
-            return v.decode()
+            try:
+                return v.decode()
+            except UnicodeDecodeError:
+                # HTTP/1.1 servers pass obs-text bytes through, so a value need not be
+                # UTF-8. An undecodable value reads as absent, like a malformed
+                # traceparent: this lookup must never be able to 500 a request.
+                return None
     return None
 
 
