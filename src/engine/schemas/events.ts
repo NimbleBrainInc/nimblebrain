@@ -139,12 +139,6 @@ export type ServerNotificationPayload = Static<typeof ServerNotificationPayload>
 export const ToolPromotionChangedPayload = Type.Object({
   runId: Type.String(),
   toolName: Type.String(),
-  /**
-   * Why the change happened. Absent for normal agent-driven add/remove.
-   * Present (`"evicted"`) when the engine reclaimed a slot under the
-   * `maxActiveTools` cap.
-   */
-  reason: Type.Optional(Type.String()),
 });
 export type ToolPromotionChangedPayload = Static<typeof ToolPromotionChangedPayload>;
 

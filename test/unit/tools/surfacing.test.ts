@@ -447,10 +447,8 @@ describe("surfaceTools — catalog activation is reachable without a promote", (
   // model on every turn. The tool that acts on it has to be reachable on every
   // turn too, or using the catalog costs an `nb__manage_tools` promote first —
   // a tools-block rewrite, which is the most expensive cache bust in the
-  // request and precisely what a stable catalog exists to avoid. Worse, a
-  // promoted tool is LRU-evictable (`evictPromotedToolsToCap`), and this one is
-  // touched rarely enough to sit at the old end of that LRU, so the bust
-  // recurs. `nb__use_skill` carries the kernel prefix to make this structural.
+  // request and precisely what a stable catalog exists to avoid.
+  // `nb__use_skill` carries the kernel prefix to make this structural.
   it("Tier 2: nb__use_skill is direct in a workspace far past the direct-tool budget", () => {
     const system = [...makeSystemTools(4), makeTool("nb__use_skill")];
     const app = makeAppTools("crm", DEFAULT_MAX_DIRECT_TOOLS * 2);

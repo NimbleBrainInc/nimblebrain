@@ -56,14 +56,12 @@ export function createManageToolsToolDefs(
             isError: true,
           };
         }
-        // Removes run BEFORE adds so an atomic domain-switch
-        // ({ add: [new tools], remove: [old tools] }) frees slots first
-        // and the new adds slot in cleanly without triggering LRU eviction
-        // of unrelated promoted tools as collateral. Do not swap the order
-        // without re-deriving the eviction interaction.
+        // Removes run BEFORE adds, so a swap at the promotion cap
+        // ({ add: [new tools], remove: [old tools] }) frees its slots
+        // before the adds are counted against it.
         const released = remove.map((toolName) => toolPromotionCtx.removeTool(toolName));
-        // Sequential, not Promise.all: each add can evict the LRU promoted
-        // tool, so the adds must land in the order the model listed them.
+        // Sequential, not Promise.all: once the cap is reached the rest are
+        // refused, so the adds must land in the order the model listed them.
         const promoted: ToolPromotionResult[] = [];
         for (const toolName of add) promoted.push(await toolPromotionCtx.addTool(toolName));
         const batch: BatchResult = { promoted, released };
