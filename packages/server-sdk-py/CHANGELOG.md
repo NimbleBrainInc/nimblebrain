@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `[observability]`: `ObservabilityMiddleware` reads a `traceparent`, `x-correlation-id`,
+  identity or caller header whose value is not UTF-8 as absent, instead of failing the
+  request with a 500 that RED metrics never counted.
+
 ## [0.4.0]
 
 ### Highlights
