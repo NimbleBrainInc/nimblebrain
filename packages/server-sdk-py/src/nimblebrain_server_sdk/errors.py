@@ -65,7 +65,7 @@ class HostCapabilityMissing(Exception):
         ```
     """
 
-    def __init__(self, capability_key: str):
+    def __init__(self, capability_key: str) -> None:
         super().__init__(
             f"Host has not advertised the {capability_key!r} capability. "
             "Check `host(ctx).available` before calling read/list, or pass "

@@ -21,12 +21,16 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from opentelemetry import context as otel_context
 from opentelemetry import propagate
 
 from .context import bind_context, clear_context, get_correlation_id
 from .metrics import IN_FLIGHT, REQUEST_DURATION, REQUESTS
+
+if TYPE_CHECKING:
+    from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # An infra-plane service supplies this to attribute a request to its *caller*
 # (its identity axis in place of a tenant). It receives a header lookup and
@@ -74,7 +78,7 @@ class ObservabilityMiddleware:
 
     def __init__(
         self,
-        app,
+        app: ASGIApp,
         *,
         metrics_path: str = "/metrics",
         caller_resolver: CallerResolver | None = None,
@@ -85,7 +89,7 @@ class ObservabilityMiddleware:
         # absent from their logs. Set only by opted-in infra-plane services.
         self.caller_resolver = caller_resolver
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -116,7 +120,7 @@ class ObservabilityMiddleware:
         start = time.perf_counter()
         IN_FLIGHT.labels(method).inc()
 
-        async def _send(message):
+        async def _send(message: Message) -> None:
             nonlocal status_code
             if message["type"] == "http.response.start":
                 status_code = message["status"]
@@ -155,10 +159,10 @@ class TraceContextMiddleware:
     caller's. Opens no span: the MCP span is FastMCP's.
     """
 
-    def __init__(self, app) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return

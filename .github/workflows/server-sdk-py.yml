@@ -116,9 +116,10 @@ jobs:
       - name: Format check
         run: uv run --frozen ruff format --check src/ tests/ scripts/
       - name: Type check
-        run: uv run --frozen ty check src/ tests/
+        run: uv run --frozen ty check src/ tests/ scripts/
       - name: Test
-        run: uv run --frozen pytest tests/ -v
+        # The coverage floor is fail_under in pyproject.toml.
+        run: uv run --frozen pytest tests/ -v --cov=nimblebrain_server_sdk
 
   core-only:
     name: server-sdk-py (core, no extras)

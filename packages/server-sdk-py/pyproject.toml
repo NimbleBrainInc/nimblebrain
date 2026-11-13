@@ -112,6 +112,7 @@ dev = [
     "ty>=0.0.1a1",
     "pytest>=8.4.2",
     "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0",
     "httpx2>=2.13",
     # The observability tests instrument a FastAPI app and drive it with Starlette's TestClient.
     "fastapi>=0.133",
@@ -123,12 +124,38 @@ target-version = "py313"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "B", "C4", "UP"]
-ignore = ["E501", "B008"]
+# ASYNC, BLE and PT catch the bugs async and test code tends to grow (a busy-wait, a swallowed
+# exception, a `raises` that passes on the wrong error); S is the security set; ANN holds every
+# signature to an annotation, because the wheel ships `py.typed` and a consumer's type checker
+# reads them. `Any` is allowed where a value is genuinely open (ASGI messages, `_meta`).
+select = ["E", "W", "F", "I", "B", "C4", "UP", "ASYNC", "BLE", "RUF", "PT", "S", "ANN"]
+ignore = ["E501", "B008", "ANN401"]
+
+# Deliberate mathematical symbols in prose (a product, a set union), not look-alikes.
+allowed-confusables = ["×", "∪"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, build SQL from the identifiers they create, and spawn the interpreter; their
+# signatures are fixtures, not API.
+"tests/**" = ["S101", "S603", "S608", "ANN"]
+# The testing helpers are assertions a server's tests call: asserting is their contract.
+"src/nimblebrain_server_sdk/testing.py" = ["S101"]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.coverage.run]
+source = ["nimblebrain_server_sdk"]
+branch = true
+
+[tool.coverage.report]
+# A floor under the branch coverage CI measures with every extra installed (the paths only a
+# core install reaches are held by scripts/check_core_only.py instead). Raise it as coverage
+# rises; a change that lowers coverage below it fails CI.
+fail_under = 96
+show_missing = true
+skip_covered = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

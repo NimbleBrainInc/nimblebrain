@@ -29,7 +29,7 @@ def test_long_text_is_cut_to_the_limit_and_says_so():
 
 
 def test_a_preview_holds_at_least_one_character():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="at least one character"):
         preview_text("text", 0)
 
 

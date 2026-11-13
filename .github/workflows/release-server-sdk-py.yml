@@ -84,7 +84,7 @@ jobs:
       - name: Format check
         run: uv run --frozen ruff format --check src/ tests/ scripts/
       - name: Type check
-        run: uv run --frozen ty check src/ tests/
+        run: uv run --frozen ty check src/ tests/ scripts/
 
   build:
     name: Build the wheel and sdist

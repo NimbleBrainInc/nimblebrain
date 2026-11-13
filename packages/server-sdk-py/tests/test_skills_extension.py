@@ -165,11 +165,49 @@ def test_directory_name_is_the_default_skill_path(tmp_path: Path) -> None:
         ({"SKILL.md": SKILL_MD.format(name="x"), "../escape.md": "x"}, "invalid file path"),
         ({"SKILL.md": SKILL_MD.format(name="x"), "refs/a b.md": "x"}, "rename the file"),
         ({"SKILL.md": b"\xff\xfe"}, "UTF-8"),
+        ({"SKILL.md": "---\nname: x\ndescription: [unclosed\n---\n"}, "not valid YAML"),
+        ({"SKILL.md": "---\n- name\n- description\n---\n"}, "must be a YAML mapping"),
+        ({"SKILL.md": SKILL_MD.format(name="x"), "refs/a\tb.md": "x"}, "rename the file"),
     ],
 )
 def test_invalid_skills_fail_at_construction(files: dict[str, Any], message: str) -> None:
     with pytest.raises(ValueError, match=message):
         SkillDefinition("x", files)
+
+
+def test_a_scheme_no_uri_can_carry_fails_at_construction() -> None:
+    with pytest.raises(ValueError, match="is not a valid URI"):
+        SkillDefinition("x", {"SKILL.md": SKILL_MD.format(name="x")}, scheme="1bad")
+
+
+def test_a_directory_without_skill_md_is_refused(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("not a skill")
+    with pytest.raises(ValueError, match=r"no SKILL\.md in skill directory"):
+        SkillDefinition.from_directory(tmp_path)
+    with pytest.raises(ValueError, match=r"no SKILL\.md in skill directory"):
+        SkillsCatalog([tmp_path])
+
+
+def test_catalog_rejects_one_uri_served_with_two_contents() -> None:
+    # A nested skill's files also belong to the skill enclosing it, so one URI is listed by
+    # both; its bytes must agree.
+    outer = SkillDefinition(
+        "outer",
+        {
+            "SKILL.md": SKILL_MD.format(name="outer"),
+            "inner/SKILL.md": SKILL_MD.format(name="inner"),
+        },
+    )
+    inner = SkillDefinition(
+        "outer/inner", {"SKILL.md": SKILL_MD.format(name="inner").replace("Body.", "Other body.")}
+    )
+    with pytest.raises(ValueError, match="served with two different contents"):
+        SkillsCatalog([outer, inner])
+
+
+def test_catalog_needs_at_least_one_skill() -> None:
+    with pytest.raises(ValueError, match="at least one skill"):
+        SkillsCatalog([])
 
 
 def test_catalog_rejects_duplicate_skill_uris() -> None:
@@ -317,7 +355,8 @@ async def test_cache_attributes_only_on_modern_protocol(wire_name: str) -> None:
         assert (got["ttlMs"], got["cacheScope"]) == (0, "private")
     async with mcpserver_wire("legacy") as legacy:
         result = await legacy.list()
-        assert "ttlMs" not in result and "cacheScope" not in result
+        assert "ttlMs" not in result
+        assert "cacheScope" not in result
 
 
 async def test_skill_md_resource_metadata_comes_from_frontmatter() -> None:

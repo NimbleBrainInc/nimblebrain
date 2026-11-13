@@ -26,7 +26,7 @@ and is re-exported here as the same objects.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypeIs
 
 from nimblebrain_server_sdk._extras import require_extra
 
@@ -53,28 +53,32 @@ from .metrics import (  # noqa: E402
     set_service_name,
     start_metrics_server,
 )
-from .middleware import ObservabilityMiddleware, TraceContextMiddleware  # noqa: E402
+from .middleware import (  # noqa: E402
+    CallerResolver,
+    ObservabilityMiddleware,
+    TraceContextMiddleware,
+)
 from .tracing import configure_tracing, inject_trace_headers  # noqa: E402
 
-# The consumed contract surface only: counter/gauge/histogram are the metric factories,
-# instrument_app/get_logger/inject_trace_headers are the adoption seam. Anything
-# no one calls yet isn't shipped — add it back with the adopter that needs it.
+# The consumed contract surface only. counter/gauge/histogram are the metric factories;
+# instrument_app, get_logger and inject_trace_headers are the adoption seam; the error contract
+# (ServiceError, ErrorCode, to_tool_error) is re-exported for servers that import it from here;
+# CapacityRefusal and rate_limited_tool_error answer a call refused for capacity (a database
+# server's workspace limit) as rate_limited. Anything no one calls yet isn't shipped: add it
+# back with the adopter that needs it.
 __all__ = [
-    "instrument_app",
-    "service_version",
-    "get_logger",
+    "CapacityRefusal",
+    "ErrorCode",
+    "ServiceError",
     "counter",
     "gauge",
+    "get_logger",
     "histogram",
     "inject_trace_headers",
-    # error contract
-    "ServiceError",
-    "ErrorCode",
-    "to_tool_error",
-    # A call refused for capacity (a database server's workspace limit): a server on
-    # nimblebrain_server_sdk.db returns it as rate_limited.
-    "CapacityRefusal",
+    "instrument_app",
     "rate_limited_tool_error",
+    "service_version",
+    "to_tool_error",
 ]
 
 
@@ -93,7 +97,13 @@ def service_version() -> str:
     return os.environ.get("SERVICE_VERSION") or "dev"
 
 
-def _is_fastapi(app: Any) -> bool:
+if TYPE_CHECKING:
+    from fastapi import FastAPI
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+
+
+def _is_fastapi(app: Any) -> TypeIs[FastAPI]:
     """Whether ``app`` is a FastAPI app, without making FastAPI a dependency."""
     try:
         from fastapi import FastAPI
@@ -102,14 +112,14 @@ def _is_fastapi(app: Any) -> bool:
     return isinstance(app, FastAPI)
 
 
-def instrument_app(
-    app,
+def instrument_app[App: Starlette](
+    app: App,
     *,
     service: str,
     metrics_path: str = "/metrics",
     log_level: str = "INFO",
-    caller_resolver=None,
-):
+    caller_resolver: CallerResolver | None = None,
+) -> App:
     """Make a FastAPI/Starlette app observable. Call once after creating the app.
 
     - configures JSON-to-stdout logging stamped with request context
@@ -160,7 +170,9 @@ def instrument_app(
     # (a bare Starlette app) as well as a FastAPI service.
     from starlette.responses import Response
 
-    async def _metrics(_request):  # pragma: no cover — exercised via the app, see tests
+    async def _metrics(
+        _request: Request,
+    ) -> Response:  # pragma: no cover — exercised via the app, see tests
         body, content_type = render()
         return Response(content=body, media_type=content_type)
 

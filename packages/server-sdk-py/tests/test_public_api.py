@@ -235,7 +235,9 @@ def test_meta_helpers() -> None:
     ],
 )
 def test_helpers_refuse_with_value_error(call: Any) -> None:
-    with pytest.raises(ValueError):
+    # Each case refuses with its own message; the pinned contract is that the refusal is a
+    # ValueError.
+    with pytest.raises(ValueError):  # noqa: PT011
         call()
 
 
@@ -251,7 +253,8 @@ def test_rows() -> None:
         "body_preview": "yyyyyyyyy…",
         "notes_preview": None,
     }
-    assert "body" in record and "secret" in record
+    assert "body" in record
+    assert "secret" in record
     with pytest.raises(TypeError):
         sdk.listing_row({"body": 1}, preview={"body": 5})
 

@@ -97,7 +97,8 @@ async def served_facets(mcp: FastMCP, mode: str = "auto") -> dict[str, dict[str,
             assert content.mime_type == "application/json", resource.name
             body = json.loads(getattr(content, "text", ""))
             count = body["count"]
-            assert isinstance(count, int) and not isinstance(count, bool), resource.name
+            assert isinstance(count, int), resource.name
+            assert not isinstance(count, bool), resource.name
             assert count >= 0, resource.name
             assert resource.name not in facets, f"{resource.name} is listed twice"
             facets[resource.name] = {"title": resource.title, "level": level, "count": count}
@@ -135,7 +136,8 @@ def assert_bounded_rows(
     assert rows, "an empty page proves nothing about its rows"
     for i, row in enumerate(rows):
         uri = row.get("uri")
-        assert isinstance(uri, str) and uri, f"row {i} has no uri"
+        assert isinstance(uri, str), f"row {i} has no uri"
+        assert uri, f"row {i} has no uri"
         leaked = unbounded & row.keys()
         assert not leaked, f"row {i} ({uri}) carries {sorted(leaked)}"
         for path, text in _texts(row, f"row {i}"):

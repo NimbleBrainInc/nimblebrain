@@ -153,6 +153,7 @@ def test_key_shapes_cannot_be_confused() -> None:
     tenant = rls_policy_sql_tenant_scoped("suppression")
     workspace = rls_policy_sql("crm_contacts")
 
-    assert "app.tenant_id" not in org and "app.workspace_id" not in org
+    assert "app.tenant_id" not in org
+    assert "app.workspace_id" not in org
     assert "app.org_id" not in tenant
     assert "app.org_id" not in workspace

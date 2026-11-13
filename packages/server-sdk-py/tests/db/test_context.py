@@ -20,9 +20,9 @@ def test_read_grants_merge_with_active() -> None:
 
 
 def test_missing_tenant_or_workspace_fails_closed() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="verified tenant_id claim"):
         SecurityContext.from_claims({"workspace_id": "w1"})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="verified workspace_id claim"):
         SecurityContext.from_claims({"tenant_id": "t1"})
 
 

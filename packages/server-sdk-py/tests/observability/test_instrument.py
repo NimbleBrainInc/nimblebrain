@@ -76,7 +76,8 @@ def test_malformed_traceparent_does_not_500():
     assert resp.status_code == 200
     # Fell through to a freshly minted id rather than the bad trace-id.
     cid = resp.headers["x-correlation-id"]
-    assert cid and cid != "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+    assert cid
+    assert cid != "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
 
 
 def test_errors_counted_as_5xx():
