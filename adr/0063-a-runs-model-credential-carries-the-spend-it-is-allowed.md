@@ -43,14 +43,23 @@ and the gateway refuses the run's calls once its spend reaches that amount.
   cap, and holds the reservations until the run ends, then debits what the run
   spent and releases the rest. The ledger stays the runtime's, and no other
   process reads or writes it.
-- **The grant never exceeds what is held.** Where the gateway counts spend per
-  replica, or can enforce only fixed amounts, the runtime divides by the replica
-  count and rounds down to an amount the gateway can enforce. A run may be held
-  below its terms, never above them.
+- **The credential states the true grant; the gateway approximates it
+  downward.** The grant is a whole number of tokens in its own claim. The gateway
+  knows how many replicas count a run separately and which limits it can
+  enforce, so it holds the run to the largest of its limits at or below the
+  grant divided by its replica count. A grant below its smallest limit, or a
+  claim that is not a whole number, admits one call. A run may be held below its
+  terms, never above them, and the runtime knows nothing of the gateway's
+  replicas or limits.
 - **The gateway counts input and output tokens together.** That is at least what
   an input-token cap counts, so it errs toward stopping early.
-- **A runtime that reaches models only through such a gateway holds a run's
-  terms.** ADR-0062's routing then keeps those runs on the default runtime.
+- **The gateway says that it enforces grants, and only then does an external
+  runtime hold a run's terms.** The gateway already tells the runtime which
+  providers it serves; it also says whether it enforces a credential's grant. A
+  runtime that reaches models only through a gateway that says so holds a run's
+  terms, and ADR-0062's routing keeps those runs on it. A gateway that does not
+  say so leaves them on the native engine, so a gateway that would ignore the
+  claim never runs budgeted work.
 
 The native engine keeps its own per-call check, which also clamps each call's
 output to what remains.
@@ -79,13 +88,15 @@ output to what remains.
 
 Measured before this was proposed for acceptance:
 
-- **The gateway enforces a grant chosen by a credential claim, per run.** On the
+- **The gateway enforces a grant read from a credential claim, per run.** On the
   gateway release the platform runs, a route's token limit takes a list of
-  fixed-size variants, each selected by a condition on the credential's claims
-  and keyed by its `sub`. Runs holding the same grant keep separate counts; a
-  credential with no grant falls through to the existing per-run ceiling. A list
-  holds up to 64 variants, so the runtime grants from a fixed scale of sizes,
-  rounding down, and a run is held to at most one step below its terms.
+  fixed-size limits, each selected by a condition on the credential's claims and
+  keyed by its `sub`, first match wins. Conditions compare the numeric grant
+  against each limit times the replica count, largest first, so the gateway
+  rounds down on its own; a grant below the smallest limit and a non-numeric
+  grant both fell through to a one-token limit, which admits a single call; a
+  credential with no grant fell through to the existing per-run ceiling. Runs
+  holding the same grant kept separate counts.
 - **It checks before a call and charges after.** A call is admitted while the
   run's count is below its grant and charged the input and output tokens the
   provider reported, so a run whose calls are serial overshoots its grant by at
