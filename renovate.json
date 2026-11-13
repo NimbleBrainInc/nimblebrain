@@ -13,7 +13,7 @@
   },
   "packageRules": [
     {
-      "description": "Layer 1 \u2014 one PR per manifest area for the non-major long tail. Later rules override these for packages that span more than one area.",
+      "description": "Layer 1 — one PR per manifest area for the non-major long tail. Later rules override these for packages that span more than one area.",
       "matchUpdateTypes": [
         "minor",
         "patch"
@@ -51,7 +51,7 @@
       "groupName": "docs site"
     },
     {
-      "description": "Layer 2 \u2014 packages installed in more than one manifest. Nothing here is a workspace, so a split bump leaves two manifests disagreeing at runtime with no check to catch it. No cooldown: it is our own package, published through OIDC trusted publishing, and bunfig excludes it for the same reason \u2014 a dependency should reach this repo on the same terms whether a bot or a person adds it.",
+      "description": "Layer 2 — packages installed in more than one manifest. Nothing here is a workspace, so a split bump leaves two manifests disagreeing at runtime with no check to catch it. No cooldown: it is our own package, published through OIDC trusted publishing, and bunfig excludes it for the same reason — a dependency should reach this repo on the same terms whether a bot or a person adds it.",
       "matchPackageNames": [
         "@nimblebrain/synapse"
       ],
@@ -68,7 +68,7 @@
       "groupName": "react"
     },
     {
-      "description": "The AI SDK core and its providers release in lockstep against a shared LanguageModelV4 surface. A major here can move that spec version, which is a code migration \u2014 not a lockfile bump.",
+      "description": "The AI SDK core and its providers release in lockstep against a shared LanguageModelV4 surface. A major here can move that spec version, which is a code migration — not a lockfile bump.",
       "matchPackageNames": [
         "ai",
         "@ai-sdk/**"
