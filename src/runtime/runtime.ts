@@ -100,6 +100,7 @@ import type {
   ToolSchema,
 } from "../engine/types.ts";
 import { CONNECTOR_SKILL_SYNTHETIC, SKILL_ACTIVATED_SYNTHETIC } from "../engine/types.ts";
+import { NATIVE_RUNTIME_ID } from "../execution/native-runtime.ts";
 import { type AgentRuntimes, createAgentRuntimes } from "../execution/registry.ts";
 import type { AgentRuntime } from "../execution/types.ts";
 import { FileLocator } from "../files/locator.ts";
@@ -301,7 +302,6 @@ import {
   DeclaredToolsUnavailableError,
   ModelNotAllowedError,
   RunInProgressError,
-  RuntimeCannotHoldRunError,
   WorkspaceMembershipRevokedError,
 } from "./errors.ts";
 import { IdentityToolRouter } from "./identity-tool-router.ts";
@@ -1807,13 +1807,11 @@ export class Runtime {
         : new WorkspaceMembershipRevokedError(ownerId, spec.workspaceId);
     }
 
-    // Refused here, before anything is written or bound, like the gate.
-    const agentRuntime = this.agentRuntimeFor(spec);
-
     // The run's correlation anchor, stamped on the request context for audit
     // and file correlation and returned to the caller. A caller that handed out
     // a handle for the run before it started names the id it minted.
     const runId = spec.runId ?? `run_${crypto.randomUUID().slice(0, 12)}`;
+    const agentRuntime = this.agentRuntimeFor(spec, runId);
 
     const { workWorkspace, activeWorkspace } = await this.resolveRunWorkspaces(spec);
     const briefingWsId = spec.briefingWorkspaceId;
@@ -2109,20 +2107,24 @@ export class Runtime {
   }
 
   /**
-   * The agent runtime a run executes on (`execution.default`), if it can hold
-   * the run to its terms: a run that names spend accounts or caps its input
-   * tokens needs a runtime that checks every model call against them.
+   * The agent runtime a run executes on: `execution.default` when it can hold
+   * the run to its terms, else the native runtime, which checks every model
+   * call against them. A run that names spend accounts or caps its input tokens
+   * needs a runtime with a spend gate; running it on one without would spend
+   * unchecked. The choice is made here, before the run starts, never as a
+   * retry after a refusal, and logged with the term the default could not hold.
    */
-  private agentRuntimeFor(spec: RunSpec): AgentRuntime {
-    const agentRuntime = this.agentRuntimes.select(this.config.execution?.default);
-    if (agentRuntime.capabilities.spendGate) return agentRuntime;
-    if (spec.budget.spendAccounts?.length) {
-      throw new RuntimeCannotHoldRunError(agentRuntime.id, "the run names spend accounts");
-    }
-    if (spec.budget.maxRunInputTokens !== undefined) {
-      throw new RuntimeCannotHoldRunError(agentRuntime.id, "the run caps its input tokens");
-    }
-    return agentRuntime;
+  private agentRuntimeFor(spec: RunSpec, runId: string): AgentRuntime {
+    const preferred = this.agentRuntimes.select(this.config.execution?.default);
+    const unheld = termTheRuntimeCannotHold(preferred, spec);
+    if (!unheld) return preferred;
+    const native = this.agentRuntimes.select(NATIVE_RUNTIME_ID);
+    log.info("[runtime] run executes on the native runtime: the default cannot hold its terms", {
+      runId,
+      default: preferred.id,
+      term: unheld,
+    });
+    return native;
   }
 
   /**
@@ -6907,4 +6909,19 @@ function syncCoreSkills(workDir: string): void {
   if (existsSync(soulSrc)) {
     copyFileSync(soulSrc, join(destDir, "soul.md"));
   }
+}
+
+/**
+ * The run term an agent runtime cannot hold, if any. Only a runtime with a
+ * spend gate checks each model call against the run's spend accounts and its
+ * run-wide input-token cap.
+ */
+function termTheRuntimeCannotHold(
+  runtime: AgentRuntime,
+  spec: RunSpec,
+): "spend_accounts" | "max_run_input_tokens" | undefined {
+  if (runtime.capabilities.spendGate) return undefined;
+  if (spec.budget.spendAccounts?.length) return "spend_accounts";
+  if (spec.budget.maxRunInputTokens !== undefined) return "max_run_input_tokens";
+  return undefined;
 }

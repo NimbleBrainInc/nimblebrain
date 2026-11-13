@@ -1,5 +1,6 @@
 /**
- * The door executes a run on the runtime `execution.default` names, and a
+ * The door executes a run on the runtime `execution.default` names when that
+ * runtime can hold the run to its terms, else on the native runtime, and a
  * conversation outlives any one runtime: every turn is recorded in the
  * engine's vocabulary, so the next turn replays it whichever runtime runs it.
  */
@@ -13,7 +14,7 @@ import type { ConversationEvent } from "../../../src/conversation/types.ts";
 import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import type { RuntimeConfig } from "../../../src/runtime/types.ts";
+import type { RuntimeConfig, TaskRequest } from "../../../src/runtime/types.ts";
 import { usageMonthDir, usageMonthOf } from "../../../src/usage/paths.ts";
 import type { UsageLedgerEntry } from "../../../src/usage/types.ts";
 import { emptyLog, scriptedConnection, scriptedDriver } from "../../helpers/acp/scripted-agent.ts";
@@ -109,6 +110,17 @@ function ledgerLines(conversationId: string): UsageLedgerEntry[] {
     .flatMap((f) => readFileSync(join(dir, f), "utf-8").split("\n").filter(Boolean))
     .map((l) => JSON.parse(l) as UsageLedgerEntry)
     .filter((l) => l.conversationId === conversationId);
+}
+
+/** The runtime each `execution.bound` of a task run names, from the run's own sink. */
+async function taskRuntimeOf(request: TaskRequest): Promise<string[]> {
+  const bound: string[] = [];
+  await runtime.executeTask(request, {
+    emit(event) {
+      if (event.type === "execution.bound") bound.push(event.data.runtime as string);
+    },
+  });
+  return bound;
 }
 
 describe("runtime selection", () => {
@@ -209,27 +221,38 @@ describe("runtime selection", () => {
     expect(title?.runtime).toBeUndefined();
   });
 
-  test("a run that names spend accounts is refused on a runtime with no spend gate", async () => {
+  test("a run that names spend accounts executes on the native runtime when the default has no spend gate", async () => {
     config.execution = { ...config.execution, default: "scripted-acp" };
-    await expect(
-      runtime.executeTask({
-        prompt: "do it",
-        workspaceId: TEST_WORKSPACE_ID,
-        identity: USER,
-        spendAccounts: [{ id: "t:1", unit: "usd", remaining: 1 }],
-      }),
-    ).rejects.toThrow(/cannot run this run/);
+    const bound = await taskRuntimeOf({
+      prompt: "budgeted",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: USER,
+      spendAccounts: [{ id: "t:1", unit: "input_tokens", remaining: 1_000_000 }],
+    });
+
+    expect(bound).toEqual(["native"]);
   });
 
-  test("a run that caps its input tokens is refused on a runtime with no spend gate", async () => {
+  test("a run that caps its input tokens executes on the native runtime when the default has no spend gate", async () => {
     config.execution = { ...config.execution, default: "scripted-acp" };
-    await expect(
-      runtime.executeTask({
-        prompt: "do it",
-        workspaceId: TEST_WORKSPACE_ID,
-        identity: USER,
-        maxRunInputTokens: 1,
-      }),
-    ).rejects.toThrow(/caps its input tokens/);
+    const bound = await taskRuntimeOf({
+      prompt: "capped",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: USER,
+      maxRunInputTokens: 1_000_000,
+    });
+
+    expect(bound).toEqual(["native"]);
+  });
+
+  test("a run with neither executes on the default", async () => {
+    config.execution = { ...config.execution, default: "scripted-acp" };
+    const bound = await taskRuntimeOf({
+      prompt: "unbudgeted",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: USER,
+    });
+
+    expect(bound).toEqual(["scripted-acp"]);
   });
 });
