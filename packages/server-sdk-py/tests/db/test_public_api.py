@@ -58,6 +58,7 @@ def test_all_is_unchanged() -> None:
         "CONNECTIONS_PER_CALL",
         "PoolConfigError",
         "PoolExhausted",
+        "UnsafeRoleError",
         "WorkspaceBusy",
         "create_pooled_engine",
     }
@@ -82,7 +83,12 @@ def test_constants() -> None:
         (db.security_context_from_edge_headers, [("headers", POS, E), ("user_header", KW, None)]),
         (
             db.create_pooled_engine,
-            [("url", POS, E), ("settings", POS, E), ("options", VAR_KW, E)],
+            [
+                ("url", POS, E),
+                ("settings", POS, E),
+                ("refuse_bypass_roles", KW, True),
+                ("options", VAR_KW, E),
+            ],
         ),
         (db.SecurityContext.from_claims, [("claims", POS, E)]),
         (db.SecurityContext.identity_columns, [("self", POS, E)]),
@@ -94,9 +100,16 @@ def test_constants() -> None:
         (db.PoolSettings.engine_options, [("self", POS, E)]),
         (
             db.SecuredDatabase,
-            [("url_env", KW, E), ("prefix", KW, E), ("defaults", KW, None), ("url", KW, None)],
+            [
+                ("url_env", KW, E),
+                ("prefix", KW, E),
+                ("defaults", KW, None),
+                ("url", KW, None),
+                ("refuse_bypass_roles", KW, True),
+            ],
         ),
         (db.SecuredDatabase.check, [("self", POS, E)]),
+        (db.SecuredDatabase.check_role, [("self", POS, E)]),
         (db.SecuredDatabase.get_engine, [("self", POS, E)]),
         (db.SecuredDatabase.dispose, [("self", POS, E)]),
         (db.SecuredDatabase.session, [("self", POS, E), ("ctx", POS, E)]),
@@ -151,6 +164,7 @@ def test_error_hierarchy() -> None:
     assert issubclass(db.Overloaded, Exception)
     assert issubclass(db.PoolConfigError, ValueError)
     assert issubclass(db.AuthError, Exception)
+    assert issubclass(db.UnsafeRoleError, RuntimeError)
 
 
 def test_overload_text() -> None:

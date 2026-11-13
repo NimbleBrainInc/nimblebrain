@@ -35,6 +35,14 @@ worst case on one database is::
 where ``max_surge`` is the extra pods a rolling update runs at once (one per server rolling).
 That sum, plus whatever else connects to the database, must stay below its
 ``max_connections``. Raising a pool setting or a replica count spends that budget.
+
+**The role.** :func:`create_pooled_engine` refuses every new connection made as a superuser or
+``BYPASSRLS`` role with :class:`UnsafeRoleError`, before any session runs on it: Postgres applies
+no row-level security policy to such a role, so an engine connected as one would see every
+tenant's rows. The check reads the role's attributes once per physical connection, not per
+session. An engine that is meant to bypass, such as one that runs migrations, passes
+``refuse_bypass_roles=False``. The pool settings never carry that choice, so no environment
+variable can turn the check off.
 """
 
 from pgbulkhead.pool import (
@@ -43,10 +51,12 @@ from pgbulkhead.pool import (
     PoolSettings,
     create_pooled_engine,
 )
+from pgbulkhead.role import UnsafeRoleError
 
 __all__ = [
     "CONNECTIONS_PER_CALL",
     "PoolConfigError",
     "PoolSettings",
+    "UnsafeRoleError",
     "create_pooled_engine",
 ]

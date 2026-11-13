@@ -1086,11 +1086,11 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'observability'", specifier = ">=1.29" },
     { name = "opentelemetry-instrumentation-fastapi", marker = "extra == 'observability'", specifier = ">=0.50b0" },
     { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.29" },
-    { name = "pgbulkhead", marker = "extra == 'db'", specifier = "==0.1.1" },
+    { name = "pgbulkhead", marker = "extra == 'db'", specifier = "==0.1.2" },
     { name = "prometheus-client", marker = "extra == 'observability'", specifier = ">=0.21" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'db'", specifier = ">=2.0.36" },
+    { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'db'", specifier = ">=2.0.44" },
     { name = "structlog", marker = "extra == 'observability'", specifier = ">=24.4" },
 ]
 provides-extras = ["db", "observability"]
@@ -1307,15 +1307,15 @@ wheels = [
 
 [[package]]
 name = "pgbulkhead"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "sqlalchemy", extra = ["asyncio"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bc/44/d28a27b2f1bd5a1f9307ed743a318090c87e06593f0220adbb95c25b11ce/pgbulkhead-0.1.1.tar.gz", hash = "sha256:03033c02ee54f93dd102dca04ee9c202e7a3ff33d8be57548f670a6a586da3ee", size = 39232, upload-time = "2026-11-12T08:58:51.144Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2a/46/89028d08f75a812ab24800fbb388975ca53c92b78c2d9f6b058739de82f0/pgbulkhead-0.1.2.tar.gz", hash = "sha256:bf6daab843a6af49f41052f7388406692d0a96c897dc42f21e50adb1c62ed3b8", size = 44797, upload-time = "2026-11-13T06:47:17.93Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/34/1b/13cb093de1df861992afecef9633cea617501d422733f032dfc70d003fe1/pgbulkhead-0.1.1-py3-none-any.whl", hash = "sha256:fe17d045b01f6718974dd1f672161cfdd5a9a8f04e8a62f5adb5dc15791fbc1c", size = 31328, upload-time = "2026-11-12T08:58:49.775Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/38/91e35006c231c11b5289ab8b069a80d2f73439aca207b537c267c0f6a61d/pgbulkhead-0.1.2-py3-none-any.whl", hash = "sha256:3d695ee5d62994e87f1b2614ddbc209a4f38bb6c3b006a6662f52b4447424cff", size = 34460, upload-time = "2026-11-13T06:47:16.812Z" },
 ]
 
 [[package]]

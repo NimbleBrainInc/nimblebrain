@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `[db]` requires `pgbulkhead` 0.1.2 (pinned exactly) and SQLAlchemy 2.0.44 or later. The
+  rendered SQL and the statements each session sends are unchanged.
+- **`[db]` pooled engines refuse a role that row-level security does not apply to.**
+  `create_pooled_engine` and `SecuredDatabase` refuse each new connection made as a superuser
+  or `BYPASSRLS` role with `UnsafeRoleError`, before any session runs on it. A server that
+  connects as such a role fails instead of silently seeing every tenant's rows. An engine meant
+  to bypass, such as one your migrations or provisioning run on, opts out with
+  `refuse_bypass_roles=False` on either.
+
+### Added
+
+- `[db]`: `UnsafeRoleError` (pgbulkhead's own class), and `SecuredDatabase.check_role()` to fail
+  the rollout at startup rather than the first call.
+
 ## [0.4.1]
 
 ### Fixed

@@ -78,8 +78,9 @@ jobs:
       run:
         working-directory: packages/server-sdk-py
     # The `[db]` suites run against a real Postgres: session exit under cancellation, admission,
-    # and RLS enforcement. The RLS suite creates its own non-superuser, non-BYPASSRLS role and
-    # runs every session as it, so the superuser URL below is all it needs. Without a reachable
+    # the role check, and RLS enforcement. The suites create their own login roles (an app role
+    # RLS applies to, and a BYPASSRLS one) from the superuser URL below, which is all they need,
+    # and run their sessions as the app role. Without a reachable
     # Postgres those suites skip locally and fail under CI, so a green run means they ran.
     services:
       postgres:

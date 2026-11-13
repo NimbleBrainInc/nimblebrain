@@ -3,8 +3,9 @@
 The other suites pin the SQL text; this one proves what it does. Each table gets the policy a
 migration would apply, rows are seeded by the owner, and every read and write runs as
 ``sdk_rls_app``: a role with neither ``SUPERUSER`` nor ``BYPASSRLS``, the only kind of role the
-policies hold against. Sessions run as it by setting ``role`` on each connection, so the suite
-needs only the superuser URL the other Postgres suites use (``DB_TEST_URL``).
+policies hold against. Sessions run as it by setting ``role`` on each connection of an engine
+built on the superuser URL (``DB_TEST_URL``); the engine is a plain one, not the pooled engine
+that checks the role a connection logs in as.
 
 Covered: cross-tenant reads are denied, cross-workspace reads are denied without a grant and
 allowed with one, a write to a granted workspace is refused, an unscoped session sees nothing,
@@ -39,9 +40,9 @@ LINKS = "sdk_rls_links"
 
 
 @pytest_asyncio.fixture
-async def app_engine(pg_engine: AsyncEngine, pg_url: str) -> AsyncIterator[AsyncEngine]:
+async def app_engine(pg_admin: AsyncEngine, pg_admin_url: str) -> AsyncIterator[AsyncEngine]:
     """Seeded tables, and a one-connection engine whose sessions run as the non-superuser role."""
-    async with pg_engine.begin() as conn:
+    async with pg_admin.begin() as conn:
         exists = await conn.scalar(text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": ROLE})
         if not exists:
             await conn.execute(text(f"CREATE ROLE {ROLE} NOLOGIN NOSUPERUSER NOBYPASSRLS"))
@@ -81,13 +82,16 @@ async def app_engine(pg_engine: AsyncEngine, pg_url: str) -> AsyncIterator[Async
             await conn.execute(text(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {table} TO {ROLE}"))
 
     engine = create_async_engine(
-        pg_url, pool_size=1, max_overflow=0, connect_args={"server_settings": {"role": ROLE}}
+        pg_admin_url,
+        pool_size=1,
+        max_overflow=0,
+        connect_args={"server_settings": {"role": ROLE}},
     )
     try:
         yield engine
     finally:
         await engine.dispose()
-        async with pg_engine.begin() as conn:
+        async with pg_admin.begin() as conn:
             for table in (NOTES, LEDGER, LINKS):
                 await conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
 

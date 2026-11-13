@@ -75,8 +75,8 @@ db = [
     # The generic core (policy rendering, sessions, pool, admission). Pinned exactly: the golden
     # SQL tests hold `db` to the SQL that replayed migrations build, so a core upgrade is a
     # deliberate, reviewed change.
-    "pgbulkhead==0.1.1",
-    "sqlalchemy[asyncio]>=2.0.36",
+    "pgbulkhead==0.1.2",
+    "sqlalchemy[asyncio]>=2.0.44",
     # The driver `create_pooled_engine` URLs name (`postgresql+asyncpg://`).
     "asyncpg>=0.30",
 ]
