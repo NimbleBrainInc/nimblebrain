@@ -290,6 +290,7 @@
 
 ### Fixed
 
+- **The web UI answers seconds after `docker compose up`, not after 30.** The platform image's health check probes every 2 seconds while the container starts (`--start-period=30s --start-interval=2s`), so `depends_on: service_healthy` releases the `web` container as soon as the platform is up. A platform that never comes up is marked unhealthy up to 30 seconds later, since failures inside the start period do not count. Docker Engine before 25 ignores `--start-interval` and keeps the 30-second wait ([docs](https://docs.nimblebrain.ai/deploy/docker/#health-check)).
 - **Every tool `nb__manage_tools` promotes stays in the tool list.** In a workspace with more tools than the direct-tool budget, each promotion evicted the one before it, so the model lost the schemas of all but the last. Only promoted tools count toward the limit now, and a promotion past it is refused instead of evicting an earlier one ([#1959](https://github.com/NimbleBrainInc/nimblebrain/issues/1959)).
 - **Task statistics read each run index once.** `tasks__stats` parsed a large archive month once per 5,000 runs in the window; the Tasks panel also re-read the figures every few seconds, and now reads them when a run is recorded or assessed and once an hour ([#1951](https://github.com/NimbleBrainInc/nimblebrain/pull/1951)).
 - **A cancelled turn on an agent runtime records the usage it spent.** The model calls the agent finished before the cancel are priced in the usage ledger; they recorded nothing ([#1877](https://github.com/NimbleBrainInc/nimblebrain/pull/1877)).
