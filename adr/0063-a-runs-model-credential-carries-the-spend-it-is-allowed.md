@@ -1,6 +1,6 @@
 # 0063. A run's model credential carries the spend it is allowed
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-12
 - Serves: orchestrate remote MCP
 - Amends: [ADR-0045](./0045-a-task-is-the-unattended-primitive-and-its-trigger-is-optional.md) (how a run is held to its spend accounts), [ADR-0062](./0062-a-run-executes-on-the-default-runtime-only-when-it-can-hold-the-run.md) (which runtimes hold a run with spend accounts)

@@ -1,6 +1,6 @@
 # 0062. A run executes on the default runtime only when it can hold the run
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0063
 - Date: 2026-11-12
 - Serves: orchestrate remote MCP
 - Amends: [ADR-0056](./0056-an-agent-runtime-executes-what-the-door-decided.md) (what the door does with a run the default runtime cannot hold)

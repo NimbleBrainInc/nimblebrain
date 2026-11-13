@@ -1,6 +1,6 @@
 # 0045. A task is the unattended primitive; its trigger is optional, and its outcome separates running from being good
 
-- Status: Accepted; amended by ADR-0049, ADR-0061
+- Status: Accepted; amended by ADR-0049, ADR-0061, ADR-0063
 - Date: 2026-10-03
 - Serves: orchestrate remote MCP, secure RBAC
 
