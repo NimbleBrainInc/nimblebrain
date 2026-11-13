@@ -474,6 +474,8 @@ async function runTask(
   },
 ) {
   const bound: string[] = [];
+  // Input tokens of the calls the worker reported, as usage consumers count them.
+  let reported = 0;
   const result = await runtime.executeTask(
     {
       identity: DEV_IDENTITY,
@@ -485,10 +487,13 @@ async function runTask(
     {
       emit(event: EngineEvent) {
         if (event.type === "execution.bound") bound.push(event.data.runtime as string);
+        if (event.type === "llm.done" && !event.data.transcriptOnly) {
+          reported += event.data.usage.inputTokens;
+        }
       },
     },
   );
-  return { result, bound };
+  return { result, bound, reported };
 }
 
 /** A runtime whose default is the worker, behind `gw`; resolves once it has asked `gw`. */
@@ -547,6 +552,27 @@ describe("the door, with a gateway that enforces grants (ADR-0063)", () => {
     expect(bound).toEqual(["pool"]);
     const grants = grantingGateway.authorizations.slice(before).map((a) => claimsOf(a).grant);
     expect(grants).toContain(30_000);
+  });
+
+  test("debits the usage the run reports from a live shared balance, and returns the rest of its share", async () => {
+    const spend = runtime.getSpendBalances();
+    const account = { id: "acct:settle", unit: "input_tokens" as const, remaining: 90_000 };
+    // Held open across the run, as a batch's driver holds its account.
+    const anchor = spend.open([account], { model: "", rates: null });
+    try {
+      const { bound, reported } = await runTask(runtime, {
+        spendAccounts: [{ ...account, sharedBy: 3 }],
+      });
+      expect(bound).toEqual(["pool"]);
+      expect(reported).toBeGreaterThan(0);
+      expect(spend.balance(account.id)).toBe(90_000 - reported);
+      // Nothing of the run's reservation is still held: a lone run gets it all.
+      const next = spend.open([account], { model: MODEL, rates: null });
+      expect(next.reserveRun().tokens).toBe(90_000 - reported);
+      next.release();
+    } finally {
+      anchor.release();
+    }
   });
 
   test("a run with neither carries no grant", async () => {

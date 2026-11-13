@@ -129,6 +129,8 @@ interface HarnessOptions {
     holdAfterCheck?: boolean;
     /** How long a refused run takes to return (so another run can end first). */
     refusalDelayMs?: number;
+    /** Input tokens left of the task's own budget, named beside the batch's account. */
+    taskTokens?: number;
   };
   /** The run's status for an input. */
   behave?: (input: unknown) => Partial<TaskRun>;
@@ -188,7 +190,17 @@ function harness(opts: HarnessOptions = {}): Harness {
       let stop: string | undefined;
       if (opts.door) {
         // What the door does with the accounts a run names (`Runtime.startRun`).
-        const hold = spend.open(extra ?? [], { model: "m", rates: RATES });
+        const taskBudget =
+          opts.door.taskTokens === undefined
+            ? []
+            : [
+                {
+                  id: `task-budget:${WS}/${OWNER}/${task.id}@daily:input_tokens`,
+                  unit: "input_tokens" as const,
+                  remaining: opts.door.taskTokens,
+                },
+              ];
+        const hold = spend.open([...(extra ?? []), ...taskBudget], { model: "m", rates: RATES });
         try {
           for (let i = 0; i < opts.door.calls; i++) {
             const allowed = hold.check({
@@ -636,6 +648,39 @@ describe("reserved-out versus spent-out", () => {
     expect(batch.pause?.reason).toBe("budget");
     expect(batch.counts).toMatchObject({ pass: 2, pending: 1 });
     expect(h.totalSpent()).toBeCloseTo(0.22, 9);
+  });
+});
+
+describe("reserved-out versus spent-out, the task's budget", () => {
+  it("does not pause when another run's reservation of the task's budget refused a call", async () => {
+    // A call reserves 100 input tokens; 150 covers one reservation at a time.
+    const h = harness({
+      door: { calls: 1, writes: 10, holdAfterCheck: true, taskTokens: 150 },
+      maxConcurrentRuns: 4,
+    });
+    makeTask();
+    const out = handleRunBatch({ taskId: "enrich", items: items("a", "b"), concurrency: 2 }, h.ctx);
+    await waitFor(() => h.gates.length === 1, "a reserved");
+    await waitFor(
+      () => readBatchItems(workDir, WS, OWNER, out.batch.id)[1]?.previousRunIds?.length === 1,
+      "b refused and back to pending",
+    );
+    expect(batchOf(h, out.batch.id).state).toBe("running");
+    h.gates[0]!.release();
+    await waitFor(() => h.gates.length === 2, "b reserved");
+    h.gates[1]!.release();
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    expect(h.paused).toHaveLength(0);
+    expect(batchOf(h, out.batch.id).counts.pass).toBe(2);
+  });
+
+  it("pauses when the task's budget is spent, with nothing else reserving", async () => {
+    const h = harness({ door: { calls: 1, taskTokens: 50 }, maxConcurrentRuns: 4 });
+    makeTask();
+    const out = handleRunBatch({ taskId: "enrich", items: items("a", "b"), concurrency: 1 }, h.ctx);
+    await waitFor(() => batchOf(h, out.batch.id).state === "paused", "budget pause");
+    expect(batchOf(h, out.batch.id).pause?.reason).toBe("budget");
+    expect(batchOf(h, out.batch.id).counts.pending).toBe(2);
   });
 });
 

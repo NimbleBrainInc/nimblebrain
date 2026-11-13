@@ -196,6 +196,8 @@ export interface BatchRunOptions {
    * when the run starts so a queued run names what is left then.
    */
   accounts: () => RunSpendAccount[];
+  /** The most of the batch's runs that may run at once (its concurrency), all drawing on the task's budget. */
+  sharedBy: number;
   /** Called when the run takes its slot and starts (a queued one later than it was asked for). */
   onStarted?: () => void;
 }
@@ -233,6 +235,8 @@ export type Executor = (
   runId?: string,
   /** Spend accounts the run names beyond the task's own token budget (a batch's). */
   extraAccounts?: readonly RunSpendAccount[],
+  /** The most runs that may draw on the task's own budget at once (a batch's concurrency); absent, one. */
+  sharedBy?: number,
 ) => Promise<{ run: TaskRun; result: TaskRunResult | null }>;
 
 /**
@@ -843,8 +847,18 @@ export function budgetSpendAccounts(auto: Task, now: number): RunSpendAccount[] 
  * where its runs start: Run now refuses it until the window resets (see
  * `Scheduler.requestRunNow`), and the door clamps and stops any run against
  * what is left.
+ *
+ * A run whose budget other runs drew on at once (`sharedBy`, a batch's
+ * concurrency) may be stopped by its own share of the window, not the window,
+ * so for it the counters alone decide.
  */
-function applyTokenBudget(auto: Task, run: TaskRun, now: number, defaultTimezone?: string): void {
+function applyTokenBudget(
+  auto: Task,
+  run: TaskRun,
+  now: number,
+  defaultTimezone?: string,
+  sharedBy = 1,
+): void {
   if (!auto.tokenBudget) return;
 
   rollBudgetWindow(auto, run, now, defaultTimezone);
@@ -852,6 +866,7 @@ function applyTokenBudget(auto: Task, run: TaskRun, now: number, defaultTimezone
   // A spend stop spends the window only when one of the budget's own accounts
   // made it; any other account the run named is not this budget's to enforce.
   const budgetStop =
+    sharedBy <= 1 &&
     run.stopReason === "spend_limit" &&
     run.spendAccountId?.startsWith(BUDGET_ACCOUNT_PREFIX) === true;
   const exceeded =
@@ -994,6 +1009,8 @@ interface UpdateAfterRunOptions {
   appendRecord?: boolean;
   /** The run's result, written before its record; one built from the record when absent. */
   result?: TaskRunResult;
+  /** The most runs that drew on the task's budget at once beside this one (a batch's concurrency). */
+  sharedBy?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -2316,6 +2333,7 @@ export class Scheduler {
         lease,
         runId,
         batch?.accounts(),
+        batch?.sharedBy,
       );
       const run = requested ? withRequest(executed.run, requested) : executed.run;
       const result: TaskRunResult = executed.result
@@ -2325,7 +2343,11 @@ export class Scheduler {
             ...(run.error !== undefined ? { error: run.error } : {}),
           }
         : resultOfRecord(run);
-      this.updateAfterRun(auto, run, trigger, firedOnceAt, { dispatchRunId: runId, result });
+      this.updateAfterRun(auto, run, trigger, firedOnceAt, {
+        dispatchRunId: runId,
+        result,
+        ...(batch ? { sharedBy: batch.sharedBy } : {}),
+      });
       ticket(run);
       this.runRecorded(auto);
       return { run, result };
@@ -2389,7 +2411,7 @@ export class Scheduler {
     run: TaskRun,
     trigger?: TaskRunTrigger,
     firedOnceAt: string | undefined = task.schedule?.at,
-    { dispatchRunId = run.id, appendRecord = true, result }: UpdateAfterRunOptions = {},
+    { dispatchRunId = run.id, appendRecord = true, result, sharedBy }: UpdateAfterRunOptions = {},
   ): void {
     const wsId = task.workspaceId;
     const ownerId = task.ownerId;
@@ -2433,7 +2455,7 @@ export class Scheduler {
       retireOnce(auto, "ran", run.startedAt, `${ONCE_RAN_REASON}${run.startedAt}`, now);
     }
     auto.updatedAt = new Date(now).toISOString();
-    applyTokenBudget(auto, run, now, this.config.defaultTimezone);
+    applyTokenBudget(auto, run, now, this.config.defaultTimezone, sharedBy);
 
     // Persist the run summary + the updated definition, then sync the single
     // in-memory entry so the timer sees the new nextRunAt without re-scanning.

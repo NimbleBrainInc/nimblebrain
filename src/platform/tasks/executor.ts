@@ -221,6 +221,7 @@ function buildRequest(
   ctx?: ExecutorContext,
   input?: RunInput,
   extraAccounts: readonly RunSpendAccount[] = [],
+  sharedBy = 1,
 ): TaskFnRequest {
   const offending = containsRecursiveTool(task.allowedTools);
   if (offending !== null) {
@@ -269,9 +270,8 @@ function buildRequest(
   req.maxIterations = limits.maxIterations;
   if (limits.maxInputTokens != null) req.maxRunInputTokens = limits.maxInputTokens;
   req.maxRunDurationMs = limits.maxRunDurationMs;
-  // A batch's runs draw on the task's own budget as many at once as on the
-  // batch's, so the task's accounts are shared by as many runs.
-  const sharedBy = Math.max(1, ...extraAccounts.map((a) => a.sharedBy ?? 1));
+  // A batch's runs draw on the task's own budget as many at once as the batch
+  // runs, so the task's accounts are shared by as many runs.
   const spendAccounts = [
     ...budgetSpendAccounts(task, Date.now()).map((a) => (sharedBy > 1 ? { ...a, sharedBy } : a)),
     ...extraAccounts,
@@ -1030,6 +1030,7 @@ export function createDirectExecutor(
     lease?: AdmissionLease,
     runId?: string,
     extraAccounts?: readonly RunSpendAccount[],
+    sharedBy?: number,
   ): Promise<{ run: TaskRun; result: TaskRunResult | null }> {
     const startedAt = new Date().toISOString();
     const limits = limitsOf(task);
@@ -1055,7 +1056,7 @@ export function createDirectExecutor(
     const externalAbort = linkExternalAbort(runController, externalSignal);
 
     try {
-      const request = buildRequest(task, trigger, limits, ctx, input, extraAccounts);
+      const request = buildRequest(task, trigger, limits, ctx, input, extraAccounts, sharedBy);
       const data = await taskFn({
         ...request,
         signal: runController.signal,
