@@ -1,1144 +1,1144 @@
--- table: account_assessment
-ALTER TABLE account_assessment ENABLE ROW LEVEL SECURITY;
-ALTER TABLE account_assessment FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS account_assessment_isolation ON account_assessment;
-DROP POLICY IF EXISTS account_assessment_select ON account_assessment;
-DROP POLICY IF EXISTS account_assessment_insert ON account_assessment;
-DROP POLICY IF EXISTS account_assessment_update ON account_assessment;
-DROP POLICY IF EXISTS account_assessment_delete ON account_assessment;
-CREATE POLICY account_assessment_select ON account_assessment
+-- table: acorn_aspen
+ALTER TABLE acorn_aspen ENABLE ROW LEVEL SECURITY;
+ALTER TABLE acorn_aspen FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS acorn_aspen_isolation ON acorn_aspen;
+DROP POLICY IF EXISTS acorn_aspen_select ON acorn_aspen;
+DROP POLICY IF EXISTS acorn_aspen_insert ON acorn_aspen;
+DROP POLICY IF EXISTS acorn_aspen_update ON acorn_aspen;
+DROP POLICY IF EXISTS acorn_aspen_delete ON acorn_aspen;
+CREATE POLICY acorn_aspen_select ON acorn_aspen
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY account_assessment_insert ON account_assessment
+CREATE POLICY acorn_aspen_insert ON acorn_aspen
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY account_assessment_update ON account_assessment
+CREATE POLICY acorn_aspen_update ON acorn_aspen
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY account_assessment_delete ON account_assessment
+CREATE POLICY acorn_aspen_delete ON acorn_aspen
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: account_config
-ALTER TABLE account_config ENABLE ROW LEVEL SECURITY;
-ALTER TABLE account_config FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS account_config_isolation ON account_config;
-DROP POLICY IF EXISTS account_config_select ON account_config;
-DROP POLICY IF EXISTS account_config_insert ON account_config;
-DROP POLICY IF EXISTS account_config_update ON account_config;
-DROP POLICY IF EXISTS account_config_delete ON account_config;
-CREATE POLICY account_config_select ON account_config
+-- table: acorn_brook
+ALTER TABLE acorn_brook ENABLE ROW LEVEL SECURITY;
+ALTER TABLE acorn_brook FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS acorn_brook_isolation ON acorn_brook;
+DROP POLICY IF EXISTS acorn_brook_select ON acorn_brook;
+DROP POLICY IF EXISTS acorn_brook_insert ON acorn_brook;
+DROP POLICY IF EXISTS acorn_brook_update ON acorn_brook;
+DROP POLICY IF EXISTS acorn_brook_delete ON acorn_brook;
+CREATE POLICY acorn_brook_select ON acorn_brook
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY account_config_insert ON account_config
+CREATE POLICY acorn_brook_insert ON acorn_brook
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY account_config_update ON account_config
+CREATE POLICY acorn_brook_update ON acorn_brook
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY account_config_delete ON account_config
+CREATE POLICY acorn_brook_delete ON acorn_brook
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: artifact_audit
-ALTER TABLE artifact_audit ENABLE ROW LEVEL SECURITY;
-ALTER TABLE artifact_audit FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS artifact_audit_isolation ON artifact_audit;
-DROP POLICY IF EXISTS artifact_audit_select ON artifact_audit;
-DROP POLICY IF EXISTS artifact_audit_insert ON artifact_audit;
-DROP POLICY IF EXISTS artifact_audit_update ON artifact_audit;
-DROP POLICY IF EXISTS artifact_audit_delete ON artifact_audit;
-CREATE POLICY artifact_audit_select ON artifact_audit
+-- table: anchor_badge
+ALTER TABLE anchor_badge ENABLE ROW LEVEL SECURITY;
+ALTER TABLE anchor_badge FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS anchor_badge_isolation ON anchor_badge;
+DROP POLICY IF EXISTS anchor_badge_select ON anchor_badge;
+DROP POLICY IF EXISTS anchor_badge_insert ON anchor_badge;
+DROP POLICY IF EXISTS anchor_badge_update ON anchor_badge;
+DROP POLICY IF EXISTS anchor_badge_delete ON anchor_badge;
+CREATE POLICY anchor_badge_select ON anchor_badge
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY artifact_audit_insert ON artifact_audit
+CREATE POLICY anchor_badge_insert ON anchor_badge
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY artifact_audit_update ON artifact_audit
+CREATE POLICY anchor_badge_update ON anchor_badge
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY artifact_audit_delete ON artifact_audit
+CREATE POLICY anchor_badge_delete ON anchor_badge
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: artifacts
-ALTER TABLE artifacts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE artifacts FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS artifacts_isolation ON artifacts;
-DROP POLICY IF EXISTS artifacts_select ON artifacts;
-DROP POLICY IF EXISTS artifacts_insert ON artifacts;
-DROP POLICY IF EXISTS artifacts_update ON artifacts;
-DROP POLICY IF EXISTS artifacts_delete ON artifacts;
-CREATE POLICY artifacts_select ON artifacts
+-- table: apple
+ALTER TABLE apple ENABLE ROW LEVEL SECURITY;
+ALTER TABLE apple FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS apple_isolation ON apple;
+DROP POLICY IF EXISTS apple_select ON apple;
+DROP POLICY IF EXISTS apple_insert ON apple;
+DROP POLICY IF EXISTS apple_update ON apple;
+DROP POLICY IF EXISTS apple_delete ON apple;
+CREATE POLICY apple_select ON apple
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY artifacts_insert ON artifacts
+CREATE POLICY apple_insert ON apple
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY artifacts_update ON artifacts
+CREATE POLICY apple_update ON apple
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY artifacts_delete ON artifacts
+CREATE POLICY apple_delete ON apple
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: batch
-ALTER TABLE batch ENABLE ROW LEVEL SECURITY;
-ALTER TABLE batch FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS batch_isolation ON batch;
-DROP POLICY IF EXISTS batch_select ON batch;
-DROP POLICY IF EXISTS batch_insert ON batch;
-DROP POLICY IF EXISTS batch_update ON batch;
-DROP POLICY IF EXISTS batch_delete ON batch;
-CREATE POLICY batch_select ON batch
+-- table: barley
+ALTER TABLE barley ENABLE ROW LEVEL SECURITY;
+ALTER TABLE barley FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS barley_isolation ON barley;
+DROP POLICY IF EXISTS barley_select ON barley;
+DROP POLICY IF EXISTS barley_insert ON barley;
+DROP POLICY IF EXISTS barley_update ON barley;
+DROP POLICY IF EXISTS barley_delete ON barley;
+CREATE POLICY barley_select ON barley
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY batch_insert ON batch
+CREATE POLICY barley_insert ON barley
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY batch_update ON batch
+CREATE POLICY barley_update ON barley
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY batch_delete ON batch
+CREATE POLICY barley_delete ON barley
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: board
-ALTER TABLE board ENABLE ROW LEVEL SECURITY;
-ALTER TABLE board FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS board_isolation ON board;
-DROP POLICY IF EXISTS board_select ON board;
-DROP POLICY IF EXISTS board_insert ON board;
-DROP POLICY IF EXISTS board_update ON board;
-DROP POLICY IF EXISTS board_delete ON board;
-CREATE POLICY board_select ON board
+-- table: basil
+ALTER TABLE basil ENABLE ROW LEVEL SECURITY;
+ALTER TABLE basil FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS basil_isolation ON basil;
+DROP POLICY IF EXISTS basil_select ON basil;
+DROP POLICY IF EXISTS basil_insert ON basil;
+DROP POLICY IF EXISTS basil_update ON basil;
+DROP POLICY IF EXISTS basil_delete ON basil;
+CREATE POLICY basil_select ON basil
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY board_insert ON board
+CREATE POLICY basil_insert ON basil
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY board_update ON board
+CREATE POLICY basil_update ON basil
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY board_delete ON board
+CREATE POLICY basil_delete ON basil
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: campaign
-ALTER TABLE campaign ENABLE ROW LEVEL SECURITY;
-ALTER TABLE campaign FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS campaign_isolation ON campaign;
-DROP POLICY IF EXISTS campaign_select ON campaign;
-DROP POLICY IF EXISTS campaign_insert ON campaign;
-DROP POLICY IF EXISTS campaign_update ON campaign;
-DROP POLICY IF EXISTS campaign_delete ON campaign;
-CREATE POLICY campaign_select ON campaign
+-- table: beacon
+ALTER TABLE beacon ENABLE ROW LEVEL SECURITY;
+ALTER TABLE beacon FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS beacon_isolation ON beacon;
+DROP POLICY IF EXISTS beacon_select ON beacon;
+DROP POLICY IF EXISTS beacon_insert ON beacon;
+DROP POLICY IF EXISTS beacon_update ON beacon;
+DROP POLICY IF EXISTS beacon_delete ON beacon;
+CREATE POLICY beacon_select ON beacon
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY campaign_insert ON campaign
+CREATE POLICY beacon_insert ON beacon
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY campaign_update ON campaign
+CREATE POLICY beacon_update ON beacon
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY campaign_delete ON campaign
+CREATE POLICY beacon_delete ON beacon
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: campaign_template_revision
-ALTER TABLE campaign_template_revision ENABLE ROW LEVEL SECURITY;
-ALTER TABLE campaign_template_revision FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS campaign_template_revision_isolation ON campaign_template_revision;
-DROP POLICY IF EXISTS campaign_template_revision_select ON campaign_template_revision;
-DROP POLICY IF EXISTS campaign_template_revision_insert ON campaign_template_revision;
-DROP POLICY IF EXISTS campaign_template_revision_update ON campaign_template_revision;
-DROP POLICY IF EXISTS campaign_template_revision_delete ON campaign_template_revision;
-CREATE POLICY campaign_template_revision_select ON campaign_template_revision
+-- table: beacon_poppy_meadow
+ALTER TABLE beacon_poppy_meadow ENABLE ROW LEVEL SECURITY;
+ALTER TABLE beacon_poppy_meadow FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS beacon_poppy_meadow_isolation ON beacon_poppy_meadow;
+DROP POLICY IF EXISTS beacon_poppy_meadow_select ON beacon_poppy_meadow;
+DROP POLICY IF EXISTS beacon_poppy_meadow_insert ON beacon_poppy_meadow;
+DROP POLICY IF EXISTS beacon_poppy_meadow_update ON beacon_poppy_meadow;
+DROP POLICY IF EXISTS beacon_poppy_meadow_delete ON beacon_poppy_meadow;
+CREATE POLICY beacon_poppy_meadow_select ON beacon_poppy_meadow
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY campaign_template_revision_insert ON campaign_template_revision
+CREATE POLICY beacon_poppy_meadow_insert ON beacon_poppy_meadow
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY campaign_template_revision_update ON campaign_template_revision
+CREATE POLICY beacon_poppy_meadow_update ON beacon_poppy_meadow
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY campaign_template_revision_delete ON campaign_template_revision
+CREATE POLICY beacon_poppy_meadow_delete ON beacon_poppy_meadow
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: campaign_version
-ALTER TABLE campaign_version ENABLE ROW LEVEL SECURITY;
-ALTER TABLE campaign_version FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS campaign_version_isolation ON campaign_version;
-DROP POLICY IF EXISTS campaign_version_select ON campaign_version;
-DROP POLICY IF EXISTS campaign_version_insert ON campaign_version;
-DROP POLICY IF EXISTS campaign_version_update ON campaign_version;
-DROP POLICY IF EXISTS campaign_version_delete ON campaign_version;
-CREATE POLICY campaign_version_select ON campaign_version
+-- table: beacon_ridge
+ALTER TABLE beacon_ridge ENABLE ROW LEVEL SECURITY;
+ALTER TABLE beacon_ridge FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS beacon_ridge_isolation ON beacon_ridge;
+DROP POLICY IF EXISTS beacon_ridge_select ON beacon_ridge;
+DROP POLICY IF EXISTS beacon_ridge_insert ON beacon_ridge;
+DROP POLICY IF EXISTS beacon_ridge_update ON beacon_ridge;
+DROP POLICY IF EXISTS beacon_ridge_delete ON beacon_ridge;
+CREATE POLICY beacon_ridge_select ON beacon_ridge
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY campaign_version_insert ON campaign_version
+CREATE POLICY beacon_ridge_insert ON beacon_ridge
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY campaign_version_update ON campaign_version
+CREATE POLICY beacon_ridge_update ON beacon_ridge
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY campaign_version_delete ON campaign_version
+CREATE POLICY beacon_ridge_delete ON beacon_ridge
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: contact
-ALTER TABLE contact ENABLE ROW LEVEL SECURITY;
-ALTER TABLE contact FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS contact_isolation ON contact;
-DROP POLICY IF EXISTS contact_select ON contact;
-DROP POLICY IF EXISTS contact_insert ON contact;
-DROP POLICY IF EXISTS contact_update ON contact;
-DROP POLICY IF EXISTS contact_delete ON contact;
-CREATE POLICY contact_select ON contact
+-- table: cedar
+ALTER TABLE cedar ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cedar FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS cedar_isolation ON cedar;
+DROP POLICY IF EXISTS cedar_select ON cedar;
+DROP POLICY IF EXISTS cedar_insert ON cedar;
+DROP POLICY IF EXISTS cedar_update ON cedar;
+DROP POLICY IF EXISTS cedar_delete ON cedar;
+CREATE POLICY cedar_select ON cedar
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY contact_insert ON contact
+CREATE POLICY cedar_insert ON cedar
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY contact_update ON contact
+CREATE POLICY cedar_update ON cedar
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY contact_delete ON contact
+CREATE POLICY cedar_delete ON cedar
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: delivery
-ALTER TABLE delivery ENABLE ROW LEVEL SECURITY;
-ALTER TABLE delivery FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS delivery_isolation ON delivery;
-DROP POLICY IF EXISTS delivery_select ON delivery;
-DROP POLICY IF EXISTS delivery_insert ON delivery;
-DROP POLICY IF EXISTS delivery_update ON delivery;
-DROP POLICY IF EXISTS delivery_delete ON delivery;
-CREATE POLICY delivery_select ON delivery
+-- table: clover
+ALTER TABLE clover ENABLE ROW LEVEL SECURITY;
+ALTER TABLE clover FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS clover_isolation ON clover;
+DROP POLICY IF EXISTS clover_select ON clover;
+DROP POLICY IF EXISTS clover_insert ON clover;
+DROP POLICY IF EXISTS clover_update ON clover;
+DROP POLICY IF EXISTS clover_delete ON clover;
+CREATE POLICY clover_select ON clover
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY delivery_insert ON delivery
+CREATE POLICY clover_insert ON clover
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY delivery_update ON delivery
+CREATE POLICY clover_update ON clover
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY delivery_delete ON delivery
+CREATE POLICY clover_delete ON clover
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: domain
-ALTER TABLE domain ENABLE ROW LEVEL SECURITY;
-ALTER TABLE domain FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS domain_isolation ON domain;
-DROP POLICY IF EXISTS domain_select ON domain;
-DROP POLICY IF EXISTS domain_insert ON domain;
-DROP POLICY IF EXISTS domain_update ON domain;
-DROP POLICY IF EXISTS domain_delete ON domain;
-CREATE POLICY domain_select ON domain
+-- table: cobalt
+ALTER TABLE cobalt ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cobalt FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS cobalt_isolation ON cobalt;
+DROP POLICY IF EXISTS cobalt_select ON cobalt;
+DROP POLICY IF EXISTS cobalt_insert ON cobalt;
+DROP POLICY IF EXISTS cobalt_update ON cobalt;
+DROP POLICY IF EXISTS cobalt_delete ON cobalt;
+CREATE POLICY cobalt_select ON cobalt
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY domain_insert ON domain
+CREATE POLICY cobalt_insert ON cobalt
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY domain_update ON domain
+CREATE POLICY cobalt_update ON cobalt
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY domain_delete ON domain
+CREATE POLICY cobalt_delete ON cobalt
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: domain_health_snapshot
-ALTER TABLE domain_health_snapshot ENABLE ROW LEVEL SECURITY;
-ALTER TABLE domain_health_snapshot FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS domain_health_snapshot_isolation ON domain_health_snapshot;
-DROP POLICY IF EXISTS domain_health_snapshot_select ON domain_health_snapshot;
-DROP POLICY IF EXISTS domain_health_snapshot_insert ON domain_health_snapshot;
-DROP POLICY IF EXISTS domain_health_snapshot_update ON domain_health_snapshot;
-DROP POLICY IF EXISTS domain_health_snapshot_delete ON domain_health_snapshot;
-CREATE POLICY domain_health_snapshot_select ON domain_health_snapshot
+-- table: cobalt_fennel_onyx
+ALTER TABLE cobalt_fennel_onyx ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cobalt_fennel_onyx FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS cobalt_fennel_onyx_isolation ON cobalt_fennel_onyx;
+DROP POLICY IF EXISTS cobalt_fennel_onyx_select ON cobalt_fennel_onyx;
+DROP POLICY IF EXISTS cobalt_fennel_onyx_insert ON cobalt_fennel_onyx;
+DROP POLICY IF EXISTS cobalt_fennel_onyx_update ON cobalt_fennel_onyx;
+DROP POLICY IF EXISTS cobalt_fennel_onyx_delete ON cobalt_fennel_onyx;
+CREATE POLICY cobalt_fennel_onyx_select ON cobalt_fennel_onyx
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY domain_health_snapshot_insert ON domain_health_snapshot
+CREATE POLICY cobalt_fennel_onyx_insert ON cobalt_fennel_onyx
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY domain_health_snapshot_update ON domain_health_snapshot
+CREATE POLICY cobalt_fennel_onyx_update ON cobalt_fennel_onyx
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY domain_health_snapshot_delete ON domain_health_snapshot
+CREATE POLICY cobalt_fennel_onyx_delete ON cobalt_fennel_onyx
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: endpoint
-ALTER TABLE endpoint ENABLE ROW LEVEL SECURITY;
-ALTER TABLE endpoint FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS endpoint_isolation ON endpoint;
-DROP POLICY IF EXISTS endpoint_select ON endpoint;
-DROP POLICY IF EXISTS endpoint_insert ON endpoint;
-DROP POLICY IF EXISTS endpoint_update ON endpoint;
-DROP POLICY IF EXISTS endpoint_delete ON endpoint;
-CREATE POLICY endpoint_select ON endpoint
+-- table: coral
+ALTER TABLE coral ENABLE ROW LEVEL SECURITY;
+ALTER TABLE coral FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS coral_isolation ON coral;
+DROP POLICY IF EXISTS coral_select ON coral;
+DROP POLICY IF EXISTS coral_insert ON coral;
+DROP POLICY IF EXISTS coral_update ON coral;
+DROP POLICY IF EXISTS coral_delete ON coral;
+CREATE POLICY coral_select ON coral
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY endpoint_insert ON endpoint
+CREATE POLICY coral_insert ON coral
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY endpoint_update ON endpoint
+CREATE POLICY coral_update ON coral
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY endpoint_delete ON endpoint
+CREATE POLICY coral_delete ON coral
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: endpoint_audit
-ALTER TABLE endpoint_audit ENABLE ROW LEVEL SECURITY;
-ALTER TABLE endpoint_audit FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS endpoint_audit_isolation ON endpoint_audit;
-DROP POLICY IF EXISTS endpoint_audit_select ON endpoint_audit;
-DROP POLICY IF EXISTS endpoint_audit_insert ON endpoint_audit;
-DROP POLICY IF EXISTS endpoint_audit_update ON endpoint_audit;
-DROP POLICY IF EXISTS endpoint_audit_delete ON endpoint_audit;
-CREATE POLICY endpoint_audit_select ON endpoint_audit
+-- table: coral_badge
+ALTER TABLE coral_badge ENABLE ROW LEVEL SECURITY;
+ALTER TABLE coral_badge FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS coral_badge_isolation ON coral_badge;
+DROP POLICY IF EXISTS coral_badge_select ON coral_badge;
+DROP POLICY IF EXISTS coral_badge_insert ON coral_badge;
+DROP POLICY IF EXISTS coral_badge_update ON coral_badge;
+DROP POLICY IF EXISTS coral_badge_delete ON coral_badge;
+CREATE POLICY coral_badge_select ON coral_badge
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY endpoint_audit_insert ON endpoint_audit
+CREATE POLICY coral_badge_insert ON coral_badge
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY endpoint_audit_update ON endpoint_audit
+CREATE POLICY coral_badge_update ON coral_badge
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY endpoint_audit_delete ON endpoint_audit
+CREATE POLICY coral_badge_delete ON coral_badge
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: enrollment
-ALTER TABLE enrollment ENABLE ROW LEVEL SECURITY;
-ALTER TABLE enrollment FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS enrollment_isolation ON enrollment;
-DROP POLICY IF EXISTS enrollment_select ON enrollment;
-DROP POLICY IF EXISTS enrollment_insert ON enrollment;
-DROP POLICY IF EXISTS enrollment_update ON enrollment;
-DROP POLICY IF EXISTS enrollment_delete ON enrollment;
-CREATE POLICY enrollment_select ON enrollment
+-- table: cotton
+ALTER TABLE cotton ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cotton FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS cotton_isolation ON cotton;
+DROP POLICY IF EXISTS cotton_select ON cotton;
+DROP POLICY IF EXISTS cotton_insert ON cotton;
+DROP POLICY IF EXISTS cotton_update ON cotton;
+DROP POLICY IF EXISTS cotton_delete ON cotton;
+CREATE POLICY cotton_select ON cotton
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY enrollment_insert ON enrollment
+CREATE POLICY cotton_insert ON cotton
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY enrollment_update ON enrollment
+CREATE POLICY cotton_update ON cotton
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY enrollment_delete ON enrollment
+CREATE POLICY cotton_delete ON cotton
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: exclusion
-ALTER TABLE exclusion ENABLE ROW LEVEL SECURITY;
-ALTER TABLE exclusion FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS exclusion_isolation ON exclusion;
-DROP POLICY IF EXISTS exclusion_select ON exclusion;
-DROP POLICY IF EXISTS exclusion_insert ON exclusion;
-DROP POLICY IF EXISTS exclusion_update ON exclusion;
-DROP POLICY IF EXISTS exclusion_delete ON exclusion;
-CREATE POLICY exclusion_select ON exclusion
+-- table: dahlia
+ALTER TABLE dahlia ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dahlia FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS dahlia_isolation ON dahlia;
+DROP POLICY IF EXISTS dahlia_select ON dahlia;
+DROP POLICY IF EXISTS dahlia_insert ON dahlia;
+DROP POLICY IF EXISTS dahlia_update ON dahlia;
+DROP POLICY IF EXISTS dahlia_delete ON dahlia;
+CREATE POLICY dahlia_select ON dahlia
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY exclusion_insert ON exclusion
+CREATE POLICY dahlia_insert ON dahlia
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY exclusion_update ON exclusion
+CREATE POLICY dahlia_update ON dahlia
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY exclusion_delete ON exclusion
+CREATE POLICY dahlia_delete ON dahlia
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: external_ref
-ALTER TABLE external_ref ENABLE ROW LEVEL SECURITY;
-ALTER TABLE external_ref FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS external_ref_isolation ON external_ref;
-DROP POLICY IF EXISTS external_ref_select ON external_ref;
-DROP POLICY IF EXISTS external_ref_insert ON external_ref;
-DROP POLICY IF EXISTS external_ref_update ON external_ref;
-DROP POLICY IF EXISTS external_ref_delete ON external_ref;
-CREATE POLICY external_ref_select ON external_ref
+-- table: delta_maple
+ALTER TABLE delta_maple ENABLE ROW LEVEL SECURITY;
+ALTER TABLE delta_maple FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS delta_maple_isolation ON delta_maple;
+DROP POLICY IF EXISTS delta_maple_select ON delta_maple;
+DROP POLICY IF EXISTS delta_maple_insert ON delta_maple;
+DROP POLICY IF EXISTS delta_maple_update ON delta_maple;
+DROP POLICY IF EXISTS delta_maple_delete ON delta_maple;
+CREATE POLICY delta_maple_select ON delta_maple
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY external_ref_insert ON external_ref
+CREATE POLICY delta_maple_insert ON delta_maple
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY external_ref_update ON external_ref
+CREATE POLICY delta_maple_update ON delta_maple
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY external_ref_delete ON external_ref
+CREATE POLICY delta_maple_delete ON delta_maple
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: field_def
-ALTER TABLE field_def ENABLE ROW LEVEL SECURITY;
-ALTER TABLE field_def FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS field_def_isolation ON field_def;
-DROP POLICY IF EXISTS field_def_select ON field_def;
-DROP POLICY IF EXISTS field_def_insert ON field_def;
-DROP POLICY IF EXISTS field_def_update ON field_def;
-DROP POLICY IF EXISTS field_def_delete ON field_def;
-CREATE POLICY field_def_select ON field_def
+-- table: dune_cinder
+ALTER TABLE dune_cinder ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dune_cinder FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS dune_cinder_isolation ON dune_cinder;
+DROP POLICY IF EXISTS dune_cinder_select ON dune_cinder;
+DROP POLICY IF EXISTS dune_cinder_insert ON dune_cinder;
+DROP POLICY IF EXISTS dune_cinder_update ON dune_cinder;
+DROP POLICY IF EXISTS dune_cinder_delete ON dune_cinder;
+CREATE POLICY dune_cinder_select ON dune_cinder
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY field_def_insert ON field_def
+CREATE POLICY dune_cinder_insert ON dune_cinder
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY field_def_update ON field_def
+CREATE POLICY dune_cinder_update ON dune_cinder
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY field_def_delete ON field_def
+CREATE POLICY dune_cinder_delete ON dune_cinder
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: inbox
-ALTER TABLE inbox ENABLE ROW LEVEL SECURITY;
-ALTER TABLE inbox FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS inbox_isolation ON inbox;
-DROP POLICY IF EXISTS inbox_select ON inbox;
-DROP POLICY IF EXISTS inbox_insert ON inbox;
-DROP POLICY IF EXISTS inbox_update ON inbox;
-DROP POLICY IF EXISTS inbox_delete ON inbox;
-CREATE POLICY inbox_select ON inbox
+-- table: flint
+ALTER TABLE flint ENABLE ROW LEVEL SECURITY;
+ALTER TABLE flint FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS flint_isolation ON flint;
+DROP POLICY IF EXISTS flint_select ON flint;
+DROP POLICY IF EXISTS flint_insert ON flint;
+DROP POLICY IF EXISTS flint_update ON flint;
+DROP POLICY IF EXISTS flint_delete ON flint;
+CREATE POLICY flint_select ON flint
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY inbox_insert ON inbox
+CREATE POLICY flint_insert ON flint
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY inbox_update ON inbox
+CREATE POLICY flint_update ON flint
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY inbox_delete ON inbox
+CREATE POLICY flint_delete ON flint
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: inbox_change
-ALTER TABLE inbox_change ENABLE ROW LEVEL SECURITY;
-ALTER TABLE inbox_change FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS inbox_change_isolation ON inbox_change;
-DROP POLICY IF EXISTS inbox_change_select ON inbox_change;
-DROP POLICY IF EXISTS inbox_change_insert ON inbox_change;
-DROP POLICY IF EXISTS inbox_change_update ON inbox_change;
-DROP POLICY IF EXISTS inbox_change_delete ON inbox_change;
-CREATE POLICY inbox_change_select ON inbox_change
+-- table: flint_birch
+ALTER TABLE flint_birch ENABLE ROW LEVEL SECURITY;
+ALTER TABLE flint_birch FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS flint_birch_isolation ON flint_birch;
+DROP POLICY IF EXISTS flint_birch_select ON flint_birch;
+DROP POLICY IF EXISTS flint_birch_insert ON flint_birch;
+DROP POLICY IF EXISTS flint_birch_update ON flint_birch;
+DROP POLICY IF EXISTS flint_birch_delete ON flint_birch;
+CREATE POLICY flint_birch_select ON flint_birch
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY inbox_change_insert ON inbox_change
+CREATE POLICY flint_birch_insert ON flint_birch
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY inbox_change_update ON inbox_change
+CREATE POLICY flint_birch_update ON flint_birch
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY inbox_change_delete ON inbox_change
+CREATE POLICY flint_birch_delete ON flint_birch
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: inbox_tag
-ALTER TABLE inbox_tag ENABLE ROW LEVEL SECURITY;
-ALTER TABLE inbox_tag FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS inbox_tag_isolation ON inbox_tag;
-DROP POLICY IF EXISTS inbox_tag_select ON inbox_tag;
-DROP POLICY IF EXISTS inbox_tag_insert ON inbox_tag;
-DROP POLICY IF EXISTS inbox_tag_update ON inbox_tag;
-DROP POLICY IF EXISTS inbox_tag_delete ON inbox_tag;
-CREATE POLICY inbox_tag_select ON inbox_tag
+-- table: flint_pepper
+ALTER TABLE flint_pepper ENABLE ROW LEVEL SECURITY;
+ALTER TABLE flint_pepper FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS flint_pepper_isolation ON flint_pepper;
+DROP POLICY IF EXISTS flint_pepper_select ON flint_pepper;
+DROP POLICY IF EXISTS flint_pepper_insert ON flint_pepper;
+DROP POLICY IF EXISTS flint_pepper_update ON flint_pepper;
+DROP POLICY IF EXISTS flint_pepper_delete ON flint_pepper;
+CREATE POLICY flint_pepper_select ON flint_pepper
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY inbox_tag_insert ON inbox_tag
+CREATE POLICY flint_pepper_insert ON flint_pepper
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY inbox_tag_update ON inbox_tag
+CREATE POLICY flint_pepper_update ON flint_pepper
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY inbox_tag_delete ON inbox_tag
+CREATE POLICY flint_pepper_delete ON flint_pepper
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: interaction
-ALTER TABLE interaction ENABLE ROW LEVEL SECURITY;
-ALTER TABLE interaction FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS interaction_isolation ON interaction;
-DROP POLICY IF EXISTS interaction_select ON interaction;
-DROP POLICY IF EXISTS interaction_insert ON interaction;
-DROP POLICY IF EXISTS interaction_update ON interaction;
-DROP POLICY IF EXISTS interaction_delete ON interaction;
-CREATE POLICY interaction_select ON interaction
+-- table: garnet
+ALTER TABLE garnet ENABLE ROW LEVEL SECURITY;
+ALTER TABLE garnet FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS garnet_isolation ON garnet;
+DROP POLICY IF EXISTS garnet_select ON garnet;
+DROP POLICY IF EXISTS garnet_insert ON garnet;
+DROP POLICY IF EXISTS garnet_update ON garnet;
+DROP POLICY IF EXISTS garnet_delete ON garnet;
+CREATE POLICY garnet_select ON garnet
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY interaction_insert ON interaction
+CREATE POLICY garnet_insert ON garnet
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY interaction_update ON interaction
+CREATE POLICY garnet_update ON garnet
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY interaction_delete ON interaction
+CREATE POLICY garnet_delete ON garnet
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: lead_signal
-ALTER TABLE lead_signal ENABLE ROW LEVEL SECURITY;
-ALTER TABLE lead_signal FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS lead_signal_isolation ON lead_signal;
-DROP POLICY IF EXISTS lead_signal_select ON lead_signal;
-DROP POLICY IF EXISTS lead_signal_insert ON lead_signal;
-DROP POLICY IF EXISTS lead_signal_update ON lead_signal;
-DROP POLICY IF EXISTS lead_signal_delete ON lead_signal;
-CREATE POLICY lead_signal_select ON lead_signal
+-- table: ginger_olive
+ALTER TABLE ginger_olive ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ginger_olive FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ginger_olive_isolation ON ginger_olive;
+DROP POLICY IF EXISTS ginger_olive_select ON ginger_olive;
+DROP POLICY IF EXISTS ginger_olive_insert ON ginger_olive;
+DROP POLICY IF EXISTS ginger_olive_update ON ginger_olive;
+DROP POLICY IF EXISTS ginger_olive_delete ON ginger_olive;
+CREATE POLICY ginger_olive_select ON ginger_olive
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY lead_signal_insert ON lead_signal
+CREATE POLICY ginger_olive_insert ON ginger_olive
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY lead_signal_update ON lead_signal
+CREATE POLICY ginger_olive_update ON ginger_olive
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY lead_signal_delete ON lead_signal
+CREATE POLICY ginger_olive_delete ON ginger_olive
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: lead_view
-ALTER TABLE lead_view ENABLE ROW LEVEL SECURITY;
-ALTER TABLE lead_view FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS lead_view_isolation ON lead_view;
-DROP POLICY IF EXISTS lead_view_select ON lead_view;
-DROP POLICY IF EXISTS lead_view_insert ON lead_view;
-DROP POLICY IF EXISTS lead_view_update ON lead_view;
-DROP POLICY IF EXISTS lead_view_delete ON lead_view;
-CREATE POLICY lead_view_select ON lead_view
+-- table: ginger_sage
+ALTER TABLE ginger_sage ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ginger_sage FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ginger_sage_isolation ON ginger_sage;
+DROP POLICY IF EXISTS ginger_sage_select ON ginger_sage;
+DROP POLICY IF EXISTS ginger_sage_insert ON ginger_sage;
+DROP POLICY IF EXISTS ginger_sage_update ON ginger_sage;
+DROP POLICY IF EXISTS ginger_sage_delete ON ginger_sage;
+CREATE POLICY ginger_sage_select ON ginger_sage
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY lead_view_insert ON lead_view
+CREATE POLICY ginger_sage_insert ON ginger_sage
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY lead_view_update ON lead_view
+CREATE POLICY ginger_sage_update ON ginger_sage
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY lead_view_delete ON lead_view
+CREATE POLICY ginger_sage_delete ON ginger_sage
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: memory
-ALTER TABLE memory ENABLE ROW LEVEL SECURITY;
-ALTER TABLE memory FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS memory_isolation ON memory;
-DROP POLICY IF EXISTS memory_select ON memory;
-DROP POLICY IF EXISTS memory_insert ON memory;
-DROP POLICY IF EXISTS memory_update ON memory;
-DROP POLICY IF EXISTS memory_delete ON memory;
-CREATE POLICY memory_select ON memory
+-- table: gull
+ALTER TABLE gull ENABLE ROW LEVEL SECURITY;
+ALTER TABLE gull FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS gull_isolation ON gull;
+DROP POLICY IF EXISTS gull_select ON gull;
+DROP POLICY IF EXISTS gull_insert ON gull;
+DROP POLICY IF EXISTS gull_update ON gull;
+DROP POLICY IF EXISTS gull_delete ON gull;
+CREATE POLICY gull_select ON gull
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY memory_insert ON memory
+CREATE POLICY gull_insert ON gull
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY memory_update ON memory
+CREATE POLICY gull_update ON gull
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY memory_delete ON memory
+CREATE POLICY gull_delete ON gull
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: message
-ALTER TABLE message ENABLE ROW LEVEL SECURITY;
-ALTER TABLE message FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS message_isolation ON message;
-DROP POLICY IF EXISTS message_select ON message;
-DROP POLICY IF EXISTS message_insert ON message;
-DROP POLICY IF EXISTS message_update ON message;
-DROP POLICY IF EXISTS message_delete ON message;
-CREATE POLICY message_select ON message
+-- table: harbor
+ALTER TABLE harbor ENABLE ROW LEVEL SECURITY;
+ALTER TABLE harbor FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS harbor_isolation ON harbor;
+DROP POLICY IF EXISTS harbor_select ON harbor;
+DROP POLICY IF EXISTS harbor_insert ON harbor;
+DROP POLICY IF EXISTS harbor_update ON harbor;
+DROP POLICY IF EXISTS harbor_delete ON harbor;
+CREATE POLICY harbor_select ON harbor
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY message_insert ON message
+CREATE POLICY harbor_insert ON harbor
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY message_update ON message
+CREATE POLICY harbor_update ON harbor
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY message_delete ON message
+CREATE POLICY harbor_delete ON harbor
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: message_event
-ALTER TABLE message_event ENABLE ROW LEVEL SECURITY;
-ALTER TABLE message_event FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS message_event_isolation ON message_event;
-DROP POLICY IF EXISTS message_event_select ON message_event;
-DROP POLICY IF EXISTS message_event_insert ON message_event;
-DROP POLICY IF EXISTS message_event_update ON message_event;
-DROP POLICY IF EXISTS message_event_delete ON message_event;
-CREATE POLICY message_event_select ON message_event
+-- table: harbor_crane
+ALTER TABLE harbor_crane ENABLE ROW LEVEL SECURITY;
+ALTER TABLE harbor_crane FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS harbor_crane_isolation ON harbor_crane;
+DROP POLICY IF EXISTS harbor_crane_select ON harbor_crane;
+DROP POLICY IF EXISTS harbor_crane_insert ON harbor_crane;
+DROP POLICY IF EXISTS harbor_crane_update ON harbor_crane;
+DROP POLICY IF EXISTS harbor_crane_delete ON harbor_crane;
+CREATE POLICY harbor_crane_select ON harbor_crane
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY message_event_insert ON message_event
+CREATE POLICY harbor_crane_insert ON harbor_crane
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY message_event_update ON message_event
+CREATE POLICY harbor_crane_update ON harbor_crane
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY message_event_delete ON message_event
+CREATE POLICY harbor_crane_delete ON harbor_crane
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: notification_outbox
-ALTER TABLE notification_outbox ENABLE ROW LEVEL SECURITY;
-ALTER TABLE notification_outbox FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS notification_outbox_isolation ON notification_outbox;
-DROP POLICY IF EXISTS notification_outbox_select ON notification_outbox;
-DROP POLICY IF EXISTS notification_outbox_insert ON notification_outbox;
-DROP POLICY IF EXISTS notification_outbox_update ON notification_outbox;
-DROP POLICY IF EXISTS notification_outbox_delete ON notification_outbox;
-CREATE POLICY notification_outbox_select ON notification_outbox
+-- table: heron_juniper
+ALTER TABLE heron_juniper ENABLE ROW LEVEL SECURITY;
+ALTER TABLE heron_juniper FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS heron_juniper_isolation ON heron_juniper;
+DROP POLICY IF EXISTS heron_juniper_select ON heron_juniper;
+DROP POLICY IF EXISTS heron_juniper_insert ON heron_juniper;
+DROP POLICY IF EXISTS heron_juniper_update ON heron_juniper;
+DROP POLICY IF EXISTS heron_juniper_delete ON heron_juniper;
+CREATE POLICY heron_juniper_select ON heron_juniper
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY notification_outbox_insert ON notification_outbox
+CREATE POLICY heron_juniper_insert ON heron_juniper
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY notification_outbox_update ON notification_outbox
+CREATE POLICY heron_juniper_update ON heron_juniper
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY notification_outbox_delete ON notification_outbox
+CREATE POLICY heron_juniper_delete ON heron_juniper
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: notification_outbox_state
-ALTER TABLE notification_outbox_state ENABLE ROW LEVEL SECURITY;
-ALTER TABLE notification_outbox_state FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS notification_outbox_state_isolation ON notification_outbox_state;
-DROP POLICY IF EXISTS notification_outbox_state_select ON notification_outbox_state;
-DROP POLICY IF EXISTS notification_outbox_state_insert ON notification_outbox_state;
-DROP POLICY IF EXISTS notification_outbox_state_update ON notification_outbox_state;
-DROP POLICY IF EXISTS notification_outbox_state_delete ON notification_outbox_state;
-CREATE POLICY notification_outbox_state_select ON notification_outbox_state
+-- table: heron_juniper_otter
+ALTER TABLE heron_juniper_otter ENABLE ROW LEVEL SECURITY;
+ALTER TABLE heron_juniper_otter FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS heron_juniper_otter_isolation ON heron_juniper_otter;
+DROP POLICY IF EXISTS heron_juniper_otter_select ON heron_juniper_otter;
+DROP POLICY IF EXISTS heron_juniper_otter_insert ON heron_juniper_otter;
+DROP POLICY IF EXISTS heron_juniper_otter_update ON heron_juniper_otter;
+DROP POLICY IF EXISTS heron_juniper_otter_delete ON heron_juniper_otter;
+CREATE POLICY heron_juniper_otter_select ON heron_juniper_otter
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY notification_outbox_state_insert ON notification_outbox_state
+CREATE POLICY heron_juniper_otter_insert ON heron_juniper_otter
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY notification_outbox_state_update ON notification_outbox_state
+CREATE POLICY heron_juniper_otter_update ON heron_juniper_otter
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY notification_outbox_state_delete ON notification_outbox_state
+CREATE POLICY heron_juniper_otter_delete ON heron_juniper_otter
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: opportunity
-ALTER TABLE opportunity ENABLE ROW LEVEL SECURITY;
-ALTER TABLE opportunity FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS opportunity_isolation ON opportunity;
-DROP POLICY IF EXISTS opportunity_select ON opportunity;
-DROP POLICY IF EXISTS opportunity_insert ON opportunity;
-DROP POLICY IF EXISTS opportunity_update ON opportunity;
-DROP POLICY IF EXISTS opportunity_delete ON opportunity;
-CREATE POLICY opportunity_select ON opportunity
+-- table: iris
+ALTER TABLE iris ENABLE ROW LEVEL SECURITY;
+ALTER TABLE iris FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS iris_isolation ON iris;
+DROP POLICY IF EXISTS iris_select ON iris;
+DROP POLICY IF EXISTS iris_insert ON iris;
+DROP POLICY IF EXISTS iris_update ON iris;
+DROP POLICY IF EXISTS iris_delete ON iris;
+CREATE POLICY iris_select ON iris
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY opportunity_insert ON opportunity
+CREATE POLICY iris_insert ON iris
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY opportunity_update ON opportunity
+CREATE POLICY iris_update ON iris
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY opportunity_delete ON opportunity
+CREATE POLICY iris_delete ON iris
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: organization
-ALTER TABLE organization ENABLE ROW LEVEL SECURITY;
-ALTER TABLE organization FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS organization_isolation ON organization;
-DROP POLICY IF EXISTS organization_select ON organization;
-DROP POLICY IF EXISTS organization_insert ON organization;
-DROP POLICY IF EXISTS organization_update ON organization;
-DROP POLICY IF EXISTS organization_delete ON organization;
-CREATE POLICY organization_select ON organization
+-- table: jasper
+ALTER TABLE jasper ENABLE ROW LEVEL SECURITY;
+ALTER TABLE jasper FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS jasper_isolation ON jasper;
+DROP POLICY IF EXISTS jasper_select ON jasper;
+DROP POLICY IF EXISTS jasper_insert ON jasper;
+DROP POLICY IF EXISTS jasper_update ON jasper;
+DROP POLICY IF EXISTS jasper_delete ON jasper;
+CREATE POLICY jasper_select ON jasper
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY organization_insert ON organization
+CREATE POLICY jasper_insert ON jasper
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY organization_update ON organization
+CREATE POLICY jasper_update ON jasper
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY organization_delete ON organization
+CREATE POLICY jasper_delete ON jasper
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: organization_edge
-ALTER TABLE organization_edge ENABLE ROW LEVEL SECURITY;
-ALTER TABLE organization_edge FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS organization_edge_isolation ON organization_edge;
-DROP POLICY IF EXISTS organization_edge_select ON organization_edge;
-DROP POLICY IF EXISTS organization_edge_insert ON organization_edge;
-DROP POLICY IF EXISTS organization_edge_update ON organization_edge;
-DROP POLICY IF EXISTS organization_edge_delete ON organization_edge;
-CREATE POLICY organization_edge_select ON organization_edge
+-- table: jasper_comet
+ALTER TABLE jasper_comet ENABLE ROW LEVEL SECURITY;
+ALTER TABLE jasper_comet FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS jasper_comet_isolation ON jasper_comet;
+DROP POLICY IF EXISTS jasper_comet_select ON jasper_comet;
+DROP POLICY IF EXISTS jasper_comet_insert ON jasper_comet;
+DROP POLICY IF EXISTS jasper_comet_update ON jasper_comet;
+DROP POLICY IF EXISTS jasper_comet_delete ON jasper_comet;
+CREATE POLICY jasper_comet_select ON jasper_comet
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY organization_edge_insert ON organization_edge
+CREATE POLICY jasper_comet_insert ON jasper_comet
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY organization_edge_update ON organization_edge
+CREATE POLICY jasper_comet_update ON jasper_comet
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY organization_edge_delete ON organization_edge
+CREATE POLICY jasper_comet_delete ON jasper_comet
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: people_audit
-ALTER TABLE people_audit ENABLE ROW LEVEL SECURITY;
-ALTER TABLE people_audit FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS people_audit_isolation ON people_audit;
-DROP POLICY IF EXISTS people_audit_select ON people_audit;
-DROP POLICY IF EXISTS people_audit_insert ON people_audit;
-DROP POLICY IF EXISTS people_audit_update ON people_audit;
-DROP POLICY IF EXISTS people_audit_delete ON people_audit;
-CREATE POLICY people_audit_select ON people_audit
+-- table: kelp_badge
+ALTER TABLE kelp_badge ENABLE ROW LEVEL SECURITY;
+ALTER TABLE kelp_badge FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS kelp_badge_isolation ON kelp_badge;
+DROP POLICY IF EXISTS kelp_badge_select ON kelp_badge;
+DROP POLICY IF EXISTS kelp_badge_insert ON kelp_badge;
+DROP POLICY IF EXISTS kelp_badge_update ON kelp_badge;
+DROP POLICY IF EXISTS kelp_badge_delete ON kelp_badge;
+CREATE POLICY kelp_badge_select ON kelp_badge
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY people_audit_insert ON people_audit
+CREATE POLICY kelp_badge_insert ON kelp_badge
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY people_audit_update ON people_audit
+CREATE POLICY kelp_badge_update ON kelp_badge
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY people_audit_delete ON people_audit
+CREATE POLICY kelp_badge_delete ON kelp_badge
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: pipeline_stage
-ALTER TABLE pipeline_stage ENABLE ROW LEVEL SECURITY;
-ALTER TABLE pipeline_stage FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS pipeline_stage_isolation ON pipeline_stage;
-DROP POLICY IF EXISTS pipeline_stage_select ON pipeline_stage;
-DROP POLICY IF EXISTS pipeline_stage_insert ON pipeline_stage;
-DROP POLICY IF EXISTS pipeline_stage_update ON pipeline_stage;
-DROP POLICY IF EXISTS pipeline_stage_delete ON pipeline_stage;
-CREATE POLICY pipeline_stage_select ON pipeline_stage
+-- table: lagoon_opal
+ALTER TABLE lagoon_opal ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lagoon_opal FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lagoon_opal_isolation ON lagoon_opal;
+DROP POLICY IF EXISTS lagoon_opal_select ON lagoon_opal;
+DROP POLICY IF EXISTS lagoon_opal_insert ON lagoon_opal;
+DROP POLICY IF EXISTS lagoon_opal_update ON lagoon_opal;
+DROP POLICY IF EXISTS lagoon_opal_delete ON lagoon_opal;
+CREATE POLICY lagoon_opal_select ON lagoon_opal
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY pipeline_stage_insert ON pipeline_stage
+CREATE POLICY lagoon_opal_insert ON lagoon_opal
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY pipeline_stage_update ON pipeline_stage
+CREATE POLICY lagoon_opal_update ON lagoon_opal
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY pipeline_stage_delete ON pipeline_stage
+CREATE POLICY lagoon_opal_delete ON lagoon_opal
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: proof_point
-ALTER TABLE proof_point ENABLE ROW LEVEL SECURITY;
-ALTER TABLE proof_point FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS proof_point_isolation ON proof_point;
-DROP POLICY IF EXISTS proof_point_select ON proof_point;
-DROP POLICY IF EXISTS proof_point_insert ON proof_point;
-DROP POLICY IF EXISTS proof_point_update ON proof_point;
-DROP POLICY IF EXISTS proof_point_delete ON proof_point;
-CREATE POLICY proof_point_select ON proof_point
+-- table: lemon_larch
+ALTER TABLE lemon_larch ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lemon_larch FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lemon_larch_isolation ON lemon_larch;
+DROP POLICY IF EXISTS lemon_larch_select ON lemon_larch;
+DROP POLICY IF EXISTS lemon_larch_insert ON lemon_larch;
+DROP POLICY IF EXISTS lemon_larch_update ON lemon_larch;
+DROP POLICY IF EXISTS lemon_larch_delete ON lemon_larch;
+CREATE POLICY lemon_larch_select ON lemon_larch
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY proof_point_insert ON proof_point
+CREATE POLICY lemon_larch_insert ON lemon_larch
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY proof_point_update ON proof_point
+CREATE POLICY lemon_larch_update ON lemon_larch
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY proof_point_delete ON proof_point
+CREATE POLICY lemon_larch_delete ON lemon_larch
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: provider_order
-ALTER TABLE provider_order ENABLE ROW LEVEL SECURITY;
-ALTER TABLE provider_order FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS provider_order_isolation ON provider_order;
-DROP POLICY IF EXISTS provider_order_select ON provider_order;
-DROP POLICY IF EXISTS provider_order_insert ON provider_order;
-DROP POLICY IF EXISTS provider_order_update ON provider_order;
-DROP POLICY IF EXISTS provider_order_delete ON provider_order;
-CREATE POLICY provider_order_select ON provider_order
+-- table: linden_ivory
+ALTER TABLE linden_ivory ENABLE ROW LEVEL SECURITY;
+ALTER TABLE linden_ivory FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS linden_ivory_isolation ON linden_ivory;
+DROP POLICY IF EXISTS linden_ivory_select ON linden_ivory;
+DROP POLICY IF EXISTS linden_ivory_insert ON linden_ivory;
+DROP POLICY IF EXISTS linden_ivory_update ON linden_ivory;
+DROP POLICY IF EXISTS linden_ivory_delete ON linden_ivory;
+CREATE POLICY linden_ivory_select ON linden_ivory
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY provider_order_insert ON provider_order
+CREATE POLICY linden_ivory_insert ON linden_ivory
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY provider_order_update ON provider_order
+CREATE POLICY linden_ivory_update ON linden_ivory
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY provider_order_delete ON provider_order
+CREATE POLICY linden_ivory_delete ON linden_ivory
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: provider_scope
-ALTER TABLE provider_scope ENABLE ROW LEVEL SECURITY;
-ALTER TABLE provider_scope FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS provider_scope_isolation ON provider_scope;
-DROP POLICY IF EXISTS provider_scope_select ON provider_scope;
-DROP POLICY IF EXISTS provider_scope_insert ON provider_scope;
-DROP POLICY IF EXISTS provider_scope_update ON provider_scope;
-DROP POLICY IF EXISTS provider_scope_delete ON provider_scope;
-CREATE POLICY provider_scope_select ON provider_scope
+-- table: linden_moss
+ALTER TABLE linden_moss ENABLE ROW LEVEL SECURITY;
+ALTER TABLE linden_moss FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS linden_moss_isolation ON linden_moss;
+DROP POLICY IF EXISTS linden_moss_select ON linden_moss;
+DROP POLICY IF EXISTS linden_moss_insert ON linden_moss;
+DROP POLICY IF EXISTS linden_moss_update ON linden_moss;
+DROP POLICY IF EXISTS linden_moss_delete ON linden_moss;
+CREATE POLICY linden_moss_select ON linden_moss
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY provider_scope_insert ON provider_scope
+CREATE POLICY linden_moss_insert ON linden_moss
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY provider_scope_update ON provider_scope
+CREATE POLICY linden_moss_update ON linden_moss
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY provider_scope_delete ON provider_scope
+CREATE POLICY linden_moss_delete ON linden_moss
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: saved_query
-ALTER TABLE saved_query ENABLE ROW LEVEL SECURITY;
-ALTER TABLE saved_query FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS saved_query_isolation ON saved_query;
-DROP POLICY IF EXISTS saved_query_select ON saved_query;
-DROP POLICY IF EXISTS saved_query_insert ON saved_query;
-DROP POLICY IF EXISTS saved_query_update ON saved_query;
-DROP POLICY IF EXISTS saved_query_delete ON saved_query;
-CREATE POLICY saved_query_select ON saved_query
+-- table: mesa_lotus
+ALTER TABLE mesa_lotus ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mesa_lotus FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS mesa_lotus_isolation ON mesa_lotus;
+DROP POLICY IF EXISTS mesa_lotus_select ON mesa_lotus;
+DROP POLICY IF EXISTS mesa_lotus_insert ON mesa_lotus;
+DROP POLICY IF EXISTS mesa_lotus_update ON mesa_lotus;
+DROP POLICY IF EXISTS mesa_lotus_delete ON mesa_lotus;
+CREATE POLICY mesa_lotus_select ON mesa_lotus
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY saved_query_insert ON saved_query
+CREATE POLICY mesa_lotus_insert ON mesa_lotus
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY saved_query_update ON saved_query
+CREATE POLICY mesa_lotus_update ON mesa_lotus
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY saved_query_delete ON saved_query
+CREATE POLICY mesa_lotus_delete ON mesa_lotus
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: send_request
-ALTER TABLE send_request ENABLE ROW LEVEL SECURITY;
-ALTER TABLE send_request FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS send_request_isolation ON send_request;
-DROP POLICY IF EXISTS send_request_select ON send_request;
-DROP POLICY IF EXISTS send_request_insert ON send_request;
-DROP POLICY IF EXISTS send_request_update ON send_request;
-DROP POLICY IF EXISTS send_request_delete ON send_request;
-CREATE POLICY send_request_select ON send_request
+-- table: nutmeg_marble
+ALTER TABLE nutmeg_marble ENABLE ROW LEVEL SECURITY;
+ALTER TABLE nutmeg_marble FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS nutmeg_marble_isolation ON nutmeg_marble;
+DROP POLICY IF EXISTS nutmeg_marble_select ON nutmeg_marble;
+DROP POLICY IF EXISTS nutmeg_marble_insert ON nutmeg_marble;
+DROP POLICY IF EXISTS nutmeg_marble_update ON nutmeg_marble;
+DROP POLICY IF EXISTS nutmeg_marble_delete ON nutmeg_marble;
+CREATE POLICY nutmeg_marble_select ON nutmeg_marble
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY send_request_insert ON send_request
+CREATE POLICY nutmeg_marble_insert ON nutmeg_marble
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY send_request_update ON send_request
+CREATE POLICY nutmeg_marble_update ON nutmeg_marble
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY send_request_delete ON send_request
+CREATE POLICY nutmeg_marble_delete ON nutmeg_marble
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: sender_app_trust
-ALTER TABLE sender_app_trust ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sender_app_trust FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS sender_app_trust_isolation ON sender_app_trust;
-DROP POLICY IF EXISTS sender_app_trust_select ON sender_app_trust;
-DROP POLICY IF EXISTS sender_app_trust_insert ON sender_app_trust;
-DROP POLICY IF EXISTS sender_app_trust_update ON sender_app_trust;
-DROP POLICY IF EXISTS sender_app_trust_delete ON sender_app_trust;
-CREATE POLICY sender_app_trust_select ON sender_app_trust
+-- table: oak_amber_raven
+ALTER TABLE oak_amber_raven ENABLE ROW LEVEL SECURITY;
+ALTER TABLE oak_amber_raven FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS oak_amber_raven_isolation ON oak_amber_raven;
+DROP POLICY IF EXISTS oak_amber_raven_select ON oak_amber_raven;
+DROP POLICY IF EXISTS oak_amber_raven_insert ON oak_amber_raven;
+DROP POLICY IF EXISTS oak_amber_raven_update ON oak_amber_raven;
+DROP POLICY IF EXISTS oak_amber_raven_delete ON oak_amber_raven;
+CREATE POLICY oak_amber_raven_select ON oak_amber_raven
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY sender_app_trust_insert ON sender_app_trust
+CREATE POLICY oak_amber_raven_insert ON oak_amber_raven
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY sender_app_trust_update ON sender_app_trust
+CREATE POLICY oak_amber_raven_update ON oak_amber_raven
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY sender_app_trust_delete ON sender_app_trust
+CREATE POLICY oak_amber_raven_delete ON oak_amber_raven
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: sender_connection
-ALTER TABLE sender_connection ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sender_connection FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS sender_connection_isolation ON sender_connection;
-DROP POLICY IF EXISTS sender_connection_select ON sender_connection;
-DROP POLICY IF EXISTS sender_connection_insert ON sender_connection;
-DROP POLICY IF EXISTS sender_connection_update ON sender_connection;
-DROP POLICY IF EXISTS sender_connection_delete ON sender_connection;
-CREATE POLICY sender_connection_select ON sender_connection
+-- table: oak_canyon
+ALTER TABLE oak_canyon ENABLE ROW LEVEL SECURITY;
+ALTER TABLE oak_canyon FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS oak_canyon_isolation ON oak_canyon;
+DROP POLICY IF EXISTS oak_canyon_select ON oak_canyon;
+DROP POLICY IF EXISTS oak_canyon_insert ON oak_canyon;
+DROP POLICY IF EXISTS oak_canyon_update ON oak_canyon;
+DROP POLICY IF EXISTS oak_canyon_delete ON oak_canyon;
+CREATE POLICY oak_canyon_select ON oak_canyon
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY sender_connection_insert ON sender_connection
+CREATE POLICY oak_canyon_insert ON oak_canyon
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY sender_connection_update ON sender_connection
+CREATE POLICY oak_canyon_update ON oak_canyon
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY sender_connection_delete ON sender_connection
+CREATE POLICY oak_canyon_delete ON oak_canyon
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: signal
-ALTER TABLE signal ENABLE ROW LEVEL SECURITY;
-ALTER TABLE signal FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS signal_isolation ON signal;
-DROP POLICY IF EXISTS signal_select ON signal;
-DROP POLICY IF EXISTS signal_insert ON signal;
-DROP POLICY IF EXISTS signal_update ON signal;
-DROP POLICY IF EXISTS signal_delete ON signal;
-CREATE POLICY signal_select ON signal
+-- table: olive
+ALTER TABLE olive ENABLE ROW LEVEL SECURITY;
+ALTER TABLE olive FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS olive_isolation ON olive;
+DROP POLICY IF EXISTS olive_select ON olive;
+DROP POLICY IF EXISTS olive_insert ON olive;
+DROP POLICY IF EXISTS olive_update ON olive;
+DROP POLICY IF EXISTS olive_delete ON olive;
+CREATE POLICY olive_select ON olive
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY signal_insert ON signal
+CREATE POLICY olive_insert ON olive
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY signal_update ON signal
+CREATE POLICY olive_update ON olive
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY signal_delete ON signal
+CREATE POLICY olive_delete ON olive
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: signal_assessment
-ALTER TABLE signal_assessment ENABLE ROW LEVEL SECURITY;
-ALTER TABLE signal_assessment FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS signal_assessment_isolation ON signal_assessment;
-DROP POLICY IF EXISTS signal_assessment_select ON signal_assessment;
-DROP POLICY IF EXISTS signal_assessment_insert ON signal_assessment;
-DROP POLICY IF EXISTS signal_assessment_update ON signal_assessment;
-DROP POLICY IF EXISTS signal_assessment_delete ON signal_assessment;
-CREATE POLICY signal_assessment_select ON signal_assessment
+-- table: olive_aspen
+ALTER TABLE olive_aspen ENABLE ROW LEVEL SECURITY;
+ALTER TABLE olive_aspen FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS olive_aspen_isolation ON olive_aspen;
+DROP POLICY IF EXISTS olive_aspen_select ON olive_aspen;
+DROP POLICY IF EXISTS olive_aspen_insert ON olive_aspen;
+DROP POLICY IF EXISTS olive_aspen_update ON olive_aspen;
+DROP POLICY IF EXISTS olive_aspen_delete ON olive_aspen;
+CREATE POLICY olive_aspen_select ON olive_aspen
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY signal_assessment_insert ON signal_assessment
+CREATE POLICY olive_aspen_insert ON olive_aspen
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY signal_assessment_update ON signal_assessment
+CREATE POLICY olive_aspen_update ON olive_aspen
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY signal_assessment_delete ON signal_assessment
+CREATE POLICY olive_aspen_delete ON olive_aspen
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: signal_evidence_for
-ALTER TABLE signal_evidence_for ENABLE ROW LEVEL SECURITY;
-ALTER TABLE signal_evidence_for FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS signal_evidence_for_isolation ON signal_evidence_for;
-DROP POLICY IF EXISTS signal_evidence_for_select ON signal_evidence_for;
-DROP POLICY IF EXISTS signal_evidence_for_insert ON signal_evidence_for;
-DROP POLICY IF EXISTS signal_evidence_for_update ON signal_evidence_for;
-DROP POLICY IF EXISTS signal_evidence_for_delete ON signal_evidence_for;
-CREATE POLICY signal_evidence_for_select ON signal_evidence_for
+-- table: olive_crocus_ember
+ALTER TABLE olive_crocus_ember ENABLE ROW LEVEL SECURITY;
+ALTER TABLE olive_crocus_ember FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS olive_crocus_ember_isolation ON olive_crocus_ember;
+DROP POLICY IF EXISTS olive_crocus_ember_select ON olive_crocus_ember;
+DROP POLICY IF EXISTS olive_crocus_ember_insert ON olive_crocus_ember;
+DROP POLICY IF EXISTS olive_crocus_ember_update ON olive_crocus_ember;
+DROP POLICY IF EXISTS olive_crocus_ember_delete ON olive_crocus_ember;
+CREATE POLICY olive_crocus_ember_select ON olive_crocus_ember
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY signal_evidence_for_insert ON signal_evidence_for
+CREATE POLICY olive_crocus_ember_insert ON olive_crocus_ember
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY signal_evidence_for_update ON signal_evidence_for
+CREATE POLICY olive_crocus_ember_update ON olive_crocus_ember
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY signal_evidence_for_delete ON signal_evidence_for
+CREATE POLICY olive_crocus_ember_delete ON olive_crocus_ember
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: signal_type
-ALTER TABLE signal_type ENABLE ROW LEVEL SECURITY;
-ALTER TABLE signal_type FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS signal_type_isolation ON signal_type;
-DROP POLICY IF EXISTS signal_type_select ON signal_type;
-DROP POLICY IF EXISTS signal_type_insert ON signal_type;
-DROP POLICY IF EXISTS signal_type_update ON signal_type;
-DROP POLICY IF EXISTS signal_type_delete ON signal_type;
-CREATE POLICY signal_type_select ON signal_type
+-- table: olive_reed
+ALTER TABLE olive_reed ENABLE ROW LEVEL SECURITY;
+ALTER TABLE olive_reed FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS olive_reed_isolation ON olive_reed;
+DROP POLICY IF EXISTS olive_reed_select ON olive_reed;
+DROP POLICY IF EXISTS olive_reed_insert ON olive_reed;
+DROP POLICY IF EXISTS olive_reed_update ON olive_reed;
+DROP POLICY IF EXISTS olive_reed_delete ON olive_reed;
+CREATE POLICY olive_reed_select ON olive_reed
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY signal_type_insert ON signal_type
+CREATE POLICY olive_reed_insert ON olive_reed
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY signal_type_update ON signal_type
+CREATE POLICY olive_reed_update ON olive_reed
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY signal_type_delete ON signal_type
+CREATE POLICY olive_reed_delete ON olive_reed
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: suppression_mirror
-ALTER TABLE suppression_mirror ENABLE ROW LEVEL SECURITY;
-ALTER TABLE suppression_mirror FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS suppression_mirror_isolation ON suppression_mirror;
-DROP POLICY IF EXISTS suppression_mirror_select ON suppression_mirror;
-DROP POLICY IF EXISTS suppression_mirror_insert ON suppression_mirror;
-DROP POLICY IF EXISTS suppression_mirror_update ON suppression_mirror;
-DROP POLICY IF EXISTS suppression_mirror_delete ON suppression_mirror;
-CREATE POLICY suppression_mirror_select ON suppression_mirror
+-- table: pebble_hazel
+ALTER TABLE pebble_hazel ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pebble_hazel FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS pebble_hazel_isolation ON pebble_hazel;
+DROP POLICY IF EXISTS pebble_hazel_select ON pebble_hazel;
+DROP POLICY IF EXISTS pebble_hazel_insert ON pebble_hazel;
+DROP POLICY IF EXISTS pebble_hazel_update ON pebble_hazel;
+DROP POLICY IF EXISTS pebble_hazel_delete ON pebble_hazel;
+CREATE POLICY pebble_hazel_select ON pebble_hazel
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY suppression_mirror_insert ON suppression_mirror
+CREATE POLICY pebble_hazel_insert ON pebble_hazel
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY suppression_mirror_update ON suppression_mirror
+CREATE POLICY pebble_hazel_update ON pebble_hazel
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY suppression_mirror_delete ON suppression_mirror
+CREATE POLICY pebble_hazel_delete ON pebble_hazel
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: task_audit
-ALTER TABLE task_audit ENABLE ROW LEVEL SECURITY;
-ALTER TABLE task_audit FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS task_audit_isolation ON task_audit;
-DROP POLICY IF EXISTS task_audit_select ON task_audit;
-DROP POLICY IF EXISTS task_audit_insert ON task_audit;
-DROP POLICY IF EXISTS task_audit_update ON task_audit;
-DROP POLICY IF EXISTS task_audit_delete ON task_audit;
-CREATE POLICY task_audit_select ON task_audit
+-- table: pine_badge
+ALTER TABLE pine_badge ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pine_badge FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS pine_badge_isolation ON pine_badge;
+DROP POLICY IF EXISTS pine_badge_select ON pine_badge;
+DROP POLICY IF EXISTS pine_badge_insert ON pine_badge;
+DROP POLICY IF EXISTS pine_badge_update ON pine_badge;
+DROP POLICY IF EXISTS pine_badge_delete ON pine_badge;
+CREATE POLICY pine_badge_select ON pine_badge
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY task_audit_insert ON task_audit
+CREATE POLICY pine_badge_insert ON pine_badge
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY task_audit_update ON task_audit
+CREATE POLICY pine_badge_update ON pine_badge
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY task_audit_delete ON task_audit
+CREATE POLICY pine_badge_delete ON pine_badge
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: tasks
-ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tasks FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tasks_isolation ON tasks;
-DROP POLICY IF EXISTS tasks_select ON tasks;
-DROP POLICY IF EXISTS tasks_insert ON tasks;
-DROP POLICY IF EXISTS tasks_update ON tasks;
-DROP POLICY IF EXISTS tasks_delete ON tasks;
-CREATE POLICY tasks_select ON tasks
+-- table: plum
+ALTER TABLE plum ENABLE ROW LEVEL SECURITY;
+ALTER TABLE plum FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS plum_isolation ON plum;
+DROP POLICY IF EXISTS plum_select ON plum;
+DROP POLICY IF EXISTS plum_insert ON plum;
+DROP POLICY IF EXISTS plum_update ON plum;
+DROP POLICY IF EXISTS plum_delete ON plum;
+CREATE POLICY plum_select ON plum
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY tasks_insert ON tasks
+CREATE POLICY plum_insert ON plum
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY tasks_update ON tasks
+CREATE POLICY plum_update ON plum
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY tasks_delete ON tasks
+CREATE POLICY plum_delete ON plum
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: todo
-ALTER TABLE todo ENABLE ROW LEVEL SECURITY;
-ALTER TABLE todo FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS todo_isolation ON todo;
-DROP POLICY IF EXISTS todo_select ON todo;
-DROP POLICY IF EXISTS todo_insert ON todo;
-DROP POLICY IF EXISTS todo_update ON todo;
-DROP POLICY IF EXISTS todo_delete ON todo;
-CREATE POLICY todo_select ON todo
+-- table: quince
+ALTER TABLE quince ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quince FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS quince_isolation ON quince;
+DROP POLICY IF EXISTS quince_select ON quince;
+DROP POLICY IF EXISTS quince_insert ON quince;
+DROP POLICY IF EXISTS quince_update ON quince;
+DROP POLICY IF EXISTS quince_delete ON quince;
+CREATE POLICY quince_select ON quince
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY todo_insert ON todo
+CREATE POLICY quince_insert ON quince
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY todo_update ON todo
+CREATE POLICY quince_update ON quince
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY todo_delete ON todo
+CREATE POLICY quince_delete ON quince
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: todo_activity
-ALTER TABLE todo_activity ENABLE ROW LEVEL SECURITY;
-ALTER TABLE todo_activity FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS todo_activity_isolation ON todo_activity;
-DROP POLICY IF EXISTS todo_activity_select ON todo_activity;
-DROP POLICY IF EXISTS todo_activity_insert ON todo_activity;
-DROP POLICY IF EXISTS todo_activity_update ON todo_activity;
-DROP POLICY IF EXISTS todo_activity_delete ON todo_activity;
-CREATE POLICY todo_activity_select ON todo_activity
+-- table: quince_alder
+ALTER TABLE quince_alder ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quince_alder FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS quince_alder_isolation ON quince_alder;
+DROP POLICY IF EXISTS quince_alder_select ON quince_alder;
+DROP POLICY IF EXISTS quince_alder_insert ON quince_alder;
+DROP POLICY IF EXISTS quince_alder_update ON quince_alder;
+DROP POLICY IF EXISTS quince_alder_delete ON quince_alder;
+CREATE POLICY quince_alder_select ON quince_alder
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY todo_activity_insert ON todo_activity
+CREATE POLICY quince_alder_insert ON quince_alder
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY todo_activity_update ON todo_activity
+CREATE POLICY quince_alder_update ON quince_alder
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY todo_activity_delete ON todo_activity
+CREATE POLICY quince_alder_delete ON quince_alder
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 
--- table: webhook_delivery
-ALTER TABLE webhook_delivery ENABLE ROW LEVEL SECURITY;
-ALTER TABLE webhook_delivery FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS webhook_delivery_isolation ON webhook_delivery;
-DROP POLICY IF EXISTS webhook_delivery_select ON webhook_delivery;
-DROP POLICY IF EXISTS webhook_delivery_insert ON webhook_delivery;
-DROP POLICY IF EXISTS webhook_delivery_update ON webhook_delivery;
-DROP POLICY IF EXISTS webhook_delivery_delete ON webhook_delivery;
-CREATE POLICY webhook_delivery_select ON webhook_delivery
+-- table: thyme_clover
+ALTER TABLE thyme_clover ENABLE ROW LEVEL SECURITY;
+ALTER TABLE thyme_clover FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS thyme_clover_isolation ON thyme_clover;
+DROP POLICY IF EXISTS thyme_clover_select ON thyme_clover;
+DROP POLICY IF EXISTS thyme_clover_insert ON thyme_clover;
+DROP POLICY IF EXISTS thyme_clover_update ON thyme_clover;
+DROP POLICY IF EXISTS thyme_clover_delete ON thyme_clover;
+CREATE POLICY thyme_clover_select ON thyme_clover
   FOR SELECT
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = ANY (string_to_array(current_setting('app.allowed_workspaces', true), ',')) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY webhook_delivery_insert ON webhook_delivery
+CREATE POLICY thyme_clover_insert ON thyme_clover
   FOR INSERT
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY webhook_delivery_update ON webhook_delivery
+CREATE POLICY thyme_clover_update ON thyme_clover
   FOR UPDATE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
-CREATE POLICY webhook_delivery_delete ON webhook_delivery
+CREATE POLICY thyme_clover_delete ON thyme_clover
   FOR DELETE
   USING (tenant_id = current_setting('app.tenant_id', true) AND (workspace_id = current_setting('app.workspace_id', true) OR current_setting('app.role', true) = 'system'));
 

@@ -529,8 +529,8 @@ transaction, values bound as parameters):
 | `rls_policy_sql_tenant_scoped` + `secured_session` | `tenant_id` | A tenant-wide fact (a suppression list, an audit log) |
 | `rls_policy_sql_org_scoped` + `org_session` | `org_id` | A service with no platform tenant, isolated by an identity provider's organization |
 
-The org-scoped shape is here, not in the one service that uses it (NimbleBrain's chat-channel
-bridge), so its policy and session have one copy, pinned by this package's golden SQL tests.
+The org-scoped shape is here, beside the other two, so its policy and session have one copy,
+pinned by this package's golden SQL tests.
 Mixing shapes fails closed: a session bound for one shape matches no row of another.
 
 - **The app's database role must be neither superuser nor `BYPASSRLS`;** either silently
