@@ -1,53 +1,60 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
-  "timezone": "Pacific/Honolulu",
-  "schedule": ["before 6am on monday"],
-  "dependencyDashboard": true,
-  "labels": ["dependencies"],
+  "extends": [
+    "local>NimbleBrainInc/renovate-config"
+  ],
+  "description": "minimumReleaseAge restates the shared preset's 14-day window here because test/unit/release-age.test.ts reads it from this file and holds every bunfig.toml and uv.toml to it.",
+  "minimumReleaseAge": "14 days",
   "prConcurrentLimit": 6,
   "prHourlyLimit": 2,
-  "minimumReleaseAge": "14 days",
   "lockFileMaintenance": {
     "description": "The package managers pick a refresh's versions, so the 14-day window is enforced there (each bunfig.toml, and exclude-newer in uv.toml). Renovate's own check cannot judge a refresh, which has no single release date, and would hold its status pending forever.",
-    "enabled": true,
-    "schedule": ["before 6am on the first day of the month"],
-    "minimumReleaseAge": null
-  },
-  "major": {
-    "dependencyDashboardApproval": true
-  },
-  "vulnerabilityAlerts": {
-    "addLabels": ["security"],
-    "schedule": ["at any time"],
-    "minimumReleaseAge": null,
-    "dependencyDashboardApproval": false
+    "enabled": true
   },
   "packageRules": [
     {
-      "description": "Layer 1 — one PR per manifest area for the non-major long tail. Later rules override these for packages that span more than one area.",
-      "matchUpdateTypes": ["minor", "patch"],
-      "matchFileNames": ["package.json"],
+      "description": "Layer 1 \u2014 one PR per manifest area for the non-major long tail. Later rules override these for packages that span more than one area.",
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "matchFileNames": [
+        "package.json"
+      ],
       "groupName": "runtime dependencies"
     },
     {
-      "matchUpdateTypes": ["minor", "patch"],
-      "matchFileNames": ["web/package.json"],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "matchFileNames": [
+        "web/package.json"
+      ],
       "groupName": "web dependencies"
     },
     {
-      "matchUpdateTypes": ["minor", "patch"],
-      "matchFileNames": ["src/platform/*/ui/package.json"],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "matchFileNames": [
+        "src/platform/*/ui/package.json"
+      ],
       "groupName": "platform app ui dependencies"
     },
     {
       "description": "docs/ is a standalone package gated by its own workflow (docs-ci.yml), so its updates land on their own.",
-      "matchFileNames": ["docs/package.json"],
+      "matchFileNames": [
+        "docs/package.json"
+      ],
       "groupName": "docs site"
     },
     {
-      "description": "Layer 2 — packages installed in more than one manifest. Nothing here is a workspace, so a split bump leaves two manifests disagreeing at runtime with no check to catch it. No cooldown: it is our own package, published through OIDC trusted publishing, and bunfig excludes it for the same reason — a dependency should reach this repo on the same terms whether a bot or a person adds it.",
-      "matchPackageNames": ["@nimblebrain/synapse"],
+      "description": "Layer 2 \u2014 packages installed in more than one manifest. Nothing here is a workspace, so a split bump leaves two manifests disagreeing at runtime with no check to catch it. No cooldown: it is our own package, published through OIDC trusted publishing, and bunfig excludes it for the same reason \u2014 a dependency should reach this repo on the same terms whether a bot or a person adds it.",
+      "matchPackageNames": [
+        "@nimblebrain/synapse"
+      ],
       "minimumReleaseAge": null,
       "groupName": "synapse sdk"
     },
@@ -61,42 +68,62 @@
       "groupName": "react"
     },
     {
-      "description": "The AI SDK core and its providers release in lockstep against a shared LanguageModelV4 surface. A major here can move that spec version, which is a code migration — not a lockfile bump.",
-      "matchPackageNames": ["ai", "@ai-sdk/**"],
+      "description": "The AI SDK core and its providers release in lockstep against a shared LanguageModelV4 surface. A major here can move that spec version, which is a code migration \u2014 not a lockfile bump.",
+      "matchPackageNames": [
+        "ai",
+        "@ai-sdk/**"
+      ],
       "groupName": "ai sdk"
     },
     {
-      "matchPackageNames": ["@opentelemetry/**"],
+      "matchPackageNames": [
+        "@opentelemetry/**"
+      ],
       "groupName": "opentelemetry"
     },
     {
       "description": "The runtime and the web bridge both speak this protocol; they cannot be on different versions of it.",
-      "matchPackageNames": ["@modelcontextprotocol/**"],
+      "matchPackageNames": [
+        "@modelcontextprotocol/**"
+      ],
       "groupName": "mcp sdk"
     },
     {
       "description": "No cooldown, matching bunfig's exclusion: the runtime tracks the ACP SDK line the agent runtimes it drives are built against, so a dependency reaches this repo on the same terms whether a bot or a person adds it.",
-      "matchPackageNames": ["@agentclientprotocol/sdk"],
+      "matchPackageNames": [
+        "@agentclientprotocol/sdk"
+      ],
       "minimumReleaseAge": null,
       "groupName": "acp sdk"
     },
     {
       "description": "nimblebrain-agent is pinned to a commit of its main branch (a test-only dev dependency the hosted parity test runs), so its updates are digest bumps. No cooldown: it is our own repo, and a commit has no publish to wait out.",
-      "matchPackageNames": ["nimblebrain-agent"],
-      "matchUpdateTypes": ["digest"],
+      "matchPackageNames": [
+        "nimblebrain-agent"
+      ],
+      "matchUpdateTypes": [
+        "digest"
+      ],
       "minimumReleaseAge": null,
       "groupName": "nimblebrain-agent"
     },
     {
-      "matchPackageNames": ["@sentry/**"],
+      "matchPackageNames": [
+        "@sentry/**"
+      ],
       "groupName": "sentry"
     },
     {
-      "matchPackageNames": ["posthog-node", "posthog-js"],
+      "matchPackageNames": [
+        "posthog-node",
+        "posthog-js"
+      ],
       "groupName": "posthog"
     },
     {
-      "matchPackageNames": ["@sinclair/typebox"],
+      "matchPackageNames": [
+        "@sinclair/typebox"
+      ],
       "groupName": "typebox"
     },
     {
@@ -114,23 +141,29 @@
       "groupName": "frontend toolchain"
     },
     {
-      "matchManagers": ["github-actions"],
-      "groupName": "github actions"
-    },
-    {
       "description": "`latest` tracks whatever bun is installed and is not a version to pin.",
-      "matchPackageNames": ["@types/bun"],
+      "matchPackageNames": [
+        "@types/bun"
+      ],
       "enabled": false
     },
     {
       "description": "bun is pinned as a binary (Dockerfile ARG, workflow setup-bun), as an image (web/Dockerfile), and as every package.json's packageManager, which is the bun Renovate itself runs to regenerate lock files. test/unit/build-pins.test.ts requires them equal, so they move in one PR.",
-      "matchPackageNames": ["oven-sh/bun", "oven/bun", "bun"],
+      "matchPackageNames": [
+        "oven-sh/bun",
+        "oven/bun",
+        "bun"
+      ],
       "groupName": "bun"
     },
     {
       "description": "The runtime image installs Node from NodeSource's 24.x repo (setup_24.x); a Node major needs that URL changed too.",
-      "matchPackageNames": ["node"],
-      "matchManagers": ["custom.regex"],
+      "matchPackageNames": [
+        "node"
+      ],
+      "matchManagers": [
+        "custom.regex"
+      ],
       "allowedVersions": "<25"
     }
   ],
@@ -138,7 +171,10 @@
     {
       "customType": "regex",
       "description": "Version pins Renovate's own managers can't see: the bun and Node versions the runtime Dockerfile installs (ARG) and the bun every workflow sets up. Each carries a `# renovate:` comment naming its source.",
-      "managerFilePatterns": ["/(^|/)Dockerfile$/", "/^\\.github/workflows/[^/]+\\.yml$/"],
+      "managerFilePatterns": [
+        "/(^|/)Dockerfile$/",
+        "/^\\.github/workflows/[^/]+\\.yml$/"
+      ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s*\\n\\s*(?:ARG [A-Z_]+=|[A-Za-z_-]+: )\"?(?<currentValue>[^\"\\s]+)\"?"
       ],
