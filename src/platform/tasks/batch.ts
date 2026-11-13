@@ -646,6 +646,7 @@ export class BatchDriver {
         id: batchAccountId(batch),
         unit: "usd",
         remaining: Math.max(0, batch.budgetUsd - lb.batch.costUsd),
+        sharedBy: batch.concurrency,
       },
     ];
   }
@@ -724,6 +725,7 @@ export class BatchDriver {
       requested,
       {
         accounts: () => this.accountsFor(lb),
+        sharedBy: batch.concurrency,
         onStarted: () => this.itemStarted(lb, index, requested.runId),
       },
     );
@@ -811,6 +813,9 @@ export class BatchDriver {
     if (!item || item.runId !== runId) return;
     const batchStop =
       run.stopReason === "spend_limit" && run.spendAccountId === batchAccountId(lb.batch);
+    const budgetStop =
+      run.stopReason === "spend_limit" &&
+      run.spendAccountId?.startsWith(BUDGET_ACCOUNT_PREFIX) === true;
     // Any run ending frees its reservation, so a reserved-out item may run now.
     lb.waitForSettle = false;
     // A batch run that ended after this one was asked for may have held the
@@ -819,18 +824,17 @@ export class BatchDriver {
     lb.settledAtRequest.delete(runId);
     // Only a run that made a model call ever held a reservation; counting a
     // refused one would let two refused items keep re-asking for each other.
-    if (run.inputTokens > 0 || run.outputTokens > 0) lb.settled++;
-    const reservedOut = batchStop && this.reservedOut(lb, endedSince);
-    this.settleItem(lb, index, run, batchStop, lb.withdrawn.delete(runId));
+    const madeCall = run.inputTokens > 0 || run.outputTokens > 0;
+    if (madeCall) lb.settled++;
+    const reservedOut =
+      (batchStop || budgetStop) && this.reservedOut(lb, run.spendAccountId!, endedSince, madeCall);
+    this.settleItem(lb, index, run, batchStop || budgetStop, lb.withdrawn.delete(runId));
     if (reservedOut) {
       // Wait for a reservation still held to free; with none held, ask again now.
       lb.waitForSettle = this.othersRunning(lb);
     } else if (batchStop) {
       this.pause(lb, "budget", "The batch's budget has too little left for another model call.");
-    } else if (
-      run.stopReason === "spend_limit" &&
-      run.spendAccountId?.startsWith(BUDGET_ACCOUNT_PREFIX)
-    ) {
+    } else if (budgetStop) {
       this.pause(lb, "budget", "The task's token budget is spent for its window.");
     }
     this.applyStopRule(lb);
@@ -843,7 +847,7 @@ export class BatchDriver {
     lb: LiveBatch,
     index: number,
     run: TaskRun,
-    batchStop: boolean,
+    accountStop: boolean,
     withdrawn: boolean,
   ): void {
     const settled = this.outcomeOf(lb.items[index]!, run);
@@ -853,9 +857,10 @@ export class BatchDriver {
       // Dropped from the queue as the runtime stopped (asked again next boot),
       // or taken out of it by a pause (asked again on resume).
       again = true;
-    } else if (batchStop && producedNothing) {
-      // Stopped by the batch's account before it produced anything: it runs
-      // again once a reservation frees, or under a raised budget.
+    } else if (accountStop && producedNothing) {
+      // Stopped by the batch's account or the task's budget before it
+      // produced anything: it runs again once a reservation frees, or under a
+      // raised budget.
       again = true;
     }
     if (!again) {
@@ -870,21 +875,39 @@ export class BatchDriver {
   }
 
   /**
-   * Whether a stop by the batch's account came from other runs' reservations
-   * rather than from spend. Only the batch's own running runs reserve against
-   * its account (the driver's anchor never does), so with none of them still
-   * running, a refusal means the actual balance cannot pay for one call: spent.
-   * With one running, or one that ended since this run was asked for (its
-   * reservation may have refused the call before it ended), and actual balance
-   * left, the item gets another turn: a second refusal with nothing reserving
-   * is spend.
+   * Whether a stop by `accountId` (the batch's account, or the task's budget
+   * its runs share) came from reservations rather than from spend: another
+   * run's, or this run's own share of a balance the batch's runs divide
+   * (ADR-0063). Only the batch's own running runs reserve against its account
+   * (the driver's anchor never does), so with none of them still running, a
+   * refusal means the actual balance cannot pay for one call: spent. With one
+   * running, or one that ended since this run was asked for (its reservation
+   * may have refused the call before it ended), and actual balance left, the
+   * item gets another turn: a second refusal with nothing reserving is spend.
+   *
+   * A run held to a share of the balance (the batch runs more than one at a
+   * time) that made a model call before its stop may have spent its share
+   * alone, with the balance left: it is reserved out whatever else runs, and
+   * the next request settles it. A spent task budget is refused there by the
+   * task's counters, a spent batch account by `budgetSpent`, and a share too
+   * small for one call stops before any call, which the rule above reads as
+   * spend.
    */
-  private reservedOut(lb: LiveBatch, endedSince: boolean): boolean {
+  private reservedOut(
+    lb: LiveBatch,
+    accountId: string,
+    endedSince: boolean,
+    madeCall: boolean,
+  ): boolean {
     const { batch } = lb;
-    if (batch.budgetUsd === undefined) return false;
+    if (madeCall && batch.concurrency > 1) return true;
     if (!endedSince && !this.othersRunning(lb)) return false;
-    const actual =
-      this.config.spend?.balance(batchAccountId(batch)) ?? batch.budgetUsd - batch.costUsd;
+    // The task's budget has a live balance only while a run holds it.
+    const fallback =
+      accountId === batchAccountId(batch) && batch.budgetUsd !== undefined
+        ? batch.budgetUsd - batch.costUsd
+        : 0;
+    const actual = this.config.spend?.balance(accountId) ?? fallback;
     return actual > 0;
   }
 

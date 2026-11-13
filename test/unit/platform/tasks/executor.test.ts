@@ -519,6 +519,40 @@ describe("createDirectExecutor — stopReason → status", () => {
     expect(run.error).toContain("10,000 left");
   });
 
+  test("a batch run's task budget is shared by as many runs as the batch runs at once, with or without a batch account (ADR-0063)", async () => {
+    const auto = makeTask({
+      tokenBudget: { maxInputTokens: 50_000, period: "daily" },
+      budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    const sent: TaskFnRequest[] = [];
+    const executor = createDirectExecutor(
+      async (req): Promise<TaskFnResult> => {
+        sent.push(req);
+        return {
+          output: "ok",
+          runId: "run_test000001",
+          toolCalls: [],
+          stopReason: "complete",
+          usage: { inputTokens: 1, outputTokens: 1, iterations: 1 },
+        };
+      },
+      () => ({}),
+    );
+    const batchAccount = {
+      id: "task-batch:ws/usr/batch_1",
+      unit: "usd" as const,
+      remaining: 5,
+      sharedBy: 4,
+    };
+    await executor(auto, undefined, "manual", undefined, undefined, undefined, [batchAccount], 4);
+    // A batch with no dollar budget names no account of its own.
+    await executor(auto, undefined, "manual", undefined, undefined, undefined, [], 4);
+    await executor(auto);
+    expect(sent[0]?.spendAccounts?.map((a) => a.sharedBy)).toEqual([4, 4]);
+    expect(sent[1]?.spendAccounts?.map((a) => a.sharedBy)).toEqual([4]);
+    expect(sent[2]?.spendAccounts?.every((a) => a.sharedBy === undefined)).toBe(true);
+  });
+
   test("spend_limit by the model gateway's run budget → failure, naming the run's budget, not the task's", async () => {
     const executor = createDirectExecutor(
       async (req): Promise<TaskFnResult> => ({

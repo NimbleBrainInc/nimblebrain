@@ -3351,6 +3351,42 @@ describe("Scheduler — token budget applies to every run", () => {
     scheduler.stop();
   });
 
+  it("a batch run stopped by its share of a budget its batch's runs share leaves the task enabled (ADR-0063)", async () => {
+    const auto = makeTask({
+      cumulativeInputTokens: 3_000,
+      tokenBudget: { maxInputTokens: 50_000, period: "daily" },
+      budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+    // A quarter of the 47,000 left, spent: the window is not.
+    const stopped: TaskRun = {
+      ...runOf(auto.id, 11_750),
+      status: "failure",
+      stopReason: "spend_limit",
+      spendAccountId: budgetSpendAccounts(auto, Date.now())[0]!.id,
+      error: "Token budget reached",
+    };
+    const executor = createMockExecutor(stopped);
+    const scheduler = new Scheduler(executor, { workDir: tmpDir });
+    scheduler.start();
+    const ticket = scheduler.requestBatchRun(
+      auto.workspaceId!,
+      auto.ownerId!,
+      auto.id,
+      { runId: "run_batch00001", requestedAt: new Date().toISOString() },
+      { accounts: () => [], sharedBy: 4 },
+    );
+    if (ticket.state === "refused") throw new Error(`refused: ${ticket.message}`);
+    await ticket.run;
+
+    expect(executor.mock.calls[0]?.[7]).toBe(4);
+    const updated = defOf(scheduler, auto.id)!;
+    expect(updated.cumulativeInputTokens).toBe(14_750);
+    expect(updated.enabled).toBe(true);
+    expect(updated.disabledReason).toBeUndefined();
+    scheduler.stop();
+  });
+
   it("a spend stop by an account that is not the budget's leaves the task enabled", async () => {
     const auto = makeTask({
       cumulativeInputTokens: 3_000,

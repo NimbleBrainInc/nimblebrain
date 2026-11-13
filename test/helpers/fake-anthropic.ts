@@ -39,6 +39,8 @@ export interface FakeAnthropicOptions {
   toolInput: string;
   /** What `GET /providers` names, as a model gateway answers. Default: `["anthropic"]`. */
   providers?: string[];
+  /** Whether `GET /providers` says the gateway enforces a credential's grant (ADR-0063). */
+  grants?: boolean;
   /**
    * Answer every Messages request after this many as a model gateway refuses a
    * call past a run's budget: 429, `text/plain`, `rate limit exceeded`.
@@ -58,7 +60,10 @@ export function startFakeAnthropic(opts: FakeAnthropicOptions): FakeAnthropic {
     async fetch(req) {
       if (req.method === "GET" && new URL(req.url).pathname === "/providers") {
         providerListings.push(req.headers.get("authorization"));
-        return Response.json({ providers: opts.providers ?? ["anthropic"] });
+        return Response.json({
+          providers: opts.providers ?? ["anthropic"],
+          ...(opts.grants ? { grants: true } : {}),
+        });
       }
       if (!new URL(req.url).pathname.endsWith("/messages"))
         return new Response(null, { status: 404 });

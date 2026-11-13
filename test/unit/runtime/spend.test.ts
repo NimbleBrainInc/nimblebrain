@@ -212,3 +212,63 @@ describe("spend accounts — units", () => {
     expect(spendIn("usd", usage(1, 1), UNPRICED)).toBe(0);
   });
 });
+
+describe("spend accounts — a run reserved as a whole (ADR-0063)", () => {
+  it("grants a token account's balance divided by the runs that may share it", () => {
+    const balances = createSpendBalances();
+    const hold = balances.open(
+      [{ id: "in", unit: "input_tokens", remaining: 30_000, sharedBy: 3 }],
+      PRICED,
+    );
+    expect(hold.reserveRun()).toEqual({ tokens: 10_000, accountId: "in" });
+  });
+
+  it("gives each run sharing the account the same share, and never more than is unreserved", () => {
+    const balances = createSpendBalances();
+    const account = { id: "in", unit: "input_tokens" as const, remaining: 30_000, sharedBy: 2 };
+    expect(balances.open([account], PRICED).reserveRun().tokens).toBe(15_000);
+    expect(balances.open([account], PRICED).reserveRun().tokens).toBe(15_000);
+    // A third run past the declared sharing finds nothing left unreserved.
+    expect(balances.open([account], PRICED).reserveRun().tokens).toBe(0);
+  });
+
+  it("prices a dollar share at the dearest per-token rate, and grants none unpriced", () => {
+    const balances = createSpendBalances();
+    // $1 at $10 per 1M output tokens, the dearest rate, buys 100,000 tokens.
+    const priced = balances.open([{ id: "usd", unit: "usd", remaining: 1 }], PRICED);
+    const grant = priced.reserveRun();
+    // Rounded down, never up: floating point may land a token short.
+    expect(grant.accountId).toBe("usd");
+    expect(grant.tokens).toBeLessThanOrEqual(100_000);
+    expect(grant.tokens).toBeGreaterThanOrEqual(99_999);
+    const unpriced = balances.open([{ id: "usd2", unit: "usd", remaining: 1 }], UNPRICED);
+    expect(unpriced.reserveRun()).toEqual({ tokens: 0, accountId: "usd2" });
+  });
+
+  it("names the account whose share is least", () => {
+    const balances = createSpendBalances();
+    const hold = balances.open(
+      [
+        { id: "big", unit: "input_tokens", remaining: 50_000 },
+        { id: "small", unit: "output_tokens", remaining: 4_000 },
+      ],
+      PRICED,
+    );
+    expect(hold.reserveRun()).toEqual({ tokens: 4_000, accountId: "small" });
+  });
+
+  it("draws the reservation down as the run spends, and returns the rest when it ends", () => {
+    const balances = createSpendBalances();
+    const account = { id: "in", unit: "input_tokens" as const, remaining: 20_000, sharedBy: 2 };
+    const first = balances.open([account], PRICED);
+    expect(first.reserveRun().tokens).toBe(10_000);
+    first.debit(usage(4_000, 100));
+    expect(balances.balance("in")).toBe(16_000);
+    // A second run sees the first's unspent 6,000 still held.
+    const second = balances.open([account], PRICED);
+    expect(second.reserveRun().tokens).toBe(8_000);
+    first.release();
+    second.release();
+    expect(balances.balance("in")).toBeUndefined();
+  });
+});

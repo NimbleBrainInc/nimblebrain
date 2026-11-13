@@ -27,7 +27,11 @@ import {
   handleRunBatch,
 } from "../../../../src/platform/tasks/batch-tools.ts";
 import { taskBatchesDir } from "../../../../src/platform/tasks/paths.ts";
-import { type Executor, Scheduler } from "../../../../src/platform/tasks/scheduler.ts";
+import {
+  budgetSpendAccounts,
+  type Executor,
+  Scheduler,
+} from "../../../../src/platform/tasks/scheduler.ts";
 import type { ToolContext } from "../../../../src/platform/tasks/server.ts";
 import { batchPausedEnvelope } from "../../../../src/platform/tasks/source.ts";
 import {
@@ -129,6 +133,15 @@ interface HarnessOptions {
     holdAfterCheck?: boolean;
     /** How long a refused run takes to return (so another run can end first). */
     refusalDelayMs?: number;
+    /** Input tokens left of the task's own budget, named beside the batch's account. */
+    taskTokens?: number;
+    /**
+     * Hold each run to its grant, as a runtime behind the model gateway is
+     * (`SpendHold.reserveRun`): the task's own budget, read from its counters
+     * and shared by the batch's concurrency, is reserved as a whole, and the
+     * run stops once its next call (100 input tokens) would pass its share.
+     */
+    grant?: boolean;
   };
   /** The run's status for an input. */
   behave?: (input: unknown) => Partial<TaskRun>;
@@ -170,7 +183,16 @@ function harness(opts: HarnessOptions = {}): Harness {
   let executing = 0;
   let maxExecuting = 0;
   let totalSpent = 0;
-  const executor: Executor = async (task, signal, trigger, input, _lease, runId, extra) => {
+  const executor: Executor = async (
+    task,
+    signal,
+    trigger,
+    input,
+    _lease,
+    runId,
+    extra,
+    sharedBy,
+  ) => {
     executing++;
     maxExecuting = Math.max(maxExecuting, executing);
     try {
@@ -186,9 +208,38 @@ function harness(opts: HarnessOptions = {}): Harness {
       }
       let costUsd = 0;
       let stop: string | undefined;
-      if (opts.door) {
+      let usedInput: number | undefined;
+      if (opts.door?.grant) {
+        const accounts = budgetSpendAccounts(task, Date.now()).map((a) => ({ ...a, sharedBy }));
+        const hold = spend.open(accounts, { model: "m", rates: RATES });
+        try {
+          const share = hold.reserveRun();
+          usedInput = 0;
+          for (let i = 0; i < opts.door.calls; i++) {
+            if (usedInput + 100 > share.tokens) {
+              stop = share.accountId;
+              break;
+            }
+            await Bun.sleep(1);
+            hold.debit({ inputTokens: 100, outputTokens: 0 });
+            usedInput += 100;
+          }
+        } finally {
+          hold.release();
+        }
+      } else if (opts.door) {
         // What the door does with the accounts a run names (`Runtime.startRun`).
-        const hold = spend.open(extra ?? [], { model: "m", rates: RATES });
+        const taskBudget =
+          opts.door.taskTokens === undefined
+            ? []
+            : [
+                {
+                  id: `task-budget:${WS}/${OWNER}/${task.id}@daily:input_tokens`,
+                  unit: "input_tokens" as const,
+                  remaining: opts.door.taskTokens,
+                },
+              ];
+        const hold = spend.open([...(extra ?? []), ...taskBudget], { model: "m", rates: RATES });
         try {
           for (let i = 0; i < opts.door.calls; i++) {
             const allowed = hold.check({
@@ -233,8 +284,8 @@ function harness(opts: HarnessOptions = {}): Harness {
             : "failure"
           : "success",
         // A run the door refused before any call reports no usage.
-        inputTokens: opts.door && costUsd === 0 ? 0 : 100,
-        outputTokens: opts.door && costUsd === 0 ? 0 : 50,
+        inputTokens: usedInput ?? (opts.door && costUsd === 0 ? 0 : 100),
+        outputTokens: usedInput !== undefined || (opts.door && costUsd === 0) ? 0 : 50,
         toolCalls: 0,
         iterations: 1,
         stopReason: stop ? "spend_limit" : "complete",
@@ -636,6 +687,55 @@ describe("reserved-out versus spent-out", () => {
     expect(batch.pause?.reason).toBe("budget");
     expect(batch.counts).toMatchObject({ pass: 2, pending: 1 });
     expect(h.totalSpent()).toBeCloseTo(0.22, 9);
+  });
+});
+
+describe("reserved-out versus spent-out, the task's budget", () => {
+  it("does not pause when another run's reservation of the task's budget refused a call", async () => {
+    // A call reserves 100 input tokens; 150 covers one reservation at a time.
+    const h = harness({
+      door: { calls: 1, writes: 10, holdAfterCheck: true, taskTokens: 150 },
+      maxConcurrentRuns: 4,
+    });
+    makeTask();
+    const out = handleRunBatch({ taskId: "enrich", items: items("a", "b"), concurrency: 2 }, h.ctx);
+    await waitFor(() => h.gates.length === 1, "a reserved");
+    await waitFor(
+      () => readBatchItems(workDir, WS, OWNER, out.batch.id)[1]?.previousRunIds?.length === 1,
+      "b refused and back to pending",
+    );
+    expect(batchOf(h, out.batch.id).state).toBe("running");
+    h.gates[0]!.release();
+    await waitFor(() => h.gates.length === 2, "b reserved");
+    h.gates[1]!.release();
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    expect(h.paused).toHaveLength(0);
+    expect(batchOf(h, out.batch.id).counts.pass).toBe(2);
+  });
+
+  it("pauses when the task's budget is spent, with nothing else reserving", async () => {
+    const h = harness({ door: { calls: 1, taskTokens: 50 }, maxConcurrentRuns: 4 });
+    makeTask();
+    const out = handleRunBatch({ taskId: "enrich", items: items("a", "b"), concurrency: 1 }, h.ctx);
+    await waitFor(() => batchOf(h, out.batch.id).state === "paused", "budget pause");
+    expect(batchOf(h, out.batch.id).pause?.reason).toBe("budget");
+    expect(batchOf(h, out.batch.id).counts.pending).toBe(2);
+  });
+});
+
+describe("reserved-out versus spent-out, a share of the task's budget", () => {
+  it("does not pause when a lone run spends its share with the budget left", async () => {
+    // Shared by 4, each run is granted a quarter of what is left: 250 and 200
+    // (two 100-token calls each), 150, 125, and 100 (one each), then 75, too
+    // little for one call: six runs, the batch pausing only at the last.
+    const h = harness({ door: { calls: 3, grant: true }, maxConcurrentRuns: 4 });
+    makeTask({ tokenBudget: { maxInputTokens: 1000, period: "daily" } });
+    const out = handleRunBatch({ taskId: "enrich", items: items("a"), concurrency: 4 }, h.ctx);
+    await waitFor(() => batchOf(h, out.batch.id).state === "paused", "budget pause");
+    const [item] = readBatchItems(workDir, WS, OWNER, out.batch.id);
+    expect(item?.previousRunIds).toHaveLength(6);
+    expect(item?.state).toBe("pending");
+    expect(batchOf(h, out.batch.id).pause?.reason).toBe("budget");
   });
 });
 
