@@ -63,12 +63,16 @@ output to what remains.
   needs more than its share stops early even when the account has balance that
   other runs hold but will not use. The batch driver already waits for running
   runs to settle before it asks again.
-- The gateway cannot shrink a call to what is left, so a run can overrun its
-  grant by the output of its last call. The native engine keeps its exact clamp.
+- The grant is an admission threshold, not a hard ceiling. The gateway admits a
+  call while the run's count is below the grant and cannot shrink a call to what
+  is left, so a run's spend can pass its grant by whole calls, input and output:
+  by its last call when the run's calls are serial, and by every call in flight
+  as it crosses the grant when they are not. The native engine keeps its exact
+  clamp.
 - Settlement debits the usage the agent reports, the same report the usage
-  ledger prices. The gateway's grant is the hard bound on each run whatever the
-  agent reports, so an agent that under-reports can misstate a shared account by
-  at most one grant per run. The gateway's access log records each call's tokens
+  ledger prices. The gateway bounds each run whatever the agent reports, so an
+  agent that under-reports can misstate a shared account by at most one grant
+  per run plus that overrun. The gateway's access log records each call's tokens
   under the run's id, but a log is not an interface to settle money from.
 
 ## Evidence
@@ -84,9 +88,9 @@ Measured before this was proposed for acceptance:
   rounding down, and a run is held to at most one step below its terms.
 - **It checks before a call and charges after.** A call is admitted while the
   run's count is below its grant and charged the input and output tokens the
-  provider reported, so a run overshoots its grant by at most its last call. A
-  refused call answers `429` with the body the runtime already maps to
-  `spend_limit`.
+  provider reported, so a run whose calls are serial overshoots its grant by at
+  most its last call, input and output. A refused call answers `429` with the
+  body the runtime already maps to `spend_limit`.
 - **A share of balance over concurrency starves almost no batch.** Across one
   installation's batches, the median share was about eighteen times the median
   cost of an item, and fewer than one in eighty batches had a share below its
