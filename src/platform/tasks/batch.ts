@@ -646,6 +646,7 @@ export class BatchDriver {
         id: batchAccountId(batch),
         unit: "usd",
         remaining: Math.max(0, batch.budgetUsd - lb.batch.costUsd),
+        sharedBy: batch.concurrency,
       },
     ];
   }

@@ -235,3 +235,32 @@ describe("parseRunKeyRing refuses", () => {
     expect(String(caught)).not.toContain(key.d);
   });
 });
+
+describe("a model credential's grant (ADR-0063)", () => {
+  const key = createRunKey({
+    ring: parseRunKeyRing(runKeyRingValue(runKeyJwk("g-1"))),
+    issuer: "https://runtime.example",
+    maxRunMs: 600_000,
+  });
+  const claimsOf = (token: string) =>
+    JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString());
+
+  it("carries the grant as a whole number of tokens", () => {
+    const token = key.mintModelCredential({ runId: "run_g", workspaceId: "ws_a", grant: 12_000 });
+    expect(claimsOf(token).grant).toBe(12_000);
+  });
+
+  it("carries no grant when the run has none", () => {
+    const token = key.mintModelCredential({ runId: "run_g", workspaceId: "ws_a" });
+    expect("grant" in claimsOf(token)).toBe(false);
+  });
+
+  it("refuses a grant that is not a whole number of tokens", () => {
+    expect(() =>
+      key.mintModelCredential({ runId: "run_g", workspaceId: "ws_a", grant: 1.5 }),
+    ).toThrow(/whole number of tokens/);
+    expect(() =>
+      key.mintModelCredential({ runId: "run_g", workspaceId: "ws_a", grant: -1 }),
+    ).toThrow(/whole number of tokens/);
+  });
+});

@@ -41,6 +41,12 @@ export interface SpendAccount {
   unit: SpendUnit;
   /** The amount left, in `unit`. Read only from the first run to name `id`. */
   remaining: number;
+  /**
+   * The most runs that may draw on this account at once, as the source that
+   * names it knows (a batch, its concurrency). Absent, no other run shares it.
+   * Only a run reserved as a whole ({@link SpendHold.reserveRun}) reads it.
+   */
+  sharedBy?: number;
 }
 
 /**
@@ -57,6 +63,18 @@ export interface SpendPricing {
  * the run.
  */
 export interface SpendHold extends SpendGate {
+  /**
+   * Reserve this run's share of every account it names, for as long as the run
+   * holds them, and answer the most tokens the run may spend, input and output
+   * together: the least, over its accounts, of the account's balance divided by
+   * `sharedBy` (and never more than is not already reserved), in tokens (a `usd` share priced at the model's
+   * dearest per-token rate, and none at all on a model with no known rates).
+   * For a run whose calls the door never sees, so cannot check one by one
+   * (ADR-0063). Its `debit`s then draw the reservation down as they spend.
+   * Called at most once, before any `debit`. Answers `accountId`, the account
+   * that set the grant, with it.
+   */
+  reserveRun(): { tokens: number; accountId?: string };
   /**
    * Stop holding the accounts, releasing any outstanding reservation. The last
    * run to release an id discards its balance. Idempotent.
@@ -151,6 +169,25 @@ function projectedCost(
   }
 }
 
+/**
+ * The tokens, input and output together, that `amount` in `unit` pays for at
+ * worst. A token count is itself; dollars buy tokens at the dearest per-token
+ * rate, so no mix of input and output can cost more; a model with no known
+ * rates buys none.
+ */
+function tokensFor(unit: SpendUnit, amount: number, rates: WorstRates): number {
+  switch (unit) {
+    case "input_tokens":
+    case "output_tokens":
+      return Math.floor(amount);
+    case "usd": {
+      if (!rates) return 0;
+      const dearest = Math.max(rates.input, rates.output);
+      return dearest > 0 ? Math.floor(amount / dearest) : Number.POSITIVE_INFINITY;
+    }
+  }
+}
+
 interface Live {
   unit: SpendUnit;
   balance: number;
@@ -185,6 +222,15 @@ export function createSpendBalances(): SpendBalances {
       // This run's outstanding reservation per id: one call's, from `check`
       // until its `debit`.
       const reservation = new Map<string, number>();
+      // This run's whole-run reservation per id (`reserveRun`), drawn down by
+      // each debit and returned at release.
+      const runReservation = new Map<string, number>();
+      const sharedBy = new Map<string, number>();
+      for (const account of accounts) {
+        if (account.sharedBy !== undefined && account.sharedBy >= 1) {
+          sharedBy.set(account.id, Math.max(sharedBy.get(account.id) ?? 1, account.sharedBy));
+        }
+      }
       const unreserve = () => {
         for (const [id, amount] of reservation) live.get(id)!.reserved -= amount;
         reservation.clear();
@@ -218,17 +264,47 @@ export function createSpendBalances(): SpendBalances {
           }
           return { maxOutputTokens: allowed };
         },
+        reserveRun() {
+          let grant = Number.POSITIVE_INFINITY;
+          let accountId: string | undefined;
+          for (const id of ids) {
+            const entry = live.get(id)!;
+            // Each of the runs that may share the account gets the same share
+            // of its balance, never more than is not already reserved.
+            const share = Math.max(
+              0,
+              Math.min(entry.balance / (sharedBy.get(id) ?? 1), entry.balance - entry.reserved),
+            );
+            entry.reserved += share;
+            runReservation.set(id, (runReservation.get(id) ?? 0) + share);
+            const tokens = tokensFor(entry.unit, share, rates);
+            if (tokens < grant) {
+              grant = tokens;
+              accountId = id;
+            }
+          }
+          return accountId === undefined ? { tokens: grant } : { tokens: grant, accountId };
+        },
         debit(actual) {
           unreserve();
           for (const id of ids) {
             const entry = live.get(id)!;
-            entry.balance -= spendIn(entry.unit, actual, pricing);
+            const cost = spendIn(entry.unit, actual, pricing);
+            entry.balance -= cost;
+            const held = runReservation.get(id);
+            if (held) {
+              const drawn = Math.min(held, cost);
+              entry.reserved -= drawn;
+              runReservation.set(id, held - drawn);
+            }
           }
         },
         release() {
           if (released) return;
           released = true;
           unreserve();
+          for (const [id, amount] of runReservation) live.get(id)!.reserved -= amount;
+          runReservation.clear();
           for (const id of ids) {
             const entry = live.get(id)!;
             if (--entry.holders === 0) live.delete(id);

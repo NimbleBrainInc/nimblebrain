@@ -195,9 +195,19 @@ export interface ModelCredentialSubject {
    * held to the installation's ceiling. Absent = the ceiling.
    */
   maxRunDurationMs?: number;
+  /**
+   * The most tokens, input and output together, the run may spend through the
+   * gateway (ADR-0063), for a run whose calls the door cannot check one by one.
+   * Absent, the credential grants nothing beyond the gateway's own ceiling.
+   */
+  grant?: number;
 }
 
-/** The claims of a model credential. Nothing here bounds the run; the runtime does. */
+/**
+ * The claims of a model credential. `grant`, when present, is the spend the
+ * gateway holds the run to (ADR-0063); a gateway that says it enforces grants
+ * rounds it down to a limit it can hold.
+ */
 export interface ModelCredentialClaims {
   iss: string;
   aud: typeof MODEL_GATEWAY_AUDIENCE;
@@ -205,6 +215,7 @@ export interface ModelCredentialClaims {
   workspace: string;
   iat: number;
   exp: number;
+  grant?: number;
 }
 
 /** The claims of a pool credential: the pool, and no run. */
@@ -292,9 +303,12 @@ export function createRunKey(opts: { ring: RunKeyRing; issuer: string; maxRunMs:
   return {
     keySet: () => ({ keys: keys.map((key) => ({ ...key })) }),
 
-    mintModelCredential({ runId, workspaceId, maxRunDurationMs }, nowMs = Date.now()) {
+    mintModelCredential({ runId, workspaceId, maxRunDurationMs, grant }, nowMs = Date.now()) {
       if (!runId) throw new RunKeyError("a model credential names a run id");
       if (!workspaceId) throw new RunKeyError("a model credential names a workspace");
+      if (grant !== undefined && !(Number.isSafeInteger(grant) && grant >= 0)) {
+        throw new RunKeyError(`a run's grant must be a whole number of tokens (got ${grant})`);
+      }
       if (maxRunDurationMs !== undefined && !(maxRunDurationMs > 0)) {
         throw new RunKeyError(
           `a run's limit must be a positive duration (got ${maxRunDurationMs})`,
@@ -309,6 +323,7 @@ export function createRunKey(opts: { ring: RunKeyRing; issuer: string; maxRunMs:
         workspace: workspaceId,
         iat,
         exp: Math.ceil((nowMs + lifetimeMs + MODEL_CREDENTIAL_LEEWAY_MS) / 1000),
+        ...(grant !== undefined ? { grant } : {}),
       };
       return signJwt(signing, claims);
     },

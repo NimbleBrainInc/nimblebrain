@@ -283,6 +283,11 @@ describe("the door, with the worker configured in execution", () => {
     expect(claims.exp - claims.iat).toBeLessThanOrEqual(661);
   });
 
+  test("leaves a capped run on the native engine when the gateway does not say it enforces grants", async () => {
+    const { bound } = await runTask(runtime, { maxRunInputTokens: 50_000 });
+    expect(bound).toEqual(["native"]);
+  });
+
   test("mints a task run's credential to the run's own duration cap", async () => {
     const before = gateway.authorizations.length;
     await runtime.executeTask({
@@ -446,5 +451,147 @@ describe("the native engine, every provider reached through the gateway", () => 
     );
     expect(claims).toMatchObject({ aud: "model-gateway", iss: publicOrigin() });
     expect(claims.sub).toMatch(/^call_/);
+  });
+});
+
+/** Decode a bearer credential's claims, as a gateway reads them. */
+function claimsOf(authorization: string | null): Record<string, unknown> {
+  const token = authorization?.replace(/^Bearer /, "") ?? "";
+  return JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString());
+}
+
+/** A task run's result and the runtime each `execution.bound` named. */
+async function runTask(
+  runtime: Runtime,
+  extra: {
+    maxRunInputTokens?: number;
+    spendAccounts?: {
+      id: string;
+      unit: "input_tokens" | "output_tokens" | "usd";
+      remaining: number;
+      sharedBy?: number;
+    }[];
+  },
+) {
+  const bound: string[] = [];
+  const result = await runtime.executeTask(
+    {
+      identity: DEV_IDENTITY,
+      workspaceId: TEST_WORKSPACE_ID,
+      prompt: "Where is order 8812?",
+      trigger: "manual",
+      ...extra,
+    },
+    {
+      emit(event: EngineEvent) {
+        if (event.type === "execution.bound") bound.push(event.data.runtime as string);
+      },
+    },
+  );
+  return { result, bound };
+}
+
+/** A runtime whose default is the worker, behind `gw`; resolves once it has asked `gw`. */
+async function startGrantedRuntime(gw: FakeAnthropic, workDir: string): Promise<Runtime> {
+  mkdirSync(workDir, { recursive: true });
+  process.env[RUN_KEY_ENV] = ring;
+  const runtime = await Runtime.start({
+    identityProvider: devProvider,
+    models: { default: MODEL },
+    logging: { disabled: true },
+    workDir,
+    secrets: { runKeyEnv: RUN_KEY_ENV },
+    execution: {
+      default: "pool",
+      modelGateway: gw.rootUrl,
+      runtimes: { pool: { driver: "nimblebrain-agent", url: workerUrl } },
+    },
+  });
+  await provisionTestWorkspace(runtime);
+  const deadline = Date.now() + 5_000;
+  while (gw.providerListings.length === 0 && Date.now() < deadline) await Bun.sleep(10);
+  await Bun.sleep(20);
+  return runtime;
+}
+
+describe("the door, with a gateway that enforces grants (ADR-0063)", () => {
+  const workDir = join(tmpdir(), `nb-remote-agent-grants-${Date.now()}`);
+  let grantingGateway: FakeAnthropic;
+  let runtime: Runtime;
+
+  beforeAll(async () => {
+    grantingGateway = startFakeAnthropic({ toolInput: '{"orderId":"8812"}', grants: true });
+    runtime = await startGrantedRuntime(grantingGateway, workDir);
+  });
+
+  afterAll(async () => {
+    await runtime?.shutdown();
+    await grantingGateway?.close();
+    delete process.env[RUN_KEY_ENV];
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  test("a capped run executes on the worker, its credential granting the cap", async () => {
+    const before = grantingGateway.authorizations.length;
+    const { bound } = await runTask(runtime, { maxRunInputTokens: 50_000 });
+    expect(bound).toEqual(["pool"]);
+    const grants = grantingGateway.authorizations.slice(before).map((a) => claimsOf(a).grant);
+    expect(grants).toContain(50_000);
+  });
+
+  test("a run with a shared account executes on the worker, granted its share", async () => {
+    const before = grantingGateway.authorizations.length;
+    const { bound } = await runTask(runtime, {
+      spendAccounts: [{ id: "acct:shared", unit: "input_tokens", remaining: 90_000, sharedBy: 3 }],
+    });
+    expect(bound).toEqual(["pool"]);
+    const grants = grantingGateway.authorizations.slice(before).map((a) => claimsOf(a).grant);
+    expect(grants).toContain(30_000);
+  });
+
+  test("a run with neither carries no grant", async () => {
+    const before = grantingGateway.authorizations.length;
+    const { bound } = await runTask(runtime, {});
+    expect(bound).toEqual(["pool"]);
+    const run = grantingGateway.authorizations.slice(before).map(claimsOf);
+    expect(run.length).toBeGreaterThan(0);
+    expect(run.every((c) => !("grant" in c))).toBe(true);
+  });
+});
+
+describe("the door, when the gateway stops a run at its grant", () => {
+  const workDir = join(tmpdir(), `nb-remote-agent-grant-stop-${Date.now()}`);
+  let refusingGateway: FakeAnthropic;
+  let runtime: Runtime;
+
+  beforeAll(async () => {
+    refusingGateway = startFakeAnthropic({
+      toolInput: '{"orderId":"8812"}',
+      grants: true,
+      refuseAfter: 0,
+    });
+    runtime = await startGrantedRuntime(refusingGateway, workDir);
+  });
+
+  afterAll(async () => {
+    await runtime?.shutdown();
+    await refusingGateway?.close();
+    delete process.env[RUN_KEY_ENV];
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  test("names the account whose share set the grant", async () => {
+    const { result, bound } = await runTask(runtime, {
+      spendAccounts: [{ id: "acct:batch", unit: "input_tokens", remaining: 10_000 }],
+    });
+    expect(bound).toEqual(["pool"]);
+    expect(result.stopReason).toBe("spend_limit");
+    expect(result.spendAccountId).toBe("acct:batch");
+  });
+
+  test("tells a grant the run's own cap set as the cap", async () => {
+    const { result } = await runTask(runtime, { maxRunInputTokens: 5_000 });
+    expect(result.stopReason).toBe("max_input_tokens");
+    expect(result.spendAccountId).toBeUndefined();
   });
 });

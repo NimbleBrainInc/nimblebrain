@@ -14,6 +14,11 @@
  *   gateway is what enforces reachability either way.
  * - The call goes through the gateway's fetch, so it carries a single-use model
  *   credential like any call outside a run.
+ * - The same answer says whether the gateway holds a run to the grant its
+ *   credential carries (`"grants": true`, ADR-0063). Until it answers, and when
+ *   it says nothing, it does not: an external runtime then holds no run with
+ *   spend accounts or a cap, so a gateway that would ignore the grant never
+ *   runs budgeted work.
  */
 
 import { MODEL_PROVIDERS, type ModelGatewayAccess } from "../model/registry.ts";
@@ -25,6 +30,8 @@ const RETRY_MAX_MS = 5 * 60_000;
 export interface GatewayProviders {
   /** The providers the gateway serves, or `undefined` until it has answered. */
   served(): readonly string[] | undefined;
+  /** Whether the gateway said it enforces a credential's grant; false until it answers. */
+  enforcesGrants(): boolean;
   /** Stop asking (the runtime is shutting down). */
   stop(): void;
 }
@@ -35,6 +42,7 @@ export function watchGatewayProviders(
 ): GatewayProviders {
   const url = `${gateway.url.replace(/\/+$/, "")}/providers`;
   let served: readonly string[] | undefined;
+  let grants = false;
   let lastReason: string | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
@@ -43,8 +51,13 @@ export function watchGatewayProviders(
 
   const ask = async (): Promise<void> => {
     try {
-      served = parseProviders(await fetchProviders(gateway.fetch, url));
-      log.info("[model-gateway] providers served", { providers: served.join(",") });
+      const body = await fetchProviders(gateway.fetch, url);
+      served = parseProviders(body);
+      grants = (body as { grants?: unknown } | null)?.grants === true;
+      log.info("[model-gateway] providers served", {
+        providers: served.join(","),
+        enforces_grants: grants,
+      });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       // Logged when the reason changes, not on every retry.
@@ -68,6 +81,7 @@ export function watchGatewayProviders(
 
   return {
     served: () => served,
+    enforcesGrants: () => grants,
     stop() {
       stopped = true;
       if (timer) clearTimeout(timer);

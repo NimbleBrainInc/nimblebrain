@@ -777,6 +777,8 @@ export interface RunSpendAccount {
   id: string;
   unit: "usd" | "input_tokens" | "output_tokens";
   remaining: number;
+  /** The most runs that may draw on it at once (a batch, its concurrency); absent, one. */
+  sharedBy?: number;
 }
 
 /** What every id `budgetSpendAccounts` produces starts with. */

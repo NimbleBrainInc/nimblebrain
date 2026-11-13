@@ -143,6 +143,7 @@ import {
   isModelAllowed,
   isModelInPolicy,
 } from "../model/catalog.ts";
+import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../model/gateway-refusal.ts";
 import { isQualifiedModelId, requireQualifiedModelId } from "../model/model-id.ts";
 import {
   buildModelResolver,
@@ -1937,7 +1938,14 @@ export class Runtime {
     // totals where an abort must still report — see {@link createPartialRunAccumulator}.
     const partial = createPartialRunAccumulator();
     const deliveries = createSkillDeliveryLog(composed.declaredSkills);
-    const sinks = [...this.buildRunSinks(spec, binding, partial.sink), deliveries.sink];
+    // Debits what a gateway-held run reports (`openSpendAccounts`), bound once
+    // the accounts are open below.
+    let settle: EventSink | undefined;
+    const sinks = [
+      ...this.buildRunSinks(spec, binding, partial.sink),
+      deliveries.sink,
+      { emit: (event: EngineEvent) => settle?.emit(event) },
+    ];
 
     // ── The engine ──────────────────────────────────────────────────────────
     // The engine's tool router is identity-bound but WALLED to one workspace.
@@ -1978,7 +1986,8 @@ export class Runtime {
     // ── The spend accounts ──────────────────────────────────────────────────
     // Held open for exactly as long as the engine runs, so a balance shared
     // with other runs in flight lives until the last of them ends.
-    const releaseSpend = this.openSpendAccounts(spec, engineConfig);
+    const spend = this.openSpendAccounts(spec, engineConfig, agentRuntime);
+    settle = spend.settle;
 
     // Tell the client its conversation id (and the model it is bound to)
     // immediately, before the first token.
@@ -2015,7 +2024,13 @@ export class Runtime {
                 ...(engineConfig.hooks?.rewriteHistory
                   ? { compaction: { model: this.getModelSlot("fast") } }
                   : {}),
-                ...this.runModelCredential(agentRuntime, runId, spec.workspaceId, deadline),
+                ...this.runModelCredential(
+                  agentRuntime,
+                  runId,
+                  spec.workspaceId,
+                  deadline,
+                  spend.grant,
+                ),
               },
               {
                 tools: identityToolRouter,
@@ -2055,7 +2070,7 @@ export class Runtime {
       };
     } finally {
       deadline.clear();
-      releaseSpend();
+      spend.release();
     }
 
     return {
@@ -2065,8 +2080,7 @@ export class Runtime {
       output: result.output,
       skillName,
       toolCalls: result.toolCalls,
-      stopReason: result.stopReason,
-      ...stopDetail(result),
+      ...attributeGrantStop(result, spend),
       usage: {
         ...result.usage,
         model: spec.model,
@@ -2079,6 +2093,20 @@ export class Runtime {
   }
 
   // ── run-start door helpers ───────────────────────────────────────
+
+  /**
+   * Whether a run on this runtime is held to its terms by the model gateway: its
+   * model calls carry a credential the door mints per run, and the gateway said
+   * it enforces the grant that credential carries (ADR-0063). A runtime with its
+   * own spend gate is held by it instead.
+   */
+  private holdsByGrant(agentRuntime: AgentRuntime): boolean {
+    return (
+      !agentRuntime.capabilities.spendGate &&
+      this.mintsModelCredential(agentRuntime) &&
+      this._gatewayProviders?.enforcesGrants() === true
+    );
+  }
 
   /** Whether a run on this runtime carries a per-run model credential the door mints. */
   private mintsModelCredential(agentRuntime: AgentRuntime): boolean {
@@ -2095,6 +2123,7 @@ export class Runtime {
     runId: string,
     workspaceId: string,
     deadline: RunDeadline,
+    grant: number | undefined,
   ): { modelCredential?: string } {
     if (!this._runKey || !this.mintsModelCredential(agentRuntime)) return {};
     return {
@@ -2102,6 +2131,7 @@ export class Runtime {
         runId,
         workspaceId,
         ...(deadline.limitMs !== undefined ? { maxRunDurationMs: deadline.limitMs } : {}),
+        ...(grant !== undefined ? { grant } : {}),
       }),
     };
   }
@@ -2110,13 +2140,15 @@ export class Runtime {
    * The agent runtime a run executes on: `execution.default` when it can hold
    * the run to its terms, else the native runtime, which checks every model
    * call against them. A run that names spend accounts or caps its input tokens
-   * needs a runtime with a spend gate; running it on one without would spend
-   * unchecked. The choice is made here, before the run starts, never as a
-   * retry after a refusal, and logged with the term the default could not hold.
+   * needs a runtime with a spend gate, or one whose model calls all cross a
+   * gateway that holds the run to the grant its credential carries (ADR-0063);
+   * running it on one without either would spend unchecked. The choice is made
+   * here, before the run starts, never as a retry after a refusal, and logged
+   * with the term the default could not hold.
    */
   private agentRuntimeFor(spec: RunSpec, runId: string): AgentRuntime {
     const preferred = this.agentRuntimes.select(this.config.execution?.default);
-    const unheld = termTheRuntimeCannotHold(preferred, spec);
+    const unheld = termTheRuntimeCannotHold(preferred, spec, this.holdsByGrant(preferred));
     if (!unheld) return preferred;
     const native = this.agentRuntimes.select(NATIVE_RUNTIME_ID);
     log.info("[runtime] run executes on the native runtime: the default cannot hold its terms", {
@@ -2128,20 +2160,55 @@ export class Runtime {
   }
 
   /**
-   * Hold the run's spend accounts open and hand them to the engine as
-   * `engineConfig.spend`; returns what releases them, with any reservation
-   * still outstanding. A run that names none (every chat) gets no gate.
-   * Dollars are priced at the run model's rates.
+   * Hold the run's spend accounts open for as long as it runs; `release` lets
+   * them go, with any reservation still outstanding. Dollars are priced at the
+   * run model's rates. A run that names none and caps nothing (every chat) gets
+   * nothing.
+   *
+   * - On a runtime with a spend gate, the accounts become `engineConfig.spend`
+   *   and the engine checks each call.
+   * - On a runtime held by the gateway's grant (`holdsByGrant`), the door never
+   *   sees a call, so the run's share of each account is reserved as a whole and
+   *   the least of those shares and its input-token cap becomes `grant`, which
+   *   its model credential carries. The calls the runtime reports are debited as
+   *   they arrive (`settle`, an event sink), drawing the reservation down;
+   *   `boundBy` is the account that set the grant, or absent when the cap did.
    */
-  private openSpendAccounts(spec: RunSpec, engineConfig: EngineConfig): () => void {
-    const accounts = spec.budget.spendAccounts;
-    if (!accounts?.length) return () => {};
+  private openSpendAccounts(
+    spec: RunSpec,
+    engineConfig: EngineConfig,
+    agentRuntime: AgentRuntime,
+  ): { release: () => void; grant?: number; boundBy?: string; settle?: EventSink } {
+    const accounts = spec.budget.spendAccounts ?? [];
+    const cap = spec.budget.maxRunInputTokens;
+    if (!this.holdsByGrant(agentRuntime)) {
+      if (!accounts.length) return { release: () => {} };
+      const hold = this.getSpendBalances().open(accounts, {
+        model: spec.model,
+        rates: resolveRates(spec.model),
+      });
+      engineConfig.spend = hold;
+      return { release: () => hold.release() };
+    }
+    if (!accounts.length) {
+      return cap === undefined ? { release: () => {} } : { release: () => {}, grant: cap };
+    }
     const hold = this.getSpendBalances().open(accounts, {
       model: spec.model,
       rates: resolveRates(spec.model),
     });
-    engineConfig.spend = hold;
-    return () => hold.release();
+    const share = hold.reserveRun();
+    const cappedBelow = cap !== undefined && cap <= share.tokens;
+    return {
+      release: () => hold.release(),
+      grant: cappedBelow ? cap : share.tokens,
+      ...(!cappedBelow && share.accountId !== undefined ? { boundBy: share.accountId } : {}),
+      settle: {
+        emit(event) {
+          if (event.type === "llm.done" && !event.data.transcriptOnly) hold.debit(event.data.usage);
+        },
+      },
+    };
   }
 
   /**
@@ -6398,6 +6465,35 @@ function agentExecutionContext(reqCtx: RequestContext, agentRuntime: AgentRuntim
 }
 
 /**
+ * The run's stop reason and its detail, with a stop by the gateway's grant told
+ * as what set the grant: the account whose share it was, or the run's own
+ * input-token cap. The gateway answers every spent grant alike
+ * (`MODEL_GATEWAY_BUDGET_ACCOUNT`); the door alone knows which term the grant
+ * stood for, and a source reads that term (a batch tells its own account apart).
+ */
+function attributeGrantStop(
+  result: Pick<
+    RunHandle,
+    "stopReason" | "finishReason" | "finishReasonRaw" | "spendAccountId" | "wrapUpLimit"
+  >,
+  spend: { grant?: number; boundBy?: string },
+): Pick<
+  RunHandle,
+  "stopReason" | "finishReason" | "finishReasonRaw" | "spendAccountId" | "wrapUpLimit"
+> {
+  const detail = stopDetail(result);
+  const byGrant =
+    spend.grant !== undefined &&
+    result.stopReason === "spend_limit" &&
+    result.spendAccountId === MODEL_GATEWAY_BUDGET_ACCOUNT;
+  if (!byGrant) return { stopReason: result.stopReason, ...detail };
+  const { spendAccountId: _gateway, ...rest } = detail;
+  return spend.boundBy !== undefined
+    ? { stopReason: "spend_limit", ...rest, spendAccountId: spend.boundBy }
+    : { stopReason: "max_input_tokens", ...rest };
+}
+
+/**
  * Why a run stopped, beyond its stop reason: the fields an engine result, a run
  * handle, and a task result share, copied only when set.
  */
@@ -6912,15 +7008,17 @@ function syncCoreSkills(workDir: string): void {
 }
 
 /**
- * The run term an agent runtime cannot hold, if any. Only a runtime with a
- * spend gate checks each model call against the run's spend accounts and its
- * run-wide input-token cap.
+ * The run term an agent runtime cannot hold, if any. A runtime with a spend
+ * gate checks each model call against the run's spend accounts and its run-wide
+ * input-token cap; one held by the gateway's grant is held to both by the grant
+ * its credential carries (ADR-0063).
  */
 function termTheRuntimeCannotHold(
   runtime: AgentRuntime,
   spec: RunSpec,
+  heldByGrant: boolean,
 ): "spend_accounts" | "max_run_input_tokens" | undefined {
-  if (runtime.capabilities.spendGate) return undefined;
+  if (runtime.capabilities.spendGate || heldByGrant) return undefined;
   if (spec.budget.spendAccounts?.length) return "spend_accounts";
   if (spec.budget.maxRunInputTokens !== undefined) return "max_run_input_tokens";
   return undefined;

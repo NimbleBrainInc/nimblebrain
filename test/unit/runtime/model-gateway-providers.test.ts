@@ -61,4 +61,21 @@ describe("watchGatewayProviders", () => {
     expect(gw.urls.length).toBeLessThanOrEqual(asked + 1);
     expect(watch.served()).toBeUndefined();
   });
+
+  it("learns that the gateway enforces grants only when it says so", async () => {
+    const saying = gatewayAnswering([
+      () => Response.json({ providers: ["anthropic"], grants: true }),
+    ]);
+    const silent = gatewayAnswering([() => Response.json({ providers: ["anthropic"] })]);
+    const loose = gatewayAnswering([
+      () => Response.json({ providers: ["anthropic"], grants: "yes" }),
+    ]);
+    const watches = [saying, silent, loose].map((gw) =>
+      watchGatewayProviders({ url: GATEWAY, fetch: gw.fetch }),
+    );
+    expect(watches.map((w) => w.enforcesGrants())).toEqual([false, false, false]);
+    await until(() => watches.every((w) => w.served() !== undefined));
+    expect(watches.map((w) => w.enforcesGrants())).toEqual([true, false, false]);
+    for (const w of watches) w.stop();
+  });
 });

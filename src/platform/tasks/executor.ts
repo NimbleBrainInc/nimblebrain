@@ -269,7 +269,13 @@ function buildRequest(
   req.maxIterations = limits.maxIterations;
   if (limits.maxInputTokens != null) req.maxRunInputTokens = limits.maxInputTokens;
   req.maxRunDurationMs = limits.maxRunDurationMs;
-  const spendAccounts = [...budgetSpendAccounts(task, Date.now()), ...extraAccounts];
+  // A batch's runs draw on the task's own budget as many at once as on the
+  // batch's, so the task's accounts are shared by as many runs.
+  const sharedBy = Math.max(1, ...extraAccounts.map((a) => a.sharedBy ?? 1));
+  const spendAccounts = [
+    ...budgetSpendAccounts(task, Date.now()).map((a) => (sharedBy > 1 ? { ...a, sharedBy } : a)),
+    ...extraAccounts,
+  ];
   if (spendAccounts.length > 0) req.spendAccounts = spendAccounts;
   // An empty list means no narrowing, as the form shows it ("all"), not a run
   // with only the system tools.
