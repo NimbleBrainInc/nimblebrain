@@ -25,7 +25,9 @@ And the capacity around them, for a server that serves many workspaces from one 
     workspace limiter, admitted ``session(ctx)`` and ``admitted(ctx)`` for several sessions
     under one slot.
   * ``PoolSettings`` / ``create_pooled_engine`` — the pool's size and timeout, read from the
-    server's env namespace and validated together with the admission limit at boot.
+    server's env namespace and validated together with the admission limit at boot. The engine
+    refuses a superuser or ``BYPASSRLS`` role with ``UnsafeRoleError`` unless built with
+    ``refuse_bypass_roles=False`` (an engine meant to bypass, such as a migration's).
   * ``WorkspaceLimiter`` — at most N calls per workspace at once,
     admitted before a call checks out a connection; a call refused for capacity raises
     ``Overloaded``, which a server returns as ``rate_limited``.
@@ -57,6 +59,7 @@ from .pool import (  # noqa: E402
     CONNECTIONS_PER_CALL,
     PoolConfigError,
     PoolSettings,
+    UnsafeRoleError,
     create_pooled_engine,
 )
 from .rls import (  # noqa: E402
@@ -84,6 +87,7 @@ __all__ = [
     "PoolSettings",
     "SecuredDatabase",
     "SecurityContext",
+    "UnsafeRoleError",
     "WorkspaceBusy",
     "WorkspaceLimiter",
     "create_pooled_engine",

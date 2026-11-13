@@ -508,7 +508,8 @@ from nimblebrain_server_sdk.db import (
 )
 
 db = SecuredDatabase(url_env="NOTES_DATABASE_URL", prefix="NOTES")   # once per process
-# in the lifespan: db.check() before serving, await db.dispose() on shutdown
+# in the lifespan: db.check() and await db.check_role() before serving,
+# await db.dispose() on shutdown
 
 @mcp.tool(annotations=ADDS)
 async def add_note(text: str):
@@ -534,7 +535,12 @@ pinned by this package's golden SQL tests.
 Mixing shapes fails closed: a session bound for one shape matches no row of another.
 
 - **The app's database role must be neither superuser nor `BYPASSRLS`;** either silently
-  voids every policy. The policies also `FORCE` row-level security on the table owner.
+  voids every policy. The policies also `FORCE` row-level security on the table owner. The
+  pooled engine (`SecuredDatabase`, `create_pooled_engine`) checks this on each new
+  connection and refuses such a role with `UnsafeRoleError` before any session runs;
+  `await db.check_role()` in the lifespan fails the rollout instead of the first call. An
+  engine meant to bypass, such as the one your migrations run on, passes
+  `refuse_bypass_roles=False`.
 - **A pooled connection cannot leak context:** the binding is transaction-local.
   `secured_session` refuses a context it cannot bind faithfully (an empty tenant or
   workspace, or a comma inside a grant or scope).

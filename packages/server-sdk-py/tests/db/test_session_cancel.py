@@ -33,6 +33,8 @@ from nimblebrain_server_sdk.db import (
 )
 from nimblebrain_server_sdk.db.admission import admitted_session
 
+from .conftest import APP_ROLE
+
 CTX = SecurityContext(tenant_id="tenant-a", workspace_id="ws-a")
 
 Opener = Callable[[AsyncEngine], AbstractAsyncContextManager[AsyncConnection]]
@@ -181,14 +183,15 @@ async def test_unshielded_exit_terminates_the_connection(
 
 
 async def test_commit_past_the_bound_raises_and_writes_nothing(
-    pg_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    pg_engine: AsyncEngine, pg_admin: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A commit that overruns the cleanup bound raises ``TimeoutError`` rather than being
     skipped, so the caller never reads a lost write as success. A deferred constraint trigger
     makes the COMMIT itself slow; the table is a real one because a connection the timeout
-    discards takes its temp tables with it."""
+    discards takes its temp tables with it. The superuser creates it, since the app role may
+    not create in ``public``, and grants the app role what the session needs."""
     table = "sdk_db_slow_commit"
-    async with pg_engine.connect() as conn:
+    async with pg_admin.connect() as conn:
         await conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
         await conn.execute(text(f"CREATE TABLE {table} (v int)"))
         await conn.execute(
@@ -203,6 +206,7 @@ async def test_commit_past_the_bound_raises_and_writes_nothing(
                 f" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION {table}_sleep()"
             )
         )
+        await conn.execute(text(f"GRANT SELECT, INSERT ON {table} TO {APP_ROLE}"))
         await conn.commit()
     monkeypatch.setattr(session_mod, "CLEANUP_TIMEOUT_SECONDS", 0.2)
     try:
@@ -217,7 +221,7 @@ async def test_commit_past_the_bound_raises_and_writes_nothing(
         assert _checked_out(pg_engine) == 0
     finally:
         monkeypatch.undo()
-        async with pg_engine.connect() as conn:
+        async with pg_admin.connect() as conn:
             await conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
             await conn.execute(text(f"DROP FUNCTION IF EXISTS {table}_sleep()"))
             await conn.commit()

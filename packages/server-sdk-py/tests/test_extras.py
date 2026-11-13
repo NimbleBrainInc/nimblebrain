@@ -247,6 +247,7 @@ def test_db_re_exports_pgbulkheads_classes_as_the_same_objects() -> None:
     """An ``except`` in a server catches what pgbulkhead raises, so these are re-exports."""
     import pgbulkhead.admission
     import pgbulkhead.pool
+    import pgbulkhead.role
 
     import nimblebrain_server_sdk.db as db
 
@@ -260,3 +261,4 @@ def test_db_re_exports_pgbulkheads_classes_as_the_same_objects() -> None:
         assert getattr(db, name) is getattr(pgbulkhead.admission, name), name
     for name in ("PoolConfigError", "PoolSettings", "create_pooled_engine"):
         assert getattr(db, name) is getattr(pgbulkhead.pool, name), name
+    assert db.UnsafeRoleError is pgbulkhead.role.UnsafeRoleError
