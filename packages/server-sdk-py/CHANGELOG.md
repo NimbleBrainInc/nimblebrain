@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.0]
+
 ### Changed
 
 - `[db]` requires `pgbulkhead` 0.1.2 (pinned exactly) and SQLAlchemy 2.0.44 or later. The
@@ -17,6 +19,8 @@
 
 - `[db]`: `UnsafeRoleError` (pgbulkhead's own class), and `SecuredDatabase.check_role()` to fail
   the rollout at startup rather than the first call.
+- `[db]`: the `refuse_bypass_roles` keyword (default `True`) on `create_pooled_engine` and
+  `SecuredDatabase`.
 
 ## [0.4.1]
 
