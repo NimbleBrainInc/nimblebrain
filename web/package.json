@@ -52,7 +52,6 @@
     "body-parser": "^2.4.0",
     "source-map-js": "^1.2.2",
     "systeminformation": "^5.33.16",
-    "undici": "^7.30.1",
-    "zod": "^4.6.6"
+    "undici": "^7.30.1"
   }
 }
