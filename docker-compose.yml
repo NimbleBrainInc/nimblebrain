@@ -29,7 +29,11 @@ services:
     build: web/
     restart: unless-stopped
     ports:
-      - "27246:8080"
+      # This machine only. The `dev` adapter checks no credential, so the UI
+      # is not published to the network. To serve other machines, first set a
+      # real adapter in instance.json, then put a TLS proxy in front or
+      # publish "27246:8080".
+      - "127.0.0.1:27246:8080"
     environment:
       - PLATFORM_URL=http://platform:27247
     depends_on:

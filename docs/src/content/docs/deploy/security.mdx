@@ -130,7 +130,7 @@ This is the MCP transport's DNS-rebinding protection: a page on another hostname
 
 The platform service (port 27247) should never be directly exposed to the internet. The platform runs on an internal Docker network:
 
-- The platform has no `ports` mapping. Only the `web` container (Caddy) is exposed on port 27246. Caddy proxies `/v1/*` to the platform.
+- The platform has no `ports` mapping. Only the `web` container (Caddy) is published, on port 27246 of `127.0.0.1`, where a reverse proxy on the same host reaches it. Caddy proxies `/v1/*` to the platform.
 
 ```
 Internet → Reverse Proxy (TLS) → Web (27246) → Platform (27247, internal)
