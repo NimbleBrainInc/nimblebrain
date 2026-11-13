@@ -590,6 +590,19 @@ describe("chat-store viewer", () => {
     expect(store.getSnapshot("kA").messages.filter((m) => m.role === "user")).toHaveLength(1);
   });
 
+  it("keeps the stream's error code on the errored assistant message", async () => {
+    const store = createChatStore();
+    await store.sendTurn("kAuth", { text: "hi" });
+    latestStream().onEvent(
+      "error",
+      { error: "model_auth_failed", message: "The model provider has no valid API key." },
+      1,
+    );
+    const last = store.getSnapshot("kAuth").messages.at(-1);
+    expect(last?.error).toBe("The model provider has no valid API key.");
+    expect(last?.errorCode).toBe("model_auth_failed");
+  });
+
   it("retry is a no-op when nothing was sent on the slice", async () => {
     const store = createChatStore();
     await store.loadConversation("conv_X"); // loaded from disk, never sent in this tab

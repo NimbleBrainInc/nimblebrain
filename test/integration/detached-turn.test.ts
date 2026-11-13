@@ -314,6 +314,43 @@ describe("cancel delivers a terminal frame to live viewers (Stop button)", () =>
   });
 });
 
+describe("a rejected model key ends the turn with a structured error code", () => {
+  let rt: Runtime;
+  const dir = join(tmpdir(), `nimblebrain-auth-${Date.now()}`);
+
+  beforeAll(async () => {
+    mkdirSync(dir, { recursive: true });
+    rt = await Runtime.start({
+      identityProvider: devProvider,
+      languageModel: createMockModel(() => {
+        throw Object.assign(new Error("invalid x-api-key"), { status: 401 });
+      }),
+      logging: { disabled: true },
+      workDir: dir,
+    });
+    await provisionTestWorkspace(rt);
+  });
+
+  afterAll(async () => {
+    await rt.shutdown();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("publishes `error` with code model_auth_failed and the fix as its message", async () => {
+    const { conversationId } = await rt.startTurn({
+      identity: DEV_IDENTITY,
+      message: "What can you help me with?",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    await waitFor(() => !rt.isTurnActive(conversationId));
+    const last = rt.getTurnReplay(conversationId, 0).at(-1);
+    expect(last?.type).toBe("error");
+    const data = last?.data as { error: string; message: string };
+    expect(data.error).toBe("model_auth_failed");
+    expect(data.message).toMatch(/^The model provider has no valid API key\. Set one/);
+  });
+});
+
 describe("shutdown aborts in-flight detached turns (RunBus teardown)", () => {
   it("aborts active turn signals before tearing down workspace sources", async () => {
     const dir = join(tmpdir(), `nimblebrain-shutdown-runbus-${Date.now()}`);

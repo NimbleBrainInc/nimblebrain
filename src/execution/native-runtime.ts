@@ -6,7 +6,7 @@
  */
 
 import type { LanguageModelV4 } from "@ai-sdk/provider";
-import { AgentEngine } from "../engine/engine.ts";
+import { AgentEngine, type AgentEngineOptions } from "../engine/engine.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { AgentRuntime } from "./types.ts";
 
@@ -14,6 +14,7 @@ export const NATIVE_RUNTIME_ID = "native";
 
 export function createNativeRuntime(
   resolveModel: (model: string) => LanguageModelV4,
+  engineOptions: AgentEngineOptions = {},
 ): AgentRuntime {
   return {
     id: NATIVE_RUNTIME_ID,
@@ -23,6 +24,7 @@ export function createNativeRuntime(
         resolveModel(run.config.model),
         io.tools,
         boundAfterStart(io.events, run.runId),
+        engineOptions,
       );
       return engine.run({ ...run.config, runId: run.runId }, run.system, run.messages, run.tools);
     },

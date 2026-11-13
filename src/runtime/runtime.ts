@@ -81,6 +81,7 @@ import {
   windowMessages,
 } from "../conversation/window.ts";
 import { textContent } from "../engine/content-helpers.ts";
+import { ModelAuthError } from "../engine/provider-error.ts";
 import type { AdminToolCallPayload } from "../engine/schemas/events.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type {
@@ -1451,7 +1452,7 @@ export class Runtime {
           this.runBus.end(conversationId, "cancelled");
         } else {
           this.publishTurnEvent(conversationId, "error", {
-            error: "engine_error",
+            error: err instanceof ModelAuthError ? err.code : "engine_error",
             message: err instanceof Error ? err.message : String(err),
           });
           this.runBus.end(conversationId, "error");

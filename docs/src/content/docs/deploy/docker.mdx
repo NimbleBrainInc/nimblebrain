@@ -130,6 +130,8 @@ The `web` service uses `depends_on` with `condition: service_healthy`, so it onl
    export ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
    ```
 
+   The platform reads the key when its container starts. To use a new key, run `docker compose up -d`, which recreates the container with it; `docker compose restart` keeps the container's old environment.
+
    Then write `instance.json` next to `docker-compose.yml`. For a local trial, the `dev` adapter:
 
    ```bash

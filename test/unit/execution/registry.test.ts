@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
 import type { AgentRuntimeConfig, ExecutionConfig } from "../../../src/config/execution.ts";
+import { textContent } from "../../../src/engine/content-helpers.ts";
+import { ModelAuthError } from "../../../src/engine/provider-error.ts";
 import {
   type AgentRuntimeDeps,
   assertPoolable,
@@ -7,6 +11,7 @@ import {
 } from "../../../src/execution/registry.ts";
 import type { AgentRuntime } from "../../../src/execution/types.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { createMockModel } from "../../helpers/mock-model.ts";
 
 const signed = () => "connection-jwt";
 const deps = (over: Partial<AgentRuntimeDeps> = {}): AgentRuntimeDeps => ({
@@ -131,5 +136,56 @@ describe("a worker pool", () => {
     expect(() => assertPoolable("pool", { toolSurface: "mixed" })).toThrow(
       /execution.runtimes.pool: its agent has tools of its own/,
     );
+  });
+});
+
+describe("the native runtime on a rejected model key", () => {
+  /** Run the native runtime once against a model that answers 401. */
+  function runRejected(config: ExecutionConfig | undefined): Promise<unknown> {
+    const runtimes = createAgentRuntimes(
+      config,
+      [],
+      deps({
+        resolveModel: () =>
+          createMockModel(() => {
+            throw Object.assign(new Error("invalid x-api-key"), { status: 401 });
+          }),
+      }),
+    );
+    return runtimes
+      .select(undefined)
+      .execute(
+        {
+          runId: "run-1",
+          conversationId: null,
+          system: "",
+          messages: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          tools: [],
+          config: {
+            model: "anthropic:claude-sonnet-4-6",
+            maxIterations: 1,
+            maxInputTokens: 100_000,
+            maxOutputTokens: 1_000,
+          },
+        },
+        {
+          tools: new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+          events: new NoopEventSink(),
+          billSummary: () => {},
+        },
+      )
+      .catch((e: unknown) => e);
+  }
+
+  test("names the provider whose key to set when it calls the provider directly", async () => {
+    const err = await runRejected(undefined);
+    expect(err).toBeInstanceOf(ModelAuthError);
+    expect((err as Error).message).toContain("Set one for anthropic");
+  });
+
+  test("names no key to set behind the model gateway, which holds the keys", async () => {
+    const err = await runRejected({ modelGateway: GATEWAY });
+    expect(err).not.toBeInstanceOf(ModelAuthError);
+    expect((err as Error).message).toBe("Authentication failed (401). Check your API key.");
   });
 });
