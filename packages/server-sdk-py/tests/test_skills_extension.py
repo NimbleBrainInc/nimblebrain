@@ -14,13 +14,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
-import mcp_types
 import pytest
 from fastmcp import Client as FastMCPClient
 from fastmcp import FastMCP
 from mcp.client import Client
 from mcp.server.mcpserver import MCPServer
 from mcp.shared.exceptions import MCPError
+from mcp.types import INVALID_PARAMS, Request
 from pydantic import TypeAdapter
 
 from nimblebrain_server_sdk.skills import (
@@ -189,12 +189,12 @@ def test_oversized_skill_warns() -> None:
 # --------------------------------------------------------------------------
 
 
-class _ListSkillsRequest(mcp_types.Request[ListSkillsParams, Literal["skills/list"]]):
+class _ListSkillsRequest(Request[ListSkillsParams, Literal["skills/list"]]):
     method: Literal["skills/list"] = "skills/list"
     params: ListSkillsParams
 
 
-class _GetSkillRequest(mcp_types.Request[GetSkillParams, Literal["skills/get"]]):
+class _GetSkillRequest(Request[GetSkillParams, Literal["skills/get"]]):
     method: Literal["skills/get"] = "skills/get"
     params: GetSkillParams
 
@@ -298,14 +298,14 @@ async def test_get_unknown_uri_is_invalid_params(wire_name: str) -> None:
         for uri in ("skill://nope/SKILL.md", "skill://pdf-processing/references/FORMS.md"):
             with pytest.raises(MCPError) as excinfo:
                 await wire.get(uri)
-            assert excinfo.value.code == mcp_types.INVALID_PARAMS
+            assert excinfo.value.code == INVALID_PARAMS
 
 
 async def test_unknown_cursor_is_invalid_params(wire_name: str) -> None:
     async with WIRES[wire_name]() as wire:
         with pytest.raises(MCPError) as excinfo:
             await wire.list(cursor="bogus")
-        assert excinfo.value.code == mcp_types.INVALID_PARAMS
+        assert excinfo.value.code == INVALID_PARAMS
 
 
 @pytest.mark.parametrize("wire_name", ["fastmcp", "mcpserver"])

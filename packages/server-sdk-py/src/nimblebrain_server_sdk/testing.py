@@ -8,20 +8,20 @@ import json
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
-import mcp_types
 from fastmcp import Client, FastMCP
+from mcp.types import Request
 from pydantic import TypeAdapter
 
 from nimblebrain_server_sdk.extensions.facets import FACET_LEVELS, FACETS_EXTENSION_ID
 from nimblebrain_server_sdk.skills import SKILLS_EXTENSION_ID, GetSkillParams, ListSkillsParams
 
 
-class _ListSkillsRequest(mcp_types.Request[ListSkillsParams, Literal["skills/list"]]):
+class _ListSkillsRequest(Request[ListSkillsParams, Literal["skills/list"]]):
     method: Literal["skills/list"] = "skills/list"
     params: ListSkillsParams
 
 
-class _GetSkillRequest(mcp_types.Request[GetSkillParams, Literal["skills/get"]]):
+class _GetSkillRequest(Request[GetSkillParams, Literal["skills/get"]]):
     method: Literal["skills/get"] = "skills/get"
     params: GetSkillParams
 

@@ -1,7 +1,7 @@
 """Bundle-side wrapper for the `ai.nimblebrain/host-resources` extension.
 
-The platform's TS implementation lives in
-`src/host-resources/` in the NimbleBrain platform repo. This module
+The host's TypeScript implementation lives in `src/host-resources/` in the
+NimbleBrain runtime (this repository). This module
 mirrors the wire shape exactly: same method names, same parameter
 shapes, same result types (reused from `mcp.types`).
 """
@@ -18,6 +18,7 @@ from mcp.types import (
     ReadResourceResult,
     ServerRequest,
 )
+from mcp.types.version import MODERN_PROTOCOL_VERSIONS
 from pydantic import BaseModel, ConfigDict, Field
 
 from nimblebrain_server_sdk.errors import HostCapabilityMissing
@@ -61,7 +62,7 @@ class _HostResourcesReadParams(BaseModel):
 
 
 class _HostResourcesReadRequest(BaseModel):
-    method: Literal["ai.nimblebrain/resources/read"] = HOST_RESOURCES_READ_METHOD  # type: ignore[assignment]
+    method: Literal["ai.nimblebrain/resources/read"] = HOST_RESOURCES_READ_METHOD
     params: _HostResourcesReadParams
 
 
@@ -107,7 +108,7 @@ class _HostResourcesListParams(BaseModel):
 
 
 class _HostResourcesListRequest(BaseModel):
-    method: Literal["ai.nimblebrain/resources/list"] = HOST_RESOURCES_LIST_METHOD  # type: ignore[assignment]
+    method: Literal["ai.nimblebrain/resources/list"] = HOST_RESOURCES_LIST_METHOD
     params: _HostResourcesListParams
 
 
@@ -141,7 +142,8 @@ class HostResources:
         falling back to the legacy `experimental` slot for hosts that
         haven't migrated to the spec-blessed `extensions` field yet.
         Returns False on any malformed shape so a buggy host can't
-        crash a bundle's availability probe.
+        crash a bundle's availability probe, and False on the 2026-07-28
+        protocol era, which has no back-channel for the host request.
         """
         return self._method_enabled("read")
 
@@ -160,7 +162,14 @@ class HostResources:
 
     def _method_enabled(self, method: str) -> bool:
         """Per-method capability gate. Shared by `available` /
-        `list_available` and the per-call guards in `read` / `list`."""
+        `list_available` and the per-call guards in `read` / `list`.
+
+        host-resources is a server-to-client request. The 2026-07-28 protocol era has
+        no back-channel for one, so on that era the capability is unusable whatever the
+        client advertised, and it reads as not available.
+        """
+        if self._negotiated_without_back_channel():
+            return False
         cap = self._capability_block()
         if cap is None:
             return False
@@ -194,7 +203,7 @@ class HostResources:
         catch and fall back to a structured tool error (the Level-C
         pattern).
 
-        Raises `McpError` for wire-level errors:
+        Raises `mcp.shared.exceptions.MCPError` for wire-level errors (match on `.code`):
         - `-32002 Resource not found` (also: cross-workspace lookup)
         - `-32004 Rate limited` (with `retryAfterMs` in `error.data`)
         - `-32005 Response too large` (with `size`, `maxSize`)
@@ -226,7 +235,7 @@ class HostResources:
         Raises `HostCapabilityMissing` if the host hasn't advertised
         the extension with `list.enabled` — check `list_available`
         before calling, or catch and fall back. Wire errors propagate as
-        `McpError` (see `read`).
+        `MCPError` (see `read`).
         """
         if not self._method_enabled("list"):
             raise HostCapabilityMissing(HOST_RESOURCES_CAPABILITY_KEY)
@@ -246,6 +255,17 @@ class HostResources:
         )
 
     # -- Internals ----------------------------------------------------------
+
+    def _negotiated_without_back_channel(self) -> bool:
+        """True when this request negotiated a protocol era with no back-channel.
+
+        Reads the negotiated version from FastMCP's request context. With no
+        request context (a background task, or a stand-in context in tests) it
+        returns False and the capability block decides.
+        """
+        request_context = getattr(self._ctx, "request_context", None)
+        version = getattr(request_context, "protocol_version", None)
+        return version in MODERN_PROTOCOL_VERSIONS
 
     def _capability_block(self) -> dict[str, Any] | None:
         """Return the raw capability dict, or None if not advertised.

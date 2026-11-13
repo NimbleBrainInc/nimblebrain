@@ -19,7 +19,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx2
 import pytest
+from fastmcp import Context, FastMCP
 from mcp.types import (
     ClientCapabilities,
     InitializeRequestParams,
@@ -84,7 +86,7 @@ def test_available_false_on_malformed_shape():
     # `model_construct` skipping validation on both models is what
     # reaches it.
     caps = ClientCapabilities.model_construct(
-        extensions={HOST_RESOURCES_CAPABILITY_KEY: "not-a-dict"}  # type: ignore[dict-item]
+        extensions={HOST_RESOURCES_CAPABILITY_KEY: "not-a-dict"}
     )
     params = InitializeRequestParams.model_construct(capabilities=caps)
     ctx = StubContext(session=StubSession(client_params=params))
@@ -207,7 +209,7 @@ def test_supports_scheme_false_on_malformed_schemes():
             HOST_RESOURCES_CAPABILITY_KEY: {
                 "read": {"enabled": True},
                 # Wrong shape — should be a list. Buggy host.
-                "schemes": "files",  # type: ignore[dict-item]
+                "schemes": "files",
             }
         }
     )
@@ -302,3 +304,69 @@ async def test_list_raises_host_capability_missing_when_unavailable():
     with pytest.raises(HostCapabilityMissing):
         await host(ctx).list()
     assert ctx.session.calls == []
+
+
+# ---------------------------------------------------------------------------
+# Protocol era
+# ---------------------------------------------------------------------------
+#
+# host-resources is a server-to-client request, and the 2026-07-28 protocol has no
+# back-channel for one. A client on that era that still advertises the capability cannot be
+# asked, so the SDK reports the capability as unavailable rather than letting `read` fail on
+# the wire. These run a real FastMCP server over its ASGI app.
+
+MODERN = "2026-07-28"
+_HEADERS = {"accept": "application/json, text/event-stream", "content-type": "application/json"}
+
+
+def _era_probe() -> FastMCP:
+    probe = FastMCP("probe")
+
+    @probe.tool
+    async def probe_host(ctx: Context) -> dict[str, Any]:
+        h = sdk_host(ctx)
+        outcome = "not-called"
+        try:
+            await h.read("files://fl_abc")
+        except HostCapabilityMissing:
+            outcome = "capability-missing"
+        except Exception as exc:  # the wire failure the era check prevents
+            outcome = type(exc).__name__
+        return {"available": h.available, "list_available": h.list_available, "read": outcome}
+
+    return probe
+
+
+async def test_modern_era_reports_host_resources_unavailable(host_resources_v1_extensions):
+    envelope = {
+        "io.modelcontextprotocol/protocolVersion": MODERN,
+        "io.modelcontextprotocol/clientInfo": {"name": "probe", "version": "0"},
+        "io.modelcontextprotocol/clientCapabilities": {"extensions": host_resources_v1_extensions},
+    }
+    body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "probe_host", "arguments": {}, "_meta": envelope},
+    }
+    headers = {
+        **_HEADERS,
+        "mcp-protocol-version": MODERN,
+        "mcp-method": "tools/call",
+        "mcp-name": "probe_host",
+    }
+    probe = _era_probe()
+    app = probe.http_app(json_response=True)
+    async with (
+        app.router.lifespan_context(app),
+        httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url="http://p") as http,
+    ):
+        reply = (await http.post("/mcp", headers=headers, json=body)).json()
+
+    result = reply["result"]
+    assert not result.get("isError"), result
+    assert result["structuredContent"] == {
+        "available": False,
+        "list_available": False,
+        "read": "capability-missing",
+    }

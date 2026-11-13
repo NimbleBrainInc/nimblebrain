@@ -2,8 +2,8 @@
 
 Mirrors `src/host-resources/methods.ts` and the JSON-RPC error codes in
 `src/host-resources/resolver.ts` and `src/host-resources/rate-limit.ts`
-in the platform repo. Pinning the values in code so bundle authors
-matching on `McpError.error.code` don't carry magic numbers.
+in the NimbleBrain runtime (this repository). Pinning the values in code so bundle authors
+matching on `MCPError.code` don't carry magic numbers.
 """
 
 HOST_RESOURCES_CAPABILITY_KEY = "ai.nimblebrain/host-resources"

@@ -1,15 +1,19 @@
 name: Release server-sdk-py
 
-# Triggered by tags matching `server-sdk-py/v*` (e.g. `server-sdk-py/v0.3.0`).
-# Tests, builds the wheel + sdist, publishes to PyPI via Trusted Publishing
-# (OIDC: no long-lived API token in repo secrets), and creates a GitHub
-# Release. The runtime release workflow (`release.yml`) globs `v*`, which
-# does not match this prefix, so the two pipelines stay independent.
+# Triggered by tags matching `server-sdk-py/v*` (e.g. `server-sdk-py/v0.3.1`), which only an
+# admin can create. The runtime release workflow (`release.yml`) globs `v*`, which does not
+# match this prefix, so the two pipelines stay independent.
 #
-# PyPI side, one-time per package: a trusted publisher for project
-# `nimblebrain-server-sdk` with owner NimbleBrainInc, repository
-# `nimblebrain`, workflow `release-server-sdk-py.yml`, environment `pypi`.
-# The `pypi` environment in this repo's settings must carry the same name.
+# The order is: check the tag, verify the source, build once, test and inspect the built files,
+# publish those exact files to PyPI, then create the GitHub Release. Each job holds only the
+# permission it uses: publishing is the only job that can mint a PyPI token (OIDC Trusted
+# Publishing, no stored API token), and the GitHub Release job is the only one that can write
+# to the repository.
+#
+# PyPI side, one-time per package: a trusted publisher for project `nimblebrain-server-sdk` with
+# owner NimbleBrainInc, repository `nimblebrain`, workflow `release-server-sdk-py.yml`,
+# environment `pypi`. The `pypi` environment in this repository requires a maintainer's
+# approval and accepts only `server-sdk-py/v*` tags.
 
 on:
   push:
@@ -17,81 +21,167 @@ on:
       - 'server-sdk-py/v*'
 
 permissions:
-  contents: write   # for GitHub Release creation
-  id-token: write   # for PyPI Trusted Publishing (OIDC)
+  contents: read
+
+concurrency:
+  group: release-server-sdk-py-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  verify:
-    name: Verify SDK
+  check-tag:
+    name: Check the tag
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: packages/server-sdk-py
     steps:
       - uses: actions/checkout@v7
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
         with:
-          enable-cache: true
-      - name: Install Python
-        run: uv python install 3.13
-      - name: Install dependencies
-        run: uv sync --frozen --no-install-project
-      - name: Lint
-        # Include `tests/` so test-only imports/formatting drift fails
-        # CI rather than getting caught on a release tag — release-time
-        # lint failures block a publish, so scope shifts here are
-        # better caught on PR.
-        run: uv run ruff check src/ tests/
-      - name: Format check
-        run: uv run ruff format --check src/ tests/
-      - name: Type check
-        run: uv run ty check src/ tests/
-      - name: Test
-        run: uv run pytest tests/ -v
-
-  build-and-publish:
-    name: Build + publish to PyPI
-    runs-on: ubuntu-latest
-    needs: verify
-    environment:
-      name: pypi
-      url: https://pypi.org/p/nimblebrain-server-sdk
-    defaults:
-      run:
-        working-directory: packages/server-sdk-py
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
-      - name: Verify tag matches package version
-        # Catches `server-sdk-py/v0.1.0` tagged against a pyproject.toml
-        # still on `0.0.x`. Tag is the source of truth for version
-        # numbers, but the pyproject.toml has to match because that's
-        # what gets baked into the wheel.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tagged commit is on main
+        # A release ships what main holds; a tag on a side branch is refused here, before any
+        # build or approval.
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main"
+            exit 1
+          fi
+      - name: Tag matches the package version
+        # The tag names the version; pyproject.toml has to agree, because that is what the
+        # wheel carries.
         run: |
           TAG="${GITHUB_REF#refs/tags/server-sdk-py/v}"
           PKG_VERSION="$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')"
           if [ "$TAG" != "$PKG_VERSION" ]; then
-            echo "Tag version ($TAG) does not match pyproject.toml version ($PKG_VERSION)"
+            echo "::error::Tag version ($TAG) does not match pyproject.toml version ($PKG_VERSION)"
             exit 1
           fi
           echo "Version match: $TAG"
+
+  verify:
+    name: Verify the source
+    needs: check-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/server-sdk-py
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
+      - name: Install Python
+        run: uv python install 3.13
+      - name: Install dependencies
+        run: uv sync --frozen --python 3.13
+      - name: Lint
+        run: uv run --frozen ruff check src/ tests/ scripts/
+      - name: Format check
+        run: uv run --frozen ruff format --check src/ tests/ scripts/
+      - name: Type check
+        run: uv run --frozen ty check src/ tests/
+
+  build:
+    name: Build the wheel and sdist
+    needs: check-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/server-sdk-py
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
       - name: Build sdist + wheel
         run: uv build
-      - name: Publish to PyPI
-        # Trusted Publishing — no token needed; OIDC from id-token
-        # permission authenticates against the PyPI publisher config.
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Inspect what ships
+        run: uv run --no-project --python 3.13 python scripts/check_dist.py dist
+      - uses: actions/upload-artifact@v7
         with:
-          packages-dir: packages/server-sdk-py/dist
+          name: dist
+          path: packages/server-sdk-py/dist/
+          if-no-files-found: error
+
+  test-dist:
+    name: Test the built wheel (Python ${{ matrix.python }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13', '3.14']
+    defaults:
+      run:
+        working-directory: packages/server-sdk-py
+    env:
+      PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: packages/server-sdk-py/dist/
+      - name: Install the built wheel, not the source
+        run: |
+          uv venv --python "$PYTHON" .venv-dist
+          uv pip install --python .venv-dist dist/*.whl pytest pytest-asyncio httpx2
+      - name: The suite imports the installed wheel
+        run: .venv-dist/bin/python -c "import nimblebrain_server_sdk as m, sys; assert 'site-packages' in m.__file__, m.__file__; print(m.__file__, m.__version__)"
+      - name: Test
+        run: .venv-dist/bin/python -m pytest tests/ -v -p no:cacheprovider
+
+  publish:
+    name: Publish to PyPI
+    needs: [verify, test-dist]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/nimblebrain-server-sdk
+    permissions:
+      id-token: write   # PyPI Trusted Publishing (OIDC); nothing else in this job writes
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
+        with:
+          packages-dir: dist/
+
+  github-release:
+    name: Create the GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write   # create the release and attach the published files
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
           name: server-sdk-py ${{ github.ref_name }}
           body: |
             Published to PyPI: https://pypi.org/project/nimblebrain-server-sdk/
             See `packages/server-sdk-py/CHANGELOG.md` for changes.
           files: |
-            packages/server-sdk-py/dist/*.whl
-            packages/server-sdk-py/dist/*.tar.gz
+            dist/*.whl
+            dist/*.tar.gz

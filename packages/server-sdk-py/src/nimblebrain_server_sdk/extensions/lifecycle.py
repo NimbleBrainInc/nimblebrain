@@ -25,14 +25,12 @@ because the host calls synchronously and the NimbleBrain host refuses a handler 
 tasks. A tool marked by hand with ``meta=lifecycle_meta(...)`` gets none of these checks.
 
 **Handlers stay listed to every client.** The spec (§6) says a server SHOULD NOT list its
-handlers to a client that did not advertise the extension, and FastMCP 4 could do that without
-patching it: a ``Middleware.on_list_tools`` reading ``Context.client_extension_settings``. This
-library does not, by default or as an option. A host that reads the declaration from its
-operator catalog rather than from the wire finds each handler by name in ``tools/list`` and
-advertises nothing, so withholding would break that host's lifecycle calls for as long as it
-reads the catalog. What makes listing safe is the server's own duty (spec §5): every handler is
-safe for any caller holding the scope's identity, so ``removing`` records intent and never
-destroys. Revisit once no host reads ``lifecycle`` from a catalog.
+handlers to a client that did not advertise the extension. This library lists them anyway: a
+host may learn a server's lifecycle declaration from its catalog rather than from the wire, in
+which case it advertises nothing and finds each handler by name in ``tools/list``, so withholding
+them would break its lifecycle calls. Listing is safe because of the server's own duty (spec §5):
+every handler is safe for any caller holding the scope's identity, so ``removing`` records intent
+and never destroys.
 """
 
 from __future__ import annotations
@@ -42,7 +40,7 @@ from typing import Any, Literal, TypeVar
 
 from fastmcp import FastMCP
 from fastmcp.tools import FunctionTool
-from mcp_types import ToolAnnotations
+from mcp.types import ToolAnnotations
 
 from nimblebrain_server_sdk.extensions.platform import PlatformExtension
 
