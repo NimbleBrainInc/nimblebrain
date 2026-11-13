@@ -19,7 +19,9 @@ from nimblebrain_server_sdk.observability import (
 
 
 def test_to_tool_error_returns_real_toolresult_marked_error() -> None:
-    err = ServiceError.from_upstream(402, detail="Exa API Error 402: … dashboard.exa.ai")
+    err = ServiceError.from_upstream(
+        402, detail="Acme Search API Error 402: … dashboard.acme-search.example"
+    )
     result = to_tool_error(err)
 
     assert isinstance(result, ToolResult)
@@ -29,7 +31,7 @@ def test_to_tool_error_returns_real_toolresult_marked_error() -> None:
     assert envelope["retryable"] is False
     assert envelope["upstream_status"] == 402
     # The raw vendor detail never reaches the host envelope.
-    assert "dashboard.exa.ai" not in json.dumps(result.structured_content)
+    assert "dashboard.acme-search.example" not in json.dumps(result.structured_content)
 
 
 class _Refusal:
