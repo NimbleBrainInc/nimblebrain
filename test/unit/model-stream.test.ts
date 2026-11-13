@@ -755,6 +755,21 @@ describe("callModel — error parts", () => {
     }
   });
 
+  it("test_provider_error_body_log_bounds_the_message", async () => {
+    const body = { message: "x".repeat(350) };
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const model = scriptedModel([() => partsStream([{ type: "error", error: body }])]);
+      const err = await streamError(callModel(model, userPrompt("x"), () => {}));
+      expect(err.message).toBe(body.message);
+      expect(warn).toHaveBeenCalledWith("[model] stream error part: object", {
+        providerMessage: body.message.slice(0, 300),
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("test_parse_failure_log_omits_its_message", async () => {
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
