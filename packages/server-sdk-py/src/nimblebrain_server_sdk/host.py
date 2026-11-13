@@ -8,6 +8,7 @@ shapes, same result types (reused from `mcp.types`).
 
 from __future__ import annotations
 
+import builtins
 from typing import Any, Literal, cast
 
 from fastmcp import Context
@@ -19,8 +20,8 @@ from mcp.types import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
-from nimblebrain_bundle_sdk.errors import HostCapabilityMissing
-from nimblebrain_bundle_sdk.methods import (
+from nimblebrain_server_sdk.errors import HostCapabilityMissing
+from nimblebrain_server_sdk.methods import (
     HOST_RESOURCES_CAPABILITY_KEY,
     HOST_RESOURCES_LIST_METHOD,
     HOST_RESOURCES_READ_METHOD,
@@ -213,7 +214,7 @@ class HostResources:
         *,
         scheme: str | None = None,
         mime_type: str | None = None,
-        tags: list[str] | None = None,
+        tags: builtins.list[str] | None = None,
     ) -> ListResourcesResult:
         """List workspace resources, optionally filtered.
 

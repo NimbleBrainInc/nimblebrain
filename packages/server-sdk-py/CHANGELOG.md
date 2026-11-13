@@ -2,8 +2,34 @@
 
 ## [Unreleased]
 
+### Highlights
+
+- **Published as `nimblebrain-server-sdk`** (import `nimblebrain_server_sdk`): the SDK for any
+  MCP server that runs on NimbleBrain, app or connector. `nimblebrain-bundle-sdk` stays at
+  0.2.0 and gets no further releases.
+- **Server helpers:** tool annotations, change announcements, the `ai.nimblebrain/facets`,
+  `lifecycle` and `view` extensions, bounded listing rows, record ids, and `testing` checks
+  that read a server the way a host does.
+
+### Breaking
+
+- **Import path** is `nimblebrain_server_sdk`; every 0.2.0 name is exported unchanged there.
+- **Install name** is `nimblebrain-server-sdk`.
+
+### Added
+
+- `READS`, `ADDS`, `CHANGES` tool annotations.
+- `announce_resource_list_changed`: a committed write tells the host its views should re-read.
+- `add_platform_extension` / `PlatformExtension`, and the facets (`facet_meta`,
+  `facet_count`), lifecycle (`add_lifecycle_extension`) and record-view (`record_view_meta`)
+  extensions.
+- `add_skills(mcp, skills)`: registers `SkillsExtension` on a FastMCP server in one call.
+- `listing_row`, `preview_text`, `PREVIEW_CHARS`; `new_ulid`, `new_prefixed_id`.
+- `nimblebrain_server_sdk.testing`: `served_skills`, `served_facets`, `assert_bounded_rows`.
+
 ### Changed
 
+- **Requires `fastmcp>=4.0.0`** with no upper bound, and `pydantic>=2.12`.
 - **Licensed under Apache-2.0**, the license of the repository it ships from. Releases up to
   and including 0.2.0 remain available under MIT.
 

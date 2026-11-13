@@ -10,7 +10,7 @@ file paths inside the skill) runs at construction so a bad skill fails at
 import, not on a host's first read.
 
 `SkillsCatalog` holds that core and knows no server framework.
-`SkillsExtension` binds it to FastMCP (`mcp.add_extension(...)`), and
+`SkillsExtension` binds it to FastMCP (`add_skills(mcp, ...)` registers it), and
 `MCPServerSkillsExtension` to the `mcp` SDK's `MCPServer(extensions=[...])`.
 The shapes follow FastMCP's `SkillsExtension` and the `mcp` SDK's `Skills`
 extension, both unreleased, so this module can be deleted once they ship.
@@ -32,6 +32,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
+from fastmcp import FastMCP
 from fastmcp.resources import BinaryResource as FastMCPBinaryResource
 from fastmcp.resources import TextResource as FastMCPTextResource
 from fastmcp.server.extensions import MethodBinding as FastMCPMethodBinding
@@ -489,6 +490,18 @@ class MCPServerSkillsExtension(Extension):
         )
 
 
+def add_skills(mcp: FastMCP, skills: Iterable[SkillInput]) -> SkillsExtension:
+    """Declare the skills extension on FastMCP server ``mcp`` and serve ``skills`` through it.
+
+    Every check SEP-2640 places on a skill runs here, so a bad skill fails at import. Like
+    any extension, it is registered where the server is built, before it serves, and once:
+    every skill the server publishes goes in the one call.
+    """
+    extension = SkillsExtension(skills)
+    mcp.add_extension(extension)
+    return extension
+
+
 async def _answer(method: Any, ctx: Any, params: Any) -> dict[str, Any]:
     return method(params, getattr(ctx, "protocol_version", None))
 
@@ -504,4 +517,5 @@ __all__ = [
     "SkillFile",
     "SkillsCatalog",
     "SkillsExtension",
+    "add_skills",
 ]

@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from nimblebrain_bundle_sdk.skills import (
+from nimblebrain_server_sdk.skills import (
     MCPServerSkillsExtension,
     SkillDefinition,
     SkillsExtension,
