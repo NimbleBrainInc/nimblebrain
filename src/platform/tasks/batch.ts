@@ -824,9 +824,10 @@ export class BatchDriver {
     lb.settledAtRequest.delete(runId);
     // Only a run that made a model call ever held a reservation; counting a
     // refused one would let two refused items keep re-asking for each other.
-    if (run.inputTokens > 0 || run.outputTokens > 0) lb.settled++;
+    const madeCall = run.inputTokens > 0 || run.outputTokens > 0;
+    if (madeCall) lb.settled++;
     const reservedOut =
-      (batchStop || budgetStop) && this.reservedOut(lb, run.spendAccountId!, endedSince);
+      (batchStop || budgetStop) && this.reservedOut(lb, run.spendAccountId!, endedSince, madeCall);
     this.settleItem(lb, index, run, batchStop || budgetStop, lb.withdrawn.delete(runId));
     if (reservedOut) {
       // Wait for a reservation still held to free; with none held, ask again now.
@@ -883,9 +884,23 @@ export class BatchDriver {
    * running, or one that ended since this run was asked for (its reservation
    * may have refused the call before it ended), and actual balance left, the
    * item gets another turn: a second refusal with nothing reserving is spend.
+   *
+   * A run held to a share of the balance (the batch runs more than one at a
+   * time) that made a model call before its stop may have spent its share
+   * alone, with the balance left: it is reserved out whatever else runs, and
+   * the next request settles it. A spent task budget is refused there by the
+   * task's counters, a spent batch account by `budgetSpent`, and a share too
+   * small for one call stops before any call, which the rule above reads as
+   * spend.
    */
-  private reservedOut(lb: LiveBatch, accountId: string, endedSince: boolean): boolean {
+  private reservedOut(
+    lb: LiveBatch,
+    accountId: string,
+    endedSince: boolean,
+    madeCall: boolean,
+  ): boolean {
     const { batch } = lb;
+    if (madeCall && batch.concurrency > 1) return true;
     if (!endedSince && !this.othersRunning(lb)) return false;
     // The task's budget has a live balance only while a run holds it.
     const fallback =
