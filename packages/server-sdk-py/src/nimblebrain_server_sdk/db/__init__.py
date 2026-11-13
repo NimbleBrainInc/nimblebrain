@@ -72,12 +72,12 @@ from .session import (  # noqa: E402
 )
 
 __all__ = [
+    "CLEANUP_TIMEOUT_SECONDS",
+    "CONNECTIONS_PER_CALL",
     "TENANT_HEADER",
     "WORKSPACE_HEADER",
     "AdmittedSlot",
     "AuthError",
-    "CLEANUP_TIMEOUT_SECONDS",
-    "CONNECTIONS_PER_CALL",
     "Overloaded",
     "PoolConfigError",
     "PoolExhausted",
@@ -87,11 +87,11 @@ __all__ = [
     "WorkspaceBusy",
     "WorkspaceLimiter",
     "create_pooled_engine",
+    "org_session",
     "rls_policy_sql",
-    "security_context_from_edge_headers",
     "rls_policy_sql_org_scoped",
     "rls_policy_sql_tenant_scoped",
-    "org_session",
     "secured_session",
+    "security_context_from_edge_headers",
     "system_session",
 ]

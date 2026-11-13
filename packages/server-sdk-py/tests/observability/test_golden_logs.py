@@ -132,7 +132,8 @@ def build(capsys: pytest.CaptureFixture[str]) -> dict[str, Any]:
         ).headers.get_list("x-correlation-id"),
     }
     minted = client.get("/golden/log").headers.get_list("x-correlation-id")
-    assert len(minted) == 1 and re.fullmatch(r"[0-9a-f]{32}", minted[0]), minted
+    assert len(minted) == 1, minted
+    assert re.fullmatch(r"[0-9a-f]{32}", minted[0]), minted
     capsys.readouterr()
     return out
 

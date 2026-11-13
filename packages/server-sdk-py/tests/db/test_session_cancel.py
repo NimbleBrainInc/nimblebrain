@@ -150,7 +150,8 @@ async def test_completed_session_commits_and_failed_one_rolls_back(pg_engine: As
     # A temp table lives on its connection, and the pool has one: each session reuses it.
     async with secured_session(pg_engine, CTX) as conn:
         await conn.execute(text("INSERT INTO t VALUES (1)"))
-    with pytest.raises(RuntimeError):
+    # The body fails inside the session, so the test covers how the session exits on it.
+    with pytest.raises(RuntimeError, match="the body failed"):  # noqa: PT012
         async with secured_session(pg_engine, CTX) as conn:
             await conn.execute(text("INSERT INTO t VALUES (2)"))
             raise RuntimeError("the body failed")

@@ -11,3 +11,7 @@ __pycache__/
 
 # Editor / OS
 .DS_Store
+
+# coverage.py data files from a --cov run
+.coverage
+.coverage.*

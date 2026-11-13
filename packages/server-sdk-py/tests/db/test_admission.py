@@ -26,9 +26,10 @@ B = SecurityContext(tenant_id="tenant-a", workspace_id="ws-b")
 OTHER_TENANT = SecurityContext(tenant_id="tenant-b", workspace_id="ws-a")
 
 
-async def _until(predicate, *, timeout: float = 5.0) -> None:
+# The limiter exposes its state, not an event to wait on, so this polls it, bounded by the timeout.
+async def _until(predicate, *, timeout: float = 5.0) -> None:  # noqa: ASYNC109
     with anyio.fail_after(timeout):
-        while not predicate():
+        while not predicate():  # noqa: ASYNC110
             await anyio.sleep(0.005)
 
 
@@ -107,7 +108,7 @@ def test_limiter_is_sized_from_the_pool_settings() -> None:
         PoolSettings(workspace_concurrency=3, workspace_wait_seconds=7)
     )
     assert (limiter.limit, limiter.wait_seconds) == (3, 7)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="limit must be at least 1"):
         WorkspaceLimiter(limit=0, wait_seconds=1)
 
 
@@ -133,7 +134,8 @@ async def test_pool_timeout_inside_the_body_is_the_bodys_own() -> None:
     async def session(ctx: pgbulkhead.SecurityContext) -> AsyncIterator[str]:
         yield f"session for {ctx.workspace_id}"
 
-    with pytest.raises(PoolTimeout):
+    # The body raises inside the session, so the test covers how the session exits on it.
+    with pytest.raises(PoolTimeout):  # noqa: PT012
         async with admitted_session(limiter, A, session) as conn:
             assert conn == "session for ws-a"
             raise PoolTimeout("a second checkout timed out")

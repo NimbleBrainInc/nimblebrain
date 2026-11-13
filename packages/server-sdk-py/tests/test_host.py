@@ -330,7 +330,7 @@ def _era_probe() -> FastMCP:
             await h.read("files://fl_abc")
         except HostCapabilityMissing:
             outcome = "capability-missing"
-        except Exception as exc:  # the wire failure the era check prevents
+        except Exception as exc:  # noqa: BLE001 — the probe reports the wire failure the era check prevents, whatever its type
             outcome = type(exc).__name__
         return {"available": h.available, "list_available": h.list_available, "read": outcome}
 

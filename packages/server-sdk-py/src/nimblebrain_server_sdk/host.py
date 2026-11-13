@@ -124,7 +124,7 @@ class HostResources:
     factory keeps the call site uniform across the SDK.
     """
 
-    def __init__(self, ctx: Context):
+    def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
 
     # -- Capability probes --------------------------------------------------

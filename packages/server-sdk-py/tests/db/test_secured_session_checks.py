@@ -42,6 +42,8 @@ ENGINE = create_async_engine("postgresql+asyncpg://unused@127.0.0.1:1/unused")
     ],
 )
 async def test_refused_before_binding(ctx: SecurityContext) -> None:
-    with pytest.raises(ValueError):
+    # Each case is refused with its own message; that it is refused before a session opens is
+    # what the body's pytest.fail holds.
+    with pytest.raises(ValueError):  # noqa: PT011
         async with secured_session(ENGINE, ctx):
             pytest.fail("opened a session for a context it cannot bind faithfully")

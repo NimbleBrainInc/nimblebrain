@@ -115,7 +115,8 @@ def _parse_frontmatter(text: str, where: str) -> dict[str, Any]:
     if match is None:
         raise ValueError(f"{where}: SKILL.md must begin with a `---` YAML frontmatter block")
     try:
-        data = yaml.load(match.group(1), Loader=_FrontmatterLoader)
+        # _FrontmatterLoader is a SafeLoader: it constructs plain data, never arbitrary objects.
+        data = yaml.load(match.group(1), Loader=_FrontmatterLoader)  # noqa: S506
     except yaml.YAMLError as exc:
         raise ValueError(f"{where}: SKILL.md frontmatter is not valid YAML: {exc}") from exc
     if not isinstance(data, dict):

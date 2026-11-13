@@ -14,5 +14,5 @@ def test_the_meta_holds_the_view_under_the_key():
 
 @pytest.mark.parametrize("bad", ["", "ui://", "acme://boards", "https://example.test/view"])
 def test_anything_but_a_ui_uri_is_refused(bad: str):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="a record's view is a ui:// URI"):
         record_view_meta(bad)

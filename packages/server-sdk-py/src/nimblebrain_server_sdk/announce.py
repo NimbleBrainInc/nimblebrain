@@ -42,5 +42,5 @@ async def announce_resource_list_changed(
         # connection has no other way out, and a session-era client need not hold the
         # standalone stream open.
         await ctx.send_notification(ResourceListChangedNotification())
-    except Exception:  # noqa: BLE001 — the write already committed; see above
+    except Exception:  # the write already committed; see above
         logger.warning("announce_resource_list_changed_failed", exc_info=True, extra={"tool": tool})
