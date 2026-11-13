@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0]
+
 ### Highlights
 
 - **Errors in the core:** `nimblebrain_server_sdk.errors` carries the service error contract
