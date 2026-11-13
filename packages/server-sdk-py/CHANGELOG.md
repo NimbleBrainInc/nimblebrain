@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.1]
+
 ### Fixed
 
 - `[observability]`: `ObservabilityMiddleware` reads a `traceparent`, `x-correlation-id`,
