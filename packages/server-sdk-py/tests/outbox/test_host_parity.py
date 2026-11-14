@@ -23,11 +23,15 @@ import pytest
 
 from nimblebrain_server_sdk.outbox import core
 from nimblebrain_server_sdk.outbox.cursor import MAX_CURSOR_LENGTH
-from nimblebrain_server_sdk.outbox.envelope import EnvelopeError, validate
+from nimblebrain_server_sdk.outbox.envelope import EnvelopeError, _js_number, validate
 
+FIXTURES = Path(__file__).parent / "fixtures"
 CASES: list[dict[str, Any]] = json.loads(
-    (Path(__file__).parent / "fixtures" / "host_parity.json").read_text(encoding="utf-8")
+    (FIXTURES / "host_parity.json").read_text(encoding="utf-8")
 )
+#: Numbers and how JavaScript's ``String`` writes them; the runtime's test checks the same
+#: table against JavaScript itself.
+JS_NUMBERS: list[list[Any]] = json.loads((FIXTURES / "js_numbers.json").read_text(encoding="utf-8"))
 
 
 def written(case: dict[str, Any]) -> dict[str, Any]:
@@ -62,3 +66,8 @@ def test_the_sdk_verdict_matches_the_case(case: dict[str, Any]) -> None:
 def test_no_case_is_accepted_here_and_dropped_there() -> None:
     lost = [c["case"] for c in CASES if c["sdk"] == "accept" and c["host"] == "drop"]
     assert lost == []
+
+
+@pytest.mark.parametrize(("value", "written"), JS_NUMBERS, ids=lambda item: str(item))
+def test_numbers_are_sized_as_javascript_writes_them(value: float, written: str) -> None:
+    assert _js_number(value) == written

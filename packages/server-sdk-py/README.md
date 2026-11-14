@@ -706,8 +706,9 @@ An MCP Triggers and Events `EventOccurrence`, with what the host renders and rou
 would drop, because the host's poll moves past a dropped envelope and the notification is
 lost. The limits are the host's, counted as it counts them, in UTF-16 code units (title 200,
 body 2000, subject 200, event id and name 200, link 2048); a name may carry no whitespace; and
-the 64 KiB size limit is measured on the event as the host receives it, with its cursor and the
-default `level` and `title` added. The runtime's tests run shared boundary cases through the
+an optional presentation field is either absent or a value of its type, never `null`; and the
+64 KiB size limit is measured as the host measures it, on the event with its cursor and the
+default `level` and `title` added and its numbers written as JavaScript writes them. The runtime's tests run shared boundary cases through the
 host's parser and fail if anything accepted here would be dropped there. The append is in the
 caller's transaction, so a raise rolls it back: trim unbounded upstream text deliberately,
 with the exported caps (`TITLE_MAX`, `BODY_MAX`, `SUBJECT_MAX`). A `link_resource` must carry a

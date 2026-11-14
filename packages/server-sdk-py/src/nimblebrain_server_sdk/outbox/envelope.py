@@ -28,6 +28,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from nimblebrain_server_sdk.outbox.cursor import MAX_CURSOR_LENGTH
@@ -164,8 +165,10 @@ def _meta_block(
     else:
         raise EnvelopeError("_meta must be a JSON object")
 
-    written = meta.get(NOTIFICATION_META_KEY)
-    if from_keywords and written is not None:
+    # Presence, not truthiness: a key written as JSON ``null`` is not an absent key to the
+    # host, which drops the envelope for it.
+    written = NOTIFICATION_META_KEY in meta
+    if from_keywords and written:
         raise EnvelopeError(
             f"pass the presentation fields as keywords or write {NOTIFICATION_META_KEY!r} "
             "by hand, not both"
@@ -183,7 +186,7 @@ def _meta_block(
         if link_resource is not None:
             presentation["link"] = {"resource": link_resource}
         meta[NOTIFICATION_META_KEY] = presentation
-    elif written is None:
+    elif not written:
         return meta
 
     _check_presentation(meta[NOTIFICATION_META_KEY])
@@ -199,19 +202,20 @@ def _check_presentation(block: object) -> None:
     if level not in LEVELS:
         raise EnvelopeError(f"level must be one of {list(LEVELS)}, not {level!r}")
 
-    _plain_text(block.get("title"), "title", TITLE_MAX)
-    _plain_text(block.get("subject"), "subject", SUBJECT_MAX)
-    _plain_text(block.get("body"), "body", BODY_MAX)
+    # Each optional field is checked when its key is present, so a JSON ``null`` is refused
+    # rather than read as absent: the host drops the envelope for it.
+    for field, maximum in (("title", TITLE_MAX), ("subject", SUBJECT_MAX), ("body", BODY_MAX)):
+        if field in block:
+            _plain_text(block[field], field, maximum)
 
-    link = block.get("link")
-    if link is None:
+    if "link" not in block:
         return
+    link = block["link"]
     if not isinstance(link, dict):
         raise EnvelopeError("link must be a JSON object")
-    resource = link.get("resource")
-    if resource is None:
+    if "resource" not in link:
         return
-    _check_link(resource)
+    _check_link(link["resource"])
 
 
 def _check_link(resource: object) -> None:
@@ -239,15 +243,13 @@ def _required_text(value: object, field: str, maximum: int) -> str:
 
 
 def _plain_text(value: object, field: str, maximum: int) -> None:
-    """Check one optional plain-text presentation field.
+    """Check one plain-text presentation field whose key is present.
 
     Control characters are refused rather than stripped in all three fields,
     including ``body``: every surface that shows them — an inbox row, a Slack
     message rendered from a route template, a log line — shows them as one line
     of plain text, so a newline or an escape sequence in them is never content.
     """
-    if value is None:
-        return
     if not isinstance(value, str):
         raise EnvelopeError(f"{field} must be a string")
     if _utf16_len(value) > maximum:
@@ -300,6 +302,11 @@ def _check_size(
     the written title and the name — so an envelope accepted here is never
     over the limit there.
 
+    The size is the one the host measures: the bytes of its ``JSON.stringify``.
+    Numbers are counted as JavaScript writes them (:func:`_js_number`), which is
+    longer than Python's form for some (``1e+20`` is 21 digits there); strings are
+    counted with non-ASCII escaped, which is never shorter than the host's UTF-8.
+
     Serializing is also the only honest check that ``data`` is JSON: a dict of
     arbitrary Python objects is not, and the failure belongs at the emit rather
     than at the ``json.dumps`` inside the poll that answers three hours later.
@@ -318,10 +325,75 @@ def _check_size(
     )
     body["_meta"] = {**meta, NOTIFICATION_META_KEY: presentation}
     try:
-        encoded = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        # Round-tripped so the size is measured on what is stored: keys become strings and
+        # tuples become lists, as they do on the way into the database.
+        stored = json.loads(json.dumps(body, separators=(",", ":"), allow_nan=False))
     except (TypeError, ValueError) as exc:
         raise EnvelopeError(f"envelope is not JSON-serializable: {exc}") from exc
-    if len(encoded) > ENVELOPE_MAX_BYTES:
+    size = _js_size(stored)
+    if size > ENVELOPE_MAX_BYTES:
         raise EnvelopeError(
-            f"envelope serializes to {len(encoded)} bytes, over the {ENVELOPE_MAX_BYTES}-byte limit"
+            f"envelope serializes to {size} bytes, over the {ENVELOPE_MAX_BYTES}-byte limit"
         )
+
+
+#: Integers past this lose precision as a JavaScript number, and are written as the double
+#: they become.
+_JS_SAFE_INTEGER = 2**53
+
+
+def _js_size(value: Any) -> int:
+    """Bytes of ``JSON.stringify(value)`` as the host measures it, never fewer.
+
+    Strings are counted with every non-ASCII character escaped (``\\uXXXX``), which is at
+    least as long as its UTF-8 bytes, so a string is never undercounted.
+    """
+    if value is None or value is True:
+        return 4
+    if value is False:
+        return 5
+    if isinstance(value, int):
+        if abs(value) < _JS_SAFE_INTEGER:
+            return len(str(value))
+        try:
+            return len(_js_number(float(value)))
+        except OverflowError:
+            return len("null")  # a JavaScript Infinity, which JSON.stringify writes as null
+    if isinstance(value, float):
+        return len(_js_number(value))
+    if isinstance(value, str):
+        return len(json.dumps(value))
+    if isinstance(value, list):
+        return 2 + sum(_js_size(item) for item in value) + max(len(value) - 1, 0)
+    if isinstance(value, dict):
+        members = sum(len(json.dumps(key)) + 1 + _js_size(item) for key, item in value.items())
+        return 2 + members + max(len(value) - 1, 0)
+    raise EnvelopeError(f"envelope carries a value JSON cannot hold: {type(value).__name__}")
+
+
+def _js_number(value: float) -> str:
+    """``String(value)`` in JavaScript, for a finite float.
+
+    Both languages write the shortest digits that round-trip; they differ in where they switch
+    to an exponent. JavaScript writes plain decimals from 1e-7 up to 1e21, Python only from
+    1e-4 up to 1e16, so the same number can be longer on the host than ``repr`` says.
+    """
+    if value == 0:
+        return "0"
+    sign = "-" if value < 0 else ""
+    exact = Decimal(repr(abs(value))).normalize()
+    _, digit_tuple, exponent = exact.as_tuple()
+    digits = "".join(str(digit) for digit in digit_tuple)
+    count = len(digits)
+    point = int(exponent) + count  # the value is 0.<digits> x 10**point
+    if count <= point <= 21:
+        text = digits + "0" * (point - count)
+    elif 0 < point <= 21:
+        text = f"{digits[:point]}.{digits[point:]}"
+    elif -6 < point <= 0:
+        text = "0." + "0" * -point + digits
+    else:
+        power = point - 1
+        mantissa = digits[0] + (f".{digits[1:]}" if count > 1 else "")
+        text = f"{mantissa}e{'+' if power >= 0 else '-'}{abs(power)}"
+    return sign + text

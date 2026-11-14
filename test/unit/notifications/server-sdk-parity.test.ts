@@ -53,6 +53,11 @@ const CASES: ParityCase[] = JSON.parse(
   readFileSync(join(SDK, "tests/outbox/fixtures/host_parity.json"), "utf8"),
 );
 
+/** Numbers and how this runtime writes them, which the SDK sizes envelopes by. */
+const JS_NUMBERS: [number, string][] = JSON.parse(
+  readFileSync(join(SDK, "tests/outbox/fixtures/js_numbers.json"), "utf8"),
+);
+
 /** What the SDK's poll serves for a case: its envelope, padded, with a longest-possible cursor. */
 function occurrence(parity: ParityCase): Record<string, unknown> {
   const data =
@@ -123,6 +128,10 @@ describe("what the server SDK accepts, this host keeps", () => {
   test.each(CASES.map((parity) => [parity.case, parity] as const))("%s", (_, parity) => {
     const kept = parseNotificationEnvelope(occurrence(parity)) !== null;
     expect(kept ? "keep" : "drop").toBe(parity.host);
+  });
+
+  test.each(JS_NUMBERS)("the SDK sizes %p as %p, as String() writes it", (value, written) => {
+    expect(String(value)).toBe(written);
   });
 
   test("no case the SDK accepts is one this host drops", () => {
