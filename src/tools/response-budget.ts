@@ -24,28 +24,53 @@ const CR = 13;
 /**
  * Counts one SSE stream. The budget is per event: it restarts only at the blank
  * line that ends an event (LF, CR or CRLF line endings), so a long-lived
- * stream of small events passes and one oversized event does not.
+ * stream of small events passes and one oversized event does not. A chunk is
+ * scanned with `indexOf` from one line break to the next, so its cost follows
+ * the number of line breaks, not the number of bytes.
  */
 function sseCounter(maxBytes: number): (chunk: Uint8Array) => void {
   let eventBytes = 0;
   let lineBytes = 0;
   let afterCr = false;
-  const read = (byte: number) => {
-    if (++eventBytes > maxBytes) throw new RemoteResponseTooLargeError(maxBytes);
+  const count = (bytes: number) => {
+    eventBytes += bytes;
+    if (eventBytes > maxBytes) throw new RemoteResponseTooLargeError(maxBytes);
+  };
+  // A run of bytes with no line break in it.
+  const text = (bytes: number) => {
+    if (bytes === 0) return;
+    count(bytes);
+    lineBytes += bytes;
+    afterCr = false;
+  };
+  const lineBreak = (isLf: boolean) => {
+    count(1);
     // The LF of a CRLF belongs to the line its CR already ended.
-    const crlf = afterCr && byte === LF;
-    afterCr = byte === CR;
+    const crlf = afterCr && isLf;
+    afterCr = !isLf;
     if (crlf) return;
-    if (byte !== LF && byte !== CR) {
-      lineBytes++;
-      return;
-    }
     if (lineBytes === 0) eventBytes = 0;
     lineBytes = 0;
   };
   return (chunk) => {
-    for (const byte of chunk) read(byte);
+    // The next LF and CR at or after `at`, each found again only once passed.
+    let lf = -1;
+    let cr = -1;
+    for (let at = 0; at < chunk.length; ) {
+      if (lf < at) lf = indexOrEnd(chunk, LF, at);
+      if (cr < at) cr = indexOrEnd(chunk, CR, at);
+      const brk = Math.min(lf, cr);
+      text(brk - at);
+      if (brk === chunk.length) return;
+      lineBreak(brk === lf);
+      at = brk + 1;
+    }
   };
+}
+
+function indexOrEnd(chunk: Uint8Array, byte: number, from: number): number {
+  const at = chunk.indexOf(byte, from);
+  return at === -1 ? chunk.length : at;
 }
 
 /** Counts one whole body: a JSON answer, an error page, anything not a stream of events. */
