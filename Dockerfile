@@ -86,7 +86,12 @@ ENV NB_HOST=0.0.0.0
 
 EXPOSE 27247
 
-HEALTHCHECK --interval=30s --timeout=5s \
+# Probe every 2s while starting, so `depends_on: service_healthy` releases
+# the web container seconds after boot instead of after the first 30s
+# interval. Failures inside the start period do not count, so a platform
+# that never comes up is marked unhealthy up to 30s later than without it.
+# Docker Engine before 25 ignores --start-interval and keeps the 30s wait.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --start-interval=2s \
   CMD curl -f http://localhost:27247/v1/health || exit 1
 
 CMD ["bun", "run", "src/cli/index.ts", "serve"]
