@@ -1,13 +1,13 @@
 name: Docs CI
 
-# Builds the docs site on merge-queue commits that touch docs/ or the runtime palette it
-# themes from. The Astro build runs starlight-links-validator, so broken internal links
-# fail the check. It is a required check, so it reports on every PR too, as a skip: a
-# skipped job satisfies a required check, and the queue is where it runs (ci.yml
-# explains why a skip on a PR is safe).
+# Builds the docs site on ready PRs and merge-queue commits that touch docs/ or the
+# runtime palette it themes from. The Astro build runs starlight-links-validator, so
+# broken internal links fail the check. A draft PR skips it, as ci.yml skips every
+# check on a draft.
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   # A required check, so it must also report on merge-queue commits.
   merge_group:
     types: [checks_requested]
@@ -18,7 +18,7 @@ permissions:
 jobs:
   build:
     name: Build docs (link-checked)
-    if: github.event_name != 'pull_request'
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

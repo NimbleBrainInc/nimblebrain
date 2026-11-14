@@ -1,15 +1,14 @@
 name: CI
 
-# Where each check runs. A merge reaches main through the merge queue, so the full suite
-# runs once, on the exact tree that lands:
+# Where each check runs:
 #   - draft PR: nothing. Review happens on the draft and is verified locally.
-#   - ready PR: Lint & Typecheck only, for early warning. The test jobs skip, and a
-#     skipped job satisfies a required check, so the PR can enter the queue.
-#   - merge_group: every check.
-#   - push to main: only builds, when the queue's run on this commit passed
-#     (verified-on-pr). Any other route onto main runs every check before the build.
-# Skipping on a PR is safe because the queue is the only route onto main that skips
-# the checks there: a push the queue did not test re-runs them.
+#   - ready PR: every check. A PR merges straight to main, so its run is the test of
+#     what lands.
+#   - push to main: every check, then the build. The PR ran on its own head, not on
+#     main with it merged, so the merged tree is checked before an image is published.
+#   - merge_group: every check. The triggers stay so the merge queue can be required
+#     again from the ruleset alone; with it required, a push the queue tested skips the
+#     checks (verified-on-pr).
 on:
   push:
     branches: [main]
@@ -81,7 +80,7 @@ jobs:
   # On a push to main, the four check jobs below skip when main advanced to the exact
   # commit the merge queue tested: the latest merge_group run of this workflow on this
   # SHA succeeded. Otherwise, including on an API error, they run. A pull_request run
-  # is no proof, since it skips the tests (see the top of this file).
+  # is no proof, since it tested the PR's head, not main with it merged.
   # On a pull_request or merge_group this job is skipped.
   verified-on-pr:
     name: Already verified in the merge queue?
@@ -145,7 +144,7 @@ jobs:
   test-unit:
     name: Unit Tests
     needs: verified-on-pr
-    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' && !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -191,7 +190,7 @@ jobs:
   test-unit-bare-deps:
     name: Unit Tests (root deps only)
     needs: verified-on-pr
-    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' && !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -216,7 +215,7 @@ jobs:
   test-integration:
     name: Integration Tests
     needs: verified-on-pr
-    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' && !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

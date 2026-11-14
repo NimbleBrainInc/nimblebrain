@@ -196,7 +196,7 @@ ECR repositories have immutable tags enabled — `:latest` is deliberately not p
 
 Use this when one fix must reach a deployment running `vX.Y.Z` without the rest of what `main` has gained since. The hotfix is that release plus cherry-picks of merged commits, and nothing else.
 
-**The fix lands on `main` first**, by the normal PR, review and merge queue. The hotfix branch only ever carries cherry-picks of commits already on `main`, so the next release from `main` contains every hotfix and nothing has to be merged back.
+**The fix lands on `main` first**, by the normal PR and review. The hotfix branch only ever carries cherry-picks of commits already on `main`, so the next release from `main` contains every hotfix and nothing has to be merged back.
 
 **A hotfix tag is a pre-release: `vX.Y.(Z+1)-hotfix.N`.** A GA tag would promote the image to every stable deployment and move `:latest`, and this image never rode staging. The hyphen keeps it out of both (§1, §7). It sorts below the `vX.Y.(Z+1)` that `main` cuts later.
 
