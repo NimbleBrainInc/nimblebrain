@@ -34,7 +34,7 @@ Docker Compose runs the platform and web UI as two containers. This is the recom
    ```yaml title="docker-compose.yml"
    services:
      platform:
-       image: ghcr.io/nimblebraininc/nimblebrain:latest
+       image: ghcr.io/nimblebraininc/nimblebrain:${NIMBLEBRAIN_TAG:-latest}
        restart: unless-stopped
        volumes:
          - workspace:/data
@@ -51,7 +51,7 @@ Docker Compose runs the platform and web UI as two containers. This is the recom
          - internal
 
      web:
-       image: ghcr.io/nimblebraininc/nimblebrain-web:latest
+       image: ghcr.io/nimblebraininc/nimblebrain-web:${NIMBLEBRAIN_TAG:-latest}
        restart: unless-stopped
        ports:
          - "27246:8080"
@@ -92,11 +92,11 @@ To build the images from a checkout instead of pulling `:latest`, add a `build:`
 ```yaml title="docker-compose.yml (build from source)"
 services:
   platform:
-    image: ghcr.io/nimblebraininc/nimblebrain:latest
+    image: ghcr.io/nimblebraininc/nimblebrain:${NIMBLEBRAIN_TAG:-latest}
     build: .
     # ...
   web:
-    image: ghcr.io/nimblebraininc/nimblebrain-web:latest
+    image: ghcr.io/nimblebraininc/nimblebrain-web:${NIMBLEBRAIN_TAG:-latest}
     build: web/
     # ...
 ```

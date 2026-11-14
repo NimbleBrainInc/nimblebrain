@@ -194,7 +194,7 @@ docker compose restart
 
 ## Update to a new version
 
-Both images take their tag from `NIMBLEBRAIN_TAG`, which defaults to `latest`. To stay on one release, set it in `.env`. A pinned stack updates by changing it to the new release's tag first; the commands below then pull and run that tag.
+Both images take their tag from `NIMBLEBRAIN_TAG`, which defaults to `latest`. To stay on one release, set it in `.env`. A pinned stack updates by changing it to the new release's tag first; the commands below then pull and run that tag. Leave it unset, in `.env` and the shell, when you build from source with `docker compose up --build`: Compose tags a local build with the image name, so a pinned stack would run unreleased code under the release's tag until the next pull.
 
 ```bash title=".env"
 NIMBLEBRAIN_TAG=v1.2.3
