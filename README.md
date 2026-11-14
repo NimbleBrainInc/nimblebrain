@@ -7,7 +7,7 @@
 
 A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent tasks. Install an MCP connector and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition.
 
-Ships as container images on GHCR (`ghcr.io/nimblebraininc/nimblebrain`, `ghcr.io/nimblebraininc/nimblebrain-web`). Also exposes itself as an MCP server via Streamable HTTP so external MCP clients can consume the aggregated toolset.
+Ships as container images on GHCR (`ghcr.io/nimblebraininc/nimblebrain-runtime`, `ghcr.io/nimblebraininc/nimblebrain-web`). Also exposes itself as an MCP server via Streamable HTTP so external MCP clients can consume the aggregated toolset.
 
 ## Quick Start
 
@@ -22,7 +22,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 echo '{"auth":{"adapter":"dev"}}' > instance.json
 
 docker compose up
-# Pulls ghcr.io/nimblebraininc/nimblebrain + nimblebrain-web
+# Pulls ghcr.io/nimblebraininc/nimblebrain-runtime + nimblebrain-web
 # Web UI:  http://localhost:27246
 # API:     http://localhost:27246/v1/health
 ```
@@ -30,6 +30,8 @@ docker compose up
 Open `http://localhost:27246` in your browser. The runtime does not start without `instance.json`; for a real identity provider (`oidc` or `workos`), see [instance.json](https://docs.nimblebrain.ai/config/instance-json/).
 
 To build from source instead of pulling (e.g. when developing against local changes), run `docker compose up --build`.
+
+**Apple Silicon and other arm64 hosts:** the published images are `linux/amd64` only, so the pull finds no arm64 image and `docker compose up` builds both images from source instead. The first build takes about six minutes. It needs the Docker buildx plugin, which Docker Desktop and OrbStack include; check with `docker buildx version`. Without buildx, Compose falls back to the classic builder, which stops at `COPY --parents` with "no source files were specified".
 
 ### Option 2: Local development
 
