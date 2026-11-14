@@ -5,7 +5,6 @@ services:
     restart: unless-stopped
     volumes:
       - workspace:/data
-      - ./skills:/app/skills:ro
       # The identity provider. The runtime does not start without it; the
       # README quickstart shows the dev adapter and the real ones.
       - type: bind

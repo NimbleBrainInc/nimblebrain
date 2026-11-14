@@ -110,17 +110,7 @@ Skills are loaded from multiple locations, in order:
 
 1. **Core skills** (`src/skills/core/`) — shipped with the platform, always loaded
 2. **Built-in skills** (`src/skills/builtin/`) — shipped with the package
-3. **Global skills** (`~/.nimblebrain/skills/`) — user-created
-4. **Config directories** — any paths listed in `skillDirs` in `nimblebrain.json`
-
-```json
-{
-  "skillDirs": [
-    "./skills",
-    "/home/user/custom-skills"
-  ]
-}
-```
+3. **Global skills** (`<workDir>/skills/`: `~/.nimblebrain/skills/` by default, `/data/skills` in the Docker image) — user-created
 
 Files must have a `.md` extension.
 
