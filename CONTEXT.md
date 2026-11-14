@@ -243,7 +243,9 @@ and absent from the on-disk schema, so a file cannot forge it (ADR-0012).
 ## Decisions
 
 The decision log is `adr/`. A proposed ADR is a draft and changes in place until
-it is accepted; a new ADR amends or supersedes only an accepted one.
+it is accepted; an accepted ADR is frozen, and a new ADR supersedes it only to
+reverse the decision. The current contract lives in the area's spec. The rules are
+in [`adr/0000-template.md`](adr/0000-template.md).
 
 Foundational (secure RBAC):
 
