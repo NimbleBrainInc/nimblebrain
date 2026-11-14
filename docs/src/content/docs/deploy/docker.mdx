@@ -25,7 +25,6 @@ services:
     restart: unless-stopped
     volumes:
       - workspace:/data
-      - ./skills:/app/skills:ro
       # The identity provider. The platform does not start without it.
       - type: bind
         source: ./instance.json
@@ -64,7 +63,7 @@ networks:
   internal:
 ```
 
-The platform reads its working directory from the `workspace` volume mounted at `/data` (the image sets `NB_WORK_DIR=/data`). Configuration (`nimblebrain.json`), skills, and connector state all live under that directory — there is no separate config bind mount required to boot. Drop custom skill files into the `./skills` directory if you want to mount them read-only.
+The platform reads its working directory from the `workspace` volume mounted at `/data` (the image sets `NB_WORK_DIR=/data`). Configuration (`nimblebrain.json`), skills, and connector state all live under that directory — there is no separate config bind mount required to boot.
 
 ### What each service does
 
@@ -80,7 +79,6 @@ The `web` container runs Caddy, which serves the static UI files and reverse-pro
 | Volume/Mount | Container path | Purpose |
 |---|---|---|
 | `workspace` (named volume) | `/data` | Working directory (`NB_WORK_DIR`) — conversations, logs, installed connectors, stored secrets, and `nimblebrain.json` |
-| `./skills` (bind mount, read-only) | `/app/skills` | Custom skill files |
 
 ### Environment variables
 
