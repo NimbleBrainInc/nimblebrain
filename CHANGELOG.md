@@ -290,6 +290,7 @@
 
 ### Fixed
 
+- **The web UI answers seconds after `docker compose up`, not after 30.** ([docs](https://docs.nimblebrain.ai/deploy/docker/#health-check), [#1987](https://github.com/NimbleBrainInc/nimblebrain/pull/1987))
 - **An app in a full pane renders without a frame border.** `prefersBorder` now applies only where the frame sits among other content (inline in chat, a settings section); in a pane it doubled the shell's header rule. ([#1993](https://github.com/NimbleBrainInc/nimblebrain/pull/1993))
 - **Every tool `nb__manage_tools` promotes stays in the tool list.** In a workspace with more tools than the direct-tool budget, each promotion evicted the one before it, so the model lost the schemas of all but the last. Only promoted tools count toward the limit now, and a promotion past it is refused instead of evicting an earlier one ([#1959](https://github.com/NimbleBrainInc/nimblebrain/issues/1959)).
 - **Task statistics read each run index once.** `tasks__stats` parsed a large archive month once per 5,000 runs in the window; the Tasks panel also re-read the figures every few seconds, and now reads them when a run is recorded or assessed and once an hour ([#1951](https://github.com/NimbleBrainInc/nimblebrain/pull/1951)).
