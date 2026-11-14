@@ -57,7 +57,9 @@ interface SlotRendererProps {
   /**
    * Size each iframe to its content instead of filling the container. For a
    * placement in a flow layout (a page section), where `height: 100%` has no
-   * height to resolve against.
+   * height to resolve against. It also decides the frame's border: a content-sized
+   * placement keeps the border the app asks for (`_meta.ui.prefersBorder`), and a
+   * full-pane one is always borderless.
    */
   fitContent?: boolean;
 }
@@ -138,7 +140,12 @@ function mountPlacement(
     frameDomains: metaUi?.csp?.frameDomains,
     baseUriDomains: metaUi?.csp?.baseUriDomains,
     permissions: metaUi?.permissions,
-    prefersBorder: metaUi?.prefersBorder,
+    // A placement that fills its pane is already bounded by the shell's chrome,
+    // and a border there doubles the header rule above it, so it renders
+    // borderless whatever the app asks. One sized to its content sits in a
+    // page's flow, as an inline view sits among chat content, and keeps the
+    // border the app asks for.
+    prefersBorder: fitContent ? metaUi?.prefersBorder : false,
   });
   iframe.style.width = "100%";
   iframe.style.height = fitContent ? `${DEFAULT_CONTENT_HEIGHT}px` : "100%";
