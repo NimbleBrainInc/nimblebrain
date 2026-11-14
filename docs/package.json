@@ -1,7 +1,7 @@
 {
   "name": "nimblebrain-docs",
   "packageManager": "bun@1.4.3",
-  "description": "Documentation site for NimbleBrain — the self-hosted platform for MCP Apps and agent tasks",
+  "description": "Documentation site for NimbleBrain Platform, the open-source runtime that runs agents and MCP apps on your systems, with any model",
   "type": "module",
   "version": "0.0.1",
   "license": "CC-BY-4.0",

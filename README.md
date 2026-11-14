@@ -5,7 +5,7 @@
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun)](https://bun.sh)
 [![MCP](https://img.shields.io/badge/protocol-MCP-8A2BE2)](https://modelcontextprotocol.io)
 
-A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent tasks. Install an MCP connector and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition.
+NimbleBrain Platform is the open-source runtime that runs agents and [MCP apps](https://modelcontextprotocol.io/extensions/apps/overview) on your systems, in your own infrastructure, with any model. Install an MCP app and you get more than tools: an interactive UI in the sidebar with live agent-UI data sync. Run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition.
 
 Ships as container images on GHCR (`ghcr.io/nimblebraininc/nimblebrain`, `ghcr.io/nimblebraininc/nimblebrain-web`). Also exposes itself as an MCP server via Streamable HTTP so external MCP clients can consume the aggregated toolset.
 
@@ -300,6 +300,7 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 | Variable | Purpose |
 |----------|---------|
 | `NB_WORK_DIR` | Override working directory (takes precedence over config) |
+| `NB_HOST` | Address the HTTP server listens on (default: `127.0.0.1`; the Docker image sets `0.0.0.0`). Wins over `http.host` |
 | `ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (for cookie-based auth) |
 | `NB_CHAT_RATE_LIMIT` | Chat requests per minute per user (default: 20) |
 | `NB_TOOL_RATE_LIMIT` | Tool calls per minute per user (default: 60) |
@@ -462,7 +463,7 @@ Images are published to GHCR on every release:
 - `ghcr.io/nimblebraininc/nimblebrain-runtime` — runtime (Bun; Node 24 builds the in-image connector UIs). Also published as `ghcr.io/nimblebraininc/nimblebrain` (transitional alias).
 - `ghcr.io/nimblebraininc/nimblebrain-web` — Caddy serving the SPA, proxying `/v1/*` to the platform
 
-Each release is tagged with the version (e.g. `v1.2.3`) and the short git SHA. Stable releases also move `:latest` forward; pre-releases (e.g. `v0.4.0-beta.1`) do not. Pin to a version tag in production. Pass `--build` to `docker compose` to build from source instead.
+Each release is tagged with the version (e.g. `v1.2.3`) and the short git SHA. Stable releases also move `:latest` forward; pre-releases (e.g. `v0.4.0-beta.1`) do not. Pin to a version tag in production by setting `NIMBLEBRAIN_TAG` (e.g. `NIMBLEBRAIN_TAG=v1.2.3`); `docker-compose.yml` uses it for both images. Pass `--build` to `docker compose` to build from source instead.
 
 See `Dockerfile`, `web/Dockerfile`, and `docker-compose.yml` for full config.
 

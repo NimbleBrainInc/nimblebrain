@@ -130,7 +130,7 @@ This is the MCP transport's DNS-rebinding protection: a page on another hostname
 
 The platform service (port 27247) should never be directly exposed to the internet. The platform runs on an internal Docker network:
 
-- The platform has no `ports` mapping. Only the `web` container (Caddy) is exposed on port 27246. Caddy proxies `/v1/*` to the platform.
+- The platform has no `ports` mapping. Only the `web` container (Caddy) is published, on port 27246 of `127.0.0.1`, where a reverse proxy on the same host reaches it. Caddy proxies `/v1/*` to the platform.
 
 ```
 Internet → Reverse Proxy (TLS) → Web (27246) → Platform (27247, internal)
@@ -161,9 +161,10 @@ If your host is directly on the internet, restrict inbound traffic:
 # Allow only HTTPS (443) and SSH (22)
 ufw allow 22/tcp
 ufw allow 443/tcp
-ufw deny 27246/tcp  # Block direct access if behind a reverse proxy
 ufw enable
 ```
+
+ufw does not filter a port Docker publishes: Docker routes that traffic before ufw's rules apply ([Docker and ufw](https://docs.docker.com/engine/network/packet-filtering-firewalls/#docker-and-ufw)). The `127.0.0.1` mapping in `docker-compose.yml` is what keeps port 27246 off the network.
 
 ## TLS
 
@@ -214,7 +215,7 @@ Caddy handles TLS automatically via Let's Encrypt.
 </Tabs>
 
 <Aside type="caution">
-The `Secure` flag on the `nb_session` cookie is only set when the server detects a non-localhost hostname. Behind a reverse proxy that terminates TLS, this works correctly because the platform binds to `0.0.0.0`. If you test over plain HTTP on a non-localhost address, the cookie will be set with `Secure` but your browser will reject it.
+The `Secure` flag on the `nb_session` cookie is only set when the server detects a non-localhost hostname. Behind a reverse proxy that terminates TLS, this works correctly because the browser reaches the proxy over HTTPS. If you test over plain HTTP on a non-localhost address, the cookie will be set with `Secure` but your browser will reject it.
 </Aside>
 
 ## MCP OAuth: the resource URL
@@ -248,6 +249,19 @@ What is left to evaluate at install time is the **connection**:
 - **What it can reach.** Connector URLs are checked against the SSRF allowlist — loopback, RFC1918, and cloud-metadata hosts are refused unless `allowInsecureRemotes` is on. Leave it off outside development.
 - **What it is granted.** OAuth scopes are declared on the catalog entry and shown on the consent screen. Credentials are workspace-scoped: a connector authorized in one workspace is not reachable from another.
 - **What its tools may do.** The per-connector permission table (Configure → Tools) is the place to disallow a tool the workspace should not expose to the agent.
+
+Each answer a connector sends over its MCP connection, a token refresh included,
+is read up to 64 MiB: a JSON reply, an error page or a token answer as a whole,
+an event stream per event. Past that the runtime stops reading the answer, and:
+
+- A JSON reply fails its call at once with a size error.
+- An event stream answering a call ends with a JSON-RPC error that carries the
+  size error, so the call fails at once.
+- An error page fails its call at once with its HTTP status, without the page text.
+- A token answer fails its token request with a size error.
+- On a connector using the legacy `sse` transport, whose answers arrive on one
+  shared stream, the call does not fail at once: it fails when its request
+  times out.
 
 ## How a tool call gets authorized
 

@@ -1,11 +1,10 @@
 services:
   platform:
-    image: ghcr.io/nimblebraininc/nimblebrain-runtime:latest
+    image: ghcr.io/nimblebraininc/nimblebrain-runtime:${NIMBLEBRAIN_TAG:-latest}
     build: .
     restart: unless-stopped
     volumes:
       - workspace:/data
-      - ./skills:/app/skills:ro
       # The identity provider. The runtime does not start without it; the
       # README quickstart shows the dev adapter and the real ones.
       - type: bind
@@ -25,11 +24,15 @@ services:
       - internal
 
   web:
-    image: ghcr.io/nimblebraininc/nimblebrain-web:latest
+    image: ghcr.io/nimblebraininc/nimblebrain-web:${NIMBLEBRAIN_TAG:-latest}
     build: web/
     restart: unless-stopped
     ports:
-      - "27246:8080"
+      # This machine only. The `dev` adapter checks no credential, so the UI
+      # is not published to the network. To serve other machines, first set a
+      # real adapter in instance.json, then put a TLS proxy in front or
+      # publish "27246:8080".
+      - "127.0.0.1:27246:8080"
     environment:
       - PLATFORM_URL=http://platform:27247
     depends_on:

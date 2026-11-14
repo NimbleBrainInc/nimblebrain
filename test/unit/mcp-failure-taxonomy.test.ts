@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { ProtocolError, UnauthorizedError } from "@modelcontextprotocol/client";
 import { type ConnectionFailure, classifyConnectionFailure } from "../../src/tools/mcp-source.ts";
+import { RemoteResponseTooLargeError } from "../../src/tools/response-budget.ts";
 
 /**
  * The connection-failure taxonomy (research/SPEC-mcp-source-recovery.md) as pure,
@@ -90,6 +91,10 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     expect(classifyConnectionFailure(new ProtocolError(-32602, "Invalid params"))).toBe("none");
     expect(classifyConnectionFailure(new ProtocolError(-32603, "Internal error"))).toBe("none");
     expect(classifyConnectionFailure(new ProtocolError(-32002, "Resource not found"))).toBe("none");
+  });
+
+  it("returns 'none' for an answer past the host budget: the same call fetches it again", () => {
+    expect(classifyConnectionFailure(new RemoteResponseTooLargeError(64))).toBe("none");
   });
 
   it("classifies recognized torn-transport shapes as transport-dead", () => {

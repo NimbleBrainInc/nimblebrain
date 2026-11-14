@@ -3,7 +3,7 @@
 FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b AS base
 
 LABEL org.opencontainers.image.title="NimbleBrain"
-LABEL org.opencontainers.image.description="Self-hosted platform for MCP Apps and agent tasks"
+LABEL org.opencontainers.image.description="Open-source runtime that runs agents and MCP apps on your systems, with any model"
 LABEL org.opencontainers.image.source="https://github.com/NimbleBrainInc/nimblebrain"
 LABEL org.opencontainers.image.url="https://nimblebrain.ai"
 LABEL org.opencontainers.image.vendor="NimbleBrain"
@@ -86,7 +86,12 @@ ENV NB_HOST=0.0.0.0
 
 EXPOSE 27247
 
-HEALTHCHECK --interval=30s --timeout=5s \
+# Probe every 2s while starting, so `depends_on: service_healthy` releases
+# the web container seconds after boot instead of after the first 30s
+# interval. Failures inside the start period do not count, so a platform
+# that never comes up is marked unhealthy up to 30s later than without it.
+# Docker Engine before 25 ignores --start-interval and keeps the 30s wait.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --start-interval=2s \
   CMD curl -f http://localhost:27247/v1/health || exit 1
 
 CMD ["bun", "run", "src/cli/index.ts", "serve"]

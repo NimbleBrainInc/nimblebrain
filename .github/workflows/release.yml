@@ -6,8 +6,8 @@ name: Release
 # ci.yml already built + pushed the staging-verified runtime/web `:<sha>` images to
 # ECR and the staging edge channel ran them. A release therefore RE-TAGS those exact
 # manifests as `:vX.Y.Z` — so prod runs byte-for-byte what staging proved, and
-# releases stop rebuilding (and re-running verify: ci.yml already gated this commit;
-# the source-image-exists guard below is the proof it did).
+# releases stop rebuilding and re-running the tests. The `ci-green` job is the gate:
+# it refuses the tag unless the test jobs in ci.yml's run for the tagged commit passed.
 #
 #   ECR  (prod deploy)        : retag :<sha> -> :vX.Y.Z (runtime + web) via put-image.
 #   GHCR (public OSS pulls)   : copy the same ECR :<sha> manifests to the GHCR tags
@@ -47,8 +47,86 @@ permissions:
   contents: read
 
 jobs:
+  # A release ships only a commit whose tests passed. This job reads the CI run for
+  # the tagged commit from the Actions API (a lookup, not a re-run) and every other
+  # job waits on it, so a refused tag writes nothing: no image, no GitHub Release, no
+  # prod promotion. It gates both paths, promote-by-retag and the emergency rebuild.
+  #
+  # The run it reads is ci.yml on `push`, on:
+  #   - main, for a commit tagged from main (GA or pre-release); or
+  #   - a `hotfix/**` branch, for a hotfix tag (RELEASING.md §8). A hotfix commit is
+  #     never on main, so its branch run is the one that checked its tree.
+  # A PR run does not count: it tested the PR head, not the commit that landed.
+  #
+  # It passes when the four test jobs of that run (TEST_JOBS) all concluded success.
+  # It reads the jobs, not the run's conclusion, so a failed image build, change
+  # detection, or edge roll does not on its own refuse a commit whose tests passed.
+  ci-green:
+    name: CI passed on the tagged commit
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Require the CI test jobs to have passed on the tagged commit
+        # The tag reaches the script through env, never pasted into it (see the
+        # `Resolve version` step below for why).
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          # The job names in ci.yml. Renaming one there means renaming it here.
+          TEST_JOBS: '["Lint & Typecheck","Unit Tests","Unit Tests (root deps only)","Integration Tests"]'
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not vX.Y.Z (with optional -prerelease)"; exit 1
+          fi
+          # The commit the tag points at (an annotated tag resolves through to it).
+          if ! sha="$(gh api "repos/$REPO/commits/refs/tags/$TAG" --jq .sha)"; then
+            echo "::error::Tag $TAG does not resolve to a commit in $REPO"; exit 1
+          fi
+
+          run_ids="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$sha&event=push&per_page=100" \
+            --jq '.workflow_runs[] | select(.head_branch == "main" or (.head_branch | startswith("hotfix/"))) | .id')"
+          if [ -z "$run_ids" ]; then
+            echo "::error::No CI run (ci.yml, push) on main or a hotfix/** branch for $sha ($TAG). Tag a commit that landed on main, or for a hotfix push its hotfix/** branch and let CI finish before releasing (RELEASING.md §8)."
+            exit 1
+          fi
+
+          # One line per test job per run: "<state> <job> (<branch> <run url>)", where
+          # state is the job's conclusion, "running", or "missing". The jobs endpoint
+          # returns each job's latest attempt, so a re-run that passed counts.
+          report=""
+          for id in $run_ids; do
+            run="$(gh api "repos/$REPO/actions/runs/$id" --jq '{branch: .head_branch, url: .html_url}')"
+            jobs="$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | {name, status, conclusion}]')"
+            lines="$(jq -r --argjson want "$TEST_JOBS" --argjson run "$run" '
+              . as $jobs | $want[] | . as $n
+              | ([$jobs[] | select(.name == $n)][0]) as $j
+              | (if $j == null then "missing"
+                 elif $j.status != "completed" then "running"
+                 else $j.conclusion end) as $state
+              | "\($state) \($n) (\($run.branch) \($run.url))"' <<<"$jobs")"
+            if ! grep -qv '^success ' <<<"$lines"; then
+              echo "CI test jobs passed on $sha ($TAG):"
+              echo "$lines"
+              exit 0
+            fi
+            report+="$lines"$'\n'
+          done
+
+          if grep -q '^running ' <<<"$report"; then
+            echo "::error::CI test jobs on $sha ($TAG) are still running. Re-run this release once they pass."
+          else
+            echo "::error::CI test jobs did not pass on $sha ($TAG). Fix them and re-run CI, or tag a commit whose tests passed."
+          fi
+          printf '%s' "$report" | grep -v '^success '
+          exit 1
+
   release:
     name: Promote release images
+    needs: ci-green
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # AWS OIDC (ECR)

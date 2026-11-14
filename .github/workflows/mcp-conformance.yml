@@ -6,8 +6,8 @@ name: MCP Conformance
 #   - a ready PR that touches the MCP door, the runtime behind it, the
 #     connector client, the tool routing behind it, the SDK (package.json,
 #     bun.lock), or the harness;
-#   - weekly on main, for a change outside those paths that still moves the
-#     endpoint;
+#   - nightly on main, called from nightly.yml, for a change outside those paths
+#     that still moves the endpoint;
 #   - by hand.
 # It is not a required check: a path-filtered workflow reports nothing on a PR
 # outside its paths, and a required check that never reports blocks the merge.
@@ -24,8 +24,7 @@ on:
       - "package.json"
       - "bun.lock"
       - ".github/workflows/mcp-conformance.yml"
-  schedule:
-    - cron: "0 15 * * 1"
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
