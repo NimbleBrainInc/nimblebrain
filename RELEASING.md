@@ -29,7 +29,7 @@ Before cutting a release, verify:
 
 - You are in a clean clone of `NimbleBrainInc/nimblebrain`
 - Local `main` fast-forwards cleanly from origin
-- The CI workflow on the commit you're about to tag has succeeded (check `gh run list --workflow=ci.yml --branch=main --limit=1`)
+- The CI workflow's push run on the commit you're about to tag has succeeded (`gh run list --workflow=ci.yml --branch=main --commit=<sha>`). `release.yml` refuses the tag otherwise (§7), so tagging early only buys a red release run
 - `gh auth status` reports authenticated
 - No tag with your target version already exists
 
@@ -174,11 +174,12 @@ Then fix the underlying issue on `main` and cut the **next** pre-release number 
 
 ## 7. Workflow reference
 
-`.github/workflows/release.yml` fires on any `v*` tag push (and `workflow_dispatch` with a `tag` input + an EMERGENCY `rebuild` toggle) and runs three jobs:
+`.github/workflows/release.yml` fires on any `v*` tag push (and `workflow_dispatch` with a `tag` input + an EMERGENCY `rebuild` toggle) and runs four jobs:
 
-1. **Promote release images** — **promote-by-retag, not rebuild.** `ci.yml` already built and pushed the staging-verified runtime + web `:<sha>` images to ECR on merge; this re-tags those exact manifests to `:vX.Y.Z` via `aws ecr put-image` (guarded: target repo must be IMMUTABLE, the `:<sha>` source must exist, and a re-run is idempotent — same digest skips, a different digest fails). It then copies the same `:<sha>` manifests to the GHCR tags with `docker buildx imagetools create` (edge never pushes GHCR), and for stable releases moves `:latest`. There is no Verify or rebuild step — `ci.yml` already gated the commit, and the source-image-exists guard proves it. The `workflow_dispatch` `rebuild=true` escape hatch rebuilds from source instead (loud warning: prod won't be byte-for-byte) — only for a tag off a commit that never rode staging.
-2. **GitHub Release** — creates a release with auto-generated notes; `prerelease` flag mirrors the hyphen rule
-3. **Promote to prod (stable channel)** — GA only; dispatches the deploy-config receiver to record the new prod stable image tag, which the auto-sync per-tenant ApplicationSet then rolls. No-ops when the prod-promote App isn't configured (forks/pre-setup CI).
+1. **CI passed on the tagged commit** — the gate; every other job waits on it. It resolves the tag to its commit and reads that commit's `ci.yml` runs from the Actions API (no tests re-run). It passes only if a `push` run on `main`, or on a `hotfix/**` branch (§8), concluded `success`. No such run, a run still in progress, or only failed runs: the release stops before anything is retagged, rebuilt, or published, and the error names the commit and the runs it found. A pull-request run does not count, since it tested the PR head rather than the commit that landed. The gate applies to pre-release tags and to `rebuild=true` alike. If CI was still running, re-run the release once it passes (`gh run rerun <id> --failed`).
+2. **Promote release images** — **promote-by-retag, not rebuild.** `ci.yml` already built and pushed the staging-verified runtime + web `:<sha>` images to ECR on merge; this re-tags those exact manifests to `:vX.Y.Z` via `aws ecr put-image` (guarded: target repo must be IMMUTABLE, the `:<sha>` source must exist, and a re-run is idempotent — same digest skips, a different digest fails). It then copies the same `:<sha>` manifests to the GHCR tags with `docker buildx imagetools create` (edge never pushes GHCR), and for stable releases moves `:latest`. There is no Verify or rebuild step — job 1 has already confirmed `ci.yml` passed on the commit. The `workflow_dispatch` `rebuild=true` escape hatch rebuilds from source instead (loud warning: prod won't be byte-for-byte) — only for a tag off a commit that never rode staging.
+3. **GitHub Release** — creates a release with auto-generated notes; `prerelease` flag mirrors the hyphen rule
+4. **Promote to prod (stable channel)** — GA only; dispatches the deploy-config receiver to record the new prod stable image tag, which the auto-sync per-tenant ApplicationSet then rolls. No-ops when the prod-promote App isn't configured (forks/pre-setup CI).
 
 Artifact map:
 
@@ -212,15 +213,17 @@ git worktree add -b "$LINE" ../hotfix "$BASE"     # existing line: git worktree 
 cd ../hotfix
 git cherry-pick -x "$FIX"
 
-# 2. Verify locally. CI runs only on main and on PRs into it, so nothing else checks this tree.
-bun install --frozen-lockfile && (cd web && bun install --frozen-lockfile) && bun run install:platform-apps
-bun run verify && bun run test:integration
-
-# 3. Push the branch and an annotated tag
+# 2. Push the branch. ci.yml runs every check on a push to hotfix/** (no image build);
+#    release.yml refuses the tag until that run passes.
 git push -u origin "$LINE"
+gh run list --workflow=ci.yml --branch="$LINE" --limit 1   # then: gh run watch <id> --exit-status
+
+# 3. Once CI is green, push an annotated tag
 git tag -a "$TAG" -m "$TAG: $BASE plus <what the fix does> (#<PR>)"
 git push origin "$TAG"
 ```
+
+The branch's CI run comes from the `ci.yml` in its own tree. If the base release's `ci.yml` does not list `hotfix/**` under `on.push.branches`, the push starts no run and the release gate refuses the tag: cherry-pick the commit that added that trigger onto the line first.
 
 The tag push starts `release.yml`, and that run **fails by design** at `No staging-built image … it never rode staging-edge`. The guard runs before any image is written, so nothing is half-published. Then build from source:
 

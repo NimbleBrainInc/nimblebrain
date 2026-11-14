@@ -6,12 +6,15 @@ name: CI
 #     what lands.
 #   - push to main: every check, then the build. The PR ran on its own head, not on
 #     main with it merged, so the merged tree is checked before an image is published.
+#   - push to a hotfix/** branch: every check, no build. A hotfix commit never reaches
+#     main, so this run is the one release.yml's gate reads for a hotfix tag
+#     (RELEASING.md §8).
 #   - merge_group: every check. The triggers stay so the merge queue can be required
 #     again from the ruleset alone; with it required, a push the queue tested skips the
 #     checks (verified-on-pr).
 on:
   push:
-    branches: [main]
+    branches: [main, 'hotfix/**']
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]

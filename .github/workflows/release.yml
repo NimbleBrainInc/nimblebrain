@@ -6,8 +6,8 @@ name: Release
 # ci.yml already built + pushed the staging-verified runtime/web `:<sha>` images to
 # ECR and the staging edge channel ran them. A release therefore RE-TAGS those exact
 # manifests as `:vX.Y.Z` — so prod runs byte-for-byte what staging proved, and
-# releases stop rebuilding (and re-running verify: ci.yml already gated this commit;
-# the source-image-exists guard below is the proof it did).
+# releases stop rebuilding and re-running the tests. The `ci-green` job is the gate:
+# it refuses the tag unless ci.yml's run for the tagged commit passed.
 #
 #   ECR  (prod deploy)        : retag :<sha> -> :vX.Y.Z (runtime + web) via put-image.
 #   GHCR (public OSS pulls)   : copy the same ECR :<sha> manifests to the GHCR tags
@@ -47,8 +47,64 @@ permissions:
   contents: read
 
 jobs:
+  # A release ships only a commit CI passed. This job reads the CI run for the
+  # tagged commit from the Actions API (a lookup, not a re-run) and every other job
+  # waits on it, so a refused tag writes nothing: no image, no GitHub Release, no
+  # prod promotion. It gates both paths, promote-by-retag and the emergency rebuild.
+  #
+  # The run it accepts is ci.yml on `push`, with a conclusion of success, on:
+  #   - main, for a commit tagged from main (GA or pre-release); or
+  #   - a `hotfix/**` branch, for a hotfix tag (RELEASING.md §8). A hotfix commit is
+  #     never on main, so its branch run is the one that checked its tree.
+  # A PR run does not count: it tested the PR head, not the commit that landed.
+  ci-green:
+    name: CI passed on the tagged commit
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Require a successful CI run for the tagged commit
+        # The tag reaches the script through env, never pasted into it (see the
+        # `Resolve version` step below for why).
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not vX.Y.Z (with optional -prerelease)"; exit 1
+          fi
+          # The commit the tag points at (an annotated tag resolves through to it).
+          if ! sha="$(gh api "repos/$REPO/commits/refs/tags/$TAG" --jq .sha)"; then
+            echo "::error::Tag $TAG does not resolve to a commit in $REPO"; exit 1
+          fi
+
+          runs="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$sha&event=push&per_page=100" \
+            --jq '[.workflow_runs[] | select(.head_branch == "main" or (.head_branch | startswith("hotfix/")))]')"
+          count="$(jq 'length' <<<"$runs")"
+          passed="$(jq -r '[.[] | select(.conclusion == "success")][0].html_url // empty' <<<"$runs")"
+          pending="$(jq -r '[.[] | select(.status != "completed")][0].html_url // empty' <<<"$runs")"
+
+          if [ -n "$passed" ]; then
+            echo "CI passed on $sha ($TAG): $passed"
+          elif [ "$count" -eq 0 ]; then
+            echo "::error::No CI run (ci.yml, push) on main or a hotfix/** branch for $sha ($TAG). Tag a commit that landed on main, or for a hotfix push its hotfix/** branch and let CI finish before releasing (RELEASING.md §8)."
+            exit 1
+          elif [ -n "$pending" ]; then
+            echo "::error::CI on $sha ($TAG) is still running: $pending. Re-run this release once it passes."
+            exit 1
+          else
+            summary="$(jq -r '.[] | "\(.head_branch): \(.conclusion) \(.html_url)"' <<<"$runs")"
+            echo "::error::CI did not pass on $sha ($TAG). Fix it and re-run CI, or tag a commit that passed. Runs found:"
+            echo "$summary"
+            exit 1
+          fi
+
   release:
     name: Promote release images
+    needs: ci-green
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # AWS OIDC (ECR)
