@@ -57,7 +57,9 @@ interface SlotRendererProps {
   /**
    * Size each iframe to its content instead of filling the container. For a
    * placement in a flow layout (a page section), where `height: 100%` has no
-   * height to resolve against.
+   * height to resolve against. It also decides the frame's border: a content-sized
+   * placement keeps the border the app asks for (`_meta.ui.prefersBorder`), and a
+   * full-pane one is always borderless.
    */
   fitContent?: boolean;
 }
