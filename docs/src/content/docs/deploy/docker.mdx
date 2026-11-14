@@ -20,7 +20,7 @@ Create a project directory and add this file:
 ```yaml title="docker-compose.yml"
 services:
   platform:
-    image: ghcr.io/nimblebraininc/nimblebrain-runtime:latest
+    image: ghcr.io/nimblebraininc/nimblebrain-runtime:${NIMBLEBRAIN_TAG:-latest}
     build: .
     restart: unless-stopped
     volumes:
@@ -44,7 +44,7 @@ services:
       - internal
 
   web:
-    image: ghcr.io/nimblebraininc/nimblebrain-web:latest
+    image: ghcr.io/nimblebraininc/nimblebrain-web:${NIMBLEBRAIN_TAG:-latest}
     build: web/
     restart: unless-stopped
     ports:
@@ -194,9 +194,15 @@ docker compose restart
 
 ## Update to a new version
 
+Both images take their tag from `NIMBLEBRAIN_TAG`, which defaults to `latest`. To stay on one release, set it in `.env`. A pinned stack updates by changing it to the new release's tag first; the commands below then pull and run that tag.
+
+```bash title=".env"
+NIMBLEBRAIN_TAG=v1.2.3
+```
+
 <Steps>
 
-1. **Pull the latest images**
+1. **Pull the images**
 
    ```bash
    docker compose pull
