@@ -540,3 +540,8 @@ body {
   font-size: 15px; font-weight: 500;
   pointer-events: none;
 }
+/* Loading shimmers are decorative; stop them looping for reduced-motion users.
+   Must stay below the rules it overrides: a media query adds no specificity. */
+@media (prefers-reduced-motion: reduce) {
+  .skel, .detail-shimmer { animation: none; }
+}
