@@ -110,7 +110,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --start-interval=2s \
   CMD curl -f http://localhost:27247/v1/health || exit 1
 ```
 
-The `web` service uses `depends_on` with `condition: service_healthy`, so it only starts after the platform passes its first health check. While the platform is starting, Docker probes every 2 seconds, so the UI is up a few seconds after the platform container starts. Docker Engine before 25 ignores `--start-interval` and runs the first check after 30 seconds.
+The `web` service uses `depends_on` with `condition: service_healthy`, so it only starts after the platform passes its first health check. While the platform is starting, Docker probes every 2 seconds, so the UI is up a few seconds after the platform container starts. Failures inside the 30-second start period do not count, so a platform that never comes up is marked unhealthy up to 30 seconds later. Docker Engine before 25 ignores `--start-interval` and runs the first check after 30 seconds.
 
 ## Start the stack
 
