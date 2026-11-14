@@ -161,9 +161,10 @@ If your host is directly on the internet, restrict inbound traffic:
 # Allow only HTTPS (443) and SSH (22)
 ufw allow 22/tcp
 ufw allow 443/tcp
-ufw deny 27246/tcp  # Block direct access if behind a reverse proxy
 ufw enable
 ```
+
+ufw does not filter a port Docker publishes: Docker routes that traffic before ufw's rules apply ([Docker and ufw](https://docs.docker.com/engine/network/packet-filtering-firewalls/#docker-and-ufw)). The `127.0.0.1` mapping in `docker-compose.yml` is what keeps port 27246 off the network.
 
 ## TLS
 
