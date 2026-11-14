@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.0]
+
 ### Added
 
 - `[outbox]` (`nimblebrain_server_sdk.outbox`): the server half of the notification protocol.

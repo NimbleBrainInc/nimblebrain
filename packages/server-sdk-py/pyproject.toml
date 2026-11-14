@@ -1,6 +1,6 @@
 [project]
 name = "nimblebrain-server-sdk"
-version = "0.5.0"
+version = "0.6.0"
 description = "The SDK for building MCP servers that run on NimbleBrain: tool annotations, change announcements, the ai.nimblebrain platform extensions (facets, lifecycle, record views), skills over the MCP Skills extension, bounded listing rows, record ids, host-resources reads, and the service error contract; with tenant- and workspace-isolated Postgres access ([db]) and metrics, logs and traces ([observability]), and the outbox a server records notifications in ([outbox])."
 readme = "README.md"
 license = "Apache-2.0"
