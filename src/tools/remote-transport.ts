@@ -7,6 +7,7 @@ import { type CredentialValue, isCredentialRef } from "./credential-ref.ts";
 import { type CredentialScope, resolveCredentialValue } from "./credential-store.ts";
 import { createInBandAuthRejectionFetch } from "./in-band-auth-rejection-fetch.ts";
 import { createOAuthRefreshFetch } from "./oauth-refresh-fetch.ts";
+import { createResponseBudgetFetch } from "./response-budget.ts";
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 
 /** One outgoing header as config declares it: the secret itself, or a reference to one. */
@@ -195,11 +196,20 @@ function selectAuthProvider(
   return config?.auth ? undefined : authProvider;
 }
 
-/** Transport fetch: the minting fetch, else an OAuth-refresh fetch for an OAuth connector, else none. */
+/**
+ * Transport fetch: the minting fetch or the global one, read within the answer
+ * budget, and wrapped in an OAuth-refresh fetch for an OAuth connector.
+ */
 function selectTransportFetch(
   mintingFetch: FetchLike | undefined,
   effectiveAuthProvider: OAuthClientProvider | undefined,
-): FetchLike | undefined {
+): FetchLike {
+  // Answers are counted as they come off the network, below every wrapper that
+  // reads one, so none of them (the refresh fetch's copy of a token answer
+  // included) holds more than the host budget (`createResponseBudgetFetch`).
+  const networkFetch = createResponseBudgetFetch(
+    mintingFetch ?? ((input, init) => fetch(input, init)),
+  );
   // For an OAuth connector (no static auth, no minting provider), wrap the
   // transport's `fetch` so transient token-endpoint refresh failures are
   // retried in place instead of bubbling up as a fabricated `UnauthorizedError`
@@ -208,8 +218,10 @@ function selectTransportFetch(
   // transient-vs-dead-token distinction is still recoverable — see
   // `oauth-refresh-fetch.ts`. `mintingFetch` and OAuth are mutually exclusive
   // (a `provider` auth is not `none`, so `effectiveAuthProvider` is unset when
-  // `mintingFetch` is set), so the `??` never drops a minting fetch.
-  return mintingFetch ?? (effectiveAuthProvider ? createOAuthRefreshFetch() : undefined);
+  // `mintingFetch` is set), so a minting fetch is never wrapped for refresh.
+  return effectiveAuthProvider
+    ? createOAuthRefreshFetch({ fetchImpl: networkFetch })
+    : networkFetch;
 }
 
 /** Streamable-HTTP reconnection options derived from config, or undefined when not configured. */
