@@ -411,9 +411,9 @@ describe("a missing or rejected key", () => {
     });
     globalThis.fetch = answer;
     try {
-      const err = await buildModelResolver(config)(model)
-        .doStream(PROMPT)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(
+        buildModelResolver(config)(model).doStream(PROMPT),
+      ).catch((e: unknown) => e);
       return { err, sent };
     } finally {
       globalThis.fetch = realFetch;
@@ -486,9 +486,9 @@ describe("a missing or rejected key", () => {
       {},
       { url: "http://model-gateway.test", fetch: gatewayFetch },
     );
-    const err = await resolve("anthropic:claude-sonnet-4-6")
-      .doStream(PROMPT)
-      .catch((e: unknown) => e);
+    const err = await Promise.resolve(
+      resolve("anthropic:claude-sonnet-4-6").doStream(PROMPT),
+    ).catch((e: unknown) => e);
     expect(err).not.toBeInstanceOf(ModelAuthError);
     expect((err as { statusCode?: number }).statusCode).toBe(401);
   });

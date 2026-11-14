@@ -37,8 +37,8 @@ async function failures(provider: string, thrown: unknown): Promise<[unknown, un
     middleware: modelAuthMiddleware(provider),
   });
   return [
-    await model.doStream(CALL).catch((e: unknown) => e),
-    await model.doGenerate(CALL).catch((e: unknown) => e),
+    await Promise.resolve(model.doStream(CALL)).catch((e: unknown) => e),
+    await Promise.resolve(model.doGenerate(CALL)).catch((e: unknown) => e),
   ];
 }
 
