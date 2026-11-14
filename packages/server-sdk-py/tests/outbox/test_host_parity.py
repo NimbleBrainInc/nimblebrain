@@ -35,10 +35,19 @@ JS_NUMBERS: list[list[Any]] = json.loads((FIXTURES / "js_numbers.json").read_tex
 
 
 def written(case: dict[str, Any]) -> dict[str, Any]:
-    """The envelope as a server writes it, with ``pad`` bytes of ``data["s"]`` when set."""
+    """The envelope as a server writes it.
+
+    Large payloads are generated rather than stored: ``pad`` is that many bytes of
+    ``data["s"]``, and ``fill`` is ``data["values"]``, its ``value`` repeated ``count`` times.
+    """
     envelope = dict(case["envelope"])
     if "pad" in case:
         envelope["data"] = {**envelope["data"], "s": "a" * case["pad"]}
+    if "fill" in case:
+        envelope["data"] = {
+            **envelope["data"],
+            "values": [case["fill"]["value"]] * case["fill"]["count"],
+        }
     return envelope
 
 

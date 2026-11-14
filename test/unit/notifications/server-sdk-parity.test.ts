@@ -45,6 +45,7 @@ interface ParityCase {
   case: string;
   envelope: Record<string, unknown> & { data: Record<string, unknown> };
   pad?: number;
+  fill?: { value: number; count: number };
   sdk: "accept" | "refuse";
   host: "keep" | "drop";
 }
@@ -58,12 +59,15 @@ const JS_NUMBERS: [number, string][] = JSON.parse(
   readFileSync(join(SDK, "tests/outbox/fixtures/js_numbers.json"), "utf8"),
 );
 
-/** What the SDK's poll serves for a case: its envelope, padded, with a longest-possible cursor. */
+/**
+ * What the SDK's poll serves for a case: its envelope with a longest-possible
+ * cursor. Large payloads are generated, as the SDK's suite generates them:
+ * `pad` bytes of `data.s`, and `fill` as `data.values`.
+ */
 function occurrence(parity: ParityCase): Record<string, unknown> {
-  const data =
-    parity.pad === undefined
-      ? parity.envelope.data
-      : { ...parity.envelope.data, s: "a".repeat(parity.pad) };
+  const data: Record<string, unknown> = { ...parity.envelope.data };
+  if (parity.pad !== undefined) data.s = "a".repeat(parity.pad);
+  if (parity.fill !== undefined) data.values = Array(parity.fill.count).fill(parity.fill.value);
   return { ...parity.envelope, data, cursor: "x".repeat(NOTIFICATION_CURSOR_MAX) };
 }
 
