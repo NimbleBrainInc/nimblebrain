@@ -56,7 +56,7 @@ Get NimbleBrain running locally with Docker Compose. You need Docker and an [Ant
        image: ghcr.io/nimblebraininc/nimblebrain-web:latest
        restart: unless-stopped
        ports:
-         - "27246:8080"
+         - "127.0.0.1:27246:8080"
        environment:
          - PLATFORM_URL=http://platform:27247
        depends_on:
@@ -72,7 +72,7 @@ Get NimbleBrain running locally with Docker Compose. You need Docker and an [Ant
      internal:
    ```
 
-   The `platform` image runs the agent API on port 27247 (internal). The `web` image serves the UI and is published on port 27246.
+   The `platform` image runs the agent API on port 27247 (internal). The `web` image serves the UI and is published on port 27246 of this machine only (`127.0.0.1`).
 
 3. **Set your API key and start**
 

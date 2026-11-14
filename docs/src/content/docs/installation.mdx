@@ -54,7 +54,7 @@ Docker Compose runs the platform and web UI as two containers. This is the recom
        image: ghcr.io/nimblebraininc/nimblebrain-web:latest
        restart: unless-stopped
        ports:
-         - "27246:8080"
+         - "127.0.0.1:27246:8080"
        environment:
          - PLATFORM_URL=http://platform:27247
        depends_on:
@@ -79,7 +79,7 @@ Docker Compose runs the platform and web UI as two containers. This is the recom
    docker compose up
    ```
 
-   The platform API runs on port 27247 (internal). The web UI is published on port 27246. Health is checked internally at `http://localhost:27247/v1/health`.
+   The platform API runs on port 27247 (internal). The web UI is published on port 27246 of this machine only (`127.0.0.1`). Health is checked internally at `http://localhost:27247/v1/health`.
 
    The platform does not start without `instance.json` (see [Authentication](#authentication) below). For a local trial, write the `dev` adapter first: `echo '{"auth":{"adapter":"dev"}}' > instance.json`.
 
