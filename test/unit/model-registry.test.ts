@@ -411,9 +411,9 @@ describe("a missing or rejected key", () => {
     });
     globalThis.fetch = answer;
     try {
-      const err = await Promise.resolve(
-        buildModelResolver(config)(model).doStream(PROMPT),
-      ).catch((e: unknown) => e);
+      const err = await Promise.resolve(buildModelResolver(config)(model).doStream(PROMPT)).catch(
+        (e: unknown) => e,
+      );
       return { err, sent };
     } finally {
       globalThis.fetch = realFetch;
