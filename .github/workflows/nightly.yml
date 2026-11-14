@@ -1,0 +1,132 @@
+name: Nightly
+
+# The suites that do not run on every PR, run once a night against main.
+#
+# Where a check runs:
+#   - every PR: the required checks in ci.yml, the only merge gate.
+#   - push to main: those checks again on the merged tree, then the image build.
+#   - nightly (this workflow): the slower suites outside that gate, so a change that
+#     breaks one shows up within a day instead of at the next PR that touches it.
+#
+# On the schedule it runs only suites that need no paid credential:
+#   - MCP conformance (`bun run test:conformance`), through mcp-conformance.yml, which
+#     also runs it on ready PRs that touch the MCP door.
+#
+# By hand only (`Run workflow`, tick the box). Each one needs a secret, and a run of
+# the LLM evals bills the Anthropic key, so none runs on the schedule:
+#   - `evals`: `bun run eval` (test/eval/), needs ANTHROPIC_API_KEY.
+#   - `smithery`: test/integration/smithery-e2e.test.ts against the real Smithery API,
+#     needs SMITHERY_API_KEY. ci.yml runs that file too, but it skips without the key.
+# A box ticked without its secret fails the job and names the secret, instead of a
+# green run that skipped everything.
+#
+# A failed scheduled run notifies through GitHub's own Actions notification. With the
+# NIGHTLY_SLACK_WEBHOOK_URL secret set, it also posts to that Slack webhook.
+on:
+  schedule:
+    # 12:23 UTC, 02:23 in Hawaii: after the US working day, off the top of the hour.
+    - cron: "23 12 * * *"
+  workflow_dispatch:
+    inputs:
+      evals:
+        description: "Also run the LLM evals (bills the Anthropic key on every run)"
+        type: boolean
+        default: false
+      smithery:
+        description: "Also run the Smithery end-to-end test (needs SMITHERY_API_KEY)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
+  BUN_VERSION: "1.4.3"
+
+jobs:
+  conformance:
+    name: MCP Conformance
+    uses: ./.github/workflows/mcp-conformance.yml
+
+  evals:
+    name: LLM evals
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.evals }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Require the Anthropic key
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          [ -n "$KEY" ] || { echo "::error::The evals need the ANTHROPIC_API_KEY secret, which this repo does not have."; exit 1; }
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache bun dependencies
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-${{ github.job }}-
+            ${{ runner.os }}-bun-
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Run the evals
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: bun run eval
+
+  smithery:
+    name: Smithery end-to-end
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.smithery }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Require the Smithery key
+        env:
+          KEY: ${{ secrets.SMITHERY_API_KEY }}
+        run: |
+          [ -n "$KEY" ] || { echo "::error::The Smithery test needs the SMITHERY_API_KEY secret, which this repo does not have."; exit 1; }
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache bun dependencies
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-${{ github.job }}-
+            ${{ runner.os }}-bun-
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Run the Smithery end-to-end test
+        env:
+          SMITHERY_API_KEY: ${{ secrets.SMITHERY_API_KEY }}
+        run: bun test --no-env-file test/integration/smithery-e2e.test.ts
+
+  alert:
+    name: Alert on failure
+    needs: [conformance, evals, smithery]
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to Slack
+        env:
+          WEBHOOK: ${{ secrets.NIGHTLY_SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "NIGHTLY_SLACK_WEBHOOK_URL is not set: GitHub's failed-run notification is the only alert"
+            exit 0
+          fi
+          jq -n --arg text ":red_circle: Nightly failed on ${GITHUB_REPOSITORY}: ${RUN_URL}" '{text: $text}' \
+            | curl -fsS -X POST -H 'Content-Type: application/json' --data @- "$WEBHOOK"
