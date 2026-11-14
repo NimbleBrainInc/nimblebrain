@@ -195,7 +195,7 @@ ECR repositories have immutable tags enabled — `:latest` is deliberately not p
 
 ## 8. Hotfixing a released version
 
-Use this when one fix must reach a deployment running `vX.Y.Z` without the rest of what `main` has gained since. The hotfix is that release plus cherry-picks of merged commits, and nothing else.
+Use this when one fix must reach a deployment running `vX.Y.Z` without the rest of what `main` has gained since. The hotfix is that release plus cherry-picks of merged commits, and nothing else. Those cherry-picks include the release gate's workflows when the release predates them, since a tag runs `ci.yml` and `release.yml` as they stand on its own commit.
 
 **The fix lands on `main` first**, by the normal PR and review. The hotfix branch only ever carries cherry-picks of commits already on `main`, so the next release from `main` contains every hotfix and nothing has to be merged back.
 
@@ -212,6 +212,10 @@ git fetch origin --tags
 git worktree add -b "$LINE" ../hotfix "$BASE"     # existing line: git worktree add -B "$LINE" ../hotfix "origin/$LINE"
 cd ../hotfix
 git cherry-pick -x "$FIX"
+# A base cut before the release gate (#1996) has neither the hotfix/** CI trigger nor
+# the gate, and the tag runs the workflows on its own commit. Cherry-pick the gate onto the line too.
+grep -q 'ci-green:' .github/workflows/release.yml || \
+  git cherry-pick -x "$(git log origin/main --grep='(#1996)' --format=%H -1)"
 
 # 2. Push the branch. ci.yml runs every check on a push to hotfix/** (no image build);
 #    release.yml refuses the tag until that run passes.
