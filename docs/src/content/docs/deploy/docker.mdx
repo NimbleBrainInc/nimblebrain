@@ -63,7 +63,7 @@ networks:
   internal:
 ```
 
-The platform reads its working directory from the `workspace` volume mounted at `/data` (the image sets `NB_WORK_DIR=/data`). Configuration (`nimblebrain.json`), skills, and connector state all live under that directory — there is no separate config bind mount required to boot.
+The platform reads its working directory from the `workspace` volume mounted at `/data` (the image sets `NB_WORK_DIR=/data`). Configuration (`nimblebrain.json`), skills, and connector state all live under that directory — there is no separate config bind mount required to boot. A custom org skill goes in `/data/skills` on that volume, or is written in the Skills app or with `skills__create`.
 
 ### What each service does
 
