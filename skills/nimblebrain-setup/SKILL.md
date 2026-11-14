@@ -104,10 +104,10 @@ grep -c '_API_KEY=' <folder>/.env
 If it prints `0`, run the check. It removes the shell's key variables and prints only the image and published-address lines:
 
 ```bash
-cd <folder> && env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GOOGLE_GENERATIVE_AI_API_KEY -u GREENPT_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY docker compose config --format json | grep -oE '"(image|host_ip)": *"[^"]*"'
+cd <folder> && env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GOOGLE_GENERATIVE_AI_API_KEY -u GREENPT_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY docker compose config --format json 2>/dev/null | grep -oE '"(image|host_ip)": *"[^"]*"'
 ```
 
-It must print both images ending in `:<tag>` and `"host_ip": "127.0.0.1"`: both images take their tag from `NIMBLEBRAIN_TAG`, and the web port is published on this machine only. On any other output, stop: this release predates this skill, and its Compose file would publish the no-login UI on the network. Tell the user, and offer to remove the folder.
+Compose's own messages are discarded: with no key yet it warns that the key variable is unset, and it echoes a malformed `.env` line in full. It must print both images ending in `:<tag>` and `"host_ip": "127.0.0.1"`: both images take their tag from `NIMBLEBRAIN_TAG`, and the web port is published on this machine only. On any other output, or none, stop: this release predates this skill, and its Compose file would publish the no-login UI on the network. Tell the user, and offer to remove the folder.
 
 If the count is not `0`, a key is already in `.env`: this is a rerun past step 6, and the release passed this check on the run that wrote the key ("Updating" checks a new release before it switches). Do not run the check.
 
