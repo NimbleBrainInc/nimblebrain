@@ -1,0 +1,16 @@
+# NimbleBrain
+
+> NimbleBrain Platform is the open-source runtime that runs agents and MCP apps on your systems, in your own infrastructure, with any model.
+
+The runtime is open source under Apache-2.0 at https://github.com/NimbleBrainInc/nimblebrain. It ships as container images on GHCR and exposes each workspace as an MCP server over Streamable HTTP. Every page below is on https://docs.nimblebrain.ai, and https://docs.nimblebrain.ai/sitemap-index.xml lists the full set.
+
+## Common tasks
+
+- [Install and run it with Docker Compose](https://docs.nimblebrain.ai/quickstart/): needs Docker and an Anthropic API key
+- [Run it from source with Bun](https://docs.nimblebrain.ai/installation/)
+- [Connect Claude Code, Claude, Cursor, or another MCP client to a workspace](https://docs.nimblebrain.ai/connect/external-clients/)
+- [Install a connector from the catalog](https://docs.nimblebrain.ai/using/connectors/)
+- [Build an MCP app with a UI](https://docs.nimblebrain.ai/apps/hello-world/)
+- [Configure models and providers](https://docs.nimblebrain.ai/config/nimblebrain-json/): see the `models` section
+- [Deploy on a single machine](https://docs.nimblebrain.ai/deploy/docker/)
+- [Schedule the agent to run on its own](https://docs.nimblebrain.ai/using/tasks/)

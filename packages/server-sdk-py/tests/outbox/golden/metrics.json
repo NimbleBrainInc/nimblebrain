@@ -1,0 +1,24 @@
+[
+  {
+    "labels": [
+      "name"
+    ],
+    "name": "notify_emitted",
+    "type": "counter"
+  },
+  {
+    "labels": [],
+    "name": "notify_outbox_capped",
+    "type": "counter"
+  },
+  {
+    "labels": [],
+    "name": "notify_outbox_depth",
+    "type": "gauge"
+  },
+  {
+    "labels": [],
+    "name": "notify_read",
+    "type": "counter"
+  }
+]

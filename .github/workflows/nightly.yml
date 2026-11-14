@@ -1,0 +1,51 @@
+name: Nightly
+
+# The suites that do not run on every PR, run once a night against main.
+#
+# Where a check runs:
+#   - every PR: the required checks in ci.yml, the only merge gate.
+#   - push to main: those checks again on the merged tree, then the image build.
+#   - nightly (this workflow): the slower suites outside that gate, so a change that
+#     breaks one shows up within a day instead of at the next PR that touches it.
+#
+# It runs MCP conformance (`bun run test:conformance`), through mcp-conformance.yml,
+# which also runs it on ready PRs that touch the MCP door. The LLM evals (test/eval/)
+# are not run here: they bill a model provider on every run.
+#
+# A failed scheduled run notifies through GitHub's own Actions notification. With the
+# NIGHTLY_SLACK_WEBHOOK_URL secret set, it also posts to that Slack webhook.
+on:
+  schedule:
+    # 12:23 UTC, 02:23 in Hawaii: after the US working day, off the top of the hour.
+    - cron: "23 12 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    name: MCP Conformance
+    uses: ./.github/workflows/mcp-conformance.yml
+
+  alert:
+    name: Alert on failure
+    needs: [conformance]
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to Slack
+        env:
+          WEBHOOK: ${{ secrets.NIGHTLY_SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "NIGHTLY_SLACK_WEBHOOK_URL is not set: GitHub's failed-run notification is the only alert"
+            exit 0
+          fi
+          jq -n --arg text ":red_circle: Nightly failed on ${GITHUB_REPOSITORY}: ${RUN_URL}" '{text: $text}' \
+            | curl -fsS -X POST -H 'Content-Type: application/json' --data @- "$WEBHOOK"

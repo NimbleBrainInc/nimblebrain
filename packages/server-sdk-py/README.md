@@ -7,7 +7,7 @@ FastMCP.
 
 | Package | What it is for |
 | --- | --- |
-| `nimblebrain-server-sdk` (this package) | The server half: a server's NimbleBrain host features (annotations, change announcements, the `ai.nimblebrain` extensions, skills, listing rows, record ids, host resources), its error contract, and, as extras, its database access and its observability |
+| `nimblebrain-server-sdk` (this package) | The server half: a server's NimbleBrain host features (annotations, change announcements, the `ai.nimblebrain` extensions, skills, listing rows, record ids, host resources), its error contract, and, as extras, its database access, its observability and its notification outbox |
 | [`nimblebrain-synapse`](https://pypi.org/project/nimblebrain-synapse/) (PyPI) | Serving a server's interface: one `ui://` component declared once, rendered in any MCP Apps host |
 | [`@nimblebrain/synapse`](https://github.com/NimbleBrainInc/synapse) (npm) | The UI half: writing that interface, the part that runs in the browser |
 | `@nimblebrain/sdk` (npm) | The API client: a program that calls NimbleBrain's API |
@@ -20,14 +20,15 @@ uv add nimblebrain-server-sdk
 pip install nimblebrain-server-sdk
 ```
 
-Two optional extras add what only some servers need. The core imports neither, and each lives
-in its own subpackage:
+Three optional extras add what only some servers need. The core imports none of them, and each
+lives in its own subpackage:
 
 | Install | Subpackage | For |
 | --- | --- | --- |
 | `nimblebrain-server-sdk` | `nimblebrain_server_sdk`, `.errors` | Every server |
 | `nimblebrain-server-sdk[db]` | `nimblebrain_server_sdk.db` | A server that owns a Postgres database shared by many tenants and workspaces |
 | `nimblebrain-server-sdk[observability]` | `nimblebrain_server_sdk.observability` | A server that serves metrics, structured logs and traces |
+| `nimblebrain-server-sdk[outbox]` | `nimblebrain_server_sdk.outbox` | A server that records notifications for the host to poll; installs `[db]` and `[observability]` |
 
 Requires Python 3.13 or later.
 
@@ -54,6 +55,8 @@ What it covers:
   a sized pool, and per-workspace admission.
 - [Observability](#observability-observability) (`[observability]`): RED metrics, JSON logs
   and W3C trace propagation in one call.
+- [Notifications](#notifications-outbox) (`[outbox]`): an outbox a server records facts in,
+  inside the transaction that made them true, and the poll the host reads it with.
 
 ## Annotating a tool
 
@@ -608,12 +611,160 @@ names, labels and log fields, so one dashboard and one log query cover a request
 The tests pin the metric families, the log lines, the spans and the error results byte for
 byte against golden files.
 
+## Notifications (`[outbox]`)
+
+```bash
+pip install 'nimblebrain-server-sdk[outbox]'
+```
+
+The server half of NimbleBrain's notification protocol (`ai.nimblebrain/notification`). A
+server that learns something nobody asked it about, such as a domain going active or a reply
+landing, records it in an outbox table beside its own. The host polls the outbox, routes what
+it finds, and a connector delivers it. The server never calls the host, learns its address, or
+asserts a workspace identity of its own. `[outbox]` installs `[db]` and `[observability]`;
+imported without it, `nimblebrain_server_sdk.outbox` raises an `ImportError` that names it.
+
+A notification is a fact **nobody asked for**. "The job you started finished" is not one: that
+is an MCP Task, which the host already polls as a client, and a server with no database to
+keep an outbox in uses Tasks.
+
+### Adopting it
+
+**Declare the outbox in the server's manifest.** The URI is the one source of truth: the host
+polls what the manifest declares, so the server registers the same string.
+
+```jsonc
+"_meta": { "ai.nimblebrain/host": {
+  "host_version": "1.0",
+  "notifications": {
+    "resource": "acme://notifications",
+    "description": "Domain lifecycle, campaign replies, bounce and suppression events."
+  }
+}}
+```
+
+The URI is the server's own name, scheme and path: a scheme, `://`, then slash-separated
+segments of lowercase letters and digits, with `-` or `.` inside a segment (`acme://inbox`,
+`acme://mail.bounces/hard`). Anything a URL parser would rewrite (a percent escape, userinfo, a
+port, a dot segment, a capital, or a scheme such as `http`) is refused at registration,
+because it would be registered at one address and read at another. Declaring an outbox grants
+no privilege: a workspace admin raises the source's level ceiling, which starts at `info`,
+before anything from it can match a route.
+
+Then three edits:
+
+```python
+# 1. A migration. outbox_ddl returns one statement per item because asyncpg refuses several
+#    commands in one execute.
+from sqlalchemy import MetaData
+from nimblebrain_server_sdk.outbox import outbox_ddl, outbox_table
+
+def upgrade() -> None:
+    for statement in outbox_ddl(outbox_table(MetaData())):   # tables, indexes, RLS policy
+        op.execute(statement)
+```
+
+```python
+# 2. server.py: serve the outbox at the URI the manifest declares, with the session factory
+#    and identity function the server's tools already use (see Database access).
+from nimblebrain_server_sdk.outbox import register_outbox
+
+register_outbox(
+    mcp, "acme://notifications", db.session,
+    lambda: security_context_from_edge_headers(get_http_headers()),
+)
+```
+
+```python
+# 3. Where the state changes, on the SAME connection and transaction.
+from nimblebrain_server_sdk.outbox import emit
+
+await emit(
+    conn, ctx,
+    {"eventId": delivery_id, "name": "domain.active",
+     "timestamp": observed_at, "data": {"domain": domain.name}},
+    title=f"{domain.name} is active", level="attention", subject=domain.name,
+    body="DNS propagated. Mailboxes can now be created on it.",
+    link_resource=f"acme://domains/{domain.id}",
+)
+```
+
+### The envelope
+
+An MCP Triggers and Events `EventOccurrence`, with what the host renders and routes on under
+`_meta["ai.nimblebrain/notification"]`. `emit` builds that block from its keywords.
+
+| Field | |
+| --- | --- |
+| `eventId` | Required. The idempotency key, unique per workspace; a repeat is a no-op. |
+| `name` | Required. The server's own dotted, lower-case name (`domain.active`), with no whitespace. |
+| `timestamp` | Required. ISO 8601 with an offset, or an aware `datetime`. |
+| `data` | Required JSON object, opaque: nothing in the SDK or the host reads into it. |
+| `title`, `body`, `subject`, `level`, `link_resource` | Optional presentation. `level` is `info`, `attention` or `urgent`: urgency, not tone, and clamped by the workspace's ceiling. See [levels](https://docs.nimblebrain.ai/using/notification-reference/#levels). |
+
+`emit` **validates and raises**; it does not repair. It refuses whatever the host's parser
+would drop, because the host's poll moves past a dropped envelope and the notification is
+lost. The limits are the host's, counted as it counts them, in UTF-16 code units (title 200,
+body 2000, subject 200, event id and name 200, link 2048); a name may carry no whitespace; and
+an optional presentation field is either absent or a value of its type, never `null`; and the
+64 KiB size limit is measured as the host measures it, on the event with its cursor and the
+default `level` and `title` added and its numbers written as JavaScript writes them. The runtime's tests run shared boundary cases through the
+host's parser and fail if anything accepted here would be dropped there. The append is in the
+caller's transaction, so a raise rolls it back: trim unbounded upstream text deliberately,
+with the exported caps (`TITLE_MAX`, `BODY_MAX`, `SUBJECT_MAX`). A `link_resource` must carry a
+scheme and never a `javascript:`, `data:`, `vbscript:`, `file:` or `blob:` one.
+
+### The poll
+
+`register_outbox` serves the RFC 6570 template `<resource>{?cursor,maxEvents,maxAgeMs}` and
+answers `{"events": [...], "cursor": "...", "truncated": false, "hasMore": false}`, events
+oldest first, each with its own cursor, plus `nextPollMs` when the server recommends one.
+
+- **`cursor`** is opaque. A read with none starts from now: a cursor and no history.
+- **`truncated: true`** means events after the cursor exist that this answer will never
+  carry (the row cap dropped them, `maxAgeMs` excluded them, or the cursor cannot be honoured,
+  as after a database restore). It is not an error.
+- **`hasMore: true`** means the batch was cut at `maxEvents`; poll again at once.
+- **`on_read(ctx, conn)`** runs before the read, in the same transaction, and may return a
+  `nextPollMs`. A server that watches something upstream refreshes it there, so the poll is
+  its tick and it needs no scheduler.
+
+**A poll never skips a row that was in flight when it ran.** A sequence number cannot promise
+that: a transaction that took sequence 10 can commit after one that took 11 has been read
+past. So each row records the id of the transaction that wrote it, a poll returns only rows
+below the oldest transaction still running (`pg_snapshot_xmin`), and the cursor advances no
+further. A row that raced costs one poll of latency. Delivery is at least once; the host
+dedupes on the source and `eventId`.
+
+### Retention, isolation and metrics
+
+- **Retention needs no sweeper.** A read stamps the rows it returned (and, on a bootstrap, the
+  rows it stepped over) and deletes what has carried a stamp for seven days, in the same
+  transaction. An outbox nobody polls never prunes, so `emit` holds each workspace to
+  `max_rows` (10,000), dropping the oldest in read order; that loss is what `truncated`
+  reports. One cursor reads each workspace's outbox, which holds because the host keeps one
+  per workspace and connector.
+- **Isolation is `[db]`'s.** Both outbox tables take `rls_policy_sql`; `emit` stamps
+  `(tenant_id, workspace_id)` from the context and the policy's `WITH CHECK` rejects a
+  mismatch. The session factory and identity function are injected, so the outbox is
+  authorized by the same code as the server's tools. Needs Postgres 13 or later and an app
+  role that is neither superuser nor `BYPASSRLS`.
+- **Metrics** ride `[observability]`'s registry: `notify_emitted_total{name}`,
+  `notify_read_total`, `notify_outbox_depth` (undelivered rows after a poll; alert on
+  `max_over_time`) and `notify_outbox_capped_total`. `name` is the only label, so keep event
+  names a closed set and put per-event values in `data`.
+
+The tests pin the DDL, the cursor's wire form, a poll's answer on both protocol eras, the
+envelope's limits and block, the metric families and the public names. Because the snapshot
+horizon is instance-wide, run this suite alone against its Postgres: a transaction open
+anywhere on the instance holds the horizon back.
+
 ## Releases
 
 Released independently of the NimbleBrain runtime by `server-sdk-py/v*` git tags. Each tag
 runs a workflow that tests, builds and publishes to PyPI. Pull requests that touch this package
-run its lint, type check and tests on Python 3.13 and 3.14 with both extras and a real
-Postgres, and check the core installed with neither extra.
+run its lint, type check and tests on Python 3.13 and 3.14 with every extra and a real
+Postgres, and check the core installed with none of them.
 
 ## Status
 

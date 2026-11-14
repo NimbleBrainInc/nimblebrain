@@ -5,6 +5,7 @@ import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { INFRA_ERROR_META_KEY, SKILL_ACTIVATED_META_KEY } from "../../src/engine/types.ts";
 import { McpSource, type McpTransportMode, policyFor } from "../../src/tools/mcp-source.ts";
 import { TASKS_EXTENSION_ID, type TaskClient } from "../../src/tools/mcp-task-client.ts";
+import { RemoteResponseTooLargeError } from "../../src/tools/response-budget.ts";
 import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import { payloadsOf } from "../helpers/engine-events.ts";
 import { mcpSourceInternals, mockTryRestart } from "../helpers/mcp-source-internals.ts";
@@ -458,6 +459,33 @@ describe("execute (tools/call) — unified recovery", () => {
       const result = await source.execute("web_fetch", {});
       expect(result.isError).toBe(true);
       expect(restart).not.toHaveBeenCalled(); // timeout → surface, never restart
+      expect(
+        payloadsOf(events, "connector.health").filter((d) => d.event === "source.crashed"),
+      ).toHaveLength(0);
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("surfaces an answer past the host budget WITHOUT restarting or retrying", async () => {
+    // The answer is the problem: a restart aborts the source's other calls and a
+    // retry reads the same oversized answer again.
+    const events: EngineEvent[] = [];
+    const sink: EventSink = { emit: (e) => events.push(e) };
+    let calls = 0;
+    const source = remoteSource({
+      callTool: () => {
+        calls++;
+        return Promise.reject(new RemoteResponseTooLargeError(64));
+      },
+      sink,
+    });
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("export", {});
+      expect(result.isError).toBe(true);
+      expect(calls).toBe(1);
+      expect(restart).not.toHaveBeenCalled();
       expect(
         payloadsOf(events, "connector.health").filter((d) => d.event === "source.crashed"),
       ).toHaveLength(0);

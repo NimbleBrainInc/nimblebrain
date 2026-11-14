@@ -1,0 +1,12 @@
+{
+  "template": {
+    "uriTemplate": "acme://notifications{?cursor,maxEvents,maxAgeMs}",
+    "name": "notifications",
+    "mimeType": "application/json",
+    "description": "Notifications this server has recorded but nobody asked for, oldest first. Poll with the cursor from the previous read; a read with no cursor starts from now and returns only a cursor."
+  },
+  "bootstrap": "{\"events\": [], \"cursor\": \"<cursor:2>\", \"truncated\": false, \"hasMore\": false}",
+  "page_cut_at_max_events": "{\"events\": [{\"eventId\": \"evt_1\", \"name\": \"domain.active\", \"timestamp\": \"2026-01-01T17:04:05Z\", \"data\": {\"n\": 1, \"domain\": \"example.com\"}, \"cursor\": \"<cursor:4>\", \"_meta\": {\"ai.nimblebrain/notification\": {\"body\": \"DNS propagated.\", \"link\": {\"resource\": \"acme://domains/1\"}, \"level\": \"attention\", \"title\": \"example.com is active\", \"subject\": \"example.com\"}}}], \"cursor\": \"<cursor:4>\", \"truncated\": false, \"hasMore\": true}",
+  "page_after": "{\"events\": [{\"eventId\": \"evt_2\", \"name\": \"reply.received\", \"timestamp\": \"2026-01-02T03:04:05.250000Z\", \"data\": {}, \"cursor\": \"<cursor:4>\", \"_meta\": {\"com.example/other\": {\"k\": [1, \"two\"]}}}], \"cursor\": \"<cursor:4>\", \"truncated\": false, \"hasMore\": false}",
+  "caught_up": "{\"events\": [], \"cursor\": \"<cursor:2>\", \"truncated\": false, \"hasMore\": false}"
+}

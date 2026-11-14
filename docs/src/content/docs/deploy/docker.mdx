@@ -5,7 +5,7 @@ description: Deploy NimbleBrain on a single machine with Docker Compose.
 
 import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
-NimbleBrain ships two container images: **`ghcr.io/nimblebraininc/nimblebrain-runtime`** (agent engine + API on port 27247, internal) and **`ghcr.io/nimblebraininc/nimblebrain-web`** (React UI served by Caddy, exposed on port 27246). Docker Compose runs both on a single machine with a shared internal network.
+NimbleBrain ships two container images: **`ghcr.io/nimblebraininc/nimblebrain-runtime`** (agent engine + API on port 27247, internal) and **`ghcr.io/nimblebraininc/nimblebrain-web`** (React UI served by Caddy, published on port 27246 of this machine). Docker Compose runs both on a single machine with a shared internal network.
 
 ## Prerequisites
 
@@ -20,12 +20,11 @@ Create a project directory and add this file:
 ```yaml title="docker-compose.yml"
 services:
   platform:
-    image: ghcr.io/nimblebraininc/nimblebrain-runtime:latest
+    image: ghcr.io/nimblebraininc/nimblebrain-runtime:${NIMBLEBRAIN_TAG:-latest}
     build: .
     restart: unless-stopped
     volumes:
       - workspace:/data
-      - ./skills:/app/skills:ro
       # The identity provider. The platform does not start without it.
       - type: bind
         source: ./instance.json
@@ -44,11 +43,11 @@ services:
       - internal
 
   web:
-    image: ghcr.io/nimblebraininc/nimblebrain-web:latest
+    image: ghcr.io/nimblebraininc/nimblebrain-web:${NIMBLEBRAIN_TAG:-latest}
     build: web/
     restart: unless-stopped
     ports:
-      - "27246:8080"
+      - "127.0.0.1:27246:8080"
     environment:
       - PLATFORM_URL=http://platform:27247
     depends_on:
@@ -64,14 +63,14 @@ networks:
   internal:
 ```
 
-The platform reads its working directory from the `workspace` volume mounted at `/data` (the image sets `NB_WORK_DIR=/data`). Configuration (`nimblebrain.json`), skills, and connector state all live under that directory — there is no separate config bind mount required to boot. Drop custom skill files into the `./skills` directory if you want to mount them read-only.
+The platform reads its working directory from the `workspace` volume mounted at `/data` (the image sets `NB_WORK_DIR=/data`). Configuration (`nimblebrain.json`), skills, and connector state all live under that directory — there is no separate config bind mount required to boot. A custom org skill goes in `/data/skills` on that volume, or is written in the Skills app or with `skills__create`.
 
 ### What each service does
 
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
 | `platform` | `ghcr.io/nimblebraininc/nimblebrain-runtime` | 27247 (internal) | Agent engine, HTTP API, MCP connector manager |
-| `web` | `ghcr.io/nimblebraininc/nimblebrain-web` | 27246 (host) → 8080 (container) | React SPA served by Caddy, proxies `/v1/*` to platform |
+| `web` | `ghcr.io/nimblebraininc/nimblebrain-web` | 127.0.0.1:27246 (host) → 8080 (container) | React SPA served by Caddy, proxies `/v1/*` to platform |
 
 The `web` container runs Caddy, which serves the static UI files and reverse-proxies all `/v1/*` API requests to the platform container. The platform container is **not** exposed to the host — all traffic flows through the web container.
 
@@ -80,7 +79,6 @@ The `web` container runs Caddy, which serves the static UI files and reverse-pro
 | Volume/Mount | Container path | Purpose |
 |---|---|---|
 | `workspace` (named volume) | `/data` | Working directory (`NB_WORK_DIR`) — conversations, logs, installed connectors, stored secrets, and `nimblebrain.json` |
-| `./skills` (bind mount, read-only) | `/app/skills` | Custom skill files |
 
 ### Environment variables
 
@@ -106,11 +104,11 @@ The platform does not start without `instance.json`. The `dev` adapter (`{"auth"
 The platform image has a built-in health check:
 
 ```dockerfile
-HEALTHCHECK --interval=30s --timeout=5s \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --start-interval=2s \
   CMD curl -f http://localhost:27247/v1/health || exit 1
 ```
 
-The `web` service uses `depends_on` with `condition: service_healthy`, so it only starts after the platform passes its first health check.
+The `web` service uses `depends_on` with `condition: service_healthy`, so it only starts after the platform passes its first health check. While the platform is starting, Docker probes every 2 seconds, so the UI is up a few seconds after the platform container starts. Failures inside the 30-second start period do not count, so a platform that never comes up is marked unhealthy up to 30 seconds later. Docker Engine before 25 ignores `--start-interval` and runs the first check after 30 seconds.
 
 ## Start the stack
 
@@ -160,7 +158,7 @@ The `web` service uses `depends_on` with `condition: service_healthy`, so it onl
    ```
    NAME                   STATUS                 PORTS
    project-platform-1     running (healthy)      27247/tcp
-   project-web-1          running                0.0.0.0:27246->8080/tcp
+   project-web-1          running                127.0.0.1:27246->8080/tcp
    ```
 
    Check the health endpoint directly (proxied through the web container):
@@ -194,9 +192,15 @@ docker compose restart
 
 ## Update to a new version
 
+Both images take their tag from `NIMBLEBRAIN_TAG`, which defaults to `latest`. To stay on one release, set it in `.env`. A pinned stack updates by changing it to the new release's tag first; the commands below then pull and run that tag. Leave it unset, in `.env` and the shell, when you build from source with `docker compose up --build`: Compose tags a local build with the image name, so a pinned stack would run unreleased code under the release's tag until the next pull.
+
+```bash title=".env"
+NIMBLEBRAIN_TAG=v1.2.3
+```
+
 <Steps>
 
-1. **Pull the latest images**
+1. **Pull the images**
 
    ```bash
    docker compose pull
@@ -285,7 +289,7 @@ server {
 ```
 
 <Aside type="caution">
-If you expose NimbleBrain over a network, configure an `instance.json` auth adapter and set `ALLOWED_ORIGINS` to your domain. See the [Security](/deploy/security) guide for full hardening steps.
+The Compose file publishes the UI on `127.0.0.1` only, so a reverse proxy running on the host reaches it and other machines do not. If you expose NimbleBrain over a network, configure an `instance.json` auth adapter and set `ALLOWED_ORIGINS` to your domain. See the [Security](/deploy/security) guide for full hardening steps.
 </Aside>
 
 ## Troubleshooting
@@ -312,5 +316,5 @@ Change the host port mapping in `docker-compose.yml`:
 
 ```yaml
 ports:
-  - "9090:8080"  # Access the UI on port 9090 instead
+  - "127.0.0.1:9090:8080"  # Access the UI on port 9090 instead
 ```

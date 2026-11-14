@@ -20,6 +20,8 @@ import nimblebrain_server_sdk.errors as errors
 #: What each extra installs that the core does not, by the module a guard imports first.
 DB_MODULES = ("pgbulkhead", "sqlalchemy", "asyncpg")
 OBSERVABILITY_MODULES = ("prometheus_client", "structlog", "opentelemetry.sdk")
+#: ``[outbox]`` is the two together; blocking either half's modules is an install without it.
+OUTBOX_MODULES = DB_MODULES + OBSERVABILITY_MODULES
 
 
 def run(block: tuple[str, ...], body: str) -> dict:
@@ -42,7 +44,7 @@ def test_importing_the_core_imports_no_extra() -> None:
         import nimblebrain_server_sdk, nimblebrain_server_sdk.errors
         extras = ("pgbulkhead", "sqlalchemy", "asyncpg", "prometheus_client", "structlog",
                   "opentelemetry.sdk", "nimblebrain_server_sdk.db",
-                  "nimblebrain_server_sdk.observability")
+                  "nimblebrain_server_sdk.observability", "nimblebrain_server_sdk.outbox")
         print(json.dumps(sorted(m for m in extras if m in sys.modules)))
         """,
     )
@@ -56,6 +58,13 @@ def test_importing_the_core_imports_no_extra() -> None:
         ("nimblebrain_server_sdk.db.session", "db", DB_MODULES),
         ("nimblebrain_server_sdk.observability", "observability", OBSERVABILITY_MODULES),
         ("nimblebrain_server_sdk.observability.metrics", "observability", OBSERVABILITY_MODULES),
+        # Named as [outbox] whichever half is missing, never as the [db] or [observability] its
+        # own imports would otherwise report first.
+        ("nimblebrain_server_sdk.outbox", "outbox", OUTBOX_MODULES),
+        ("nimblebrain_server_sdk.outbox", "outbox", DB_MODULES),
+        ("nimblebrain_server_sdk.outbox", "outbox", OBSERVABILITY_MODULES),
+        ("nimblebrain_server_sdk.outbox.envelope", "outbox", OUTBOX_MODULES),
+        ("nimblebrain_server_sdk.outbox.fastmcp", "outbox", DB_MODULES),
     ],
 )
 def test_a_subpackage_without_its_extra_names_it(

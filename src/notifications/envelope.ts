@@ -36,23 +36,33 @@ import {
 /** Longest serialized envelope the inbox admits, in bytes of UTF-8 JSON. */
 export const NOTIFICATION_ENVELOPE_MAX_BYTES = 64 * 1024;
 
-/** Longest an id, a name, a cursor, or a link may be. */
-const ID_MAX = 200;
+/**
+ * Longest an event id, a per-event cursor, or a link may be. Exported, with the
+ * other limits here, so the server SDK's copy is checked against them
+ * (`test/unit/notifications/server-sdk-parity.test.ts`).
+ */
+export const NOTIFICATION_ID_MAX = 200;
 /**
  * Exported because it is the ceiling on the input a route's name glob is
  * matched against, and the test that pins that match's cost has to assert
  * against the real bound rather than a copy of it.
  */
 export const NOTIFICATION_NAME_MAX = 200;
-const CURSOR_MAX = 1024;
-const LINK_MAX = 2048;
+export const NOTIFICATION_CURSOR_MAX = 1024;
+export const NOTIFICATION_LINK_MAX = 2048;
 
 /**
  * URI schemes a `link.resource` may never carry. Each is a scheme a renderer
  * can be talked into executing or into reading local state from, and a link is
  * the one envelope field aimed at a click.
  */
-const FORBIDDEN_LINK_SCHEMES = new Set(["javascript", "data", "vbscript", "file", "blob"]);
+export const NOTIFICATION_FORBIDDEN_LINK_SCHEMES: ReadonlySet<string> = new Set([
+  "javascript",
+  "data",
+  "vbscript",
+  "file",
+  "blob",
+]);
 
 /** A URI with a scheme, e.g. `acme://notifications` or `https://…`. */
 const URI_WITH_SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):/;
@@ -114,10 +124,10 @@ function isCleanString(value: unknown, max: number): value is string {
  * something that executes.
  */
 function isAcceptableLink(value: unknown): value is string {
-  if (!isCleanString(value, LINK_MAX)) return false;
+  if (!isCleanString(value, NOTIFICATION_LINK_MAX)) return false;
   const match = URI_WITH_SCHEME_RE.exec(value);
   if (!match) return false;
-  return !FORBIDDEN_LINK_SCHEMES.has(match[1]!.toLowerCase());
+  return !NOTIFICATION_FORBIDDEN_LINK_SCHEMES.has(match[1]!.toLowerCase());
 }
 
 /** Drop with a reason. Always returns `null` so callers read as one line. */
@@ -209,7 +219,8 @@ function readTimestamp(raw: unknown): string | undefined {
 export function parseNotificationEnvelope(raw: unknown): NotificationEnvelope | null {
   if (!isPlainObject(raw)) return drop("not an object");
 
-  if (!isCleanString(raw.eventId, ID_MAX)) return drop("eventId is not a bounded string");
+  if (!isCleanString(raw.eventId, NOTIFICATION_ID_MAX))
+    return drop("eventId is not a bounded string");
   const eventId = raw.eventId;
 
   // `name` is matched as a string and never enumerated, so the only constraint
@@ -226,7 +237,7 @@ export function parseNotificationEnvelope(raw: unknown): NotificationEnvelope | 
   if (!isPlainObject(raw.data)) return drop("data is not an object", eventId);
   const data = raw.data;
 
-  if (raw.cursor !== undefined && !isCleanString(raw.cursor, CURSOR_MAX)) {
+  if (raw.cursor !== undefined && !isCleanString(raw.cursor, NOTIFICATION_CURSOR_MAX)) {
     return drop("cursor is not a bounded string", eventId);
   }
   const cursor = raw.cursor as string | undefined;

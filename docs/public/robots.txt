@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://docs.nimblebrain.ai/sitemap-index.xml

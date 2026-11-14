@@ -33,6 +33,7 @@ export async function runServe(opts: ServeOptions, telemetry: TelemetryManager):
   });
   log.info("[nimblebrain] Runtime ready.");
 
-  const port = Number(process.env.PORT) || opts.port || 27247;
-  await startServerWithShutdown({ runtime, port });
+  const port = Number(process.env.PORT) || opts.port || config.http?.port || 27247;
+  const hostname = process.env.NB_HOST || config.http?.host;
+  await startServerWithShutdown({ runtime, port, ...(hostname ? { hostname } : {}) });
 }

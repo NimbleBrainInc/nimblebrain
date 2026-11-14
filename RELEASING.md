@@ -29,7 +29,7 @@ Before cutting a release, verify:
 
 - You are in a clean clone of `NimbleBrainInc/nimblebrain`
 - Local `main` fast-forwards cleanly from origin
-- The CI workflow on the commit you're about to tag has succeeded (check `gh run list --workflow=ci.yml --branch=main --limit=1`)
+- The test jobs of the CI workflow's push run on the commit you're about to tag have passed (`gh run list --workflow=ci.yml --branch=main --commit=<sha>`). `release.yml` refuses the tag otherwise (§7), so tagging early only buys a red release run
 - `gh auth status` reports authenticated
 - No tag with your target version already exists
 
@@ -174,11 +174,12 @@ Then fix the underlying issue on `main` and cut the **next** pre-release number 
 
 ## 7. Workflow reference
 
-`.github/workflows/release.yml` fires on any `v*` tag push (and `workflow_dispatch` with a `tag` input + an EMERGENCY `rebuild` toggle) and runs three jobs:
+`.github/workflows/release.yml` fires on any `v*` tag push (and `workflow_dispatch` with a `tag` input + an EMERGENCY `rebuild` toggle) and runs four jobs:
 
-1. **Promote release images** — **promote-by-retag, not rebuild.** `ci.yml` already built and pushed the staging-verified runtime + web `:<sha>` images to ECR on merge; this re-tags those exact manifests to `:vX.Y.Z` via `aws ecr put-image` (guarded: target repo must be IMMUTABLE, the `:<sha>` source must exist, and a re-run is idempotent — same digest skips, a different digest fails). It then copies the same `:<sha>` manifests to the GHCR tags with `docker buildx imagetools create` (edge never pushes GHCR), and for stable releases moves `:latest`. There is no Verify or rebuild step — `ci.yml` already gated the commit, and the source-image-exists guard proves it. The `workflow_dispatch` `rebuild=true` escape hatch rebuilds from source instead (loud warning: prod won't be byte-for-byte) — only for a tag off a commit that never rode staging.
-2. **GitHub Release** — creates a release with auto-generated notes; `prerelease` flag mirrors the hyphen rule
-3. **Promote to prod (stable channel)** — GA only; dispatches the deploy-config receiver to record the new prod stable image tag, which the auto-sync per-tenant ApplicationSet then rolls. No-ops when the prod-promote App isn't configured (forks/pre-setup CI).
+1. **CI passed on the tagged commit** — the gate; every other job waits on it. It resolves the tag to its commit and reads that commit's `ci.yml` `push` runs, on `main` or on a `hotfix/**` branch (§8), and their jobs from the Actions API (no tests re-run). It passes when one run's four test jobs (`Lint & Typecheck`, `Unit Tests`, `Unit Tests (root deps only)`, `Integration Tests`) all concluded `success`. A failure in the run's other jobs (image build, change detection, edge roll) does not refuse the release on its own. No run, or a test job that failed, was skipped, is missing, or is still running: the release stops before anything is retagged, rebuilt, or published, and the error names the commit and each such job with its run. A pull-request run does not count, since it tested the PR head rather than the commit that landed. The gate applies to pre-release tags and to `rebuild=true` alike, and its job-name list must change with any rename in `ci.yml`. If CI was still running, re-run the release once it passes (`gh run rerun <id> --failed`).
+2. **Promote release images** — **promote-by-retag, not rebuild.** `ci.yml` already built and pushed the staging-verified runtime + web `:<sha>` images to ECR on merge; this re-tags those exact manifests to `:vX.Y.Z` via `aws ecr put-image` (guarded: target repo must be IMMUTABLE, the `:<sha>` source must exist, and a re-run is idempotent — same digest skips, a different digest fails). It then copies the same `:<sha>` manifests to the GHCR tags with `docker buildx imagetools create` (edge never pushes GHCR), and for stable releases moves `:latest`. There is no Verify or rebuild step — job 1 has already confirmed `ci.yml` passed on the commit. The `workflow_dispatch` `rebuild=true` escape hatch rebuilds from source instead (loud warning: prod won't be byte-for-byte) — only for a tag off a commit that never rode staging.
+3. **GitHub Release** — creates a release with auto-generated notes; `prerelease` flag mirrors the hyphen rule
+4. **Promote to prod (stable channel)** — GA only; dispatches the deploy-config receiver to record the new prod stable image tag, which the auto-sync per-tenant ApplicationSet then rolls. No-ops when the prod-promote App isn't configured (forks/pre-setup CI).
 
 Artifact map:
 
@@ -194,9 +195,9 @@ ECR repositories have immutable tags enabled — `:latest` is deliberately not p
 
 ## 8. Hotfixing a released version
 
-Use this when one fix must reach a deployment running `vX.Y.Z` without the rest of what `main` has gained since. The hotfix is that release plus cherry-picks of merged commits, and nothing else.
+Use this when one fix must reach a deployment running `vX.Y.Z` without the rest of what `main` has gained since. The hotfix is that release plus cherry-picks of merged commits, and nothing else. Those cherry-picks include the release gate's workflows when the release predates them, since a tag runs `ci.yml` and `release.yml` as they stand on its own commit.
 
-**The fix lands on `main` first**, by the normal PR, review and merge queue. The hotfix branch only ever carries cherry-picks of commits already on `main`, so the next release from `main` contains every hotfix and nothing has to be merged back.
+**The fix lands on `main` first**, by the normal PR and review. The hotfix branch only ever carries cherry-picks of commits already on `main`, so the next release from `main` contains every hotfix and nothing has to be merged back.
 
 **A hotfix tag is a pre-release: `vX.Y.(Z+1)-hotfix.N`.** A GA tag would promote the image to every stable deployment and move `:latest`, and this image never rode staging. The hyphen keeps it out of both (§1, §7). It sorts below the `vX.Y.(Z+1)` that `main` cuts later.
 
@@ -211,13 +212,17 @@ git fetch origin --tags
 git worktree add -b "$LINE" ../hotfix "$BASE"     # existing line: git worktree add -B "$LINE" ../hotfix "origin/$LINE"
 cd ../hotfix
 git cherry-pick -x "$FIX"
+# A base cut before the release gate (#1996) has neither the hotfix/** CI trigger nor
+# the gate, and the tag runs the workflows on its own commit. Cherry-pick the gate onto the line too.
+grep -q 'ci-green:' .github/workflows/release.yml || \
+  git cherry-pick -x "$(git log origin/main --grep='(#1996)' --format=%H -1)"
 
-# 2. Verify locally. CI runs only on main and on PRs into it, so nothing else checks this tree.
-bun install --frozen-lockfile && (cd web && bun install --frozen-lockfile) && bun run install:platform-apps
-bun run verify && bun run test:integration
-
-# 3. Push the branch and an annotated tag
+# 2. Push the branch. ci.yml runs every check on a push to hotfix/** (no image build);
+#    release.yml refuses the tag until that run passes.
 git push -u origin "$LINE"
+gh run list --workflow=ci.yml --branch="$LINE" --limit 1   # then: gh run watch <id> --exit-status
+
+# 3. Once CI is green, push an annotated tag
 git tag -a "$TAG" -m "$TAG: $BASE plus <what the fix does> (#<PR>)"
 git push origin "$TAG"
 ```

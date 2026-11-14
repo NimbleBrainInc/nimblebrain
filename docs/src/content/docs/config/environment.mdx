@@ -32,6 +32,7 @@ A provider's API key can be supplied here or in `nimblebrain.json` under `provid
 |----------|----------|---------|-------------|
 | `NB_WORK_DIR` | No | `~/.nimblebrain` | Working directory for runtime state (conversations, logs, workspaces). Does **not** drive config-file discovery — see [config resolution](/config/nimblebrain-json/#config-resolution). |
 | `PORT` | No | `27247` | HTTP server port. **Wins over** the `--port` CLI flag when both are set. |
+| `NB_HOST` | No | `127.0.0.1` | Address the HTTP server listens on. The default accepts connections from this machine only; `0.0.0.0` listens on every IPv4 interface (the Docker image sets it), and `::` on IPv6 as well. **Wins over** `http.host` in `nimblebrain.json`. |
 | `ALLOWED_ORIGINS` | No | — | Comma-separated additional CORS origins. The canonical origins (platform host, custom domain) are already trusted; this is for extra origins. |
 | `NB_CHAT_RATE_LIMIT` | No | `20` | Chat requests per minute per identity. |
 | `NB_TOOL_RATE_LIMIT` | No | `600` | Tool calls per minute per identity. |
@@ -214,6 +215,7 @@ When the same setting can be configured in multiple places, this is the resoluti
 |---------|---------|----------|-------------|---------|
 | Working directory | `NB_WORK_DIR` (beats all) | `--workdir` | `workDir` | `~/.nimblebrain` |
 | Port | `PORT` (beats `--port`) | `--port` | `http.port` | `27247` |
+| Listen address | `NB_HOST` | — | `http.host` | `127.0.0.1` |
 | Public origin | `NB_PUBLIC_ORIGIN` | — | derived from host facts | `http://localhost:27247` |
 | Anthropic key | `ANTHROPIC_API_KEY` | — | `providers.anthropic.apiKey` | — |
 | Telemetry | `NB_TELEMETRY_DISABLED` / `DO_NOT_TRACK` | — | `telemetry.enabled` | Enabled |
@@ -226,6 +228,9 @@ A typical production setup:
 export ANTHROPIC_API_KEY=sk-ant-api03-...
 export NB_PUBLIC_ORIGIN=https://app.example.com
 export NB_WORK_DIR=/data/nimblebrain
+# Outside the Docker image, when a proxy on another host connects
+# (the default 127.0.0.1 accepts this machine only).
+# export NB_HOST=0.0.0.0
 export NB_TELEMETRY_DISABLED=1
 # Composio connectors (only if the catalog uses auth: composio).
 # Per-toolkit ac_… ids are not env vars — declare them in nimblebrain.json

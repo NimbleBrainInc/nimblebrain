@@ -1,0 +1,52 @@
+{
+  "constants": {
+    "NOTIFICATION_META_KEY": "ai.nimblebrain/notification",
+    "LEVELS": [
+      "info",
+      "attention",
+      "urgent"
+    ],
+    "DEFAULT_LEVEL": "info",
+    "TITLE_MAX": 200,
+    "BODY_MAX": 2000,
+    "SUBJECT_MAX": 200,
+    "LINK_MAX": 2048,
+    "NAME_MAX": 200,
+    "EVENT_ID_MAX": 200,
+    "ENVELOPE_MAX_BYTES": 65536,
+    "FORBIDDEN_LINK_SCHEMES": [
+      "blob",
+      "data",
+      "file",
+      "javascript",
+      "vbscript"
+    ],
+    "MAX_CURSOR_LENGTH": 1024,
+    "DEFAULT_MAX_EVENTS": 100,
+    "MAX_MAX_EVENTS": 500,
+    "DEFAULT_MAX_ROWS": 10000,
+    "DEFAULT_TABLE_NAME": "notification_outbox",
+    "RETENTION_SECONDS": 604800.0,
+    "MAX_AGE_MS_CEILING": 3153600000000
+  },
+  "meta_from_keywords": {
+    "com.example/other": {
+      "k": 1
+    },
+    "ai.nimblebrain/notification": {
+      "level": "attention",
+      "title": "example.com is active",
+      "subject": "example.com",
+      "body": "DNS propagated.",
+      "link": {
+        "resource": "acme://domains/1"
+      }
+    }
+  },
+  "meta_from_title_only": {
+    "ai.nimblebrain/notification": {
+      "level": "info",
+      "title": "t"
+    }
+  }
+}
