@@ -1,6 +1,5 @@
-import { LoadAPIKeyError } from "ai";
 import { log } from "../observability/log.ts";
-import { ModelAuthError, providerStatus } from "./provider-error.ts";
+import { providerStatus } from "./provider-error.ts";
 
 /**
  * Transient HTTP statuses: request timeout (408), rate limit (429), server
@@ -94,12 +93,7 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
  * - Retries what `isRetryable` admits: a transient provider error (rate
  *   limit, overload, 5xx, network failure) or an error flagged `retryable`
  *   (e.g. a stalled model stream).
- * - Fails immediately when the key is missing (the provider client's
- *   `LoadAPIKeyError`, thrown before any request) or rejected (401). With
- *   `provider` given, the call went straight to that provider with a key the
- *   runtime holds, so it throws a `ModelAuthError` that names the provider
- *   and says how to fix the key. Without it (the model gateway holds the
- *   keys), a 401 fails with a plain error and a missing key is rethrown.
+ * - Fails immediately on 401 (auth) with a clear message.
  * - Fails immediately on all other errors.
  * - Backoff: baseDelay * 2^attempt + random(0, 500ms).
  * - Logs one `warn` per retried attempt (attempt, reason, backoff). A retry
@@ -116,17 +110,12 @@ export async function withRetry<T>(
   maxRetries = 3,
   baseDelayMs = 1000,
   signal?: AbortSignal,
-  provider?: string,
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await fn();
     } catch (err) {
       const status = providerStatus(err);
-
-      if (provider !== undefined && (status === AUTH_STATUS || LoadAPIKeyError.isInstance(err))) {
-        throw new ModelAuthError(provider, { cause: err });
-      }
 
       if (status === AUTH_STATUS) {
         throw new Error(`Authentication failed (401). Check your API key.`, { cause: err });

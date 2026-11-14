@@ -48,10 +48,7 @@ export function createAgentRuntimes(
   deps: AgentRuntimeDeps,
 ): AgentRuntimes {
   const runtimes = new Map<string, AgentRuntime>([
-    [
-      NATIVE_RUNTIME_ID,
-      createNativeRuntime(deps.resolveModel, { modelGateway: Boolean(config?.modelGateway) }),
-    ],
+    [NATIVE_RUNTIME_ID, createNativeRuntime(deps.resolveModel)],
   ]);
   const add = (runtime: AgentRuntime) => {
     if (runtimes.has(runtime.id)) {

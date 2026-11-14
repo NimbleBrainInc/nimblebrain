@@ -6,6 +6,7 @@ import type { ChatResponse } from "../../src/api/schemas/responses.ts";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { ModelAuthError } from "../../src/model/model-auth.ts";
 import { ConversationNotFoundError, RunInProgressError } from "../../src/runtime/errors.ts";
 import type { BufferedRunEvent, RunStatus } from "../../src/runtime/run-bus.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -314,7 +315,7 @@ describe("cancel delivers a terminal frame to live viewers (Stop button)", () =>
   });
 });
 
-describe("a rejected model key ends the turn with a structured error code", () => {
+describe("a missing or rejected model key ends the turn with a structured error code", () => {
   let rt: Runtime;
   const dir = join(tmpdir(), `nimblebrain-auth-${Date.now()}`);
 
@@ -323,7 +324,7 @@ describe("a rejected model key ends the turn with a structured error code", () =
     rt = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createMockModel(() => {
-        throw Object.assign(new Error("invalid x-api-key"), { status: 401 });
+        throw new ModelAuthError("anthropic");
       }),
       logging: { disabled: true },
       workDir: dir,
@@ -347,7 +348,9 @@ describe("a rejected model key ends the turn with a structured error code", () =
     expect(last?.type).toBe("error");
     const data = last?.data as { error: string; message: string };
     expect(data.error).toBe("model_auth_failed");
-    expect(data.message).toMatch(/^The model provider has no valid API key\. Set one/);
+    expect(data.message).toBe(
+      "The model provider has no valid API key. Set one for anthropic and restart NimbleBrain.",
+    );
   });
 });
 

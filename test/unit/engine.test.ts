@@ -11,7 +11,6 @@ import { type ConfirmationGate, createPrivilegeHook } from "../../src/config/pri
 import type { StoredMessage } from "../../src/conversation/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
-import { ModelAuthError } from "../../src/engine/provider-error.ts";
 import type {
   EngineConfig,
   EngineEvent,
@@ -4786,36 +4785,9 @@ describe("malformed tool call input", () => {
           [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
           [],
         ),
-      ).rejects.toThrow(/has no valid API key/);
+      ).rejects.toThrow(/Authentication failed/);
 
       // No recovery — the auth error is non-retryable and surfaces immediately.
-      expect(callCount).toBe(1);
-    });
-
-    it("fails a 401 behind the model gateway without naming a key to set", async () => {
-      let callCount = 0;
-      const model = createMockModel(() => {
-        callCount += 1;
-        throw Object.assign(new Error("invalid api key"), { status: 401 });
-      });
-
-      const engine = new AgentEngine(
-        model,
-        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
-        new NoopEventSink(),
-        { modelGateway: true },
-      );
-
-      const err = await engine
-        .run(
-          { ...defaultConfig, model: "anthropic:claude-sonnet-4-5" },
-          "",
-          [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
-          [],
-        )
-        .catch((e: unknown) => e);
-      expect(err).not.toBeInstanceOf(ModelAuthError);
-      expect((err as Error).message).toBe("Authentication failed (401). Check your API key.");
       expect(callCount).toBe(1);
     });
 

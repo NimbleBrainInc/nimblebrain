@@ -13,25 +13,3 @@ export function providerStatus(err: unknown): number | undefined {
   if (typeof statusCode === "number") return statusCode;
   return undefined;
 }
-
-/**
- * The model provider has no valid API key: the key is missing, so the provider
- * client threw before sending, or the provider rejected it (HTTP 401).
- *
- * Raised only for a direct provider call, where the runtime holds the key.
- * Retrying cannot fix it: the key has to change, and the provider clients read
- * their keys at startup. `code` is the stream error code the runtime sends to
- * the browser, so the chat states the fix and offers no retry.
- */
-export class ModelAuthError extends Error {
-  readonly code = "model_auth_failed";
-
-  constructor(provider: string, options?: ErrorOptions) {
-    const keyFor = provider ? ` for ${provider}` : "";
-    super(
-      `The model provider has no valid API key. Set one${keyFor} and restart NimbleBrain.`,
-      options,
-    );
-    this.name = "ModelAuthError";
-  }
-}

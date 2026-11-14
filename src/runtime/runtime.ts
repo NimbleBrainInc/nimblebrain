@@ -81,7 +81,6 @@ import {
   windowMessages,
 } from "../conversation/window.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import { ModelAuthError } from "../engine/provider-error.ts";
 import type { AdminToolCallPayload } from "../engine/schemas/events.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type {
@@ -145,6 +144,7 @@ import {
   isModelInPolicy,
 } from "../model/catalog.ts";
 import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../model/gateway-refusal.ts";
+import { ModelAuthError } from "../model/model-auth.ts";
 import { isQualifiedModelId, requireQualifiedModelId } from "../model/model-id.ts";
 import {
   buildModelResolver,

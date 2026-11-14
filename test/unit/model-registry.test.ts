@@ -1,7 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4, SharedV4ProviderOptions } from "@ai-sdk/provider";
+import { ModelAuthError } from "../../src/model/model-auth.ts";
 import { ModelNotQualifiedError } from "../../src/model/model-id.ts";
-import { buildModelResolver, buildRegistry } from "../../src/model/registry.ts";
+import {
+  buildModelResolver,
+  buildRegistry,
+  type ProvidersConfig,
+} from "../../src/model/registry.ts";
 import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 describe("buildRegistry", () => {
@@ -376,5 +381,115 @@ describe("providers through the model gateway", () => {
       // The stand-in answers 500; only where the call went matters.
     }
     expect(url).toBe(`${GATEWAY}/xai/v1/chat/completions`);
+  });
+});
+
+describe("a missing or rejected key", () => {
+  const PROMPT = {
+    prompt: [{ role: "user" as const, content: [{ type: "text" as const, text: "x" }] }],
+  };
+
+  /**
+   * Build the registry from `config` and run one call of `model` against a
+   * stand-in provider that answers `status` with `body`. The stand-in replaces
+   * `fetch` before the build, since a client keeps the `fetch` it was built with.
+   */
+  async function failure(
+    config: ProvidersConfig,
+    model: string,
+    status: number,
+    body: unknown,
+  ): Promise<{ err: unknown; sent: boolean }> {
+    const realFetch = globalThis.fetch;
+    let sent = false;
+    const answer = fakeFetch(async () => {
+      sent = true;
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    globalThis.fetch = answer;
+    try {
+      const err = await buildModelResolver(config)(model)
+        .doStream(PROMPT)
+        .catch((e: unknown) => e);
+      return { err, sent };
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  const ANTHROPIC_401 = {
+    type: "error",
+    error: { type: "authentication_error", message: "invalid x-api-key" },
+  };
+
+  it("fails a direct provider's rejected key as ModelAuthError naming the provider", async () => {
+    const { err } = await failure(
+      { providers: { anthropic: { apiKey: "sk-wrong" } } },
+      "anthropic:claude-sonnet-4-6",
+      401,
+      ANTHROPIC_401,
+    );
+    expect(err).toBeInstanceOf(ModelAuthError);
+    expect((err as Error).message).toContain("Set one for anthropic");
+  });
+
+  it("fails a direct provider with no key as ModelAuthError before any request", async () => {
+    const prev = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const { err, sent } = await failure(
+        { providers: { anthropic: {} } },
+        "anthropic:claude-sonnet-4-6",
+        401,
+        ANTHROPIC_401,
+      );
+      expect(err).toBeInstanceOf(ModelAuthError);
+      expect(sent).toBe(false);
+    } finally {
+      if (prev !== undefined) process.env.ANTHROPIC_API_KEY = prev;
+    }
+  });
+
+  it("fails a key Gemini rejects with 400 API_KEY_INVALID as ModelAuthError", async () => {
+    const { err } = await failure(
+      { providers: { google: { apiKey: "wrong" } } },
+      "google:gemini-3-pro",
+      400,
+      {
+        error: {
+          code: 400,
+          message: "API key not valid. Please pass a valid API key.",
+          status: "INVALID_ARGUMENT",
+          details: [
+            { "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "API_KEY_INVALID" },
+          ],
+        },
+      },
+    );
+    expect(err).toBeInstanceOf(ModelAuthError);
+    expect((err as Error).message).toContain("Set one for google");
+  });
+
+  // The gateway holds the keys, so there is no key here for anyone to set.
+  it("leaves a 401 through the model gateway as the provider client raised it", async () => {
+    const gatewayFetch = fakeFetch(
+      async () =>
+        new Response(JSON.stringify(ANTHROPIC_401), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const resolve = buildModelResolver(
+      {},
+      { url: "http://model-gateway.test", fetch: gatewayFetch },
+    );
+    const err = await resolve("anthropic:claude-sonnet-4-6")
+      .doStream(PROMPT)
+      .catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(ModelAuthError);
+    expect((err as { statusCode?: number }).statusCode).toBe(401);
   });
 });

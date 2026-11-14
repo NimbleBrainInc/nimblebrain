@@ -1124,23 +1124,11 @@ interface ToolExecResult {
   held?: true;
 }
 
-/** How the engine's model calls reach the model. */
-export interface AgentEngineOptions {
-  /**
-   * The calls go through the installation's model gateway
-   * (`execution.modelGateway`), which holds the provider keys. A missing or
-   * rejected key is then the gateway's to fix, so a 401 fails without naming
-   * a provider key to set.
-   */
-  modelGateway?: boolean;
-}
-
 export class AgentEngine {
   constructor(
     private model: LanguageModelV4,
     private tools: ToolRouter,
     private events: EventSink,
-    private options: AgentEngineOptions = {},
   ) {}
 
   async run(
@@ -1538,15 +1526,13 @@ export class AgentEngine {
                 throw err;
               });
             },
-            // Default retry counts. The retry backoff sleep aborts on
-            // `config.signal` so a cancel during backoff bites within the
-            // abort tick instead of after the full delay (up to ~8.5s on
-            // attempt 3). The provider is named only for a direct call,
-            // where the key to fix is this runtime's.
+            // Defaults preserved; only the new fourth arg matters here.
+            // The retry backoff sleep aborts on `config.signal` so a
+            // cancel during backoff bites within the abort tick instead
+            // of after the full delay (up to ~8.5s on attempt 3).
             3,
             1000,
             config.signal,
-            this.options.modelGateway ? undefined : callProvider,
           );
         };
 

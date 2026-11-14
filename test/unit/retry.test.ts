@@ -1,6 +1,5 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { APICallError, LoadAPIKeyError } from "ai";
-import { ModelAuthError } from "../../src/engine/provider-error.ts";
+import { APICallError } from "ai";
 import { isRetryable, withRetry } from "../../src/engine/retry.ts";
 import { ModelStreamStallError } from "../../src/model/stream.ts";
 
@@ -114,95 +113,18 @@ describe("withRetry", () => {
     expect(calls).toBe(2);
   });
 
-  it("fails immediately on 401 with a ModelAuthError that names the provider", async () => {
+  it("fails immediately on 401 with clear message", async () => {
     let calls = 0;
-    const cause = httpError(401);
-    const err = await withRetry(
-      async () => {
-        calls++;
-        throw cause;
-      },
-      3,
-      0,
-      undefined,
-      "anthropic",
-    ).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ModelAuthError);
-    expect((err as ModelAuthError).code).toBe("model_auth_failed");
-    expect((err as ModelAuthError).message).toBe(
-      "The model provider has no valid API key. Set one for anthropic and restart NimbleBrain.",
-    );
-    expect((err as ModelAuthError).cause).toBe(cause);
-    expect(calls).toBe(1);
-  });
-
-  // A provider client with no key throws before it sends anything, so no 401
-  // ever arrives: the missing key is caught by its own error type.
-  it("fails immediately on a missing key with a ModelAuthError that names the provider", async () => {
-    let calls = 0;
-    const cause = new LoadAPIKeyError({ message: "Anthropic API key is missing." });
-    const err = await withRetry(
-      async () => {
-        calls++;
-        throw cause;
-      },
-      3,
-      0,
-      undefined,
-      "anthropic",
-    ).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ModelAuthError);
-    expect((err as ModelAuthError).message).toBe(
-      "The model provider has no valid API key. Set one for anthropic and restart NimbleBrain.",
-    );
-    expect((err as ModelAuthError).cause).toBe(cause);
-    expect(calls).toBe(1);
-  });
-
-  it("leaves the provider out of the message when the model string names none", async () => {
-    await expect(
-      withRetry(
-        async () => {
-          throw httpError(401);
-        },
-        3,
-        0,
-        undefined,
-        "",
-      ),
-    ).rejects.toThrow("The model provider has no valid API key. Set one and restart NimbleBrain.");
-  });
-
-  // No provider means the call went through the model gateway, which holds the
-  // keys: there is no key here for anyone to set.
-  it("fails a 401 with a plain error when no provider is given", async () => {
-    let calls = 0;
-    const err = await withRetry(
-      async () => {
-        calls++;
-        throw httpError(401);
-      },
-      3,
-      0,
-    ).catch((e: unknown) => e);
-    expect(err).not.toBeInstanceOf(ModelAuthError);
-    expect((err as Error).message).toBe("Authentication failed (401). Check your API key.");
-    expect(calls).toBe(1);
-  });
-
-  it("rethrows a missing key unchanged when no provider is given", async () => {
-    let calls = 0;
-    const cause = new LoadAPIKeyError({ message: "Anthropic API key is missing." });
     await expect(
       withRetry(
         async () => {
           calls++;
-          throw cause;
+          throw httpError(401);
         },
         3,
         0,
       ),
-    ).rejects.toBe(cause);
+    ).rejects.toThrow("Authentication failed (401)");
     expect(calls).toBe(1);
   });
 
@@ -340,10 +262,8 @@ describe("withRetry — AI SDK APICallError", () => {
         },
         3,
         0,
-        undefined,
-        "openai",
       ),
-    ).rejects.toBeInstanceOf(ModelAuthError);
+    ).rejects.toThrow("Authentication failed (401)");
     expect(calls).toBe(1);
   });
 
