@@ -2,8 +2,15 @@
  * The Python server SDK's outbox (`packages/server-sdk-py`, `[outbox]`) is the
  * server half of this notification protocol. It refuses at `emit` what this
  * host would trim or drop, so an envelope it accepts is rendered whole here.
- * That holds only while its limits equal this host's, so this test reads the
- * SDK's constants from its source and fails when the two sides diverge.
+ * The host drops an envelope it cannot hold and its poll moves past it, so an
+ * envelope the SDK accepts and this parser drops is a lost notification.
+ *
+ * Two checks hold that. The SDK's limits are read from its source and compared
+ * with this host's. And the boundary cases in the SDK's
+ * `tests/outbox/fixtures/host_parity.json` go through this host's real parser:
+ * the SDK's suite asserts its own verdict on each and that the poll renders an
+ * accepted one as the case's envelope plus a cursor, and this one asserts the
+ * host's verdict on that same occurrence.
  *
  * Read from source rather than by running Python: the unit suite needs no
  * interpreter, and the SDK's own suite runs from its wheel, where this host's
@@ -20,6 +27,7 @@ import {
   NOTIFICATION_ID_MAX,
   NOTIFICATION_LINK_MAX,
   NOTIFICATION_NAME_MAX,
+  parseNotificationEnvelope,
 } from "../../../src/notifications/envelope.ts";
 import {
   DEFAULT_NOTIFICATION_LEVEL,
@@ -30,10 +38,29 @@ import {
   NOTIFICATION_TITLE_MAX,
 } from "../../../src/notifications/types.ts";
 
-const OUTBOX = join(
-  import.meta.dir,
-  "../../../packages/server-sdk-py/src/nimblebrain_server_sdk/outbox",
+const SDK = join(import.meta.dir, "../../../packages/server-sdk-py");
+const OUTBOX = join(SDK, "src/nimblebrain_server_sdk/outbox");
+
+interface ParityCase {
+  case: string;
+  envelope: Record<string, unknown> & { data: Record<string, unknown> };
+  pad?: number;
+  sdk: "accept" | "refuse";
+  host: "keep" | "drop";
+}
+
+const CASES: ParityCase[] = JSON.parse(
+  readFileSync(join(SDK, "tests/outbox/fixtures/host_parity.json"), "utf8"),
 );
+
+/** What the SDK's poll serves for a case: its envelope, padded, with a longest-possible cursor. */
+function occurrence(parity: ParityCase): Record<string, unknown> {
+  const data =
+    parity.pad === undefined
+      ? parity.envelope.data
+      : { ...parity.envelope.data, s: "a".repeat(parity.pad) };
+  return { ...parity.envelope, data, cursor: "x".repeat(NOTIFICATION_CURSOR_MAX) };
+}
 
 /**
  * The right-hand side of a module-level `NAME = ...` assignment, read as the
@@ -89,5 +116,17 @@ describe("the server SDK's outbox limits equal this host's", () => {
   test("the link schemes refused", () => {
     const sdk = pythonConstant("envelope.py", "FORBIDDEN_LINK_SCHEMES") as string[];
     expect([...sdk].sort()).toEqual([...NOTIFICATION_FORBIDDEN_LINK_SCHEMES].sort());
+  });
+});
+
+describe("what the server SDK accepts, this host keeps", () => {
+  test.each(CASES.map((parity) => [parity.case, parity] as const))("%s", (_, parity) => {
+    const kept = parseNotificationEnvelope(occurrence(parity)) !== null;
+    expect(kept ? "keep" : "drop").toBe(parity.host);
+  });
+
+  test("no case the SDK accepts is one this host drops", () => {
+    const lost = CASES.filter((parity) => parity.sdk === "accept" && parity.host === "drop");
+    expect(lost.map((parity) => parity.case)).toEqual([]);
   });
 });

@@ -697,14 +697,18 @@ An MCP Triggers and Events `EventOccurrence`, with what the host renders and rou
 | Field | |
 | --- | --- |
 | `eventId` | Required. The idempotency key, unique per workspace; a repeat is a no-op. |
-| `name` | Required. The server's own dotted, lower-case name (`domain.active`). |
+| `name` | Required. The server's own dotted, lower-case name (`domain.active`), with no whitespace. |
 | `timestamp` | Required. ISO 8601 with an offset, or an aware `datetime`. |
 | `data` | Required JSON object, opaque: nothing in the SDK or the host reads into it. |
 | `title`, `body`, `subject`, `level`, `link_resource` | Optional presentation. `level` is `info`, `attention` or `urgent`: urgency, not tone, and clamped by the workspace's ceiling. See [levels](https://docs.nimblebrain.ai/using/notification-reference/#levels). |
 
-`emit` **validates and raises**; it does not repair. The limits are the host's (title 200,
-body 2000, subject 200 characters, 64 KiB serialized), so an envelope accepted here renders
-whole there, and the runtime's tests fail if the two sides diverge. The append is in the
+`emit` **validates and raises**; it does not repair. It refuses whatever the host's parser
+would drop, because the host's poll moves past a dropped envelope and the notification is
+lost. The limits are the host's, counted as it counts them, in UTF-16 code units (title 200,
+body 2000, subject 200, event id and name 200, link 2048); a name may carry no whitespace; and
+the 64 KiB size limit is measured on the event as the host receives it, with its cursor and the
+default `level` and `title` added. The runtime's tests run shared boundary cases through the
+host's parser and fail if anything accepted here would be dropped there. The append is in the
 caller's transaction, so a raise rolls it back: trim unbounded upstream text deliberately,
 with the exported caps (`TITLE_MAX`, `BODY_MAX`, `SUBJECT_MAX`). A `link_resource` must carry a
 scheme and never a `javascript:`, `data:`, `vbscript:`, `file:` or `blob:` one.

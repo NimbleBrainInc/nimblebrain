@@ -8,6 +8,9 @@
   An outbox table under `[db]`'s row-level security, `emit` inside the caller's transaction,
   the poll the host reads it with, and its metrics. See the README's
   [Notifications](README.md#notifications-outbox).
+  `emit` refuses any envelope the host's parser would drop (whitespace in a name, a length
+  over a limit in UTF-16 code units, or a size over 64 KiB once the poll's cursor and default
+  presentation are added), so an accepted notification is never lost at the host.
 
 ## [0.5.0]
 
