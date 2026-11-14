@@ -44,7 +44,7 @@ On the build route, also run `docker buildx version`. If it fails, stop before w
 git ls-remote --tags --refs https://github.com/NimbleBrainInc/nimblebrain.git 'refs/tags/v*' | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
 ```
 
-That prints the newest release tag, for example `v1.2.3`. Only plain `vX.Y.Z` tags count: pre-releases such as `-rc` tags and the SDKs' namespaced tags are left out. `<tag>` in every later command is this value. `<tag>` in every later command is this value.
+That prints the newest release tag, for example `v1.2.3`. Only plain `vX.Y.Z` tags count: pre-releases such as `-rc` tags and the SDKs' namespaced tags are left out. `<tag>` in every later command is this value.
 
 ## 3. Say what will happen, and wait for a yes
 
