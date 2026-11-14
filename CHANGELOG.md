@@ -33,6 +33,7 @@
 
 ### Added
 
+- **`docker-compose.yml` takes the image tag from `NIMBLEBRAIN_TAG`.** Both images default to `latest`; set it to a release tag to stay on that release ([docs](https://docs.nimblebrain.ai/deploy/docker/#update-to-a-new-version)).
 - **Budgeted and capped task runs can execute on an agent worker.** Behind a model gateway that says it enforces grants, a run's model credential carries a token `grant` (its share of each spend account, or its input-token cap), and the gateway holds it there; without one, such runs stay on the native engine ([ADR-0063](https://github.com/NimbleBrainInc/nimblebrain/blob/main/adr/0063-a-runs-model-credential-carries-the-spend-it-is-allowed.md)).
 - **Apps learn which of a connector's tools the viewer may call.** The host context's `connector` key carries `allowedTools` on the connector's settings page and on the app's own page, so an app can leave out an action the viewer would be refused ([docs](https://docs.nimblebrain.ai/host/settings-sections/#which-tools-the-viewer-may-call), [#1879](https://github.com/NimbleBrainInc/nimblebrain/pull/1879)).
 - **Apps get the host's page gutter.** Every app frame's injected style block carries `--nb-gutter-wide` (1.5rem) and `--nb-gutter-narrow` (1rem), which `AppFrame` in `@nimblebrain/synapse` 0.38.0 picks between by its own width ([docs](https://docs.nimblebrain.ai/apps/theming/#nimblebrain-extensions---nb-), [#1887](https://github.com/NimbleBrainInc/nimblebrain/pull/1887)).

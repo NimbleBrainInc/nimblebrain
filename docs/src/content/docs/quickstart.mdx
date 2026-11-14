@@ -41,7 +41,7 @@ Get NimbleBrain running locally with Docker Compose. You need Docker and an [Ant
    ```yaml title="docker-compose.yml"
    services:
      platform:
-       image: ghcr.io/nimblebraininc/nimblebrain:latest
+       image: ghcr.io/nimblebraininc/nimblebrain:${NIMBLEBRAIN_TAG:-latest}
        restart: unless-stopped
        volumes:
          - workspace:/data
@@ -53,7 +53,7 @@ Get NimbleBrain running locally with Docker Compose. You need Docker and an [Ant
          - internal
 
      web:
-       image: ghcr.io/nimblebraininc/nimblebrain-web:latest
+       image: ghcr.io/nimblebraininc/nimblebrain-web:${NIMBLEBRAIN_TAG:-latest}
        restart: unless-stopped
        ports:
          - "27246:8080"

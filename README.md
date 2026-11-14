@@ -462,7 +462,7 @@ Images are published to GHCR on every release:
 - `ghcr.io/nimblebraininc/nimblebrain-runtime` — runtime (Bun; Node 24 builds the in-image connector UIs). Also published as `ghcr.io/nimblebraininc/nimblebrain` (transitional alias).
 - `ghcr.io/nimblebraininc/nimblebrain-web` — Caddy serving the SPA, proxying `/v1/*` to the platform
 
-Each release is tagged with the version (e.g. `v1.2.3`) and the short git SHA. Stable releases also move `:latest` forward; pre-releases (e.g. `v0.4.0-beta.1`) do not. Pin to a version tag in production. Pass `--build` to `docker compose` to build from source instead.
+Each release is tagged with the version (e.g. `v1.2.3`) and the short git SHA. Stable releases also move `:latest` forward; pre-releases (e.g. `v0.4.0-beta.1`) do not. Pin to a version tag in production by setting `NIMBLEBRAIN_TAG` (e.g. `NIMBLEBRAIN_TAG=v1.2.3`); `docker-compose.yml` uses it for both images. Pass `--build` to `docker compose` to build from source instead.
 
 See `Dockerfile`, `web/Dockerfile`, and `docker-compose.yml` for full config.
 
