@@ -16,6 +16,8 @@ import sys
 EXTRAS = {
     "db": ("pgbulkhead", "sqlalchemy", "asyncpg"),
     "observability": ("prometheus_client", "structlog", "opentelemetry.sdk"),
+    # `[outbox]` is `[db]` and `[observability]` together, so it installs nothing of its own.
+    "outbox": ("pgbulkhead", "sqlalchemy", "prometheus_client"),
 }
 
 

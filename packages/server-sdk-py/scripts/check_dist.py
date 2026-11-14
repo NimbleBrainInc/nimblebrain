@@ -18,8 +18,8 @@ from pathlib import Path
 PACKAGE = "nimblebrain_server_sdk"
 LICENSE = "Apache-2.0"
 REQUIRES_PYTHON = ">=3.13"
-# The optional halves: `db` and `observability`, each a subpackage the core never imports.
-EXTRAS = {"db", "observability"}
+# The optional parts: `db`, `observability` and `outbox`, each a subpackage the core never imports.
+EXTRAS = {"db", "observability", "outbox"}
 # The repository's tooling around the package, not part of it. (Hatchling adds .gitignore to
 # every sdist itself, so it is not listed.)
 SDIST_EXCLUDED = ("uv.lock", "uv.toml")

@@ -1,7 +1,7 @@
 [project]
 name = "nimblebrain-server-sdk"
 version = "0.5.0"
-description = "The SDK for building MCP servers that run on NimbleBrain: tool annotations, change announcements, the ai.nimblebrain platform extensions (facets, lifecycle, record views), skills over the MCP Skills extension, bounded listing rows, record ids, host-resources reads, and the service error contract; with tenant- and workspace-isolated Postgres access ([db]) and metrics, logs and traces ([observability])."
+description = "The SDK for building MCP servers that run on NimbleBrain: tool annotations, change announcements, the ai.nimblebrain platform extensions (facets, lifecycle, record views), skills over the MCP Skills extension, bounded listing rows, record ids, host-resources reads, and the service error contract; with tenant- and workspace-isolated Postgres access ([db]) and metrics, logs and traces ([observability]), and the outbox a server records notifications in ([outbox])."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -20,6 +20,8 @@ keywords = [
     "observability",
     "opentelemetry",
     "prometheus",
+    "notifications",
+    "outbox",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -67,9 +69,9 @@ dependencies = [
     "pyyaml>=6.0",
 ]
 
-# Optional halves a server installs only when it uses them. The core imports neither; importing
-# `nimblebrain_server_sdk.db` or `.observability` without its extra raises an ImportError that
-# names the extra.
+# Optional parts a server installs only when it uses them. The core imports none of them;
+# importing `nimblebrain_server_sdk.db`, `.observability` or `.outbox` without its extra raises an
+# ImportError that names the extra.
 [project.optional-dependencies]
 db = [
     # The generic core (policy rendering, sessions, pool, admission). Pinned exactly: the golden
@@ -87,6 +89,11 @@ observability = [
     "opentelemetry-exporter-otlp-proto-http>=1.29",
     "opentelemetry-instrumentation-fastapi>=0.50b0",
 ]
+
+# The server half of the notification contract (`nimblebrain_server_sdk.outbox`). It needs
+# nothing beyond the two extras: the outbox rows live under `[db]`'s security context and RLS
+# policy, and its counters record on `[observability]`'s registry.
+outbox = ["nimblebrain-server-sdk[db,observability]"]
 
 [project.urls]
 Homepage = "https://nimblebrain.ai"

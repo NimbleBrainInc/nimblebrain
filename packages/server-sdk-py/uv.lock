@@ -1065,6 +1065,16 @@ observability = [
     { name = "prometheus-client" },
     { name = "structlog" },
 ]
+outbox = [
+    { name = "asyncpg" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "opentelemetry-sdk" },
+    { name = "pgbulkhead" },
+    { name = "prometheus-client" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "structlog" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1083,6 +1093,7 @@ requires-dist = [
     { name = "asyncpg", marker = "extra == 'db'", specifier = ">=0.30" },
     { name = "fastmcp", specifier = ">=4.0.0" },
     { name = "mcp", specifier = ">=2.0.0,<2.4.0" },
+    { name = "nimblebrain-server-sdk", extras = ["db", "observability"], marker = "extra == 'outbox'" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'observability'", specifier = ">=1.29" },
     { name = "opentelemetry-instrumentation-fastapi", marker = "extra == 'observability'", specifier = ">=0.50b0" },
     { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.29" },
@@ -1093,7 +1104,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'db'", specifier = ">=2.0.44" },
     { name = "structlog", marker = "extra == 'observability'", specifier = ">=24.4" },
 ]
-provides-extras = ["db", "observability"]
+provides-extras = ["db", "observability", "outbox"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -1,0 +1,418 @@
+[
+  {
+    "case": "ordinary",
+    "envelope": {
+      "eventId": "evt_ok",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      },
+      "_meta": {
+        "ai.nimblebrain/notification": {
+          "level": "attention",
+          "title": "Hello",
+          "link": {
+            "resource": "acme://domains/1"
+          }
+        }
+      }
+    },
+    "sdk": "accept",
+    "host": "keep"
+  },
+  {
+    "case": "name with a space",
+    "envelope": {
+      "eventId": "evt_n1",
+      "name": "domain active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      }
+    },
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "name with a no-break space",
+    "envelope": {
+      "eventId": "evt_n2",
+      "name": "domain active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      }
+    },
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "name with a byte order mark",
+    "envelope": {
+      "eventId": "evt_n3",
+      "name": "domain﻿active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      }
+    },
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "eventId of 200 UTF-16 units",
+    "envelope": {
+      "eventId": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      }
+    },
+    "sdk": "accept",
+    "host": "keep"
+  },
+  {
+    "case": "eventId of 202 UTF-16 units",
+    "envelope": {
+      "eventId": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      }
+    },
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "name of 202 UTF-16 units",
+    "envelope": {
+      "eventId": "evt_n4",
+      "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      }
+    },
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "link of 2048 UTF-16 units",
+    "envelope": {
+      "eventId": "evt_l1",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      },
+      "_meta": {
+        "ai.nimblebrain/notification": {
+          "level": "info",
+          "title": "t",
+          "link": {
+            "resource": "acme://😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀a"
+          }
+        }
+      }
+    },
+    "sdk": "accept",
+    "host": "keep"
+  },
+  {
+    "case": "link of 2049 UTF-16 units",
+    "envelope": {
+      "eventId": "evt_l2",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      },
+      "_meta": {
+        "ai.nimblebrain/notification": {
+          "level": "info",
+          "title": "t",
+          "link": {
+            "resource": "acme://😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+          }
+        }
+      }
+    },
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "title of 202 UTF-16 units, which the host trims rather than drops",
+    "envelope": {
+      "eventId": "evt_t1",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      },
+      "_meta": {
+        "ai.nimblebrain/notification": {
+          "level": "info",
+          "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+        }
+      }
+    },
+    "sdk": "refuse",
+    "host": "keep"
+  },
+  {
+    "case": "the largest data the SDK accepts",
+    "envelope": {
+      "eventId": "evt_size_1",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {}
+    },
+    "pad": 64316,
+    "sdk": "accept",
+    "host": "keep"
+  },
+  {
+    "case": "one byte past what the SDK accepts, which the host still keeps",
+    "envelope": {
+      "eventId": "evt_size_2",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {}
+    },
+    "pad": 64317,
+    "sdk": "refuse",
+    "host": "keep"
+  },
+  {
+    "case": "under the limit as written, over it once the poll adds a cursor",
+    "envelope": {
+      "eventId": "evt_size_3",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {}
+    },
+    "pad": 65390,
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "presentation block written as null",
+    "envelope": {
+      "eventId": "evt_p0",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      },
+      "_meta": {
+        "ai.nimblebrain/notification": null
+      }
+    },
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "title written as null",
+    "envelope": {
+      "eventId": "evt_p1",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      },
+      "_meta": {
+        "ai.nimblebrain/notification": {
+          "title": null
+        }
+      }
+    },
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "subject written as null",
+    "envelope": {
+      "eventId": "evt_p2",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      },
+      "_meta": {
+        "ai.nimblebrain/notification": {
+          "subject": null
+        }
+      }
+    },
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "body written as null",
+    "envelope": {
+      "eventId": "evt_p3",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      },
+      "_meta": {
+        "ai.nimblebrain/notification": {
+          "body": null
+        }
+      }
+    },
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "link written as null",
+    "envelope": {
+      "eventId": "evt_p4",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      },
+      "_meta": {
+        "ai.nimblebrain/notification": {
+          "link": null
+        }
+      }
+    },
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "link resource written as null",
+    "envelope": {
+      "eventId": "evt_p5",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      },
+      "_meta": {
+        "ai.nimblebrain/notification": {
+          "link": {
+            "resource": null
+          }
+        }
+      }
+    },
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "level written as null",
+    "envelope": {
+      "eventId": "evt_p6",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      },
+      "_meta": {
+        "ai.nimblebrain/notification": {
+          "level": null
+        }
+      }
+    },
+    "sdk": "refuse",
+    "host": "drop"
+  },
+  {
+    "case": "a presentation block with no fields",
+    "envelope": {
+      "eventId": "evt_p7",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {
+        "k": 1
+      },
+      "_meta": {
+        "ai.nimblebrain/notification": {}
+      }
+    },
+    "sdk": "accept",
+    "host": "keep"
+  },
+  {
+    "case": "the most 1e20s in data the SDK accepts",
+    "envelope": {
+      "eventId": "evt_num_1",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {}
+    },
+    "sdk": "accept",
+    "host": "keep",
+    "fill": {
+      "value": 1e+20,
+      "count": 2923
+    }
+  },
+  {
+    "case": "one 1e20 past what the SDK accepts",
+    "envelope": {
+      "eventId": "evt_num_1_over",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {}
+    },
+    "sdk": "refuse",
+    "host": "drop",
+    "fill": {
+      "value": 1e+20,
+      "count": 2924
+    }
+  },
+  {
+    "case": "the most 1.5e-5s in data the SDK accepts",
+    "envelope": {
+      "eventId": "evt_num_2",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {}
+    },
+    "sdk": "accept",
+    "host": "keep",
+    "fill": {
+      "value": 1.5e-05,
+      "count": 7145
+    }
+  },
+  {
+    "case": "one 1.5e-5 past what the SDK accepts",
+    "envelope": {
+      "eventId": "evt_num_2_over",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {}
+    },
+    "sdk": "refuse",
+    "host": "drop",
+    "fill": {
+      "value": 1.5e-05,
+      "count": 7146
+    }
+  },
+  {
+    "case": "4,000 1e20s, under the limit in Python's form and over it in JavaScript's",
+    "envelope": {
+      "eventId": "evt_num_3",
+      "name": "domain.active",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "data": {}
+    },
+    "sdk": "refuse",
+    "host": "drop",
+    "fill": {
+      "value": 1e+20,
+      "count": 4000
+    }
+  }
+]

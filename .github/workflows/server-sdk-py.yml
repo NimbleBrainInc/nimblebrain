@@ -1,8 +1,8 @@
 name: server-sdk-py
 
 # The Python server SDK's own gate: lint, format, type check and tests on every Python it
-# supports with both extras installed and a real Postgres, a check of the core installed with
-# neither extra, then a build whose wheel and sdist are inspected. It checks a dependency bound or an
+# supports with every extra installed and a real Postgres, a check of the core installed with
+# none of them, then a build whose wheel and sdist are inspected. It checks a dependency bound or an
 # upstream minor before it merges rather than on the release tag; the release workflow checks
 # again before it publishes.
 #

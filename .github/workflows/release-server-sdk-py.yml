@@ -155,11 +155,11 @@ jobs:
           uv venv --python "$PYTHON" .venv-core
           uv pip install --python .venv-core dist/*.whl
           .venv-core/bin/python scripts/check_core_only.py
-      - name: Install the built wheel with both extras, not the source
+      - name: Install the built wheel with every extra, not the source
         run: |
           uv venv --python "$PYTHON" .venv-dist
           WHEEL="$(ls dist/*.whl)"
-          uv pip install --python .venv-dist "${WHEEL}[db,observability]" \
+          uv pip install --python .venv-dist "${WHEEL}[db,observability,outbox]" \
             pytest pytest-asyncio httpx2 fastapi httpx
       - name: The suite imports the installed wheel
         run: .venv-dist/bin/python -c "import nimblebrain_server_sdk as m, sys; assert 'site-packages' in m.__file__, m.__file__; print(m.__file__, m.__version__)"

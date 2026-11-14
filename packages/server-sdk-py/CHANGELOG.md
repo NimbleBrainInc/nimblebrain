@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- `[outbox]` (`nimblebrain_server_sdk.outbox`): the server half of the notification protocol.
+  An outbox table under `[db]`'s row-level security, `emit` inside the caller's transaction,
+  the poll the host reads it with, and its metrics. See the README's
+  [Notifications](README.md#notifications-outbox).
+  `emit` refuses any envelope the host's parser would drop (whitespace in a name, a `null`
+  presentation field, a length over a limit in UTF-16 code units, or a size over 64 KiB as the
+  host measures it), so an accepted notification is never lost at the host.
+
 ## [0.5.0]
 
 ### Changed

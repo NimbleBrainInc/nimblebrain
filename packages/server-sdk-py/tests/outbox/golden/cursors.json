@@ -1,0 +1,37 @@
+[
+  {
+    "epoch": "6f1d9f5e-0d2f-4a1e-9b7c-1a2b3c4d5e6f",
+    "watermark": 0,
+    "extra_txid": null,
+    "extra_seq": null,
+    "wire": "nbo1:WyI2ZjFkOWY1ZS0wZDJmLTRhMWUtOWI3Yy0xYTJiM2M0ZDVlNmYiLDBd"
+  },
+  {
+    "epoch": "6f1d9f5e-0d2f-4a1e-9b7c-1a2b3c4d5e6f",
+    "watermark": 4211,
+    "extra_txid": null,
+    "extra_seq": null,
+    "wire": "nbo1:WyI2ZjFkOWY1ZS0wZDJmLTRhMWUtOWI3Yy0xYTJiM2M0ZDVlNmYiLDQyMTFd"
+  },
+  {
+    "epoch": "6f1d9f5e-0d2f-4a1e-9b7c-1a2b3c4d5e6f",
+    "watermark": 4211,
+    "extra_txid": 4300,
+    "extra_seq": 97,
+    "wire": "nbo1:WyI2ZjFkOWY1ZS0wZDJmLTRhMWUtOWI3Yy0xYTJiM2M0ZDVlNmYiLDQyMTEsNDMwMCw5N10"
+  },
+  {
+    "epoch": "6f1d9f5e-0d2f-4a1e-9b7c-1a2b3c4d5e6f",
+    "watermark": 9223372036854775807,
+    "extra_txid": 9223372036854775807,
+    "extra_seq": 9223372036854775807,
+    "wire": "nbo1:WyI2ZjFkOWY1ZS0wZDJmLTRhMWUtOWI3Yy0xYTJiM2M0ZDVlNmYiLDkyMjMzNzIwMzY4NTQ3NzU4MDcsOTIyMzM3MjAzNjg1NDc3NTgwNyw5MjIzMzcyMDM2ODU0Nzc1ODA3XQ"
+  },
+  {
+    "epoch": "00000000-0000-0000-0000-000000000000",
+    "watermark": 1,
+    "extra_txid": 1,
+    "extra_seq": 1,
+    "wire": "nbo1:WyIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLDEsMSwxXQ"
+  }
+]
