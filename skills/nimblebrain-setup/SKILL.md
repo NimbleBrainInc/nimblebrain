@@ -12,13 +12,13 @@ metadata:
 
 # NimbleBrain Setup
 
-You are setting up NimbleBrain Platform, the open-source runtime that runs agents and MCP apps on your systems, in your own infrastructure, with any model, on the user's own machine. The route is the one in `docs.nimblebrain.ai/deploy/docker/`: a clone of this repository at its newest release, started with its own `docker-compose.yml`. Done means the health endpoint answers and the user has seen one chat reply.
+You are setting up NimbleBrain Platform, the open-source runtime that runs agents and MCP apps on your systems, in your own infrastructure, with any model, on the user's own machine. The route is the Compose route of `docs.nimblebrain.ai/deploy/docker/`, run from a clone of this repository at its newest release tag with the repository's own `docker-compose.yml`. Done means the health endpoint answers and the user has seen one chat reply.
 
 Work through the steps in order, from step 1 every time, reruns included. Run each command yourself and read its output before the next step. When a step fails, look the symptom up in `references/TROUBLESHOOTING.md`, give the fix, and stop there. Do not improvise a different install route.
 
 ## Rules that hold for every step
 
-- **The model key never passes through you.** Do not ask for it in chat. Do not open or print `.env`, and do not run `docker compose config`, `docker inspect` on a container, or a bare `env`: each prints the key. If the user pastes a key into chat anyway, do not use it; tell them it is in the transcript and that they may want to rotate it.
+- **The model key never passes through you.** Do not ask for it in chat. Do not open or print `.env`, and do not run `docker compose config`, `docker inspect` on a container, or a bare `env`: each prints the key. The one `docker compose config` this skill runs is the check in step 5, and only while `.env` holds no key, with the shell's key variables removed. If the user pastes a key into chat anyway, do not use it; tell them it is in the transcript and that they may want to rotate it.
 - **Write only inside the folder chosen in step 3.** Step 9 is the one exception, on its own yes.
 - **Install nothing.** If Docker, git or buildx is missing, name the fix and stop.
 - **The `dev` sign-in adapter is for this machine only.** It checks no credential: anyone who can reach the port is the admin. The Compose file publishes the port on `127.0.0.1` for that reason. Never widen it, tunnel it or put a proxy in front of it. A shared instance needs the `oidc` or `workos` adapter (`docs.nimblebrain.ai/config/instance-json/`).
@@ -41,10 +41,10 @@ On the build route, also run `docker buildx version`. If it fails, stop before w
 ## 2. Find the newest release
 
 ```bash
-git ls-remote --tags --refs https://github.com/NimbleBrainInc/nimblebrain.git 'v*' | awk -F/ '{print $3}' | grep -v -e '-' | sort -V | tail -1
+git ls-remote --tags --refs https://github.com/NimbleBrainInc/nimblebrain.git 'refs/tags/v*' | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
 ```
 
-That prints the newest release tag, for example `v1.2.3`. A tag with a hyphen is a pre-release and is left out. `<tag>` in every later command is this value.
+That prints the newest release tag, for example `v1.2.3`. Only plain `vX.Y.Z` tags count: pre-releases such as `-rc` tags and the SDKs' namespaced tags are left out. `<tag>` in every later command is this value. `<tag>` in every later command is this value.
 
 ## 3. Say what will happen, and wait for a yes
 
@@ -61,27 +61,30 @@ ls -a <folder> 2>/dev/null || echo "free"
 grep -qx 'COMPOSE_PROJECT_NAME=nimblebrain-setup' <folder>/.env 2>/dev/null && echo "ours"
 ```
 
-A folder that printed `ours` is an earlier run of this skill: reuse it and skip the clone in step 4. Any other folder that exists and is not empty, a developer's checkout of this repository included, is not ours: ask for another folder. On a Mac with Colima, keep the folder under the home folder, which is all Colima shares with its VM by default.
+A folder that printed `ours` is an earlier run of this skill: reuse it and skip step 4. It stays on the release it holds, which can be older than step 2's, so from here on `<tag>` is the one this prints, and the report names it. "Updating" moves it to a newer one.
 
-## 4. Clone the release and check it
+```bash
+git -C <folder> describe --tags --exact-match --match 'v[0-9]*' --exclude '*-*'
+```
+
+Any other folder that exists and is not empty, a developer's checkout of this repository included, is not ours: ask for another folder. On a Mac with Colima, keep the folder under the home folder, which is all Colima shares with its VM by default.
+
+## 4. Clone the release
 
 ```bash
 git clone --depth 1 --branch <tag> https://github.com/NimbleBrainInc/nimblebrain.git <folder>
-grep -cF ':${NIMBLEBRAIN_TAG:-latest}' <folder>/docker-compose.yml
-grep -cF '"127.0.0.1:27246:8080"' <folder>/docker-compose.yml
 ```
 
-git warns that HEAD is detached and that the tag is not a commit; both are expected. The two checks must print `2` and then `1`: both images take their tag from `NIMBLEBRAIN_TAG`, and the web port is published on this machine only. On any other output, stop: this release predates this skill, and its Compose file would publish the no-login UI on the network. Tell the user, and offer to remove the folder you just created.
+git warns that HEAD is detached and that the tag is not a commit; both are expected.
 
-## 5. Write the two files
+## 5. Write the two files and check the release
 
 Write each only if it is missing. Never overwrite or merge into an existing file. Write `.env` first: it is what marks the folder as this skill's on a rerun.
 
-`<folder>/.env` holds settings for Compose. The project name keeps this install's containers and its `nimblebrain-setup_workspace` volume apart from any other checkout of this repository. The tag keeps the images on the release you cloned.
+`<folder>/.env` holds settings for Compose, and later the model key, so it is created readable by this user only. The project name keeps this install's containers and its `nimblebrain-setup_workspace` volume apart from any other checkout of this repository. The tag keeps the images on the release you cloned.
 
 ```bash
-COMPOSE_PROJECT_NAME=nimblebrain-setup
-NIMBLEBRAIN_TAG=<tag>
+cd <folder> && { test -e .env || (umask 077 && printf 'COMPOSE_PROJECT_NAME=nimblebrain-setup\nNIMBLEBRAIN_TAG=%s\n' '<tag>' > .env); }
 ```
 
 `<folder>/instance.json` names the identity provider. The runtime does not start without it.
@@ -91,6 +94,22 @@ NIMBLEBRAIN_TAG=<tag>
 ```
 
 Git ignores both files, so the clone stays clean.
+
+Now check the release's Compose file as Compose reads it. This prints how many key lines `.env` has, not the lines:
+
+```bash
+grep -c '_API_KEY=' <folder>/.env
+```
+
+If it prints `0`, run the check. It removes the shell's key variables and prints only the image and published-address lines:
+
+```bash
+cd <folder> && env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GOOGLE_GENERATIVE_AI_API_KEY -u GREENPT_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY docker compose config --format json | grep -oE '"(image|host_ip)": *"[^"]*"'
+```
+
+It must print both images ending in `:<tag>` and `"host_ip": "127.0.0.1"`: both images take their tag from `NIMBLEBRAIN_TAG`, and the web port is published on this machine only. On any other output, stop: this release predates this skill, and its Compose file would publish the no-login UI on the network. Tell the user, and offer to remove the folder.
+
+If the count is not `0`, a key is already in `.env`: this is a rerun past step 6, and the release passed this check on the run that wrote the key ("Updating" checks a new release before it switches). Do not run the check.
 
 ## 6. The model key
 
@@ -153,10 +172,10 @@ There is no sign-in screen. Report success only after the user confirms the repl
 Give the user all of this, briefly:
 
 - **Where it is:** `http://localhost:27246`, the folder, the release, and whether the images were pulled or built.
-- **Chat:** confirmed, or not tested because there is no key yet. To add one later, put the line in `<folder>/.env`, then `docker compose up -d` from the folder.
-- **Stop it:** `docker compose down` from the folder. Until then it starts again whenever Docker starts. Data stays in the volume.
+- **Chat:** confirmed, or not tested because there is no key yet. To add one later, put the line in `<folder>/.env`, then `cd <folder> && docker compose up -d`.
+- **Stop it:** `cd <folder> && docker compose down`. Until then it starts again whenever Docker starts. Data stays in the volume.
 - **Update it:** `references/TROUBLESHOOTING.md`, under "Updating".
-- **Remove everything:** `docker compose down -v --rmi all` from the folder removes the containers, the network, the volume with every conversation in it, and this release's images; then `rm -rf <folder>`, which holds the key. Images of earlier releases, if you updated, show in `docker images 'ghcr.io/nimblebraininc/*'`. Offer to run these, and run them only on a clear yes.
+- **Remove everything:** `cd <folder> && docker compose down -v --rmi all` removes the containers, the network, the volume with every conversation in it, and this release's images; then `rm -rf <folder>`, which holds the key. Images of earlier releases, if you updated, show in `docker images 'ghcr.io/nimblebraininc/*'`. Offer to run these, and run them only on a clear yes. On the build route the build cache stays. `docker builder prune` clears it, but it clears the cache of every project on this Docker host, so offer it on its own and run it only on its own yes.
 - **Telemetry:** the runtime collects anonymous usage telemetry (`nimblebrain.ai/telemetry/`). `docs.nimblebrain.ai/using/telemetry/` says how to turn it off.
 - **What this did not do:** it created no account, installed no software and no connectors, and changed nothing outside the folder and Docker.
 
