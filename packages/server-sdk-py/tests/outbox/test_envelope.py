@@ -167,3 +167,29 @@ def test_an_envelope_over_the_size_limit_is_refused() -> None:
     validate(envelope(data={"blob": "x" * (ENVELOPE_MAX_BYTES // 2)}))
     with pytest.raises(EnvelopeError, match="bytes"):
         validate(envelope(data={"blob": "x" * ENVELOPE_MAX_BYTES}))
+
+
+# The host drops what it cannot hold, and the poll moves past it, so each case
+# below is one the host's parser refuses: accepting it here would lose the event.
+
+
+@pytest.mark.parametrize("name", ["domain active", "domain\u00a0active", "domain\ufeffactive"])
+def test_a_name_may_not_carry_whitespace(name: str) -> None:
+    with pytest.raises(EnvelopeError, match="whitespace"):
+        validate(envelope(name=name))
+
+
+def test_lengths_count_utf16_code_units_as_the_host_does() -> None:
+    """A character past U+FFFF is two units there, so 101 of them exceed 200."""
+    validate(envelope(eventId="\U0001f600" * 100))
+    with pytest.raises(EnvelopeError, match="eventId"):
+        validate(envelope(eventId="\U0001f600" * 101))
+    with pytest.raises(EnvelopeError, match="title"):
+        validate(envelope(), title="\U0001f600" * (TITLE_MAX // 2 + 1))
+
+
+def test_the_size_budget_counts_the_cursor_and_default_presentation() -> None:
+    """An envelope just under the limit as written is over it once the poll adds a cursor."""
+    with pytest.raises(EnvelopeError, match="bytes"):
+        validate(envelope(data={"s": "x" * 65390}))
+    validate(envelope(data={"s": "x" * 64000}))
