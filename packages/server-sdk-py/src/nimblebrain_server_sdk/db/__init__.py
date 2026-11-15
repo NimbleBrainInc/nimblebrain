@@ -26,7 +26,10 @@ And the capacity around them, for a server that serves many workspaces from one 
     under one slot.
   * ``PoolSettings`` / ``create_pooled_engine`` — the pool's size and timeout, read from the
     server's env namespace and validated together with the admission limit at boot. The engine
-    refuses a superuser or ``BYPASSRLS`` role with ``UnsafeRoleError`` unless built with
+    refuses a connection whose session bypasses row-level security (a superuser or ``BYPASSRLS``
+    role, a member of a managed Postgres admin role in ``MANAGED_ADMIN_ROLES``, or any session a
+    probe sees bypass a forced policy, when the session can run the probe) with
+    ``UnsafeRoleError`` unless built with
     ``refuse_bypass_roles=False`` (an engine meant to bypass, such as a migration's).
   * ``WorkspaceLimiter`` — at most N calls per workspace at once,
     admitted before a call checks out a connection; a call refused for capacity raises
@@ -57,6 +60,7 @@ from .edge import (  # noqa: E402
 )
 from .pool import (  # noqa: E402
     CONNECTIONS_PER_CALL,
+    MANAGED_ADMIN_ROLES,
     PoolConfigError,
     PoolSettings,
     UnsafeRoleError,
@@ -77,6 +81,7 @@ from .session import (  # noqa: E402
 __all__ = [
     "CLEANUP_TIMEOUT_SECONDS",
     "CONNECTIONS_PER_CALL",
+    "MANAGED_ADMIN_ROLES",
     "TENANT_HEADER",
     "WORKSPACE_HEADER",
     "AdmittedSlot",
