@@ -5,6 +5,7 @@ import type {
   LlmResponseEvent,
   RunStartEvent,
 } from "../../src/conversation/types.ts";
+import { CUT_OFF_FINISH_RAW } from "../../src/engine/types.ts";
 import { tokenEstimateCorrection } from "../../src/runtime/token-estimate-correction.ts";
 
 const MODEL = "anthropic:claude-sonnet-4-6";
@@ -100,6 +101,26 @@ describe("tokenEstimateCorrection", () => {
     );
     expect(tokenEstimateCorrection([start(), context(), response(Number.NaN)], MODEL)).toBe(1);
     expect(tokenEstimateCorrection([start(), context(RUN, []), response(240)], MODEL)).toBe(1);
+  });
+
+  test("falls back when a persisted context or usage line has the wrong JSON shape", () => {
+    const badContext = JSON.parse(
+      JSON.stringify({ ...context(), sources: null }),
+    ) as ContextAssembledEvent;
+    const badSource = JSON.parse(
+      JSON.stringify({ ...context(), sources: [null] }),
+    ) as ContextAssembledEvent;
+    const badUsage = JSON.parse(
+      JSON.stringify({ ...response(240), usage: null }),
+    ) as LlmResponseEvent;
+    expect(tokenEstimateCorrection([start(), badContext, response(240)], MODEL)).toBe(1);
+    expect(tokenEstimateCorrection([start(), badSource, response(240)], MODEL)).toBe(1);
+    expect(tokenEstimateCorrection([start(), context(), badUsage], MODEL)).toBe(1);
+  });
+
+  test("does not mistake a cancelled call's estimated usage for provider measurement", () => {
+    const cutOff = { ...response(240), finishReasonRaw: CUT_OFF_FINISH_RAW };
+    expect(tokenEstimateCorrection([start(), context(), cutOff], MODEL)).toBe(1);
   });
 
   test("never expands the budget and caps an anomalous ratio", () => {

@@ -4,14 +4,18 @@ import type {
   LlmResponseEvent,
   RunStartEvent,
 } from "../conversation/types.ts";
+import { CUT_OFF_FINISH_RAW } from "../engine/types.ts";
 
 const DISJOINT_SOURCES = ["system_prompt", "tool_descriptions", "history"] as const;
 export const MAX_TOKEN_ESTIMATE_CORRECTION = 1.5;
 
 /** The prompt estimate for one run, excluding the skills row already counted in the system. */
 function estimatedPromptTokens(context: ContextAssembledEvent): number | null {
+  // Older or hand-edited JSONL lines are parsed without runtime schema validation.
+  if (!Array.isArray(context.sources)) return null;
   const tokens = new Map<string, number>();
   for (const source of context.sources) {
+    if (!source || typeof source !== "object") return null;
     if (!DISJOINT_SOURCES.some((kind) => kind === source.kind)) continue;
     if (tokens.has(source.kind) || !Number.isFinite(source.tokens) || source.tokens < 0)
       return null;
@@ -38,8 +42,14 @@ function correctionFromPair(
   model: string,
 ): number {
   const estimate = context ? estimatedPromptTokens(context) : null;
-  const actual = response.usage.inputTokens;
-  if (response.model !== model || estimate === null || !Number.isFinite(actual) || actual <= 0)
+  const actual = response.usage?.inputTokens;
+  if (
+    response.model !== model ||
+    response.finishReasonRaw === CUT_OFF_FINISH_RAW ||
+    estimate === null ||
+    !Number.isFinite(actual) ||
+    actual <= 0
+  )
     return 1;
   return Math.min(MAX_TOKEN_ESTIMATE_CORRECTION, Math.max(1, actual / estimate));
 }

@@ -118,20 +118,26 @@ describe("resolveMessageBudget", () => {
   });
 
   it("reduces a binding configured cap by the measured correction", () => {
+    const tools = [tool("search", "find records".repeat(12))];
     const result = resolveMessageBudget({
       model: "anthropic:claude-opus-4-7",
       configMaxInputTokens: 200_000,
       systemPrompt: "you are a helpful assistant",
-      tools: [],
+      tools,
       maxOutputTokens: 16_384,
       estimateCorrection: 1.25,
     });
 
-    expect(result.budget).toBe(160_000 - result.breakdown.systemPromptTokens);
+    expect(result.breakdown.toolTokens).toBeGreaterThan(0);
+    expect(result.budget).toBe(
+      160_000 - result.breakdown.systemPromptTokens - result.breakdown.toolTokens,
+    );
     expect(result.breakdown.estimateCorrection).toBe(1.25);
     expect(result.breakdown.boundedByModel).toBe(false);
     expect(
-      Math.ceil((result.budget + result.breakdown.systemPromptTokens) * 1.25),
+      Math.ceil(
+        (result.budget + result.breakdown.systemPromptTokens + result.breakdown.toolTokens) * 1.25,
+      ),
     ).toBeLessThanOrEqual(200_000);
   });
 
