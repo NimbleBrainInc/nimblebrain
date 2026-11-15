@@ -55,6 +55,14 @@ import {
 import { buildHostCapabilities, TASKS_EXTENSION_ID } from "./host-capabilities";
 import { buildHostStyles, type UploadLimits } from "./host-extensions";
 import { appWindowOf, onAppMessage, postToAppWindow } from "./iframe";
+import {
+  DEFAULT_PICKER_MAX_SIZE,
+  MAX_NOTICE_DESCRIPTION,
+  MAX_NOTICE_TITLE,
+  NOTICE_BURST,
+  NOTICE_LEVELS,
+  NOTICE_WINDOW_MS,
+} from "./limits";
 import type {
   LoggingMessageNotification,
   UiOpenConnectorSettingsMessage,
@@ -520,13 +528,6 @@ function supersedes(next: unknown, prev: unknown): boolean {
   if (a.method === "ui/notifications/host-context-changed") return true;
   return JSON.stringify(next) === JSON.stringify(prev);
 }
-
-const NOTICE_LEVELS = new Set(["success", "info", "warning", "error"]);
-const MAX_NOTICE_TITLE = 120;
-const MAX_NOTICE_DESCRIPTION = 500;
-/** At most this many notices per app in any window of `NOTICE_WINDOW_MS`. */
-const NOTICE_BURST = 5;
-const NOTICE_WINDOW_MS = 10_000;
 
 /** A per-bridge limiter: true while the app is within its notice budget. */
 export function createNoticeLimiter(now: () => number = Date.now): () => boolean {
@@ -1020,9 +1021,6 @@ async function answerOpen(
     postToIframe({ jsonrpc: "2.0", id, error: { code: -32602, message } });
   }
 }
-
-/** The picker's per-file cap when the host supplies no upload limits. */
-const DEFAULT_PICKER_MAX_SIZE = 26_214_400; // 25 MB
 
 /**
  * The host's upload limits, or `undefined` when it supplies none. Wrapped for
