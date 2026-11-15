@@ -3374,7 +3374,7 @@ describe("Scheduler — token budget applies to every run", () => {
       auto.ownerId!,
       auto.id,
       { runId: "run_batch00001", requestedAt: new Date().toISOString() },
-      { accounts: () => [], sharedBy: 4 },
+      { accounts: () => [], sharedBy: () => 4 },
     );
     if (ticket.state === "refused") throw new Error(`refused: ${ticket.message}`);
     await ticket.run;

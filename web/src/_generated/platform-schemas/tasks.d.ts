@@ -1745,6 +1745,7 @@ export declare const TaskBatchRecord: import("@sinclair/typebox").TObject<{
     ownerId: import("@sinclair/typebox").TString;
     items: import("@sinclair/typebox").TNumber;
     concurrency: import("@sinclair/typebox").TNumber;
+    sharing: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     stopWhen: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         minPassRate: import("@sinclair/typebox").TNumber;
@@ -1801,6 +1802,7 @@ export declare const TaskBatchView: import("@sinclair/typebox").TObject<{
     workspaceId: import("@sinclair/typebox").TString;
     createdAt: import("@sinclair/typebox").TString;
     updatedAt: import("@sinclair/typebox").TString;
+    sharing: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     counts: import("@sinclair/typebox").TObject<{
         pending: import("@sinclair/typebox").TNumber;
@@ -1865,6 +1867,7 @@ export declare const TasksRunBatchOutput: import("@sinclair/typebox").TObject<{
         workspaceId: import("@sinclair/typebox").TString;
         createdAt: import("@sinclair/typebox").TString;
         updatedAt: import("@sinclair/typebox").TString;
+        sharing: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         counts: import("@sinclair/typebox").TObject<{
             pending: import("@sinclair/typebox").TNumber;
@@ -1915,6 +1918,7 @@ export declare const TasksBatchOutput: import("@sinclair/typebox").TObject<{
         workspaceId: import("@sinclair/typebox").TString;
         createdAt: import("@sinclair/typebox").TString;
         updatedAt: import("@sinclair/typebox").TString;
+        sharing: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         counts: import("@sinclair/typebox").TObject<{
             pending: import("@sinclair/typebox").TNumber;
@@ -1981,6 +1985,7 @@ export declare const TasksBatchControlOutput: import("@sinclair/typebox").TObjec
         workspaceId: import("@sinclair/typebox").TString;
         createdAt: import("@sinclair/typebox").TString;
         updatedAt: import("@sinclair/typebox").TString;
+        sharing: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         counts: import("@sinclair/typebox").TObject<{
             pending: import("@sinclair/typebox").TNumber;
@@ -2027,6 +2032,7 @@ export declare const TasksBatchesOutput: import("@sinclair/typebox").TObject<{
         workspaceId: import("@sinclair/typebox").TString;
         createdAt: import("@sinclair/typebox").TString;
         updatedAt: import("@sinclair/typebox").TString;
+        sharing: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         counts: import("@sinclair/typebox").TObject<{
             pending: import("@sinclair/typebox").TNumber;

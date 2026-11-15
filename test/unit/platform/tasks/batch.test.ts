@@ -137,11 +137,19 @@ interface HarnessOptions {
     taskTokens?: number;
     /**
      * Hold each run to its grant, as a runtime behind the model gateway is
-     * (`SpendHold.reserveRun`): the task's own budget, read from its counters
-     * and shared by the batch's concurrency, is reserved as a whole, and the
-     * run stops once its next call (100 input tokens) would pass its share.
+     * (`SpendHold.reserveRun`): the task's own budget, read from its counters,
+     * and the batch's account are reserved as a whole, each shared by as many
+     * runs as the batch says. The gateway admits a call (100 input tokens)
+     * while the run has spent less than its grant, so the run stops before
+     * the first call that finds the grant spent.
      */
     grant?: boolean;
+    /**
+     * With `grant`: every call's input is read from the cache at a hundredth
+     * of the rate the grant is sized at, so a run stopped by its grant has
+     * spent little of the budget, as a real one has.
+     */
+    cachedInput?: boolean;
   };
   /** The run's status for an input. */
   behave?: (input: unknown) => Partial<TaskRun>;
@@ -210,19 +218,33 @@ function harness(opts: HarnessOptions = {}): Harness {
       let stop: string | undefined;
       let usedInput: number | undefined;
       if (opts.door?.grant) {
-        const accounts = budgetSpendAccounts(task, Date.now()).map((a) => ({ ...a, sharedBy }));
-        const hold = spend.open(accounts, { model: "m", rates: RATES });
+        const accounts = [
+          ...budgetSpendAccounts(task, Date.now()).map((a) => ({ ...a, sharedBy })),
+          ...(extra ?? []),
+        ];
+        const cached = opts.door.cachedInput === true;
+        const hold = spend.open(accounts, {
+          model: "m",
+          rates: cached ? { ...RATES, cacheRead: 10 } : RATES,
+        });
+        const callCost = cached ? 0.001 : 0.1;
         try {
           const share = hold.reserveRun();
           usedInput = 0;
           for (let i = 0; i < opts.door.calls; i++) {
-            if (usedInput + 100 > share.tokens) {
+            if (usedInput >= share.tokens) {
               stop = share.accountId;
               break;
             }
             await Bun.sleep(1);
-            hold.debit({ inputTokens: 100, outputTokens: 0 });
+            hold.debit({
+              inputTokens: 100,
+              outputTokens: 0,
+              ...(cached ? { cacheReadTokens: 100 } : {}),
+            });
             usedInput += 100;
+            costUsd += callCost;
+            totalSpent += callCost;
           }
         } finally {
           hold.release();
@@ -723,19 +745,71 @@ describe("reserved-out versus spent-out, the task's budget", () => {
   });
 });
 
-describe("reserved-out versus spent-out, a share of the task's budget", () => {
-  it("does not pause when a lone run spends its share with the budget left", async () => {
-    // Shared by 4, each run is granted a quarter of what is left: 250 and 200
-    // (two 100-token calls each), 150, 125, and 100 (one each), then 75, too
-    // little for one call: six runs, the batch pausing only at the last.
-    const h = harness({ door: { calls: 3, grant: true }, maxConcurrentRuns: 4 });
+describe("a share of the budget too small for an item", () => {
+  it("runs the item again with half as many runs sharing the task's budget", async () => {
+    // Shared by 4, the run is granted a quarter of 1000: 250, spent after three
+    // of its four calls. Shared by 2, it is granted half of the 700 left: 350.
+    const h = harness({ door: { calls: 4, grant: true }, maxConcurrentRuns: 4 });
     makeTask({ tokenBudget: { maxInputTokens: 1000, period: "daily" } });
     const out = handleRunBatch({ taskId: "enrich", items: items("a"), concurrency: 4 }, h.ctx);
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    const [item] = readBatchItems(workDir, WS, OWNER, out.batch.id);
+    expect(item?.previousRunIds).toHaveLength(1);
+    expect(item?.execution).toBe("completed");
+    expect(batchOf(h, out.batch.id).sharing).toBe(2);
+    expect(h.paused).toHaveLength(0);
+  });
+
+  it("halves once when every run of a round is stopped, and completes the batch", async () => {
+    // 1.6 shared by 8 grants 200 tokens, spent after two of three calls, at a
+    // cost of 0.002 a run. Shared by 4, what is left grants about 396.
+    const h = harness({
+      door: { calls: 3, grant: true, cachedInput: true },
+      maxConcurrentRuns: 8,
+    });
+    makeTask();
+    const out = handleRunBatch(
+      {
+        taskId: "enrich",
+        items: items("a", "b", "c", "d", "e", "f", "g", "h"),
+        concurrency: 8,
+        budgetUsd: 1.6,
+      },
+      h.ctx,
+    );
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    const batch = batchOf(h, out.batch.id);
+    expect(batch.sharing).toBe(4);
+    expect(batch.counts.pass).toBe(8);
+    for (const item of readBatchItems(workDir, WS, OWNER, out.batch.id)) {
+      expect(item.previousRunIds ?? []).toHaveLength(1);
+    }
+    expect(h.paused).toHaveLength(0);
+  });
+
+  it("pauses once a run that had the budget to itself is stopped, and shares as asked under a new budget", async () => {
+    // Five calls need more than 400 tokens granted; 0.25 grants 62, then 125,
+    // then 249 to a run alone: three runs, the last stopping the batch.
+    const h = harness({
+      door: { calls: 5, grant: true, cachedInput: true },
+      maxConcurrentRuns: 4,
+    });
+    makeTask();
+    const out = handleRunBatch(
+      { taskId: "enrich", items: items("a"), concurrency: 4, budgetUsd: 0.25 },
+      h.ctx,
+    );
     await waitFor(() => batchOf(h, out.batch.id).state === "paused", "budget pause");
     const [item] = readBatchItems(workDir, WS, OWNER, out.batch.id);
-    expect(item?.previousRunIds).toHaveLength(6);
+    expect(item?.previousRunIds).toHaveLength(3);
     expect(item?.state).toBe("pending");
     expect(batchOf(h, out.batch.id).pause?.reason).toBe("budget");
+    expect(batchOf(h, out.batch.id).sharing).toBe(1);
+
+    h.driver.control(WS, OWNER, out.batch.id, "resume", 4);
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    expect(batchOf(h, out.batch.id).sharing).toBeUndefined();
+    expect(batchOf(h, out.batch.id).counts.pass).toBe(1);
   });
 });
 
@@ -1050,7 +1124,7 @@ describe("tasks__batch_control", () => {
     expect(back.previousRunIds).toEqual([queued.runId!]);
     const withdrawn = readRuns(workDir, WS, OWNER, "enrich").find((r) => r.id === queued.runId);
     expect(withdrawn?.status).toBe("skipped");
-    expect(withdrawn?.error).toContain("batch paused");
+    expect(withdrawn?.error).toContain("by its batch");
 
     // The running run finishes; nothing new starts while paused.
     h.gates[0]!.release();
