@@ -26,17 +26,19 @@ Four packages, two registries. Which you need depends on what you are building.
 An app's server uses the Server SDK and Synapse together, on one FastMCP server:
 
 ```bash
-uv add nimblebrain-server-sdk nimblebrain-synapse
+uv add nimblebrain-server-sdk 'nimblebrain-synapse[fastmcp]'
 ```
 
 | | Version |
 |---|---|
 | `nimblebrain-server-sdk` | 0.7 or later |
-| `nimblebrain-synapse` | The first release with FastMCP 4 support, or later; its [changelog](https://github.com/NimbleBrainInc/synapse/blob/main/python/CHANGELOG.md) names it |
+| `nimblebrain-synapse` | 0.10 or later, with its `fastmcp` extra |
 | FastMCP | 4.0 or later |
 | Python | 3.13 or later |
 
-The Server SDK requires FastMCP 4. A `nimblebrain-synapse` release from before its FastMCP 4 support cannot be added to a FastMCP 4 server, so install the two at these versions or later.
+On a FastMCP server the interface is a `FastMCPSynapseUI`, from `nimblebrain_synapse.fastmcp`, registered with `mcp.add_extension(ui)`. `SynapseUI` is the class for a server built on the `mcp` SDK's `MCPServer`. Synapse's [Python quickstart](https://synapse.nimblebrain.ai/docs/quickstart-python/) shows both.
+
+The Server SDK requires FastMCP 4, and `nimblebrain-synapse` supports FastMCP from 0.10, so an earlier Synapse release cannot be paired with it.
 
 The two do different jobs and do not overlap: the Server SDK is what the server shares with NimbleBrain's host, and Synapse is what the server shares with its own interface, on any host.
 
