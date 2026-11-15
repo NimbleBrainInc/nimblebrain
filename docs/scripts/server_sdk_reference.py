@@ -169,14 +169,14 @@ def to_markdown(doc: str) -> str:
     return "\n".join(out).strip() + "\n"
 
 
-def _load() -> griffe.Object:
+def _load(package_dir: Path) -> griffe.Object:
     # `db` re-exports part of its API from pgbulkhead, so griffe reads that package too, from
     # wherever the SDK's environment installed it.
     spec = importlib.util.find_spec("pgbulkhead")
     if spec is None or spec.origin is None:
         raise SystemExit("pgbulkhead is not installed: run with the SDK's [db] extra")
     loader = griffe.GriffeLoader(
-        search_paths=[str(PACKAGE_DIR / "src"), str(Path(spec.origin).parent.parent)]
+        search_paths=[str(package_dir / "src"), str(Path(spec.origin).parent.parent)]
     )
     loader.load("pgbulkhead")
     package = loader.load(PACKAGE)
@@ -247,16 +247,25 @@ def _entry(name: str, obj: griffe.Object, problems: list[str], where: str) -> li
     return lines
 
 
-def main() -> int:
-    version = tomllib.loads((PACKAGE_DIR / "pyproject.toml").read_text())["project"]["version"]
-    package = _load()
+def main(
+    package_dir: Path = PACKAGE_DIR,
+    out: Path = OUT,
+    pages: list[tuple[str, str, str, str, str]] = PAGES,
+) -> int:
+    """Write the reference for the package under ``package_dir`` to ``out``.
+
+    The defaults are the SDK and the docs site. A test passes a fixture package and a
+    temporary directory.
+    """
+    version = tomllib.loads((package_dir / "pyproject.toml").read_text())["project"]["version"]
+    package = _load(package_dir)
     problems: list[str] = []
-    OUT.mkdir(parents=True, exist_ok=True)
-    for stale in OUT.glob("*.md"):
+    out.mkdir(parents=True, exist_ok=True)
+    for stale in out.glob("*.md"):
         stale.unlink()
 
     index_rows: list[str] = []
-    for order, (path, slug, label, install, summary) in enumerate(PAGES, start=1):
+    for order, (path, slug, label, install, summary) in enumerate(pages, start=1):
         module: griffe.Object = package
         for part in filter(None, path.split(".")):
             module = _target(module.members[part])
@@ -298,7 +307,7 @@ def main() -> int:
             body += [f"## {KIND_TITLE[kind]}", ""]
             for name, obj in entries:
                 body += _entry(name, obj, problems, dotted)
-        (OUT / f"{slug}.md").write_text("\n".join(body).rstrip() + "\n")
+        (out / f"{slug}.md").write_text("\n".join(body).rstrip() + "\n")
         index_rows.append(
             f"| [`{dotted}`](/server-sdk/reference/{slug}/) | `{install}` | {summary} |"
         )
@@ -326,13 +335,13 @@ def main() -> int:
         "and may change in any release. See [Compatibility and stability](/server-sdk/compatibility/).",
         "",
     ]
-    (OUT / "index.md").write_text("\n".join(index))
+    (out / "index.md").write_text("\n".join(index))
 
     for problem in problems:
         print(f"error: {problem}", file=sys.stderr)
     if problems:
         return 1
-    print(f"wrote {len(PAGES) + 1} reference pages for {PACKAGE} {version} to {OUT}")
+    print(f"wrote {len(pages) + 1} reference pages for {PACKAGE} {version} to {out}")
     return 0
 
 

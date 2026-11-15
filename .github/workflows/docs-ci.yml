@@ -58,6 +58,11 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
         if: steps.changes.outputs.docs == 'true'
 
+      # A public name with no docstring, or one that cannot be resolved, must fail the build.
+      - name: Test the reference generator
+        if: steps.changes.outputs.docs == 'true'
+        run: cd docs && bun run test:reference
+
       - name: Install and build (fails on broken internal links)
         if: steps.changes.outputs.docs == 'true'
         run: cd docs && bun install --frozen-lockfile && bun run build

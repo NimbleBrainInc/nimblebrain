@@ -20,6 +20,7 @@
   ],
   "scripts": {
     "reference": "uv run --project ../packages/server-sdk-py --frozen --all-extras --python 3.13 --with griffe==2.4.1 python scripts/server_sdk_reference.py",
+    "test:reference": "uv run --project ../packages/server-sdk-py --frozen --all-extras --python 3.13 --with griffe==2.4.1 --with pytest python -B -m pytest -p no:cacheprovider scripts/",
     "predev": "bun run reference",
     "dev": "astro dev",
     "prebuild": "bun run reference",
