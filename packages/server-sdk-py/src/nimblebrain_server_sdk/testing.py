@@ -15,6 +15,12 @@ from pydantic import TypeAdapter
 from nimblebrain_server_sdk.extensions.facets import FACET_LEVELS, FACETS_EXTENSION_ID
 from nimblebrain_server_sdk.skills import SKILLS_EXTENSION_ID, GetSkillParams, ListSkillsParams
 
+__all__ = ["Mode", "assert_bounded_rows", "served_facets", "served_skills"]
+
+type Mode = Literal["auto", "legacy"]
+"""The protocol era a check connects on, as ``fastmcp.Client(mcp, mode=...)`` takes it:
+``"auto"`` negotiates 2026-07-28 and ``"legacy"`` runs the 2025-11-25 ``initialize`` handshake."""
+
 
 class _ListSkillsRequest(Request[ListSkillsParams, Literal["skills/list"]]):
     method: Literal["skills/list"] = "skills/list"
@@ -33,7 +39,7 @@ def _digest(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
-async def served_skills(mcp: FastMCP, mode: str = "auto") -> dict[str, dict[str, Any]]:
+async def served_skills(mcp: FastMCP, mode: Mode = "auto") -> dict[str, dict[str, Any]]:
     """What a host sees of ``mcp``'s skills, checked the way a host checks it.
 
     Connects in ``mode`` (``"auto"`` negotiates 2026-07-28, ``"legacy"`` 2025-11-25), calls
@@ -67,7 +73,7 @@ async def served_skills(mcp: FastMCP, mode: str = "auto") -> dict[str, dict[str,
     return entries
 
 
-async def served_facets(mcp: FastMCP, mode: str = "auto") -> dict[str, dict[str, Any]]:
+async def served_facets(mcp: FastMCP, mode: Mode = "auto") -> dict[str, dict[str, Any]]:
     """What a host sees of ``mcp``'s facets, checked the way a host checks it.
 
     Connects in ``mode``, takes the resources whose ``_meta`` carries the facets marker (never

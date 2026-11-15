@@ -11,6 +11,7 @@ from importlib.metadata import version as _version
 
 from nimblebrain_server_sdk.annotations import ADDS, CHANGES, READS
 from nimblebrain_server_sdk.announce import announce_resource_list_changed
+from nimblebrain_server_sdk.error_contract import ErrorContractMiddleware, add_error_contract
 from nimblebrain_server_sdk.errors import HostCapabilityMissing
 from nimblebrain_server_sdk.extensions.facets import (
     FACET_LEVELS,
@@ -67,6 +68,7 @@ __all__ = [
     "RESOURCE_NOT_FOUND",
     "RESPONSE_TOO_LARGE",
     "SKILLS_EXTENSION_ID",
+    "ErrorContractMiddleware",
     "FacetLevel",
     "HostCapabilityMissing",
     "HostResources",
@@ -76,6 +78,7 @@ __all__ = [
     "PlatformExtension",
     "SkillDefinition",
     "SkillsExtension",
+    "add_error_contract",
     "add_lifecycle_extension",
     "add_platform_extension",
     "add_skills",

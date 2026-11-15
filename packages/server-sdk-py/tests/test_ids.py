@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from nimblebrain_server_sdk import ids
 from nimblebrain_server_sdk.ids import CROCKFORD_ALPHABET, ULID_LENGTH, new_prefixed_id, new_ulid
 
@@ -33,11 +35,18 @@ def test_ulid_is_26_crockford_characters() -> None:
 
 
 def test_prefixed_id_is_prefix_underscore_ulid() -> None:
-    value = new_prefixed_id("ex_kind")
-    prefix, _, body = value.rpartition("_")
-    assert prefix == "ex_kind"
+    value = new_prefixed_id("ex2")
+    prefix, _, body = value.partition("_")
+    assert prefix == "ex2"
     assert len(body) == ULID_LENGTH
     assert set(body) <= _ALPHABET
+
+
+@pytest.mark.parametrize("prefix", ["", "Tk", "ex_kind", "bad-prefix", "tk ", "né"])
+def test_a_prefix_is_lowercase_letters_and_digits(prefix: str) -> None:
+    """Anything else could not be split back into prefix and body at the underscore."""
+    with pytest.raises(ValueError, match="lowercase ASCII letters and digits"):
+        new_prefixed_id(prefix)
 
 
 def test_timestamp_is_the_mint_millisecond() -> None:

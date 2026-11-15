@@ -20,7 +20,7 @@ from nimblebrain_server_sdk import (
     facet_count,
     facet_meta,
 )
-from nimblebrain_server_sdk.testing import served_facets
+from nimblebrain_server_sdk.testing import Mode, served_facets
 
 HEADERS = {"accept": "application/json, text/event-stream", "content-type": "application/json"}
 MODERN = "2026-07-28"
@@ -104,7 +104,7 @@ async def test_a_read_answers_one_json_text_holding_the_count():
 
 
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
-async def test_served_facets_finds_the_marked_resource_on_both_eras(mode: str):
+async def test_served_facets_finds_the_marked_resource_on_both_eras(mode: Mode):
     facets = await served_facets(_probe(count=2), mode)
 
     assert facets == {

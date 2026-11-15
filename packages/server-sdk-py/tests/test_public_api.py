@@ -92,11 +92,13 @@ def test_all_is_unchanged() -> None:
         set(sdk.__all__)
         == CONSUMED
         | {
+            "ErrorContractMiddleware",
             "FACET_LEVELS",
             "FacetLevel",
             "LIFECYCLE_EVENTS",
             "PlatformExtension",
             "SKILLS_EXTENSION_ID",
+            "add_error_contract",
             "lifecycle_meta",
         }
         | HOST_RESOURCES
@@ -306,3 +308,11 @@ def test_the_skill_eval_request_is_skills_list() -> None:
         "method": "skills/list",
         "params": {},
     }
+
+
+def test_testing_names_its_public_helpers() -> None:
+    """``__all__`` is the helpers; the request models the eval harness imports stay importable."""
+    assert set(testing.__all__) == {"Mode", "assert_bounded_rows", "served_facets", "served_skills"}
+    assert typing.get_args(testing.Mode.__value__) == ("auto", "legacy")
+    for check in (testing.served_skills, testing.served_facets):
+        assert typing.get_type_hints(check)["mode"] is testing.Mode

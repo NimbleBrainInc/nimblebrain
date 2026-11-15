@@ -57,9 +57,21 @@ async def secured_session(
 
 @asynccontextmanager
 async def system_session(engine: AsyncEngine) -> AsyncGenerator[AsyncConnection]:
-    """Cross-cutting access for reconcilers / admin jobs. Bypasses *workspace*
-    scoping via the ``system`` role flag — never the tenant wall. Use sparingly
-    and AUDIT every use (actor='system')."""
+    """A transaction under the ``system`` role, for a job that no request's identity covers.
+
+    A reconciler, a sweep or an admin job has no caller, so it has no tenant or workspace to
+    bind. This binds ``app.role = 'system'`` instead, and the tenant+workspace policy
+    (:func:`~nimblebrain_server_sdk.db.rls.rls_policy_sql`) lets that role past its
+    *workspace* predicate. It does not pass the tenant wall: the tenant predicate still
+    compares against ``app.tenant_id``, which this session leaves unset, so the job binds a
+    tenant for the rows it touches or sees none. The tenant-scoped and org-scoped policies
+    carry no ``system`` escape at all.
+
+    The role is a session setting, not a database role: the connection is still the app role,
+    and the binding is transaction-local like any other. Never open one on a request path,
+    where ``secured_session`` with the caller's context is the only correct session, and record
+    each use in the server's audit trail as the actor ``system``.
+    """
     async with pgbulkhead.system_session(engine, NIMBLEBRAIN) as conn:
         yield conn
 
