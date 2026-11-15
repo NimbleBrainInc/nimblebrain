@@ -2,6 +2,7 @@ import { estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type { ToolSchema } from "../engine/types.ts";
 import { getModelByString } from "../model/catalog.ts";
 import { log } from "../observability/log.ts";
+import { MAX_TOKEN_ESTIMATE_CORRECTION } from "./token-estimate-correction.ts";
 
 /**
  * Floor for the per-call safety margin. Binding for any model whose context
@@ -25,10 +26,8 @@ export const MIN_BUDGET_SAFETY_MARGIN_TOKENS = 8_192;
  * again on the million-token models. A prompt composed to fill a large window
  * then overflows by the drift the margin was supposed to cover.
  *
- * This bounds the error rather than measuring it. Reading the provider's own
- * `llm.response.usage` back to calibrate the estimate is the durable fix and
- * is tracked separately; this floor is what that would fall back to on a
- * conversation's first turn, where no measurement exists yet.
+ * This remains the floor on a conversation's first turn, or whenever there
+ * is no comparable provider usage from its previous turn.
  */
 export const BUDGET_SAFETY_MARGIN_RATIO = 0.05;
 
@@ -46,7 +45,7 @@ export function budgetSafetyMarginTokens(modelContextWindow: number): number {
 export interface ResolveMessageBudgetInput {
   /** Resolved provider-qualified model id (e.g. "anthropic:claude-opus-4-7"). */
   model: string;
-  /** Operator/tenant cap from runtime config. Acts as an upper bound only. */
+  /** Operator/tenant cap on estimated input tokens from runtime config. */
   configMaxInputTokens: number;
   /** The system prompt that will go on this call. */
   systemPrompt: string;
@@ -56,6 +55,8 @@ export interface ResolveMessageBudgetInput {
   maxOutputTokens: number;
   /** Override for the safety margin. Defaults to `budgetSafetyMarginTokens(context)`. */
   safetyMarginTokens?: number;
+  /** Previous same-model provider usage divided by its disjoint prompt estimate; 1 without data. */
+  estimateCorrection?: number;
 }
 
 export interface ResolveMessageBudgetResult {
@@ -69,6 +70,8 @@ export interface ResolveMessageBudgetResult {
     maxOutputTokens: number;
     safetyMarginTokens: number;
     configMaxInputTokens: number;
+    /** Conservative correction applied to both the configured cap and model headroom. */
+    estimateCorrection: number;
     /** True when the composed headroom was the binding constraint. False when the config cap was. */
     boundedByModel: boolean;
   };
@@ -78,21 +81,20 @@ export interface ResolveMessageBudgetResult {
  * Compose the per-call message token budget from first principles:
  *
  *   budget = min(
- *     configMaxInputTokens,
- *     modelContextWindow − systemTokens − toolTokens − maxOutputTokens − safetyMargin
+ *     configMaxInputTokens / correction − systemTokens − toolTokens,
+ *     (modelContextWindow − maxOutputTokens − safetyMargin) / correction
+ *       − systemTokens − toolTokens
  *   )
  *
- * The model's catalog `limits.context` is the absolute ceiling. Subtracting
- * the static per-call overhead (system + tools + reserved output + safety)
- * yields the maximum tokens we can spend on message history without the
- * provider rejecting the request for exceeding the context window. The
- * operator's `configMaxInputTokens` caps that headroom from below — never
- * raises it.
+ * The model's catalog `limits.context` is the absolute ceiling. The
+ * correction reduces each estimated input allowance before subtracting the
+ * static system and tool estimates. The operator's `configMaxInputTokens`
+ * caps that allowance from below — never raises it. With no prior
+ * measurement, correction is 1 and the model-window safety margin remains.
  *
  * If the resolved model isn't in the catalog (typo, brand-new model
- * pre-sync), fall back to `configMaxInputTokens` directly. This preserves
- * the prior behavior for unknown models rather than silently zeroing the
- * budget; missing catalog data should not break sends.
+ * pre-sync), fall back to the corrected config cap. Missing catalog data
+ * should not silently zero the budget or break sends.
  *
  * Estimators are intentionally cheap and conservative:
  *   - System prompt: chars/4 (text-only, matches `approxTokens` elsewhere).
@@ -110,9 +112,18 @@ export function resolveMessageBudget(input: ResolveMessageBudgetInput): ResolveM
   // Scales with the window, so the margin tracks the estimator drift it exists
   // to absorb. A catalog miss has no window to scale against and takes the floor.
   const safety = input.safetyMarginTokens ?? budgetSafetyMarginTokens(modelCtx ?? 0);
+  const measured = input.estimateCorrection;
+  const correction =
+    measured !== undefined && Number.isFinite(measured)
+      ? Math.min(MAX_TOKEN_ESTIMATE_CORRECTION, Math.max(1, measured))
+      : 1;
 
   const systemTokens = Math.ceil(input.systemPrompt.length / 4);
   const toolTokens = input.tools.reduce((sum, t) => sum + estimateToolDescriptionTokens(t), 0);
+  const correctedConfigCap = Math.max(
+    0,
+    Math.floor(input.configMaxInputTokens / correction - systemTokens - toolTokens),
+  );
 
   const baseBreakdown = {
     modelContextWindow: modelCtx,
@@ -121,28 +132,27 @@ export function resolveMessageBudget(input: ResolveMessageBudgetInput): ResolveM
     maxOutputTokens: input.maxOutputTokens,
     safetyMarginTokens: safety,
     configMaxInputTokens: input.configMaxInputTokens,
+    estimateCorrection: correction,
   };
 
   if (modelCtx === null) {
-    // Catalog miss. Fall back to the config cap so the call still ships,
-    // but warn loudly: this is the only path where `configMaxInputTokens`
-    // re-acquires its old "target" semantics (no overhead subtracted), so
-    // a typo'd model id or a brand-new model that's ahead of the vendored
-    // catalog can still overflow on the first call. The engine's reactive
-    // recovery (one retry, halved budget) is the safety net; operators
-    // tuning catalog sync should see this in stderr aggregates.
+    // Catalog miss. Fall back to the corrected config cap so the call still
+    // ships, but warn: without the model's context limit the provider can
+    // still reject a prompt. Reactive recovery is the safety net.
     log.warn(
       `[runtime] resolveMessageBudget: model "${input.model}" not in catalog; ` +
-        `falling back to configMaxInputTokens=${input.configMaxInputTokens} as budget. ` +
-        `Per-call overhead is NOT subtracted on this path — the call may overflow and rely on engine recovery.`,
+        `falling back to corrected history budget=${correctedConfigCap}; ` +
+        `unknown model context may still require engine recovery.`,
     );
     return {
-      budget: input.configMaxInputTokens,
+      budget: correctedConfigCap,
       breakdown: { ...baseBreakdown, boundedByModel: false },
     };
   }
 
-  const headroom = modelCtx - systemTokens - toolTokens - input.maxOutputTokens - safety;
+  const headroom = Math.floor(
+    (modelCtx - input.maxOutputTokens - safety) / correction - systemTokens - toolTokens,
+  );
   if (headroom <= 0) {
     // The static per-call cost already exceeds the context window. The
     // call will almost certainly fail at the provider; returning 0 lets
@@ -151,11 +161,11 @@ export function resolveMessageBudget(input: ResolveMessageBudgetInput): ResolveM
     return { budget: 0, breakdown: { ...baseBreakdown, boundedByModel: true } };
   }
 
-  if (headroom <= input.configMaxInputTokens) {
+  if (headroom <= correctedConfigCap) {
     return { budget: headroom, breakdown: { ...baseBreakdown, boundedByModel: true } };
   }
   return {
-    budget: input.configMaxInputTokens,
+    budget: correctedConfigCap,
     breakdown: { ...baseBreakdown, boundedByModel: false },
   };
 }

@@ -360,6 +360,7 @@ import { buildMidTurnCompaction } from "./mid-turn-compaction.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
 import { resolveMessageBudget } from "./resolve-message-budget.ts";
 import { resolveThinking } from "./resolve-thinking.ts";
+import { tokenEstimateCorrection } from "./token-estimate-correction.ts";
 import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
 
 /**
@@ -371,6 +372,15 @@ import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
  */
 function applyClearable<T>(current: T | undefined, patched: T | null | undefined): T | undefined {
   return patched === undefined ? current : (patched ?? undefined);
+}
+
+/** Read the last run's measured drift only when this conversation has prior turns. */
+async function correctionForConversation(
+  binding: RunConversationBinding | undefined,
+  model: string,
+): Promise<number> {
+  if (!binding?.resumed) return 1;
+  return tokenEstimateCorrection(await binding.store.readEvents(binding.conversation.id), model);
 }
 
 /**
@@ -1848,12 +1858,14 @@ export class Runtime {
     // window minus the static per-call overhead. The configured value is
     // treated as a CAP — never a target. Per-run override beats config beats
     // default. See `src/runtime/resolve-message-budget.ts`.
+    const estimateCorrection = await correctionForConversation(binding, spec.model);
     const messageBudget = resolveMessageBudget({
       model: spec.model,
       configMaxInputTokens: this.getMaxInputTokens(),
       systemPrompt,
       tools,
       maxOutputTokens: resolvedMaxOutputTokens,
+      estimateCorrection,
     });
 
     // ── The messages ────────────────────────────────────────────────────────
