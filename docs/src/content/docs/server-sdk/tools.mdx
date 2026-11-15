@@ -56,7 +56,7 @@ def new_note_id() -> str:
     return new_prefixed_id("nt")   # nt_01K9Z3M0V8Q4T6W2X5Y7ZABCDE
 ```
 
-- **The prefix names the kind of record.** It is lowercase ASCII letters and digits; anything else raises `ValueError`, because the underscore is what separates the prefix from the body.
+- **The prefix names the kind of record.** It is lowercase ASCII letters and digits, in one segment (`nt`) or several joined by single underscores (`po_cmp`); anything else raises `ValueError`. A ULID has no underscore, so the last underscore of an id separates the prefix from the body.
 - **The body is a ULID:** 26 characters of Crockford base32, a 48-bit millisecond timestamp then 80 random bits. It reveals no row count.
 - **Strictly increasing in one process,** from any thread. Within a millisecond the random part is incremented, and a clock that steps back holds at the last millisecond.
 - **Uniqueness is the primary key's job.** The random bits make a collision across replicas unlikely, not impossible.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
@@ -89,3 +91,30 @@ async def test_the_error_is_recorded_once(monkeypatch: pytest.MonkeyPatch) -> No
     assert [(err.code, err.message, err.detail) for err in recorded] == [
         (ErrorCode.NOT_FOUND, "No such note.", "notes row 41 is gone")
     ]
+
+
+FASTMCP_LOGGER = "fastmcp.server.server"
+
+
+async def test_fastmcp_logs_no_traceback_for_a_contract_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """FastMCP reports a tool's exception at error level; a contract error is not one."""
+    with caplog.at_level(logging.DEBUG, logger=FASTMCP_LOGGER):
+        async with Client(server(contract=True)) as client:
+            await client.call_tool("classified", {}, raise_on_error=False)
+            await client.call_tool("refused", {}, raise_on_error=False)
+    assert [r for r in caplog.records if r.name == FASTMCP_LOGGER and r.exc_info] == []
+
+
+async def test_fastmcp_still_logs_an_unclassified_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.DEBUG, logger=FASTMCP_LOGGER):
+        async with Client(server(contract=True)) as client:
+            with pytest.raises(ToolError):
+                await client.call_tool("broken", {})
+    (record,) = [r for r in caplog.records if r.name == FASTMCP_LOGGER and r.exc_info]
+    assert record.levelno == logging.ERROR
+    assert record.exc_info is not None
+    assert isinstance(record.exc_info[1], RuntimeError)

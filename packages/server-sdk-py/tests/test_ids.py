@@ -42,9 +42,20 @@ def test_prefixed_id_is_prefix_underscore_ulid() -> None:
     assert set(body) <= _ALPHABET
 
 
-@pytest.mark.parametrize("prefix", ["", "Tk", "ex_kind", "bad-prefix", "tk ", "né"])
-def test_a_prefix_is_lowercase_letters_and_digits(prefix: str) -> None:
-    """Anything else could not be split back into prefix and body at the underscore."""
+@pytest.mark.parametrize("prefix", ["tk", "ex2", "po_cmp", "a_b_c", "1a"])
+def test_a_prefix_may_join_segments_with_underscores(prefix: str) -> None:
+    """A ULID has no underscore, so the last one always separates prefix from body."""
+    value = new_prefixed_id(prefix)
+    head, _, body = value.rpartition("_")
+    assert head == prefix
+    assert len(body) == ULID_LENGTH
+    assert set(body) <= _ALPHABET
+
+
+@pytest.mark.parametrize(
+    "prefix", ["", "Tk", "bad-prefix", "tk ", "né", "_tk", "tk_", "po__cmp", "_"]
+)
+def test_a_malformed_prefix_is_refused(prefix: str) -> None:
     with pytest.raises(ValueError, match="lowercase ASCII letters and digits"):
         new_prefixed_id(prefix)
 
