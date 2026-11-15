@@ -1,0 +1,51 @@
+---
+title: Compatibility and stability
+description: The Python, FastMCP, mcp, protocol and Postgres versions nimblebrain-server-sdk supports, what may change in a 0.x release, and the deprecation policy.
+---
+
+## Supported versions
+
+| | Supported |
+|---|---|
+| Python | 3.13, 3.14 |
+| FastMCP | 4.0 and later. There is no ceiling; a weekly run tests the newest release. |
+| `mcp` | 2.0 up to, not including, 2.4. Each new `mcp` minor is admitted by an SDK release. |
+| MCP protocol | `2026-07-28` and `2025-11-25` |
+| Postgres (`[db]`, `[outbox]`) | 13 and later |
+
+A server still on FastMCP 3 cannot install the SDK: FastMCP 3 needs `mcp` below 2 and the SDK needs `mcp` 2 or later, so the resolver reports the conflict instead of moving the server across a major.
+
+`[db]` pins [`pgbulkhead`](https://pypi.org/project/pgbulkhead/) to one exact version, because the SQL it renders is held byte for byte by the SDK's tests.
+
+## By protocol era
+
+| Feature | `2026-07-28` | `2025-11-25` |
+|---|---|---|
+| Tools, annotations, the error contract | Yes | Yes |
+| Change announcements | Yes | Yes |
+| Skills (`skills/list`, `skills/get`, `skill://` files) | Yes | Yes; the extension declaration is not carried |
+| Facets, lifecycle | Yes | The declaration is not carried, so a host does not read them |
+| Host resources | No | Yes, when the host advertises the capability |
+| Notifications outbox | Yes | Yes |
+
+## What may change
+
+`0.x` is pre-stable.
+
+- **A minor release (`0.7` to `0.8`) may change the Python API.** Each change is listed under "Breaking" in the changelog.
+- **A patch release (`0.7.0` to `0.7.1`) never changes the API.**
+- **The wire does not change within a major.** The `ai.nimblebrain/*` identifiers and `_meta` keys are a contract with the host.
+- **The SQL `[db]` renders is a schema contract.** Migrations replay it, so a release that changes it says so and says what to migrate.
+- **A name that starts with an underscore, or is not in a module's `__all__`, is not part of the API.** The [API reference](/server-sdk/reference/) lists exactly the public names.
+
+Pin a minor in a server's dependencies: `nimblebrain-server-sdk>=0.7,<0.8`.
+
+## Deprecation
+
+A public name is deprecated for at least one minor release before it is removed. While deprecated it keeps working, emits a `DeprecationWarning` that names its replacement, and is listed under "Deprecated" in the changelog.
+
+A server whose tests turn warnings into errors (`filterwarnings = ["error"]`) learns of a deprecation one release before the removal.
+
+## Changelog
+
+[`CHANGELOG.md`](https://github.com/NimbleBrainInc/nimblebrain/blob/main/packages/server-sdk-py/CHANGELOG.md) in the package's folder.

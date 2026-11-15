@@ -1,0 +1,69 @@
+---
+title: Facets
+description: Serve a count the NimbleBrain host shows without being asked, such as tickets blocked, with facet_meta and facet_count.
+---
+
+A facet is a count a host shows without being asked: tickets blocked, drafts awaiting review. The protocol is the [facets extension](/extensions/facets/), `ai.nimblebrain/facets`. The SDK supplies the identifier, the marker and the read's body.
+
+```python
+from nimblebrain_server_sdk import (
+    FACETS_EXTENSION_ID,
+    add_platform_extension,
+    facet_count,
+    facet_meta,
+)
+
+add_platform_extension(mcp, FACETS_EXTENSION_ID)   # 1. advertise the extension
+
+@mcp.resource(                                     # 2. list the facet as a resource
+    "acme://facets/blocked",
+    name="tickets-blocked",
+    title="Tickets blocked",
+    mime_type="application/json",
+    meta=facet_meta("critical"),
+)
+async def tickets_blocked() -> str:
+    return facet_count(await count_blocked())      # 3. answer the read with a count
+```
+
+The [quickstart server](/server-sdk/quickstart/) has a facet in a complete file.
+
+## The rules
+
+- **The marker is the contract.** A host takes a facet from the `_meta` key `facet_meta` writes, never from the URI's shape.
+- **`title` is the label,** rendered after the number: "3 Tickets blocked".
+- **The level** (`critical`, `warning` or `info`) belongs to the facet, not to a reading. `facet_meta` raises `ValueError` for any other value.
+- **The read takes no arguments** and counts at the source, for the caller's identity.
+- **`facet_count` refuses** anything but an integer of at least zero. A boolean or a float raises.
+- **Only a `2026-07-28` connection sees the declaration.** On a 2025-era connection the marked resources are ordinary resources a host ignores.
+
+## Test it
+
+`served_facets` finds the marked resources the way a host does, checks each one's title, MIME type and level, and reads each count:
+
+```python
+from nimblebrain_server_sdk.testing import served_facets
+
+assert await served_facets(mcp, "auto") == {
+    "tickets-blocked": {"title": "Tickets blocked", "level": "critical", "count": 0}
+}
+```
+
+## Other platform extensions
+
+`add_platform_extension(mcp, identifier, settings)` advertises any `ai.nimblebrain/*` extension that adds no methods of its own. FastMCP refuses a registration once the server is serving, and a second registration of one identifier, so register at import.
+
+A server with several views names the view that shows a kind of record on that record's resource template:
+
+```python
+from nimblebrain_server_sdk import record_view_meta
+
+@mcp.resource("acme://boards/{board_id}", name="board", meta=record_view_meta("ui://acme/boards"))
+async def board(board_id: str) -> str: ...
+```
+
+## Related
+
+- [Facets extension](/extensions/facets/): the protocol and what the host does
+- [Testing](/server-sdk/testing/)
+- [API reference](/server-sdk/reference/core/)

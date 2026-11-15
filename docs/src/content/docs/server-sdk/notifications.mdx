@@ -1,0 +1,110 @@
+---
+title: Notifications
+description: Record facts nobody asked for in an outbox table with nimblebrain-server-sdk[outbox], inside the transaction that made them true, and serve the poll the NimbleBrain host reads.
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import outboxNotes from '@sdk-examples/outbox_notes.py?raw';
+import outboxMigrate from '@sdk-examples/outbox_migrate.py?raw';
+import testOutbox from '@sdk-examples/test_outbox_notes.py?raw';
+
+A server that learns something nobody asked it about, such as a domain going active or a reply landing, records it in an outbox table beside its own. The host polls the outbox, routes what it finds, and a connector delivers it. The server never calls the host, learns its address, or asserts a workspace identity of its own. The protocol is [Notifications](/host/notifications/); `nimblebrain-server-sdk[outbox]` is the server half of it.
+
+```bash
+uv add 'nimblebrain-server-sdk[outbox]'
+```
+
+`[outbox]` installs `[db]` and `[observability]`: the outbox rows live under the same row-level security as the server's own tables, and its counters record on the same registry. Read [Data](/server-sdk/data/) first; this page builds on its notes server.
+
+<Aside type="note">
+A notification is a fact **nobody asked for**. "The job you started finished" is not one: that is an MCP Task, which the host already polls as a client. A server with no database to keep an outbox in uses Tasks.
+</Aside>
+
+## 1. Declare the outbox
+
+The server's catalog entry declares the outbox's URI. The host polls what the entry declares, so the server registers the same string.
+
+```json
+"_meta": { "ai.nimblebrain/host": {
+  "host_version": "1.0",
+  "notifications": {
+    "resource": "notes://notifications",
+    "description": "Notes shared with someone."
+  }
+}}
+```
+
+The URI is the server's own name: a scheme, `://`, then slash-separated segments of lowercase letters and digits, with `-` or `.` inside a segment (`acme://inbox`, `acme://mail.bounces/hard`). `register_outbox` refuses anything a URL parser would rewrite (a percent escape, a port, a dot segment, a capital, or a scheme such as `http`), because it would be registered at one address and read at another.
+
+Declaring an outbox grants no privilege. A workspace admin raises the source's level ceiling, which starts at `info`, before anything from it can match a route. See [levels](/using/notification-reference/#levels).
+
+## 2. Add the tables
+
+`outbox_ddl` returns the tables, their indexes and the row-level security policy, one statement per item.
+
+<Code code={outboxMigrate} lang="python" title="outbox_migrate.py" />
+
+## 3. Serve the outbox and emit
+
+<Code code={outboxNotes} lang="python" title="outbox_notes.py" />
+
+- **`register_outbox`** takes the session factory and identity function the server's tools already use, so the outbox is authorized by the same code as the tools.
+- **`emit` runs on the same connection and transaction as the state change.** A rolled-back change takes its event with it, and a committed one cannot lose it.
+- **`eventId` is the idempotency key,** unique per workspace. Emitting the same id again is a no-op that returns `None`. Use the upstream's delivery id when there is one.
+
+## The envelope
+
+An MCP Triggers and Events `EventOccurrence`, with what the host renders and routes on under `_meta["ai.nimblebrain/notification"]`. `emit` builds that block from its keywords.
+
+| Field | |
+|---|---|
+| `eventId` | Required. The idempotency key. |
+| `name` | Required. The server's own dotted, lower-case name (`domain.active`), with no whitespace. |
+| `timestamp` | Required. ISO 8601 with an offset, or an aware `datetime`. |
+| `data` | Required JSON object. Opaque: nothing in the SDK or the host reads into it. |
+| `title`, `body`, `subject`, `level`, `link_resource` | Optional presentation, passed to `emit` as keywords. `level` is `info`, `attention` or `urgent`. |
+
+`emit` **validates and raises; it does not repair.** It refuses whatever the host's parser would drop, because the host's poll moves past a dropped envelope and the notification is lost:
+
+- a length over a limit, counted as the host counts it, in UTF-16 code units: `TITLE_MAX` (200), `BODY_MAX` (2000), `SUBJECT_MAX` (200), event id and name 200, link 2048;
+- whitespace in a name;
+- a presentation field that is `null` (leave it out instead);
+- an envelope over 64 KiB as the host measures it;
+- a `link_resource` with no scheme, or a `javascript:`, `data:`, `vbscript:`, `file:` or `blob:` one.
+
+Because the raise rolls the caller's transaction back, trim unbounded upstream text deliberately with the exported limits, as `share_note` does.
+
+## The poll
+
+`register_outbox` serves the template `<resource>{?cursor,maxEvents,maxAgeMs}` and answers:
+
+```json
+{ "events": [], "cursor": "...", "truncated": false, "hasMore": false }
+```
+
+Events come oldest first, each with its own cursor.
+
+- **`cursor`** is opaque. A read with none starts from now: a cursor and no history.
+- **`truncated: true`** means events after the cursor exist that this answer will never carry: the row cap dropped them, `maxAgeMs` excluded them, or the cursor cannot be honoured, as after a database restore. It is not an error.
+- **`hasMore: true`** means the batch was cut at `maxEvents`; poll again at once.
+- **`on_read(ctx, conn)`**, an argument to `register_outbox`, runs before the read in the same transaction and may return a `nextPollMs`. A server that watches something upstream refreshes it there, so the poll is its tick and it needs no scheduler.
+
+**A poll never skips a row that was in flight when it ran.** Each row records the id of the transaction that wrote it, a poll returns only rows below the oldest transaction still running, and the cursor advances no further. A row that raced costs one poll of latency. Delivery is at least once; the host removes duplicates by source and `eventId`.
+
+## Retention and metrics
+
+- **Retention needs no sweeper.** A read stamps the rows it returned and deletes what has carried a stamp for seven days, in the same transaction. An outbox nobody polls never prunes, so `emit` holds each workspace to `max_rows` (10,000), dropping the oldest; that loss is what `truncated` reports.
+- **Metrics** are on the `[observability]` registry: `notify_emitted_total{name}`, `notify_read_total`, `notify_outbox_depth` (undelivered rows after a poll) and `notify_outbox_capped_total`. `name` is the only label, so keep event names a closed set and put per-event values in `data`.
+- **Postgres 13 or later,** and an app role that is neither superuser nor `BYPASSRLS`.
+
+## Test it
+
+<Code code={testOutbox} lang="python" title="test_outbox_notes.py" />
+
+Give the test database its own Postgres instance: a poll reads below the instance-wide snapshot horizon, so a transaction open anywhere on the instance holds it back.
+
+## Related
+
+- [Notifications](/host/notifications/): the protocol, and where the events end up
+- [Data](/server-sdk/data/)
+- [API reference](/server-sdk/reference/outbox/)

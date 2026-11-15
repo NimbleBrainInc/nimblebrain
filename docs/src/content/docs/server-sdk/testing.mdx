@@ -1,0 +1,90 @@
+---
+title: Testing
+description: Test a Python MCP server the way a NimbleBrain host reads it — on both protocol eras, with the SDK's testing helpers, and with a verified identity for [db].
+---
+
+import { Code } from '@astrojs/starlight/components';
+import testNotes from '@sdk-examples/test_notes.py?raw';
+
+## Both protocol eras
+
+A host may connect to a server on either protocol era, and some features differ between them, so run each test on both. `fastmcp.Client` chooses the era with `mode`:
+
+| `mode` | Era | Handshake |
+|---|---|---|
+| `"auto"` | `2026-07-28` | `server/discover`; extensions are declared |
+| `"legacy"` | `2025-11-25` | `initialize`; carries no extensions |
+
+<Code code={testNotes} lang="python" title="test_notes.py" />
+
+`nimblebrain_server_sdk.testing.Mode` is the type of `mode`: `Literal["auto", "legacy"]`. Annotate the parameter with it so a type checker accepts the parametrized value.
+
+What differs by era:
+
+| Feature | `2026-07-28` | `2025-11-25` |
+|---|---|---|
+| Extension declarations (facets, lifecycle, skills) | Declared | Not carried; marked resources and tools still work |
+| `skills/list`, `skills/get` | Answered | Answered |
+| [Host resources](/server-sdk/host-resources/) | Not available | Available when the host advertises it |
+| [Change announcements](/server-sdk/announcing-changes/) | Sent | Sent |
+
+## Setup
+
+```bash
+uv add --dev pytest pytest-asyncio
+```
+
+```toml title="pyproject.toml"
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+```
+
+## The helpers
+
+`nimblebrain_server_sdk.testing` checks a server the way a host reads it. Each helper connects in the `mode` it is given.
+
+### `served_skills`
+
+`served_skills(mcp, mode)` lists the skills, reads every file back through `resources/read` and checks it against its listed digest and size, checks that `skills/get` answers each skill with its list entry, and on `2026-07-28` that the extension is declared. Returns the entries by `SKILL.md` URI. See [Skills](/server-sdk/skills/#test-it).
+
+### `served_facets`
+
+`served_facets(mcp, mode)` finds the resources marked as facets, checks each one's title, MIME type and level, reads each count, and on `2026-07-28` checks that the extension is declared. Returns `{name: {"title", "level", "count"}}`. See [Facets](/server-sdk/facets/#test-it).
+
+### `assert_bounded_rows`
+
+`assert_bounded_rows(rows, unbounded=(...))` asserts that each row of a listing has a `uri`, none of the named fields, and no text over `max_chars` (1,000) at any depth.
+
+```python
+from nimblebrain_server_sdk.testing import assert_bounded_rows
+
+async def test_a_listing_is_bounded() -> None:
+    await store.save(title="t", body="x" * 5_000)       # longer than max_chars
+    result = await client.call_tool("list_documents", {})
+    assert_bounded_rows(result.structured_content["rows"], unbounded=("body",))
+```
+
+Seed each unbounded field longer than `max_chars` first, so a field that leaks under another name fails the length check too. An empty page proves nothing, so it fails.
+
+## Identity for `[db]`
+
+The in-memory client sends no HTTP headers, so a tool that reads its identity from them is refused as `auth_required`. `nimblebrain_server_sdk.db.testing.edge_client` connects a client that sends the identity headers the way NimbleBrain's edge does:
+
+```python
+from nimblebrain_server_sdk.db.testing import edge_client
+
+async def test_a_workspace_reads_only_its_own_notes() -> None:
+    async with edge_client(mcp, tenant_id="t1", workspace_id="ws_a") as ws_a:
+        await ws_a.call_tool("add_note", {"text": "from a"})
+    async with edge_client(mcp, tenant_id="t1", workspace_id="ws_b") as ws_b:
+        assert (await ws_b.call_tool("list_notes", {})).data == []
+```
+
+It takes `mode` like the other helpers, and `headers` for any others the server reads. It is for tests only and changes nothing in the server. The complete test, with its database fixture, is in [Data](/server-sdk/data/#in-a-test).
+
+`nimblebrain_server_sdk.db.testing.use_limiter(db, limiter)` runs the block under a small workspace limiter, to test what a server does when it is at capacity.
+
+## Related
+
+- [Compatibility and stability](/server-sdk/compatibility/)
+- [API reference](/server-sdk/reference/testing/)

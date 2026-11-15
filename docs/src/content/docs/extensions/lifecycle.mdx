@@ -3,7 +3,7 @@ title: Lifecycle
 description: Be told when your server is installed into a workspace and when it is about to be removed, with the ai.nimblebrain/lifecycle MCP extension, so per-workspace state you hold elsewhere is set up and released with it.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 A server that keeps anything outside itself for a workspace (a tenancy at a
 vendor, a storage bucket, a sending domain, a webhook registration) needs to
@@ -15,8 +15,10 @@ Lifecycle tells you both. It is an
 [MCP extension](https://modelcontextprotocol.io/extensions/overview),
 `ai.nimblebrain/lifecycle`, built on the core Tools primitive. It adds no
 method. You advertise the extension, mark one of your tools per event with a
-`_meta` key, and the host calls that tool with an ordinary `tools/call`. You
-need no NimbleBrain SDK, and nothing goes in your catalog entry.
+`_meta` key, and the host calls that tool with an ordinary `tools/call`.
+Nothing goes in your catalog entry. Any MCP SDK can do it; in Python the
+[Server SDK](/server-sdk/lifecycle/) does it with one decorator per event, shown
+under [Complete examples](#complete-examples).
 
 ## What it enables
 
@@ -132,10 +134,45 @@ a warning on the install:
 
 ## Complete examples
 
-Both servers advertise the extension and mark two handlers. Neither needs
-anything beyond the MCP SDK.
+Each server advertises the extension and marks two handlers.
 
-### TypeScript
+<Tabs syncKey="sdk">
+<TabItem label="SDK (Python)">
+
+[`nimblebrain-server-sdk`](/server-sdk/lifecycle/) advertises the extension and marks the tool. It refuses, when the server is built, a handler that requires an argument or a second handler for one event, and registers each handler without task support.
+
+```python title="server.py"
+from fastmcp import FastMCP
+from nimblebrain_server_sdk import CHANGES, add_lifecycle_extension
+
+mcp = FastMCP("acme-outreach")
+lifecycle = add_lifecycle_extension(mcp)
+
+
+@lifecycle.handler("ready", annotations=CHANGES)
+async def workspace_ready(reason: str | None = None) -> str:
+    """Records that this workspace has the connector installed."""
+    state = await request_tenancy(current_workspace())  # an upsert
+    if reason == "install":
+        return "Setting up your sending workspace. It will be ready in a few seconds."
+    return f"Sending workspace: {state}."
+
+
+@lifecycle.handler("removing", annotations=CHANGES)
+async def workspace_removing() -> str:
+    """Records that this workspace's tenancy should be released."""
+    await release_tenancy(current_workspace())
+    return "Releasing your sending workspace."
+```
+
+A complete, tested server is in the [Server SDK lifecycle guide](/server-sdk/lifecycle/).
+
+</TabItem>
+<TabItem label="Wire (any SDK)">
+
+Neither server needs anything beyond an MCP SDK.
+
+**TypeScript**
 
 ```ts title="server.ts"
 import { McpServer } from "@modelcontextprotocol/server";
@@ -182,7 +219,7 @@ server.registerTool(
 );
 ```
 
-### Python (FastMCP)
+**Python (FastMCP), without the Server SDK**
 
 ```python title="server.py"
 from fastmcp import FastMCP
@@ -219,6 +256,9 @@ async def workspace_removing() -> str:
     await release_tenancy(current_workspace())
     return "Releasing your sending workspace."
 ```
+
+</TabItem>
+</Tabs>
 
 `request_tenancy` and `release_tenancy` record intent, and nothing in them calls
 the vendor. [Privileged work](#privileged-work-record-it-act-on-it-elsewhere)

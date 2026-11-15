@@ -1,0 +1,84 @@
+---
+title: Server SDK quickstart
+description: Install nimblebrain-server-sdk, write a minimal connector in Python, run it, test it on both protocol eras, and connect it to NimbleBrain.
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import notes from '@sdk-examples/notes.py?raw';
+import testNotes from '@sdk-examples/test_notes.py?raw';
+
+`nimblebrain-server-sdk` is the Python package for building an MCP server that runs on NimbleBrain. It gives a [FastMCP](https://gofastmcp.com) server what NimbleBrain's host expects of it: annotated tools, change announcements, the `ai.nimblebrain` extensions, skills, and one error contract. The MCP protocol itself comes from FastMCP and the `mcp` package.
+
+This page builds a connector: a server with tools and no interface. To add an interface, see [Build for NimbleBrain](/build/).
+
+## 1. Install
+
+Python 3.13 or later.
+
+```bash
+uv init notes && cd notes
+uv add nimblebrain-server-sdk
+```
+
+`pip install nimblebrain-server-sdk` works too.
+
+## 2. Write the server
+
+<Code code={notes} lang="python" title="notes.py" />
+
+- Every tool carries `READS`, `ADDS` or `CHANGES`. Under the MCP specification's defaults an unannotated tool is a destructive write. See [Tools and annotations](/server-sdk/tools/).
+- `save_note` announces its write so open views re-read. See [Announcing changes](/server-sdk/announcing-changes/).
+- A failure is a `ServiceError` with a code from a closed set. `add_error_contract` returns it to the caller in the shape the host reads. See [Errors](/server-sdk/errors/).
+- The resource marked with `facet_meta` is a count the host shows beside the server's name. See [Facets](/server-sdk/facets/).
+
+## 3. Run it
+
+```bash
+uv run python notes.py
+```
+
+The server listens at `http://127.0.0.1:8000/mcp`. Any MCP client can connect to it.
+
+## 4. Test it
+
+<Code code={testNotes} lang="python" title="test_notes.py" />
+
+```bash
+uv add --dev pytest pytest-asyncio
+uv run pytest
+```
+
+Set `asyncio_mode = "auto"` under `[tool.pytest.ini_options]` in `pyproject.toml`, so `async def` tests run.
+
+`fastmcp.Client(mcp, mode=...)` chooses the protocol era: `"auto"` negotiates `2026-07-28` and `"legacy"` runs the `2025-11-25` `initialize` handshake. A host may connect on either, so test both. See [Testing](/server-sdk/testing/).
+
+## 5. Connect it to NimbleBrain
+
+NimbleBrain connects to a server by URL and never starts one. With the server running, point a development workspace at it and allow the loopback address:
+
+```json title="<workDir>/workspaces/<wsId>/workspace.json"
+{
+  "connectors": [
+    { "url": "http://127.0.0.1:8000/mcp", "serverName": "notes" }
+  ]
+}
+```
+
+```json title="<workDir>/nimblebrain.json"
+{ "allowInsecureRemotes": true }
+```
+
+Start NimbleBrain (`bun run dev` in the platform repository) and ask the agent to save a note.
+
+<Aside type="caution">
+  `allowInsecureRemotes` lets every connector in the instance reach loopback and private addresses. It is a development switch. For a deployed NimbleBrain, serve the connector over HTTPS and add it to the [connectors catalog](/config/connectors-catalog/).
+</Aside>
+
+
+## Next
+
+- Give the agent instructions for your tools: [Skills](/server-sdk/skills/).
+- Keep data per tenant and workspace in Postgres: [Data](/server-sdk/data/).
+- Serve metrics, logs and traces: [Observability](/server-sdk/observability/).
+- Start from a repository with CI, packaging and a manifest already set up: the [Python server template](https://github.com/NimbleBrainInc/mcp-server-template-python).
+- Every public name: the [API reference](/server-sdk/reference/).

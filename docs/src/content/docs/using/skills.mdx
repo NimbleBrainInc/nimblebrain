@@ -186,12 +186,35 @@ Uninstalling the connector removes its materialized overlays.
 
 A server publishes its own guidance as skills through the MCP [Skills Extension](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/seps/2640-skills-extension.md) (`io.modelcontextprotocol/skills`). The platform declares the extension when it connects, and a server that does not declare it publishes no skills: its `skill://` resources are ordinary resources.
 
-To publish skills, a server must:
+To publish skills, a server declares the extension, answers `skills/list` and `skills/get`, and serves each file:
+
+<Tabs syncKey="sdk">
+<TabItem label="SDK (Python)">
+
+[`nimblebrain-server-sdk`](/server-sdk/skills/) does all of it in one call for a FastMCP server. A skill is a directory holding a `SKILL.md` and its reference files.
+
+```python title="server.py"
+from pathlib import Path
+
+from fastmcp import FastMCP
+from nimblebrain_server_sdk import add_skills
+
+mcp = FastMCP("notes")
+add_skills(mcp, [Path(__file__).parent / "skills" / "notes"])
+```
+
+`add_skills` declares the extension, answers `skills/list` and `skills/get` with each file's digest and size, and serves every file at `skill://<skill-path>/<file-path>`. It checks each skill when the server is built, so a `SKILL.md` with no frontmatter or a name that differs from its directory fails then. Generated skills, the checks and the test helper are in the [Server SDK skills guide](/server-sdk/skills/).
+
+</TabItem>
+<TabItem label="Wire (any SDK)">
 
 1. Declare the extension in its capabilities: `"extensions": { "io.modelcontextprotocol/skills": {} }`, alongside the `resources` capability. On a `2026-07-28` connection the platform asks only a server that declares it. On a 2025-era connection it asks every server once per discovery window, because some SDKs (the Python `mcp` SDK among them) leave the declaration out of the legacy `initialize` result; a server that answers `-32601` (method not found) publishes no skills.
 2. Implement `skills/list`, returning one entry per skill: the `SKILL.md` URI, its frontmatter verbatim as JSON, and a `resources` manifest of every file in the skill with its SHA-256 `digest` and byte `size` (or `"dynamic"` for generated content).
 3. Implement `skills/get`, returning the same entry for one skill URI.
 4. Serve each file with `resources/read`.
+
+</TabItem>
+</Tabs>
 
 How the platform uses them:
 

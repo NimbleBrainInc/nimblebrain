@@ -1,0 +1,142 @@
+---
+title: Data
+description: Tenant- and workspace-isolated Postgres access with nimblebrain-server-sdk[db] — a local Postgres, the app role, migrations on asyncpg, identity from the edge headers, and tests.
+---
+
+import { Aside, Code, Steps } from '@astrojs/starlight/components';
+import dbNotes from '@sdk-examples/db_notes.py?raw';
+import dbMigrate from '@sdk-examples/db_migrate.py?raw';
+import testDbNotes from '@sdk-examples/test_db_notes.py?raw';
+
+`nimblebrain-server-sdk[db]` is for a server that owns a Postgres database serving many tenants and workspaces. Isolation is enforced by Postgres row-level security, not by `WHERE` clauses, so a forgotten filter cannot leak.
+
+```bash
+uv add 'nimblebrain-server-sdk[db]'
+```
+
+The generic core is [`pgbulkhead`](https://pypi.org/project/pgbulkhead/), pinned exactly; `nimblebrain_server_sdk.db` is NimbleBrain's configuration of it.
+
+## The model
+
+- **Tenant is a hard wall,** never crossed. **Workspace is a soft wall** inside a tenant, crossable for reads only by a grant NimbleBrain puts in the verified token.
+- **Reads** see the active workspace plus any read-granted ones. **Writes** go to the active workspace only, both for the row written and for the rows an `UPDATE` or `DELETE` selects.
+- **Identity comes from verified input only.** Behind NimbleBrain's edge, that is the `x-tenant-id` and `x-workspace-id` headers it injects. It never comes from a tool argument or a request body.
+
+## The server
+
+<Code code={dbNotes} lang="python" title="db_notes.py" />
+
+- **One `SecuredDatabase` per process.** It reads and validates its settings once and builds the engine on the first session, so importing the server needs no database.
+- **The lifespan checks before serving.** `db.check()` validates the pool settings and `await db.check_role()` connects and refuses a role that bypasses row-level security, so a misconfiguration fails the rollout and not the first call.
+- **`db.session(ctx)`** admits the call against its workspace's concurrency limit, opens a transaction, and binds `ctx` for the policies. The binding is transaction-local, so a pooled connection cannot carry one request's identity into the next.
+- **`ctx.identity_columns()`** is the `tenant_id` and `workspace_id` a row is written with. The policy's `WITH CHECK` rejects a mismatch.
+
+## Local setup
+
+<Steps>
+
+1. **Start a Postgres**
+
+   ```bash
+   docker run -d --name notes-pg -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:5432:5432 postgres:16
+   ```
+
+2. **Run the migration as a role that owns the schema**
+
+   ```bash
+   export MIGRATION_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/postgres
+   export NOTES_APP_PASSWORD=notes-local-only
+   uv run python db_migrate.py
+   ```
+
+3. **Point the server at the app role**
+
+   ```bash
+   export NOTES_DATABASE_URL=postgresql+asyncpg://notes_app:$NOTES_APP_PASSWORD@127.0.0.1:5432/postgres
+   ```
+
+</Steps>
+
+<Aside type="caution" title="The URL scheme is postgresql+asyncpg://">
+The engine is SQLAlchemy's async engine on asyncpg. A bare `postgresql://` URL selects a driver the extra does not install.
+</Aside>
+
+## The migration and the app role
+
+<Code code={dbMigrate} lang="python" title="db_migrate.py" />
+
+- **Loop over `rls_policy_statements(table)`.** asyncpg refuses several commands in one execute, so the policy is one statement per item. In an Alembic revision: `for statement in rls_policy_statements("notes"): op.execute(statement)`. `rls_policy_sql(table)` is the same DDL as one string, for a driver that takes it.
+- **The app role is `NOSUPERUSER` and `NOBYPASSRLS`.** Postgres applies no policy to a superuser, a `BYPASSRLS` role, or a member of a managed Postgres admin role (on Amazon RDS, `rds_superuser`). The policies also `FORCE` row-level security on the table owner.
+- **Grant the role its tables and sequences.** A table the role cannot `INSERT` into, or a sequence it cannot use, fails on the first write.
+- **The migration's own engine is meant to bypass,** so one built with `create_pooled_engine` or `SecuredDatabase` passes `refuse_bypass_roles=False`. A plain SQLAlchemy engine, as here, has no role check.
+
+The rendered SQL is a schema contract: migrations replay it, so a change to it in a new SDK release comes with a migration note in the [changelog](https://github.com/NimbleBrainInc/nimblebrain/blob/main/packages/server-sdk-py/CHANGELOG.md).
+
+## Three policy shapes
+
+Each binds identity the same way (`set_config(..., is_local => true)` inside a transaction, values bound as parameters).
+
+| Policy | Session | Hard wall | Use when |
+|---|---|---|---|
+| `rls_policy_statements` | `db.session(ctx)` | `(tenant_id, workspace_id)` | The default: workspace-scoped data |
+| `rls_policy_statements_tenant_scoped` | `db.session(ctx)` | `tenant_id` | A tenant-wide fact: a suppression list, an audit log |
+| `rls_policy_statements_org_scoped` | `org_session(engine, org_id)` | `org_id` | A service with no NimbleBrain tenant, isolated by an identity provider's organization |
+
+Mixing shapes fails closed: a session bound for one shape matches no row of another.
+
+## Identity
+
+`security_context_from_edge_headers(get_http_headers())` reads `x-tenant-id` and `x-workspace-id` and nothing else. A request without either did not come through the edge, and the call raises `AuthError` instead of defaulting to a permissive scope. A deployment must admit only the edge to the server, so that a caller cannot set those headers itself.
+
+`AuthError` is the `auth_required` [service error](/server-sdk/errors/). Its message is safe to show a caller; the missing header is in `detail`, which is logged and never sent. With `add_error_contract(mcp)`, as above, a tool lets it propagate.
+
+### In a test
+
+The in-memory `fastmcp.Client(mcp)` sends no HTTP headers, so every call is refused. `edge_client` serves the server over HTTP inside the test's event loop (no port is bound) and sends the two headers the way the edge does.
+
+<Code code={testDbNotes} lang="python" title="test_db_notes.py" />
+
+`edge_client` changes nothing in the server. Identity still arrives in the two headers and nowhere else, so it opens no way for a tool argument or a request body to carry one. The test stands where the edge stands in production.
+
+### In a local run
+
+Serve over HTTP and send both headers from the client:
+
+```python
+from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
+
+transport = StreamableHttpTransport(
+    "http://127.0.0.1:8000/mcp",
+    headers={"x-tenant-id": "t1", "x-workspace-id": "ws_a"},
+)
+async with Client(transport) as client:
+    await client.call_tool("add_note", {"text": "hello"})
+```
+
+## Capacity
+
+- **Per-workspace admission.** `db.session` admits at most `<PREFIX>_WORKSPACE_CONCURRENCY` (2) calls per workspace before it checks a connection out, so one workspace's burst queues behind its own slots.
+- **A call refused for capacity raises `Overloaded`** (`WorkspaceBusy` or `PoolExhausted`). It ran nothing, so a retry is safe. With `add_error_contract` the caller receives a `rate_limited` error; without it, a tool returns `rate_limited_tool_error(exc)`.
+- **Pool settings** come from `<PREFIX>_DB_POOL_SIZE` (5), `<PREFIX>_DB_POOL_MAX_OVERFLOW` (5), `<PREFIX>_DB_POOL_TIMEOUT_SECONDS` (10) and `<PREFIX>_WORKSPACE_WAIT_SECONDS` (15), where the prefix is the one given to `SecuredDatabase`. `db.check()` refuses settings where `2 × WORKSPACE_CONCURRENCY` reaches `DB_POOL_SIZE + DB_POOL_MAX_OVERFLOW`.
+- **A cancelled call returns its connection.** Each session commits or rolls back and returns the connection in a shielded scope, each step bounded by `CLEANUP_TIMEOUT_SECONDS` (10 seconds).
+- **In a test,** `nimblebrain_server_sdk.db.testing.use_limiter(db, limiter)` swaps in a small limiter for the block.
+
+## The system role
+
+A reconciler, a sweep or an admin job has no caller, so it has no identity to bind. `db.system_session()` (or `system_session(engine)`) opens a transaction under the `system` role, which the tenant+workspace policy lets past its **workspace** predicate.
+
+- **It does not pass the tenant wall.** The tenant predicate still compares against the bound tenant, which this session leaves unset, so the job binds a tenant for the rows it touches or sees none.
+- **The tenant-scoped and org-scoped policies carry no `system` escape.** A job that crosses tenants or organizations there opens one scoped session per tenant or organization.
+- **It is a session setting, not a database role.** The connection is still the app role.
+- **Never on a request path.** There, `db.session(ctx)` with the caller's identity is the only correct session. Record each use in the server's audit trail as the actor `system`.
+
+## What it does not do
+
+It does not hold against arbitrary SQL running as the app role, which can set any `app.*` setting. Do not run SQL a caller supplies on these connections.
+
+## Related
+
+- [Notifications](/server-sdk/notifications/): an outbox under the same policies
+- [Errors](/server-sdk/errors/)
+- [API reference](/server-sdk/reference/db/)

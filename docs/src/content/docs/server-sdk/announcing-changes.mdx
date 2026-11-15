@@ -1,0 +1,36 @@
+---
+title: Announcing changes
+description: A write tool calls announce_resource_list_changed after its write commits, so the server's open views re-read on either protocol era.
+---
+
+A view re-reads when the server tells its host that the resource list changed. A write tool calls `announce_resource_list_changed` once its write has committed:
+
+```python
+from fastmcp import Context
+from nimblebrain_server_sdk import ADDS, announce_resource_list_changed
+
+@mcp.tool(annotations=ADDS)
+async def save_note(text: str, ctx: Context) -> dict[str, str]:
+    row = await store.save(text)                # commits
+    await announce_resource_list_changed(ctx)
+    return {"id": row.id}
+```
+
+The [quickstart server](/server-sdk/quickstart/) shows it in a complete file.
+
+## The rules
+
+- **Writes announce, reads never do.** A read that announced would have every open view refreshing itself forever. That includes a read that writes on the way in, such as one that records an audit row.
+- **After the commit.** Announce a write that is durable, so a view that re-reads at once sees it.
+- **Best-effort.** A failed send is logged (`announce_resource_list_changed_failed`, with the `tool` name you pass) and not raised. The write is stored either way, and reporting it as failed would have the agent make it again. A view that misses one announcement catches up on its next read.
+- **In the call's own response.** The notification rides the response to the tool call that made the write, so it reaches the host that holds the workspace on either protocol era, and the server keeps no map of sessions.
+- **No request, no announcement.** Called with no `ctx` and no active MCP request (a background job, for instance), it does nothing.
+
+## What the host does with it
+
+The host relays `notifications/resources/list_changed` to the server's open views, which re-read their data. The wire behaviour, and how a view subscribes, is in [App Bridge](/apps/bridge/) and Synapse's [Keep the UI in sync](https://synapse.nimblebrain.ai/docs/guides/keep-ui-in-sync/).
+
+## Related
+
+- [Tools and annotations](/server-sdk/tools/)
+- [API reference](/server-sdk/reference/core/)
