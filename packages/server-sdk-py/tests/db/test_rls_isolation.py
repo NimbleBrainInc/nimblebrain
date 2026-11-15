@@ -22,6 +22,7 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from nimblebrain_server_sdk.db import (
     SecurityContext,
@@ -168,10 +169,36 @@ async def test_a_write_to_the_active_workspace_is_admitted(app_engine: AsyncEngi
     assert await bodies(app_engine, ctx()) == ["a1", "a2"]
 
 
-async def test_an_unscoped_connection_sees_nothing(app_engine: AsyncEngine) -> None:
-    async with app_engine.connect() as conn:
-        for table in (NOTES, LEDGER, LINKS):
-            assert (await conn.execute(text(f"SELECT body FROM {table}"))).all() == []
+#: Settings a session might hold without a usable identity: nothing at all, an empty key, and
+#: the system role with no tenant (or an empty one). Each must see no row of any shape.
+NO_TENANT_BINDINGS: dict[str, dict[str, str]] = {
+    "nothing bound": {},
+    "empty tenant and org": {"app.tenant_id": "", "app.org_id": "", "app.workspace_id": ""},
+    "system role, no tenant": {"app.role": "system"},
+    "system role, empty tenant": {"app.role": "system", "app.tenant_id": "", "app.org_id": ""},
+}
+
+
+@pytest.mark.parametrize("binding", NO_TENANT_BINDINGS, ids=list(NO_TENANT_BINDINGS))
+async def test_an_unscoped_connection_sees_nothing(
+    app_engine: AsyncEngine, pg_admin_url: str, binding: str
+) -> None:
+    """On a fresh connection as the app role, RLS is active on every table and no row shows."""
+    fresh = create_async_engine(
+        pg_admin_url, poolclass=NullPool, connect_args={"server_settings": {"role": ROLE}}
+    )
+    try:
+        async with fresh.begin() as conn:
+            assert await conn.scalar(text("SELECT current_user")) == ROLE
+            for name, value in NO_TENANT_BINDINGS[binding].items():
+                await conn.execute(text("SELECT set_config(:n, :v, true)"), {"n": name, "v": value})
+            for table in (NOTES, LEDGER, LINKS):
+                active = await conn.scalar(text("SELECT row_security_active(:t)"), {"t": table})
+                count = await conn.scalar(text(f"SELECT count(*) FROM {table}"))
+                assert (table, active, count) == (table, True, 0)
+            await conn.rollback()
+    finally:
+        await fresh.dispose()
 
 
 async def test_a_pooled_connection_carries_no_context_into_the_next(

@@ -56,6 +56,7 @@ def test_all_is_unchanged() -> None:
     assert set(db.__all__) == CONSUMED | {
         "CLEANUP_TIMEOUT_SECONDS",
         "CONNECTIONS_PER_CALL",
+        "MANAGED_ADMIN_ROLES",
         "PoolConfigError",
         "PoolExhausted",
         "UnsafeRoleError",

@@ -36,11 +36,13 @@ where ``max_surge`` is the extra pods a rolling update runs at once (one per ser
 That sum, plus whatever else connects to the database, must stay below its
 ``max_connections``. Raising a pool setting or a replica count spends that budget.
 
-**The role.** :func:`create_pooled_engine` refuses every new connection made as a superuser or
-``BYPASSRLS`` role with :class:`UnsafeRoleError`, before any session runs on it: Postgres applies
-no row-level security policy to such a role, so an engine connected as one would see every
-tenant's rows. The check reads the role's attributes once per physical connection, not per
-session. An engine that is meant to bypass, such as one that runs migrations, passes
+**The role.** :func:`create_pooled_engine` refuses every new connection whose session bypasses
+row-level security with :class:`UnsafeRoleError`, before any session runs on it, since an engine
+connected that way would see every tenant's rows. A session bypasses when its role is a
+superuser or ``BYPASSRLS``, when it belongs to a managed Postgres admin role
+(:data:`MANAGED_ADMIN_ROLES`, such as Amazon RDS's ``rds_superuser``, which bypasses with neither
+attribute), or when a probe sees it bypass a forced policy on a temporary table in a transaction
+that is rolled back. The checks run once per physical connection, not per session. An engine that is meant to bypass, such as one that runs migrations, passes
 ``refuse_bypass_roles=False``. The pool settings never carry that choice, so no environment
 variable can turn the check off.
 """
@@ -51,10 +53,11 @@ from pgbulkhead.pool import (
     PoolSettings,
     create_pooled_engine,
 )
-from pgbulkhead.role import UnsafeRoleError
+from pgbulkhead.role import MANAGED_ADMIN_ROLES, UnsafeRoleError
 
 __all__ = [
     "CONNECTIONS_PER_CALL",
+    "MANAGED_ADMIN_ROLES",
     "PoolConfigError",
     "PoolSettings",
     "UnsafeRoleError",

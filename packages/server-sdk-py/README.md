@@ -537,10 +537,14 @@ The org-scoped shape is here, beside the other two, so its policy and session ha
 pinned by this package's golden SQL tests.
 Mixing shapes fails closed: a session bound for one shape matches no row of another.
 
-- **The app's database role must be neither superuser nor `BYPASSRLS`;** either silently
-  voids every policy. The policies also `FORCE` row-level security on the table owner. The
-  pooled engine (`SecuredDatabase`, `create_pooled_engine`) checks this on each new
-  connection and refuses such a role with `UnsafeRoleError` before any session runs;
+- **Row-level security must apply to the app's database role.** A superuser, a `BYPASSRLS`
+  role, or a member of a managed Postgres admin role (on Amazon RDS, `rds_superuser`, which
+  bypasses with neither attribute) silently voids every policy. The policies also `FORCE`
+  row-level security on the table owner. The pooled engine (`SecuredDatabase`,
+  `create_pooled_engine`) checks each new connection three ways: the role's attributes,
+  membership in `MANAGED_ADMIN_ROLES`, and a probe that sees whether the session bypasses a
+  forced policy on a temporary table, in a transaction it rolls back. It refuses a bypassing
+  session with `UnsafeRoleError` before any session runs;
   `await db.check_role()` in the lifespan fails the rollout instead of the first call. An
   engine meant to bypass, such as the one your migrations run on, passes
   `refuse_bypass_roles=False`.
