@@ -811,6 +811,74 @@ describe("a share of the budget too small for an item", () => {
     expect(batchOf(h, out.batch.id).sharing).toBeUndefined();
     expect(batchOf(h, out.batch.id).counts.pass).toBe(1);
   });
+
+  it("takes its queued runs back to pending when it halves, and completes with fewer sharing", async () => {
+    // Two slots under a concurrency of 4, so two of the batch's runs wait
+    // queued. 0.8 shared by 4 grants 200 tokens, spent after two of three
+    // calls; shared by 2, what is left grants about 395.
+    const h = harness({
+      gated: true,
+      door: { calls: 3, grant: true, cachedInput: true },
+      maxConcurrentRuns: 2,
+    });
+    makeTask();
+    h.scheduler.reload();
+    const created = h.driver.create({
+      wsId: WS,
+      ownerId: OWNER,
+      task: makeTask(),
+      inputs: items("a", "b", "c", "d"),
+      concurrency: 4,
+      budgetUsd: 0.8,
+      createdBy: OWNER,
+    });
+    const read = () => readBatchItems(workDir, WS, OWNER, created.id);
+    await waitFor(() => h.gates.length === 2, "two runs started");
+    expect(read().map((i) => i.state)).toEqual(["running", "running", "queued", "queued"]);
+    const queuedRunIds = new Set(read().flatMap((i) => (i.state === "queued" ? [i.runId] : [])));
+
+    // One run outgrows its share while the others are held.
+    const stoppedRunId = h.gates[0]!.runId;
+    h.gates[0]!.release();
+    await waitFor(() => batchOf(h, created.id).sharing === 2, "the halving");
+    await waitFor(() => !read().some((i) => i.state === "queued"), "no run left queued");
+    expect(h.admission.queued()).toHaveLength(0);
+    expect(batchOf(h, created.id).state).toBe("running");
+
+    // Each run still queued at the halving was withdrawn, its item pending.
+    const runs = readRuns(workDir, WS, OWNER, "enrich");
+    const withdrawn = runs.filter((r) => r.error?.includes("by its batch"));
+    expect(withdrawn.length).toBeGreaterThanOrEqual(1);
+    for (const run of withdrawn) {
+      expect(queuedRunIds.has(run.id)).toBe(true);
+      expect(run.status).toBe("skipped");
+      const item = read().find((i) => i.previousRunIds?.includes(run.id));
+      expect(item?.state).toBe("pending");
+    }
+    const stopped = read().find((i) => i.previousRunIds?.includes(stoppedRunId!));
+    expect(stopped?.state).toBe("pending");
+
+    // Two runs are out, as many as now share: nothing more is asked for.
+    await Bun.sleep(30);
+    expect(read().filter((i) => i.state !== "pending")).toHaveLength(2);
+
+    let everQueued = false;
+    const drain = setInterval(() => {
+      everQueued ||= read().some((i) => i.state === "queued");
+      for (const g of h.gates) g.release();
+    }, 5);
+    try {
+      await waitFor(() => batchOf(h, created.id).state === "completed", "completion");
+    } finally {
+      clearInterval(drain);
+    }
+    const batch = batchOf(h, created.id);
+    expect(batch.sharing).toBe(2);
+    expect(batch.counts.pass).toBe(4);
+    // With two slots and two sharing, no run waits at the door again.
+    expect(everQueued).toBe(false);
+    expect(h.paused).toHaveLength(0);
+  });
 });
 
 describe("reserved-out, ordering", () => {
