@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import logging
-
 import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 
-from nimblebrain_server_sdk import READS, add_error_contract
+from nimblebrain_server_sdk import READS, add_error_contract, errors
 from nimblebrain_server_sdk.errors import ErrorCode, ServiceError
 from nimblebrain_server_sdk.testing import Mode
 
@@ -83,8 +81,11 @@ async def test_an_unclassified_exception_is_left_alone() -> None:
         assert (await client.call_tool("fine", {})).data == "ok"
 
 
-async def test_the_error_is_recorded_once(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING):
-        async with Client(server(contract=True)) as client:
-            await client.call_tool("classified", {}, raise_on_error=False)
-    assert [r.getMessage() for r in caplog.records].count("service_error") <= 1
+async def test_the_error_is_recorded_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorded: list[ServiceError] = []
+    monkeypatch.setattr(errors, "_record", recorded.append)
+    async with Client(server(contract=True)) as client:
+        await client.call_tool("classified", {}, raise_on_error=False)
+    assert [(err.code, err.message, err.detail) for err in recorded] == [
+        (ErrorCode.NOT_FOUND, "No such note.", "notes row 41 is gone")
+    ]
