@@ -1,0 +1,60 @@
+---
+title: Observability
+description: Metrics, structured JSON logs and W3C trace propagation for a Python MCP server in one call, with nimblebrain-server-sdk[observability].
+---
+
+import { Code } from '@astrojs/starlight/components';
+import observable from '@sdk-examples/observable_server.py?raw';
+import testObservable from '@sdk-examples/test_observable_server.py?raw';
+
+`nimblebrain-server-sdk[observability]` makes a server observable the same way as every other NimbleBrain service, in one call.
+
+```bash
+uv add 'nimblebrain-server-sdk[observability]'
+```
+
+<Code code={observable} lang="python" title="observable_server.py" />
+
+`instrument_app` takes the server's ASGI app (`mcp.http_app()`, or a FastAPI or Starlette app) and the service's name. Call it once.
+
+## Metrics
+
+`GET /metrics` serves Prometheus text. When `METRICS_PORT` is set, the registry is also served on that metrics-only port, so a scraper never needs to reach the port that serves `/mcp`.
+
+| Metric | Labels |
+|---|---|
+| `http_requests_total` | `method`, `route`, `status` |
+| `http_request_duration_seconds` | `method`, `route` |
+| `http_in_flight_requests` | `method` |
+| `service_errors_total` | `service`, `code`, `upstream_status` |
+
+- `route` is the route template, never the raw path.
+- `service_errors_total` counts every error [surfaced through the error contract](/server-sdk/errors/).
+- `counter`, `gauge` and `histogram` declare a server's own metrics on the same registry.
+- Identity is never a metric label. Tenant and workspace belong in logs.
+
+## Logs
+
+One JSON object per line on stdout, with `event`, `level`, `timestamp` (ISO 8601 UTC) and `service`. Inside a request each line also carries the `tenant_id` and `workspace_id` from the edge's identity headers and the active span's `trace_id`.
+
+- `get_logger(__name__)` returns a structured logger: `log.info("note_added", length=12)`.
+- Standard library logging is routed through the same renderer, `extra` fields included.
+- Request URLs from the `httpx` family are held at `WARNING`, so a key in a query string never reaches a log.
+
+## Traces
+
+- The inbound `traceparent` header is honoured.
+- Spans export over OTLP to `OTEL_EXPORTER_OTLP_ENDPOINT` when it is set.
+- On a FastMCP app the request span is FastMCP's own; on a FastAPI app it is the FastAPI instrumentation's.
+- `inject_trace_headers(headers)` carries the trace onto an outbound call.
+- Each response carries `x-correlation-id`: the inbound trace id when there is one.
+
+## Test it
+
+<Code code={testObservable} lang="python" title="test_observable_server.py" />
+
+## Related
+
+- [Errors](/server-sdk/errors/): what is counted in `service_errors_total`
+- [Observability for a NimbleBrain deployment](/deploy/observability/)
+- [API reference](/server-sdk/reference/observability/)

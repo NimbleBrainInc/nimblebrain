@@ -10,7 +10,7 @@ Documentation site for [NimbleBrain](https://nimblebrain.ai) — the composable 
 
 ## Local Development
 
-Prerequisites: [Bun](https://bun.sh) (or Node.js 22+)
+Prerequisites: [Bun](https://bun.sh), and [uv](https://docs.astral.sh/uv/) for the Server SDK pages.
 
 ```bash
 bun install
@@ -18,6 +18,11 @@ bun run dev       # Start dev server at localhost:4321
 bun run build     # Production build to dist/
 bun run preview   # Preview the production build
 ```
+
+`dev` and `build` first run `bun run reference`, which writes the Server SDK API reference
+(`src/content/docs/server-sdk/reference/`, not in git) from the docstrings in
+`../packages/server-sdk-py`. The Server SDK guides import their code from that package's
+`examples/`, which its test suite runs, so edit an example there, not in a page.
 
 ## Deployment
 

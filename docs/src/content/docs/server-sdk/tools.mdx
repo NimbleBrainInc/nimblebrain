@@ -1,0 +1,68 @@
+---
+title: Tools and annotations
+description: Annotate every tool as a read, an addition or a change, return bounded listing rows, and mint opaque record ids with nimblebrain-server-sdk.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Annotate every tool
+
+`READS`, `ADDS` and `CHANGES` are the MCP specification's tool hints for the three things a tool can do.
+
+| Annotation | The tool | Examples |
+|---|---|---|
+| `READS` | reads and changes nothing | `get_note`, `search_notes` |
+| `ADDS` | writes without losing anything already there | `save_note`, `add_comment` |
+| `CHANGES` | overwrites, removes, or acts on what is there | `update_note`, `delete_note`, `send_email` |
+
+```python
+from nimblebrain_server_sdk import ADDS, CHANGES, READS
+
+@mcp.tool(annotations=READS)
+async def get_note(note_id: str) -> dict[str, str]: ...
+```
+
+Under the specification's defaults an unannotated tool is a destructive write, and a host treats it as one: it may ask the user to confirm a call that only reads. Give every tool one of the three.
+
+<Aside type="note">
+The annotation describes the tool to the host. It does not enforce anything: a tool marked `READS` that writes will still write.
+</Aside>
+
+## Listing rows
+
+A page of a few hundred rows with one unbounded text field each (a document's body, a ticket's description) is a page no agent context can hold. A listing row carries such a field as a preview or not at all, plus the `uri` the whole record is read from.
+
+```python
+from nimblebrain_server_sdk import PREVIEW_CHARS, listing_row
+
+rows = [listing_row(r, omit=("body",)) for r in records]                          # drop it
+rows = [listing_row(r, preview={"description": PREVIEW_CHARS}) for r in records]  # preview it
+```
+
+- **`omit` drops a field; `preview` replaces it** with `<field>_preview`, at most the given number of characters (200 by default), ending in `…` when cut. `None` stays `None`.
+- **Everything else is copied,** `uri` included. The record passed in is not modified.
+- **A preview of anything but text raises** `TypeError`.
+
+[`assert_bounded_rows`](/server-sdk/testing/#assert_bounded_rows) checks a listing in a test.
+
+## Record ids
+
+A record id is `<prefix>_<ulid>`: opaque, never recycled, and sortable by the time it was minted.
+
+```python
+from nimblebrain_server_sdk import new_prefixed_id
+
+def new_note_id() -> str:
+    return new_prefixed_id("nt")   # nt_01K9Z3M0V8Q4T6W2X5Y7ZABCDE
+```
+
+- **The prefix names the kind of record.** It is lowercase ASCII letters and digits; anything else raises `ValueError`, because the underscore is what separates the prefix from the body.
+- **The body is a ULID:** 26 characters of Crockford base32, a 48-bit millisecond timestamp then 80 random bits. It reveals no row count.
+- **Strictly increasing in one process,** from any thread. Within a millisecond the random part is incremented, and a clock that steps back holds at the last millisecond.
+- **Uniqueness is the primary key's job.** The random bits make a collision across replicas unlikely, not impossible.
+
+## Related
+
+- [Errors](/server-sdk/errors/): what a tool returns when it fails
+- [Announcing changes](/server-sdk/announcing-changes/): what a write tool does after it commits
+- [API reference](/server-sdk/reference/core/)

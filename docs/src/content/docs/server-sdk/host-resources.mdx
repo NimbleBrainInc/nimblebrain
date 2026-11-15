@@ -1,0 +1,69 @@
+---
+title: Host resources
+description: Read a workspace file by URI from a Python MCP server with host(ctx), and fall back to inline content on a connection that cannot carry the request.
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import hostFiles from '@sdk-examples/host_files.py?raw';
+import testHostFiles from '@sdk-examples/test_host_files.py?raw';
+
+With `ai.nimblebrain/host-resources`, a tool takes a URI such as `files://fl_abc123` and the server reads the file from the host. The model passes a short reference and never copies the bytes. The protocol is the [host resources extension](/extensions/host-resources/). The SDK wraps the capability check, the method names and the result types: you write `await host(ctx).read(uri)`.
+
+<Aside type="caution" title="2025-era connections only">
+A read is a request from the server to its client, and the `2026-07-28` protocol has no channel for one. On a `2026-07-28` connection `available` is `False` and `read` raises `HostCapabilityMissing`, whatever the client advertised. Every tool that takes a URI also takes the content inline.
+</Aside>
+
+## A tool that works on any connection
+
+Accept a URI, accept inline content as the fallback, and let the capability decide which is used.
+
+<Code code={hostFiles} lang="python" title="host_files.py" />
+
+- **Check `available` before reading.** It is true when the host advertised the capability with `read` enabled and the connection can carry the request.
+- **Narrow the content's type.** A text MIME type comes back as `TextResourceContents`; anything else as a base64 blob.
+- **Return the fallback as a tool error the agent can act on.** The message names the argument to use instead. Raising `ValueError` here would reach the agent as an unclassified failure.
+- **Say in the tool's description which argument to use when.** The model picks the argument.
+
+## The API
+
+```python
+from nimblebrain_server_sdk import host
+
+files = host(ctx)
+
+files.available                 # read is enabled, and the connection can carry it
+files.list_available            # the same for list
+files.supports_scheme("files")  # the URI scheme is on the host's allowlist
+
+result = await files.read("files://fl_abc123")        # an MCP ReadResourceResult
+listing = await files.list(mime_type="text/csv")      # an MCP ListResourcesResult
+for entry in listing.resources:
+    print(entry.name, entry.uri)
+```
+
+`list` takes `mime_type` and `tags` filters. The whole list comes back in one response; pagination is not supported.
+
+## Errors
+
+`read` and `list` raise `HostCapabilityMissing` when the connection cannot carry the request. Its message says whether the host did not advertise the capability or the connection negotiated `2026-07-28`, and `protocol_version` carries the version in the second case.
+
+An error the host returns arrives as `mcp.shared.exceptions.MCPError`. Match on `.code`:
+
+| Code | Constant | Meaning |
+|---|---|---|
+| `-32002` | `RESOURCE_NOT_FOUND` | Resource not found, or not visible to this caller |
+| `-32004` | `RATE_LIMITED` | Rate limited; `error.data` carries `retryAfterMs` |
+| `-32005` | `RESPONSE_TOO_LARGE` | The resource exceeds the host's size limit; `error.data` carries `size` and `maxSize` |
+| `-32602` | `INVALID_PARAMS` | Unsupported URI scheme, malformed `tags`, or a pagination cursor |
+
+## Test it
+
+The in-memory client advertises no host-resources capability, so a test exercises the fallback on both eras.
+
+<Code code={testHostFiles} lang="python" title="test_host_files.py" />
+
+## Related
+
+- [Host resources extension](/extensions/host-resources/): the capability, the methods, and which files a server can see
+- [Errors](/server-sdk/errors/)
+- [API reference](/server-sdk/reference/core/)

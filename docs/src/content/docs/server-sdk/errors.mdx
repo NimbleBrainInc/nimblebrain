@@ -1,0 +1,116 @@
+---
+title: Errors
+description: The service error contract in nimblebrain-server-sdk — a closed set of codes, a host-safe message, and the tool result a server returns or raises.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`nimblebrain_server_sdk.errors` is the contract a server reports a failure with, so every server fails the same way and nothing internal to it or to a service it calls reaches the host. It is in the core package: no extra is needed.
+
+## Raise it, or return it
+
+With `add_error_contract(mcp)` called once, a tool raises a `ServiceError` and the caller receives the contract's result:
+
+```python
+from nimblebrain_server_sdk import READS, add_error_contract
+from nimblebrain_server_sdk.errors import ErrorCode, ServiceError
+
+add_error_contract(mcp)
+
+@mcp.tool(annotations=READS)
+async def search(query: str) -> list[dict[str, str]]:
+    if not query.strip():
+        raise ServiceError(ErrorCode.BAD_INPUT, "`query` is empty.")
+    try:
+        return await provider.search(query)
+    except ProviderError as exc:                 # carries the upstream's HTTP status
+        raise ServiceError.from_upstream(exc.status, detail=str(exc)) from exc
+```
+
+Without the middleware, a tool returns the same result itself: `return to_tool_error(ServiceError(...))`.
+
+<Aside type="caution">
+Return the result of `to_tool_error`, never a dict. It is a FastMCP `ToolResult` with `is_error=True`. A returned dict that describes an error is scored as a success, by the host and by the model.
+</Aside>
+
+`add_error_contract` covers two kinds of raised error and leaves every other exception alone, because an unclassified failure is a bug to see:
+
+| A tool raises | The caller receives |
+|---|---|
+| a `ServiceError` (including `[db]`'s `AuthError`) | `to_tool_error(err)` |
+| a capacity refusal (`[db]`'s `Overloaded`) | `rate_limited_tool_error(err)` |
+| anything else | FastMCP's own handling, unchanged |
+
+It covers tool calls. A resource read has no in-band error result to return.
+
+## What the caller receives
+
+```json
+{
+  "isError": true,
+  "content": [{ "type": "text", "text": "`query` is empty." }],
+  "structuredContent": {
+    "error": { "code": "bad_input", "retryable": false, "message": "`query` is empty." }
+  }
+}
+```
+
+`upstream_status` is added when the error came from `from_upstream`.
+
+## The codes
+
+`ErrorCode` is a closed set. Each code fixes the HTTP status a host presents and whether a retry can help.
+
+| Code | HTTP status | Retryable | Use for |
+|---|---|---|---|
+| `bad_input` | 400 | no | The caller's arguments are wrong |
+| `auth_required` | 401 | no | No verified identity, or an upstream needs authorization |
+| `forbidden` | 403 | no | The operation is not permitted |
+| `not_found` | 404 | no | The record does not exist |
+| `conflict` | 409 | no | The request conflicts with the current state |
+| `quota_exhausted` | 502 | no | An upstream's quota or credits ran out |
+| `rate_limited` | 429 | yes | The server or an upstream is at capacity |
+| `upstream_rejected` | 502 | no | An upstream refused the request |
+| `upstream_unavailable` | 503 | yes | An upstream is down |
+| `upstream_timeout` | 504 | yes | An upstream did not answer in time |
+| `internal` | 500 | no | A fault in the server |
+
+## `message` and `detail`
+
+- **`message` reaches the host and the model.** Keep it generic and actionable. Omit it for the code's default. Never put a vendor's name, a URL, a raw response body, a secret or tenant data in it.
+- **`detail` is logged and never sent.** The raw upstream text goes there.
+
+## Classifying an upstream
+
+`ServiceError.from_upstream(status)` classifies an upstream HTTP status and passes the bare number to the host as `upstream_status`:
+
+| Upstream status | Code |
+|---|---|
+| 401, 403, 404, 409 | `auth_required`, `forbidden`, `not_found`, `conflict` |
+| 402 | `quota_exhausted` |
+| 429 | `rate_limited` |
+| 408, 504 | `upstream_timeout` |
+| other 5xx | `upstream_unavailable` |
+| other 4xx | `upstream_rejected` |
+
+## Every surfaced error is recorded once
+
+- **With `[observability]` installed:** one increment of `service_errors_total{service, code, upstream_status}` and one `service_error` JSON log line carrying `code`, `retryable`, `upstream_status`, `http_status` and `detail`.
+- **Without it:** the result is the same, nothing is counted, and the `service_error` line goes to the standard library logger `nimblebrain_server_sdk.errors` with the same fields.
+- **`bad_input` is logged at `WARNING`,** since it is the caller's mistake and the server worked. Every other code is logged at `ERROR`.
+
+A domain-specific error subclasses `ServiceError` and overrides `metric_code` to roll up to one of the codes above, so the metric's label set stays closed.
+
+## Other errors the SDK raises
+
+| Error | When |
+|---|---|
+| `ValueError`, `TypeError` | A bad argument at registration or call time: a facet level that does not exist, a record id prefix with a capital, a skill with no `SKILL.md` |
+| `HostCapabilityMissing` | A [host-resources](/server-sdk/host-resources/) call on a connection that cannot carry it |
+| `MissingExtraError` (an `ImportError`) | A subpackage imported without its extra; the message names the extra |
+| `AuthError`, `Overloaded`, `PoolConfigError`, `UnsafeRoleError` | From `[db]`; see [Data](/server-sdk/data/) |
+
+## Related
+
+- [Observability](/server-sdk/observability/)
+- [API reference](/server-sdk/reference/errors/)

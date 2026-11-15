@@ -3,7 +3,7 @@ title: Facets
 description: Tell the host how many things are waiting in your server with the ai.nimblebrain/facets MCP extension, so they appear on the workspace overview.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 Your server holds work that needs someone: drafts awaiting review, tasks
 blocked, invoices unpaid. A **facet** is one of those, as a number. The
@@ -13,8 +13,10 @@ workspace overview shows each facet whose count is above zero as one row,
 Facets are an [MCP extension](https://modelcontextprotocol.io/extensions/overview),
 `ai.nimblebrain/facets`, built on the core Resources primitive. It adds no
 method. You advertise the extension, list each facet as a resource carrying a
-`_meta` marker, and answer `resources/read` with a count. You need no
-NimbleBrain SDK, and nothing goes in your catalog entry or manifest.
+`_meta` marker, and answer `resources/read` with a count. Nothing goes in your
+catalog entry or manifest. Any MCP SDK can do it; in Python the
+[Server SDK](/server-sdk/facets/) does it in three calls, shown under
+[Complete example](#complete-example).
 
 <Aside type="note" title="A count, nothing else">
 A facet carries a label and a non-negative integer. It does not carry the items
@@ -164,6 +166,43 @@ a model as instruction.
 
 ## Complete example
 
+One facet, counting drafts awaiting review.
+
+<Tabs syncKey="sdk">
+<TabItem label="SDK (Python)">
+
+[`nimblebrain-server-sdk`](/server-sdk/facets/) supplies the identifier, the marker and the read's body for a FastMCP server.
+
+```python title="server.py"
+from fastmcp import FastMCP
+from nimblebrain_server_sdk import (
+    FACETS_EXTENSION_ID,
+    add_platform_extension,
+    facet_count,
+    facet_meta,
+)
+
+mcp = FastMCP("acme-outbound")
+add_platform_extension(mcp, FACETS_EXTENSION_ID)
+
+
+@mcp.resource(
+    "acme://facets/drafts-awaiting-review",
+    name="drafts-awaiting-review",
+    title="Drafts awaiting review",
+    mime_type="application/json",
+    meta=facet_meta("warning"),
+)
+async def drafts_awaiting_review() -> str:
+    # One aggregate query for the workspace this connection serves.
+    return facet_count(await count_drafts())
+```
+
+`facet_meta` refuses a level the extension does not define, and `facet_count` refuses anything but an integer of at least zero. `served_facets` checks the result in a test the way the host reads it; see the [Server SDK facets guide](/server-sdk/facets/).
+
+</TabItem>
+<TabItem label="Wire (any SDK)">
+
 A TypeScript server on the MCP SDK (`@modelcontextprotocol/server`) with one
 facet. Connect it to your transport as you would any other server.
 
@@ -205,6 +244,9 @@ export function createServer(countDrafts: () => Promise<number>): Server {
   return server;
 }
 ```
+
+</TabItem>
+</Tabs>
 
 With three drafts waiting, the overview shows **3 Drafts awaiting review**,
 opening your app.

@@ -10,6 +10,11 @@ on:
     paths:
       - 'docs/**'
       - 'web/src/theme/palette.ts'
+      # The Server SDK pages are built from the package's docstrings and examples.
+      - 'packages/server-sdk-py/src/**'
+      - 'packages/server-sdk-py/examples/**'
+      - 'packages/server-sdk-py/pyproject.toml'
+      - 'packages/server-sdk-py/uv.lock'
       - '.github/workflows/docs-pages.yml'
   workflow_dispatch:
 
@@ -32,6 +37,8 @@ jobs:
           # Same bun as ci.yml (test/unit/build-pins.test.ts checks it).
           # renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
           bun-version: "1.4.3"
+      # The build writes the Server SDK API reference from the package's docstrings.
+      - uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
       - name: Build
         run: cd docs && bun install --frozen-lockfile && bun run build
       - uses: actions/upload-pages-artifact@v5

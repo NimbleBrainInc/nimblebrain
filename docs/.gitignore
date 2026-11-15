@@ -21,3 +21,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.code-workspace
+
+# The Server SDK API reference, written from docstrings by `bun run reference` on every build
+src/content/docs/server-sdk/reference/

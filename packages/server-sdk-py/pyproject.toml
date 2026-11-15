@@ -158,7 +158,7 @@ allowed-confusables = ["×", "∪"]
 # The examples are what the README and the docs show. Their tests assert; the migration builds
 # its role and grant statements from a constant, which SQL cannot bind as a parameter.
 "examples/test_*.py" = ["S101"]
-"examples/db_migrate.py" = ["S608"]
+"examples/*_migrate.py" = ["S608"]
 # The testing helpers are assertions a server's tests call: asserting is their contract.
 "src/nimblebrain_server_sdk/testing.py" = ["S101"]
 
