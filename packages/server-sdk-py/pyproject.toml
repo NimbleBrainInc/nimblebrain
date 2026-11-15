@@ -145,6 +145,10 @@ allowed-confusables = ["×", "∪"]
 # Tests assert, build SQL from the identifiers they create, and spawn the interpreter; their
 # signatures are fixtures, not API.
 "tests/**" = ["S101", "S603", "S608", "ANN"]
+# The examples are what the README and the docs show. Their tests assert; the migration builds
+# its role and grant statements from a constant, which SQL cannot bind as a parameter.
+"examples/test_*.py" = ["S101"]
+"examples/db_migrate.py" = ["S608"]
 # The testing helpers are assertions a server's tests call: asserting is their contract.
 "src/nimblebrain_server_sdk/testing.py" = ["S101"]
 
@@ -166,4 +170,4 @@ skip_covered = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests", "examples"]

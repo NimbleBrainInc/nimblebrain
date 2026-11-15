@@ -88,7 +88,9 @@ def test_a_subpackage_without_its_extra_names_it(
     assert out["is_import_error"]
     root = ".".join(subpackage.split(".")[:2])
     assert out["message"].startswith(f"{root} needs the [{extra}] extra")
-    assert out["message"].endswith(f"pip install 'nimblebrain-server-sdk[{extra}]'")
+    assert out["message"].endswith(
+        f"uv add 'nimblebrain-server-sdk[{extra}]' or pip install 'nimblebrain-server-sdk[{extra}]'"
+    )
 
 
 def test_without_observability_a_surfaced_error_is_logged_not_counted() -> None:
@@ -271,3 +273,18 @@ def test_db_re_exports_pgbulkheads_classes_as_the_same_objects() -> None:
     for name in ("PoolConfigError", "PoolSettings", "create_pooled_engine"):
         assert getattr(db, name) is getattr(pgbulkhead.pool, name), name
     assert db.UnsafeRoleError is pgbulkhead.role.UnsafeRoleError
+
+
+def test_bad_input_is_logged_below_error(caplog: pytest.LogCaptureFixture) -> None:
+    """A caller's mistake is not a server error; every other code still logs at ERROR."""
+    import logging
+
+    from nimblebrain_server_sdk.errors import ErrorCode, ServiceError, _log_only
+
+    with caplog.at_level(logging.DEBUG, logger="nimblebrain_server_sdk.errors"):
+        for code in ErrorCode:
+            _log_only(ServiceError(code))
+    levels = {r.code: r.levelno for r in caplog.records}  # ty: ignore[unresolved-attribute]
+    assert levels.pop("bad_input") == logging.WARNING
+    assert set(levels.values()) == {logging.ERROR}
+    assert len(levels) == len(ErrorCode) - 1

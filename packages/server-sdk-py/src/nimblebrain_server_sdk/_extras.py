@@ -24,7 +24,8 @@ class MissingExtraError(ImportError):
     def __init__(self, subpackage: str, extra: str, missing: str) -> None:
         super().__init__(
             f"{subpackage} needs the [{extra}] extra, which is not installed "
-            f"({missing!r} is missing): pip install 'nimblebrain-server-sdk[{extra}]'",
+            f"({missing!r} is missing): uv add 'nimblebrain-server-sdk[{extra}]' "
+            f"or pip install 'nimblebrain-server-sdk[{extra}]'",
             name=missing,
         )
         self.extra = extra

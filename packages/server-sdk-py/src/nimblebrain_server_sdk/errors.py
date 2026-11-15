@@ -1,10 +1,13 @@
 """The errors a server raises and the errors it returns.
 
-``HostCapabilityMissing`` is the one error the SDK itself raises. It signals a local
-condition ("this host hasn't advertised the extension") rather than a wire response.
-Wire-level errors from the host come through as `mcp.shared.exceptions.MCPError`; the SDK
-does not wrap those, so server code matches on the JSON-RPC error code through the standard
-exception path.
+``HostCapabilityMissing`` signals a local condition ("this connection cannot carry a
+host-resources request") rather than a wire response. Wire-level errors from the host come
+through as `mcp.shared.exceptions.MCPError`; the SDK does not wrap those, so server code
+matches on the JSON-RPC error code through the standard exception path. The other errors the
+SDK raises are ``ValueError`` and ``TypeError`` for a bad argument at registration or call
+time, ``MissingExtraError`` for a subpackage imported without its extra, and, from the
+extras, the errors each documents (``[db]``'s ``AuthError``, ``Overloaded``,
+``PoolConfigError`` and ``UnsafeRoleError``).
 
 The rest is the service error contract: how a server reports a failure that crosses its
 boundary, so every server fails the same way and no upstream's internals reach the host.
@@ -16,6 +19,8 @@ boundary, so every server fails the same way and no upstream's internals reach t
 * ``ServiceError.from_upstream`` classifies a raw upstream HTTP status into that set.
 * ``to_tool_error`` turns a ``ServiceError`` into the FastMCP tool result to ``return``, and
   ``rate_limited_tool_error`` does the same for a call refused for capacity.
+* ``add_error_contract`` (in the package root) makes a server return either one for a
+  ``ServiceError`` or capacity refusal a tool *raises*, so a tool need not catch them.
 
 Surfacing an error also records it: one ``service_error`` log line and one increment of
 ``service_errors_total{service, code, upstream_status}``. Both come from
@@ -46,32 +51,46 @@ __all__ = [
 
 
 class HostCapabilityMissing(Exception):
-    """Raised when bundle code calls a host-resources method but the
-    host hasn't advertised the capability in `initialize`.
+    """Raised by a host-resources call the connection cannot carry.
 
-    Catch this to implement the Level-C fallback pattern: when the
-    capability is absent, return a structured tool error that tells
-    the agent to call the tool again with inline content instead.
+    Either the host did not advertise the capability, or the connection negotiated the
+    2026-07-28 protocol, which has no channel for a request from a server to its client. The
+    message says which. Catch it, or check ``host(ctx).available`` first, and return a tool
+    error that tells the agent to pass the content inline instead:
 
-    Example:
         ```python
         try:
             result = await host(ctx).read(seed_uri)
         except HostCapabilityMissing:
-            raise ValueError(
-                "This host doesn't support ai.nimblebrain/host-resources. "
-                "Pass file contents inline via `seed_data` instead."
+            return to_tool_error(
+                ServiceError(
+                    ErrorCode.BAD_INPUT,
+                    "This connection cannot read workspace files. Pass the file's contents "
+                    "in `seed_data` instead.",
+                )
             )
         ```
+
+    ``protocol_version`` is the negotiated version when the protocol era is the cause, else
+    ``None``.
     """
 
-    def __init__(self, capability_key: str) -> None:
+    def __init__(self, capability_key: str, *, protocol_version: str | None = None) -> None:
+        if protocol_version is None:
+            cause = f"Host has not advertised the {capability_key!r} capability."
+        else:
+            cause = (
+                f"This connection negotiated MCP protocol {protocol_version}, which has no "
+                f"channel for a request from a server to its client, so {capability_key!r} "
+                "cannot be used on it whatever the host advertised. It works on a connection "
+                "that negotiated 2025-11-25 or earlier."
+            )
         super().__init__(
-            f"Host has not advertised the {capability_key!r} capability. "
-            "Check `host(ctx).available` before calling read/list, or pass "
+            f"{cause} Check `host(ctx).available` before calling read/list, or pass "
             "content via tool arguments instead."
         )
         self.capability_key = capability_key
+        self.protocol_version = protocol_version
 
 
 class ErrorCode(StrEnum):
@@ -233,9 +252,19 @@ class ServiceError(Exception):
 _log = logging.getLogger(__name__)
 
 
+def _log_level(err: ServiceError) -> int:
+    """The level a surfaced error is logged at: ``WARNING`` for ``bad_input``, else ``ERROR``.
+
+    ``bad_input`` is the caller's mistake and the server worked as intended, so it stays out of
+    an error-level alert. It is still counted in ``service_errors_total``.
+    """
+    return logging.WARNING if err.code is ErrorCode.BAD_INPUT else logging.ERROR
+
+
 def _log_only(err: ServiceError) -> None:
     """Record ``err`` without ``[observability]``: the same fields, on the stdlib logger."""
-    _log.error(
+    _log.log(
+        _log_level(err),
         "service_error",
         extra={
             "code": err.code.value,

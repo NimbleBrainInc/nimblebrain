@@ -62,7 +62,7 @@ def main() -> list[str]:
         try:
             importlib.import_module(subpackage)
         except ImportError as exc:
-            if f"pip install 'nimblebrain-server-sdk[{extra}]'" not in str(exc):
+            if f"uv add 'nimblebrain-server-sdk[{extra}]'" not in str(exc):
                 problems.append(f"{subpackage}: ImportError does not name the extra: {exc}")
         else:
             problems.append(f"{subpackage} imported without the [{extra}] extra")
