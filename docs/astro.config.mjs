@@ -66,6 +66,20 @@ export default defineConfig({
     '/extensions/notifications': '/host/notifications/',
     '/extensions/custom-instructions': '/using/skills/#guidance-for-one-connector',
     '/apps/manifest': '/host/manifest/',
+    // A section root with no page of its own sends readers to the section's first page in
+    // the sidebar, so a trimmed URL or a link to a section lands somewhere instead of 404ing.
+    '/guide': '/guide/welcome/',
+    '/using': '/using/chat/',
+    '/mcp': '/mcp/overview/',
+    '/connect': '/connect/external-clients/',
+    '/extensions': '/extensions/overview/',
+    '/host': '/host/overview/',
+    '/apps': '/apps/overview/',
+    '/cli': '/cli/overview/',
+    '/config': '/config/nimblebrain-json/',
+    '/gateways': '/gateways/composio/',
+    '/deploy': '/deploy/docker/',
+    '/api': '/connect/mcp-endpoint/',
   },
   integrations: [
     starlight({
