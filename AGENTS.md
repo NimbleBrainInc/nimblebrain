@@ -218,9 +218,10 @@ Do not edit these manually:
 
 ## Published Schemas
 
-`.github/workflows/schema-deploy.yml` publishes two hand-authored JSON Schemas to `schemas.nimblebrain.ai` on push to `main`. Editing either one ships it.
+`.github/workflows/schema-deploy.yml` publishes two hand-authored JSON Schemas and one generated document to `schemas.nimblebrain.ai` on push to `main`. Editing any of them ships it. Adding a file needs its object key granted to the deploy role first, or the upload is refused.
 
 - `src/connectors/catalog/schemas/host-manifest.schema.json` → `/v1/nimblebrain-host.schema.json`: the `ai.nimblebrain/host` `_meta` extension, how an MCP server declares its UI placement in the host shell. It is **published-only** — nothing here validates against it, because the runtime reads that block from a catalog entry it already trusts. No local guard holds it in step with `HostManifestMeta` (`src/connectors/runtime/types.ts`), so change both together.
+- `web/src/bridge/host-constants.json` → `/v1/nimblebrain-host-bridge.constants.json`: the app bridge's identifiers and limits, which an SDK holding copies of them tests against. Generated (`bun run gen:host-constants`); see [Auto-Generated Files](#auto-generated-files).
 - `src/config/nimblebrain-config.schema.json` is the **canonical source** for the `nimblebrain.json` config schema — edit it here; the repo is upstream of the published artifact. The runtime validates against it at startup. It must stay in lockstep with the runtime feature surface in `src/config/features.ts`; `test/unit/config-schema-drift.test.ts` fails the build on drift.
 
 ## Releasing
