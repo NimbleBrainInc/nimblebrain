@@ -43,7 +43,7 @@ Return the result of `to_tool_error`, never a dict. It is a FastMCP `ToolResult`
 
 It covers tool calls. A resource read has no in-band error result to return.
 
-FastMCP logs every exception a tool raises at error level, with a traceback. `add_error_contract` drops that record for the errors it converts, so a caller's mistake does not look like a server fault in the logs. The `service_error` line described [below](#every-surfaced-error-is-recorded-once) is the record to alert on.
+FastMCP logs every exception a tool raises at error level, with a traceback. `add_error_contract` drops that record for the errors it converts in tool calls on that server, so a caller's mistake does not look like a server fault in the logs. The `service_error` line described [below](#every-surfaced-error-is-recorded-once) is the record to alert on. FastMCP's record is kept for a resource read, a prompt, and a server without the contract.
 
 ## What the caller receives
 

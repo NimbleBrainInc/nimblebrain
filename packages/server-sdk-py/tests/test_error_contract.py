@@ -118,3 +118,39 @@ async def test_fastmcp_still_logs_an_unclassified_failure(
     assert record.levelno == logging.ERROR
     assert record.exc_info is not None
     assert isinstance(record.exc_info[1], RuntimeError)
+
+
+def contract_error_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        r
+        for r in caplog.records
+        if r.name == FASTMCP_LOGGER and r.exc_info and isinstance(r.exc_info[1], ServiceError)
+    ]
+
+
+async def test_fastmcp_still_logs_a_contract_error_a_resource_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The middleware converts tool calls only, so a resource's failure keeps its one record."""
+    mcp = server(contract=True)
+
+    @mcp.resource("notes://missing")
+    async def missing() -> str:
+        raise ServiceError(ErrorCode.NOT_FOUND, "No such note.")
+
+    with caplog.at_level(logging.DEBUG, logger=FASTMCP_LOGGER):
+        async with Client(mcp) as client:
+            with pytest.raises(Exception, match="notes://missing"):
+                await client.read_resource("notes://missing")
+    assert len(contract_error_records(caplog)) == 1
+
+
+async def test_fastmcp_still_logs_for_a_server_without_the_contract(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Another server in the process, with no middleware to record the error, keeps FastMCP's."""
+    server(contract=True)
+    with caplog.at_level(logging.DEBUG, logger=FASTMCP_LOGGER):
+        async with Client(server(contract=False)) as client:
+            await client.call_tool("classified", {}, raise_on_error=False)
+    assert len(contract_error_records(caplog)) == 1
