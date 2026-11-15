@@ -170,7 +170,7 @@
       "maximum": 50
     },
     "maxInputTokens": {
-      "description": "Max input tokens per request. Default: 500000.",
+      "description": "Estimated input-token cap per model call, including system prompt and tools. Prior same-model usage may tighten the history budget. Default: 500000.",
       "type": "integer",
       "minimum": 1
     },

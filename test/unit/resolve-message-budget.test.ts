@@ -104,7 +104,7 @@ describe("resolveMessageBudget", () => {
     expect(result.budget).toBe(expected);
   });
 
-  it("uses configMaxInputTokens when it's lower than the model headroom", () => {
+  it("keeps estimated system and tool tokens inside a binding configured cap", () => {
     const result = resolveMessageBudget({
       model: "anthropic:claude-opus-4-7",
       configMaxInputTokens: 500_000,
@@ -113,11 +113,35 @@ describe("resolveMessageBudget", () => {
       maxOutputTokens: 16_384,
     });
 
-    expect(result.budget).toBe(500_000);
+    expect(result.budget).toBe(500_000 - result.breakdown.systemPromptTokens);
     expect(result.breakdown.boundedByModel).toBe(false);
   });
 
-  it("falls back to configMaxInputTokens when the model is not in the catalog", () => {
+  it("reduces a binding configured cap by the measured correction", () => {
+    const tools = [tool("search", "find records".repeat(12))];
+    const result = resolveMessageBudget({
+      model: "anthropic:claude-opus-4-7",
+      configMaxInputTokens: 200_000,
+      systemPrompt: "you are a helpful assistant",
+      tools,
+      maxOutputTokens: 16_384,
+      estimateCorrection: 1.25,
+    });
+
+    expect(result.breakdown.toolTokens).toBeGreaterThan(0);
+    expect(result.budget).toBe(
+      160_000 - result.breakdown.systemPromptTokens - result.breakdown.toolTokens,
+    );
+    expect(result.breakdown.estimateCorrection).toBe(1.25);
+    expect(result.breakdown.boundedByModel).toBe(false);
+    expect(
+      Math.ceil(
+        (result.budget + result.breakdown.systemPromptTokens + result.breakdown.toolTokens) * 1.25,
+      ),
+    ).toBeLessThanOrEqual(200_000);
+  });
+
+  it("falls back to the configured input cap when the model is not in the catalog", () => {
     const result = resolveMessageBudget({
       model: "anthropic:claude-not-a-real-model",
       configMaxInputTokens: 200_000,
@@ -126,8 +150,36 @@ describe("resolveMessageBudget", () => {
       maxOutputTokens: 16_384,
     });
 
-    expect(result.budget).toBe(200_000);
+    expect(result.budget).toBe(200_000 - result.breakdown.systemPromptTokens);
     expect(result.breakdown.modelContextWindow).toBeNull();
+    expect(result.breakdown.boundedByModel).toBe(false);
+  });
+
+  it("still corrects the configured cap when the model is absent from the catalog", () => {
+    const result = resolveMessageBudget({
+      model: "anthropic:claude-not-a-real-model",
+      configMaxInputTokens: 200_000,
+      systemPrompt: "system",
+      tools: [],
+      maxOutputTokens: 16_384,
+      estimateCorrection: 1.25,
+    });
+
+    expect(result.budget).toBe(160_000 - result.breakdown.systemPromptTokens);
+    expect(result.breakdown.boundedByModel).toBe(false);
+  });
+
+  it("never returns a negative budget when the static prompt exceeds the configured cap", () => {
+    const result = resolveMessageBudget({
+      model: "anthropic:claude-opus-4-7",
+      configMaxInputTokens: 100,
+      systemPrompt: "x".repeat(800),
+      tools: [],
+      maxOutputTokens: 16_384,
+      estimateCorrection: 1.25,
+    });
+
+    expect(result.budget).toBe(0);
     expect(result.breakdown.boundedByModel).toBe(false);
   });
 
@@ -148,6 +200,30 @@ describe("resolveMessageBudget", () => {
     const expectedHeadroom =
       1_000_000 - result.breakdown.toolTokens - 16_384 - budgetSafetyMarginTokens(1_000_000);
     expect(result.budget).toBe(expectedHeadroom);
+  });
+
+  it("corrects the whole estimated prompt before subtracting system and tool tokens", () => {
+    const tools = [tool("search", "find records".repeat(12))];
+    const result = resolveMessageBudget({
+      model: "anthropic:claude-opus-4-7",
+      configMaxInputTokens: 5_000_000,
+      systemPrompt: "system prompt",
+      tools,
+      maxOutputTokens: 16_384,
+      estimateCorrection: 1.25,
+    });
+    const { systemPromptTokens, toolTokens, safetyMarginTokens } = result.breakdown;
+    expect(result.breakdown.boundedByModel).toBe(true);
+    expect(result.budget).toBe(
+      Math.floor(
+        (1_000_000 - 16_384 - safetyMarginTokens) / 1.25 - systemPromptTokens - toolTokens,
+      ),
+    );
+    expect(
+      Math.ceil((result.budget + systemPromptTokens + toolTokens) * 1.25) +
+        16_384 +
+        safetyMarginTokens,
+    ).toBeLessThanOrEqual(1_000_000);
   });
 
   it("subtracts maxOutputTokens from headroom", () => {
