@@ -25,6 +25,7 @@
     "dev": "astro dev",
     "prebuild": "bun run reference",
     "build": "astro build",
+    "postbuild": "bun scripts/check-section-roots.mjs",
     "preview": "astro preview"
   },
   "dependencies": {
