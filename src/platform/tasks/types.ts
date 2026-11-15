@@ -800,6 +800,11 @@ export interface Batch {
   items: number;
   /** Most of the batch's runs asked for at once (queued or running); at most `tasks.maxConcurrentRuns`. */
   concurrency: number;
+  /**
+   * How many of the batch's runs share its budget, and so run at once, when a
+   * budget stop lowered it below `concurrency`. Absent, `concurrency`.
+   */
+  sharing?: number;
   /** Whole-batch ceiling in USD, enforced before each model call as one shared spend account. */
   budgetUsd?: number;
   stopWhen?: BatchStopRule;

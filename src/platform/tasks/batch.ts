@@ -17,9 +17,15 @@
  *   balance lives across the gaps between runs. It is seeded when the driver
  *   opens it (create, resume, boot) from the budget minus the batch's cost, the
  *   sum of its items' costs; boot charges a run lost in a crash from the usage
- *   ledger, so its spend still counts. When the balance is spent, or a run is
- *   stopped by the batch's account (or the task's token budget), no new item
- *   starts and the batch pauses with reason `budget`.
+ *   ledger, so its spend still counts. When the balance is spent, or a run that
+ *   had the budget to itself is stopped by the batch's account (or the task's
+ *   token budget), no new item starts and the batch pauses with reason `budget`.
+ * - **Sharing.** Each of a batch's runs may be held to a share of the budget,
+ *   what is left divided by how many run at once. A run stopped by the budget
+ *   after a model call had too small a share for its item, and what is left
+ *   only falls, so the same share never pays for it later. The driver halves
+ *   how many share the budget (`Batch.sharing`) and asks for the item again,
+ *   down to one run at a time.
  * - **Pause.** No new item starts, and runs still queued at the door are
  *   withdrawn, their items back to pending; running runs finish.
  * - **Stop rule.** After `stopWhen.afterItems` assessed runs (pass, fail, or
@@ -168,6 +174,13 @@ interface LiveBatch {
   settled: number;
   /** `settled` when each outstanding run was asked for, by run id. */
   settledAtRequest: Map<string, number>;
+  /** How many runs shared the budget when each outstanding run started, by run id. */
+  sharingAtStart: Map<string, number>;
+}
+
+/** How many of a batch's runs share its budget, and so run at once. */
+export function sharingOf(batch: Pick<Batch, "concurrency" | "sharing">): number {
+  return Math.max(1, Math.min(batch.concurrency, batch.sharing ?? batch.concurrency));
 }
 
 /** The spend account id of a batch. Opaque to the door. */
@@ -310,6 +323,7 @@ export class BatchDriver {
       withdrawn: new Set(),
       settled: 0,
       settledAtRequest: new Map(),
+      sharingAtStart: new Map(),
     };
   }
 
@@ -394,6 +408,7 @@ export class BatchDriver {
       withdrawn: new Set(),
       settled: 0,
       settledAtRequest: new Map(),
+      sharingAtStart: new Map(),
     };
     this.live.set(BatchDriver.keyOf(spec.wsId, spec.ownerId, batch.id), lb);
     this.activate(lb);
@@ -425,6 +440,7 @@ export class BatchDriver {
       withdrawn: new Set(),
       settled: 0,
       settledAtRequest: new Map(),
+      sharingAtStart: new Map(),
     };
     this.live.set(key, lb);
     return lb;
@@ -557,6 +573,8 @@ export class BatchDriver {
       );
     }
     batch.budgetUsd = budgetUsd;
+    // A larger budget makes each share larger, so the batch shares it as asked again.
+    delete batch.sharing;
   }
 
   private controlCancel(lb: LiveBatch): BatchControlResult {
@@ -646,7 +664,7 @@ export class BatchDriver {
         id: batchAccountId(batch),
         unit: "usd",
         remaining: Math.max(0, batch.budgetUsd - lb.batch.costUsd),
-        sharedBy: batch.concurrency,
+        sharedBy: sharingOf(batch),
       },
     ];
   }
@@ -667,7 +685,7 @@ export class BatchDriver {
       return;
     }
     if (this.stopping || lb.retryTimer || lb.waitForSettle) return;
-    while (lb.outstanding.size < lb.batch.concurrency) {
+    while (lb.outstanding.size < sharingOf(lb.batch)) {
       const index = this.nextPending(lb);
       if (index === undefined) break;
       if (this.budgetSpent(lb)) {
@@ -725,7 +743,11 @@ export class BatchDriver {
       requested,
       {
         accounts: () => this.accountsFor(lb),
-        sharedBy: batch.concurrency,
+        sharedBy: () => {
+          const sharing = sharingOf(lb.batch);
+          lb.sharingAtStart.set(requested.runId, sharing);
+          return sharing;
+        },
         onStarted: () => this.itemStarted(lb, index, requested.runId),
       },
     );
@@ -811,11 +833,32 @@ export class BatchDriver {
     lb.outstanding.delete(index);
     const item = lb.items[index];
     if (!item || item.runId !== runId) return;
-    const batchStop =
-      run.stopReason === "spend_limit" && run.spendAccountId === batchAccountId(lb.batch);
-    const budgetStop =
-      run.stopReason === "spend_limit" &&
-      run.spendAccountId?.startsWith(BUDGET_ACCOUNT_PREFIX) === true;
+    const stop = this.budgetStopOf(lb, runId, run);
+    this.settleItem(lb, index, run, stop !== "none", lb.withdrawn.delete(runId));
+    if (stop === "again") {
+      // Wait for a reservation still held to free; with none held, ask again now.
+      lb.waitForSettle = this.othersRunning(lb);
+    } else if (stop === "batch_spent") {
+      this.pause(lb, "budget", "The batch's budget has too little left for another model call.");
+    } else if (stop === "budget_spent") {
+      this.pause(lb, "budget", "The task's token budget is spent for its window.");
+    }
+    this.applyStopRule(lb);
+    this.persistBatch(lb);
+    this.pump(lb);
+  }
+
+  /**
+   * What an ended run's stop means for the batch: `none` when no budget
+   * stopped it; `again` when its item can run again as things stand (another
+   * run's reservation was in the way, or it outgrew its share and fewer now
+   * share); otherwise which budget is spent.
+   */
+  private budgetStopOf(
+    lb: LiveBatch,
+    runId: string,
+    run: TaskRun,
+  ): "none" | "again" | "batch_spent" | "budget_spent" {
     // Any run ending frees its reservation, so a reserved-out item may run now.
     lb.waitForSettle = false;
     // A batch run that ended after this one was asked for may have held the
@@ -826,20 +869,17 @@ export class BatchDriver {
     // refused one would let two refused items keep re-asking for each other.
     const madeCall = run.inputTokens > 0 || run.outputTokens > 0;
     if (madeCall) lb.settled++;
-    const reservedOut =
-      (batchStop || budgetStop) && this.reservedOut(lb, run.spendAccountId!, endedSince, madeCall);
-    this.settleItem(lb, index, run, batchStop || budgetStop, lb.withdrawn.delete(runId));
-    if (reservedOut) {
-      // Wait for a reservation still held to free; with none held, ask again now.
-      lb.waitForSettle = this.othersRunning(lb);
-    } else if (batchStop) {
-      this.pause(lb, "budget", "The batch's budget has too little left for another model call.");
-    } else if (budgetStop) {
-      this.pause(lb, "budget", "The task's token budget is spent for its window.");
+    const sharedBy = lb.sharingAtStart.get(runId) ?? sharingOf(lb.batch);
+    lb.sharingAtStart.delete(runId);
+    if (run.stopReason !== "spend_limit" || run.spendAccountId === undefined) return "none";
+    const batchStop = run.spendAccountId === batchAccountId(lb.batch);
+    if (!batchStop && !run.spendAccountId.startsWith(BUDGET_ACCOUNT_PREFIX)) return "none";
+    if (madeCall && sharedBy > 1) {
+      this.shareAmongFewer(lb, sharedBy);
+      return "again";
     }
-    this.applyStopRule(lb);
-    this.persistBatch(lb);
-    this.pump(lb);
+    if (this.reservedOut(lb, run.spendAccountId, endedSince)) return "again";
+    return batchStop ? "batch_spent" : "budget_spent";
   }
 
   /** Give an item its run's outcome, or put it back to run again when the run did not really have its turn. */
@@ -859,8 +899,8 @@ export class BatchDriver {
       again = true;
     } else if (accountStop && producedNothing) {
       // Stopped by the batch's account or the task's budget before it
-      // produced anything: it runs again once a reservation frees, or under a
-      // raised budget.
+      // produced anything: it runs again once a reservation frees, with fewer
+      // runs sharing the budget, or under a raised budget.
       again = true;
     }
     if (!again) {
@@ -876,31 +916,16 @@ export class BatchDriver {
 
   /**
    * Whether a stop by `accountId` (the batch's account, or the task's budget
-   * its runs share) came from reservations rather than from spend: another
-   * run's, or this run's own share of a balance the batch's runs divide
-   * (ADR-0063). Only the batch's own running runs reserve against its account
-   * (the driver's anchor never does), so with none of them still running, a
-   * refusal means the actual balance cannot pay for one call: spent. With one
-   * running, or one that ended since this run was asked for (its reservation
-   * may have refused the call before it ended), and actual balance left, the
-   * item gets another turn: a second refusal with nothing reserving is spend.
-   *
-   * A run held to a share of the balance (the batch runs more than one at a
-   * time) that made a model call before its stop may have spent its share
-   * alone, with the balance left: it is reserved out whatever else runs, and
-   * the next request settles it. A spent task budget is refused there by the
-   * task's counters, a spent batch account by `budgetSpent`, and a share too
-   * small for one call stops before any call, which the rule above reads as
-   * spend.
+   * its runs share) came from other runs' reservations rather than from spend.
+   * Only the batch's own running runs reserve against its account (the
+   * driver's anchor never does), so with none of them still running, a refusal
+   * means the actual balance cannot pay for the call: spent. With one running,
+   * or one that ended since this run was asked for (its reservation may have
+   * refused the call before it ended), and actual balance left, the item gets
+   * another turn: a second refusal with nothing reserving is spend.
    */
-  private reservedOut(
-    lb: LiveBatch,
-    accountId: string,
-    endedSince: boolean,
-    madeCall: boolean,
-  ): boolean {
+  private reservedOut(lb: LiveBatch, accountId: string, endedSince: boolean): boolean {
     const { batch } = lb;
-    if (madeCall && batch.concurrency > 1) return true;
     if (!endedSince && !this.othersRunning(lb)) return false;
     // The task's budget has a live balance only while a run holds it.
     const fallback =
@@ -909,6 +934,24 @@ export class BatchDriver {
         : 0;
     const actual = this.config.spend?.balance(accountId) ?? fallback;
     return actual > 0;
+  }
+
+  /**
+   * A run that shared the budget with `sharedBy - 1` others was stopped by it
+   * after a model call: its share (ADR-0063) was too small for its item. What
+   * is left only falls, so the same share never pays for the item later; half
+   * as many runs sharing doubles it. Every run of one round reports the same
+   * `sharedBy`, so a round of stops halves once. Runs still queued give their
+   * places back, since they would start beside more runs than now share. Never
+   * raised again while the batch runs: one costly item slows every later one,
+   * until a resume with a new budget.
+   */
+  private shareAmongFewer(lb: LiveBatch, sharedBy: number): void {
+    const { batch } = lb;
+    const fewer = Math.max(1, Math.floor(sharedBy / 2));
+    if (fewer >= sharingOf(batch)) return;
+    batch.sharing = fewer;
+    this.withdrawQueued(lb);
   }
 
   /** Whether another of the batch's runs is running (and so may hold a reservation). */
@@ -941,7 +984,15 @@ export class BatchDriver {
     batch.pause = { reason, message, at: new Date().toISOString() };
     if (lb.retryTimer) clearTimeout(lb.retryTimer);
     lb.retryTimer = undefined;
-    // Runs still waiting at the door give their places back; running ones finish.
+    this.withdrawQueued(lb);
+    this.releaseAnchor(lb);
+    this.persistBatch(lb);
+    if (reason === "budget" || reason === "pass_rate") this.config.notifyPaused?.({ ...batch });
+  }
+
+  /** Runs still waiting at the door give their places back, their items to pending; running ones finish. */
+  private withdrawQueued(lb: LiveBatch): void {
+    const { batch } = lb;
     for (const index of lb.outstanding) {
       const item = lb.items[index];
       if (item?.state !== "queued" || !item.runId) continue;
@@ -950,9 +1001,6 @@ export class BatchDriver {
         lb.withdrawn.delete(item.runId);
       }
     }
-    this.releaseAnchor(lb);
-    this.persistBatch(lb);
-    if (reason === "budget" || reason === "pass_rate") this.config.notifyPaused?.({ ...batch });
   }
 
   private complete(lb: LiveBatch): void {

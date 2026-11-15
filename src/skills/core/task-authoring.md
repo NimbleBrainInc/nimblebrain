@@ -112,6 +112,9 @@ If the name is taken, `tasks__create` refuses: change that task with
    or a `filter` (`failing`, `uncertain`, ...).
 6. Control with `tasks__batch_control`:
    - A batch paused for budget needs `resume` with a higher `budgetUsd`.
+   - A batch whose `sharing` is below its concurrency has lowered how many items
+     run at once, because the budget split that many ways could not pay for an
+     item. A higher `budgetUsd` (pause, then `resume`) restores it.
    - `rerun_failed` reruns failed, skipped, cancelled, and fail-judged items, but
      not uncertain ones: give those a verdict instead (Workflow 3).
 
