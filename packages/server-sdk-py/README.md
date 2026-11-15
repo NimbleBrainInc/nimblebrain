@@ -1,18 +1,26 @@
 # nimblebrain-server-sdk
 
-The Python SDK for building MCP servers that run on NimbleBrain, whether the server ships its
-own interface (an MCP app) or only tools (a connector). It covers what a server shares with the
-NimbleBrain host it runs in. The MCP protocol itself comes from the `mcp` package, through
-FastMCP.
+The Python SDK for building MCP servers that run on NimbleBrain.
 
-| Package | What it is for |
-| --- | --- |
-| `nimblebrain-server-sdk` (this package) | The server half: a server's NimbleBrain host features (annotations, change announcements, the `ai.nimblebrain` extensions, skills, listing rows, record ids, host resources), its error contract, and, as extras, its database access, its observability and its notification outbox |
-| [`nimblebrain-synapse`](https://pypi.org/project/nimblebrain-synapse/) (PyPI) | Serving a server's interface: one `ui://` component declared once, rendered in any MCP Apps host |
-| [`@nimblebrain/synapse`](https://github.com/NimbleBrainInc/synapse) (npm) | The UI half: writing that interface, the part that runs in the browser |
-| `@nimblebrain/sdk` (npm) | The API client: a program that calls NimbleBrain's API |
+It covers what a server shares with the NimbleBrain host it runs in. The MCP protocol itself
+comes from the `mcp` package, through [FastMCP](https://gofastmcp.com). Full documentation:
+**[docs.nimblebrain.ai/server-sdk](https://docs.nimblebrain.ai/server-sdk/quickstart/)**.
 
-A server with an interface uses this package and `nimblebrain-synapse` together.
+## Which package
+
+A server alone is a connector. A server plus its interface is an app.
+
+| Package | Registry | What it is for |
+| --- | --- | --- |
+| `nimblebrain-server-sdk` (this package) | [PyPI](https://pypi.org/project/nimblebrain-server-sdk/) | The server: tool annotations, change announcements, the `ai.nimblebrain` extensions, skills, the error contract, and, as extras, database access, observability and notifications |
+| `nimblebrain-synapse` | [PyPI](https://pypi.org/project/nimblebrain-synapse/) | Serving an app's interface from a Python server: one `ui://` component, rendered in any MCP Apps host |
+| `@nimblebrain/synapse` | [npm](https://www.npmjs.com/package/@nimblebrain/synapse) | Writing that interface: the part that runs in the browser |
+| `@nimblebrain/sdk` | [npm](https://www.npmjs.com/package/@nimblebrain/sdk) | The API client: a program that calls NimbleBrain's API |
+
+A connector needs only this package. An app uses this package and `nimblebrain-synapse` on the
+server, and `@nimblebrain/synapse` in its interface.
+
+## Install
 
 ```bash
 uv add nimblebrain-server-sdk
@@ -20,759 +28,378 @@ uv add nimblebrain-server-sdk
 pip install nimblebrain-server-sdk
 ```
 
-Three optional extras add what only some servers need. The core imports none of them, and each
-lives in its own subpackage:
-
-| Install | Subpackage | For |
-| --- | --- | --- |
-| `nimblebrain-server-sdk` | `nimblebrain_server_sdk`, `.errors` | Every server |
-| `nimblebrain-server-sdk[db]` | `nimblebrain_server_sdk.db` | A server that owns a Postgres database shared by many tenants and workspaces |
-| `nimblebrain-server-sdk[observability]` | `nimblebrain_server_sdk.observability` | A server that serves metrics, structured logs and traces |
-| `nimblebrain-server-sdk[outbox]` | `nimblebrain_server_sdk.outbox` | A server that records notifications for the host to poll; installs `[db]` and `[observability]` |
-
 Requires Python 3.13 or later.
 
+## A complete server
+
+`notes.py`: two tools, a count the host shows beside the server's name, and errors a host can
+act on.
+
+<!-- example: examples/notes.py -->
 ```python
-from fastmcp import FastMCP
-from nimblebrain_server_sdk import ADDS, READS, announce_resource_list_changed
+"""A complete connector: two tools, a count the host shows, and the error contract."""
+
+from fastmcp import Context, FastMCP
+
+from nimblebrain_server_sdk import (
+    ADDS,
+    FACETS_EXTENSION_ID,
+    READS,
+    add_error_contract,
+    add_platform_extension,
+    announce_resource_list_changed,
+    facet_count,
+    facet_meta,
+    new_prefixed_id,
+)
+from nimblebrain_server_sdk.errors import ErrorCode, ServiceError
 
 mcp = FastMCP("notes")
-```
-
-What it covers:
-
-- [Annotating a tool](#annotating-a-tool): `READS`, `ADDS`, `CHANGES`.
-- [Announcing a change](#announcing-a-change) so a server's views re-read.
-- [Platform extensions](#platform-extensions): facets, lifecycle handlers, and the view a record
-  opens in.
-- [Skills](#skills) through the MCP Skills extension.
-- [Listing rows](#bounding-a-listing-row) bounded for an agent's context, and
-  [record ids](#minting-a-record-id).
-- [Host resources](#host-resources): reading workspace files through the host.
-- [Testing](#testing) a server the way a host reads it.
-- [Errors](#errors): the service error contract a tool returns.
-- [Database access](#database-access-db) (`[db]`): row-level security per tenant and workspace,
-  a sized pool, and per-workspace admission.
-- [Observability](#observability-observability) (`[observability]`): RED metrics, JSON logs
-  and W3C trace propagation in one call.
-- [Notifications](#notifications-outbox) (`[outbox]`): an outbox a server records facts in,
-  inside the transaction that made them true, and the poll the host reads it with.
-
-## Annotating a tool
-
-`READS`, `ADDS` and `CHANGES` are the MCP spec's tool hints for a read, a write that loses
-nothing already there, and a write that overwrites, removes, or acts on what is there. Under
-the spec's defaults an unannotated tool is a destructive write, so give every tool one.
-
-```python
-@mcp.tool(annotations=READS)
-async def get_note(note_id: str) -> dict: ...
-```
-
-## Announcing a change
-
-A view re-reads when the server tells its host that the resource list changed. A write tool
-calls this once its write has committed:
-
-```python
-from fastmcp import Context
-
-@mcp.tool(annotations=ADDS)
-async def save_note(text: str, ctx: Context | None = None) -> dict:
-    row = await store.save(text)          # commits
-    await announce_resource_list_changed(ctx)
-    return {"note": row}
-```
-
-- **Writes announce, reads never do.** A read that announced would have every open view
-  refreshing itself forever, including a read that writes on the way in (an audit row).
-- **After the commit, and best-effort.** A failed send is logged
-  (`announce_resource_list_changed_failed`, with the `tool` you pass), not raised: the write
-  is stored either way, and reporting it as failed would have the agent make it again. A view
-  that misses one catches up on its next read.
-- **In the call's own response,** so it reaches the host that holds the workspace on either
-  protocol era, without the server keeping a map of sessions.
-- **No request, no announcement.** With no `ctx` and no active MCP request, it does nothing.
-
-## Platform extensions
-
-An MCP extension (SEP-2133) is a capability offered under a reverse-DNS identifier and
-discovered through `server/discover`. NimbleBrain's `ai.nimblebrain/*` extensions add no
-methods: each marks a primitive the host already reads (a resource, a tool, a template).
-
-- **Only a 2026-07-28 peer sees an extension.** A legacy `initialize` never carries
-  `capabilities.extensions`.
-- **Fixed at construction.** FastMCP refuses a registration once the server is serving, and a
-  second registration of one identifier.
-
-### Advertising one
-
-```python
-from nimblebrain_server_sdk import add_platform_extension
-
-add_platform_extension(mcp, "acme/widgets", {"version": 1})
-```
-
-`PlatformExtension` serves no methods of its own. An extension with methods subclasses
-FastMCP's `ServerExtension`.
-
-### Facets
-
-A facet is a count a host shows without being asked: tickets blocked, drafts awaiting review.
-See the [facets extension](https://docs.nimblebrain.ai/extensions/facets/).
-
-```python
-from nimblebrain_server_sdk import FACETS_EXTENSION_ID, facet_count, facet_meta
-
+add_error_contract(mcp)  # a ServiceError a tool raises reaches the caller with its code
 add_platform_extension(mcp, FACETS_EXTENSION_ID)
 
-@mcp.resource(
-    "acme://facets/blocked",
-    name="tickets-blocked",
-    title="Tickets blocked",
-    mime_type="application/json",
-    meta=facet_meta("critical"),
-)
-async def tickets_blocked() -> str:
-    return facet_count(await count_blocked())
-```
+NOTES: dict[str, str] = {}
 
-- **The marker is the contract.** A host takes a facet from the `_meta` key, never the URI.
-- **`title` is the label,** rendered after the number.
-- **The level** (`critical`, `warning`, `info`) belongs to the facet, not to a reading.
-- **The read takes no arguments** and counts at the source for the caller's identity.
-- **`facet_count` refuses** anything but an integer of at least zero.
-
-### Lifecycle handlers
-
-`ai.nimblebrain/lifecycle` tells a server it has been made available to a scope (`ready`) and
-that it is about to be removed (`removing`). See the
-[lifecycle extension](https://docs.nimblebrain.ai/extensions/lifecycle/).
-
-```python
-from nimblebrain_server_sdk import CHANGES, add_lifecycle_extension
-
-lifecycle = add_lifecycle_extension(mcp)
-
-@lifecycle.handler("ready", annotations=CHANGES)
-async def workspace_ready(reason: str | None = None) -> str: ...
-
-@lifecycle.handler("removing", annotations=CHANGES)
-async def workspace_removing() -> str: ...
-```
-
-- **Refused at import:** a handler that requires a property, or a second handler for one event.
-- **Synchronous:** registered without task support, since the host calls it directly.
-- **`reason` if you want it:** a `ready` handler that declares it receives `install` or `resume`.
-- **Listed to every client,** so a handler must be safe for any caller with the scope's
-  identity: `removing` records intent and never destroys.
-- **Not correct by the events alone.** Most hosts never send them: set up lazily on first use
-  too, and sweep for state whose `removing` never came.
-
-### The view a record opens in
-
-A server with several views names the one that shows a kind of record on that record's
-resource template:
-
-```python
-from nimblebrain_server_sdk import record_view_meta
-
-@mcp.resource("acme://boards/{board_id}", name="board", meta=record_view_meta("ui://acme/boards"))
-async def board(board_id: str) -> str: ...
-```
-
-## Skills
-
-A server publishes skills by declaring `io.modelcontextprotocol/skills`. The
-extension answers `skills/list` and `skills/get` with each skill's entry (its
-`SKILL.md` URI, its frontmatter verbatim, and a `sha256` digest and byte size
-for every file) and serves every file through `resources/read` at
-`skill://<skill-path>/<file-path>`. A host verifies each file it reads against
-the digest, so the bytes served and the bytes listed come from one place: the
-extension. Do not also register `skill://` resources by hand: FastMCP serves
-the last resource registered at a URI, so a FastMCP server that registers one
-over a skill file fails at startup.
-
-A skill is a directory holding a `SKILL.md` (frontmatter with `name` and
-`description`) and any reference files:
-
-```
-skills/tasks/
-├── SKILL.md
-└── references/transitions.md
-```
-
-**FastMCP:** register every skill the server publishes in one call.
-
-```python
-from pathlib import Path
-from fastmcp import FastMCP
-from nimblebrain_server_sdk import add_skills
-
-mcp = FastMCP("Tasks")
-add_skills(mcp, [Path(__file__).parent / "skills" / "tasks"])
-```
-
-**`mcp` SDK `MCPServer`:**
-
-```python
-from mcp.server.mcpserver import MCPServer
-from nimblebrain_server_sdk import MCPServerSkillsExtension
-
-server = MCPServer("Tasks", extensions=[MCPServerSkillsExtension([SKILLS / "tasks"])])
-```
-
-**Generated or packaged files.** When a skill's files are not a directory of
-their own (a `SKILL.md` built at startup, or one packaged beside other code),
-pass a `SkillDefinition` with the skill path and the files keyed by their path
-in the skill:
-
-```python
-from nimblebrain_server_sdk import SkillDefinition, add_skills
-
-outreach = SkillDefinition(
-    "outreach",  # served at skill://outreach/SKILL.md
-    {
-        "SKILL.md": render_skill_md("outreach"),
-        "references/tone.md": (REFS / "tone.md").read_text(),
-    },
-)
-add_skills(mcp, [SKILLS / "tasks", outreach])
-```
-
-The skill path may carry a prefix (`"acme/billing/refunds"`); its last segment
-must equal the frontmatter `name`. A directory's skill path defaults to the
-directory's name (`SkillDefinition.from_directory(dir, path=...)` overrides it).
-Dotfiles and `__pycache__` are skipped.
-
-Everything the spec requires of a skill is checked at construction, so a bad
-skill fails when the server starts rather than on a host's first read: a
-missing `SKILL.md` or frontmatter, a `name` outside the Agent Skills rules, a
-`name` that differs from the last path segment, a file path that escapes the
-skill or that a URI would encode differently, two skills at one URI.
-A skill beyond the SEP-2640 limits (512 files or 16 MiB) warns.
-
-Notes on the wire:
-
-- Frontmatter is parsed with YAML 1.2 semantics for booleans, numbers, and
-  dates (`yes`, `1:30`, and `2026-01-01` stay strings, and `017` is 17),
-  matching the parsers hosts compare with.
-- Text files are served as text resources and anything that is not UTF-8 as a
-  blob; either way the digest covers the raw file bytes.
-- `skills/list` returns every skill in one page. On protocol 2026-07-28 both
-  results carry `ttlMs: 0` and `cacheScope: "private"`.
-- On a 2025-era (`initialize`) connection the `mcp` SDK does not send
-  `capabilities.extensions`, so only 2026-07-28 clients see the declaration.
-  `skills/list` and `skills/get` answer on either.
-
-### Conformance
-
-The upstream suite's SEP-2640 server scenarios run against
-`tests/conformance_server.py`, which serves the fixture skill and a generated
-one. The scenarios are on the suite's `main` branch:
-
-```bash
-uv run python tests/conformance_server.py --port 3001            # or --server mcpserver
-git clone https://github.com/modelcontextprotocol/conformance && cd conformance && npm ci
-for s in enumeration manifest directory; do
-  npm start -- server --url http://127.0.0.1:3001/mcp --scenario sep-2640-skills-$s
-done
-```
-
-Both adapters pass every check. On FastMCP the manifest scenario warns
-(`sep-2640-meta-prefix`) because FastMCP stamps its own `fastmcp` `_meta` key
-on every resource; the `directory` checks skip because `resources/directory/read`
-is not implemented.
-
-## Bounding a listing row
-
-A page of a few hundred rows with one unbounded text field each (a document's body, a ticket's
-description) is a page no agent context can hold. A row carries such a field as a preview or
-not at all, plus the `uri` the whole record is read from:
-
-```python
-from nimblebrain_server_sdk import PREVIEW_CHARS, listing_row
-
-rows = [listing_row(r, omit=("body",)) for r in records]                       # drop it
-rows = [listing_row(r, preview={"description": PREVIEW_CHARS}) for r in records]  # preview it
-```
-
-- **`omit` drops a field; `preview` replaces it** with `<field>_preview`, at most the given
-  number of characters (200 by default), ending in `…` when cut. `None` stays `None`.
-- **Everything else is copied,** `uri` included; the record passed in is not modified.
-- **A preview of anything but text raises** `TypeError`.
-
-## Minting a record id
-
-A record id is `<prefix>_<ulid>`: opaque, never recycled, and sortable by mint time.
-
-```python
-from nimblebrain_server_sdk import new_prefixed_id
-
-def new_ticket_id() -> str:
-    return new_prefixed_id("tk")
-```
-
-- **The body is a ULID:** 26 characters of Crockford base32, a 48-bit millisecond timestamp
-  then 80 random bits.
-- **Strictly increasing in one process,** from any thread: within a millisecond the random part
-  is incremented, and a clock that steps back holds at the last millisecond.
-- **Uniqueness is the primary key's job.** The random bits make a collision across replicas
-  unlikely, not impossible.
-
-## Host resources
-
-A server running on NimbleBrain receives a `Context` argument
-in every tool handler. The platform advertises the
-`ai.nimblebrain/host-resources` capability during the MCP `initialize`
-handshake; when present, the server can issue
-`ai.nimblebrain/resources/read` and `ai.nimblebrain/resources/list`
-requests back to the platform to read files from the workspace's
-`FileStore` — the same store the agent's `files__read` tool sees.
-
-This SDK wraps that protocol. You write `await host(ctx).read(uri)` and
-get bytes; the SDK takes care of capability detection, method names,
-and Pydantic result types.
-
-**Host resources work on 2025-era (`initialize`) connections only.** A read is a request from
-the server to the client, and the 2026-07-28 protocol has no channel for one. On a 2026-07-28
-connection `available` and `list_available` are `False` and `read`/`list` raise
-`HostCapabilityMissing`, whatever the client advertised, so a server takes its fallback path
-instead of failing on the wire.
-
-### Quick start
-
-```python
-from fastmcp import Context
-from nimblebrain_server_sdk import host, HostCapabilityMissing
-
-@mcp.tool
-async def start_research(
-    seed_uri: str | None = None,
-    seed_data: str | None = None,
-    ctx: Context = None,
-):
-    h = host(ctx)
-    if seed_uri and h.available:
-        # Host supports the extension — read the file directly.
-        result = await h.read(seed_uri)
-        content = result.contents[0].text
-    elif seed_data:
-        # No URI, but the agent passed inline content. Common path for
-        # hosts that don't (yet) advertise the extension.
-        content = seed_data
-    elif seed_uri and not h.available:
-        # URI passed, but the host can't resolve it. Return a structured
-        # tool error so the agent knows to retry with `seed_data` instead
-        # — the Level-C fallback pattern.
-        raise ValueError(
-            "This host doesn't support ai.nimblebrain/host-resources. "
-            "Pass file contents inline via `seed_data` instead."
-        )
-    else:
-        raise ValueError("Provide `seed_data` or `seed_uri`.")
-
-    ...  # do research with `content`
-```
-
-### API
-
-```python
-from nimblebrain_server_sdk import host
-
-h = host(ctx)
-
-# Capability detection — true when the platform advertised
-# `ai.nimblebrain/host-resources` with `read.enabled: true`.
-h.available
-
-# Per-scheme detection. v1 only supports `files`; future schemes
-# (`entities`, etc.) get added to the platform's advertisement.
-h.supports_scheme("files")
-
-# Read a single resource. Returns the MCP-standard `ReadResourceResult`.
-# Raises `HostCapabilityMissing` when the host doesn't advertise the
-# extension. Raises `mcp.shared.exceptions.MCPError` (match on `.code`)
-# for `-32004` (rate limited), `-32005`
-# (response too large), `-32002` (resource not found), `-32602`
-# (invalid params, e.g. unsupported scheme).
-result = await h.read("files://fl_abc123")
-text = result.contents[0].text
-
-# List resources with an optional filter. Filter rides in `_meta.filter`
-# per the platform's wire convention; this SDK does the unwrap. Supports
-# `mime_type` and `tags` filters; rejects pagination cursors with
-# `-32602` (pagination is reserved for a later version).
-listing = await h.list(mime_type="text/csv")
-for entry in listing.resources:
-    print(entry.name, entry.uri)
-```
-
-### Error codes
-
-The host-resources extension uses the JSON-RPC impl-defined server-error
-range (`-32000` to `-32099`) for quota/policy responses, distinct from
-`-32603 InternalError`:
-
-| Code | Meaning |
-| --- | --- |
-| `-32002` | Resource not found (also returned for cross-workspace lookups — no info leak) |
-| `-32004` | Rate limited (per-server token bucket; carries `retryAfterMs` in `error.data`) |
-| `-32005` | Response too large (whole-response cap; `error.data` carries `size`, `maxSize`) |
-| `-32602` | Invalid params (unsupported URI scheme, malformed `tags`, unsupported cursor) |
-
-Servers should match on specific codes to back off intelligently
-rather than treating all errors as server faults.
-
-## Testing
-
-`nimblebrain_server_sdk.testing` checks a server the way a host reads it, on either era
-(`mode="auto"` negotiates 2026-07-28, `mode="legacy"` 2025-11-25):
-
-- **`served_skills(mcp, mode)`** lists the skills, reads every file back against its digest,
-  checks `skills/get`, and on 2026-07-28 that the extension is declared. It returns the entries
-  by `SKILL.md` URI.
-- **`served_facets(mcp, mode)`** finds the marked resources, checks each title, MIME type and
-  level, reads each count, and on 2026-07-28 that the extension is declared. It returns
-  `{name: {"title", "level", "count"}}`.
-- **`assert_bounded_rows(rows, unbounded=(...))`** asserts each row has a `uri`, none of the
-  named fields, and no text over `max_chars` (1,000) at any depth. Seed each unbounded field
-  longer than that first, so one that leaks under another name fails too.
-
-## Errors
-
-`nimblebrain_server_sdk.errors` is the contract a server reports a failure with, so every
-server fails the same way and no upstream's internals reach the host. It is in the core: no
-extra needed.
-
-```python
-from nimblebrain_server_sdk.errors import ErrorCode, ServiceError, to_tool_error
-
-@mcp.tool(annotations=READS)
-async def search(query: str):
-    if not query.strip():
-        return to_tool_error(ServiceError(ErrorCode.BAD_INPUT, "`query` is empty."))
-    try:
-        return await provider.search(query)
-    except ProviderError as exc:                          # carries the upstream's HTTP status
-        return to_tool_error(ServiceError.from_upstream(exc.status, detail=str(exc)))
-```
-
-- **A closed set of codes.** `ErrorCode` is `bad_input`, `auth_required`, `forbidden`,
-  `not_found`, `conflict`, `quota_exhausted`, `rate_limited`, `upstream_rejected`,
-  `upstream_unavailable`, `upstream_timeout` and `internal`. Each fixes the HTTP status a host
-  presents and whether a retry can help (`rate_limited`, `upstream_unavailable` and
-  `upstream_timeout` are retryable).
-- **`message` reaches the host; `detail` does not.** Omit `message` for the code's generic
-  default. Never put a vendor name, URL, raw response body, secret or tenant data in it;
-  that goes in `detail`, which is logged only.
-- **`from_upstream(status)`** classifies an upstream HTTP status (`402` is
-  `quota_exhausted`, `429` `rate_limited`, `408`/`504` `upstream_timeout`, other 5xx
-  `upstream_unavailable`, other 4xx `upstream_rejected`) and passes the bare number to the
-  host as `upstream_status`.
-- **Return the result of `to_tool_error`, never a dict.** It is a FastMCP `ToolResult` with
-  `is_error=True`, the message as text and `structured_content.error` as the envelope
-  (`code`, `retryable`, `message`, and `upstream_status` when there is one). A returned dict
-  scores as a success.
-- **`rate_limited_tool_error(refusal)`** is the `rate_limited` result for a call refused for
-  capacity, such as `[db]`'s `Overloaded`: any object with host-safe `message` and
-  `next_step` text.
-- **Every surfaced error is recorded once.** With `[observability]` installed, that is one
-  increment of `service_errors_total{service, code, upstream_status}` and one `service_error`
-  JSON log line. Without it the result is the same, nothing is counted, and the
-  `service_error` line goes to the standard library logger `nimblebrain_server_sdk.errors`
-  with the same fields.
-
-## Database access (`[db]`)
-
-```bash
-pip install 'nimblebrain-server-sdk[db]'
-```
-
-For a server that owns a Postgres database serving many tenants and workspaces. Isolation is
-enforced by Postgres row-level security, not by `WHERE` clauses: a forgotten filter cannot
-leak. Imported without the extra, `nimblebrain_server_sdk.db` raises an `ImportError` that
-names it. The generic core is [`pgbulkhead`](https://pypi.org/project/pgbulkhead/), pinned
-exactly; this subpackage is NimbleBrain's configuration of it.
-
-- **Tenant is a hard wall,** never crossed. **Workspace is a soft wall** inside a tenant,
-  crossable for reads only by a grant the platform puts in the verified token.
-- **Reads** see the active workspace plus any read-granted ones; **writes** go to the active
-  workspace only, both for the row written and the rows an `UPDATE` or `DELETE` selects.
-- **Identity comes from verified input only.** Behind NimbleBrain's edge, that is the
-  `x-tenant-id` / `x-workspace-id` headers it injects; never a tool argument or request body.
-
-```python
-from fastmcp.server.dependencies import get_http_headers
-from nimblebrain_server_sdk.db import (
-    SecuredDatabase,
-    rls_policy_sql,
-    security_context_from_edge_headers,
-)
-
-db = SecuredDatabase(url_env="NOTES_DATABASE_URL", prefix="NOTES")   # once per process
-# in the lifespan: db.check() and await db.check_role() before serving,
-# await db.dispose() on shutdown
 
 @mcp.tool(annotations=ADDS)
-async def add_note(text: str):
-    ctx = security_context_from_edge_headers(get_http_headers())  # AuthError when absent
-    async with db.session(ctx) as conn:          # admitted, then bound to ctx for RLS
-        await conn.execute(notes.insert().values(**ctx.identity_columns(), text=text))
+async def save_note(text: str, ctx: Context) -> dict[str, str]:
+    """Save a note and return its id."""
+    if not text.strip():
+        raise ServiceError(ErrorCode.BAD_INPUT, "`text` is empty.")
+    note_id = new_prefixed_id("nt")
+    NOTES[note_id] = text
+    await announce_resource_list_changed(ctx)  # after the write, so open views re-read
+    return {"id": note_id}
 
-# in a migration, per table tagged (tenant_id, workspace_id):
-op.execute(rls_policy_sql("notes"))
+
+@mcp.tool(annotations=READS)
+async def get_note(note_id: str) -> dict[str, str]:
+    """Read one note by id."""
+    if note_id not in NOTES:
+        raise ServiceError(ErrorCode.NOT_FOUND, "No note has that id.")
+    return {"id": note_id, "text": NOTES[note_id]}
+
+
+@mcp.resource(
+    "notes://facets/total",
+    name="notes-total",
+    title="Notes",
+    mime_type="application/json",
+    meta=facet_meta("info"),
+)
+async def notes_total() -> str:
+    return facet_count(len(NOTES))
+
+
+if __name__ == "__main__":
+    mcp.run(transport="http", host="127.0.0.1", port=8000)
 ```
 
-Three key shapes share one binding discipline (`set_config(..., is_local => true)` inside a
-transaction, values bound as parameters):
+Run it, then connect any MCP client to `http://127.0.0.1:8000/mcp`:
 
-| Policy + session | Hard wall | Use when |
+```bash
+uv run python notes.py
+```
+
+To add it to NimbleBrain, see
+[connect it to NimbleBrain](https://docs.nimblebrain.ai/server-sdk/quickstart/#connect-it-to-nimblebrain).
+
+### Test it
+
+`test_notes.py` checks the server the way a host reads it. `fastmcp.Client(mcp, mode=...)`
+chooses the protocol era: `"auto"` negotiates 2026-07-28 and `"legacy"` runs the 2025-11-25
+`initialize` handshake. A host may connect on either, so test both.
+
+<!-- example: examples/test_notes.py -->
+```python
+"""The notes server, checked the way a host reads it, on both protocol eras."""
+
+import pytest
+from fastmcp import Client
+from notes import NOTES, mcp
+
+from nimblebrain_server_sdk.testing import Mode, served_facets
+
+
+@pytest.fixture(autouse=True)
+def empty_store() -> None:
+    NOTES.clear()
+
+
+@pytest.mark.parametrize("mode", ["auto", "legacy"])  # 2026-07-28, then 2025-11-25
+async def test_a_saved_note_reads_back_and_is_counted(mode: Mode) -> None:
+    async with Client(mcp, mode=mode) as client:
+        saved = await client.call_tool("save_note", {"text": "hello"})
+        note = await client.call_tool("get_note", {"note_id": saved.data["id"]})
+    assert note.data == {"id": saved.data["id"], "text": "hello"}
+    assert await served_facets(mcp, mode) == {
+        "notes-total": {"title": "Notes", "level": "info", "count": 1}
+    }
+
+
+async def test_a_missing_note_is_a_not_found_error() -> None:
+    async with Client(mcp) as client:
+        result = await client.call_tool("get_note", {"note_id": "nt_0"}, raise_on_error=False)
+    assert result.is_error
+    assert result.structured_content == {
+        "error": {"code": "not_found", "retryable": False, "message": "No note has that id."}
+    }
+```
+
+```bash
+uv add --dev pytest pytest-asyncio   # with asyncio_mode = "auto" under [tool.pytest.ini_options]
+uv run pytest
+```
+
+## What it covers
+
+| Feature | Names | Guide |
 | --- | --- | --- |
-| `rls_policy_sql` + `secured_session` | `(tenant_id, workspace_id)` | The default: workspace-scoped data |
-| `rls_policy_sql_tenant_scoped` + `secured_session` | `tenant_id` | A tenant-wide fact (a suppression list, an audit log) |
-| `rls_policy_sql_org_scoped` + `org_session` | `org_id` | A service with no platform tenant, isolated by an identity provider's organization |
+| Tool annotations | `READS`, `ADDS`, `CHANGES` | [Tools and annotations](https://docs.nimblebrain.ai/server-sdk/tools/) |
+| Change announcements | `announce_resource_list_changed` | [Announcing changes](https://docs.nimblebrain.ai/server-sdk/announcing-changes/) |
+| Skills | `add_skills`, `SkillDefinition` | [Skills](https://docs.nimblebrain.ai/server-sdk/skills/) |
+| Facets | `facet_meta`, `facet_count` | [Facets](https://docs.nimblebrain.ai/server-sdk/facets/) |
+| Lifecycle handlers | `add_lifecycle_extension` | [Lifecycle](https://docs.nimblebrain.ai/server-sdk/lifecycle/) |
+| Host resources | `host(ctx).read`, `host(ctx).list` | [Host resources](https://docs.nimblebrain.ai/server-sdk/host-resources/) |
+| Listing rows and record ids | `listing_row`, `new_prefixed_id` | [Tools and annotations](https://docs.nimblebrain.ai/server-sdk/tools/#listing-rows) |
+| The error contract | `ServiceError`, `to_tool_error`, `add_error_contract` | [Errors](https://docs.nimblebrain.ai/server-sdk/errors/) |
+| Test helpers | `served_skills`, `served_facets`, `assert_bounded_rows` | [Testing](https://docs.nimblebrain.ai/server-sdk/testing/) |
 
-The org-scoped shape is here, beside the other two, so its policy and session have one copy,
-pinned by this package's golden SQL tests.
-Mixing shapes fails closed: a session bound for one shape matches no row of another.
+Every public name is in the [API reference](https://docs.nimblebrain.ai/server-sdk/reference/).
 
-- **Row-level security must apply to the app's database role.** A superuser, a `BYPASSRLS`
-  role, or a member of a managed Postgres admin role (on Amazon RDS, `rds_superuser`, which
-  bypasses with neither attribute) silently voids every policy. The policies also `FORCE`
-  row-level security on the table owner. The pooled engine (`SecuredDatabase`,
-  `create_pooled_engine`) checks each new connection three ways: the role's attributes,
-  membership in `MANAGED_ADMIN_ROLES`, and a probe that sees whether the session bypasses a
-  forced policy on a temporary table, in a transaction it rolls back. The probe needs the
-  `TEMP` privilege and a writable session; without either (`TEMP` revoked, a hot standby, or
-  `default_transaction_read_only`) only the first two checks run and the `pgbulkhead.role`
-  logger warns. It refuses a bypassing session with `UnsafeRoleError` before any session runs;
-  `await db.check_role()` in the lifespan fails the rollout instead of the first call. An
-  engine meant to bypass, such as the one your migrations run on, passes
-  `refuse_bypass_roles=False`.
-- **A pooled connection cannot leak context:** the binding is transaction-local.
-  `secured_session` refuses a context it cannot bind faithfully (an empty tenant or
-  workspace, or a comma inside a grant or scope).
-- **A cancelled call returns its connection.** Each session commits or rolls back and
-  returns the connection in a shielded scope, each step bounded by
-  `CLEANUP_TIMEOUT_SECONDS` (10s).
-- **Per-workspace admission.** `SecuredDatabase.session` admits at most
-  `<PREFIX>_WORKSPACE_CONCURRENCY` (2) calls per workspace before checking a connection out,
-  so one workspace's burst queues behind its own slots. A call refused for capacity raises
-  `Overloaded` (`WorkspaceBusy` or `PoolExhausted`), which a tool returns as
-  `rate_limited_tool_error(exc)`. The call ran nothing, so a retry is safe.
-- **Pool settings** come from `<PREFIX>_DB_POOL_SIZE` (5), `_DB_POOL_MAX_OVERFLOW` (5),
-  `_DB_POOL_TIMEOUT_SECONDS` (10) and `_WORKSPACE_WAIT_SECONDS` (15). `PoolSettings` refuses
-  any where `2 × WORKSPACE_CONCURRENCY` reaches `DB_POOL_SIZE + DB_POOL_MAX_OVERFLOW`, so a
-  bad value fails at boot, not on a user's call.
-- **It does not hold against arbitrary SQL** running as the app role, which can set any
-  `app.*` setting.
+## Extras
 
-The rendered SQL is a schema contract: migrations replay it, so a change to it needs its own
-migration. The tests pin every policy shape and the statements each session sends byte for
-byte, and prove the policies against a real Postgres under a non-superuser role.
-`nimblebrain_server_sdk.db.testing.use_limiter(db, ...)` swaps in a small limiter for tests.
+Three optional extras add what only some servers need. The core imports none of them; a
+subpackage imported without its extra raises an `ImportError` that names the extra.
 
-## Observability (`[observability]`)
+| Install | Subpackage | For | Guide |
+| --- | --- | --- | --- |
+| `nimblebrain-server-sdk[db]` | `nimblebrain_server_sdk.db` | A Postgres database shared by many tenants and workspaces, isolated by row-level security | [Data](https://docs.nimblebrain.ai/server-sdk/data/) |
+| `nimblebrain-server-sdk[observability]` | `nimblebrain_server_sdk.observability` | Metrics, structured logs and traces | [Observability](https://docs.nimblebrain.ai/server-sdk/observability/) |
+| `nimblebrain-server-sdk[outbox]` | `nimblebrain_server_sdk.outbox` | Notifications the host polls; installs `[db]` and `[observability]` | [Notifications](https://docs.nimblebrain.ai/server-sdk/notifications/) |
+
+### `[db]` in brief
+
+Isolation is enforced by Postgres row-level security, not by `WHERE` clauses, so a forgotten
+filter cannot leak. Identity comes only from the `x-tenant-id` and `x-workspace-id` headers
+NimbleBrain's edge injects; never from a tool argument or a request body.
+
+<!-- example: examples/db_notes.py -->
+```python
+"""A server that keeps its notes in Postgres, isolated per tenant and workspace by RLS."""
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+import sqlalchemy as sa
+from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_http_headers
+
+from nimblebrain_server_sdk import ADDS, READS, add_error_contract
+from nimblebrain_server_sdk.db import SecuredDatabase, security_context_from_edge_headers
+
+# NOTES_DATABASE_URL=postgresql+asyncpg://notes_app:...@host:5432/notes  (the app role)
+db = SecuredDatabase(url_env="NOTES_DATABASE_URL", prefix="NOTES")
+
+metadata = sa.MetaData()
+notes = sa.Table(
+    "notes",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("workspace_id", sa.Text, nullable=False),
+    sa.Column("text", sa.Text, nullable=False),
+)
+
+
+@asynccontextmanager
+async def lifespan(_: FastMCP) -> AsyncIterator[None]:
+    db.check()  # the pool settings are valid
+    await db.check_role()  # the role is one row-level security applies to
+    yield
+    await db.dispose()
+
+
+mcp = FastMCP("notes", lifespan=lifespan)
+add_error_contract(mcp)  # a missing identity is `auth_required`, a full pool `rate_limited`
+
+
+@mcp.tool(annotations=ADDS)
+async def add_note(text: str) -> dict[str, bool]:
+    """Add a note to the caller's workspace."""
+    ctx = security_context_from_edge_headers(get_http_headers())  # AuthError when absent
+    async with db.session(ctx) as conn:  # admitted, then bound to ctx for RLS
+        await conn.execute(notes.insert().values(**ctx.identity_columns(), text=text))
+    return {"saved": True}
+
+
+@mcp.tool(annotations=READS)
+async def list_notes() -> list[str]:
+    """List the notes the caller's workspace can read."""
+    ctx = security_context_from_edge_headers(get_http_headers())
+    async with db.session(ctx) as conn:  # no WHERE clause: the policy filters the rows
+        return list((await conn.execute(sa.select(notes.c.text))).scalars())
+```
+
+Three things a first run needs:
+
+- **The URL scheme is `postgresql+asyncpg://`.** The engine is SQLAlchemy's async engine on
+  asyncpg; a bare `postgresql://` URL selects a driver the extra does not install.
+- **The server connects as an app role that is `NOSUPERUSER` and `NOBYPASSRLS`.** Postgres
+  applies no policy to a superuser, so the server refuses to start as one (`UnsafeRoleError`).
+  The migration below creates the role and grants it the table and its sequence.
+- **A migration executes the policy one statement at a time.** asyncpg refuses several
+  commands in one execute, so loop over `rls_policy_statements(table)`.
+
+A local Postgres, and the migration that prepares it:
 
 ```bash
-pip install 'nimblebrain-server-sdk[observability]'
+docker run -d --name notes-pg -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:5432:5432 postgres:16
+export MIGRATION_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/postgres
+export NOTES_APP_PASSWORD=notes-local-only
+uv run python db_migrate.py
+export NOTES_DATABASE_URL=postgresql+asyncpg://notes_app:$NOTES_APP_PASSWORD@127.0.0.1:5432/postgres
 ```
 
-Makes a server observable the same way as every other NimbleBrain service, in one call.
-Imported without the extra, `nimblebrain_server_sdk.observability` raises an `ImportError`
-that names it.
-
+<!-- example: examples/db_migrate.py -->
 ```python
-from nimblebrain_server_sdk.observability import counter, get_logger, instrument_app, service_version
+"""Create the notes table, its RLS policy, and the role the server connects as.
 
-mcp = FastMCP("notes", version=service_version())   # SERVICE_VERSION, else "dev"
-app = mcp.http_app()
-instrument_app(app, service="notes")
-log = get_logger(__name__)
-NOTES_ADDED = counter("notes_added_total", "Notes added.")
+Run it as a role that owns the schema (locally, the `postgres` superuser):
+
+    MIGRATION_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:5432/postgres \
+    NOTES_APP_PASSWORD=... python db_migrate.py
+"""
+
+import asyncio
+import os
+
+import sqlalchemy as sa
+from db_notes import metadata
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from nimblebrain_server_sdk.db import rls_policy_statements
+
+APP_ROLE = "notes_app"
+
+
+async def migrate(url: str, app_password: str) -> None:
+    engine = create_async_engine(url)
+    async with engine.begin() as conn:
+        await conn.run_sync(metadata.create_all)
+        for statement in rls_policy_statements("notes"):  # asyncpg runs one statement a call
+            await conn.execute(sa.text(statement))
+        # The app role: row-level security does not apply to a superuser or BYPASSRLS role,
+        # and the server refuses to start as one.
+        exists = await conn.scalar(
+            sa.text("SELECT 1 FROM pg_roles WHERE rolname = :role"), {"role": APP_ROLE}
+        )
+        verb = "ALTER" if exists else "CREATE"
+        password = app_password.replace("'", "''")
+        await conn.execute(
+            sa.text(f"{verb} ROLE {APP_ROLE} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{password}'")
+        )
+        await conn.execute(sa.text(f"GRANT SELECT, INSERT, UPDATE, DELETE ON notes TO {APP_ROLE}"))
+        await conn.execute(sa.text(f"GRANT USAGE ON SEQUENCE notes_id_seq TO {APP_ROLE}"))
+    await engine.dispose()
+
+
+if __name__ == "__main__":
+    asyncio.run(migrate(os.environ["MIGRATION_DATABASE_URL"], os.environ["NOTES_APP_PASSWORD"]))
 ```
 
-- **Metrics:** `GET /metrics` in Prometheus text, served on a metrics-only `METRICS_PORT`
-  as well when that is set. `http_requests_total{method, route, status}`,
-  `http_request_duration_seconds{method, route}` and
-  `http_in_flight_requests{method}` per route template (never the raw path), plus
-  `service_errors_total{service, code, upstream_status}` for every error
-  [surfaced](#errors). `counter`, `gauge` and `histogram` declare a server's own on the same
-  registry. Identity is never a metric label.
-- **Logs:** one JSON object per line on stdout with `event`, `level`, `timestamp` (ISO 8601
-  UTC) and `service`, plus, inside a request, the `tenant_id` / `workspace_id` from the edge's
-  identity headers and the active span's `trace_id`. Standard library logging is routed
-  through the same renderer, `extra` fields included, and request URLs from the `httpx`
-  family are held at `WARNING` so a key in a query string never reaches a log.
-- **Traces:** the inbound `traceparent` is honoured, and spans export over OTLP to
-  `OTEL_EXPORTER_OTLP_ENDPOINT` when it is set. On a FastMCP app the request span is
-  FastMCP's own; on a FastAPI app it is the FastAPI instrumentation's.
-  `inject_trace_headers(headers)` carries the trace onto an outbound call.
-- **Correlation:** each response carries `x-correlation-id`, the inbound trace id when there
-  is one.
+In a test, the in-memory `fastmcp.Client(mcp)` sends no headers, so every call is refused as
+`auth_required`. `nimblebrain_server_sdk.db.testing.edge_client` connects a client that sends
+the identity headers the way the edge does:
 
-The platform's TypeScript services carry a twin of this package that emits the same metric
-names, labels and log fields, so one dashboard and one log query cover a request across both.
-The tests pin the metric families, the log lines, the spans and the error results byte for
-byte against golden files.
-
-## Notifications (`[outbox]`)
-
-```bash
-pip install 'nimblebrain-server-sdk[outbox]'
-```
-
-The server half of NimbleBrain's notification protocol (`ai.nimblebrain/notification`). A
-server that learns something nobody asked it about, such as a domain going active or a reply
-landing, records it in an outbox table beside its own. The host polls the outbox, routes what
-it finds, and a connector delivers it. The server never calls the host, learns its address, or
-asserts a workspace identity of its own. `[outbox]` installs `[db]` and `[observability]`;
-imported without it, `nimblebrain_server_sdk.outbox` raises an `ImportError` that names it.
-
-A notification is a fact **nobody asked for**. "The job you started finished" is not one: that
-is an MCP Task, which the host already polls as a client, and a server with no database to
-keep an outbox in uses Tasks.
-
-### Adopting it
-
-**Declare the outbox in the server's manifest.** The URI is the one source of truth: the host
-polls what the manifest declares, so the server registers the same string.
-
-```jsonc
-"_meta": { "ai.nimblebrain/host": {
-  "host_version": "1.0",
-  "notifications": {
-    "resource": "acme://notifications",
-    "description": "Domain lifecycle, campaign replies, bounce and suppression events."
-  }
-}}
-```
-
-The URI is the server's own name, scheme and path: a scheme, `://`, then slash-separated
-segments of lowercase letters and digits, with `-` or `.` inside a segment (`acme://inbox`,
-`acme://mail.bounces/hard`). Anything a URL parser would rewrite (a percent escape, userinfo, a
-port, a dot segment, a capital, or a scheme such as `http`) is refused at registration,
-because it would be registered at one address and read at another. Declaring an outbox grants
-no privilege: a workspace admin raises the source's level ceiling, which starts at `info`,
-before anything from it can match a route.
-
-Then three edits:
-
+<!-- example: examples/test_db_notes.py -->
 ```python
-# 1. A migration. outbox_ddl returns one statement per item because asyncpg refuses several
-#    commands in one execute.
-from sqlalchemy import MetaData
-from nimblebrain_server_sdk.outbox import outbox_ddl, outbox_table
+"""The Postgres notes server under a verified identity, against a real Postgres.
 
-def upgrade() -> None:
-    for statement in outbox_ddl(outbox_table(MetaData())):   # tables, indexes, RLS policy
-        op.execute(statement)
+Needs a superuser URL in DB_TEST_URL, as the SDK's own database tests do; skipped without it.
+"""
+
+import os
+from collections.abc import AsyncIterator
+
+import pytest
+import sqlalchemy as sa
+from db_migrate import APP_ROLE, migrate
+from db_notes import db, mcp
+from fastmcp import Client
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from nimblebrain_server_sdk.db.testing import edge_client
+from nimblebrain_server_sdk.testing import Mode
+
+ADMIN_URL = os.environ.get("DB_TEST_URL")
+PASSWORD = "notes-test-only"  # noqa: S105
+
+pytestmark = pytest.mark.skipif(ADMIN_URL is None and not os.environ.get("CI"), reason="no DB")
+
+
+@pytest.fixture(autouse=True)
+async def database(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
+    assert ADMIN_URL is not None, "DB_TEST_URL is not set"
+    admin = create_async_engine(ADMIN_URL)
+    async with admin.begin() as conn:
+        await conn.execute(sa.text("DROP TABLE IF EXISTS notes"))
+    await migrate(ADMIN_URL, PASSWORD)
+    app_url = sa.make_url(ADMIN_URL).set(username=APP_ROLE, password=PASSWORD)
+    monkeypatch.setenv("NOTES_DATABASE_URL", app_url.render_as_string(hide_password=False))
+    yield
+    await db.dispose()
+    async with admin.begin() as conn:
+        await conn.execute(sa.text("DROP TABLE IF EXISTS notes"))
+    await admin.dispose()
+
+
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+async def test_a_workspace_reads_only_its_own_notes(mode: Mode) -> None:
+    async with edge_client(mcp, tenant_id="t1", workspace_id="ws_a", mode=mode) as ws_a:
+        await ws_a.call_tool("add_note", {"text": "from a"})
+        assert (await ws_a.call_tool("list_notes", {})).data == ["from a"]
+    async with edge_client(mcp, tenant_id="t1", workspace_id="ws_b", mode=mode) as ws_b:
+        assert (await ws_b.call_tool("list_notes", {})).data == []
+    async with edge_client(mcp, tenant_id="t2", workspace_id="ws_a", mode=mode) as other_tenant:
+        assert (await other_tenant.call_tool("list_notes", {})).data == []
+
+
+async def test_a_call_with_no_identity_is_auth_required() -> None:
+    async with Client(mcp) as client:  # the in-memory client sends no identity headers
+        result = await client.call_tool("list_notes", {}, raise_on_error=False)
+    assert result.is_error
+    assert result.structured_content is not None
+    assert result.structured_content["error"]["code"] == "auth_required"
 ```
 
-```python
-# 2. server.py: serve the outbox at the URI the manifest declares, with the session factory
-#    and identity function the server's tools already use (see Database access).
-from nimblebrain_server_sdk.outbox import register_outbox
+Outside a test, serve it over HTTP (`mcp.run(transport="http")`) and send both headers from
+the client, standing where the edge stands:
+`Client(StreamableHttpTransport(url, headers={"x-tenant-id": "t1", "x-workspace-id": "ws_a"}))`.
 
-register_outbox(
-    mcp, "acme://notifications", db.session,
-    lambda: security_context_from_edge_headers(get_http_headers()),
-)
-```
+The [data guide](https://docs.nimblebrain.ai/server-sdk/data/) covers the three policy shapes, the pool and per-workspace
+admission, and `system_session`.
 
-```python
-# 3. Where the state changes, on the SAME connection and transaction.
-from nimblebrain_server_sdk.outbox import emit
+## Compatibility
 
-await emit(
-    conn, ctx,
-    {"eventId": delivery_id, "name": "domain.active",
-     "timestamp": observed_at, "data": {"domain": domain.name}},
-    title=f"{domain.name} is active", level="attention", subject=domain.name,
-    body="DNS propagated. Mailboxes can now be created on it.",
-    link_resource=f"acme://domains/{domain.id}",
-)
-```
-
-### The envelope
-
-An MCP Triggers and Events `EventOccurrence`, with what the host renders and routes on under
-`_meta["ai.nimblebrain/notification"]`. `emit` builds that block from its keywords.
-
-| Field | |
+| | Supported |
 | --- | --- |
-| `eventId` | Required. The idempotency key, unique per workspace; a repeat is a no-op. |
-| `name` | Required. The server's own dotted, lower-case name (`domain.active`), with no whitespace. |
-| `timestamp` | Required. ISO 8601 with an offset, or an aware `datetime`. |
-| `data` | Required JSON object, opaque: nothing in the SDK or the host reads into it. |
-| `title`, `body`, `subject`, `level`, `link_resource` | Optional presentation. `level` is `info`, `attention` or `urgent`: urgency, not tone, and clamped by the workspace's ceiling. See [levels](https://docs.nimblebrain.ai/using/notification-reference/#levels). |
+| Python | 3.13, 3.14 |
+| FastMCP | 4.0 and later (no ceiling; a weekly run tests the newest release) |
+| `mcp` | 2.0 up to, not including, 2.4 (each new minor is admitted by an SDK release) |
+| MCP protocol | 2026-07-28 and 2025-11-25, except host resources, which need a 2025-era connection |
+| Postgres (`[db]`, `[outbox]`) | 13 and later |
 
-`emit` **validates and raises**; it does not repair. It refuses whatever the host's parser
-would drop, because the host's poll moves past a dropped envelope and the notification is
-lost. The limits are the host's, counted as it counts them, in UTF-16 code units (title 200,
-body 2000, subject 200, event id and name 200, link 2048); a name may carry no whitespace; and
-an optional presentation field is either absent or a value of its type, never `null`; and the
-64 KiB size limit is measured as the host measures it, on the event with its cursor and the
-default `level` and `title` added and its numbers written as JavaScript writes them. The runtime's tests run shared boundary cases through the
-host's parser and fail if anything accepted here would be dropped there. The append is in the
-caller's transaction, so a raise rolls it back: trim unbounded upstream text deliberately,
-with the exported caps (`TITLE_MAX`, `BODY_MAX`, `SUBJECT_MAX`). A `link_resource` must carry a
-scheme and never a `javascript:`, `data:`, `vbscript:`, `file:` or `blob:` one.
+**Stability.** `0.x` is pre-stable: a minor release (`0.7` to `0.8`) may change the Python
+API, and a patch release never does. The `ai.nimblebrain/*` identifiers and `_meta` keys are a
+wire contract with the host and do not change within a major. The SQL `[db]` renders is a schema
+contract: a change to it ships with its own migration note.
 
-### The poll
+**Deprecation.** A public name is deprecated for at least one minor release before it is
+removed: it keeps working, emits a `DeprecationWarning` that names its replacement, and is
+listed under "Deprecated" in the [changelog](https://github.com/NimbleBrainInc/nimblebrain/blob/main/packages/server-sdk-py/CHANGELOG.md).
 
-`register_outbox` serves the RFC 6570 template `<resource>{?cursor,maxEvents,maxAgeMs}` and
-answers `{"events": [...], "cursor": "...", "truncated": false, "hasMore": false}`, events
-oldest first, each with its own cursor, plus `nextPollMs` when the server recommends one.
+## Contributing
 
-- **`cursor`** is opaque. A read with none starts from now: a cursor and no history.
-- **`truncated: true`** means events after the cursor exist that this answer will never
-  carry (the row cap dropped them, `maxAgeMs` excluded them, or the cursor cannot be honoured,
-  as after a database restore). It is not an error.
-- **`hasMore: true`** means the batch was cut at `maxEvents`; poll again at once.
-- **`on_read(ctx, conn)`** runs before the read, in the same transaction, and may return a
-  `nextPollMs`. A server that watches something upstream refreshes it there, so the poll is
-  its tick and it needs no scheduler.
-
-**A poll never skips a row that was in flight when it ran.** A sequence number cannot promise
-that: a transaction that took sequence 10 can commit after one that took 11 has been read
-past. So each row records the id of the transaction that wrote it, a poll returns only rows
-below the oldest transaction still running (`pg_snapshot_xmin`), and the cursor advances no
-further. A row that raced costs one poll of latency. Delivery is at least once; the host
-dedupes on the source and `eventId`.
-
-### Retention, isolation and metrics
-
-- **Retention needs no sweeper.** A read stamps the rows it returned (and, on a bootstrap, the
-  rows it stepped over) and deletes what has carried a stamp for seven days, in the same
-  transaction. An outbox nobody polls never prunes, so `emit` holds each workspace to
-  `max_rows` (10,000), dropping the oldest in read order; that loss is what `truncated`
-  reports. One cursor reads each workspace's outbox, which holds because the host keeps one
-  per workspace and connector.
-- **Isolation is `[db]`'s.** Both outbox tables take `rls_policy_sql`; `emit` stamps
-  `(tenant_id, workspace_id)` from the context and the policy's `WITH CHECK` rejects a
-  mismatch. The session factory and identity function are injected, so the outbox is
-  authorized by the same code as the server's tools. Needs Postgres 13 or later and an app
-  role that is neither superuser nor `BYPASSRLS`.
-- **Metrics** ride `[observability]`'s registry: `notify_emitted_total{name}`,
-  `notify_read_total`, `notify_outbox_depth` (undelivered rows after a poll; alert on
-  `max_over_time`) and `notify_outbox_capped_total`. `name` is the only label, so keep event
-  names a closed set and put per-event values in `data`.
-
-The tests pin the DDL, the cursor's wire form, a poll's answer on both protocol eras, the
-envelope's limits and block, the metric families and the public names. Because the snapshot
-horizon is instance-wide, run this suite alone against its Postgres: a transaction open
-anywhere on the instance holds the horizon back.
-
-## Releases
-
-Released independently of the NimbleBrain runtime by `server-sdk-py/v*` git tags. Each tag
-runs a workflow that tests, builds and publishes to PyPI. Pull requests that touch this package
-run its lint, type check and tests on Python 3.13 and 3.14 with every extra and a real
-Postgres, and check the core installed with none of them.
-
-## Status
-
-`v0.x` is pre-stable; the API may shift before `v1.0`. The `ai.nimblebrain/*` identifiers and
-`_meta` keys are a wire contract with the host and do not change within a major.
+See [CONTRIBUTING.md](https://github.com/NimbleBrainInc/nimblebrain/blob/main/packages/server-sdk-py/CONTRIBUTING.md)
+for the checks, the conformance suite and how a release is cut.

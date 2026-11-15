@@ -113,14 +113,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --all-extras --python "$PYTHON"
       - name: Lint
-        run: uv run --frozen ruff check src/ tests/ scripts/
+        run: uv run --frozen ruff check src/ tests/ scripts/ examples/
       - name: Format check
-        run: uv run --frozen ruff format --check src/ tests/ scripts/
+        run: uv run --frozen ruff format --check src/ tests/ scripts/ examples/
       - name: Type check
-        run: uv run --frozen ty check src/ tests/ scripts/
+        run: uv run --frozen ty check src/ tests/ scripts/ examples/
       - name: Test
         # The coverage floor is fail_under in pyproject.toml.
-        run: uv run --frozen pytest tests/ -v --cov=nimblebrain_server_sdk
+        run: uv run --frozen pytest tests/ examples/ -v --cov=nimblebrain_server_sdk
 
   core-only:
     name: server-sdk-py (core, no extras)

@@ -1,7 +1,7 @@
 [project]
 name = "nimblebrain-server-sdk"
-version = "0.6.1"
-description = "The SDK for building MCP servers that run on NimbleBrain: tool annotations, change announcements, the ai.nimblebrain platform extensions (facets, lifecycle, record views), skills over the MCP Skills extension, bounded listing rows, record ids, host-resources reads, and the service error contract; with tenant- and workspace-isolated Postgres access ([db]) and metrics, logs and traces ([observability]), and the outbox a server records notifications in ([outbox])."
+version = "0.7.0"
+description = "The Python SDK for building MCP servers that run on NimbleBrain."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -97,8 +97,9 @@ outbox = ["nimblebrain-server-sdk[db,observability]"]
 
 [project.urls]
 Homepage = "https://nimblebrain.ai"
-Documentation = "https://docs.nimblebrain.ai"
-Repository = "https://github.com/NimbleBrainInc/nimblebrain"
+Documentation = "https://docs.nimblebrain.ai/server-sdk/quickstart/"
+Changelog = "https://github.com/NimbleBrainInc/nimblebrain/blob/main/packages/server-sdk-py/CHANGELOG.md"
+Source = "https://github.com/NimbleBrainInc/nimblebrain/tree/main/packages/server-sdk-py"
 
 [build-system]
 requires = ["hatchling"]
@@ -111,7 +112,16 @@ packages = ["src/nimblebrain_server_sdk"]
 # tooling around it (the lockfile, uv's settings). Hatchling adds .gitignore
 # to every sdist on its own, so that one stays.
 [tool.hatch.build.targets.sdist]
-only-include = ["src", "tests", "scripts", "README.md", "CHANGELOG.md", "LICENSE"]
+only-include = [
+    "src",
+    "tests",
+    "examples",
+    "scripts",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+]
 
 [dependency-groups]
 dev = [
