@@ -200,6 +200,7 @@ export default defineConfig({
               {
                 label: 'Server SDK (Python)',
                 items: [
+                  { label: 'Overview', slug: 'server-sdk' },
                   { label: 'Quickstart', slug: 'server-sdk/quickstart' },
                   {
                     label: 'Guides',
