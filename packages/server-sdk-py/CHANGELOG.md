@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.7.1]
+
+### Fixed
+
+- `new_prefixed_id` accepts a prefix of several segments joined by single underscores (`po_cmp`), which 0.7.0 refused. A ULID has no underscore, so the last underscore of an id still separates prefix from body. A server whose prefixes carry one can move off 0.6.1.
+- With `add_error_contract`, FastMCP no longer logs an error-level traceback for a `ServiceError` or capacity refusal raised in a tool call on that server. The error is recorded once, as `service_error`, at its own level. FastMCP's record is kept for a resource read, a prompt, and a server without the contract.
+
 ## [0.7.0]
 
 ### Highlights

@@ -100,18 +100,21 @@ def new_ulid() -> str:
     return _MINTER.mint()
 
 
-_PREFIX = re.compile(r"[a-z0-9]+")
+_PREFIX = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*")
 
 
 def new_prefixed_id(prefix: str) -> str:
     """``<prefix>_<ulid>``: an opaque record id whose prefix names the record's kind.
 
-    ``prefix`` is one or more lowercase ASCII letters and digits (``tk``, ``whe``). Anything
-    else raises ``ValueError``: the underscore separates the prefix from the body, so an id
-    with one inside its prefix, or with no prefix, cannot be split back into its two parts.
+    ``prefix`` is lowercase ASCII letters and digits, in one segment (``tk``) or several
+    joined by single underscores (``po_cmp``). A ULID carries no underscore, so the last
+    underscore of an id always separates its prefix from its body. Anything else raises
+    ``ValueError``: an empty prefix, a capital, a hyphen, or a leading, trailing or doubled
+    underscore.
     """
     if not _PREFIX.fullmatch(prefix):
         raise ValueError(
-            f"a record id prefix is lowercase ASCII letters and digits, got {prefix!r}"
+            "a record id prefix is lowercase ASCII letters and digits, in segments joined "
+            f"by single underscores, got {prefix!r}"
         )
     return f"{prefix}_{new_ulid()}"
