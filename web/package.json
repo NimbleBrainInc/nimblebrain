@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "gen:theme": "bun run scripts/gen-theme-css.ts",
+    "gen:host-constants": "bun run scripts/gen-host-constants.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "bun test",

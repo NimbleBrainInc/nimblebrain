@@ -74,8 +74,10 @@ export const READ_METHODS: ReadonlySet<string> = new Set([
   "tasks/get",
 ]);
 
-/** JSON-RPC error codes this module answers with. */
-const REQUEST_TIMEOUT = -32001;
+/** The JSON-RPC error code a request that got no answer in time is answered with. */
+export const REQUEST_TIMEOUT = -32001;
+/** The `data` field of a {@link REQUEST_TIMEOUT} error that says the page was suspended, and for how long. */
+export const SUSPENSION_DATA_FIELD = "suspendedMs";
 
 /** A JSON-RPC error object. */
 export type McpError = JSONRPCErrorResponse["error"];
@@ -238,7 +240,7 @@ function timedOut(
   return {
     error:
       suspendedMs > 0
-        ? { code: REQUEST_TIMEOUT, message, data: { suspendedMs } }
+        ? { code: REQUEST_TIMEOUT, message, data: { [SUSPENSION_DATA_FIELD]: suspendedMs } }
         : { code: REQUEST_TIMEOUT, message },
   };
 }
