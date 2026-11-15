@@ -543,8 +543,10 @@ Mixing shapes fails closed: a session bound for one shape matches no row of anot
   row-level security on the table owner. The pooled engine (`SecuredDatabase`,
   `create_pooled_engine`) checks each new connection three ways: the role's attributes,
   membership in `MANAGED_ADMIN_ROLES`, and a probe that sees whether the session bypasses a
-  forced policy on a temporary table, in a transaction it rolls back. It refuses a bypassing
-  session with `UnsafeRoleError` before any session runs;
+  forced policy on a temporary table, in a transaction it rolls back. The probe needs the
+  `TEMP` privilege and a writable session; without either (`TEMP` revoked, a hot standby, or
+  `default_transaction_read_only`) only the first two checks run and the `pgbulkhead.role`
+  logger warns. It refuses a bypassing session with `UnsafeRoleError` before any session runs;
   `await db.check_role()` in the lifespan fails the rollout instead of the first call. An
   engine meant to bypass, such as the one your migrations run on, passes
   `refuse_bypass_roles=False`.

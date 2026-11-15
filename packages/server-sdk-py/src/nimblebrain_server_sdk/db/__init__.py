@@ -28,7 +28,8 @@ And the capacity around them, for a server that serves many workspaces from one 
     server's env namespace and validated together with the admission limit at boot. The engine
     refuses a connection whose session bypasses row-level security (a superuser or ``BYPASSRLS``
     role, a member of a managed Postgres admin role in ``MANAGED_ADMIN_ROLES``, or any session a
-    probe sees bypass a forced policy) with ``UnsafeRoleError`` unless built with
+    probe sees bypass a forced policy, when the session can run the probe) with
+    ``UnsafeRoleError`` unless built with
     ``refuse_bypass_roles=False`` (an engine meant to bypass, such as a migration's).
   * ``WorkspaceLimiter`` — at most N calls per workspace at once,
     admitted before a call checks out a connection; a call refused for capacity raises

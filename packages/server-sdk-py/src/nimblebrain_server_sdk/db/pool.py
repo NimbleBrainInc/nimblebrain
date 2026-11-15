@@ -36,13 +36,16 @@ where ``max_surge`` is the extra pods a rolling update runs at once (one per ser
 That sum, plus whatever else connects to the database, must stay below its
 ``max_connections``. Raising a pool setting or a replica count spends that budget.
 
-**The role.** :func:`create_pooled_engine` refuses every new connection whose session bypasses
+**The role.** :func:`create_pooled_engine` refuses a new connection whose session bypasses
 row-level security with :class:`UnsafeRoleError`, before any session runs on it, since an engine
 connected that way would see every tenant's rows. A session bypasses when its role is a
 superuser or ``BYPASSRLS``, when it belongs to a managed Postgres admin role
 (:data:`MANAGED_ADMIN_ROLES`, such as Amazon RDS's ``rds_superuser``, which bypasses with neither
 attribute), or when a probe sees it bypass a forced policy on a temporary table in a transaction
-that is rolled back. The checks run once per physical connection, not per session. An engine that is meant to bypass, such as one that runs migrations, passes
+that is rolled back. The probe needs the ``TEMP`` privilege and a writable session; without
+either (``TEMP`` revoked, a hot standby, or ``default_transaction_read_only``) only the first two
+checks run and the ``pgbulkhead.role`` logger warns. The checks run once per physical connection,
+not per session. An engine that is meant to bypass, such as one that runs migrations, passes
 ``refuse_bypass_roles=False``. The pool settings never carry that choice, so no environment
 variable can turn the check off.
 """

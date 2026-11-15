@@ -6,11 +6,13 @@
 
 ### Changed
 
-- **`[db]` refuses every session that bypasses row-level security, not only roles whose
+- **`[db]` refuses sessions that bypass row-level security, not only roles whose
   attributes say so.** `[db]` requires `pgbulkhead` 0.1.3 (pinned exactly), whose guard also
   refuses a member of a managed Postgres admin role (on Amazon RDS, `rds_superuser`, which
   bypasses with neither `SUPERUSER` nor `BYPASSRLS`) and any session a rolled-back probe sees
-  bypass a forced policy. The rendered SQL and the statements each session sends are unchanged.
+  bypass a forced policy. The probe needs the `TEMP` privilege and a writable session; without
+  either, only the attribute and membership checks run and pgbulkhead logs a warning. The
+  rendered SQL and the statements each session sends are unchanged.
 
 ### Added
 
