@@ -175,6 +175,7 @@ describe("engine ↔ supervisor wiring", () => {
     expect(data.trippedTool).toBe("stuck");
     expect(data.consecutiveRepeats).toBeUndefined();
     expect(data.output).toContain("connection unavailable");
+    expect(data.output).toContain("9 times in a row");
     expect(data.output).toContain("withheld");
   });
 
