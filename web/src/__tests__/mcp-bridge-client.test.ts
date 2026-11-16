@@ -18,6 +18,8 @@ import type { McpTimeoutReport } from "../sentry";
 
 const {
   buildMcpRequest,
+  RATE_LIMITED,
+  RETRY_AFTER_DATA_FIELD,
   readMcpAnswer,
   sendMcpRequest,
   setMcpTimeoutReporter,
@@ -170,6 +172,36 @@ describe("readMcpAnswer", () => {
   test("a body that is no JSON-RPC answer rejects with its status", async () => {
     const res = new Response("Bad Gateway", { status: 502 });
     await expect(readMcpAnswer(res)).rejects.toThrow("HTTP 502");
+  });
+
+  test("test_rate_limited_429_answers_rate_limited_with_retry_after_ms", async () => {
+    // The body the host's limiter sends is REST-shaped, not JSON-RPC.
+    const res = new Response(
+      JSON.stringify({ error: "rate_limited", message: "Rate limit exceeded" }),
+      {
+        status: 429,
+        headers: { "content-type": "application/json", "retry-after": "12" },
+      },
+    );
+    expect(await readMcpAnswer(res)).toEqual({
+      error: {
+        code: RATE_LIMITED,
+        message: "Rate limit exceeded",
+        data: { [RETRY_AFTER_DATA_FIELD]: 12_000 },
+      },
+    });
+  });
+
+  test("test_rate_limited_429_without_seconds_leaves_data_out", async () => {
+    for (const retryAfter of [null, "Wed, 21 Oct 2026 07:28:00 GMT"]) {
+      const res = new Response("", {
+        status: 429,
+        headers: retryAfter === null ? {} : { "retry-after": retryAfter },
+      });
+      expect(await readMcpAnswer(res)).toEqual({
+        error: { code: RATE_LIMITED, message: "Rate limit exceeded" },
+      });
+    }
   });
 });
 

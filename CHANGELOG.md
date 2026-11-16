@@ -123,6 +123,7 @@
 
 ### Changed
 
+- **Rate limits slow a caller instead of shutting it out.** Each per-identity limit is now a token bucket at the same rate and burst, so a caller slightly over the rate is admitted at the rate rather than refused for the rest of the minute, and `Retry-After` names the wait for the next request. In the browser, an app view whose `/mcp` call is refused gets JSON-RPC error `-32029` (`RATE_LIMITED`) with `data.retryAfterMs`, not a generic failure.
 - **The runtime asks the model gateway what it serves every minute**, not only at startup, so a redeployed gateway (a provider added, or grant enforcement turned on) is picked up without restarting the runtime; a gateway briefly unreachable leaves its last answer standing ([docs](https://docs.nimblebrain.ai/config/nimblebrain-json/)).
 - **A run the default runtime cannot hold runs on the native runtime instead of being refused.** With `execution.default` set to a worker, a task run that names spend accounts (a token budget) or caps its input tokens executes on the native runtime, which checks each model call against them; chat and uncapped runs execute on the default ([docs](https://docs.nimblebrain.ai/config/nimblebrain-json/#execution)).
 - **Host pages and the top bar's title inset by one page gutter** (24px, or 16px when the main column is 640px wide or less), so page content lines up with the title and with app content ([#1887](https://github.com/NimbleBrainInc/nimblebrain/pull/1887), [#1890](https://github.com/NimbleBrainInc/nimblebrain/pull/1890)).

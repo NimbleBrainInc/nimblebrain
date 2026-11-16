@@ -42,7 +42,9 @@
   },
   "errors": {
     "requestTimeout": -32001,
-    "suspensionDataField": "suspendedMs"
+    "suspensionDataField": "suspendedMs",
+    "rateLimited": -32029,
+    "retryAfterDataField": "retryAfterMs"
   },
   "theme": {
     "gutter": {
