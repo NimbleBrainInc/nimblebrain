@@ -55,7 +55,7 @@ jobs:
           bun-version: "1.4.3"
 
       # The build writes the Server SDK API reference from the package's docstrings.
-      - uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
+      - uses: astral-sh/setup-uv@v10.3.3  # setup-uv dropped floating major tags (v8+); pin exact
         if: steps.changes.outputs.docs == 'true'
 
       # A public name with no docstring, or one that cannot be resolved, must fail the build.
