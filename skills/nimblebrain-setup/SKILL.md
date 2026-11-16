@@ -18,7 +18,7 @@ Work through the steps in order, from step 1 every time, reruns included. Run ea
 
 ## Rules that hold for every step
 
-- **The model key never passes through you.** Do not ask for it in chat. Do not open or print `.env`, and do not run `docker compose config`, `docker inspect` on a container, or a bare `env`: each prints the key. The one `docker compose config` this skill runs is the check in step 5, and only while `.env` holds no key, with the shell's key variables removed. If the user pastes a key into chat anyway, do not use it; tell them it is in the transcript and that they may want to rotate it.
+- **The model key never passes through you.** Do not ask for it in chat. Do not open or print `.env`, and do not run `docker compose config`, `docker inspect` on a container, or a bare `env`: each prints the key. The one `docker compose config` this skill runs is the release check in step 5, which reads no `.env` and removes the shell's key variables. If the user pastes a key into chat anyway, do not use it; tell them it is in the transcript and that they may want to rotate it.
 - **Write only inside the folder chosen in step 3.** Step 9 is the one exception, on its own yes.
 - **Install nothing.** If Docker, git or buildx is missing, name the fix and stop.
 - **The `dev` sign-in adapter is for this machine only.** It checks no credential: anyone who can reach the port is the admin. The Compose file publishes the port on `127.0.0.1` for that reason. Never widen it, tunnel it or put a proxy in front of it. A shared instance needs the `oidc` or `workos` adapter (`docs.nimblebrain.ai/config/instance-json/`).
@@ -95,21 +95,13 @@ cd <folder> && { test -e .env || (umask 077 && printf 'COMPOSE_PROJECT_NAME=nimb
 
 Git ignores both files, so the clone stays clean.
 
-Now check the release's Compose file as Compose reads it. This prints how many key lines `.env` has, not the lines:
+Now check the release's Compose file as Compose renders it. The check reads no `.env` and removes the shell's key variables, so no key can reach its output, and it prints only the image and published-address lines:
 
 ```bash
-grep -c '_API_KEY=' <folder>/.env
+cd <folder> && git show <tag>:docker-compose.yml | env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GOOGLE_GENERATIVE_AI_API_KEY -u GREENPT_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY NIMBLEBRAIN_TAG=<tag> docker compose --env-file /dev/null -f - config --format json 2>/dev/null | grep -oE '"(image|host_ip)": *"[^"]*"'
 ```
 
-If it prints `0`, run the check. It removes the shell's key variables and prints only the image and published-address lines:
-
-```bash
-cd <folder> && env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GOOGLE_GENERATIVE_AI_API_KEY -u GREENPT_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY docker compose config --format json 2>/dev/null | grep -oE '"(image|host_ip)": *"[^"]*"'
-```
-
-Compose's own messages are discarded: with no key yet it warns that the key variable is unset, and it echoes a malformed `.env` line in full. It must print both images ending in `:<tag>` and `"host_ip": "127.0.0.1"`: both images take their tag from `NIMBLEBRAIN_TAG`, and the web port is published on this machine only. On any other output, or none, stop: this release predates this skill, and its Compose file would publish the no-login UI on the network. Tell the user, and offer to remove the folder.
-
-If the count is not `0`, a key is already in `.env`: this is a rerun past step 6, and the release passed this check on the run that wrote the key ("Updating" checks a new release before it switches). Do not run the check.
+Compose's own message, that the key variable is unset, is discarded. It must print both images ending in `:<tag>` and `"host_ip": "127.0.0.1"`: both images take their tag from `NIMBLEBRAIN_TAG`, and the web port is published on this machine only. On any other output, or none, stop: this release predates this skill, and its Compose file would publish the no-login UI on the network. Tell the user, and offer to remove the folder.
 
 ## 6. The model key
 

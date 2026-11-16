@@ -27,15 +27,13 @@ Find the symptom, give the fix, and stop. Run every `docker compose` command fro
 
 ## Updating
 
-Find the newest release as in step 2. Fetch it and check its Compose file before switching to it. The key is in `.env` by now, so this reads the file's text and does not render it:
+Find the newest release as in step 2, and fetch it:
 
 ```bash
 cd <folder> && git fetch --depth 1 origin tag <tag>
-cd <folder> && git show <tag>:docker-compose.yml | grep -cF ':${NIMBLEBRAIN_TAG:-latest}'
-cd <folder> && git show <tag>:docker-compose.yml | grep -cF '"127.0.0.1:27246:8080"'
 ```
 
-The two counts must be `2` and `1`. On any other output, stop and tell the user; the stack stays on its release. Then switch the clone and the tag in `.env`, without printing the file and keeping it readable by this user only:
+Before switching to it, run step 5's release check with the new `<tag>`. On any output other than both images at `:<tag>` and `"host_ip": "127.0.0.1"`, stop and tell the user; the stack stays on its release. Then switch the clone and the tag in `.env`, without printing the file and keeping it readable by this user only:
 
 ```bash
 cd <folder> && git checkout <tag> && (umask 077 && { grep -v '^NIMBLEBRAIN_TAG=' .env; echo 'NIMBLEBRAIN_TAG=<tag>'; } > .env.new) && chmod 600 .env.new && mv .env.new .env
