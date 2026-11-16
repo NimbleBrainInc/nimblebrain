@@ -199,9 +199,9 @@ class HostResources:
         """Read a single workspace resource by URI.
 
         Raises `HostCapabilityMissing` if the host hasn't advertised the
-        extension with `read.enabled` — check `available` first, or
-        catch and fall back to a structured tool error (the Level-C
-        pattern).
+        extension with `read.enabled`, or the connection negotiated the
+        2026-07-28 protocol — check `available` first, or catch and fall
+        back to a structured tool error (the Level-C pattern).
 
         Raises `mcp.shared.exceptions.MCPError` for wire-level errors (match on `.code`):
         - `-32002 Resource not found` (also: cross-workspace lookup)
@@ -210,7 +210,7 @@ class HostResources:
         - `-32602 Invalid params` (unsupported scheme)
         """
         if not self._method_enabled("read"):
-            raise HostCapabilityMissing(HOST_RESOURCES_CAPABILITY_KEY)
+            raise self._missing()
 
         request = _HostResourcesReadRequest(params=_HostResourcesReadParams(uri=uri))
         return await self._ctx.session.send_request(
@@ -238,7 +238,7 @@ class HostResources:
         `MCPError` (see `read`).
         """
         if not self._method_enabled("list"):
-            raise HostCapabilityMissing(HOST_RESOURCES_CAPABILITY_KEY)
+            raise self._missing()
 
         filter_obj = _HostResourcesListFilter(scheme=scheme, mime_type=mime_type, tags=tags)
         filter_wire = filter_obj.to_wire()
@@ -263,9 +263,21 @@ class HostResources:
         request context (a background task, or a stand-in context in tests) it
         returns False and the capability block decides.
         """
+        return self._protocol_version() in MODERN_PROTOCOL_VERSIONS
+
+    def _protocol_version(self) -> str | None:
         request_context = getattr(self._ctx, "request_context", None)
         version = getattr(request_context, "protocol_version", None)
-        return version in MODERN_PROTOCOL_VERSIONS
+        return version if isinstance(version, str) else None
+
+    def _missing(self) -> HostCapabilityMissing:
+        """The error for a call this connection cannot carry, naming the protocol era when
+        that, not the host's advertisement, is the cause."""
+        if self._negotiated_without_back_channel():
+            return HostCapabilityMissing(
+                HOST_RESOURCES_CAPABILITY_KEY, protocol_version=self._protocol_version()
+            )
+        return HostCapabilityMissing(HOST_RESOURCES_CAPABILITY_KEY)
 
     def _capability_block(self) -> dict[str, Any] | None:
         """Return the raw capability dict, or None if not advertised.

@@ -36,6 +36,9 @@ CONSUMED = {
     "rls_policy_sql",
     "rls_policy_sql_org_scoped",
     "rls_policy_sql_tenant_scoped",
+    "rls_policy_statements",
+    "rls_policy_statements_org_scoped",
+    "rls_policy_statements_tenant_scoped",
     "secured_session",
     "security_context_from_edge_headers",
     "system_session",
@@ -56,6 +59,7 @@ def test_all_is_unchanged() -> None:
     assert set(db.__all__) == CONSUMED | {
         "CLEANUP_TIMEOUT_SECONDS",
         "CONNECTIONS_PER_CALL",
+        "MANAGED_ADMIN_ROLES",
         "PoolConfigError",
         "PoolExhausted",
         "UnsafeRoleError",

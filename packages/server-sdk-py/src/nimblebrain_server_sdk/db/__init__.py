@@ -1,6 +1,6 @@
 """Tenant + workspace data access for a server that owns a Postgres database.
 
-Needs the ``[db]`` extra (``pip install 'nimblebrain-server-sdk[db]'``); imported without it,
+Needs the ``[db]`` extra (``uv add 'nimblebrain-server-sdk[db]'``); imported without it,
 this package raises an ``ImportError`` that names the extra.
 
 The pattern, in three pieces:
@@ -15,8 +15,9 @@ The pattern, in three pieces:
     scoped to (tenant, workspace, allowed_workspaces). Transaction-scoped, so a
     pooled connection cannot leak context to the next request. Its exit is
     shielded from cancellation, so a cancelled call returns its connection.
-  * ``rls_policy_sql`` — the standard RLS policy a service applies to every
-    table tagged ``(tenant_id, workspace_id)``.
+  * ``rls_policy_statements`` — the standard RLS policy a service applies to every
+    table tagged ``(tenant_id, workspace_id)``, one statement per item for a migration to
+    execute in turn (``rls_policy_sql`` is the same DDL as one string).
 
 And the capacity around them, for a server that serves many workspaces from one pool:
 
@@ -26,7 +27,10 @@ And the capacity around them, for a server that serves many workspaces from one 
     under one slot.
   * ``PoolSettings`` / ``create_pooled_engine`` — the pool's size and timeout, read from the
     server's env namespace and validated together with the admission limit at boot. The engine
-    refuses a superuser or ``BYPASSRLS`` role with ``UnsafeRoleError`` unless built with
+    refuses a connection whose session bypasses row-level security (a superuser or ``BYPASSRLS``
+    role, a member of a managed Postgres admin role in ``MANAGED_ADMIN_ROLES``, or any session a
+    probe sees bypass a forced policy, when the session can run the probe) with
+    ``UnsafeRoleError`` unless built with
     ``refuse_bypass_roles=False`` (an engine meant to bypass, such as a migration's).
   * ``WorkspaceLimiter`` — at most N calls per workspace at once,
     admitted before a call checks out a connection; a call refused for capacity raises
@@ -57,6 +61,7 @@ from .edge import (  # noqa: E402
 )
 from .pool import (  # noqa: E402
     CONNECTIONS_PER_CALL,
+    MANAGED_ADMIN_ROLES,
     PoolConfigError,
     PoolSettings,
     UnsafeRoleError,
@@ -66,6 +71,9 @@ from .rls import (  # noqa: E402
     rls_policy_sql,
     rls_policy_sql_org_scoped,
     rls_policy_sql_tenant_scoped,
+    rls_policy_statements,
+    rls_policy_statements_org_scoped,
+    rls_policy_statements_tenant_scoped,
 )
 from .session import (  # noqa: E402
     CLEANUP_TIMEOUT_SECONDS,
@@ -77,6 +85,7 @@ from .session import (  # noqa: E402
 __all__ = [
     "CLEANUP_TIMEOUT_SECONDS",
     "CONNECTIONS_PER_CALL",
+    "MANAGED_ADMIN_ROLES",
     "TENANT_HEADER",
     "WORKSPACE_HEADER",
     "AdmittedSlot",
@@ -95,6 +104,9 @@ __all__ = [
     "rls_policy_sql",
     "rls_policy_sql_org_scoped",
     "rls_policy_sql_tenant_scoped",
+    "rls_policy_statements",
+    "rls_policy_statements_org_scoped",
+    "rls_policy_statements_tenant_scoped",
     "secured_session",
     "security_context_from_edge_headers",
     "system_session",

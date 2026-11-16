@@ -11,6 +11,7 @@ from nimblebrain_server_sdk.db import (
     SecurityContext,
     security_context_from_edge_headers,
 )
+from nimblebrain_server_sdk.errors import ErrorCode, ServiceError
 
 
 def test_headers_are_the_edge_names() -> None:
@@ -38,9 +39,21 @@ def test_context_is_active_workspace_only() -> None:
     ],
 )
 def test_missing_identity_fails_closed(headers: dict[str, str], message: str) -> None:
-    with pytest.raises(AuthError, match=message.replace("(", r"\(").replace(")", r"\)")) as err:
+    with pytest.raises(AuthError) as err:
         security_context_from_edge_headers(headers)
-    assert str(err.value).endswith("; the request did not arrive through the mcp-edge sidecar")
+    # The operator's log names the header; what a caller is shown names nothing of the deployment.
+    assert err.value.detail is not None
+    assert err.value.detail.startswith(message)
+    assert err.value.code is ErrorCode.AUTH_REQUIRED
+    assert not err.value.retryable
+    assert str(err.value) == err.value.message == AuthError.MESSAGE
+    for internal in ("x-tenant-id", "x-workspace-id", "edge", "sidecar", "header"):
+        assert internal not in err.value.message
+    assert err.value.to_envelope() == {
+        "code": "auth_required",
+        "retryable": False,
+        "message": AuthError.MESSAGE,
+    }
 
 
 def test_user_id_is_read_only_when_asked() -> None:
@@ -56,3 +69,7 @@ def test_identity_columns_are_the_active_workspace() -> None:
         tenant_id="t1", workspace_id="ws_a", allowed_workspaces=frozenset({"ws_a", "ws_b"})
     )
     assert ctx.identity_columns() == {"tenant_id": "t1", "workspace_id": "ws_a"}
+
+
+def test_auth_error_is_a_service_error() -> None:
+    assert issubclass(AuthError, ServiceError)

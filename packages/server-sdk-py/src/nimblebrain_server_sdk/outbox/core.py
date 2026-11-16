@@ -67,7 +67,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.schema import CreateIndex, CreateTable
 
-from nimblebrain_server_sdk.db import SecurityContext, rls_policy_sql
+from nimblebrain_server_sdk.db import SecurityContext, rls_policy_statements
 
 from . import metrics
 from .cursor import Cursor, CursorError
@@ -212,11 +212,7 @@ def outbox_ddl(table: sa.Table) -> list[str]:
             _compile(CreateIndex(index))
             for index in sorted(target.indexes, key=lambda index: index.name or "")
         )
-        statements.extend(
-            statement.strip()
-            for statement in rls_policy_sql(target.name).split(";")
-            if statement.strip()
-        )
+        statements.extend(rls_policy_statements(target.name))
     return statements
 
 

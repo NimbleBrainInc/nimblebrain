@@ -6,7 +6,7 @@ import pytest
 from fastmcp import FastMCP
 
 from nimblebrain_server_sdk import SkillDefinition, add_skills
-from nimblebrain_server_sdk.testing import served_skills
+from nimblebrain_server_sdk.testing import Mode, served_skills
 
 SKILL_MD = (
     "---\nname: probe\ndescription: Does a thing.\n"
@@ -24,7 +24,7 @@ def _probe() -> FastMCP:
 
 
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
-async def test_the_skill_lists_with_its_files_and_frontmatter(mode: str):
+async def test_the_skill_lists_with_its_files_and_frontmatter(mode: Mode):
     entries = await served_skills(_probe(), mode)
 
     assert list(entries) == ["skill://probe/SKILL.md"]

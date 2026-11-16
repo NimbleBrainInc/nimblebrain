@@ -1,0 +1,84 @@
+---
+title: Skills
+description: Publish skills from a Python MCP server with add_skills, which serves the MCP Skills extension (io.modelcontextprotocol/skills) and every skill file with its digest.
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import skillsServer from '@sdk-examples/skills_server.py?raw';
+import testSkills from '@sdk-examples/test_skills_server.py?raw';
+import skillMd from '@sdk-examples/skills/notes/SKILL.md?raw';
+
+A skill is a set of instructions an agent loads when its work matches: how to use your tools well, in your words. A server publishes skills by declaring the MCP Skills extension, `io.modelcontextprotocol/skills`. What NimbleBrain does with a published skill is in [Skills published by an MCP server](/using/skills/#skills-published-by-an-mcp-server).
+
+## A skill is a directory
+
+```
+skills/notes/
+├── SKILL.md
+└── references/style.md
+```
+
+`SKILL.md` starts with frontmatter that has a `name` and a `description`. The directory's name is the skill's name.
+
+<Code code={skillMd} lang="markdown" title="skills/notes/SKILL.md" />
+
+## Register the skills
+
+One call registers every skill the server publishes.
+
+<Code code={skillsServer} lang="python" title="skills_server.py" />
+
+`add_skills` answers `skills/list` and `skills/get` with each skill's entry (its `SKILL.md` URI, its frontmatter verbatim, and a `sha256` digest and byte size for every file) and serves every file through `resources/read` at `skill://<skill-path>/<file-path>`.
+
+<Aside type="caution">
+Do not also register `skill://` resources by hand. A host verifies each file it reads against the listed digest, so the bytes served and the bytes listed must come from one place. FastMCP serves the last resource registered at a URI, so a server that registers one over a skill file fails at startup.
+</Aside>
+
+## Generated or packaged files
+
+When a skill's files are not a directory of their own (a `SKILL.md` built at startup, or one packaged beside other code), pass a `SkillDefinition` with the skill path and the files keyed by their path in the skill, as `glossary` does above.
+
+- The skill path may carry a prefix (`"acme/billing/refunds"`). Its last segment must equal the frontmatter `name`.
+- A directory's skill path defaults to the directory's name. `SkillDefinition.from_directory(dir, path=...)` overrides it.
+- Dotfiles and `__pycache__` are skipped.
+
+## What is checked at startup
+
+Everything the specification requires of a skill is checked when the server is built, so a bad skill fails then and not on a host's first read:
+
+- a missing `SKILL.md`, or one with no frontmatter;
+- a `name` outside the Agent Skills naming rules, or one that differs from the last path segment;
+- a file path that escapes the skill, or that a URI would encode differently;
+- two skills at one URI.
+
+A skill beyond the specification's limits (512 files or 16 MiB) logs a warning.
+
+## Test it
+
+`served_skills` connects the way a host does, lists the skills, reads every file back and checks it against its digest.
+
+<Code code={testSkills} lang="python" title="test_skills_server.py" />
+
+## On the wire
+
+- Frontmatter is parsed with YAML 1.2 semantics for booleans, numbers and dates (`yes`, `1:30` and `2026-01-01` stay strings, and `017` is 17), matching the parsers hosts compare with.
+- Text files are served as text resources and anything that is not UTF-8 as a blob. Either way the digest covers the raw file bytes.
+- `skills/list` returns every skill in one page. On protocol `2026-07-28` both results carry `ttlMs: 0` and `cacheScope: "private"`.
+- On a 2025-era (`initialize`) connection the declaration is not sent, because that handshake carries no `capabilities.extensions`. `skills/list` and `skills/get` answer on either era.
+
+## With the `mcp` SDK's `MCPServer`
+
+A server built on `mcp.server.mcpserver.MCPServer` instead of FastMCP passes the extension at construction:
+
+```python
+from mcp.server.mcpserver import MCPServer
+from nimblebrain_server_sdk import MCPServerSkillsExtension
+
+server = MCPServer("notes", extensions=[MCPServerSkillsExtension([SKILLS / "notes"])])
+```
+
+## Related
+
+- [Skills in NimbleBrain](/using/skills/): how a skill loads, and its file format
+- [Testing](/server-sdk/testing/)
+- [API reference](/server-sdk/reference/core/)

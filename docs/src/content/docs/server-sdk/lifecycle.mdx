@@ -1,0 +1,30 @@
+---
+title: Lifecycle
+description: Handle the ai.nimblebrain/lifecycle ready and removing events in a Python MCP server with add_lifecycle_extension.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import lifecycleServer from '@sdk-examples/lifecycle_server.py?raw';
+import testLifecycle from '@sdk-examples/test_lifecycle_server.py?raw';
+
+`ai.nimblebrain/lifecycle` tells a server it has been made available to a workspace (`ready`) and that it is about to be removed (`removing`). The protocol, its delivery guarantees and what the user sees are in the [lifecycle extension](/extensions/lifecycle/). The SDK advertises the extension and marks one tool per event.
+
+<Code code={lifecycleServer} lang="python" title="lifecycle_server.py" />
+
+## The rules
+
+- **Refused at import:** a handler that requires an argument, or a second handler for one event.
+- **Synchronous:** a handler is registered without task support, since the host calls it directly and waits.
+- **`reason` if you want it:** a `ready` handler that declares `reason` receives `install` or `resume`.
+- **Listed to every client.** A handler is an ordinary tool, so it must be safe for any caller with the workspace's identity. `removing` records intent and never destroys data.
+- **Delivered at least once.** `ready` can arrive twice on a fresh install. Make each handler idempotent.
+- **Not correct by the events alone.** Most MCP hosts never send them. Set up lazily on first use too, and sweep for state whose `removing` never came.
+
+## Test it
+
+<Code code={testLifecycle} lang="python" title="test_lifecycle_server.py" />
+
+## Related
+
+- [Lifecycle extension](/extensions/lifecycle/): delivery, failure semantics, and why a handler must be safe for any caller
+- [API reference](/server-sdk/reference/core/)

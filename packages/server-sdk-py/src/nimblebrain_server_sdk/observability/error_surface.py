@@ -12,7 +12,7 @@ to the metrics registry.
 
 from __future__ import annotations
 
-from nimblebrain_server_sdk.errors import ServiceError
+from nimblebrain_server_sdk.errors import ServiceError, _log_level
 
 from .logging import get_logger
 from .metrics import record_service_error
@@ -23,7 +23,8 @@ _log = get_logger(__name__)
 def _record(err: ServiceError) -> None:
     """Emit the metric + structured log for a classified error (exactly once)."""
     record_service_error(err.metric_code, err.upstream_status)
-    _log.error(
+    _log.log(
+        _log_level(err),
         "service_error",
         code=err.code.value,
         retryable=err.retryable,

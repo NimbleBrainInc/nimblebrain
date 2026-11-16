@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "extensions": {
+    "declared": [
+      "ai.nimblebrain/open",
+      "ai.nimblebrain/open-connector-settings",
+      "ai.nimblebrain/notify",
+      "ai.nimblebrain/request-file",
+      "ai.nimblebrain/upload-files",
+      "ai.nimblebrain/keydown",
+      "ai.nimblebrain/location"
+    ],
+    "hostToApp": [
+      "ai.nimblebrain/navigate"
+    ],
+    "hostContext": [
+      "ai.nimblebrain/styles"
+    ]
+  },
+  "limits": {
+    "location": {
+      "maxTrailEntries": 32,
+      "minLabelLength": 1,
+      "maxLabelLength": 200,
+      "maxIdLength": 512
+    },
+    "notify": {
+      "levels": [
+        "success",
+        "info",
+        "warning",
+        "error"
+      ],
+      "maxTitleLength": 120,
+      "maxDescriptionLength": 500,
+      "burst": 5,
+      "windowMs": 10000
+    },
+    "files": {
+      "defaultMaxFileSize": 26214400
+    }
+  },
+  "errors": {
+    "requestTimeout": -32001,
+    "suspensionDataField": "suspendedMs"
+  },
+  "theme": {
+    "gutter": {
+      "wide": "1.5rem",
+      "narrow": "1rem",
+      "narrowBreakpointPx": 640
+    },
+    "modeExtensionVariables": [
+      "--color-text-accent",
+      "--nb-color-processing",
+      "--nb-color-processing-light"
+    ]
+  }
+}

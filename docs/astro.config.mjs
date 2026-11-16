@@ -3,11 +3,23 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightSidebarTopics from 'starlight-sidebar-topics';
 import starlightLinksValidator from 'starlight-links-validator';
+import { fileURLToPath } from 'node:url';
 import { starlightThemeCss } from './src/theme/starlight.ts';
 
 // https://astro.build/config
 export default defineConfig({
   site: 'https://docs.nimblebrain.ai',
+  vite: {
+    resolve: {
+      alias: {
+        // The Server SDK pages show the package's tested examples by importing the files
+        // themselves (`?raw`), so a page cannot show code the SDK's suite did not run.
+        '@sdk-examples': fileURLToPath(
+          new URL('../packages/server-sdk-py/examples', import.meta.url),
+        ),
+      },
+    },
+  },
   // Redirects for pages removed/merged in the architecture realignment, so
   // bookmarked and indexed URLs land on their replacements instead of 404ing.
   redirects: {
@@ -54,6 +66,20 @@ export default defineConfig({
     '/extensions/notifications': '/host/notifications/',
     '/extensions/custom-instructions': '/using/skills/#guidance-for-one-connector',
     '/apps/manifest': '/host/manifest/',
+    // A section root with no page of its own sends readers to the section's first page in
+    // the sidebar, so a trimmed URL or a link to a section lands somewhere instead of 404ing.
+    '/guide': '/guide/welcome/',
+    '/using': '/using/chat/',
+    '/mcp': '/mcp/overview/',
+    '/connect': '/connect/external-clients/',
+    '/extensions': '/extensions/overview/',
+    '/host': '/host/overview/',
+    '/apps': '/apps/overview/',
+    '/cli': '/cli/overview/',
+    '/config': '/config/nimblebrain-json/',
+    '/gateways': '/gateways/composio/',
+    '/deploy': '/deploy/docker/',
+    '/api': '/connect/mcp-endpoint/',
   },
   integrations: [
     starlight({
@@ -180,9 +206,40 @@ export default defineConfig({
           },
           {
             label: 'Building for NimbleBrain',
-            link: '/host/overview',
+            link: '/build/',
             icon: 'puzzle',
             items: [
+              { label: 'Build for NimbleBrain', slug: 'build' },
+              { label: 'Which package do I need?', slug: 'build/packages' },
+              {
+                label: 'Server SDK (Python)',
+                items: [
+                  { label: 'Overview', slug: 'server-sdk' },
+                  { label: 'Quickstart', slug: 'server-sdk/quickstart' },
+                  {
+                    label: 'Guides',
+                    items: [
+                      { label: 'Tools and annotations', slug: 'server-sdk/tools' },
+                      { label: 'Announcing changes', slug: 'server-sdk/announcing-changes' },
+                      { label: 'Skills', slug: 'server-sdk/skills' },
+                      { label: 'Facets', slug: 'server-sdk/facets' },
+                      { label: 'Lifecycle', slug: 'server-sdk/lifecycle' },
+                      { label: 'Host resources', slug: 'server-sdk/host-resources' },
+                      { label: 'Notifications', slug: 'server-sdk/notifications' },
+                      { label: 'Data', slug: 'server-sdk/data' },
+                    ],
+                  },
+                  { label: 'Observability', slug: 'server-sdk/observability' },
+                  { label: 'Errors', slug: 'server-sdk/errors' },
+                  { label: 'Testing', slug: 'server-sdk/testing' },
+                  { label: 'Compatibility and stability', slug: 'server-sdk/compatibility' },
+                  {
+                    label: 'API reference',
+                    // Written from the package's docstrings by `bun run reference`.
+                    items: [{ autogenerate: { directory: 'server-sdk/reference' } }],
+                  },
+                ],
+              },
               {
                 label: 'Host Integration',
                 items: [

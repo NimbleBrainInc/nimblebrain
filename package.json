@@ -75,6 +75,7 @@
     "check:platform-apps": "bun run scripts/check-platform-apps.ts",
     "check:core-skill-tool-refs": "bun run scripts/check-core-skill-tool-refs.ts",
     "codegen": "bun run scripts/codegen-web-platform-schemas.ts",
+    "gen:host-constants": "cd web && bun run gen:host-constants",
     "check:codegen": "bun run codegen && bun run scripts/check-codegen.ts",
     "verify": "bun run verify:static && bun run verify:test-unit && bun run test:integration",
     "verify:static": "bun run --sequential --no-exit-on-error format:check lint check \"check:*\"",

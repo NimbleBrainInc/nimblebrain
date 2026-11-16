@@ -59,6 +59,7 @@ import {
 import {
   collectSuppressedSkillNames,
   extractOperatorTurns,
+  reconstructMessages,
 } from "../conversation/event-reconstructor.ts";
 import {
   type ConversationMutation,
@@ -361,6 +362,7 @@ import { buildMidTurnCompaction } from "./mid-turn-compaction.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
 import { resolveMessageBudget } from "./resolve-message-budget.ts";
 import { resolveThinking } from "./resolve-thinking.ts";
+import { tokenEstimateCorrection } from "./token-estimate-correction.ts";
 import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
 
 /**
@@ -372,6 +374,19 @@ import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
  */
 function applyClearable<T>(current: T | undefined, patched: T | null | undefined): T | undefined {
   return patched === undefined ? current : (patched ?? undefined);
+}
+
+/** One log read feeds both calibration and the resumed history projection. */
+async function calibrationForConversation(
+  binding: RunConversationBinding | undefined,
+  model: string,
+): Promise<{ recordedHistory?: StoredMessage[]; estimateCorrection: number }> {
+  if (!binding?.resumed) return { estimateCorrection: 1 };
+  const events = await binding.store.readEvents(binding.conversation.id);
+  return {
+    recordedHistory: reconstructMessages(events),
+    estimateCorrection: tokenEstimateCorrection(events, model),
+  };
 }
 
 /**
@@ -1849,12 +1864,19 @@ export class Runtime {
     // window minus the static per-call overhead. The configured value is
     // treated as a CAP — never a target. Per-run override beats config beats
     // default. See `src/runtime/resolve-message-budget.ts`.
+    // Read the resumed conversation once for both calibration and history.
+    // The append-only JSONL can be large even after history compaction.
+    const { recordedHistory, estimateCorrection } = await calibrationForConversation(
+      binding,
+      spec.model,
+    );
     const messageBudget = resolveMessageBudget({
       model: spec.model,
       configMaxInputTokens: this.getMaxInputTokens(),
       systemPrompt,
       tools,
       maxOutputTokens: resolvedMaxOutputTokens,
+      estimateCorrection,
     });
 
     // ── The messages ────────────────────────────────────────────────────────
@@ -1863,6 +1885,7 @@ export class Runtime {
       userMessage,
       reqCtx,
       messageBudget.budget,
+      recordedHistory,
     );
 
     // Files are workspace-owned: rehydrate a `files://` URI from the workspace
@@ -1891,20 +1914,26 @@ export class Runtime {
         alwaysOn: composed.alwaysOnSkills,
       }),
     );
+    // Match the first provider attempt: the engine windows the history before
+    // sending it. Keep the composed prompt's historical accounting intact:
+    // the volatile head moves to the latest user message for caching, but its
+    // tokens still belong to the `system_prompt` source in this digest.
+    const latestUser = messages.findLast((message) => message.role === "user");
+    const engineSystem = resolveEngineSystem(messages, stableSystem, volatileHead);
+    const injectedUser = messages.findLast((message) => message.role === "user");
+    const firstWindow = buildTransformContext(
+      messageBudget.budget,
+      getProviderFromModel(spec.model),
+    )(messages);
+    const contextMessages = firstWindow.messages.map((message) =>
+      volatileHead && message === injectedUser && latestUser ? latestUser : message,
+    );
     const contextAssembled = buildContextAssembledPayload({
       systemPrompt,
       activeTools: tools,
-      messages,
+      messages: contextMessages,
       skillsLoaded,
     });
-
-    // Evict the volatile head onto the latest user message so a per-run change
-    // (date, app/focused-app state, matched skill) does not rewrite the
-    // 1h-cached system prefix. Telemetry above counts every segment via
-    // `systemPrompt`; the prepend runs after it, so history isn't double-counted.
-    // Falls back to folding the head into the system string when there's no user
-    // message to carry it (keeps the content, forgoes the cache win).
-    const engineSystem = resolveEngineSystem(messages, stableSystem, volatileHead);
 
     const deadline = runDeadline({
       signal: spec.signal,
@@ -2607,9 +2636,10 @@ export class Runtime {
     opening: StoredMessage,
     reqCtx: RequestContext,
     budget: number,
+    recordedHistory?: StoredMessage[],
   ): Promise<StoredMessage[]> {
     if (!binding) return [opening];
-    const history = await binding.store.history(binding.conversation);
+    const history = recordedHistory ?? (await binding.store.history(binding.conversation));
     const compacted = await runWithRequestContext(reqCtx, () =>
       this.maybeCompactHistory(binding.store, binding.conversation.id, history, budget),
     );

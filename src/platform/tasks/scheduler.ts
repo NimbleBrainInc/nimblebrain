@@ -103,7 +103,7 @@ const ADMISSION_KEY_PREFIX = "task:";
 /** The withdrawal reason `dropWorkspace` gives the runs it takes out of the queue. */
 const WORKSPACE_DELETED = "workspace_deleted";
 
-/** The withdrawal reason a paused batch gives its runs still waiting in the queue. */
+/** The withdrawal reason a batch gives its runs still waiting in the queue (a pause, or fewer runs sharing its budget). */
 const BATCH_PAUSED = "batch_paused";
 
 /** What `runFromEvent` answers when the task already has a run. */
@@ -196,8 +196,12 @@ export interface BatchRunOptions {
    * when the run starts so a queued run names what is left then.
    */
   accounts: () => RunSpendAccount[];
-  /** The most of the batch's runs that may run at once (its concurrency), all drawing on the task's budget. */
-  sharedBy: number;
+  /**
+   * The most of the batch's runs that may run at once, all drawing on the
+   * task's budget, read when the run starts so a queued run shares as the
+   * batch does then.
+   */
+  sharedBy: () => number;
   /** Called when the run takes its slot and starts (a queued one later than it was asked for). */
   onStarted?: () => void;
 }
@@ -1823,7 +1827,7 @@ export class Scheduler {
       : reason === WORKSPACE_DELETED
         ? "the workspace was deleted"
         : reason === BATCH_PAUSED
-          ? "Withdrawn from the queue: its batch paused before a run slot freed"
+          ? "Withdrawn from the queue by its batch before a run slot freed"
           : "Queued run dropped: the runtime stopped before a run slot freed";
     const status = cancelled ? "cancelled" : "skipped";
     try {
@@ -2325,6 +2329,7 @@ export class Scheduler {
         });
       }
       batch?.onStarted?.();
+      const sharedBy = batch?.sharedBy();
       const executed = await this.executor(
         auto,
         controller.signal,
@@ -2333,7 +2338,7 @@ export class Scheduler {
         lease,
         runId,
         batch?.accounts(),
-        batch?.sharedBy,
+        sharedBy,
       );
       const run = requested ? withRequest(executed.run, requested) : executed.run;
       const result: TaskRunResult = executed.result
@@ -2346,7 +2351,7 @@ export class Scheduler {
       this.updateAfterRun(auto, run, trigger, firedOnceAt, {
         dispatchRunId: runId,
         result,
-        ...(batch ? { sharedBy: batch.sharedBy } : {}),
+        ...(sharedBy !== undefined ? { sharedBy } : {}),
       });
       ticket(run);
       this.runRecorded(auto);

@@ -3,7 +3,7 @@ title: Notifications
 description: Expose an outbox so facts your server learns on its own reach the inbox, the agent, and — through an operator's route — a human.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 Your server learns things nobody asked it for. A domain it ordered goes active
 twenty minutes after the call that ordered it returned. A reply lands on a
@@ -231,10 +231,50 @@ everything is `urgent` gets its ceiling left where it is.
 
 ## Examples
 
-Neither example imports anything from NimbleBrain. An outbox is a resource that
-returns JSON.
+An outbox is a resource that returns JSON, plus a table the server appends to.
 
-### Python (FastMCP)
+<Tabs syncKey="sdk">
+<TabItem label="SDK (Python)">
+
+[`nimblebrain-server-sdk[outbox]`](/server-sdk/notifications/) is the server half of this protocol: the tables, the append, the poll and its cursor.
+
+```python title="server.py"
+from nimblebrain_server_sdk.outbox import emit, register_outbox
+
+# Serve the outbox at the URI the catalog entry declares, with the session factory and
+# identity function the server's tools already use.
+register_outbox(mcp, "acme://notifications", db.session, identity)
+
+
+async def claim_domain(ctx, domain: str) -> None:
+    async with db.session(ctx) as conn:
+        await conn.execute(insert_domain(domain))
+        # Appended on the same connection, so it commits with the change or not at all.
+        await emit(
+            conn,
+            ctx,
+            {
+                "eventId": f"domain-registered-{domain}",
+                "name": "domain.registered",
+                "timestamp": datetime.now(UTC),
+                "data": {"domain": domain},
+            },
+            title=f"{domain} registered",
+            level="info",
+            subject=domain,
+        )
+```
+
+- `emit` refuses an envelope the host's parser would drop, so an accepted notification is never lost at the host.
+- A poll never skips a row whose transaction was still in flight when it ran, which a cursor over a sequence number cannot promise.
+- Retention, the per-workspace row cap and `truncated` are handled in the read.
+
+The migration, a complete server and its test are in the [Server SDK notifications guide](/server-sdk/notifications/).
+
+</TabItem>
+<TabItem label="Wire (any SDK)">
+
+**Python (FastMCP), without the Server SDK**
 
 ```python
 from datetime import datetime, timezone
@@ -293,7 +333,7 @@ def claim_domain(conn, workspace_id: str, domain: str) -> None:
         ))
 ```
 
-### TypeScript
+**TypeScript**
 
 ```ts
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
@@ -340,6 +380,9 @@ server.registerResource(
   },
 );
 ```
+
+</TabItem>
+</Tabs>
 
 ## Where the events end up
 

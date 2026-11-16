@@ -370,3 +370,33 @@ async def test_modern_era_reports_host_resources_unavailable(host_resources_v1_e
         "list_available": False,
         "read": "capability-missing",
     }
+
+
+async def test_missing_capability_on_the_2026_era_names_the_protocol() -> None:
+    """On 2026-07-28 the cause is the protocol era, not the host's advertisement."""
+    from fastmcp import Client
+
+    from nimblebrain_server_sdk import HostCapabilityMissing, host
+
+    mcp = FastMCP("era")
+
+    @mcp.tool
+    async def read(ctx: Context) -> dict[str, str | None]:
+        try:
+            await host(ctx).read("files://fl_x")
+        except HostCapabilityMissing as exc:
+            return {"message": str(exc), "protocol_version": exc.protocol_version}
+        return {"message": "read", "protocol_version": None}
+
+    async with Client(mcp, mode="auto") as client:
+        modern = (await client.call_tool("read", {})).structured_content
+    async with Client(mcp, mode="legacy") as client:
+        legacy = (await client.call_tool("read", {})).structured_content
+
+    assert modern is not None
+    assert legacy is not None
+    assert modern["protocol_version"] == "2026-07-28"
+    assert "negotiated MCP protocol 2026-07-28" in modern["message"]
+    assert "has not advertised" not in modern["message"]
+    assert legacy["protocol_version"] is None
+    assert legacy["message"].startswith("Host has not advertised")

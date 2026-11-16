@@ -1635,6 +1635,7 @@ export const TaskBatchRecord = Type.Object({
   ownerId: Type.String(),
   items: Type.Number(),
   concurrency: Type.Number(),
+  sharing: Type.Optional(Type.Number()),
   budgetUsd: Type.Optional(Type.Number()),
   stopWhen: Type.Optional(Type.Object({ minPassRate: Type.Number(), afterItems: Type.Number() })),
   stopRuleDisarmed: Type.Optional(Type.Boolean()),

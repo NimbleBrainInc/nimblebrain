@@ -1,7 +1,7 @@
 name: Docs CI
 
-# Builds the docs site on ready PRs and merge-queue commits that touch docs/ or the
-# runtime palette it themes from. The Astro build runs starlight-links-validator, so
+# Builds the docs site on ready PRs and merge-queue commits that touch docs/, the
+# runtime palette it themes from, or the Server SDK source and examples its SDK pages are built from. The Astro build runs starlight-links-validator, so
 # broken internal links fail the check. A draft PR skips it, as ci.yml skips every
 # check on a draft.
 
@@ -38,8 +38,9 @@ jobs:
             git fetch origin "$BASE" --depth=1 --quiet
             range="origin/$BASE...HEAD"
           fi
-          # The docs theme is projected from the runtime palette, so a palette change rebuilds them.
-          if git diff --name-only "$range" | grep -qE '^(docs/|web/src/theme/palette\.ts$)'; then
+          # The docs theme is projected from the runtime palette, and the Server SDK pages are
+          # built from the SDK's docstrings and examples, so a change to either rebuilds them.
+          if git diff --name-only "$range" | grep -qE '^(docs/|web/src/theme/palette\.ts$|packages/server-sdk-py/(src/|examples/|pyproject\.toml$|uv\.lock$)|\.github/workflows/docs-(ci|pages)\.yml$)'; then
             echo "docs=true" >> "$GITHUB_OUTPUT"
           else
             echo "docs=false" >> "$GITHUB_OUTPUT"
@@ -52,6 +53,15 @@ jobs:
           # Same bun as ci.yml (test/unit/build-pins.test.ts checks it).
           # renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
           bun-version: "1.4.3"
+
+      # The build writes the Server SDK API reference from the package's docstrings.
+      - uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
+        if: steps.changes.outputs.docs == 'true'
+
+      # A public name with no docstring, or one that cannot be resolved, must fail the build.
+      - name: Test the reference generator
+        if: steps.changes.outputs.docs == 'true'
+        run: cd docs && bun run test:reference
 
       - name: Install and build (fails on broken internal links)
         if: steps.changes.outputs.docs == 'true'

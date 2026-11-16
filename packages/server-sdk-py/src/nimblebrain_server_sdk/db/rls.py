@@ -21,13 +21,16 @@ unset, so an unscoped session sees nothing — default deny.
 
 from __future__ import annotations
 
-from pgbulkhead import policy_sql
+from pgbulkhead import policy_sql, policy_statements
 
 from .presets import NIMBLEBRAIN, ORG_SCOPED, TENANT_SCOPED
 
 
 def rls_policy_sql(table: str) -> str:
-    """Render the standard tenant+workspace RLS policy DDL for ``table``.
+    """Render the standard tenant+workspace RLS policy DDL for ``table``, as one string.
+
+    Several statements separated by ``;``. A driver that runs one statement per call (asyncpg
+    refuses several commands in one execute) takes :func:`rls_policy_statements` instead.
 
     Emitted as four **per-command** policies so the read/write asymmetry holds
     for every command, not just INSERT:
@@ -40,17 +43,25 @@ def rls_policy_sql(table: str) -> str:
     A single ``FOR ALL`` policy cannot express this. PostgreSQL applies
     ``WITH CHECK`` only to the *new* row of INSERT/UPDATE and **never** to
     DELETE, while ``USING`` decides which *existing* rows UPDATE/DELETE may
-    touch. With one policy the read predicate (the allowed set) therefore
-    governed DELETE and UPDATE row-selection, so a cross-workspace *read* grant
-    could DELETE a granted workspace's rows or UPDATE-relabel them into the
-    active workspace. Splitting per command binds writes to the active workspace
-    on both the row selected (``USING``) and the row written (``WITH CHECK``).
-    The ``system`` role still bypasses *workspace* scoping (reconcilers/admin)
-    but never the tenant wall. The leading ``DROP``s (old single ``_isolation``
-    name + the four per-command names) make the DDL idempotent and upgrade an
-    existing table from the prior single-policy form.
+    touch, so under one policy the read predicate (the allowed set) would govern
+    which rows a DELETE or UPDATE selects. Per-command policies bind writes to the
+    active workspace on both the row selected (``USING``) and the row written
+    (``WITH CHECK``). The ``system`` role bypasses *workspace* scoping
+    (:func:`~nimblebrain_server_sdk.db.session.system_session`) but never the tenant
+    wall. The leading ``DROP POLICY IF EXISTS`` statements make the DDL idempotent.
     """
     return policy_sql(NIMBLEBRAIN, table)
+
+
+def rls_policy_statements(table: str) -> list[str]:
+    """The statements of :func:`rls_policy_sql`, one per item, none ending in ``;``.
+
+    For a migration that runs on asyncpg, which refuses several commands in one execute::
+
+        for statement in rls_policy_statements("notes"):
+            op.execute(statement)
+    """
+    return policy_statements(NIMBLEBRAIN, table)
 
 
 def rls_policy_sql_tenant_scoped(table: str) -> str:
@@ -74,6 +85,11 @@ def rls_policy_sql_tenant_scoped(table: str) -> str:
     (one scoped session per tenant), since there is no role bypass to lean on.
     """
     return policy_sql(TENANT_SCOPED, table)
+
+
+def rls_policy_statements_tenant_scoped(table: str) -> list[str]:
+    """The statements of :func:`rls_policy_sql_tenant_scoped`, one per item."""
+    return policy_statements(TENANT_SCOPED, table)
 
 
 def rls_policy_sql_org_scoped(table: str) -> str:
@@ -122,3 +138,8 @@ def rls_policy_sql_org_scoped(table: str) -> str:
     whole design depends on.
     """
     return policy_sql(ORG_SCOPED, table)
+
+
+def rls_policy_statements_org_scoped(table: str) -> list[str]:
+    """The statements of :func:`rls_policy_sql_org_scoped`, one per item."""
+    return policy_statements(ORG_SCOPED, table)

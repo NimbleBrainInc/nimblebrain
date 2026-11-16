@@ -2,6 +2,57 @@
 
 ## [Unreleased]
 
+## [0.7.1]
+
+### Fixed
+
+- `new_prefixed_id` accepts a prefix of several segments joined by single underscores (`po_cmp`), which 0.7.0 refused. A ULID has no underscore, so the last underscore of an id still separates prefix from body. A server whose prefixes carry one can move off 0.6.1.
+- With `add_error_contract`, FastMCP no longer logs an error-level traceback for a `ServiceError` or capacity refusal raised in a tool call on that server. The error is recorded once, as `service_error`, at its own level. FastMCP's record is kept for a resource read, a prompt, and a server without the contract.
+
+## [0.7.0]
+
+### Highlights
+
+- A `[db]` migration runs on asyncpg: `rls_policy_statements` returns the policy one statement per item.
+- A server's tests reach its tools with a verified identity through `db.testing.edge_client`.
+- `add_error_contract(mcp)` returns the error contract for a `ServiceError` or capacity refusal a tool raises.
+- The README is a complete server and its test; the guides and API reference are at [docs.nimblebrain.ai/server-sdk](https://docs.nimblebrain.ai/server-sdk/quickstart/).
+
+### Breaking
+
+- `[db]`: `AuthError` is a `ServiceError` (`auth_required`). `str(exc)` is now text safe to show a caller; the missing header is in `exc.detail`. It no longer names the edge deployment.
+- `new_prefixed_id` raises `ValueError` for a prefix that is not lowercase ASCII letters and digits.
+
+### Added
+
+- `[db]`: `rls_policy_statements`, `rls_policy_statements_tenant_scoped` and `rls_policy_statements_org_scoped`.
+- `[db]`: `nimblebrain_server_sdk.db.testing.edge_client`, for tests only: it sends the identity headers as the edge does and changes nothing in the server.
+- `add_error_contract` and `ErrorContractMiddleware`.
+- `HostCapabilityMissing.protocol_version`; on a 2026-07-28 connection the message names the protocol era as the cause.
+- `testing.Mode` (`Literal["auto", "legacy"]`), the type of every helper's `mode`, and `testing.__all__`.
+
+### Changed
+
+- A `bad_input` error is logged at `WARNING`, not `ERROR`; it is still counted in `service_errors_total`.
+- The missing-extra `ImportError` suggests `uv add` as well as `pip install`.
+- Project metadata: a one-line description, and Documentation, Changelog and Source URLs.
+
+## [0.6.1]
+
+### Changed
+
+- **`[db]` refuses sessions that bypass row-level security, not only roles whose
+  attributes say so.** `[db]` requires `pgbulkhead` 0.1.3 (pinned exactly), whose guard also
+  refuses a member of a managed Postgres admin role (on Amazon RDS, `rds_superuser`, which
+  bypasses with neither `SUPERUSER` nor `BYPASSRLS`) and any session a rolled-back probe sees
+  bypass a forced policy. The probe needs the `TEMP` privilege and a writable session; without
+  either, only the attribute and membership checks run and pgbulkhead logs a warning. The
+  rendered SQL and the statements each session sends are unchanged.
+
+### Added
+
+- `[db]`: `MANAGED_ADMIN_ROLES`, the admin roles the guard refuses membership in.
+
 ## [0.6.0]
 
 ### Added

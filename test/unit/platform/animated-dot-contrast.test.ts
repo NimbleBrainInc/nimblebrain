@@ -372,3 +372,59 @@ describe("reduced-motion overrides are placed where they win", () => {
     });
   }
 });
+
+/**
+ * Every infinite animation in every themed tree has a reduced-motion override
+ * declared after it.
+ *
+ * The block above only covers the indicators in GUARDED. A looping shimmer
+ * anywhere else (files `.skel`, `.detail-shimmer`) would run forever with no
+ * override and no failing test, so this sweeps every looping rule instead.
+ * Placement is checked here too: an override above its rule is inert, see the
+ * note on the block above.
+ */
+describe("every looping animation has a later reduced-motion override", () => {
+  const LOOPING_RULE = /([^{}@]+)\{([^{}]*animation:[^;{}]*\binfinite\b[^{}]*)\}/g;
+  const OVERRIDE_BLOCK = /@media\s*\([^)]*prefers-reduced-motion[^)]*\)\s*\{/g;
+
+  /** Selector -> offset of the reduced-motion block that sets it to `animation: none`. */
+  function overrides(css: string): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const media of css.matchAll(OVERRIDE_BLOCK)) {
+      const start = media.index as number;
+      const body = blockBody(css, start, "reduced-motion block");
+      for (const rule of body.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+        if (!/animation:\s*none/.test(rule[2] as string)) continue;
+        for (const sel of (rule[1] as string).split(",").map((s) => s.trim())) {
+          if (sel) out.set(sel, start);
+        }
+      }
+    }
+    return out;
+  }
+
+  test("no looping selector in a themed tree is left running under reduced motion", () => {
+    const unguarded: string[] = [];
+    for (const { dir } of themedTrees) {
+      for (const file of sourceFiles(dir)) {
+        // Comments stripped first: prose like "loops forever." ahead of a rule
+        // would otherwise be read as part of that rule's selector.
+        const css = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+        const off = overrides(css);
+        for (const m of css.matchAll(LOOPING_RULE)) {
+          const at = m.index as number;
+          for (const sel of (m[1] as string).split(",").map((s) => s.trim())) {
+            if (!sel) continue;
+            const placedAfter = (off.get(sel) ?? -1) > at;
+            if (!placedAfter) {
+              unguarded.push(
+                `${sel} loops forever with no prefers-reduced-motion override after it — ${relative(REPO, file)}`,
+              );
+            }
+          }
+        }
+      }
+    }
+    expect(unguarded).toEqual([]);
+  });
+});

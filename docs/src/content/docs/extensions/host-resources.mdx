@@ -3,7 +3,8 @@ title: Host Resources
 description: The ai.nimblebrain/host-resources extension lets an MCP server read and list files in the workspace it is serving, by URI, instead of receiving their contents as tool arguments.
 ---
 
-import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import { Aside, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+import hostFiles from '@sdk-examples/host_files.py?raw';
 
 | | |
 |---|---|
@@ -142,31 +143,14 @@ The error codes are the specification's where one exists, so a future upstream v
 
 Design the tool so it works on any host. Accept a URI, accept inline content as the fallback, and let the capability decide which one is used.
 
-<Tabs>
-<TabItem label="Python (server SDK)">
+<Tabs syncKey="sdk">
+<TabItem label="SDK (Python)">
 
-The [`nimblebrain-server-sdk`](https://pypi.org/project/nimblebrain-server-sdk/) package wraps the capability check, the method names, and the result types for FastMCP servers.
+[`nimblebrain-server-sdk`](/server-sdk/host-resources/) wraps the capability check, the method names, and the result types for FastMCP servers.
 
-```python
-from fastmcp import Context
-from nimblebrain_server_sdk import host
+<Code code={hostFiles} lang="python" title="host_files.py" />
 
-@mcp.tool
-async def summarize(file_uri: str | None = None, text: str | None = None, ctx: Context = None) -> dict:
-    """Summarize a document. Pass file_uri for a workspace file, or text inline."""
-    h = host(ctx)
-    if file_uri and h.available:
-        result = await h.read(file_uri)
-        content = result.contents[0]
-        if getattr(content, "text", None) is None:
-            return {"error": "summarize reads text files. This file came back as a binary blob."}
-        text = content.text
-    elif file_uri:
-        return {"error": "This host cannot read files by URI. Pass the content as `text`."}
-    ...
-```
-
-`h.available` is true when `read` is enabled, and `h.list_available` is true when `list` is enabled. `h.supports_scheme("files")` checks the scheme allowlist. On a `2026-07-28` connection both are false, whatever the client advertised, because the methods cannot be reached there.
+`files.available` is true when `read` is enabled, and `files.list_available` is true when `list` is enabled. `files.supports_scheme("files")` checks the scheme allowlist. On a `2026-07-28` connection both are false, whatever the client advertised, because the methods cannot be reached there, and `read` raises `HostCapabilityMissing` with a message that names the protocol version as the cause.
 
 </TabItem>
 <TabItem label="Wire (any SDK)">

@@ -1,0 +1,58 @@
+---
+title: Build for NimbleBrain
+description: Where to start building for NimbleBrain — a connector (a server alone) or an app (a server plus its interface) — and the path from a template to a server connected to NimbleBrain.
+---
+
+import { CardGrid, LinkCard, Steps } from '@astrojs/starlight/components';
+
+What you build for NimbleBrain is an MCP server. NimbleBrain connects to it by URL, the agent calls its tools, and, if it ships an interface, people use that interface inside NimbleBrain.
+
+## Choose what you are building
+
+| | A connector | An app |
+|---|---|---|
+| **What it is** | A server alone | A server plus its interface |
+| **Who uses it** | The agent, through tools | The agent through tools, and people through views |
+| **Example** | Search a ticket system, send an email | A task board the agent and the team both edit |
+| **You write** | Python | Python, and a web interface |
+
+Start with a connector. An app is a connector with an interface added, so nothing is thrown away.
+
+## The path
+
+<Steps>
+
+1. **Start from the template**
+
+   The [Python server template](https://github.com/NimbleBrainInc/mcp-server-template-python) is a working server with tests, lint, CI and packaging set up. Use it, or start from an empty directory with the [Server SDK quickstart](/server-sdk/quickstart/).
+
+2. **Build the server with the Server SDK**
+
+   [`nimblebrain-server-sdk`](/server-sdk/quickstart/) gives the server what NimbleBrain expects: annotated tools, an error contract, skills, and the `ai.nimblebrain` extensions. A connector is complete at this step.
+
+3. **Add an interface with Synapse** (an app only)
+
+   Synapse serves an interface from the server and gives that interface a typed way to call the server's tools. It works in any MCP Apps host, so its documentation is its own site: [synapse.nimblebrain.ai](https://synapse.nimblebrain.ai/docs/). Start with the [Python quickstart](https://synapse.nimblebrain.ai/docs/quickstart-python/). What NimbleBrain adds for a view (placements, theming, the bridge) is under [App Views](/apps/overview/).
+
+4. **Publish on mpak**
+
+   [mpak](https://mpak.dev/docs/) is the registry for MCP server bundles. Publishing gives the server a versioned, scanned bundle others can install.
+
+5. **Connect it to NimbleBrain**
+
+   NimbleBrain connects to a running server by URL. For development, [point a workspace at it](/server-sdk/quickstart/#5-connect-it-to-nimblebrain). For a deployment, an operator adds an entry to the [connectors catalog](/config/connectors-catalog/), and the entry's [`ai.nimblebrain/host` block](/host/overview/) asks for pages, settings sections, webhooks and notifications.
+
+</Steps>
+
+## Go to
+
+<CardGrid>
+  <LinkCard title="Server SDK quickstart" href="/server-sdk/quickstart/" description="Install, a minimal connector, run it, test it, connect it." />
+  <LinkCard title="Which package do I need?" href="/build/packages/" description="The four packages and the supported pairing for apps." />
+  <LinkCard title="Host integration" href="/host/overview/" description="What a server asks NimbleBrain to grant it: pages, settings, webhooks, notifications." />
+  <LinkCard title="MCP extensions" href="/extensions/overview/" description="The ai.nimblebrain protocol, for a server in any language." />
+</CardGrid>
+
+## Not using Python?
+
+Everything NimbleBrain expects of a server is a documented protocol. Each protocol page has a "Wire (any SDK)" tab with what to send and read: [extensions](/extensions/overview/), [host integration](/host/overview/) and [skills](/using/skills/#skills-published-by-an-mcp-server). The [TypeScript server template](https://github.com/NimbleBrainInc/mcp-server-template-typescript) is a starting point.

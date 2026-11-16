@@ -28,6 +28,7 @@ A server keeps its own prefixes and builds its named minters on :func:`new_prefi
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -99,6 +100,21 @@ def new_ulid() -> str:
     return _MINTER.mint()
 
 
+_PREFIX = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*")
+
+
 def new_prefixed_id(prefix: str) -> str:
-    """``<prefix>_<ulid>``: an opaque record id whose prefix names the record's kind."""
+    """``<prefix>_<ulid>``: an opaque record id whose prefix names the record's kind.
+
+    ``prefix`` is lowercase ASCII letters and digits, in one segment (``tk``) or several
+    joined by single underscores (``po_cmp``). A ULID carries no underscore, so the last
+    underscore of an id always separates its prefix from its body. Anything else raises
+    ``ValueError``: an empty prefix, a capital, a hyphen, or a leading, trailing or doubled
+    underscore.
+    """
+    if not _PREFIX.fullmatch(prefix):
+        raise ValueError(
+            "a record id prefix is lowercase ASCII letters and digits, in segments joined "
+            f"by single underscores, got {prefix!r}"
+        )
     return f"{prefix}_{new_ulid()}"
