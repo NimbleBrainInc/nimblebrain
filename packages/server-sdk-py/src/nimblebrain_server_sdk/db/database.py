@@ -16,6 +16,9 @@ Its engine refuses every connection made as a superuser or ``BYPASSRLS`` role wi
 security policy to one. ``refuse_bypass_roles=False`` turns that off, for a database object
 that is meant to bypass (one that runs migrations or provisioning), never for one that serves
 a request.
+
+Its engine is built with ``hide_parameters=True``, so a database error's text names the
+statement and never the values bound to it.
 """
 
 from __future__ import annotations
@@ -64,8 +67,13 @@ class SecuredDatabase(pgbulkhead.SecuredDatabase):
         # pgbulkhead's own builder always refuses; this one passes the opt-out through. It
         # reads the base class's URL reader and engine slot, which the exact pin holds fixed.
         if self._engine is None:
+            # ``hide_parameters`` keeps bound values out of every database error's text, so
+            # ``str(exc)`` names the statement and never the row it carried.
             self._engine = create_pooled_engine(
-                self._url(), self.settings, refuse_bypass_roles=self.refuse_bypass_roles
+                self._url(),
+                self.settings,
+                refuse_bypass_roles=self.refuse_bypass_roles,
+                hide_parameters=True,
             )
         return self._engine
 

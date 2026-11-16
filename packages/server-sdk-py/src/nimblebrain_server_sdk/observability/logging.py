@@ -27,6 +27,7 @@ from typing import Any
 import structlog
 from opentelemetry import trace
 
+from ._db_errors import redact_database_errors
 from .context import current_context
 
 
@@ -66,6 +67,10 @@ _SHARED_PROCESSORS: list[Any] = [
     _inject_context,
     _inject_trace_id,
     structlog.processors.StackInfoRenderer(),
+    # A database error's message carries row data (Postgres's DETAIL, SQLAlchemy's SQL and
+    # parameters), so its traceback is rendered here without any message, before
+    # ``format_exc_info`` would render it whole.
+    redact_database_errors,
     structlog.processors.format_exc_info,
 ]
 

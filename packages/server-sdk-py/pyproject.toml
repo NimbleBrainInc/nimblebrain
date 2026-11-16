@@ -1,6 +1,6 @@
 [project]
 name = "nimblebrain-server-sdk"
-version = "0.7.1"
+version = "0.7.2"
 description = "The Python SDK for building MCP servers that run on NimbleBrain."
 readme = "README.md"
 license = "Apache-2.0"
