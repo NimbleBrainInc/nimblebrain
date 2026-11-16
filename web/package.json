@@ -10,7 +10,7 @@
     "gen:host-constants": "bun run scripts/gen-host-constants.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "bun test",
+    "test": "bun test --isolate",
     "check": "bunx tsc --noEmit",
     "check:theme": "bun run gen:theme && git diff --exit-code src/theme/tokens.generated.css"
   },
