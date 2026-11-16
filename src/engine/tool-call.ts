@@ -131,7 +131,9 @@ export function buildToolDoneData(params: {
       ? {
           supervisorTripped: true,
           trippedTool: verdict.trippedTool,
-          consecutiveRepeats: verdict.consecutiveRepeats,
+          ...(verdict.consecutiveRepeats === undefined
+            ? {}
+            : { consecutiveRepeats: verdict.consecutiveRepeats }),
         }
       : {}),
   };

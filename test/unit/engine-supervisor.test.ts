@@ -11,6 +11,7 @@ import type {
   ToolResult,
   ToolSchema,
 } from "../../src/engine/types.ts";
+import { INFRA_ERROR_META_KEY } from "../../src/engine/types.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 
 const config: EngineConfig = {
@@ -114,6 +115,67 @@ describe("engine ↔ supervisor wiring", () => {
     const withoutStuck = trace.filter((t) => !t.sawStuck).length;
     expect(withStuck).toBe(3);
     expect(withoutStuck).toBe(1);
+  });
+
+  it("withholds a tool after persistent connection failures without reporting repeat strikes", async () => {
+    const offered: boolean[] = [];
+    const model = createMockModel((opts) => {
+      const hasTool = (opts.tools ?? []).some((t) => (t as { name?: string }).name === "stuck");
+      offered.push(hasTool);
+      return hasTool
+        ? {
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: `call-${offered.length}`,
+                toolName: "stuck",
+                input: JSON.stringify({}),
+              },
+            ],
+            inputTokens: 1,
+            outputTokens: 1,
+          }
+        : {
+            content: [{ type: "text", text: "Using another path." }],
+            inputTokens: 1,
+            outputTokens: 1,
+          };
+    });
+    let calls = 0;
+    const handler = (): ToolResult => {
+      calls++;
+      return {
+        content: textContent("connection unavailable"),
+        isError: true,
+        _meta: { [INFRA_ERROR_META_KEY]: true },
+      };
+    };
+    const events: EngineEvent[] = [];
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter([stuckToolSchema], handler),
+      collect(events),
+    );
+    const result = await engine.run(
+      config,
+      "system",
+      [{ role: "user", content: [{ type: "text", text: "try the tool" }] }],
+      [stuckToolSchema],
+    );
+
+    expect(result.stopReason).toBe("complete");
+    expect(calls).toBe(9);
+    expect(offered).toEqual([...Array(9).fill(true), false]);
+    const tripped = events.filter(
+      (e) =>
+        e.type === "tool.done" && (e.data as Record<string, unknown>).supervisorTripped === true,
+    );
+    expect(tripped).toHaveLength(1);
+    const data = tripped[0]!.data as Record<string, unknown>;
+    expect(data.trippedTool).toBe("stuck");
+    expect(data.consecutiveRepeats).toBeUndefined();
+    expect(data.output).toContain("connection unavailable");
+    expect(data.output).toContain("withheld");
   });
 
   it("does not trip when tool results vary across calls", async () => {
