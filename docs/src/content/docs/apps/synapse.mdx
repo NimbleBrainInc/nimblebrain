@@ -9,6 +9,8 @@ Synapse is the recommended way to build NimbleBrain app UIs. It wraps the standa
 
 The primary API is `connect()` — a single async call that handles the entire MCP Apps handshake and returns a ready-to-use `App` object. For React apps, `<AppProvider>` wraps `connect()` and exposes everything through hooks.
 
+Synapse runs in the browser. The server serves the built UI as a `ui://` resource and binds tools to it with FastMCP's `AppConfig`, with no Synapse package on the server: see [Serve a Synapse UI from a FastMCP server](https://synapse.nimblebrain.ai/docs/quickstart-python/).
+
 Apps built with vanilla ext-apps still work without Synapse. Synapse apps degrade gracefully in non-NimbleBrain hosts (Claude, ChatGPT, VS Code) — NB-specific features become silent no-ops while the ext-apps baseline continues working.
 
 ## Why use Synapse?

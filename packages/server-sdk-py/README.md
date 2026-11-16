@@ -13,12 +13,14 @@ A server alone is a connector. A server plus its interface is an app.
 | Package | Registry | What it is for |
 | --- | --- | --- |
 | `nimblebrain-server-sdk` (this package) | [PyPI](https://pypi.org/project/nimblebrain-server-sdk/) | The server: tool annotations, change announcements, the `ai.nimblebrain` extensions, skills, the error contract, and, as extras, database access, observability and notifications |
-| `nimblebrain-synapse` | [PyPI](https://pypi.org/project/nimblebrain-synapse/) | Serving an app's interface from a Python server: one `ui://` component, rendered in any MCP Apps host |
-| `@nimblebrain/synapse` | [npm](https://www.npmjs.com/package/@nimblebrain/synapse) | Writing that interface: the part that runs in the browser |
+| `@nimblebrain/synapse` | [npm](https://www.npmjs.com/package/@nimblebrain/synapse) | An app's interface: the part that runs in the browser |
 | `@nimblebrain/sdk` | [npm](https://www.npmjs.com/package/@nimblebrain/sdk) | The API client: a program that calls NimbleBrain's API |
 
-A connector needs only this package. An app uses this package and `nimblebrain-synapse` on the
-server, and `@nimblebrain/synapse` in its interface.
+A connector needs only this package. An app also has an interface, built with
+`@nimblebrain/synapse`, which the server serves as a `ui://` resource with FastMCP's
+`fastmcp.apps.AppConfig`: see
+[Serve a Synapse UI from a FastMCP server](https://synapse.nimblebrain.ai/docs/quickstart-python/)
+and [ChatGPT compatibility](https://synapse.nimblebrain.ai/docs/guides/chatgpt/).
 
 ## Install
 
