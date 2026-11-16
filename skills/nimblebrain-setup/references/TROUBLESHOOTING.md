@@ -33,7 +33,7 @@ Find the newest release as in step 2, and fetch it:
 cd <folder> && git fetch --depth 1 origin tag <tag>
 ```
 
-Before switching to it, run step 5's release check with the new `<tag>`. On any output other than both images at `:<tag>` and `"host_ip": "127.0.0.1"`, stop and tell the user; the stack stays on its release. Then switch the clone and the tag in `.env`, without printing the file and keeping it readable by this user only:
+Before switching to it, run step 5's release check with the new `<tag>`. If its output does not meet step 5's rule, stop and tell the user; the stack stays on its release. Then switch the clone and the tag in `.env`, without printing the file and keeping it readable by this user only:
 
 ```bash
 cd <folder> && git checkout <tag> && (umask 077 && { grep -v '^NIMBLEBRAIN_TAG=' .env; echo 'NIMBLEBRAIN_TAG=<tag>'; } > .env.new) && chmod 600 .env.new && mv .env.new .env

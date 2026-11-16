@@ -104,13 +104,13 @@ cd <folder> && { test -e .env || (umask 077 && printf 'COMPOSE_PROJECT_NAME=nimb
 
 Git ignores both files, so the clone stays clean.
 
-Now check the release's Compose file as Compose renders it. The check reads no `.env` and removes the shell's key variables, so no key can reach its output, and it prints only the image and published-address lines:
+Now check the release's Compose file as Compose renders it. The check reads no `.env` and removes the shell's key variables, so no key can reach its output, and it prints only the image lines and, for each published port, its address and target:
 
 ```bash
-cd <folder> && git show <tag>:docker-compose.yml | env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GOOGLE_GENERATIVE_AI_API_KEY -u GREENPT_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY NIMBLEBRAIN_TAG=<tag> docker compose --env-file /dev/null -f - config --format json 2>/dev/null | grep -oE '"(image|host_ip)": *"[^"]*"'
+cd <folder> && git show <tag>:docker-compose.yml | env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GOOGLE_GENERATIVE_AI_API_KEY -u GREENPT_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY NIMBLEBRAIN_TAG=<tag> docker compose --env-file /dev/null -f - config --format json 2>/dev/null | grep -oE '"(image|host_ip)": *"[^"]*"|"target": *[0-9]+'
 ```
 
-Compose's own message, that the key variable is unset, is discarded. It must print both images ending in `:<tag>` and `"host_ip": "127.0.0.1"`: both images take their tag from `NIMBLEBRAIN_TAG`, and the web port is published on this machine only. On any other output, or none, stop: this release predates this skill, and its Compose file would publish the no-login UI on the network. Tell the user, and offer to remove the folder.
+Compose's own message, that the key variable is unset, is discarded. It must print both images ending in `:<tag>`, and as many `"host_ip": "127.0.0.1"` lines as `"target"` lines: both images take their tag from `NIMBLEBRAIN_TAG`, each `"target"` line is a published port, and a port with no `host_ip` is published on every network interface. On any other output, or none, stop: this release predates this skill or publishes a port beyond this machine. Tell the user, and offer to remove the folder.
 
 ## 6. The model key
 
@@ -179,7 +179,7 @@ Give the user all of this, briefly:
 - **Chat:** confirmed, or not tested because there is no key yet. To add one later, put the line in `<folder>/.env`, then `cd <folder> && docker compose up -d`.
 - **Stop it:** `cd <folder> && docker compose down`. Until then it starts again whenever Docker starts. Data stays in the volume.
 - **Update it:** `references/TROUBLESHOOTING.md`, under "Updating".
-- **Remove everything:** `cd <folder> && docker compose down -v --rmi all` removes the containers, the network, the volume with every conversation in it, and this release's images; then `rm -rf <folder>`, which holds the key. Images of earlier releases, if you updated, show in `docker images 'ghcr.io/nimblebraininc/*'`. Offer to run these, and run them only on a clear yes. On the build route the build cache stays. `docker builder prune` clears it, but it clears the cache of every project on this Docker host, so offer it on its own and run it only on its own yes.
+- **Remove everything:** `cd <folder> && docker compose down -v --rmi all` removes the containers, the network, the volume with every conversation in it, and the images. On the pull route those are this release's images; earlier releases', if you updated, stay and show in `docker images 'ghcr.io/nimblebraininc/*'`. On the build route they are every image built under the project name `nimblebrain-setup`, earlier releases included. Then `rm -rf <folder>`, which holds the key. Offer to run these, and run them only on a clear yes. On the build route the build cache stays. `docker builder prune` clears it, but it clears the cache of every project on this Docker host, so offer it on its own and run it only on its own yes.
 - **Telemetry:** the runtime collects anonymous usage telemetry (`nimblebrain.ai/telemetry/`). `docs.nimblebrain.ai/using/telemetry/` says how to turn it off.
 - **What this did not do:** it created no account, installed no software and no connectors, and changed nothing outside the folder and Docker.
 
