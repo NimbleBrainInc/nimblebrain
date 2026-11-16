@@ -29,10 +29,11 @@ Work through the steps in order, from step 1 every time, reruns included. Run ea
 docker info >/dev/null && echo "docker: running"
 docker compose version
 git --version
+docker context show
 docker info --format '{{.Architecture}}'
 ```
 
-If a line prints an error, give its fix from the troubleshooting table and stop.
+If a line prints an error, give its fix from the troubleshooting table and stop. A context of `colima` or `colima-<profile>` means Colima runs Docker, which limits the folder in step 3.
 
 The last line is the architecture of the Docker host. `x86_64` is the **pull** route: the published images are `linux/amd64`. `aarch64` or `arm64` is the **build** route: there is no image to pull, so Compose builds both from the clone, about six minutes the first time. Anything else: say the runtime publishes no image for it and stop.
 
@@ -56,6 +57,14 @@ Say this in three lines, in your own words, then wait:
 
 Use the default folder unless the user names another. `<folder>` in every later command is its absolute path.
 
+On Colima, containers see only the folders Colima mounts into its VM, by default the home folder. List them, adding `-p <profile>` after `ssh` for a `colima-<profile>` context:
+
+```bash
+colima ssh -- findmnt -rn -t virtiofs,9p,fuse.sshfs -o TARGET
+```
+
+If `<folder>` is not under a path it prints, refuse it before cloning: Compose could not mount `instance.json` from it and `up` would fail after the build. Offer a folder under the home folder instead.
+
 ```bash
 ls -a <folder> 2>/dev/null || echo "free"
 grep -qx 'COMPOSE_PROJECT_NAME=nimblebrain-setup' <folder>/.env 2>/dev/null && echo "ours"
@@ -67,7 +76,7 @@ A folder that printed `ours` is an earlier run of this skill: reuse it and skip 
 git -C <folder> describe --tags --exact-match --match 'v[0-9]*' --exclude '*-*'
 ```
 
-Any other folder that exists and is not empty, a developer's checkout of this repository included, is not ours: ask for another folder. On a Mac with Colima, keep the folder under the home folder, which is all Colima shares with its VM by default.
+Any other folder that exists and is not empty, a developer's checkout of this repository included, is not ours: ask for another folder.
 
 ## 4. Clone the release
 
@@ -123,11 +132,14 @@ Keys for other providers go in the same file under their own names. If the user 
 
 ## 7. Start it and check it
 
-Stop and ask, without starting anything, if this prints a project whose CONFIG FILES is not `<folder>/docker-compose.yml`: another copy of this setup owns the name and its data.
+Stop and ask, without starting anything, if the first line prints a project whose CONFIG FILES is not `<folder>/docker-compose.yml`: another copy of this setup owns the name and its data.
 
 ```bash
 docker compose ls -a --filter name=nimblebrain-setup
+docker volume ls -q --filter name=nimblebrain-setup_
 ```
+
+The second line lists this project's volumes, which `docker compose down` and a failed `up` leave behind. If it prints `nimblebrain-setup_workspace` and step 3 did not reuse the folder, that volume holds an earlier install's data and this one would start with it. Say so, and ask whether to keep it or remove it. Remove it only on its own yes, with `docker volume rm nimblebrain-setup_workspace`, which deletes every conversation in it.
 
 Then start it. Pull route:
 
