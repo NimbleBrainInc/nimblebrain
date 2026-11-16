@@ -1,6 +1,6 @@
 {
   "name": "nimblebrain-docs",
-  "packageManager": "bun@1.4.3",
+  "packageManager": "bun@1.4.4",
   "description": "Documentation site for NimbleBrain Platform, the open-source runtime that runs agents and MCP apps on your systems, with any model",
   "type": "module",
   "version": "0.0.1",

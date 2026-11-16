@@ -52,7 +52,7 @@ jobs:
         with:
           # Same bun as ci.yml (test/unit/build-pins.test.ts checks it).
           # renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
 
       # The build writes the Server SDK API reference from the package's docstrings.
       - uses: astral-sh/setup-uv@v10.3.3  # setup-uv dropped floating major tags (v8+); pin exact
