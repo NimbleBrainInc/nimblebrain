@@ -5,7 +5,7 @@ description: What nimblebrain-server-sdk is, who it is for, how to install it an
 
 import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-`nimblebrain-server-sdk` is the Python SDK for building MCP servers that run on NimbleBrain. Use it for a connector (a server alone, which the agent reaches through its tools) or for the server half of an app (a server plus its interface). It builds on FastMCP 4 and gives your server what a NimbleBrain host reads: tool annotations, change announcements, skills, facets, lifecycle handlers, host resources and the error contract. The interface half of an app is [Synapse](/build/packages/).
+`nimblebrain-server-sdk` is the Python SDK for building MCP servers that run on NimbleBrain. Use it for a connector (a server alone, which the agent reaches through its tools) or for the server half of an app (a server plus its interface). It builds on FastMCP 4 and gives your server what a NimbleBrain host reads: tool annotations, change announcements, skills, facets, lifecycle handlers, host resources and the error contract. The interface half of an app is built with [Synapse](/build/packages/) and served from this server with FastMCP's `AppConfig`.
 
 ```sh
 uv add nimblebrain-server-sdk

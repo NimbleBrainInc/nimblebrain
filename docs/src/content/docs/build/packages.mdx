@@ -1,46 +1,51 @@
 ---
 title: Which package do I need?
-description: The four NimbleBrain packages — nimblebrain-server-sdk, nimblebrain-synapse, @nimblebrain/synapse and @nimblebrain/sdk — what each is for, and the supported pairing for an app.
+description: The three NimbleBrain packages — nimblebrain-server-sdk, @nimblebrain/synapse and @nimblebrain/sdk — what each is for, and how an app pairs them with FastMCP.
 ---
 
-Four packages, two registries. Which you need depends on what you are building.
+Three packages, two registries. Which you need depends on what you are building.
 
 | Package | Registry | Language | What it is for |
 |---|---|---|---|
 | [`nimblebrain-server-sdk`](https://pypi.org/project/nimblebrain-server-sdk/) | PyPI | Python | **The server.** Tool annotations, change announcements, the `ai.nimblebrain` extensions, skills and the error contract, with database access, observability and notifications as extras. [Docs](/server-sdk/quickstart/) |
-| [`nimblebrain-synapse`](https://pypi.org/project/nimblebrain-synapse/) | PyPI | Python | **Serving an app's interface.** One `ui://` component declared in the server and rendered in any MCP Apps host. [Docs](https://synapse.nimblebrain.ai/docs/quickstart-python/) |
-| [`@nimblebrain/synapse`](https://www.npmjs.com/package/@nimblebrain/synapse) | npm | TypeScript | **Writing that interface.** The part that runs in the browser: calling tools, staying in sync with the agent, theming. [Docs](https://synapse.nimblebrain.ai/docs/quickstart-react/) |
+| [`@nimblebrain/synapse`](https://www.npmjs.com/package/@nimblebrain/synapse) | npm | TypeScript | **An app's interface.** The part that runs in the browser: calling tools, staying in sync with the agent, theming. [Docs](https://synapse.nimblebrain.ai/docs/quickstart-react/) |
 | [`@nimblebrain/sdk`](https://www.npmjs.com/package/@nimblebrain/sdk) | npm | TypeScript | **The API client.** A program that calls NimbleBrain's API from outside. Not used to build a server. |
+
+Serving the interface from the server needs no NimbleBrain package. It is the MCP Apps standard, which FastMCP 4 implements in `fastmcp.apps`.
 
 ## By what you are building
 
 | You are building | Install |
 |---|---|
 | A connector: a server alone | `nimblebrain-server-sdk` |
-| An app: a server plus its interface | `nimblebrain-server-sdk` and `nimblebrain-synapse` in the server; `@nimblebrain/synapse` in the interface |
+| An app: a server plus its interface | `nimblebrain-server-sdk` in the server, which serves the interface with FastMCP's `AppConfig`; `@nimblebrain/synapse` in the interface |
 | A program that calls NimbleBrain | `@nimblebrain/sdk` |
 | A server in another language | None. Implement the protocol from the "Wire (any SDK)" tabs, starting at [MCP extensions](/extensions/overview/) |
 
-## The supported pairing for an app
+## How an app fits together
 
-An app's server uses the Server SDK and Synapse together, on one FastMCP server:
+The interface is built with `@nimblebrain/synapse` to one self-contained HTML file. The server is a FastMCP 4 server with the Server SDK. It serves that file as a `ui://` resource and binds tools to it, both with `fastmcp.apps.AppConfig`:
 
-```bash
-uv add nimblebrain-server-sdk 'nimblebrain-synapse[fastmcp]'
+```python
+from fastmcp.apps import AppConfig, ResourceCSP
+
+@mcp.resource("ui://tasks/main", app=AppConfig(prefers_border=True, csp=ResourceCSP()))
+def tasks_ui() -> str:
+    return UI_HTML
+
+@mcp.tool(app=AppConfig(resource_uri="ui://tasks/main", visibility=["model", "app"]))
+async def list_tasks() -> dict: ...
 ```
 
 | | Version |
 |---|---|
 | `nimblebrain-server-sdk` | 0.7 or later |
-| `nimblebrain-synapse` | 0.10 or later, with its `fastmcp` extra |
 | FastMCP | 4.0 or later |
 | Python | 3.13 or later |
 
-On a FastMCP server the interface is a `FastMCPSynapseUI`, from `nimblebrain_synapse.fastmcp`, registered with `mcp.add_extension(ui)`. `SynapseUI` is the class for a server built on the `mcp` SDK's `MCPServer`. Synapse's [Python quickstart](https://synapse.nimblebrain.ai/docs/quickstart-python/) shows both.
+Synapse's [Serve a Synapse UI from a FastMCP server](https://synapse.nimblebrain.ai/docs/quickstart-python/) walks through it, and [ChatGPT compatibility](https://synapse.nimblebrain.ai/docs/guides/chatgpt/) covers the keys only ChatGPT reads. NimbleBrain's own additions for a view (placements, theming, the bridge) are under [App Views](/apps/overview/).
 
-The Server SDK requires FastMCP 4, and `nimblebrain-synapse` supports FastMCP from 0.10, so an earlier Synapse release cannot be paired with it.
-
-The two do different jobs and do not overlap: the Server SDK is what the server shares with NimbleBrain's host, and Synapse is what the server shares with its own interface, on any host.
+The two packages do different jobs and do not overlap: the Server SDK is what the server shares with NimbleBrain's host, and Synapse is what the interface uses to reach the server, on any host.
 
 ## Related
 
