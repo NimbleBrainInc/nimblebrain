@@ -3,7 +3,7 @@
 //
 // `host-constants.json` beside this file states the identifiers and limits an
 // app's SDK has to agree with: the extensions this host declares, the bounds it
-// drops or refuses a message over, the timeout error it answers, and the theme
+// drops or refuses a message over, the timeout and rate-limit errors it answers, and the theme
 // values it sends. `@nimblebrain/synapse` keeps its own copy of each (a client
 // cannot import a host) and tests that copy against the document, so a value
 // changed on one side alone fails a test instead of failing silently in an app.
@@ -18,7 +18,12 @@
 // bumps `HOST_CONSTANTS_VERSION`.
 // ---------------------------------------------------------------------------
 
-import { REQUEST_TIMEOUT, SUSPENSION_DATA_FIELD } from "../mcp-bridge-client";
+import {
+  RATE_LIMITED,
+  REQUEST_TIMEOUT,
+  RETRY_AFTER_DATA_FIELD,
+  SUSPENSION_DATA_FIELD,
+} from "../mcp-bridge-client";
 import { spacing } from "../theme/palette.ts";
 import { HOST_STYLES_EXTENSION, NAVIGATE_METHOD, NIMBLEBRAIN_EXTENSIONS } from "./extensions";
 import {
@@ -71,6 +76,10 @@ export interface HostConstants {
     requestTimeout: number;
     /** The `error.data` field that error carries when the page was suspended. */
     suspensionDataField: string;
+    /** The JSON-RPC code for a request the host refused under its rate limit. */
+    rateLimited: number;
+    /** The `error.data` field that error carries: the wait, in ms, before asking again. */
+    retryAfterDataField: string;
   };
   theme: {
     /** The values of `--nb-gutter-wide` and `--nb-gutter-narrow`, and the frame width at or under which the narrow one applies. */
@@ -114,6 +123,8 @@ export function buildHostConstants(): HostConstants {
     errors: {
       requestTimeout: REQUEST_TIMEOUT,
       suspensionDataField: SUSPENSION_DATA_FIELD,
+      rateLimited: RATE_LIMITED,
+      retryAfterDataField: RETRY_AFTER_DATA_FIELD,
     },
     theme: {
       gutter: {

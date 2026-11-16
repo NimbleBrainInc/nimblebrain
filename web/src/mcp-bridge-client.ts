@@ -78,6 +78,13 @@ export const READ_METHODS: ReadonlySet<string> = new Set([
 export const REQUEST_TIMEOUT = -32001;
 /** The `data` field of a {@link REQUEST_TIMEOUT} error that says the page was suspended, and for how long. */
 export const SUSPENSION_DATA_FIELD = "suspendedMs";
+/**
+ * The JSON-RPC error code a request the host refused under its rate limit (HTTP
+ * `429`) is answered with. The call did not run.
+ */
+export const RATE_LIMITED = -32029;
+/** The `data` field of a {@link RATE_LIMITED} error: how long to wait before asking again, in ms, from `Retry-After`. */
+export const RETRY_AFTER_DATA_FIELD = "retryAfterMs";
 
 /** A JSON-RPC error object. */
 export type McpError = JSONRPCErrorResponse["error"];
@@ -300,8 +307,10 @@ export function buildMcpRequest(
 /**
  * The answer in a `/mcp` response: a JSON body, or the JSON-RPC response among
  * the events of an SSE body. A JSON-RPC error is answered whatever the HTTP
- * status (`/mcp` answers a header mismatch `400` with one); a response
- * that carries none rejects with its status.
+ * status (`/mcp` answers a header mismatch `400` with one). A `429` the host's
+ * rate limit sent is {@link RATE_LIMITED}, with the wait its `Retry-After`
+ * names, so a view can tell a refusal it should wait out from a failure. Any
+ * other response that carries no JSON-RPC answer rejects with its status.
  */
 export async function readMcpAnswer(response: Response): Promise<McpAnswer> {
   const text = await response.text();
@@ -309,6 +318,7 @@ export async function readMcpAnswer(response: Response): Promise<McpAnswer> {
   if (message && "error" in message && isJsonRpcError(message.error)) {
     return { error: message.error };
   }
+  if (response.status === 429) return { error: rateLimited(response.headers.get("retry-after")) };
   if (message && response.ok && "result" in message && isObject(message.result)) {
     return { result: message.result };
   }
@@ -320,6 +330,21 @@ export async function readMcpAnswer(response: Response): Promise<McpAnswer> {
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
+
+/**
+ * The {@link RATE_LIMITED} error for a `429`. `Retry-After` in delta-seconds
+ * becomes `data.retryAfterMs`; one that is absent or not a number of seconds
+ * leaves `data` out rather than guess a wait.
+ */
+function rateLimited(retryAfter: string | null): McpError {
+  const seconds =
+    retryAfter !== null && /^\d+$/.test(retryAfter.trim()) ? Number(retryAfter) : null;
+  return {
+    code: RATE_LIMITED,
+    message: "Rate limit exceeded",
+    ...(seconds !== null ? { data: { [RETRY_AFTER_DATA_FIELD]: seconds * 1000 } } : {}),
+  };
+}
 
 /** The target a method names, for `Mcp-Name`: a tool, a resource, a task. */
 function mcpNameOf(method: string, params: Record<string, unknown>): string | undefined {
