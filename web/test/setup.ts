@@ -1,5 +1,12 @@
 import { Window } from "happy-dom";
 
+// The suite runs with `bun test --isolate` (`bun run test`), so each file gets
+// a fresh module registry and no file's `mock.module` reaches another. A
+// snapshot below copies a module's exports, not its imports: a real function
+// taken from one still calls through the module's live bindings, which a
+// `mock.module` in the same process rewrites. Only isolation stops that
+// across files; the snapshots serve partial mocks within one file.
+
 // Snapshot of the real `../src/api/client` module, captured here in the test
 // preload — guaranteed to run before any test file, so before any test can
 // register a `mock.module("../api/client", ...)` replacement. Several suites
