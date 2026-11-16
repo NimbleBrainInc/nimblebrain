@@ -110,7 +110,7 @@ Now check the release's Compose file as Compose renders it. The check reads no `
 cd <folder> && git show <tag>:docker-compose.yml | env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GOOGLE_GENERATIVE_AI_API_KEY -u GREENPT_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY NIMBLEBRAIN_TAG=<tag> docker compose --env-file /dev/null -f - config --format json 2>/dev/null | grep -oE '"(image|host_ip)": *"[^"]*"|"target": *[0-9]+'
 ```
 
-Compose's own message, that the key variable is unset, is discarded. It must print both images ending in `:<tag>`, and as many `"host_ip": "127.0.0.1"` lines as `"target"` lines: both images take their tag from `NIMBLEBRAIN_TAG`, each `"target"` line is a published port, and a port with no `host_ip` is published on every network interface. On any other output, or none, stop: this release predates this skill or publishes a port beyond this machine. Tell the user, and offer to remove the folder.
+Compose's own message, that the key variable is unset, is discarded. It must print exactly two `"image"` lines, both ending in `:<tag>`, at least one `"target"` line, and as many `"host_ip": "127.0.0.1"` lines as `"target"` lines: both images take their tag from `NIMBLEBRAIN_TAG`, each `"target"` line is a published port, the web UI publishes one, and a port with no `host_ip` is published on every network interface. On any other output, or none, stop: this release predates this skill or publishes a port beyond this machine. Tell the user, and offer to remove the folder.
 
 ## 6. The model key
 
