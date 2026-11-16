@@ -1,6 +1,6 @@
 {
   "name": "nimblebrain",
-  "packageManager": "bun@1.4.3",
+  "packageManager": "bun@1.4.4",
   "version": "0.0.0-dev",
   "description": "Open-source runtime that runs agents and MCP apps on your systems, with any model",
   "license": "Apache-2.0",
