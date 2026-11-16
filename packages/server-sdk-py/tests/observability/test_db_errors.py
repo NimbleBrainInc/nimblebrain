@@ -151,7 +151,7 @@ def test_a_span_event_named_by_a_chained_header_is_redacted() -> None:
     )
     assert redacted is not None
     assert CANARY not in str(redacted)
-    assert 'File "/srv/app.py", line 3, in insert' in redacted["exception.stacktrace"]
+    assert redacted["exception.stacktrace"] == f"RuntimeError: {WITHHELD}"
 
 
 def test_a_span_event_without_a_stacktrace_keeps_none() -> None:
@@ -186,3 +186,36 @@ def test_the_exporter_redacts_a_span_whose_status_has_no_description() -> None:
     assert exporter.force_flush()
     exporter.shutdown()
     assert inner.export([]) is SpanExportResult.FAILURE  # the inner exporter was shut down
+
+
+def _exported(exc: BaseException) -> str:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from nimblebrain_server_sdk.observability.tracing import RedactingSpanExporter
+
+    inner = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(RedactingSpanExporter(inner)))
+    with provider.get_tracer("t").start_as_current_span("s", record_exception=False) as span:
+        span.record_exception(exc)
+    (finished,) = inner.get_finished_spans()
+    return finished.to_json()
+
+
+def test_the_exporter_redacts_a_database_error_inside_an_exception_group() -> None:
+    inner = _raised(UniqueViolationError(f"dup\nDETAIL:  Key (email)=({CANARY})"))
+    group = _raised(BaseExceptionGroup("batch failed", [ValueError("other"), inner]))
+    assert CANARY not in _exported(group)
+
+
+def test_the_exporter_redacts_a_database_error_inside_a_nested_group() -> None:
+    inner = _raised(UniqueViolationError(f"dup\nDETAIL:  Key (email)=({CANARY})"))
+    group = _raised(BaseExceptionGroup("outer", [BaseExceptionGroup("inner", [inner])]))
+    assert CANARY not in _exported(group)
+
+
+def test_the_exporter_keeps_no_frame_shaped_line_of_a_database_message() -> None:
+    message = f'dup\nDETAIL:\n  File "{CANARY}", line 1, in value'
+    assert CANARY not in _exported(_raised(UniqueViolationError(message)))

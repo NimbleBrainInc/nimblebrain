@@ -4,7 +4,7 @@ Postgres writes the offending values into its own message (``DETAIL:  Key (email
 and SQLAlchemy appends the statement's bound parameters, so a traceback rendered whole puts a
 person's email in the logs. These run real Postgres errors through the real renderer and
 exporter and read what comes out: the canary must be absent, and what an operator needs
-(SQLSTATE, constraint, table, column, the frames) present.
+(SQLSTATE, constraint, table, column, the log line's frames) present.
 
 The engine here (``pg_admin``) is built without ``hide_parameters``, so the parameters are in
 the exception's text and only the renderer stands between them and the line.
@@ -179,7 +179,7 @@ async def test_an_exported_span_carries_no_value(pg_admin: AsyncEngine) -> None:
     (event,) = span.events
     assert event.attributes is not None
     assert event.attributes["exception.type"] == "sqlalchemy.exc.IntegrityError"
-    assert 'File "' in str(event.attributes["exception.stacktrace"])
+    assert "Traceback" not in str(event.attributes["exception.stacktrace"])
     assert span.status.status_code is StatusCode.ERROR
 
 

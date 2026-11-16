@@ -45,7 +45,7 @@ One JSON object per line on stdout, with `event`, `level`, `timestamp` (ISO 8601
 ## Traces
 
 - The inbound `traceparent` header is honoured.
-- Spans export over OTLP to `OTEL_EXPORTER_OTLP_ENDPOINT` when it is set. A recorded database error is exported with its type and frames, and no message.
+- Spans export over OTLP to `OTEL_EXPORTER_OTLP_ENDPOINT` when it is set. A recorded database error is exported with its type only: no message and no stacktrace, since a message line can imitate a frame. Its frames are on the log line.
 - On a FastMCP app the request span is FastMCP's own; on a FastAPI app it is the FastAPI instrumentation's.
 - `inject_trace_headers(headers)` carries the trace onto an outbound call.
 - Each response carries `x-correlation-id`: the inbound trace id when there is one.

@@ -181,12 +181,12 @@ def redact_database_errors(
 # A span records an exception as an event (``exception.type``, ``exception.message``,
 # ``exception.stacktrace``) and FastMCP also puts ``str(exc)`` in the span's status. By export
 # the exception object is gone, so a database error is recognised from the text: the event's
-# type, or a header line of the stacktrace, names a class in a database package.
+# type, or a header line of the stacktrace, names a class in a database package. A header
+# inside an exception group carries the group's ``|`` margin, so the margin is allowed.
 
 _DATABASE_HEADER = re.compile(
-    r"^(?:" + "|".join(sorted(DATABASE_PACKAGES)) + r")(?:\.\w+)*(?::|$)", re.MULTILINE
+    r"^[ |]*(?:" + "|".join(sorted(DATABASE_PACKAGES)) + r")(?:\.\w+)*(?::|$)", re.MULTILINE
 )
-_FRAME = re.compile(r'^\s*File "[^\n]*$', re.MULTILINE)
 
 
 def _names_database_error(attributes: Mapping[str, Any]) -> bool:
@@ -200,17 +200,14 @@ def _names_database_error(attributes: Mapping[str, Any]) -> bool:
 def redact_exception_event(attributes: Mapping[str, Any]) -> dict[str, Any] | None:
     """An exception event's attributes with the message withheld, or ``None`` to keep them.
 
-    The stacktrace keeps its ``File "...", line N, in f`` frames and drops everything else,
-    since a message line cannot be told from the rest of the text once it is a string.
+    The stacktrace is reduced to the exception's type: once it is a string, a message line can
+    imitate a ``File "...", line N, in f`` frame exactly, so no line of it is kept. The frames
+    stay on the log line, which renders them from the exception object.
     """
     if not _names_database_error(attributes):
         return None
     redacted = dict(attributes)
     redacted["exception.message"] = WITHHELD
-    stacktrace = attributes.get("exception.stacktrace")
-    if isinstance(stacktrace, str):
-        frames = [match.group(0).strip() for match in _FRAME.finditer(stacktrace)]
-        redacted["exception.stacktrace"] = "\n".join(
-            [*frames, f"{attributes.get('exception.type', '')}: {WITHHELD}"]
-        )
+    if "exception.stacktrace" in attributes:
+        redacted["exception.stacktrace"] = f"{attributes.get('exception.type', '')}: {WITHHELD}"
     return redacted
