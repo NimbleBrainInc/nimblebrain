@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.7.2]
+
+### Fixed
+
+- A logged exception that is, or was caused by, a database error no longer carries row data. Its traceback keeps every frame and class with each message withheld, since Postgres's `DETAIL` and SQLAlchemy's `[parameters: ...]` both carry the row's values. The line adds `db_error`: SQLSTATE, constraint, table, column and schema. `[observability]` still needs no database package.
+- An exported span records a database error with its type and frames, no message, and no `str(exc)` in its status.
+- `[db]`: `SecuredDatabase` builds its engine with `hide_parameters=True`, so a database error's text names the statement but never its bound values.
+
 ## [0.7.1]
 
 ### Fixed

@@ -51,6 +51,42 @@ def test_importing_the_core_imports_no_extra() -> None:
     assert out == []
 
 
+def test_observability_redacts_database_errors_without_the_db_extra() -> None:
+    """The redaction reads a class's module name, so ``[observability]`` alone imports no
+    database package, and still withholds the message of an error a driver raised."""
+    out = run(
+        DB_MODULES,
+        """
+        import io, json, logging
+        from nimblebrain_server_sdk.observability import configure_logging
+
+        configure_logging("core-svc")
+        buffer = io.StringIO()
+        logging.getLogger().handlers[0].stream = buffer
+
+        class UniqueViolationError(Exception):
+            sqlstate = "23505"
+            constraint_name = "people_email_key"
+
+        UniqueViolationError.__module__ = "asyncpg.exceptions"
+        exc = UniqueViolationError("DETAIL:  Key (email)=(jane@acme.example) already exists.")
+        logging.getLogger("svc").error("commit_failed", exc_info=exc)
+        line = buffer.getvalue()
+        print(json.dumps({
+            "leaked": "jane@acme.example" in line,
+            "db_error": json.loads(line)["db_error"],
+            "imported": sorted(m for m in ("pgbulkhead", "sqlalchemy", "asyncpg")
+                               if sys.modules.get(m) is not None),
+        }))
+        """,
+    )
+    assert out == {
+        "leaked": False,
+        "db_error": {"sqlstate": "23505", "constraint": "people_email_key"},
+        "imported": [],
+    }
+
+
 @pytest.mark.parametrize(
     ("subpackage", "extra", "block"),
     [

@@ -40,11 +40,12 @@ One JSON object per line on stdout, with `event`, `level`, `timestamp` (ISO 8601
 - `get_logger(__name__)` returns a structured logger: `log.info("note_added", length=12)`.
 - Standard library logging is routed through the same renderer, `extra` fields included.
 - Request URLs from the `httpx` family are held at `WARNING`, so a key in a query string never reaches a log.
+- A logged exception that is, or was caused by, a database error (SQLAlchemy, asyncpg, psycopg) keeps its frames and classes but no message, because Postgres and SQLAlchemy write row values into the message. The line adds `db_error` with the SQLSTATE and the constraint, table and column the driver reported.
 
 ## Traces
 
 - The inbound `traceparent` header is honoured.
-- Spans export over OTLP to `OTEL_EXPORTER_OTLP_ENDPOINT` when it is set.
+- Spans export over OTLP to `OTEL_EXPORTER_OTLP_ENDPOINT` when it is set. A recorded database error is exported with its type and frames, and no message.
 - On a FastMCP app the request span is FastMCP's own; on a FastAPI app it is the FastAPI instrumentation's.
 - `inject_trace_headers(headers)` carries the trace onto an outbound call.
 - Each response carries `x-correlation-id`: the inbound trace id when there is one.
