@@ -68,24 +68,24 @@ export const layout = {
  * values the Tailwind `@theme inline` block aliases as `--color-*`.
  */
 export const colors = {
-  background: ["#ffffff", "#000000"],
-  foreground: ["#09090b", "#fafafa"],
-  card: ["#ffffff", "#0e0e10"],
-  "card-foreground": ["#09090b", "#fafafa"],
-  popover: ["#ffffff", "#0e0e10"],
-  "popover-foreground": ["#09090b", "#fafafa"],
+  background: ["#ffffff", "#141414"],
+  foreground: ["#09090b", "#ededed"],
+  card: ["#ffffff", "#1c1c1c"],
+  "card-foreground": ["#09090b", "#ededed"],
+  popover: ["#ffffff", "#1f1f1f"],
+  "popover-foreground": ["#09090b", "#ededed"],
   // NimbleBrain Blue. The single accent: every primary action, focus ring, and
   // live state. There is no second accent hue; status colors are the only
   // other hues in the interface.
-  primary: ["#315EDB", "#6a8fe4"],
+  primary: ["#315EDB", "#799ff5"],
   "primary-foreground": ["#ffffff", "#000000"],
-  secondary: ["#f4f4f5", "#161618"],
-  "secondary-foreground": ["#09090b", "#fafafa"],
-  muted: ["#f4f4f5", "#161618"],
-  "muted-foreground": ["#5c5c66", "#9b9ba4"],
-  accent: ["#f4f4f5", "#161618"],
-  "accent-foreground": ["#09090b", "#fafafa"],
-  destructive: ["#c02a24", "#f0736a"],
+  secondary: ["#f4f4f5", "#262626"],
+  "secondary-foreground": ["#09090b", "#ededed"],
+  muted: ["#f4f4f5", "#262626"],
+  "muted-foreground": ["#5c5c66", "#a3a3a3"],
+  accent: ["#f4f4f5", "#262626"],
+  "accent-foreground": ["#09090b", "#ededed"],
+  destructive: ["#c02a24", "#f77970"],
   "destructive-foreground": ["#ffffff", "#000000"],
   // Translucent 10% tints of `foreground` and `destructive`, used as the chat
   // bubble fill and the failed-tool-call ground. They are alpha values rather
@@ -100,16 +100,16 @@ export const colors = {
   // reason the tint was mixed rather than fixed.
   //
   // The channels must track their source token. `contrast.test.ts` asserts that.
-  "foreground-tint": ["rgba(9, 9, 11, 0.1)", "rgba(250, 250, 250, 0.1)"],
-  "destructive-tint": ["rgba(192, 42, 36, 0.1)", "rgba(240, 115, 106, 0.1)"],
-  border: ["#e4e4e7", "#232326"],
-  input: ["#e4e4e7", "#232326"],
-  ring: ["#315EDB", "#6a8fe4"],
+  "foreground-tint": ["rgba(9, 9, 11, 0.1)", "rgba(237, 237, 237, 0.1)"],
+  "destructive-tint": ["rgba(192, 42, 36, 0.1)", "rgba(247, 121, 112, 0.1)"],
+  border: ["#e4e4e7", "#2b2b2b"],
+  input: ["#e4e4e7", "#333333"],
+  ring: ["#315EDB", "#799ff5"],
   success: ["#0f7a4f", "#3fbf85"],
   warning: ["#8a5f0a", "#e0aa3c"],
-  processing: ["#6d3ecf", "#a68bfa"],
-  "processing-light": ["#f0ecfd", "#161234"],
-  "info-light": ["#eaf0ff", "#0b1a33"],
+  processing: ["#6d3ecf", "#ab90ff"],
+  "processing-light": ["#f0ecfd", "#211d38"],
+  "info-light": ["#eaf0ff", "#283041"],
   // Skill-scope tones for the Context Ledger — one hue per tier (org /
   // workspace / user / provided, which the ledger labels "connector").
   // Shell-only (no ext-apps projection); shape and
@@ -118,7 +118,7 @@ export const colors = {
   // information, so they are not decorative. They are also deliberately
   // distinct from `primary` and from every status hue: a tier that renders in
   // the warning amber or the success green reads as a status, not a scope.
-  "scope-org": ["#1d4ed8", "#7aa2f7"],
+  "scope-org": ["#1d4ed8", "#a3bcff"],
   "scope-workspace": ["#0e7490", "#4dd0e1"],
   "scope-user": ["#7c3aed", "#b79bfc"],
   "scope-connector": ["#a13d0f", "#f0894f"],
@@ -133,18 +133,18 @@ export const colors = {
   "chart-3": ["#b45309", "#f0a24a"],
   "chart-4": ["#7c3aed", "#b39afb"],
   "chart-5": ["#be185d", "#f27aa8"],
-  sidebar: ["#fafafa", "#08080a"],
-  "sidebar-foreground": ["#5c5c66", "#9b9ba4"],
-  "sidebar-border": ["#e4e4e7", "#232326"],
-  "sidebar-hover": ["#f4f4f5", "#0e0e10"],
-  // The active sidebar row: `sidebar-foreground` at 10% over `sidebar`, the
-  // look of a selected row, as an opaque token so a brand can fill the row
-  // with its highlight color.
-  "sidebar-active": ["#eaeaeb", "#171719"],
-  "sidebar-active-foreground": ["#09090b", "#fafafa"],
+  sidebar: ["#fafafa", "#181818"],
+  "sidebar-foreground": ["#5c5c66", "#a3a3a3"],
+  "sidebar-border": ["#e4e4e7", "#2b2b2b"],
+  "sidebar-hover": ["#f4f4f5", "#212121"],
+  // The active sidebar row, as an opaque token so a brand can fill the row
+  // with its highlight color. Light mode is `sidebar-foreground` at 10% over
+  // `sidebar`; dark mode sets the row explicitly, a step above `sidebar-hover`.
+  "sidebar-active": ["#eaeaeb", "#2a2a2a"],
+  "sidebar-active-foreground": ["#09090b", "#ededed"],
   // The tooltip pill (`components/ui/tooltip.tsx`): a dark chip in both modes,
   // lifted off the black ground in dark mode so it still reads as a surface.
-  tooltip: ["#18181b", "#2e2e33"],
+  tooltip: ["#18181b", "#383838"],
   "tooltip-foreground": ["#fafafa", "#fafafa"],
 } as const satisfies Record<string, Pair>;
 
@@ -154,11 +154,11 @@ export const colors = {
  * the ext-apps projection never hardcodes a value.
  */
 export const extOnlyColors = {
-  "background-tertiary": ["#f4f4f5", "#161618"],
+  "background-tertiary": ["#f4f4f5", "#262626"],
   // Ext-apps only: `paletteToRootCss` emits `colors`, so the shell never sees
   // these. They reach embedded iframes via `paletteToExtAppsTokens`, which is
   // the only place they meet, and `contrast.test.ts` checks exactly that pair.
-  "text-tertiary": ["#6b6b73", "#82828c"],
+  "text-tertiary": ["#6b6b73", "#8f8f8f"],
 } as const satisfies Record<string, Pair>;
 
 /**

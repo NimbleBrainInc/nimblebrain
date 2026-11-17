@@ -382,9 +382,10 @@ function applyHighlight(modes: Modes, highlight: Pair): void {
 }
 
 /**
- * The canonical active row is `sidebar-foreground` at 10% over `sidebar`; keep
- * that relation over a brand's recast sidebar. Dark mode keeps it too unless
- * the dark surfaces were derived, which set the row as a surface step.
+ * Over a brand's recast sidebar, the active row is `sidebar-foreground` at 10%
+ * over `sidebar` (the relation the canonical light row follows; the canonical
+ * dark row is set explicitly). Dark mode derives it too unless the dark
+ * surfaces were derived, which set the row as a surface step.
  */
 function recomputeActiveRow(modes: Modes, includeDark: boolean): void {
   const row = (m: Record<string, string>) =>
