@@ -320,16 +320,25 @@ jobs:
   # merge-queue run verified-on-pr matched), which closes the "deployed a tag that was
   # never pushed" hole.
   #
-  # The ECR repos are immutable: a `<sha>` tag is written once. Both steps pass
-  # `skip-existing`, so a tag already pushed for this commit skips its build.
-  # A second push run of the same commit, or "Re-run failed jobs" after a
-  # partial push, then completes instead of failing on the immutable tag.
+  # The `:<sha>` tag is a multi-platform index (linux/amd64 + linux/arm64), so the
+  # public images run natively on arm64 hosts and an amd64 node still pulls the
+  # amd64 image. Each platform builds natively on its own runner (build-image): the
+  # runtime is Bun, which crashes under QEMU emulation. Each leg pushes its image
+  # to ECR untagged by digest; build-and-push then joins the digests under the one
+  # `:<sha>` tag. release.yml retags and copies that index whole.
+  #
+  # The ECR repos are immutable: a `<sha>` tag is written once. Both jobs skip
+  # an image whose `<sha>` tag already holds this commit's build, so a second
+  # push run of the same commit, or "Re-run failed jobs" after a partial push,
+  # completes instead of failing on the immutable tag. A leg pushes untagged, so
+  # rebuilding a leg never collides with anything; re-running every build-image
+  # leg is always safe.
   #
   # `if` restricts this to direct pushes to main (post-merge), never PRs — so
   # the OIDC/ECR credentials are never exposed to fork PRs, and only verified
   # main commits get published.
-  build-and-push:
-    name: Build & Push Images
+  build-image:
+    name: Build image (${{ matrix.arch }})
     needs: [lint-and-check, test-unit, test-unit-bare-deps, test-integration]
     # `!failure() && !cancelled()` rather than the default success(): the checks
     # are skipped, not failed, when verified-on-pr found this tree already passed,
@@ -338,18 +347,33 @@ jobs:
       github.event_name == 'push' && github.ref == 'refs/heads/main'
       && !failure() && !cancelled()
     # Two push runs of one commit (a duplicate push delivery) would otherwise build
-    # side by side, both find no `<sha>` tag, and the second push fails on the
-    # immutable tag. Queued per commit, the second starts after the first has
-    # pushed, and skip-existing then skips its builds.
+    # side by side. Queued per commit and platform, the second starts after the
+    # first has finished, and skip-existing then skips its builds once the first
+    # run has tagged the merged image.
     concurrency:
-      group: build-and-push-${{ github.sha }}
+      group: build-image-${{ github.sha }}-${{ matrix.arch }}
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    strategy:
+      # One platform failing leaves the other's digest in place, so "Re-run failed
+      # jobs" rebuilds only the failed platform.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     permissions:
       id-token: write
       contents: read
+    # Each leg sets only its own architecture's outputs; a matrix job's outputs
+    # merge across legs, so build-and-push sees both.
     outputs:
-      sha: ${{ steps.tag.outputs.sha }}
+      runtime_amd64: ${{ steps.digests.outputs.runtime_amd64 }}
+      runtime_arm64: ${{ steps.digests.outputs.runtime_arm64 }}
+      web_amd64: ${{ steps.digests.outputs.web_amd64 }}
+      web_arm64: ${{ steps.digests.outputs.web_arm64 }}
     steps:
       - uses: actions/checkout@v7
       # buildx (docker-container driver) is required for the GitHub Actions
@@ -367,22 +391,106 @@ jobs:
         id: tag
         run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
       - name: Build and push platform image
+        id: runtime
         uses: ./.github/actions/build-push-image
         with:
           context: .
           file: Dockerfile
+          platform: linux/${{ matrix.arch }}
           cache-scope: platform
           skip-existing: "true"
           build-args: BUILD_SHA=${{ steps.tag.outputs.sha }}
           tags: ${{ steps.ecr.outputs.registry }}/nimblebrain/nimblebrain-runtime:${{ steps.tag.outputs.sha }}
+          push-by-digest: ${{ steps.ecr.outputs.registry }}/nimblebrain/nimblebrain-runtime
       - name: Build and push web image
+        id: web
         uses: ./.github/actions/build-push-image
         with:
           context: web
           file: web/Dockerfile
+          platform: linux/${{ matrix.arch }}
           cache-scope: web
           skip-existing: "true"
           tags: ${{ steps.ecr.outputs.registry }}/nimblebrain/nimblebrain-web:${{ steps.tag.outputs.sha }}
+          push-by-digest: ${{ steps.ecr.outputs.registry }}/nimblebrain/nimblebrain-web
+      - name: Record digests
+        id: digests
+        env:
+          ARCH: ${{ matrix.arch }}
+          RUNTIME: ${{ steps.runtime.outputs.digest }}
+          WEB: ${{ steps.web.outputs.digest }}
+        run: |
+          if [ -n "$RUNTIME" ]; then echo "runtime_$ARCH=$RUNTIME" >> "$GITHUB_OUTPUT"; fi
+          if [ -n "$WEB" ]; then echo "web_$ARCH=$WEB" >> "$GITHUB_OUTPUT"; fi
+          echo "runtime ${RUNTIME:-skipped (tag exists)}, web ${WEB:-skipped (tag exists)}"
+
+  # Join the per-platform digests under the `:<sha>` tag, one multi-platform index
+  # per image. An image whose tag already holds this commit's build is skipped (see
+  # skip-existing in the build-push-image action); otherwise both platforms' digests
+  # must be present, or the job fails before writing the immutable tag.
+  build-and-push:
+    name: Build & Push Images
+    needs: build-image
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && !failure() && !cancelled()
+    concurrency:
+      group: build-and-push-${{ github.sha }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      sha: ${{ steps.tag.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - name: Set image tag
+        id: tag
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Tag the multi-platform images
+        env:
+          REG: ${{ steps.ecr.outputs.registry }}
+          SHA: ${{ steps.tag.outputs.sha }}
+          REVISION: ${{ github.sha }}
+          RUNTIME_AMD64: ${{ needs.build-image.outputs.runtime_amd64 }}
+          RUNTIME_ARM64: ${{ needs.build-image.outputs.runtime_arm64 }}
+          WEB_AMD64: ${{ needs.build-image.outputs.web_amd64 }}
+          WEB_ARM64: ${{ needs.build-image.outputs.web_arm64 }}
+        run: |
+          set -euo pipefail
+          merge() {
+            local repo="$REG/nimblebrain/$1" amd64="$2" arm64="$3"
+            local tag="$repo:$SHA" out
+            if out=$(docker buildx imagetools inspect "$tag" --format '{{json .Image}}' 2>&1); then
+              if grep -qE "\"org\.opencontainers\.image\.revision\": *\"$REVISION\"" <<< "$out"; then
+                echo "exists: $tag"; return 0
+              fi
+              echo "::error::$tag exists but is not an image of $REVISION"; exit 1
+            elif ! grep -qF ": not found" <<< "$out"; then
+              echo "::error::could not inspect $tag: $out"; exit 1
+            fi
+            if [ -z "$amd64" ] || [ -z "$arm64" ]; then
+              echo "::error::$tag is missing and a platform digest is absent (amd64='$amd64' arm64='$arm64'); re-run the build-image jobs"
+              exit 1
+            fi
+            docker buildx imagetools create -t "$tag" "$repo@$amd64" "$repo@$arm64"
+            # The tag must resolve to both platforms before staging rolls onto it.
+            platforms=$(docker buildx imagetools inspect "$tag" --raw \
+              | jq -r '[.manifests[].platform | select(.os != "unknown") | "\(.os)/\(.architecture)"] | sort | join(",")')
+            [ "$platforms" = "linux/amd64,linux/arm64" ] \
+              || { echo "::error::$tag holds '$platforms', expected linux/amd64,linux/arm64"; exit 1; }
+            echo "tagged $tag ($platforms)"
+          }
+          merge nimblebrain-runtime "$RUNTIME_AMD64" "$RUNTIME_ARM64"
+          merge nimblebrain-web "$WEB_AMD64" "$WEB_ARM64"
 
   # Roll the staging "edge" channel onto this build. Fires a single
   # repository_dispatch into the private deploy-config repo, whose staging

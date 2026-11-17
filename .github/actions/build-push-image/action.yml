@@ -1,12 +1,15 @@
 name: Build and push image
 description: >-
-  Build a linux/amd64 image with the GitHub Actions layer cache and push it to
-  the given tags. Single source of truth for how CI (ci.yml) and releases
+  Build one platform's image natively with the GitHub Actions layer cache and
+  push it, either to the given tags or untagged by digest for a later merge into
+  a multi-platform tag. Single source of truth for how CI (ci.yml) and releases
   (release.yml) build the platform and web images — keep the build mechanics
   here; keep tag/registry *policy* in the calling workflow, where it differs.
   The caller must run docker/setup-buildx-action once per job (the gha cache
-  needs the docker-container driver) and log in to every registry referenced
-  in `tags` before calling this action.
+  needs the docker-container driver), run on a runner of `platform`'s
+  architecture (the runtime is Bun, which crashes under QEMU emulation), and log
+  in to every registry referenced in `tags` or `push-by-digest` before calling
+  this action.
 
 inputs:
   context:
@@ -15,13 +18,31 @@ inputs:
   file:
     description: Path to the Dockerfile
     required: true
+  platform:
+    description: >-
+      The one platform to build, e.g. linux/amd64 or linux/arm64. Must match
+      the runner's architecture.
+    required: false
+    default: linux/amd64
   tags:
-    description: Newline-separated list of fully-qualified image tags to push
+    description: >-
+      Newline-separated list of fully-qualified image tags. Pushed as given,
+      unless `push-by-digest` is set; then these are only the tags
+      `skip-existing` checks, and the caller tags the merged image.
     required: true
+  push-by-digest:
+    description: >-
+      A repository (registry/name, no tag). When set, the image is pushed there
+      untagged and its digest is the `digest` output, for the caller to merge
+      with the other platforms' digests into one multi-platform tag.
+    required: false
+    default: ""
   cache-scope:
     description: >-
       gha cache scope. Use a distinct scope per image (e.g. platform, web) so
-      the caches never overwrite each other.
+      the caches never overwrite each other. The platform's architecture is
+      appended for any platform but linux/amd64, so each architecture keeps its
+      own cache.
     required: true
   build-args:
     description: Newline-separated build args (KEY=value)
@@ -38,6 +59,13 @@ inputs:
       Leave "false" for a tag that can name a different build (a semver tag).
     required: false
     default: "false"
+
+outputs:
+  digest:
+    description: >-
+      Digest of the pushed image. Empty when the build was skipped
+      (skip-existing found every tag).
+    value: ${{ steps.build.outputs.digest }}
 
 runs:
   using: composite
@@ -73,18 +101,39 @@ runs:
           fi
         done <<< "$TAGS"
         echo "all=$all" >> "$GITHUB_OUTPUT"
-    - if: steps.existing.outputs.all != 'true'
+    - name: Resolve push target
+      id: target
+      if: steps.existing.outputs.all != 'true'
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+        SCOPE: ${{ inputs.cache-scope }}
+        BY_DIGEST: ${{ inputs.push-by-digest }}
+      # The amd64 scope keeps the caller's name, so its existing cache stays warm.
+      run: |
+        if [ "$PLATFORM" = "linux/amd64" ]; then
+          echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
+        else
+          echo "scope=$SCOPE-${PLATFORM//\//-}" >> "$GITHUB_OUTPUT"
+        fi
+        if [ -n "$BY_DIGEST" ]; then
+          echo "outputs=type=image,name=$BY_DIGEST,push-by-digest=true,name-canonical=true,push=true" >> "$GITHUB_OUTPUT"
+        fi
+    - id: build
+      if: steps.existing.outputs.all != 'true'
       uses: docker/build-push-action@v7
       with:
         context: ${{ inputs.context }}
         file: ${{ inputs.file }}
-        platforms: linux/amd64
-        push: true
+        platforms: ${{ inputs.platform }}
+        # Pushing by digest goes through `outputs`; a tag list would also tag it.
+        push: ${{ inputs.push-by-digest == '' }}
+        outputs: ${{ steps.target.outputs.outputs }}
         build-args: ${{ inputs.build-args }}
         labels: org.opencontainers.image.revision=${{ github.sha }}
-        tags: ${{ inputs.tags }}
+        tags: ${{ inputs.push-by-digest == '' && inputs.tags || '' }}
         # mode=max caches intermediate (multi-stage) layers too, which the web
         # image needs — its bun install + vite build live in a build stage that
         # is discarded from the final image.
-        cache-from: type=gha,scope=${{ inputs.cache-scope }}
-        cache-to: type=gha,mode=max,scope=${{ inputs.cache-scope }}
+        cache-from: type=gha,scope=${{ steps.target.outputs.scope }}
+        cache-to: type=gha,mode=max,scope=${{ steps.target.outputs.scope }}

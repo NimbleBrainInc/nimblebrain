@@ -9,6 +9,11 @@ name: Release
 # releases stop rebuilding and re-running the tests. The `ci-green` job is the gate:
 # it refuses the tag unless the test jobs in ci.yml's run for the tagged commit passed.
 #
+# Each `:<sha>` is a multi-platform index (linux/amd64 + linux/arm64, plus their
+# build attestations), built natively per platform by ci.yml. Both steps below move
+# the index itself, never one platform's manifest, so every platform ships and each
+# node pulls its own:
+#
 #   ECR  (prod deploy)        : retag :<sha> -> :vX.Y.Z (runtime + web) via put-image.
 #   GHCR (public OSS pulls)   : copy the same ECR :<sha> manifests to the GHCR tags
 #                               via `buildx imagetools create` — edge never pushes
@@ -179,7 +184,8 @@ jobs:
       # ── EMERGENCY rebuild path (workflow_dispatch + rebuild=true) ──────────────
       # Build from source instead of promoting the staging-verified image. Loud on
       # purpose — prod won't be byte-for-byte. Pushes the same ECR + GHCR tag set the
-      # normal path produces. NB_VERSION is still NOT baked (it's deploy-injected), so
+      # normal path produces, for linux/amd64 only: this job runs on one amd64
+      # runner, so arm64 hosts build a rebuilt tag from source. NB_VERSION is still NOT baked (it's deploy-injected), so
       # a rebuilt image behaves identically to a retagged one at runtime.
       - name: Compute rebuild tags (EMERGENCY)
         if: ${{ github.event.inputs.rebuild == 'true' }}
@@ -236,7 +242,9 @@ jobs:
 
       # ── Normal path: promote-by-retag ─────────────────────────────────────────
       # ECR: retag the staging-verified :<sha> manifest -> :vX.Y.Z for runtime + web,
-      # with three guards (immutable repo / source exists / idempotent).
+      # with three guards (immutable repo / source exists / idempotent). The manifest
+      # batch-get-image returns is the index itself (its media type is in the body),
+      # so put-image tags the whole index and the digest compare is index to index.
       - name: Promote-by-retag in ECR (runtime + web)
         if: ${{ github.event.inputs.rebuild != 'true' }}
         env:
