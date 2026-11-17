@@ -32,14 +32,18 @@ expect "$out" '(.workspaces | length) >= 1' "a workspace exists"
 expect "$out" '.url == "http://127.0.0.1:27246"' "the UI is on 127.0.0.1:27246"
 mcp=$(jq -r '.workspaces[0].mcp' <<<"$out")
 
-step "the workspace MCP endpoint answers initialize"
-code=$(curl -s -o /tmp/mcp-init.json -w '%{http_code}' -X POST "$mcp" \
+step "the workspace MCP endpoint lists tools, as a connected agent would"
+# The endpoint speaks MCP 2026-07-28 only: no initialize handshake; every
+# request carries the _meta envelope and the protocol-version and method headers.
+code=$(curl -s -o /tmp/mcp-tools.txt -w '%{http_code}' -X POST "$mcp" \
   -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"cli-e2e","version":"0"}}}')
+  -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: tools/list' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"cli-e2e","version":"0"},"io.modelcontextprotocol/clientCapabilities":{}}}}')
 echo "HTTP $code from $mcp"
-head -c 400 /tmp/mcp-init.json; echo
+head -c 300 /tmp/mcp-tools.txt; echo
 test "$code" = "200"
-echo "ok: MCP initialize returns 200"
+grep -q '"tools"' /tmp/mcp-tools.txt
+echo "ok: tools/list returns the workspace's tools"
 
 step "the port is published on this machine only"
 ports=$(docker ps --filter "label=com.docker.compose.project=nimblebrain-local" --format '{{.Ports}}')
