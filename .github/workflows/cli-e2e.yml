@@ -1,0 +1,64 @@
+name: cli-e2e
+
+# The `nimblebrain` CLI end to end on a clean x86_64 machine with Docker: install
+# the newest release's images, check health and the workspace's MCP endpoint, run
+# every lifecycle command, then remove it all. The unit tests (`test:cli`) cover
+# the logic against a fake machine; this proves it against real Docker, Compose
+# and a real runtime.
+#
+# Runs on a ready PR that touches the CLI or the root Compose file it embeds,
+# and on demand. Not a required check: it pulls about 2 GB of images, so it runs
+# only where it can find something.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'packages/cli/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/cli-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cli-e2e:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v5
+        with:
+          # The floor the CLI declares in packages/cli/package.json.
+          node-version: 20
+
+      - name: Build the CLI
+        working-directory: packages/cli
+        run: bun run build
+
+      - name: Pin the newest release
+        # A dev build would look this up itself, unauthenticated; the runner's
+        # shared IP can exhaust that limit, so the job asks with its own token.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh api "repos/${{ github.repository }}/tags?per_page=100" --jq '.[].name' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          test -n "$tag"
+          echo "NIMBLEBRAIN_TAG=$tag" >> "$GITHUB_ENV"
+          echo "NIMBLEBRAIN_HOME=$RUNNER_TEMP/nimblebrain-local" >> "$GITHUB_ENV"
+          echo "Installing $tag"
+
+      - name: Install, use and remove NimbleBrain
+        run: bash packages/cli/test/e2e.sh "node packages/cli/dist/nimblebrain.js"
+
+      - name: Runtime logs on failure
+        if: failure()
+        run: docker compose --project-name nimblebrain-local logs --no-color --tail 200 || true
