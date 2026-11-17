@@ -368,8 +368,8 @@ jobs:
   # npm trusted publishing: no token. npm accepts this workflow's OIDC identity
   # because the `nimblebrain` package names this repository, `release.yml` and the
   # `npm` environment as its trusted publisher, with direct publish and dist-tag
-  # changes not allowed (staging only). A version already on npm is skipped, so a
-  # re-run of this workflow completes.
+  # changes not allowed (staging only). A re-run skips a version already on npm
+  # and stops at one that is staged but not yet approved (RELEASING.md §4e).
   publish-cli:
     name: Publish the CLI to npm
     needs: release
@@ -419,7 +419,7 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "dist=$dist" >> "$GITHUB_OUTPUT"
-          echo "Publishing nimblebrain@$version to dist-tag $dist"
+          echo "Staging nimblebrain@$version for dist-tag $dist"
 
       # The version is set from the tag here, never committed (RELEASING.md: do not
       # bump package.json per release). The build bakes it in, and the CLI installs
