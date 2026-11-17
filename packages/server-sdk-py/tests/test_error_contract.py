@@ -116,7 +116,7 @@ async def test_fastmcp_still_logs_an_unclassified_failure(
                 await client.call_tool("broken", {})
     (record,) = [r for r in caplog.records if r.name == FASTMCP_LOGGER and r.exc_info]
     assert record.levelno == logging.ERROR
-    assert record.exc_info is not None
+    assert isinstance(record.exc_info, tuple)
     assert isinstance(record.exc_info[1], RuntimeError)
 
 

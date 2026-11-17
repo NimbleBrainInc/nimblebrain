@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import anyio
@@ -116,7 +116,7 @@ async def test_session_checkout_timeout_raises_pool_exhausted() -> None:
     limiter = WorkspaceLimiter(limit=1, wait_seconds=1)
 
     @asynccontextmanager
-    async def exhausted(ctx: pgbulkhead.SecurityContext) -> AsyncIterator[str]:
+    async def exhausted(ctx: pgbulkhead.SecurityContext) -> AsyncGenerator[str]:
         raise PoolTimeout("QueuePool limit reached")
         yield "unreachable"
 
@@ -131,7 +131,7 @@ async def test_pool_timeout_inside_the_body_is_the_bodys_own() -> None:
     limiter = WorkspaceLimiter(limit=1, wait_seconds=1)
 
     @asynccontextmanager
-    async def session(ctx: pgbulkhead.SecurityContext) -> AsyncIterator[str]:
+    async def session(ctx: pgbulkhead.SecurityContext) -> AsyncGenerator[str]:
         yield f"session for {ctx.workspace_id}"
 
     # The body raises inside the session, so the test covers how the session exits on it.

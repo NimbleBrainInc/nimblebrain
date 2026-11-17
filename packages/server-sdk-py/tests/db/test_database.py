@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import pytest
@@ -82,7 +82,7 @@ async def test_admitted_slot_holds_one_slot_across_sessions(pg_url: str) -> None
 
 async def test_admitted_slot_turns_a_checkout_timeout_into_pool_exhausted() -> None:
     @asynccontextmanager
-    async def exhausted(ctx: SecurityContext) -> AsyncIterator[None]:
+    async def exhausted(ctx: SecurityContext) -> AsyncGenerator[None]:
         raise PoolTimeout("QueuePool limit reached")
         yield
 
@@ -98,7 +98,7 @@ async def test_admitted_slot_lets_a_later_checkout_timeout_through() -> None:
     opened = 0
 
     @asynccontextmanager
-    async def first_then_exhausted(ctx: SecurityContext) -> AsyncIterator[None]:
+    async def first_then_exhausted(ctx: SecurityContext) -> AsyncGenerator[None]:
         nonlocal opened
         opened += 1
         if opened > 1:
