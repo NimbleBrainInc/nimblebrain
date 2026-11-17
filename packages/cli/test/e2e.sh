@@ -49,7 +49,8 @@ step "the port is published on this machine only"
 ports=$(docker ps --filter "label=com.docker.compose.project=nimblebrain-local" --format '{{.Ports}}')
 echo "$ports"
 grep -q '127.0.0.1:27246->8080' <<<"$ports"
-! grep -q '0.0.0.0:27246' <<<"$ports"
+# Not `! grep`: under `set -e` a negated command never stops the script.
+if grep -q '0.0.0.0:27246' <<<"$ports"; then echo "FAILED: published on every interface"; exit 1; fi
 echo "ok: 127.0.0.1 only"
 
 step "init again changes nothing"
