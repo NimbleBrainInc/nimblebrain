@@ -12,6 +12,7 @@ import {
 } from "ai";
 import { wrapFetchWithLiveness } from "./fetch-liveness.ts";
 import { googleStreamErrorMiddleware } from "./google-stream-error.ts";
+import { modelAuthMiddleware } from "./model-auth.ts";
 import { requireQualifiedModelId } from "./model-id.ts";
 
 export interface ProvidersConfig {
@@ -121,7 +122,8 @@ function assertNothingBesideGateway(config: ProvidersConfig): void {
  * provider the runtime knows (`MODEL_PROVIDERS`) is built through it, whatever
  * `providers` names; which of them the gateway serves is its own answer
  * (`watchGatewayProviders`). Without one, each configured provider is built
- * with its own key.
+ * with its own key, and its models fail a missing or rejected key as
+ * `ModelAuthError` (`model-auth.ts`).
  */
 export function buildRegistry(config: ProvidersConfig, gateway?: ModelGatewayAccess): Provider {
   if (gateway) assertNothingBesideGateway(config);
@@ -138,6 +140,19 @@ export function buildRegistry(config: ProvidersConfig, gateway?: ModelGatewayAcc
   if (providersCfg.greenpt) providers.greenpt = greenptProvider(providersCfg.greenpt, gateway);
   if (providersCfg.nebius) providers.nebius = nebiusProvider(providersCfg.nebius, gateway);
   if (providersCfg.xai) providers.xai = xaiProvider(providersCfg.xai, gateway);
+
+  if (!gateway) {
+    for (const [id, built] of Object.entries(providers)) {
+      providers[id] = {
+        ...built,
+        languageModel: (modelId: string) =>
+          wrapLanguageModel({
+            model: built.languageModel(modelId),
+            middleware: modelAuthMiddleware(id),
+          }),
+      };
+    }
+  }
 
   return createProviderRegistry(providers);
 }

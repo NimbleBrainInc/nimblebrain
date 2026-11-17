@@ -145,6 +145,7 @@ import {
   isModelInPolicy,
 } from "../model/catalog.ts";
 import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../model/gateway-refusal.ts";
+import { ModelAuthError } from "../model/model-auth.ts";
 import { isQualifiedModelId, requireQualifiedModelId } from "../model/model-id.ts";
 import {
   buildModelResolver,
@@ -1466,7 +1467,7 @@ export class Runtime {
           this.runBus.end(conversationId, "cancelled");
         } else {
           this.publishTurnEvent(conversationId, "error", {
-            error: "engine_error",
+            error: err instanceof ModelAuthError ? err.code : "engine_error",
             message: err instanceof Error ? err.message : String(err),
           });
           this.runBus.end(conversationId, "error");

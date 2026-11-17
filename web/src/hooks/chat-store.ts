@@ -128,6 +128,8 @@ export interface ChatMessage {
    *  read). Drives the resume reconcile — a partial snapshot vs a finished turn. */
   pending?: boolean;
   error?: string;
+  /** The stream's machine-readable code for `error` (`StreamErrorEvent.error`). */
+  errorCode?: string;
   usage?: {
     inputTokens: number;
     outputTokens: number;
@@ -1173,7 +1175,7 @@ export function createChatStore(): ChatStore {
     const updated = [...slice.messages];
     const last = updated[updated.length - 1];
     if (last?.role === "assistant") {
-      updated[updated.length - 1] = { ...last, error: evt.message };
+      updated[updated.length - 1] = { ...last, error: evt.message, errorCode: evt.error };
       slice.messages = updated;
     } else {
       slice.error = evt.message;

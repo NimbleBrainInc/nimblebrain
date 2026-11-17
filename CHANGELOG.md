@@ -294,6 +294,7 @@
 
 ### Fixed
 
+- **A missing or rejected model API key now says so in the chat and offers no retry** ([#1989](https://github.com/NimbleBrainInc/nimblebrain/pull/1989)).
 - **A batch no longer re-runs the same items without end when its budget, split among its runs, cannot pay for one.** It halves how many run at once and tries again, and pauses once an item cannot finish alone. ([docs](https://docs.nimblebrain.ai/using/tasks/#batches))
 - **The web UI answers seconds after `docker compose up`, not after 30.** ([docs](https://docs.nimblebrain.ai/deploy/docker/#health-check), [#1987](https://github.com/NimbleBrainInc/nimblebrain/pull/1987))
 - **An app in a full pane renders without a frame border.** `prefersBorder` now applies only where the frame sits among other content (inline in chat, a settings section); in a pane it doubled the shell's header rule. ([#1993](https://github.com/NimbleBrainInc/nimblebrain/pull/1993))

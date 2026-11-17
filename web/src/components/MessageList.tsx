@@ -316,6 +316,15 @@ function StopReasonNotice({ stopReason }: { stopReason: string }) {
 }
 
 /**
+ * Whether resending the turn could succeed. A missing or rejected model key fails the
+ * same way until someone changes the key and restarts, so it offers no retry
+ * and its message, which says what to fix, becomes the headline.
+ */
+function retryCanSucceed(msg: ChatMessage): boolean {
+  return msg.errorCode !== "model_auth_failed";
+}
+
+/**
  * Inline error notice with an optional retry button and a collapsible detail.
  *
  * Without `onRetry` the generic headline would tell the user to try again next
@@ -426,7 +435,9 @@ function AssistantMessage({
       {/* Stop reason notice */}
       {msg.stopReason && <StopReasonNotice stopReason={msg.stopReason} />}
       {/* Inline error notice */}
-      {msg.error && <ErrorNotice error={msg.error} onRetry={onRetry} />}
+      {msg.error && (
+        <ErrorNotice error={msg.error} onRetry={retryCanSucceed(msg) ? onRetry : undefined} />
+      )}
       {/* Inline app views are rendered within their tool block above */}
     </div>
   );
