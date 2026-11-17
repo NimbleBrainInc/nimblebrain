@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { Agent } from "./args.ts";
+import { hasKey } from "./compose.ts";
 import type { Deps } from "./deps.ts";
 import { CliError } from "./result.ts";
 
@@ -48,7 +49,7 @@ export interface StatusResult {
   url: string;
   workspaces: Workspace[];
   agent: { connected: Agent | null; skill: string | null };
-  model_key: "set" | "missing" | "unknown";
+  model_key: "set" | "missing";
 }
 
 /**
@@ -56,6 +57,10 @@ export interface StatusResult {
  * does it have, and is a model key configured. Reads only what the local
  * instance serves to anyone on this machine (`/v1/health`, and `/v1/bootstrap`
  * under the `dev` adapter), so it never needs a credential.
+ *
+ * Whether a model key is set is read from the install's `.env`, not from the
+ * runtime: bootstrap's `configuredProviders` lists the providers the config
+ * allows (`["anthropic"]` when it names none), with or without a key.
  *
  * The MCP URL is built from the port this install published, not taken from
  * bootstrap's `mcpUrl`: inside Docker the runtime's own idea of its origin can
@@ -70,9 +75,10 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
   const up =
     health?.status === 200 && (health.body as { status?: unknown } | undefined)?.status === "ok";
 
-  const { workspaces, modelKey } = up
-    ? await readBootstrap(deps, url)
-    : { workspaces: [], modelKey: "unknown" as const };
+  const workspaces = up ? await readWorkspaces(deps, url) : [];
+  // The install's `.env` is the only place a key can come from: every Compose
+  // call runs without the shell's key variables. Read for names, never values.
+  const modelKey = hasKey((await deps.readText(join(home, ".env"))) ?? "") ? "set" : "missing";
 
   return {
     ok: true,
@@ -85,28 +91,15 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
   };
 }
 
-/** Workspaces and whether a provider key is configured, from `/v1/bootstrap`. */
-async function readBootstrap(
-  deps: Deps,
-  url: string,
-): Promise<{ workspaces: Workspace[]; modelKey: StatusResult["model_key"] }> {
+/** The workspaces the local `dev` identity belongs to, from `/v1/bootstrap`. */
+async function readWorkspaces(deps: Deps, url: string): Promise<Workspace[]> {
   const boot = await deps.getJson(`${url}/v1/bootstrap`);
-  if (boot?.status !== 200) return { workspaces: [], modelKey: "unknown" };
-  const body = boot.body as {
-    workspaces?: Array<{ id?: unknown; name?: unknown }>;
-    config?: { configuredProviders?: unknown };
-  };
-  const workspaces = (body.workspaces ?? [])
+  if (boot?.status !== 200) return [];
+  const body = boot.body as { workspaces?: Array<{ id?: unknown; name?: unknown }> };
+  return (body.workspaces ?? [])
     .filter(
       (w): w is { id: string; name: string } =>
         typeof w.id === "string" && typeof w.name === "string",
     )
     .map((w) => ({ id: w.id, name: w.name, mcp: `${url}/mcp/${w.id}` }));
-  const providers = body.config?.configuredProviders;
-  const modelKey = Array.isArray(providers)
-    ? providers.length > 0
-      ? "set"
-      : "missing"
-    : "unknown";
-  return { workspaces, modelKey };
 }

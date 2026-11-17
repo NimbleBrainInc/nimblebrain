@@ -183,7 +183,7 @@ describe("status", () => {
     const deps = fakeDeps({ readText: async () => install });
     const { body, code } = await json(["status"], deps);
     expect(code).toBe(0);
-    expect(body).toMatchObject({ health: "down", workspaces: [], model_key: "unknown" });
+    expect(body).toMatchObject({ health: "down", workspaces: [], model_key: "missing" });
   });
 
   test("NIMBLEBRAIN_HOME moves the install", async () => {

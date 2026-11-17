@@ -76,12 +76,13 @@ export function machine(opts: MachineOptions = {}): Machine {
       if (!m.healthy) return undefined;
       if (url.endsWith("/v1/health")) return { status: 200, body: { status: "ok" } };
       if (url.endsWith("/v1/bootstrap")) {
-        const env = [...m.files.entries()].find(([p]) => p.endsWith("/.env"))?.[1].text ?? "";
+        // As the real runtime answers: the providers the config allows, which
+        // is `["anthropic"]` with no provider config, whether or not a key is set.
         return {
           status: 200,
           body: {
             workspaces: opts.workspaces ?? [{ id: "ws_1", name: "Default" }],
-            config: { configuredProviders: /_API_KEY=\S/.test(env) ? ["anthropic"] : [] },
+            config: { configuredProviders: ["anthropic"] },
           },
         };
       }
