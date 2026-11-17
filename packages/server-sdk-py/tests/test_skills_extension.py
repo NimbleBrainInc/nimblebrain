@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -267,7 +267,7 @@ def _skills() -> list[Any]:
 
 
 @asynccontextmanager
-async def fastmcp_wire() -> AsyncIterator[Wire]:
+async def fastmcp_wire() -> AsyncGenerator[Wire]:
     server = FastMCP("skills-test")
     server.add_extension(SkillsExtension(_skills()))
     async with FastMCPClient(server) as client:
@@ -276,7 +276,7 @@ async def fastmcp_wire() -> AsyncIterator[Wire]:
 
 
 @asynccontextmanager
-async def mcpserver_wire(mode: str = "auto") -> AsyncIterator[Wire]:
+async def mcpserver_wire(mode: str = "auto") -> AsyncGenerator[Wire]:
     server = MCPServer("skills-test", extensions=[MCPServerSkillsExtension(_skills())])
     async with Client(server, mode=mode) as client:
         caps = client.server_capabilities

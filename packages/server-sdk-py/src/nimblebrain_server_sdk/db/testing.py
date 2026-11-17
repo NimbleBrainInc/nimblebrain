@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 
 from fastmcp import Client, FastMCP
@@ -23,7 +23,7 @@ async def edge_client(
     workspace_id: str,
     headers: Mapping[str, str] | None = None,
     mode: Mode = "auto",
-) -> AsyncIterator[Client]:
+) -> AsyncGenerator[Client]:
     """A client whose calls reach ``mcp`` with a verified identity, for a test.
 
     The in-memory ``fastmcp.Client(mcp)`` sends no HTTP headers, so a tool that reads its

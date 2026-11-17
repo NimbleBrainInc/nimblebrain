@@ -23,7 +23,7 @@ import json
 import mimetypes
 import re
 import warnings
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import cached_property
@@ -413,7 +413,7 @@ class SkillsExtension(ServerExtension):
             self._resources[file.uri] = resource
 
     @asynccontextmanager
-    async def lifespan(self) -> AsyncIterator[None]:
+    async def lifespan(self) -> AsyncGenerator[None]:
         # FastMCP keeps the last resource registered at a URI and only warns,
         # so a `skill://` resource registered by hand after this extension
         # would be served in place of the listed bytes and fail every host's

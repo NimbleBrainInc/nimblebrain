@@ -190,7 +190,7 @@ NimbleBrain's edge injects; never from a tool argument or a request body.
 ```python
 """A server that keeps its notes in Postgres, isolated per tenant and workspace by RLS."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import sqlalchemy as sa
@@ -215,7 +215,7 @@ notes = sa.Table(
 
 
 @asynccontextmanager
-async def lifespan(_: FastMCP) -> AsyncIterator[None]:
+async def lifespan(_: FastMCP) -> AsyncGenerator[None]:
     db.check()  # the pool settings are valid
     await db.check_role()  # the role is one row-level security applies to
     yield
