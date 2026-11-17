@@ -337,6 +337,14 @@ export function createAppIframe(
   // Track app name for event routing
   iframe.dataset.app = appName;
 
+  // A browser paints a frame's canvas opaque, in its own scheme's canvas color, when
+  // the frame element's color scheme differs from the framed document's. The shell's
+  // `:root.dark` is inherited by this element, while the frame page (and the blank
+  // document before it loads) declares none and is light, so in dark mode the frame
+  // shows white until the app paints. `normal` is the frame page's own scheme, so the
+  // two always match and the frame stays transparent over the shell.
+  iframe.style.setProperty("color-scheme", "normal");
+
   // Default to no border; server can request a visible one via
   // `_meta.ui.prefersBorder`. The background-color pairs with the border
   // because a bare border on a transparent frame looks half-finished.
