@@ -1,0 +1,77 @@
+---
+title: npx nimblebrain
+description: Install, run and connect NimbleBrain on your own machine with one command, as a person or from a coding agent.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`npx nimblebrain` installs NimbleBrain on your machine from the release images, starts it, and connects your coding agent to it. Run it yourself in a terminal, or hand it to a coding agent: the same command works for both.
+
+```bash
+npx nimblebrain
+```
+
+It checks your machine, starts NimbleBrain in Docker at `http://127.0.0.1:27246`, asks for your model key, and connects the coding agent you choose to a workspace over MCP. Run it again any time: on a machine that already has NimbleBrain it reports what is there and changes nothing.
+
+You need Docker with Compose v2, about 2 GB of memory for Docker, and Node.js 20 or later. It runs on `x86_64` and `arm64`, Apple Silicon included.
+
+<Aside type="caution">
+The local instance signs nobody in: anyone who can reach its port is the admin. That is why it is published on `127.0.0.1` only. Do not widen the port, tunnel it, or put a proxy in front of it. To serve other people, set up a real identity provider instead ([instance.json](/config/instance-json/)).
+</Aside>
+
+## From a coding agent
+
+Tell your agent:
+
+> Install NimbleBrain with `npx nimblebrain`
+
+An agent runs it with `--yes --agent <its name> --json` and reads the result. When no model key is set, everything else still starts, and the result says `MODEL_KEY_MISSING`. The agent then asks you to run `npx nimblebrain key` in your own terminal, so the key never passes through the agent.
+
+## Commands
+
+| Command | Does |
+|---|---|
+| `init` (the default) | Checks the machine, starts NimbleBrain, connects the agent named by `--agent`, and installs the `nimblebrain` skill for it. |
+| `doctor` | Checks Docker, Compose v2, CPU architecture, memory and the port. Installs nothing. |
+| `status` | Version, health, URL, each workspace's MCP URL, the connected agent, and whether a model key is set. |
+| `key` | Takes the model key at a hidden prompt and restarts NimbleBrain so it takes effect. A person runs this. |
+| `up` / `down` | Starts or stops NimbleBrain. Your data survives `down`. |
+| `logs` | Recent log lines from the runtime. |
+| `update` | Moves to the release this CLI carries, keeping your data. Run `npx nimblebrain@latest update` for the newest. |
+| `uninstall` | Removes the containers, the images, every conversation, and the files `init` wrote. Asks first. |
+
+## Flags
+
+| Flag | Meaning |
+|---|---|
+| `--json` | One JSON object on stdout. Progress goes to stderr. |
+| `--yes`, `-y` | Take every default. With no terminal attached, the CLI acts as if this were set and fails rather than wait for input. |
+| `--agent <name>` | `claude-code`, `cursor`, `codex` or `none`. |
+| `--port <n>` | The local port (default `27246`). |
+| `--provider <name>` | For `key`: `anthropic` (default), `openai`, `google`, `greenpt`, `nebius` or `xai`. |
+| `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). |
+
+## Connecting an agent
+
+`init --agent <name>` registers the workspace's MCP URL, `http://127.0.0.1:27246/mcp/<workspaceId>`, with the agent: through `claude mcp add` for Claude Code, `codex mcp add` for Codex, and `~/.cursor/mcp.json` for Cursor. The local instance needs no login. If the agent's own CLI is not installed, `init` still succeeds and returns `manual`: the exact command or setting to add by hand. An agent loads a new MCP server when its next session starts.
+
+To connect another client by hand, take the MCP URL from `npx nimblebrain status` and follow [Connecting External Clients](/connect/external-clients/).
+
+## The JSON
+
+Every command answers `{"ok": true, ...}` or `{"ok": false, "error": "<CODE>", "message": "...", "fix": "..."}`. The exit code is `0` when `ok` is true, `1` when it is false, and `2` for an unknown command or flag. The model key never appears in any output.
+
+| `error` | Means |
+|---|---|
+| `DOCKER_MISSING`, `DOCKER_NOT_RUNNING`, `DOCKER_PERMISSION`, `COMPOSE_MISSING` | Docker is missing, stopped, not usable by this user, or lacks Compose v2. |
+| `ARCH_UNSUPPORTED`, `LOW_MEMORY`, `PORT_IN_USE` | No image for this CPU, under 2 GB for Docker, or the port is taken. |
+| `NOT_INSTALLED`, `NOT_OURS` | No install here, or files, containers or data this CLI did not make are in the way. |
+| `NETWORK`, `START_FAILED`, `HEALTH_TIMEOUT` | A download failed, Compose could not start it, or it did not become healthy in time. |
+| `MODEL_KEY_MISSING` | NimbleBrain is running; chat needs a key (`npx nimblebrain key`). |
+| `NEEDS_TERMINAL`, `CANCELLED`, `AGENT_UNSUPPORTED`, `USAGE` | `key` needs a person, the action was declined, an unknown agent, or a bad command or flag. |
+
+Each error's `fix` is the next thing to do.
+
+## What it writes
+
+Everything lives in `~/.nimblebrain-local`: the release's `docker-compose.yml`, an `instance.json` naming the `dev` sign-in, a `.env` that only your user can read (the release, the port, and your model key), and `install.json`. Your conversations live in the Docker volume `nimblebrain-local_workspace`. A key exported in your shell is not used: `.env` is the only source, so the key you entered with `key` is the one that runs.

@@ -21,8 +21,11 @@ Published to npm as `nimblebrain`; run as `npx nimblebrain`. It installs, starts
 
 ## Not here yet
 
-- **Publishing.** An npm publish step belongs in `release.yml` beside the image retag, using npm trusted publishing, with pre-release tags on a non-`latest` dist-tag. Lands with arm64 images, since `doctor` refuses arm64 until then.
 - **A skill matched to the release.** `installSkill` takes the `nimblebrain` skill from the skills repo's default branch; that repo has no release tags to pin to yet.
+
+## Releasing
+
+`release.yml` job `publish-cli` publishes this package at every `v*` tag's version, after the images are on GHCR (RELEASING.md §7, job 5): GA to `latest`, a pre-release to `next`, a hotfix tag to nowhere. The version is set from the tag in the job; `package.json` stays `0.0.0-dev`. `cli-e2e` runs the whole lifecycle on `ubuntu-latest` and `ubuntu-24.04-arm` against the newest release.
 
 ## Verify
 

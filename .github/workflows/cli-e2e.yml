@@ -1,6 +1,6 @@
 name: cli-e2e
 
-# The `nimblebrain` CLI end to end on a clean x86_64 machine with Docker: install
+# The `nimblebrain` CLI end to end on clean x86_64 and arm64 machines with Docker: install
 # the newest release's images, check health and the workspace's MCP endpoint, run
 # every lifecycle command, then remove it all. The unit tests (`test:cli`) cover
 # the logic against a fake machine; this proves it against real Docker, Compose
@@ -29,7 +29,13 @@ concurrency:
 jobs:
   cli-e2e:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    # Both platforms the release publishes images for, each on a native runner.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    name: cli-e2e (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
