@@ -7,6 +7,8 @@ import { fail, machine, ok } from "./fake.ts";
 const HOME = "/home/dana/.nimblebrain-local";
 const INSTALL = `${HOME}/install.json`;
 const ENV = `${HOME}/.env`;
+/** What an earlier, unfinished `init` leaves in `.env`: the mark that the home is the CLI's. */
+const MARK = `COMPOSE_PROJECT_NAME=${PROJECT}\n`;
 /** A dev build of the CLI pins no release, so tests pin one the way a release build would. */
 const env = { NIMBLEBRAIN_TAG: "v0.70.0" };
 
@@ -81,7 +83,7 @@ describe("init", () => {
   });
 
   test("with a key in .env it ends ok", async () => {
-    const m = machine({ env, files: { [ENV]: "ANTHROPIC_API_KEY=sk-test\n" } });
+    const m = machine({ env, files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk-test\n` } });
     const { body, code } = await json(["--yes"], m);
     expect(code).toBe(0);
     expect(body).toMatchObject({ ok: true, model_key: "set" });
@@ -89,7 +91,7 @@ describe("init", () => {
   });
 
   test("the key never appears in the output", async () => {
-    const m = machine({ env, files: { [ENV]: "ANTHROPIC_API_KEY=sk-secret-123\n" } });
+    const m = machine({ env, files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk-secret-123\n` } });
     const { stdout } = await run(["--yes", "--json"], m.deps);
     expect(stdout).not.toContain("sk-secret-123");
   });
@@ -105,10 +107,17 @@ describe("init", () => {
 
   test("a person at the terminal is asked to confirm, for the key, and for an agent", async () => {
     const m = machine({ env, interactive: true, answers: ["", "", "sk-typed", "none"] });
+    const exec = m.deps.exec;
+    const envAtStart: string[] = [];
+    m.deps.exec = async (cmd, args, o) => {
+      if (args.join(" ").startsWith("compose up")) envAtStart.push(m.files.get(ENV)?.text ?? "");
+      return exec(cmd, args, o);
+    };
     const { stdout, code } = await run([], m.deps);
     expect(code).toBe(0);
     expect(stdout).not.toContain("sk-typed");
-    expect(m.files.get(ENV)?.text).toContain("ANTHROPIC_API_KEY=sk-typed");
+    expect(envAtStart).toHaveLength(1);
+    expect(envAtStart[0]).toContain("ANTHROPIC_API_KEY=sk-typed");
   });
 
   test("declining the confirmation installs nothing", async () => {
@@ -132,6 +141,15 @@ describe("init", () => {
     const { body } = await json(["--yes"], m);
     expect(body.error).toBe("NOT_OURS");
     expect(m.files.size).toBe(0);
+  });
+
+  test("a --home holding files this CLI did not write refuses with NOT_OURS and keeps them", async () => {
+    const compose = "/home/dana/project/docker-compose.yml";
+    const m = machine({ env, files: { [compose]: "services: {}\n" } });
+    const { body } = await json(["--yes", "--home", "/home/dana/project"], m);
+    expect(body.error).toBe("NOT_OURS");
+    expect(m.files.get(compose)?.text).toBe("services: {}\n");
+    expect(m.files.size).toBe(1);
   });
 
   test("a failed pull over the network is NETWORK", async () => {
@@ -159,7 +177,7 @@ describe("init", () => {
 
 describe("after install", () => {
   async function installed() {
-    const m = machine({ env, files: { [ENV]: "ANTHROPIC_API_KEY=sk-test\n" } });
+    const m = machine({ env, files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk-test\n` } });
     await json(["--yes", "--agent", "claude-code"], m);
     return m;
   }
@@ -174,7 +192,7 @@ describe("after install", () => {
   test("logs returns the runtime's lines", async () => {
     const m = machine({
       env,
-      files: { [ENV]: "ANTHROPIC_API_KEY=sk\n" },
+      files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk\n` },
       exec: { "docker compose logs --no-color --tail 100 platform": ok("a\nb\n") },
     });
     await json(["--yes"], m);
@@ -206,6 +224,11 @@ describe("after install", () => {
     expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_TAG=v0.71.0");
     m.deps.env = { NIMBLEBRAIN_TAG: "v0.69.0" };
     expect((await json(["update"], m)).body.error).toBe("USAGE");
+    m.deps.env = { NIMBLEBRAIN_TAG: "v0.71.0-rc.1" };
+    expect((await json(["update"], m)).body.error).toBe("USAGE");
+    m.deps.env = { NIMBLEBRAIN_TAG: "latest" };
+    expect((await json(["update"], m)).body.error).toBe("USAGE");
+    expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_TAG=v0.71.0");
   });
 
   test("uninstall without --yes from an agent changes nothing", async () => {
@@ -223,6 +246,13 @@ describe("after install", () => {
     expect(m.files.has(INSTALL)).toBe(false);
   });
 
+  test("uninstall removes only the files init wrote", async () => {
+    const m = await installed();
+    m.files.set(`${HOME}/notes.txt`, { text: "mine", mode: 0o644 });
+    await json(["uninstall", "--yes"], m);
+    expect([...m.files.keys()]).toEqual([`${HOME}/notes.txt`]);
+  });
+
   test("commands on a machine with no install say NOT_INSTALLED", async () => {
     for (const cmd of ["up", "down", "logs", "update"]) {
       expect((await json([cmd])).body.error).toBe("NOT_INSTALLED");
@@ -236,6 +266,16 @@ describe("releases", () => {
       "v0.10.0",
     );
     expect(compareVersions("v0.10.0", "v0.9.9")).toBeGreaterThan(0);
+  });
+
+  test("a pre-release sorts before its release, by SemVer precedence", () => {
+    expect(compareVersions("v0.70.0-rc.1", "v0.70.0")).toBeLessThan(0);
+    expect(compareVersions("v0.70.0", "v0.70.0-rc.1")).toBeGreaterThan(0);
+    expect(compareVersions("v0.70.0-rc.2", "v0.70.0-rc.10")).toBeLessThan(0);
+    expect(compareVersions("v0.70.0-rc.1", "v0.70.0-rc.1.1")).toBeLessThan(0);
+    expect(compareVersions("v0.70.0-1", "v0.70.0-alpha")).toBeLessThan(0);
+    expect(compareVersions("v0.71.0-rc.1", "v0.70.0")).toBeGreaterThan(0);
+    expect(compareVersions("v0.70.0", "v0.70.0")).toBe(0);
   });
 });
 
@@ -252,7 +292,7 @@ describe("details that are easy to get wrong", () => {
     const m = machine({
       env,
       files: {
-        [ENV]: "ANTHROPIC_API_KEY=sk\n",
+        [ENV]: `${MARK}ANTHROPIC_API_KEY=sk\n`,
         [cursor]: '{"mcpServers":{"github":{"url":"https://x"}}}',
       },
     });
@@ -268,7 +308,7 @@ describe("details that are easy to get wrong", () => {
   test("an agent whose CLI is missing still gets a working install and the settings to add by hand", async () => {
     const m = machine({
       env,
-      files: { [ENV]: "ANTHROPIC_API_KEY=sk\n" },
+      files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk\n` },
       exec: {
         "claude mcp add --transport http -s user nimblebrain http://127.0.0.1:27246/mcp/ws_1": fail(
           "",

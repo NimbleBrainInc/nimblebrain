@@ -92,8 +92,8 @@ export function machine(opts: MachineOptions = {}): Machine {
     async writeText(path, text, mode = 0o644) {
       m.files.set(path, { text, mode });
     },
-    async removeDir(path) {
-      for (const p of [...m.files.keys()]) if (p.startsWith(`${path}/`)) m.files.delete(p);
+    async remove(path) {
+      m.files.delete(path);
     },
     async prompt() {
       return answers.shift() ?? "";

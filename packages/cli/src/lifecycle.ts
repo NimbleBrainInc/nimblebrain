@@ -48,10 +48,11 @@ export async function init(ctx: Ctx): Promise<Ok> {
   await confirmStart(ctx, tag);
 
   await writeInstallFiles(deps, home, tag, flags.port);
-  deps.say(`Starting NimbleBrain ${tag}. The first start downloads about 2 GB of images.`);
-  await start(deps, home, flags.port);
+  // Asked before the start: the runtime reads `.env` only when its container is created.
   if (!hasKey((await deps.readText(paths(home).env)) ?? "") && asks(ctx))
     await enterKey(ctx, false);
+  deps.say(`Starting NimbleBrain ${tag}. The first start downloads about 2 GB of images.`);
+  await start(deps, home, flags.port);
 
   const state: InstallState = {
     version: tag.replace(/^v/, ""),
@@ -152,7 +153,10 @@ export async function update(ctx: Ctx): Promise<Ok> {
   return { ...(await status(deps, home)), from };
 }
 
-/** Removes the containers, images, the data volume and the install folder. Asks first. */
+/**
+ * Removes the containers, images, the data volume and the files `init` wrote.
+ * The install folder goes too when nothing else is left in it. Asks first.
+ */
 export async function uninstall(ctx: Ctx): Promise<Ok> {
   const { deps, flags, home } = ctx;
   const install = await requireInstall(ctx);
@@ -171,7 +175,8 @@ export async function uninstall(ctx: Ctx): Promise<Ok> {
   if (install.agent === "claude-code")
     await deps.exec("claude", ["mcp", "remove", "-s", "user", SERVER_NAME]);
   if (install.agent === "codex") await deps.exec("codex", ["mcp", "remove", SERVER_NAME]);
-  await deps.removeDir(home);
+  for (const file of Object.values(paths(home))) await deps.remove(file);
+  await deps.remove(home);
   return { ok: true, removed: true };
 }
 
@@ -267,13 +272,19 @@ async function requireInstall({ deps, home }: Ctx): Promise<InstallState> {
 }
 
 /**
- * Refuses to start over another install's containers or data. A project or
- * volume named like ours counts as ours only when this home's `.env` names the
+ * Refuses to start over another install's containers or data, or over files
+ * in the home that the CLI did not write (`uninstall` deletes them). A home,
+ * project or volume counts as ours only when this home's `.env` names the
  * project, which is the mark a previous, unfinished `init` leaves.
  */
 async function guardOurs(deps: Deps, home: string): Promise<void> {
-  const env = (await deps.readText(paths(home).env)) ?? "";
-  if (env.includes(`COMPOSE_PROJECT_NAME=${PROJECT}`)) return;
+  const env = await deps.readText(paths(home).env);
+  if (env?.includes(`COMPOSE_PROJECT_NAME=${PROJECT}`)) return;
+  for (const file of Object.values(paths(home))) {
+    if ((await deps.readText(file)) !== undefined) {
+      throw new CliError("NOT_OURS", `${file} already exists and this CLI did not write it.`);
+    }
+  }
   const projects = await deps.exec("docker", ["compose", "ls", "-a", "--format", "json"]);
   const taken = projects.code === 0 && /"Name"\s*:\s*"nimblebrain-local"/.test(projects.stdout);
   const volumes = await deps.exec("docker", ["volume", "ls", "-q", "--filter", `name=^${VOLUME}$`]);

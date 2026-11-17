@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -19,7 +19,8 @@ export interface Deps {
   readText(path: string): Promise<string | undefined>;
   /** Write a file, creating its folder (mode 700). `mode` applies to a new file and to an existing one. */
   writeText(path: string, text: string, mode?: number): Promise<void>;
-  removeDir(path: string): Promise<void>;
+  /** Remove a file, or a folder only when it is empty. Never recursive; a missing path or a non-empty folder is left as it is. */
+  remove(path: string): Promise<void>;
   /** Ask a person a question on stderr; `hidden` echoes nothing (for the model key). */
   prompt(question: string, opts?: { hidden?: boolean }): Promise<string>;
   /** Whether a person is at a terminal to answer a prompt. */
@@ -109,8 +110,12 @@ export function realDeps(): Deps {
       // `mode` on writeFile only applies when it creates the file.
       await chmod(path, mode);
     },
-    async removeDir(path) {
-      await rm(path, { recursive: true, force: true });
+    async remove(path) {
+      try {
+        await rmdir(path);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOTDIR") await rm(path, { force: true });
+      }
     },
     prompt: (question, opts = {}) =>
       opts.hidden ? hiddenPrompt(question) : visiblePrompt(question),
