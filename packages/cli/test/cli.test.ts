@@ -209,6 +209,7 @@ describe("status", () => {
       },
     });
     await json(["status"], deps);
-    expect(seen).toEqual(["/srv/nb/install.json"]);
+    expect(seen).toContain("/srv/nb/install.json");
+    expect(seen.every((p) => p.startsWith("/srv/nb/"))).toBe(true);
   });
 });

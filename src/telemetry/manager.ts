@@ -1,19 +1,57 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
 
 const TELEMETRY_ID_FILE = ".telemetry-id";
-
-// Write-only PostHog project API key. Set POSTHOG_API_KEY env var to override.
-// If unset, telemetry is silently disabled.
-const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY ?? "";
+/** The person's answer, `{"consent": "on" | "off"}`, kept beside the install's data. */
+const CONSENT_FILE = "telemetry.json";
 const POSTHOG_HOST = "https://us.i.posthog.com";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const FIRST_RUN_NOTICE = `
-NimbleBrain collects anonymous usage telemetry to improve the platform.
-No personal data, conversation content, or file paths are ever sent.
-Set NB_TELEMETRY_DISABLED=1 (or DO_NOT_TRACK=1) to disable.  Learn more: https://nimblebrain.ai/telemetry
-`.trim();
+const pkg = JSON.parse(
+  readFileSync(resolve(import.meta.dirname ?? __dirname, "../../package.json"), "utf-8"),
+) as { version: string };
+
+/**
+ * Whether this install sends anonymous telemetry. Nothing is sent until a
+ * person answers: `undecided` sends nothing, and so does `off`.
+ */
+export type TelemetryConsent = "on" | "off" | "undecided";
+
+/**
+ * Why the answer cannot be changed here. `operator`: the deployment decided
+ * (`DO_NOT_TRACK`, `NB_TELEMETRY_DISABLED`, or `telemetry.enabled` in the
+ * config). `no_destination`: no PostHog key is configured, so there is nothing
+ * to agree to and no one is asked.
+ */
+export type TelemetryLock = "operator" | "no_destination";
+
+export interface TelemetryStatus {
+  consent: TelemetryConsent;
+  /** Present when no person can change the answer. */
+  locked?: TelemetryLock;
+}
+
+/** Raised when a person tries to change an answer the deployment owns. */
+export class TelemetryLockedError extends Error {
+  readonly lock: TelemetryLock;
+  constructor(lock: TelemetryLock) {
+    super(
+      lock === "operator"
+        ? "Telemetry is set by this deployment's configuration and cannot be changed here."
+        : "This install has nowhere to send telemetry, so there is nothing to turn on.",
+    );
+    this.name = "TelemetryLockedError";
+    this.lock = lock;
+  }
+}
 
 /** Minimal interface for PostHog client (production or mock). */
 export interface TelemetryClient {
@@ -33,82 +71,58 @@ export type TelemetryClientFactory = (
 
 export interface TelemetryManagerOptions {
   workDir: string;
+  /**
+   * The deployment's decision from `telemetry.enabled`. `false` turns telemetry
+   * off and `true` turns it on, both without asking anyone; absent leaves the
+   * answer to a person.
+   */
   enabled?: boolean;
   clientFactory?: TelemetryClientFactory;
-}
-
-/** Common properties enriched on every captured event. */
-function commonProperties(): Record<string, unknown> {
-  return {
-    nb_version: "0.1.0",
-    os: process.platform,
-    arch: process.arch,
-    bun_version: typeof Bun !== "undefined" ? Bun.version : "unknown",
-  };
+  /** Defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export class TelemetryManager {
-  private client: TelemetryClient | null;
-  private anonymousId: string;
-  private enabled: boolean;
+  private client: TelemetryClient | null = null;
 
-  private constructor(client: TelemetryClient | null, anonymousId: string, enabled: boolean) {
-    this.client = client;
-    this.anonymousId = anonymousId;
-    this.enabled = enabled;
+  private constructor(
+    private readonly workDir: string,
+    private readonly apiKey: string,
+    private readonly factory: TelemetryClientFactory,
+    private readonly anonymousId: string,
+    private consent: TelemetryConsent,
+    private readonly locked: TelemetryLock | undefined,
+  ) {
+    if (consent === "on") this.client = this.connect();
   }
 
   static create(options: TelemetryManagerOptions): TelemetryManager {
-    // Env vars take priority (fastest check, no file I/O)
-    if (process.env.NB_TELEMETRY_DISABLED === "1" || process.env.DO_NOT_TRACK === "1") {
-      return new TelemetryManager(null, "disabled", false);
-    }
-
-    // Config check
-    if (options.enabled === false) {
-      return new TelemetryManager(null, "disabled", false);
-    }
-
-    // Ensure workDir exists
-    mkdirSync(options.workDir, { recursive: true });
-
-    // Load or create anonymous ID
-    const idPath = join(options.workDir, TELEMETRY_ID_FILE);
-    let isFirstRun = false;
-    let anonymousId: string;
-
-    if (existsSync(idPath)) {
-      anonymousId = readFileSync(idPath, "utf-8").trim();
-    } else {
-      anonymousId = randomUUID();
-      writeFileSync(idPath, `${anonymousId}\n`);
-      isFirstRun = true;
-    }
-
-    if (isFirstRun) {
-      process.stderr.write(`${FIRST_RUN_NOTICE}\n\n`);
-    }
-
-    // Initialize PostHog client — skip if no key is configured and no custom factory
-    if (!POSTHOG_API_KEY && !options.clientFactory) {
-      return new TelemetryManager(null, anonymousId, false);
-    }
-    // Batched flush: the runtime is a long-running server, so events accumulate
-    // and flush every 30s (or every 20 events). No short-lived invocation path
-    // remains that would need immediate per-event flushing.
+    const env = options.env ?? process.env;
     const factory = options.clientFactory ?? defaultClientFactory;
-    const client = factory(POSTHOG_API_KEY, {
-      host: POSTHOG_HOST,
-      flushAt: 20,
-      flushInterval: 30_000,
-      disableGeoip: true,
-    });
+    const apiKey = env.POSTHOG_API_KEY ?? "";
 
-    return new TelemetryManager(client, anonymousId, true);
+    // The operator's off wins over everything, and leaves nothing on disk.
+    if (env.NB_TELEMETRY_DISABLED === "1" || env.DO_NOT_TRACK === "1" || options.enabled === false)
+      return new TelemetryManager(options.workDir, apiKey, factory, "", "off", "operator");
+    // A test passes a factory in place of a key.
+    if (!apiKey && !options.clientFactory)
+      return new TelemetryManager(options.workDir, apiKey, factory, "", "off", "no_destination");
+
+    const id = installId(options.workDir, env);
+    if (options.enabled === true)
+      return new TelemetryManager(options.workDir, apiKey, factory, id, "on", "operator");
+    return new TelemetryManager(
+      options.workDir,
+      apiKey,
+      factory,
+      id,
+      readConsent(options.workDir, env),
+      undefined,
+    );
   }
 
   capture(event: string, properties: Record<string, unknown> = {}): void {
-    if (!this.enabled || !this.client) return;
+    if (this.consent !== "on" || !this.client) return;
     this.client.capture({
       distinctId: this.anonymousId,
       event,
@@ -116,15 +130,32 @@ export class TelemetryManager {
     });
   }
 
+  /** Records a person's answer and applies it at once. Throws `TelemetryLockedError` when the deployment owns it. */
+  setConsent(consent: "on" | "off"): TelemetryStatus {
+    if (this.locked) throw new TelemetryLockedError(this.locked);
+    mkdirSync(this.workDir, { recursive: true });
+    const path = join(this.workDir, CONSENT_FILE);
+    writeFileSync(`${path}.tmp`, `${JSON.stringify({ consent })}\n`);
+    renameSync(`${path}.tmp`, path);
+    this.consent = consent;
+    if (consent === "on" && !this.client) this.client = this.connect();
+    return this.status();
+  }
+
+  status(): TelemetryStatus {
+    return this.locked ? { consent: this.consent, locked: this.locked } : { consent: this.consent };
+  }
+
   async shutdown(): Promise<void> {
-    if (!this.enabled || !this.client) return;
-    await this.client.shutdown();
+    await this.client?.shutdown();
   }
 
+  /** Whether events are being sent now. */
   isEnabled(): boolean {
-    return this.enabled;
+    return this.consent === "on" && this.client !== null;
   }
 
+  /** The install's anonymous id; empty when telemetry can never be on. */
   getAnonymousId(): string {
     return this.anonymousId;
   }
@@ -137,6 +168,63 @@ export class TelemetryManager {
     writeFileSync(idPath, `${newId}\n`);
     return newId;
   }
+
+  private connect(): TelemetryClient {
+    // Batched flush: the runtime is a long-running server, so events accumulate
+    // and flush every 30s (or every 20 events).
+    return this.factory(this.apiKey, {
+      host: POSTHOG_HOST,
+      flushAt: 20,
+      flushInterval: 30_000,
+      disableGeoip: true,
+    });
+  }
+}
+
+/**
+ * The install's anonymous id. `NB_TELEMETRY_ID` (a UUID) wins, so an installer
+ * that sends its own events before the runtime starts (the `nimblebrain` CLI)
+ * and the runtime report as one install. Otherwise a random UUID kept in the
+ * work directory.
+ */
+function installId(workDir: string, env: NodeJS.ProcessEnv): string {
+  const given = env.NB_TELEMETRY_ID?.trim();
+  if (given && UUID.test(given)) return given.toLowerCase();
+  mkdirSync(workDir, { recursive: true });
+  const idPath = join(workDir, TELEMETRY_ID_FILE);
+  if (existsSync(idPath)) return readFileSync(idPath, "utf-8").trim();
+  const id = randomUUID();
+  writeFileSync(idPath, `${id}\n`);
+  return id;
+}
+
+/**
+ * The recorded answer. `NB_TELEMETRY_CONSENT` carries an answer an installer
+ * took before the runtime first ran (the `nimblebrain` CLI asks at `init`);
+ * once a person answers here, the recorded file wins. Anything unreadable
+ * counts as no answer.
+ */
+function readConsent(workDir: string, env: NodeJS.ProcessEnv): TelemetryConsent {
+  try {
+    const { consent } = JSON.parse(readFileSync(join(workDir, CONSENT_FILE), "utf-8")) as {
+      consent?: unknown;
+    };
+    if (consent === "on" || consent === "off") return consent;
+  } catch {
+    // No answer recorded here yet.
+  }
+  const seed = env.NB_TELEMETRY_CONSENT;
+  return seed === "on" || seed === "off" ? seed : "undecided";
+}
+
+/** Common properties enriched on every captured event. */
+function commonProperties(): Record<string, unknown> {
+  return {
+    nb_version: process.env.NB_VERSION || pkg.version,
+    os: process.platform,
+    arch: process.arch,
+    bun_version: typeof Bun !== "undefined" ? Bun.version : "unknown",
+  };
 }
 
 /** Default factory using the real posthog-node SDK. */
@@ -149,7 +237,7 @@ function defaultClientFactory(
     disableGeoip: boolean;
   },
 ): TelemetryClient {
-  // Lazy import to avoid loading posthog-node when telemetry is disabled
+  // Lazy import to avoid loading posthog-node when telemetry is off
   const { PostHog } = require("posthog-node");
   const client = new PostHog(apiKey, {
     host: options.host,

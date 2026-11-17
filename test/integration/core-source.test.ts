@@ -79,12 +79,12 @@ async function makeRuntime(): Promise<Runtime> {
 }
 
 describe("Core Source", () => {
-  it("tools() returns 8 tools with nb__ prefix", async () => {
+  it("tools() returns 9 tools with nb__ prefix", async () => {
     const runtime = await makeRuntime();
     try {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const tools = await source.tools();
-      expect(tools).toHaveLength(8);
+      expect(tools).toHaveLength(9);
       for (const tool of tools) {
         expect(tool.name).toMatch(/^nb__/);
       }
@@ -97,8 +97,21 @@ describe("Core Source", () => {
         "nb__read_artifact",
         "nb__set_model_config",
         "nb__set_preferences",
+        "nb__set_telemetry",
         "nb__workspace_info",
       ]);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("set_telemetry refuses a caller who is not an org admin", async () => {
+    const runtime = await makeRuntime();
+    try {
+      const tool = createCoreToolDefs(runtime).find((t) => t.name === "set_telemetry");
+      const result = await tool?.handler({ consent: "on" });
+      expect(result?.isError).toBe(true);
+      expect(runtime.getTelemetryManager().status().consent).not.toBe("on");
     } finally {
       await runtime.shutdown();
     }

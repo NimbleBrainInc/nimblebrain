@@ -1,130 +1,114 @@
 ---
 title: Telemetry
-description: What NimbleBrain collects, why, and how to opt out.
+description: What NimbleBrain sends, who decides whether it is sent, and how to turn it off.
 ---
 
-import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
-NimbleBrain collects anonymous usage telemetry to improve the platform. Telemetry is on by default and can be disabled at any time. No personal data, conversation content, or file paths are ever sent.
+NimbleBrain can send anonymous usage data so we can see where installs fail and which features get used. **Nothing is sent until a person says yes.** An install that has not been answered sends nothing, and neither does one with nowhere to send it.
 
-## What is collected
+## Who decides
 
-Telemetry events fall into four categories:
+| Install | Who answers | How |
+|---|---|---|
+| `npx nimblebrain` | You | `init` asks once in your terminal. Only a typed `y` is a yes. |
+| `npx nimblebrain` run by a coding agent | You, through the agent | The agent passes the question on (below) and runs `npx nimblebrain telemetry on` or `off` with your answer. |
+| Any install, still unanswered | An org admin | The web UI asks once, at the foot of the sidebar. |
+| A deployment that set it | The operator | `telemetry.enabled` in `nimblebrain.json`, or `NB_TELEMETRY_DISABLED` / `DO_NOT_TRACK`. Nobody is asked. |
 
-### CLI events
+An agent's unattended `init` installs everything and reports the question instead of answering it:
+
+```json
+"telemetry": {
+  "state": "undecided",
+  "ask": "Help improve NimbleBrain by sending anonymous usage data? No prompts, content, names or keys are sent.",
+  "set": "npx nimblebrain telemetry on|off"
+}
+```
+
+Where nobody can answer (CI, a script), the install stays undecided and sends nothing.
+
+The answer belongs to the install. The CLI, the web UI and the runtime read and change the same one, so `npx nimblebrain telemetry status` shows what the web UI set.
+
+## What is sent
+
+### Installing (`npx nimblebrain`)
 
 | Event | Properties |
-|-------|-----------|
-| `cli.startup` | Mode (`serve`), connector count, startup time in ms |
+|---|---|
+| `cli.init_started` | Agent named with `--agent`, whether a person was at the terminal |
+| `cli.doctor_failed` | Which check failed (Docker, Compose, architecture, memory, port) and its error code |
+| `cli.init_failed` | The error code |
+| `cli.agent_connected` | Which coding agent (`claude-code`, `cursor`, `codex`) |
+| `cli.init_completed` | Time taken, whether a model key is set |
 
-### Agent loop events
+Every CLI event also carries the CLI version, OS, CPU architecture and Node version.
 
-| Event | Properties |
-|-------|-----------|
-| `agent.chat_started` | Whether a skill matched, tool count, whether this is a resumed conversation |
-| `agent.chat_completed` | Iteration count, tool call count, stop reason (`complete`, `max_iterations`, `max_input_tokens`, `cancelled`), LLM latency, tool latency, total time, input/output token counts |
-| `agent.error` | Error type name only (e.g., `AnthropicError`), structured error code if available |
+Until someone answers, these events wait in `telemetry-report.jsonl` in the install folder, readable by you only. A yes sends them with the first batch; a no deletes them. Nothing leaves the machine before a yes.
 
-### Connector lifecycle events
-
-| Event | Properties |
-|-------|-----------|
-| `connector.installed` | Whether the connector has UI |
-| `connector.uninstalled` | Source type |
-
-### Web client events
+### Using NimbleBrain
 
 | Event | Properties |
-|-------|-----------|
-| `web.page_view` | Automatic (PostHog JS), IP capture disabled |
-| `web.chat_sent` | Whether this is a resumed conversation, whether an app context is set |
-| `web.app_opened` | Whether the app has a primary view |
+|---|---|
+| `agent.chat_started` | Number of tools available |
+| `agent.chat_completed` | Iterations, tool calls, calls to connector tools, stop reason, model and tool latency, total time, token counts |
+| `agent.error` | The error's type name only (e.g. `AnthropicError`) |
+| `task.created` | Nothing beyond the event |
+| `connector.installed` | Whether the connector has a UI |
+| `connector.uninstalled` | Nothing beyond the event |
+| `web.chat_sent` | Whether the conversation was resumed, whether an app was in focus |
 
-Before a web event is sent, every URL in its properties (including PostHog's own `$current_url`, referrer, and `$initial_*` values) loses its query string and fragment, which can name the conversation or record on screen. The path stays.
+Runtime events also carry the NimbleBrain version, OS, CPU architecture and Bun version. Before a web event leaves the browser, every URL in it loses its query string and fragment, which can name what is on screen.
 
-## What is never collected
+## What is never sent
 
-- Conversation content, messages, or prompts
-- File paths, working directories, or hostnames
-- Usernames, IP addresses, or email addresses
-- Connector names, skill names, or tool names
+- Prompts, messages, conversation or file content
+- Names of connectors, tools, skills, workspaces or people
 - Tool arguments or results
-- Error messages or stack traces (only error type)
-- Model names (could reveal organization info)
-- Cost data (reveals pricing tier)
+- File paths, hostnames, IP addresses or email addresses
+- Model keys or any other credential
+- Error messages or stack traces (only an error's type)
+- Model names or cost
 
-## Identity model
+## Identity
 
-On first run, NimbleBrain generates a random UUIDv4 and stores it at `~/.nimblebrain/.telemetry-id`. This is the only identifier sent with events. It has no connection to any user identity.
+Each install has one random ID, and nothing else identifies it. `npx nimblebrain` creates it and passes it to the runtime as `NB_TELEMETRY_ID`, so the CLI's events and the runtime's count as one install. An install started another way keeps its ID in `.telemetry-id` in the work directory. The web client tags its events with the same ID.
 
-The ID is scoped to the work directory. Running `bun run dev` (workDir = `.nimblebrain`) creates a different ID than `bun run start` (workDir = `~/.nimblebrain`).
+To unlink future events from past ones, delete `NB_TELEMETRY_ID` from the install's `.env` (or `.telemetry-id` from the work directory). A new ID is made at the next start.
 
-The web client uses a separate browser-scoped anonymous ID (generated by PostHog JS using in-memory persistence). Server and web events are correlated by a shared `installId` property.
+## Changing your answer
 
-## How to opt out
-
-Any one of these methods disables telemetry completely:
-
-<Tabs>
-  <TabItem label="Config file">
-    Add to `nimblebrain.json`:
-
-    ```json
-    {
-      "telemetry": {
-        "enabled": false
-      }
-    }
-    ```
-  </TabItem>
-  <TabItem label="Environment variable">
-    ```bash
-    export NB_TELEMETRY_DISABLED=1
-    ```
-
-    Or use the informal standard:
-
-    ```bash
-    export DO_NOT_TRACK=1
-    ```
-
-    Environment variables are checked first (no file I/O). If either is set, telemetry is off regardless of the config file.
-  </TabItem>
-</Tabs>
-
-## Re-enabling telemetry
-
-Telemetry is on by default. Remove the `NB_TELEMETRY_DISABLED` / `DO_NOT_TRACK` env vars and set `telemetry.enabled: true` (or drop the `telemetry` block) in `nimblebrain.json`.
-
-## Resetting your anonymous ID
-
-To unlink future events from past events, delete `~/.nimblebrain/.telemetry-id`. A new random ID is generated on the next run.
-
-## First-run notice
-
-On first run, when the `.telemetry-id` file is created, NimbleBrain prints this notice to stderr:
-
-```
-NimbleBrain collects anonymous usage telemetry to improve the platform.
-No personal data, conversation content, or file paths are ever sent.
-Set NB_TELEMETRY_DISABLED=1 (or DO_NOT_TRACK=1) to disable.  Learn more: https://nimblebrain.ai/telemetry
+```bash
+npx nimblebrain telemetry          # what it is now
+npx nimblebrain telemetry off
+npx nimblebrain telemetry on
 ```
 
-This notice appears exactly once per work directory.
+Changing it needs NimbleBrain running (`npx nimblebrain up`), since the runtime keeps the answer.
+
+## Turning it off for a deployment
+
+Any one of these turns telemetry off and stops anyone from being asked:
+
+- `"telemetry": { "enabled": false }` in `nimblebrain.json`
+- `NB_TELEMETRY_DISABLED=1`
+- `DO_NOT_TRACK=1`
+
+`"telemetry": { "enabled": true }` turns it on without asking anyone. Set it only where you, as the operator, have the right to decide for the people using the install.
 
 <Aside type="tip">
-  When telemetry is disabled, no `.telemetry-id` file is created and no HTTP requests are made to PostHog. The PostHog SDK silently drops events when offline — telemetry is always best-effort and never blocks normal operation.
+  A runtime with no `POSTHOG_API_KEY` has nowhere to send anything. It asks no one, creates no ID, and makes no request to PostHog.
 </Aside>
 
 ## Technical details
 
-- **Server-side SDK:** `posthog-node` (batched, async, no native bindings)
-- **Web client SDK:** `posthog-js` with `ip: false`, `autocapture: false`, `disable_session_recording: true`, `persistence: "memory"`
-- **Destination:** PostHog Cloud (`https://us.i.posthog.com`)
-- **Check order:** Environment variables checked first, then config file
-- **Offline behavior:** Events silently dropped (no disk queue, no exceptions)
+- **Runtime:** `posthog-node`, batched every 30 seconds or 20 events, GeoIP off.
+- **Web client:** `posthog-js` with `ip: false`, `autocapture: false`, `capture_pageview: false`, session recording off. It starts only after the runtime reports a yes.
+- **CLI:** one `POST` to PostHog's batch endpoint at the end of a command, using Node's built-in `fetch`.
+- **Destination:** PostHog Cloud (`https://us.i.posthog.com`).
+- **Offline:** events are dropped by the runtime and kept by the CLI for its next command. Telemetry never fails a command.
 
 ## What's next
 
-- [Configuration: nimblebrain.json](/config/nimblebrain-json) — full config reference including telemetry settings
-- [Environment Variables](/config/environment/) — `NB_TELEMETRY_DISABLED` and `DO_NOT_TRACK`
+- [`npx nimblebrain`](/cli/nimblebrain/): installing and running NimbleBrain locally
+- [Environment variables](/config/environment/): `NB_TELEMETRY_DISABLED`, `DO_NOT_TRACK` and the telemetry settings

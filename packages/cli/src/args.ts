@@ -11,6 +11,7 @@ export const COMMANDS = [
   "logs",
   "update",
   "uninstall",
+  "telemetry",
 ] as const;
 export type Command = (typeof COMMANDS)[number];
 
@@ -24,10 +25,12 @@ export interface Flags {
   port: number;
   home?: string;
   provider?: string;
+  /** `--telemetry on|off`: an answer a person already gave. */
+  telemetry?: "on" | "off";
 }
 
 export type Parsed =
-  | { kind: "run"; command: Command; flags: Flags }
+  | { kind: "run"; command: Command; flags: Flags; arg?: string }
   | { kind: "help"; flags: Flags }
   | { kind: "version"; flags: Flags };
 
@@ -40,6 +43,7 @@ const options = {
   port: { type: "string" },
   home: { type: "string" },
   provider: { type: "string" },
+  telemetry: { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } satisfies ParseArgsOptionsConfig;
@@ -64,6 +68,7 @@ export function parse(argv: string[]): Parsed {
     }
     agent = values.agent as Agent;
   }
+  const telemetry = telemetryFlag(values.telemetry);
   const flags: Flags = {
     json,
     yes: values.yes === true,
@@ -71,18 +76,32 @@ export function parse(argv: string[]): Parsed {
     port,
     home: values.home,
     provider: values.provider,
+    telemetry,
   };
 
   if (values.help) return { kind: "help", flags };
   if (values.version) return { kind: "version", flags };
-  if (positionals.length > 1)
-    throw new CliError("USAGE", `Unexpected argument "${positionals[1]}".`);
-
   const name = positionals[0] ?? "init";
   if (name === "help") return { kind: "help", flags };
+  return { kind: "run", command: command(name, positionals), flags, arg: positionals[1] };
+}
+
+function telemetryFlag(value: string | undefined): "on" | "off" | undefined {
+  if (value === undefined || value === "on" || value === "off") return value;
+  throw new CliError("USAGE", `--telemetry must be on or off, not "${value}".`);
+}
+
+/** The command named, checked with its argument: only `telemetry` takes one (on, off or status). */
+function command(name: string, positionals: string[]): Command {
+  const maxArgs = name === "telemetry" ? 2 : 1;
+  if (positionals.length > maxArgs)
+    throw new CliError("USAGE", `Unexpected argument "${positionals[maxArgs]}".`);
   if (!(COMMANDS as readonly string[]).includes(name))
     throw new CliError("USAGE", `Unknown command "${name}".`);
-  return { kind: "run", command: name as Command, flags };
+  const arg = positionals[1];
+  if (name === "telemetry" && arg !== undefined && !["on", "off", "status"].includes(arg))
+    throw new CliError("USAGE", `telemetry takes on, off or status, not "${arg}".`);
+  return name as Command;
 }
 
 function parseStrict(argv: string[]) {

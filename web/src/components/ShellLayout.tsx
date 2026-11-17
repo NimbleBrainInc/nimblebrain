@@ -19,6 +19,7 @@ import { SidebarHeader } from "./shell/SidebarHeader";
 import { TopBar } from "./shell/TopBar";
 import { WorkspaceNav } from "./shell/WorkspaceNav";
 import { WorkspaceSwitcher } from "./shell/WorkspaceSwitcher";
+import { TelemetryConsentCard } from "./TelemetryConsentCard";
 import { UserMenu } from "./UserMenu";
 import { TooltipProvider } from "./ui/tooltip";
 
@@ -237,6 +238,9 @@ function SidebarBody({
 
       {/* New-build-available prompt — renders nothing until detected. */}
       <ReleaseUpdateBanner collapsed={collapsed} />
+
+      {/* Asks once whether this install may send usage data; nothing otherwise. */}
+      <TelemetryConsentCard collapsed={collapsed} />
 
       <div className="shrink-0 border-t border-sidebar-border py-2">
         <UserMenu collapsed={collapsed} onLogout={onLogout} />

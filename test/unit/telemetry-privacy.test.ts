@@ -51,6 +51,7 @@ function createMockSetup(): {
     workDir: tmpDir,
     clientFactory: () => client,
   });
+  manager.setConsent("on");
   const sink = new PostHogEventSink(manager);
   return { client, sink, tmpDir };
 }
@@ -165,6 +166,7 @@ describe("Telemetry Privacy", () => {
         allowed: new Set([
           "iterations",
           "tool_calls",
+          "connector_tool_calls",
           "stop_reason",
           "llm_latency_ms",
           "tool_latency_ms",

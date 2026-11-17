@@ -16,6 +16,12 @@ export interface Deps {
   portFree(port: number): Promise<boolean>;
   /** A GET with a timeout; never throws, a connection failure is `undefined`. */
   getJson(url: string, timeoutMs?: number): Promise<{ status: number; body: unknown } | undefined>;
+  /** A JSON POST with a timeout; never throws, a connection failure is `undefined`. */
+  postJson(
+    url: string,
+    body: unknown,
+    timeoutMs?: number,
+  ): Promise<{ status: number; body: unknown } | undefined>;
   readText(path: string): Promise<string | undefined>;
   /** Write a file, creating its folder (mode 700). `mode` applies to a new file and to an existing one. */
   writeText(path: string, text: string, mode?: number): Promise<void>;
@@ -93,6 +99,26 @@ export function realDeps(): Deps {
           // Not JSON: hand back the text; the caller decides whether that is an answer.
         }
         return { status: res.status, body };
+      } catch {
+        return undefined;
+      }
+    },
+    async postJson(url, body, timeoutMs = 5_000) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          signal: AbortSignal.timeout(timeoutMs),
+          headers: { "user-agent": "nimblebrain-cli", "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const text = await res.text();
+        let parsed: unknown = text;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          // Not JSON: hand back the text.
+        }
+        return { status: res.status, body: parsed };
       } catch {
         return undefined;
       }

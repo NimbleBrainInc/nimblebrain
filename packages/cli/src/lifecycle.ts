@@ -17,6 +17,20 @@ import { doctor } from "./doctor.ts";
 import { compareVersions, releaseTag } from "./release.ts";
 import { CliError, type Ok } from "./result.ts";
 import { type InstallState, readInstall, type StatusResult, status } from "./status.ts";
+import {
+  type Consent,
+  envValues,
+  field,
+  lockedHere,
+  parseAnswer,
+  QUESTION,
+  type Recorder,
+  recorder,
+  reportId,
+  reportPath,
+  runtimeTelemetry,
+  setRuntimeTelemetry,
+} from "./telemetry.ts";
 
 /** How long a pull plus first start may take, and how long health may take after it. */
 const START_TIMEOUT_MS = 15 * 60_000;
@@ -27,6 +41,8 @@ export interface Ctx {
   flags: Flags;
   home: string;
   version: string;
+  /** The command's argument; only `telemetry` takes one. */
+  arg?: string;
 }
 
 /** A person is there to answer, and did not ask for defaults or machine output. */
@@ -42,12 +58,46 @@ export async function init(ctx: Ctx): Promise<Ok> {
   const { deps, flags, home } = ctx;
   if (await readInstall(deps, home)) return { ...(await status(deps, home)), already: true };
 
+  // Asked first, so a failure on this machine is reported only with a yes.
+  const consent = await chooseConsent(ctx);
+  const rec = recorder(deps, ctx.version, await reportId(deps, home));
+  const begun = Date.now();
+  rec.record("cli.init_started", { agent: flags.agent ?? null, interactive: deps.interactive });
+  try {
+    return await install(ctx, consent, rec, begun);
+  } catch (err) {
+    if (!(err instanceof CliError)) throw err;
+    if (err.code !== "MODEL_KEY_MISSING") {
+      const check = typeof err.detail.check === "string" ? err.detail.check : undefined;
+      rec.record(check ? "cli.doctor_failed" : "cli.init_failed", { error: err.code, check });
+    }
+    await rec.settle(home, consent);
+    throw new CliError(err.code, err.message, {
+      ...err.detail,
+      telemetry: field(consent, lockedHere(deps)),
+    });
+  }
+}
+
+/**
+ * The answer, in order: `--telemetry`, then the person at the terminal, else
+ * undecided. Never asked when `DO_NOT_TRACK` is set or there is nowhere to send.
+ */
+async function chooseConsent(ctx: Ctx): Promise<Consent> {
+  if (lockedHere(ctx.deps)) return "off";
+  if (ctx.flags.telemetry) return ctx.flags.telemetry;
+  if (!asks(ctx)) return "undecided";
+  return parseAnswer(await ctx.deps.prompt(`${QUESTION} [y/N] `));
+}
+
+async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number): Promise<Ok> {
+  const { deps, flags, home } = ctx;
   await doctor(deps, flags.port);
   await guardOurs(deps, home);
   const tag = await releaseTag(deps, ctx.version);
   await confirmStart(ctx, tag);
 
-  await writeInstallFiles(deps, home, tag, flags.port);
+  await writeInstallFiles(deps, home, tag, flags.port, envValues(deps, rec.id, consent));
   // Asked before the start: the runtime reads `.env` only when its container is created.
   if (!hasKey((await deps.readText(paths(home).env)) ?? "") && asks(ctx))
     await enterKey(ctx, false);
@@ -61,8 +111,14 @@ export async function init(ctx: Ctx): Promise<Ok> {
   };
   await writeState(deps, home, state);
   const manual = await connectChosenAgent(ctx, state);
+  if (state.agent) rec.record("cli.agent_connected", { agent: state.agent });
 
   const result: StatusResult & { manual?: string } = { ...(await status(deps, home)), manual };
+  rec.record("cli.init_completed", {
+    duration_ms: Date.now() - begun,
+    model_key: result.model_key,
+  });
+  await rec.settle(home, consent);
   if (result.model_key === "missing") {
     throw new CliError("MODEL_KEY_MISSING", "NimbleBrain is running; chat needs a model key.", {
       ...result,
@@ -175,9 +231,50 @@ export async function uninstall(ctx: Ctx): Promise<Ok> {
   if (install.agent === "claude-code")
     await deps.exec("claude", ["mcp", "remove", "-s", "user", SERVER_NAME]);
   if (install.agent === "codex") await deps.exec("codex", ["mcp", "remove", SERVER_NAME]);
-  for (const file of Object.values(paths(home))) await deps.remove(file);
+  for (const file of [...Object.values(paths(home)), reportPath(home)]) await deps.remove(file);
   await deps.remove(home);
   return { ok: true, removed: true };
+}
+
+/**
+ * Reports or changes whether the install sends anonymous telemetry. The
+ * running runtime keeps the answer, so this and the web UI change the same
+ * thing; changing it needs the runtime up. A report waiting from earlier runs
+ * is sent on `on` and deleted on `off`.
+ */
+export async function telemetry(ctx: Ctx): Promise<Ok> {
+  const { deps, home } = ctx;
+  const install = await requireInstall(ctx);
+  const url = `http://127.0.0.1:${install.port}`;
+  if (ctx.arg !== "on" && ctx.arg !== "off") {
+    return { ok: true, telemetry: (await status(deps, home)).telemetry };
+  }
+  const here = lockedHere(deps);
+  if (here) {
+    throw new CliError(
+      "TELEMETRY_LOCKED",
+      here === "do_not_track"
+        ? "DO_NOT_TRACK (or NB_TELEMETRY_DISABLED) is set, so telemetry stays off."
+        : "This CLI has nowhere to send telemetry.",
+    );
+  }
+  const rt = await runtimeTelemetry(deps, url);
+  if (!rt)
+    throw new CliError(
+      "NOT_RUNNING",
+      "NimbleBrain is not running, so it cannot record the answer.",
+    );
+  await setRuntimeTelemetry(deps, url, ctx.arg);
+  // The answer the CLI holds in `.env` follows, so the two never disagree.
+  const p = paths(home);
+  await deps.writeText(
+    p.env,
+    setEnvLines((await deps.readText(p.env)) ?? "", { NB_TELEMETRY_CONSENT: ctx.arg }),
+    0o600,
+  );
+  const rec = recorder(deps, ctx.version, await reportId(deps, home));
+  await rec.settle(home, ctx.arg);
+  return { ok: true, telemetry: field(ctx.arg) };
 }
 
 /** Takes the model key at a hidden prompt. A person runs this; an agent never handles the key. */
@@ -248,6 +345,7 @@ async function writeInstallFiles(
   home: string,
   tag: string,
   port: number,
+  extra: Record<string, string> = {},
 ): Promise<void> {
   const p = paths(home);
   await deps.writeText(p.compose, COMPOSE_FILE);
@@ -257,6 +355,7 @@ async function writeInstallFiles(
     COMPOSE_PROJECT_NAME: PROJECT,
     NIMBLEBRAIN_TAG: tag,
     NIMBLEBRAIN_WEB_PORT: String(port),
+    ...extra,
   });
   await deps.writeText(p.env, env, 0o600);
 }

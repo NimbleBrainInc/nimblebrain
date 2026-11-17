@@ -222,7 +222,7 @@ A fully specified example:
   "http":      { "port": 27247, "host": "127.0.0.1" },
   "logging":   { "dir": "~/.nimblebrain/logs", "level": "normal", "retentionDays": 30 },
   "store":     { "type": "jsonl", "dir": "~/.nimblebrain/conversations" },
-  "telemetry": { "enabled": true },
+  "telemetry": { "enabled": false },
   "files":     { "maxFileSize": 26214400, "maxFilesPerMessage": 10 },
   "features":  { "catalogSearch": true },
   "maxIterations": 25,
@@ -317,7 +317,7 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 | Variable | Purpose |
 |----------|---------|
 | `WORKOS_API_KEY` | WorkOS API key (when `auth.adapter: "workos"` in `instance.json`) |
-| `POSTHOG_API_KEY` | PostHog key for anonymous product telemetry |
+| `POSTHOG_API_KEY` | Where anonymous telemetry goes; nothing is sent until a person says yes |
 | `NB_TELEMETRY_DISABLED` | Set to `1` to disable telemetry (also `DO_NOT_TRACK=1`) |
 
 ## Programmatic API
@@ -705,7 +705,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 - **`WorkspaceLogSink`** — Workspace-level daily rolling JSONL logs. Only persists workspace events (connector lifecycle, data/config changes, skill/file operations).
 - **`ConsoleEventSink`** — Human-readable stderr for development.
 - **`DebugEventSink`** — Verbose JSON dumps (`--debug`).
-- **`PostHogEventSink`** — Anonymous telemetry. No PII. Opt-out: `telemetry.enabled: false`, `NB_TELEMETRY_DISABLED=1`, or `DO_NOT_TRACK=1`.
+- **`PostHogEventSink`** — Anonymous telemetry, sent only after a person says yes. No PII. Off for a deployment: `telemetry.enabled: false`, `NB_TELEMETRY_DISABLED=1`, or `DO_NOT_TRACK=1`.
 
 ## License
 
