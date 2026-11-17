@@ -25,7 +25,7 @@ Published to npm as `nimblebrain`; run as `npx nimblebrain`. It installs, starts
 
 ## Releasing
 
-`release.yml` job `publish-cli` publishes this package at every `v*` tag's version, after the images are on GHCR (RELEASING.md §7, job 5): GA to `latest`, a pre-release to `next`, a hotfix tag to nowhere. The version is set from the tag in the job; `package.json` stays `0.0.0-dev`. `cli-e2e` runs the whole lifecycle on `ubuntu-latest` and `ubuntu-24.04-arm` against the newest release.
+`release.yml` job `publish-cli` stages this package at every `v*` tag's version, after the images are on GHCR (RELEASING.md §7, job 5): GA for `latest`, a pre-release for `next`, a hotfix tag nowhere. It goes public only when a maintainer approves it on npm with 2FA (§4e); the workflow cannot publish directly. The version is set from the tag in the job; `package.json` stays `0.0.0-dev`. `cli-e2e` runs the whole lifecycle on `ubuntu-latest` and `ubuntu-24.04-arm` against the newest release.
 
 ## Verify
 

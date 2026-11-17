@@ -360,10 +360,16 @@ jobs:
   # pre-release to `next`, so `npx nimblebrain` never resolves to one. A hotfix
   # tag (`-hotfix.N`) is for one deployment and publishes nothing.
   #
+  # The job STAGES the version; a maintainer approves it on npmjs.com (2FA) before
+  # it is public, so nothing this workflow (or a stolen OIDC token) does can put a
+  # version in front of `npx` users on its own. Until it is approved, `npx
+  # nimblebrain` keeps resolving to the previous version (RELEASING.md §4e).
+  #
   # npm trusted publishing: no token. npm accepts this workflow's OIDC identity
   # because the `nimblebrain` package names this repository, `release.yml` and the
-  # `npm` environment as its trusted publisher (set once on npmjs.com). A version
-  # already on npm is skipped, so a re-run of this workflow completes.
+  # `npm` environment as its trusted publisher, with direct publish and dist-tag
+  # changes not allowed (staging only). A version already on npm is skipped, so a
+  # re-run of this workflow completes.
   publish-cli:
     name: Publish the CLI to npm
     needs: release
@@ -380,9 +386,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v5
         with:
-          # Trusted publishing needs npm 11.5.1+, which Node 24 ships.
           node-version: 24
           registry-url: https://registry.npmjs.org
+      # `npm stage` is newer than the npm a Node 24 runner may bundle; pin one that has it.
+      - name: Use an npm with staged publishing
+        run: npm install -g npm@11.16.0
 
       - name: Resolve the version and dist-tag
         id: v
@@ -420,12 +428,24 @@ jobs:
           built=$(node dist/nimblebrain.js --version)
           test "$built" = "$VERSION" || { echo "built $built, expected $VERSION"; exit 1; }
 
-      - name: Publish
+      - name: Stage for approval
         if: steps.v.outputs.skip != 'true'
         working-directory: packages/cli
         env:
           DIST: ${{ steps.v.outputs.dist }}
-        run: npm publish --access public --tag "$DIST"
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -uo pipefail
+          if npm stage publish --access public --tag "$DIST"; then
+            msg="nimblebrain@$VERSION is staged for dist-tag $DIST. Approve it on npmjs.com, or run npm stage list nimblebrain then npm stage approve <stage-id>, to publish it. npx nimblebrain serves the previous version until then."
+            echo "::notice title=Approve the CLI on npm::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          else
+            # A staged, unapproved version is invisible to `npm view` but holds its
+            # version number, so a re-run lands here: say what to do, then fail.
+            echo "::error title=Staging failed::If nimblebrain@$VERSION is already staged (npm stage list nimblebrain), approve or reject it on npmjs.com; otherwise read the npm error above."
+            exit 1
+          fi
 
   # Promote the agent's STABLE channel to prod: dispatch the deploy-config repo's
   # prod-promote receiver (target: agent), which records the prod stable image tag;
