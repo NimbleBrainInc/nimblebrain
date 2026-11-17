@@ -137,9 +137,9 @@ export const colors = {
   "sidebar-foreground": ["#5c5c66", "#a3a3a3"],
   "sidebar-border": ["#e4e4e7", "#2b2b2b"],
   "sidebar-hover": ["#f4f4f5", "#212121"],
-  // The active sidebar row: `sidebar-foreground` at 10% over `sidebar`, the
-  // look of a selected row, as an opaque token so a brand can fill the row
-  // with its highlight color.
+  // The active sidebar row, as an opaque token so a brand can fill the row
+  // with its highlight color. Light mode is `sidebar-foreground` at 10% over
+  // `sidebar`; dark mode sets the row explicitly, a step above `sidebar-hover`.
   "sidebar-active": ["#eaeaeb", "#2a2a2a"],
   "sidebar-active-foreground": ["#09090b", "#ededed"],
   // The tooltip pill (`components/ui/tooltip.tsx`): a dark chip in both modes,
