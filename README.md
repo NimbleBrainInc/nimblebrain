@@ -31,7 +31,7 @@ Open `http://localhost:27246` in your browser. The runtime does not start withou
 
 To build from source instead of pulling (e.g. when developing against local changes), run `docker compose up --build`.
 
-**Apple Silicon and other arm64 hosts:** the published images are `linux/amd64` only, so the pull finds no arm64 image and `docker compose up` builds both images from source instead. The first build takes about six minutes. It needs the Docker buildx plugin, which Docker Desktop and OrbStack include; check with `docker buildx version`. Without buildx, Compose falls back to the classic builder, which stops at `COPY --parents` with "no source files were specified".
+**Apple Silicon and other arm64 hosts:** the images are published for `linux/amd64` and `linux/arm64`, so `docker compose up` pulls a native image on either.
 
 ### Option 2: Local development
 

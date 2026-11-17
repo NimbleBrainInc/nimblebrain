@@ -110,6 +110,19 @@ describe("doctor", () => {
     expect((await json(["doctor"], deps)).body.error).toBe("ARCH_UNSUPPORTED");
   });
 
+  test("Apple Silicon (aarch64) and arm64 hosts pass", async () => {
+    for (const arch of ["aarch64", "arm64"]) {
+      const deps = fakeDeps({
+        execMap: {
+          "docker info --format {{json .}}": ok(
+            JSON.stringify({ Architecture: arch, MemTotal: 8 * GB }),
+          ),
+        },
+      });
+      expect((await json(["doctor"], deps)).body.ok).toBe(true);
+    }
+  });
+
   test("under 2 GB of Docker memory is LOW_MEMORY", async () => {
     const deps = fakeDeps({
       execMap: {

@@ -7,6 +7,10 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 
 Get NimbleBrain running locally with Docker Compose. You need Docker and an [Anthropic API key](https://console.anthropic.com/).
 
+<Aside type="tip">
+One command does all of this: `npx nimblebrain` checks your machine, starts NimbleBrain, takes your model key, and connects your coding agent. See [The nimblebrain CLI](/cli/nimblebrain/). The steps below are the same setup by hand.
+</Aside>
+
 <Steps>
 
 1. **Create a config file**
@@ -74,8 +78,8 @@ Get NimbleBrain running locally with Docker Compose. You need Docker and an [Ant
 
    The `platform` image runs the agent API on port 27247 (internal). The `web` image serves the UI and is published on port 27246 of this machine only (`127.0.0.1`).
 
-   <Aside type="caution">
-   The published images are `linux/amd64` only. On Apple Silicon or another arm64 host this file fails at the pull with `no matching manifest for linux/arm64/v8`. Clone the [repository](https://github.com/NimbleBrainInc/nimblebrain) and follow the Docker quick start in its README instead: the repository's `docker-compose.yml` builds both images from source when the pull finds no arm64 image. The first build takes about six minutes and needs the Docker buildx plugin, which Docker Desktop and OrbStack include. Without buildx the build stops at `COPY --parents`.
+   <Aside type="note">
+   The images are published for `linux/amd64` and `linux/arm64`, so this file runs natively on Apple Silicon and other arm64 hosts.
    </Aside>
 
 3. **Set your API key and start**

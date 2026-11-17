@@ -3,12 +3,12 @@ import { CliError, type ErrorCode } from "./result.ts";
 
 /**
  * The CPU architectures the runtime publishes images for, as Docker reports
- * them. arm64 joins when the release publishes `linux/arm64` images; until
- * then an Apple Silicon host would have to build both images locally, which
- * is not a one-command start, so it is refused here rather than left to fail
- * mid-pull.
+ * them (`docker info` says `x86_64` or `aarch64`; some hosts say `amd64` or
+ * `arm64`). Releases from v0.73.0 publish `linux/amd64` and `linux/arm64`; an
+ * install older than that on arm64 has no image to pull, which `init` reports
+ * as a failed start rather than here, since the CLI installs its own release.
  */
-export const SUPPORTED_ARCH = ["x86_64", "amd64"];
+export const SUPPORTED_ARCH = ["x86_64", "amd64", "aarch64", "arm64"];
 
 /** The runtime's working floor, in bytes of memory Docker can give it. */
 export const MIN_MEMORY = 2 * 1024 ** 3;

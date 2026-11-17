@@ -273,6 +273,7 @@ export default defineConfig({
             icon: 'seti:shell',
             items: [
               { label: 'Overview', slug: 'cli/overview' },
+              { label: 'npx nimblebrain', slug: 'cli/nimblebrain' },
               { label: 'Running the server', slug: 'cli/serve' },
               { label: 'Managing secrets', slug: 'cli/secrets' },
               { label: 'Dev mode', slug: 'cli/dev' },

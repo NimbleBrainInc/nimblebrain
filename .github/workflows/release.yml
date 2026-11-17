@@ -354,6 +354,79 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
 
+  # Publish the `nimblebrain` CLI (packages/cli) to npm at the release's version,
+  # after `release` put this version's images on GHCR, since the CLI installs the
+  # runtime release of its own version. A GA tag publishes to `latest`; a
+  # pre-release to `next`, so `npx nimblebrain` never resolves to one. A hotfix
+  # tag (`-hotfix.N`) is for one deployment and publishes nothing.
+  #
+  # npm trusted publishing: no token. npm accepts this workflow's OIDC identity
+  # because the `nimblebrain` package names this repository, `release.yml` and the
+  # `npm` environment as its trusted publisher (set once on npmjs.com). A version
+  # already on npm is skipped, so a re-run of this workflow completes.
+  publish-cli:
+    name: Publish the CLI to npm
+    needs: release
+    if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-hotfix.') }}
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write   # npm trusted publishing
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v5
+        with:
+          # Trusted publishing needs npm 11.5.1+, which Node 24 ships.
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Resolve the version and dist-tag
+        id: v
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          case "$TAG" in
+            *-*) dist=next ;;
+            *) dist=latest ;;
+          esac
+          if npm view "nimblebrain@$version" version >/dev/null 2>&1; then
+            echo "nimblebrain@$version is already on npm; nothing to publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dist=$dist" >> "$GITHUB_OUTPUT"
+          echo "Publishing nimblebrain@$version to dist-tag $dist"
+
+      # The version is set from the tag here, never committed (RELEASING.md: do not
+      # bump package.json per release). The build bakes it in, and the CLI installs
+      # the runtime release `v<version>`.
+      - name: Build at the release version
+        if: steps.v.outputs.skip != 'true'
+        working-directory: packages/cli
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          npm pkg set version="$VERSION"
+          bun run build
+          built=$(node dist/nimblebrain.js --version)
+          test "$built" = "$VERSION" || { echo "built $built, expected $VERSION"; exit 1; }
+
+      - name: Publish
+        if: steps.v.outputs.skip != 'true'
+        working-directory: packages/cli
+        env:
+          DIST: ${{ steps.v.outputs.dist }}
+        run: npm publish --access public --tag "$DIST"
+
   # Promote the agent's STABLE channel to prod: dispatch the deploy-config repo's
   # prod-promote receiver (target: agent), which records the prod stable image tag;
   # the auto-sync per-tenant ApplicationSet then rolls every `stable` tenant. Mirrors

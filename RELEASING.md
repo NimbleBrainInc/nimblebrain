@@ -131,7 +131,16 @@ docker pull "ghcr.io/nimblebraininc/nimblebrain-web:$TAG"
 
 **Expected:** both pulls succeed. A failure here with "not found" or "denied" for a newly-created image name means §5 is needed.
 
-If any of 4a–4d fail, go to §6.
+### 4e. The CLI on npm
+
+```bash
+npm view "nimblebrain@${TAG#v}" version
+npm view nimblebrain dist-tags
+```
+
+**Expected:** the version is published; a GA tag is `latest`, a pre-release is `next`. A hotfix tag (`-hotfix.N`) publishes nothing. If the job failed with an authentication error, the trusted-publisher link on npmjs.com is missing or names another workflow or environment (§7, job 5); fix it and re-run the job. It skips a version already on npm, so a re-run is safe.
+
+If any of 4a–4e fail, go to §6.
 
 ## 5. One-time visibility flip for new image names
 
@@ -185,12 +194,13 @@ Then fix the underlying issue on `main` and cut the **next** pre-release number 
 
 ## 7. Workflow reference
 
-`.github/workflows/release.yml` fires on any `v*` tag push (and `workflow_dispatch` with a `tag` input + an EMERGENCY `rebuild` toggle) and runs four jobs:
+`.github/workflows/release.yml` fires on any `v*` tag push (and `workflow_dispatch` with a `tag` input + an EMERGENCY `rebuild` toggle) and runs five jobs:
 
 1. **CI passed on the tagged commit** — the gate; every other job waits on it. It resolves the tag to its commit and reads that commit's `ci.yml` `push` runs, on `main` or on a `hotfix/**` branch (§8), and their jobs from the Actions API (no tests re-run). It passes when one run's four test jobs (`Lint & Typecheck`, `Unit Tests`, `Unit Tests (root deps only)`, `Integration Tests`) all concluded `success`. A failure in the run's other jobs (image build, change detection, edge roll) does not refuse the release on its own. No run, or a test job that failed, was skipped, is missing, or is still running: the release stops before anything is retagged, rebuilt, or published, and the error names the commit and each such job with its run. A pull-request run does not count, since it tested the PR head rather than the commit that landed. The gate applies to pre-release tags and to `rebuild=true` alike, and its job-name list must change with any rename in `ci.yml`. If CI was still running, re-run the release once it passes (`gh run rerun <id> --failed`).
 2. **Promote release images** — **promote-by-retag, not rebuild.** `ci.yml` already built and pushed the staging-verified runtime + web `:<sha>` images to ECR on merge, each a multi-platform index (`linux/amd64` + `linux/arm64`, each platform built natively on its own runner); this re-tags those exact indexes to `:vX.Y.Z` via `aws ecr put-image` (guarded: target repo must be IMMUTABLE, the `:<sha>` source must exist, and a re-run is idempotent — same digest skips, a different digest fails). It then copies the same `:<sha>` manifests to the GHCR tags with `docker buildx imagetools create` (edge never pushes GHCR), and for stable releases moves `:latest`. There is no Verify or rebuild step — job 1 has already confirmed `ci.yml` passed on the commit. The `workflow_dispatch` `rebuild=true` escape hatch rebuilds from source instead (loud warning: prod won't be byte-for-byte), for `linux/amd64` only — only for a tag off a commit that never rode staging.
 3. **GitHub Release** — creates a release with auto-generated notes; `prerelease` flag mirrors the hyphen rule
 4. **Promote to prod (stable channel)** — GA only; dispatches the deploy-config receiver to record the new prod stable image tag, which the auto-sync per-tenant ApplicationSet then rolls. No-ops when the prod-promote App isn't configured (forks/pre-setup CI).
+5. **Publish the CLI to npm** — after job 2, so the images the CLI installs are on GHCR first. Builds `packages/cli` at the tag's version (set in the job, never committed) and publishes `nimblebrain` to `latest` for a GA tag and `next` for a pre-release; a hotfix tag skips it. Authenticates by npm trusted publishing, so there is no npm token: the package's trusted publisher on npmjs.com must name this repository, `release.yml`, and the `npm` environment. Skips a version already on npm.
 
 Artifact map:
 
