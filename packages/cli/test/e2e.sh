@@ -10,7 +10,12 @@ export NIMBLEBRAIN_HOME=${NIMBLEBRAIN_HOME:-$(mktemp -d)/nimblebrain-local}
 
 step() { printf '\n== %s\n' "$*"; }
 # Runs the CLI with --json; prints the object; never stops the script on a non-zero exit.
-nb() { $NB "$@" --json || true; }
+# The exit code goes to stderr (the log), so a failure shows how the process ended.
+nb() {
+  local rc=0
+  $NB "$@" --json || rc=$?
+  echo "(nimblebrain $* exited $rc)" >&2
+}
 expect() { # expect <json> <jq filter that must be true> <what>
   if ! jq -e "$2" >/dev/null <<<"$1"; then
     echo "FAILED: $3"

@@ -2,10 +2,44 @@
  * The published entry point (`bin` in package.json, after the build). Kept
  * apart from `main.ts` so importing `run` in a test never executes a command,
  * without `import.meta.main`, which Node only has from 24.
+ *
+ * Every run answers exactly once. The answer is written synchronously, and the
+ * event loop is held open until it has been, so the process cannot end mid-
+ * `await` with nothing on stdout. If it ends anyway (a signal, or something
+ * that drained the loop), the exit hook writes an `INTERRUPTED` answer carrying
+ * the exit code, and says so on stderr, so the cause is visible next time.
  */
+import { writeSync } from "node:fs";
 import { realDeps } from "./deps.ts";
-import { run } from "./main.ts";
+import { interrupted, run } from "./main.ts";
 
-const { stdout, code } = await run(process.argv.slice(2), realDeps());
-process.stdout.write(stdout);
-process.exitCode = code;
+const argv = process.argv.slice(2);
+let answered = false;
+
+process.on("exit", (code) => {
+  if (answered) return;
+  const out = interrupted(argv, code);
+  writeSync(1, out.stdout);
+  writeSync(2, `nimblebrain: stopped before answering (exit code ${code})\n`);
+  process.exitCode = out.code;
+});
+
+// A signal ends the process without an `exit` event; end it through
+// process.exit so the hook above still answers. 128 + n is the shell's code.
+for (const [signal, n] of [
+  ["SIGINT", 2],
+  ["SIGTERM", 15],
+  ["SIGHUP", 1],
+] as const) {
+  process.on(signal, () => process.exit(128 + n));
+}
+
+const hold = setInterval(() => {}, 2 ** 30);
+try {
+  const { stdout, code } = await run(argv, realDeps());
+  writeSync(1, stdout);
+  answered = true;
+  process.exitCode = code;
+} finally {
+  clearInterval(hold);
+}

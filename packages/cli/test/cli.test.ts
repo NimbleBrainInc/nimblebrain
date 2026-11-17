@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Deps, ExecResult } from "../src/deps.ts";
-import { run, VERSION } from "../src/main.ts";
+import { interrupted, run, VERSION } from "../src/main.ts";
 import { GB, machine, ok } from "./fake.ts";
 
 /** A machine where everything passes unless a test overrides one answer. */
@@ -210,5 +210,20 @@ describe("status", () => {
     });
     await json(["status"], deps);
     expect(seen).toEqual(["/srv/nb/install.json"]);
+  });
+});
+
+describe("a run that ends without answering", () => {
+  test("still answers once, as INTERRUPTED with the exit code, in the format asked for", () => {
+    const asJson = interrupted(["init", "--json"], 143);
+    expect(asJson.code).toBe(1);
+    expect(JSON.parse(asJson.stdout)).toMatchObject({
+      ok: false,
+      error: "INTERRUPTED",
+      exit_code: 143,
+    });
+    const plain = interrupted(["init"], 130);
+    expect(plain.stdout).toContain("exit code 130");
+    expect(plain.stdout).toContain("fix: ");
   });
 });
