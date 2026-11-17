@@ -131,14 +131,18 @@ docker pull "ghcr.io/nimblebraininc/nimblebrain-web:$TAG"
 
 **Expected:** both pulls succeed. A failure here with "not found" or "denied" for a newly-created image name means §5 is needed.
 
-### 4e. The CLI on npm
+### 4e. Approve the CLI on npm
+
+The release job stages `nimblebrain@${TAG#v}`; it is not public until a maintainer approves it, with 2FA, on npmjs.com (the package's **Staged** versions) or from a shell:
 
 ```bash
+npm stage list nimblebrain            # find the stage id for this version
+npm stage approve <stage-id>          # prompts for 2FA, then publishes
 npm view "nimblebrain@${TAG#v}" version
 npm view nimblebrain dist-tags
 ```
 
-**Expected:** the version is published; a GA tag is `latest`, a pre-release is `next`. A hotfix tag (`-hotfix.N`) publishes nothing. If the job failed with an authentication error, the trusted-publisher link on npmjs.com is missing or names another workflow or environment (§7, job 5); fix it and re-run the job. It skips a version already on npm, so a re-run is safe.
+**Expected:** after approval the version is published; a GA tag is `latest`, a pre-release is `next`. A hotfix tag (`-hotfix.N`) stages nothing. Until approval, `npx nimblebrain` serves the previous version, so approve before announcing the release. If the job failed with an authentication error, the trusted-publisher link on npmjs.com is missing or names another workflow or environment (§7, job 5); fix it and re-run the job. A re-run skips a version already published, and stops with a pointer to `npm stage list` when the version is staged but not yet approved.
 
 If any of 4a–4e fail, go to §6.
 
@@ -200,7 +204,7 @@ Then fix the underlying issue on `main` and cut the **next** pre-release number 
 2. **Promote release images** — **promote-by-retag, not rebuild.** `ci.yml` already built and pushed the staging-verified runtime + web `:<sha>` images to ECR on merge, each a multi-platform index (`linux/amd64` + `linux/arm64`, each platform built natively on its own runner); this re-tags those exact indexes to `:vX.Y.Z` via `aws ecr put-image` (guarded: target repo must be IMMUTABLE, the `:<sha>` source must exist, and a re-run is idempotent — same digest skips, a different digest fails). It then copies the same `:<sha>` manifests to the GHCR tags with `docker buildx imagetools create` (edge never pushes GHCR), and for stable releases moves `:latest`. There is no Verify or rebuild step — job 1 has already confirmed `ci.yml` passed on the commit. The `workflow_dispatch` `rebuild=true` escape hatch rebuilds from source instead (loud warning: prod won't be byte-for-byte), for `linux/amd64` only — only for a tag off a commit that never rode staging.
 3. **GitHub Release** — creates a release with auto-generated notes; `prerelease` flag mirrors the hyphen rule
 4. **Promote to prod (stable channel)** — GA only; dispatches the deploy-config receiver to record the new prod stable image tag, which the auto-sync per-tenant ApplicationSet then rolls. No-ops when the prod-promote App isn't configured (forks/pre-setup CI).
-5. **Publish the CLI to npm** — after job 2, so the images the CLI installs are on GHCR first. Builds `packages/cli` at the tag's version (set in the job, never committed) and publishes `nimblebrain` to `latest` for a GA tag and `next` for a pre-release; a hotfix tag skips it. Authenticates by npm trusted publishing, so there is no npm token: the package's trusted publisher on npmjs.com must name this repository, `release.yml`, and the `npm` environment. Skips a version already on npm.
+5. **Publish the CLI to npm** — after job 2, so the images the CLI installs are on GHCR first. Builds `packages/cli` at the tag's version (set in the job, never committed) and **stages** `nimblebrain` for `latest` (GA) or `next` (pre-release); a hotfix tag skips it. A maintainer approves the staged version (§4e) before it is public. Authenticates by npm trusted publishing, so there is no npm token: the package's trusted publisher on npmjs.com names this repository, `release.yml`, and the `npm` environment, and allows staging only (direct publish and dist-tag changes unticked). The `npm` environment admits `v*` tags and `main` as deployment refs, like `deploy-config-prod`: a `workflow_dispatch` run starts from `main`. Skips a version already on npm, and an emergency `rebuild=true` run (its images are amd64 only).
 
 Artifact map:
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { COMPOSE_FILE, KEY_VARS, PROJECT, PROVIDERS } from "../src/compose.ts";
 import { run } from "../src/main.ts";
-import { compareVersions, newestRelease } from "../src/release.ts";
+import { compareVersions, newestRelease, releaseTag } from "../src/release.ts";
 import { fail, machine, ok } from "./fake.ts";
 
 const HOME = "/home/dana/.nimblebrain-local";
@@ -261,6 +261,18 @@ describe("after install", () => {
 });
 
 describe("releases", () => {
+  test("a published build installs the runtime release of its own version, with no lookup", async () => {
+    const m = machine();
+    let looked = false;
+    m.deps.getJson = async () => {
+      looked = true;
+      return undefined;
+    };
+    expect(await releaseTag(m.deps, "0.74.0")).toBe("v0.74.0");
+    expect(await releaseTag(m.deps, "0.74.0-rc.1")).toBe("v0.74.0-rc.1");
+    expect(looked).toBe(false);
+  });
+
   test("newest plain tag wins; SDK tags and pre-releases do not count", () => {
     expect(newestRelease(["v0.9.0", "v0.10.0", "v0.10.1-rc.1", "server-sdk-py/v1.0.0"])).toBe(
       "v0.10.0",
