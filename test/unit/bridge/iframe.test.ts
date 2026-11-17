@@ -42,8 +42,8 @@ describe("injectThemeStyles", () => {
 
   test("dark mode contains dark token values", () => {
     const result = injectThemeStyles(FULL_HTML, "dark");
-    expect(result).toContain("--color-background-primary: #000000;");
-    expect(result).toContain("--color-text-primary: #fafafa;");
+    expect(result).toContain("--color-background-primary: #141414;");
+    expect(result).toContain("--color-text-primary: #ededed;");
   });
 
   test("leaves out the non-spec tokens that vary with the mode", () => {

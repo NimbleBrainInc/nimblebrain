@@ -36,11 +36,11 @@ const ANCHORS = {
     "--nb-font-heading": "'Hanken Grotesk', system-ui, sans-serif",
   },
   dark: {
-    "--color-background-primary": "#000000",
-    "--color-text-primary": "#fafafa",
-    "--color-text-accent": "#6a8fe4",
-    "--color-ring-primary": "#6a8fe4",
-    "--color-border-primary": "#232326",
+    "--color-background-primary": "#141414",
+    "--color-text-primary": "#ededed",
+    "--color-text-accent": "#799ff5",
+    "--color-ring-primary": "#799ff5",
+    "--color-border-primary": "#2b2b2b",
     "--font-sans": "'Hanken Grotesk', system-ui, sans-serif",
     "--nb-font-heading": "'Hanken Grotesk', system-ui, sans-serif",
   },
@@ -170,9 +170,9 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
   });
 
   test("dark block redefines colors but not radius/layout (those cascade)", () => {
-    expect(darkBlock).toContain("--background: #000000;");
-    expect(darkBlock).toContain("--primary: #6a8fe4;");
-    expect(darkBlock).toContain("--processing: #a68bfa;");
+    expect(darkBlock).toContain("--background: #141414;");
+    expect(darkBlock).toContain("--primary: #799ff5;");
+    expect(darkBlock).toContain("--processing: #ab90ff;");
     expect(darkBlock).not.toContain("--radius:");
     expect(darkBlock).not.toContain("--sidebar-width:");
   });
