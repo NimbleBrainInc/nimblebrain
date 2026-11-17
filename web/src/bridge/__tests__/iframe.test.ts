@@ -28,6 +28,13 @@ describe("createAppIframe nests the app in the frame page", () => {
     expect(APP_FRAME_PATH).not.toContain("?");
   });
 
+  // A frame whose element scheme differs from its document's is painted opaque, so
+  // in dark mode the light frame page would flash white until the app paints.
+  test("the frame matches the frame page's color scheme, so it stays transparent", () => {
+    const frame = createAppIframe("<p>hi</p>", "test-app");
+    expect(frame.style.getPropertyValue("color-scheme")).toBe("normal");
+  });
+
   test("the app renders inside the frame page, and its window is the one the host talks to", () => {
     const frame = createAppIframe("<p>hi</p>", "test-app");
     const appWindow = { postMessage() {} };
