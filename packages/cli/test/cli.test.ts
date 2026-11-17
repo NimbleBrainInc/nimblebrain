@@ -1,30 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { Deps, ExecResult } from "../src/deps.ts";
 import { run, VERSION } from "../src/main.ts";
-
-const ok = (stdout = ""): ExecResult => ({ code: 0, stdout, stderr: "", missing: false });
-const GB = 1024 ** 3;
+import { GB, machine, ok } from "./fake.ts";
 
 /** A machine where everything passes unless a test overrides one answer. */
 function fakeDeps(over: Partial<Deps> & { execMap?: Record<string, ExecResult> } = {}): Deps {
-  const execMap: Record<string, ExecResult> = {
-    "docker --version": ok("Docker version 27.1.1"),
-    "docker info --format {{json .}}": ok(
-      JSON.stringify({ Architecture: "x86_64", MemTotal: 8 * GB }),
-    ),
-    "docker compose version --short": ok("2.29.1"),
-    ...over.execMap,
-  };
-  return {
-    exec: async (cmd, args) =>
-      execMap[[cmd, ...args].join(" ")] ?? { code: 1, stdout: "", stderr: "", missing: false },
-    portFree: async () => true,
-    getJson: async () => undefined,
-    readText: async () => undefined,
-    env: {},
-    home: "/home/dana",
-    ...over,
-  };
+  const { execMap, ...rest } = over;
+  return { ...machine({ exec: execMap }).deps, ...rest };
 }
 
 async function json(argv: string[], deps = fakeDeps()) {

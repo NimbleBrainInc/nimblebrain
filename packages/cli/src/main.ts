@@ -2,6 +2,7 @@ import pkg from "../package.json" with { type: "json" };
 import { type Parsed, parse, wantsJson } from "./args.ts";
 import { type Deps, installHome } from "./deps.ts";
 import { doctor } from "./doctor.ts";
+import { down, init, key, logs, uninstall, up, update } from "./lifecycle.ts";
 import { CliError, exitCodeFor, type Failure, failure, type Ok } from "./result.ts";
 import { readInstall, status } from "./status.ts";
 
@@ -27,6 +28,7 @@ Flags:
   --agent <name>    claude-code, cursor, codex or none
   --port <n>        Local port (default 27246)
   --home <dir>      Where the install lives (default ~/.nimblebrain-local, or NIMBLEBRAIN_HOME)
+  --provider <name> The model provider for key (default anthropic)
   --help, --version
 `;
 
@@ -64,11 +66,11 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
       case "status":
         result = { ...(await status(deps, home)) };
         break;
-      default:
-        throw new CliError(
-          "USAGE",
-          `\`${command}\` is not built yet (NimbleBrainInc/nimblebrain#2028).`,
-        );
+      default: {
+        const ctx = { deps, flags, home, version: VERSION };
+        const commands = { init, up, down, logs, update, uninstall, key };
+        result = await commands[command](ctx);
+      }
     }
   } catch (err) {
     result = toFailure(err);

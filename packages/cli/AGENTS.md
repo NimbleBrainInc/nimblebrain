@@ -12,8 +12,17 @@ Published to npm as `nimblebrain`; run as `npx nimblebrain`. It installs, starts
 - **The model key never appears in arguments, output or logs.** Only `key` takes it, at a hidden prompt, and writes it to `<home>/.env` with mode 600. `status` reports `model_key: set | missing`, from the providers `/v1/bootstrap` names.
 - **The web port is published on `127.0.0.1` only.** The local instance uses the `dev` adapter, which signs nobody in.
 - **Never touch an install the CLI did not make.** The Compose project name in `install.json` marks containers and the data volume as ours; anything else is `NOT_OURS`.
+- **The Compose file is the release's own, embedded at build** (`import … with { type: "text" }` of the root `docker-compose.yml`). Never write a second Compose file here; a change to how the runtime is composed lands in the root file, and the CLI ships it. Model-key variable names and `key`'s provider list are read from that file, not restated.
+- **Compose runs without the shell's keys, `NIMBLEBRAIN_TAG`, `NIMBLEBRAIN_WEB_PORT` or `COMPOSE_PROJECT_NAME`** (`composeEnv`), so `<home>/.env` is the one source: a key exported in the shell would otherwise silently win over the one entered with `key`.
+- **`up -d --no-build`, always.** The root Compose file keeps `build:` for source checkouts; the install folder has no source, so a missing image must fail as a pull, never fall back to a build.
+- **Connecting an agent and installing the skill never fail `init`.** The instance is usable either way; a failed connection returns `manual`, the exact settings to add by hand.
 - **All I/O goes through `Deps` (`src/deps.ts`).** Tests pass a fake and stay unit tests: no Docker, no ports, no network.
 - **Each CLI release installs the runtime release of the same version.** The version is set from the release tag, like the root package; do not bump `package.json` by hand.
+
+## Not here yet
+
+- **Publishing.** An npm publish step belongs in `release.yml` beside the image retag, using npm trusted publishing, with pre-release tags on a non-`latest` dist-tag. Lands with arm64 images, since `doctor` refuses arm64 until then.
+- **A skill matched to the release.** `installSkill` takes the `nimblebrain` skill from the skills repo's default branch; that repo has no release tags to pin to yet.
 
 ## Verify
 

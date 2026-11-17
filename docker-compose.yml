@@ -31,8 +31,9 @@ services:
       # This machine only. The `dev` adapter checks no credential, so the UI
       # is not published to the network. To serve other machines, first set a
       # real adapter in instance.json, then put a TLS proxy in front or
-      # publish "27246:8080".
-      - "127.0.0.1:27246:8080"
+      # publish "27246:8080". NIMBLEBRAIN_WEB_PORT moves the host port, which
+      # is how `npx nimblebrain --port` runs beside something already on 27246.
+      - "127.0.0.1:${NIMBLEBRAIN_WEB_PORT:-27246}:8080"
     environment:
       - PLATFORM_URL=http://platform:27247
     depends_on:

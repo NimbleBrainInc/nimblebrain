@@ -58,7 +58,7 @@
   },
   "overrides": [
     {
-      "includes": ["scripts/**", "src/**", "web/src/**", "test/**", "web/test/**"],
+      "includes": ["scripts/**", "src/**", "web/src/**", "test/**", "web/test/**", "packages/cli/**"],
       "plugins": ["./biome-plugins/double-cast.grit"]
     },
     {
@@ -67,7 +67,8 @@
         "src/**",
         "web/src/**",
         "web/test/**",
-        "test/**"
+        "test/**",
+        "packages/cli/**"
       ],
       "plugins": ["./biome-plugins/never-cast.grit"]
     },
@@ -255,7 +256,7 @@
       ]
     },
     {
-      "includes": ["test/**", "web/test/**"],
+      "includes": ["test/**", "web/test/**", "packages/cli/test/**"],
       "linter": {
         "rules": {
           "complexity": { "noExcessiveCognitiveComplexity": "off" },

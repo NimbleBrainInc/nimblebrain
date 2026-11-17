@@ -27,6 +27,10 @@ export const ERRORS = {
   MODEL_KEY_MISSING: "Run `npx nimblebrain key` in your own terminal to enter a model key.",
   HEALTH_TIMEOUT: "Run `npx nimblebrain logs` and look at the last error line.",
   AGENT_UNSUPPORTED: "Pass --agent claude-code, cursor, codex or none.",
+  START_FAILED: "Run `npx nimblebrain logs` and look at the last error line, then run this again.",
+  NEEDS_TERMINAL:
+    "A person runs this in their own terminal; it asks for input no agent should give.",
+  CANCELLED: "Nothing was changed. Run the command again to go ahead.",
 } as const;
 
 export type ErrorCode = keyof typeof ERRORS;
@@ -56,7 +60,8 @@ export interface Failure {
 }
 
 export function failure(err: CliError): Failure {
-  return { ok: false, error: err.code, message: err.message, fix: err.fix, ...err.detail };
+  // Detail first: a failure that carries a status must not let its `ok: true` win.
+  return { ...err.detail, ok: false, error: err.code, message: err.message, fix: err.fix };
 }
 
 export function exitCodeFor(result: Ok | Failure): number {

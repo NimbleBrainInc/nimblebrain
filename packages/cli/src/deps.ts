@@ -1,24 +1,41 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 /**
  * Everything the CLI does to the world goes through here, so a command is a
  * pure function of its `Deps` and the tests replace them without spawning
- * Docker, binding a port or making a request.
+ * Docker, binding a port, writing a file or making a request.
  */
 export interface Deps {
   /** Run a program. `missing` is true when it is not installed at all. */
-  exec(cmd: string, args: string[], opts?: { timeoutMs?: number }): Promise<ExecResult>;
+  exec(cmd: string, args: string[], opts?: ExecOptions): Promise<ExecResult>;
   /** Whether nothing on this machine listens on `127.0.0.1:<port>`. */
   portFree(port: number): Promise<boolean>;
   /** A GET with a timeout; never throws, a connection failure is `undefined`. */
   getJson(url: string, timeoutMs?: number): Promise<{ status: number; body: unknown } | undefined>;
   readText(path: string): Promise<string | undefined>;
+  /** Write a file, creating its folder (mode 700). `mode` applies to a new file and to an existing one. */
+  writeText(path: string, text: string, mode?: number): Promise<void>;
+  removeDir(path: string): Promise<void>;
+  /** Ask a person a question on stderr; `hidden` echoes nothing (for the model key). */
+  prompt(question: string, opts?: { hidden?: boolean }): Promise<string>;
+  /** Whether a person is at a terminal to answer a prompt. */
+  interactive: boolean;
+  sleep(ms: number): Promise<void>;
+  /** A progress line for a person, on stderr, so `--json` stdout stays one object. */
+  say(line: string): void;
   env: NodeJS.ProcessEnv;
   home: string;
+}
+
+export interface ExecOptions {
+  timeoutMs?: number;
+  cwd?: string;
+  /** Replaces the environment entirely; the caller passes `process.env` minus what it withholds. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface ExecResult {
@@ -38,6 +55,8 @@ export function realDeps(): Deps {
         const child = spawn(cmd, args, {
           stdio: ["ignore", "pipe", "pipe"],
           timeout: opts.timeoutMs ?? 30_000,
+          cwd: opts.cwd,
+          env: opts.env,
         });
         child.stdout.on("data", (d: Buffer) => {
           stdout += d.toString();
@@ -61,7 +80,10 @@ export function realDeps(): Deps {
     },
     async getJson(url, timeoutMs = 3_000) {
       try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+        const res = await fetch(url, {
+          signal: AbortSignal.timeout(timeoutMs),
+          headers: { "user-agent": "nimblebrain-cli" },
+        });
         const text = await res.text();
         let body: unknown = text;
         try {
@@ -81,9 +103,75 @@ export function realDeps(): Deps {
         return undefined;
       }
     },
+    async writeText(path, text, mode = 0o644) {
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      await writeFile(path, text, { mode });
+      // `mode` on writeFile only applies when it creates the file.
+      await chmod(path, mode);
+    },
+    async removeDir(path) {
+      await rm(path, { recursive: true, force: true });
+    },
+    prompt: (question, opts = {}) =>
+      opts.hidden ? hiddenPrompt(question) : visiblePrompt(question),
+    interactive: Boolean(process.stdin.isTTY && process.stderr.isTTY),
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    say: (line) => {
+      process.stderr.write(`${line}\n`);
+    },
     env: process.env,
     home: homedir(),
   };
+}
+
+async function visiblePrompt(question: string): Promise<string> {
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    return (await rl.question(question)).trim();
+  } finally {
+    rl.close();
+  }
+}
+
+/** Reads a line with nothing echoed, so the model key never lands in the terminal's scrollback. */
+function hiddenPrompt(question: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const stdin = process.stdin;
+    process.stderr.write(question);
+    let value = "";
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding("utf8");
+    const done = (fn: () => void) => {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener("data", onData);
+      process.stderr.write("\n");
+      fn();
+    };
+    const onData = (chunk: string) => {
+      const step = typeHidden(value, chunk);
+      value = step.value;
+      if (step.end === "enter") done(() => resolve(value.trim()));
+      if (step.end === "cancel") done(() => reject(new Error("Cancelled.")));
+    };
+    stdin.on("data", onData);
+  });
+}
+
+/** Applies typed characters to the hidden value: backspace deletes, Enter ends, Ctrl-C cancels. */
+export function typeHidden(
+  value: string,
+  chunk: string,
+): { value: string; end?: "enter" | "cancel" } {
+  let v = value;
+  for (const ch of chunk) {
+    if (ch === "\r" || ch === "\n") return { value: v, end: "enter" };
+    if (ch === "\u0003") return { value: v, end: "cancel" };
+    v = ch === "\u007f" || ch === "\b" ? v.slice(0, -1) : v + ch;
+  }
+  return { value: v };
 }
 
 /**

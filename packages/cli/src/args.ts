@@ -23,6 +23,7 @@ export interface Flags {
   agent?: Agent;
   port: number;
   home?: string;
+  provider?: string;
 }
 
 export type Parsed =
@@ -38,6 +39,7 @@ const options = {
   agent: { type: "string" },
   port: { type: "string" },
   home: { type: "string" },
+  provider: { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } satisfies ParseArgsOptionsConfig;
@@ -62,7 +64,14 @@ export function parse(argv: string[]): Parsed {
     }
     agent = values.agent as Agent;
   }
-  const flags: Flags = { json, yes: values.yes === true, agent, port, home: values.home };
+  const flags: Flags = {
+    json,
+    yes: values.yes === true,
+    agent,
+    port,
+    home: values.home,
+    provider: values.provider,
+  };
 
   if (values.help) return { kind: "help", flags };
   if (values.version) return { kind: "version", flags };
