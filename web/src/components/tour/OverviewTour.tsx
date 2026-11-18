@@ -19,7 +19,7 @@
 // offers itself; the Help menu always replays it.
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { type EventData, Joyride, STATUS, type Step, type TooltipRenderProps } from "react-joyride";
 import { useIsMobile } from "../../lib/hooks/use-is-mobile";
 import { type LocalPref, usePref, writePref } from "../../lib/local-pref";
@@ -31,6 +31,26 @@ const SEEN: LocalPref<boolean> = {
   parse: (stored) => stored === true,
   empty: false,
 };
+
+// Whether a tour is on screen, for other one-time asks to wait their turn (the
+// telemetry question holds back while it runs, so a first visit asks one thing
+// at a time).
+let running = false;
+const runningListeners = new Set<() => void>();
+function setRunning(value: boolean) {
+  if (running === value) return;
+  running = value;
+  for (const l of runningListeners) l();
+}
+export function useTourRunning(): boolean {
+  return useSyncExternalStore(
+    (l) => {
+      runningListeners.add(l);
+      return () => runningListeners.delete(l);
+    },
+    () => running,
+  );
+}
 
 /** The anchor each step points at, as `[data-tour="<name>"]`. */
 export type TourAnchor = "nav" | "ask" | "chat" | "help";
@@ -169,15 +189,22 @@ export function OverviewTour({ replay, onEnd }: { replay: boolean; onEnd?: () =>
     const origin =
       replay && !replayStarted.current ? "help" : !replay && !seen ? "first_visit" : null;
     if (!origin) return;
-    if (origin === "help") replayStarted.current = true;
-    // One frame later, so the shell's anchors have rendered.
+    // One frame later, so the shell's anchors have rendered. The replay is
+    // marked started only here: a cancelled frame (an effect re-run, React's
+    // double mount in development) must leave it able to start.
     const id = requestAnimationFrame(() => {
+      if (origin === "help") replayStarted.current = true;
       setSteps(stepsFor(mobile));
       setRun(true);
       captureEvent("web.tour_started", { origin });
     });
     return () => cancelAnimationFrame(id);
   }, [replay, seen, run, mobile]);
+
+  useEffect(() => {
+    setRunning(run);
+    return () => setRunning(false);
+  }, [run]);
 
   const joyrideSteps = useMemo(() => toJoyrideSteps(steps), [steps]);
 
@@ -211,6 +238,9 @@ export function OverviewTour({ replay, onEnd }: { replay: boolean; onEnd?: () =>
       onEvent={onEvent}
       tooltipComponent={TourCard}
       arrowComponent={NoArrow}
+      // The card appears whole: Joyride's 0.3s fade showed the page through it,
+      // and its drop shadow doubled the card's own.
+      styles={{ floater: { transition: "none", filter: "none" } }}
       options={{
         buttons: ["back", "primary", "skip"],
         overlayClickAction: false,
