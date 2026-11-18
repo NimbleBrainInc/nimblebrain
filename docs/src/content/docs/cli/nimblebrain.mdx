@@ -11,7 +11,7 @@ import { Aside } from '@astrojs/starlight/components';
 npx nimblebrain
 ```
 
-It checks your machine, starts NimbleBrain in Docker at `http://127.0.0.1:27246`, asks for your model key, and connects the coding agent you choose to a workspace over MCP. Run it again any time: on a machine that already has NimbleBrain it reports what is there and changes nothing.
+It checks your machine, starts NimbleBrain in Docker at `http://127.0.0.1:27246`, asks whether NimbleBrain's agents run on a hosted model (your API key) or a local one (see [On a local model](#on-a-local-model)), and connects the coding agent you choose to a workspace over MCP. Run it again any time: on a machine that already has NimbleBrain it reports what is there and changes nothing.
 
 You need Docker with Compose v2, about 2 GB of memory for Docker, and Node.js 20 or later. It runs on `x86_64` and `arm64`, Apple Silicon included.
 
@@ -37,6 +37,7 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `doctor` | Checks Docker, Compose v2, CPU architecture, memory and the port. Installs nothing. |
 | `status` | Version, health, URL, each workspace's MCP URL, the connected agent, and whether a model key is set. |
 | `key` | Takes the model key at a hidden prompt and restarts NimbleBrain so it takes effect. A person runs this. |
+| `local-model [model]` | Runs NimbleBrain's agents on a model served by Ollama instead of a hosted key: prepares the model (default `gemma4:e4b`) and restarts NimbleBrain. See [On a local model](#on-a-local-model). |
 | `up` / `down` | Starts or stops NimbleBrain. Your data survives `down`. |
 | `logs` | Recent log lines from the runtime. |
 | `update` | Moves to the newest NimbleBrain release, or the one `--runtime` names, keeping your data. It never moves backwards. |
@@ -52,6 +53,7 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `--agent <name>` | `claude-code`, `cursor`, `codex` or `none`. |
 | `--port <n>` | The local port (default `27246`). |
 | `--provider <name>` | For `key`: `anthropic` (default), `openai`, `google`, `greenpt`, `nebius` or `xai`. |
+| `--local-model <model>` | For `init`: run on this Ollama model instead of a hosted key, without asking. |
 | `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). |
 | `--runtime <tag>` | For `init` and `update`: the NimbleBrain release to install, such as `v0.74.0`. Default: the newest release. |
 | `--telemetry <on\|off>` | For `init`: your answer to sending anonymous usage data. Without it, `init` asks you, or, with no one at the terminal, leaves it undecided and sends nothing. |
@@ -62,7 +64,7 @@ The CLI and NimbleBrain are versioned separately. `nimblebrain --version` is the
 
 ## Connecting an agent
 
-`init --agent <name>` registers the workspace's MCP URL, `http://127.0.0.1:27246/mcp/<workspaceId>`, with the agent: through `claude mcp add` for Claude Code, `codex mcp add` for Codex, and `~/.cursor/mcp.json` for Cursor. The local instance needs no login. If the agent's own CLI is not installed, `init` still succeeds and returns `manual`: the exact command or setting to add by hand. An agent loads a new MCP server when its next session starts. `status` reports the skill as the agent has it now, read from the agent's own skills folder, so a skill added later with `npx skills add nimblebraininc/skills --skill nimblebrain --agent <agent> -g` counts. Connecting an agent gives it NimbleBrain's tools; it does not change the model NimbleBrain runs on. NimbleBrain's own agents always run on the model key you entered, billed by that provider.
+`init --agent <name>` registers the workspace's MCP URL, `http://127.0.0.1:27246/mcp/<workspaceId>`, with the agent: through `claude mcp add` for Claude Code, `codex mcp add` for Codex, and `~/.cursor/mcp.json` for Cursor. The local instance needs no login. If the agent's own CLI is not installed, `init` still succeeds and returns `manual`: the exact command or setting to add by hand. An agent loads a new MCP server when its next session starts. `status` reports the skill as the agent has it now, read from the agent's own skills folder, so a skill added later with `npx skills add nimblebraininc/skills --skill nimblebrain --agent <agent> -g` counts. Connecting an agent gives it NimbleBrain's tools; it does not change the model NimbleBrain runs on. NimbleBrain's own agents run on the model key you entered, billed by that provider, or on the local model you chose.
 
 To connect another client by hand, take the MCP URL from `npx nimblebrain status` and follow [Connecting External Clients](/connect/external-clients/).
 
@@ -79,10 +81,24 @@ Every command answers `{"ok": true, ...}` or `{"ok": false, "error": "<CODE>", "
 | `MODEL_KEY_MISSING` | NimbleBrain is running; chat needs a key (`npx nimblebrain key`). |
 | `NEEDS_TERMINAL`, `CANCELLED`, `AGENT_UNSUPPORTED`, `USAGE` | `key` needs a person, the action was declined, an unknown agent, or a bad command or flag. |
 | `RUNTIME_UNSUPPORTED` | The release `--runtime` names is older than this CLI supports, or its Compose file cannot be driven. |
+| `LOCAL_MODEL_UNREACHABLE`, `LOCAL_MODEL_MISSING`, `LOCAL_MODEL_NO_TOOLS`, `LOCAL_CONTEXT_SMALL` | Ollama does not answer, the model is not on it (or its download was declined or failed), the model cannot call tools, or its context window is below the 32k NimbleBrain needs. |
 | `INTERRUPTED` | The CLI was stopped (a signal, Ctrl-C) before it finished; `exit_code` says how. Check `status`, then run the command again. |
 
 Each error's `fix` is the next thing to do.
 
+## On a local model
+
+NimbleBrain's agents can run on a model served by [Ollama](https://ollama.com) on this machine, with no key and no per-call cost. Install Ollama and start it, then answer `local` when `init` asks, or run:
+
+```bash
+npx nimblebrain --local-model gemma4:e4b     # a new install
+npx nimblebrain local-model gemma4:e4b       # an install that has one already
+```
+
+The CLI checks that Ollama answers on `127.0.0.1:11434`, downloads the model if it is missing (it asks first), refuses a model that cannot call tools, and creates `nimblebrain-<model>` from it: the same model with a 32k context window, so Ollama never picks a smaller one and cuts the prompt. It then writes `NB_LOCAL_MODEL_URL`, `NB_LOCAL_MODEL` and `NB_LOCAL_MODEL_CONTEXT` to `.env`, and the runtime reaches Ollama at `host.docker.internal`. `doctor` checks all of this again, and `status` reports `local_model`.
+
+Gemma 4 E4B is the smallest model run end to end on NimbleBrain's tasks; [Local Models](/config/local-models/) lists what has been tested, what failed, and what has not been tried. It needs about 7 GB of memory beside NimbleBrain's 2 GB. On Linux, Ollama listens on `127.0.0.1` by default, which a container cannot reach: set `OLLAMA_HOST=0.0.0.0`. This needs a NimbleBrain release that takes a local model; an older one answers `RUNTIME_UNSUPPORTED`.
+
 ## What it writes
 
-Everything lives in `~/.nimblebrain-local`: the installed release's `docker-compose.yml`, downloaded from that release, an `instance.json` naming the `dev` sign-in, a `.env` that only your user can read (the release, the port, and your model key), and `install.json`. Your conversations live in the Docker volume `nimblebrain-local_workspace`. A key exported in your shell is not used: `.env` is the only source, so the key you entered with `key` is the one that runs.
+Everything lives in `~/.nimblebrain-local`: the installed release's `docker-compose.yml`, downloaded from that release, an `instance.json` naming the `dev` sign-in, a `.env` that only your user can read (the release, the port, and your model key or local model), and `install.json`. Your conversations live in the Docker volume `nimblebrain-local_workspace`. A key exported in your shell is not used: `.env` is the only source, so the key you entered with `key` is the one that runs.

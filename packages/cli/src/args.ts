@@ -12,6 +12,7 @@ export const COMMANDS = [
   "update",
   "uninstall",
   "telemetry",
+  "local-model",
 ] as const;
 export type Command = (typeof COMMANDS)[number];
 
@@ -25,6 +26,8 @@ export interface Flags {
   port: number;
   home?: string;
   provider?: string;
+  /** `--local-model <model>`: run NimbleBrain's agents on this Ollama model instead of a hosted key. */
+  localModel?: string;
   runtime?: string;
   /** `--telemetry on|off`: an answer a person already gave. */
   telemetry?: "on" | "off";
@@ -44,6 +47,7 @@ const options = {
   port: { type: "string" },
   home: { type: "string" },
   provider: { type: "string" },
+  "local-model": { type: "string" },
   runtime: { type: "string" },
   telemetry: { type: "string" },
   help: { type: "boolean", short: "h" },
@@ -78,6 +82,7 @@ export function parse(argv: string[]): Parsed {
     port,
     home: values.home,
     provider: values.provider,
+    localModel: values["local-model"],
     runtime: values.runtime,
     telemetry,
   };
@@ -94,9 +99,9 @@ function telemetryFlag(value: string | undefined): "on" | "off" | undefined {
   throw new CliError("USAGE", `--telemetry must be on or off, not "${value}".`);
 }
 
-/** The command named, checked with its argument: only `telemetry` takes one (on, off or status). */
+/** The command named, checked with its argument: `telemetry` takes on, off or status; `local-model` a model. */
 function command(name: string, positionals: string[]): Command {
-  const maxArgs = name === "telemetry" ? 2 : 1;
+  const maxArgs = name === "telemetry" || name === "local-model" ? 2 : 1;
   if (positionals.length > maxArgs)
     throw new CliError("USAGE", `Unexpected argument "${positionals[maxArgs]}".`);
   if (!(COMMANDS as readonly string[]).includes(name))
