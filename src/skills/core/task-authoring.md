@@ -96,8 +96,9 @@ A run reads as one `label`:
 4. Pick the schedule (see Schedules). Give `schedule.timezone` when the person
    names a timezone or theirs is known; otherwise the instance timezone applies,
    and `tasks__create` returns it as `timezone`.
-5. Show the person the name, the schedule in words, the prompt, and the tools.
-   Ask before creating.
+5. If the person has not said what the task does, when it runs, or what to call
+   it, ask for that. When they have, create it without asking again, then show
+   the name, the schedule in words, the prompt, and the tools.
 6. `tasks__create`, then offer a test: `tasks__run {taskId}` and follow it.
 7. Say when it runs next (`nextRunAt` from `tasks__status`).
 
@@ -180,13 +181,16 @@ The same `idempotencyKey` with the same definition returns the same run.
 
 ## Schedules
 
-- `cron` with a 5-field `expression`:
+Give exactly one of these; the field you give is the kind of schedule.
+
+- `cron`, a 5-field expression, with `timezone` when one is known:
+  `{"cron": "0 8 * * 1-5", "timezone": "Pacific/Honolulu"}`
   - "every morning at 8" → `0 8 * * *`
   - "weekdays at 7" → `0 7 * * 1-5`
   - "Mondays" → `0 9 * * 1` (9am unless a time is given)
   - "every hour" → `0 * * * *`
-- `interval` with `intervalMs` (at least 60000) for "every 30 minutes".
-- `once` with `at`, an ISO time with an offset (`2026-07-01T13:00:00-07:00`),
+- `intervalMs` (at least 60000) for "every 30 minutes": `{"intervalMs": 1800000}`.
+- `at`, an ISO time with an offset (`{"at": "2026-07-01T13:00:00-07:00"}`),
   for one action at a set time. Never use a cron with a fixed date, since that
   recurs every year.
 - No `schedule`: the task runs only when someone runs it.
@@ -194,7 +198,7 @@ The same `idempotencyKey` with the same definition returns the same run.
 
 ### Running on events
 
-`schedule: {type: "event", match: {source, name}, debounceMs, maxFiresPerHour}`
+`schedule: {match: {source, name}, debounceMs, maxFiresPerHour}`
 runs the task when a connector reports something. Tell the person:
 
 1. Nothing arrives until a workspace admin routes notifications to the task.

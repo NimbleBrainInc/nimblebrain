@@ -201,7 +201,7 @@ describe("a person's own apps announce their writes to that person", () => {
         arguments: {
           manifest: {
             name: "weekly-digest",
-            schedule: { type: "interval", intervalMs: 7 * 24 * 60 * 60 * 1000 },
+            schedule: { intervalMs: 7 * 24 * 60 * 60 * 1000 },
           },
           body: "Summarize the week.",
         },

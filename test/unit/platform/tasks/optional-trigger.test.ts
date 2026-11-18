@@ -310,10 +310,7 @@ describe("a once schedule", () => {
     const tick1 = scheduler.onTimer();
     // While the first occurrence runs, the owner moves the time out by an hour.
     const newAt = iso(Date.now() + 3_600_000);
-    handleUpdate(
-      { taskId: "send-it", manifest: { schedule: { type: "once", at: newAt } } },
-      makeCtx(),
-    );
+    handleUpdate({ taskId: "send-it", manifest: { schedule: { at: newAt } } }, makeCtx());
     finish();
     await tick1;
 
@@ -381,7 +378,7 @@ describe("once schedule validation and re-arm", () => {
   test("create accepts a future time and arms it", () => {
     const at = future();
     const out = handleCreate(
-      { manifest: { name: "Send It", schedule: { type: "once", at } }, body: "Send the email" },
+      { manifest: { name: "Send It", schedule: { at } }, body: "Send the email" },
       makeCtx(),
     );
     expect(out.task.nextRunAt).toBe(new Date(at).toISOString());
@@ -392,7 +389,7 @@ describe("once schedule validation and re-arm", () => {
     expect(() =>
       handleCreate(
         {
-          manifest: { name: "Late", schedule: { type: "once", at: iso(Date.now() - 1000) } },
+          manifest: { name: "Late", schedule: { at: iso(Date.now() - 1000) } },
           body: "x",
         },
         makeCtx(),
@@ -406,11 +403,8 @@ describe("once schedule validation and re-arm", () => {
     ["not a timestamp", { at: "next tuesday" }],
   ])("create refuses %s", (_label, fields) => {
     expect(() =>
-      handleCreate(
-        { manifest: { name: "Bad", schedule: { type: "once", ...fields } }, body: "x" },
-        makeCtx(),
-      ),
-    ).toThrow(/at is required|Invalid once time/);
+      handleCreate({ manifest: { name: "Bad", schedule: { ...fields } }, body: "x" }, makeCtx()),
+    ).toThrow(/exactly one of cron, at, intervalMs, or match|Invalid once time/);
   });
 
   test("a new time re-arms one that already ran", () => {
@@ -430,10 +424,7 @@ describe("once schedule validation and re-arm", () => {
     );
 
     const at = future();
-    const out = handleUpdate(
-      { taskId: "send-it", manifest: { schedule: { type: "once", at } } },
-      ctx,
-    );
+    const out = handleUpdate({ taskId: "send-it", manifest: { schedule: { at } } }, ctx);
 
     expect(out.task.enabled).toBe(true);
     expect(out.task.disabledReason).toBeUndefined();
@@ -465,7 +456,7 @@ describe("once schedule validation and re-arm", () => {
     saveTask(workDir, WS, OWNER, makeTask({ schedule: { type: "once", at: future() } }));
     expect(() =>
       handleUpdate(
-        { taskId: "send-it", manifest: { schedule: { type: "once", at: iso(Date.now() - 1000) } } },
+        { taskId: "send-it", manifest: { schedule: { at: iso(Date.now() - 1000) } } },
         makeCtx(),
       ),
     ).toThrow(/already passed/);
@@ -495,7 +486,7 @@ describe("once schedule validation and re-arm", () => {
       makeTask({ schedule: { type: "once", at: future() }, enabled: false }),
     );
     const out = handleUpdate(
-      { taskId: "send-it", manifest: { schedule: { type: "once", at: future() } } },
+      { taskId: "send-it", manifest: { schedule: { at: future() } } },
       makeCtx(),
     );
     expect(out.task.enabled).toBe(false);
@@ -504,7 +495,7 @@ describe("once schedule validation and re-arm", () => {
   test("list and status say when it runs, and that it ran", () => {
     const ctx = makeCtx();
     const at = "2099-07-01T13:12:00-07:00";
-    handleCreate({ manifest: { name: "Send It", schedule: { type: "once", at } }, body: "x" }, ctx);
+    handleCreate({ manifest: { name: "Send It", schedule: { at } }, body: "x" }, ctx);
     const armed = handleList({}, ctx).tasks[0]!;
     expect(armed.schedule).toMatch(/^Once at Jul 1, 2099/);
     expect(armed.scheduleType).toBe("once");
@@ -584,7 +575,7 @@ describe("a task with no schedule", () => {
     const ctx = makeCtx();
     handleCreate(
       {
-        manifest: { name: "Was Daily", schedule: { type: "cron", expression: "0 8 * * *" } },
+        manifest: { name: "Was Daily", schedule: { cron: "0 8 * * *" } },
         body: "x",
       },
       ctx,
@@ -604,7 +595,7 @@ describe("a task with no schedule", () => {
     const ctx = makeCtx();
     handleCreate({ manifest: { name: "By Hand" }, body: "x" }, ctx);
     const out = handleUpdate(
-      { taskId: "by-hand", manifest: { schedule: { type: "interval", intervalMs: 3_600_000 } } },
+      { taskId: "by-hand", manifest: { schedule: { intervalMs: 3_600_000 } } },
       ctx,
     );
     expect(out.task.schedule?.type).toBe("interval");

@@ -158,9 +158,7 @@ export declare const PlatformToolCatalog: {
                     name: import("@sinclair/typebox").TString;
                     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-                        type: import("@sinclair/typebox").TUnsafe<"cron" | "event" | "interval" | "once">;
-                        expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                        timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        cron: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                         at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                         intervalMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
                         match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
@@ -168,6 +166,7 @@ export declare const PlatformToolCatalog: {
                             name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                             level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
                         }>>;
+                        timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                         debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
                         maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
                     }>>;
@@ -183,9 +182,7 @@ export declare const PlatformToolCatalog: {
                 manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
                     schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
-                        type: import("@sinclair/typebox").TUnsafe<"cron" | "event" | "interval" | "once">;
-                        expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                        timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        cron: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                         at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                         intervalMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
                         match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
@@ -193,6 +190,7 @@ export declare const PlatformToolCatalog: {
                             name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                             level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
                         }>>;
+                        timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                         debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
                         maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
                     }>, import("@sinclair/typebox").TNull]>>;

@@ -56,7 +56,7 @@ describe("createArgs", () => {
       manifest: {
         name: "Digest",
         enabled: true,
-        schedule: { type: "interval", intervalMs: 3_600_000 },
+        schedule: { intervalMs: 3_600_000 },
         allowedTools: ["gmail__*", "files__read"],
         maxRunDurationMs: 60_000,
       },
@@ -79,7 +79,24 @@ describe("createArgs", () => {
       },
     };
     expect(createArgs(d).args?.manifest).toMatchObject({
-      schedule: { type: "event", match: { source: "mail", name: "mail.*" }, maxFiresPerHour: 6 },
+      schedule: { match: { source: "mail", name: "mail.*" }, maxFiresPerHour: 6 },
+    });
+  });
+
+  test("a picked cron goes out as `cron`, with its timezone", () => {
+    const d = {
+      ...emptyDraft(),
+      name: "Morning",
+      prompt: "Summarize",
+      trigger: "schedule" as const,
+      schedule: {
+        type: "cron" as const,
+        expression: "0 8 * * 1-5",
+        timezone: "Pacific/Honolulu",
+      },
+    };
+    expect(createArgs(d).args?.manifest).toMatchObject({
+      schedule: { cron: "0 8 * * 1-5", timezone: "Pacific/Honolulu" },
     });
   });
 });
