@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { skillInstalled } from "./agents.ts";
 import type { Agent } from "./args.ts";
-import { hasKey, keyVars } from "./compose.ts";
+import { hasKey, hostLoopback, keyVars } from "./compose.ts";
 import type { Deps } from "./deps.ts";
 import { localModelOf } from "./local-model.ts";
 import { CliError } from "./result.ts";
@@ -55,6 +55,8 @@ export interface StatusResult {
   workspaces: Workspace[];
   agent: { connected: Agent | null; skill: string | null };
   model_key: "set" | "missing";
+  /** Whether the installed release can reach a server on this machine (`mcp add`); false until `update`. */
+  host_loopback: boolean;
   /** The local model NimbleBrain's agents run on (`npx nimblebrain local-model`), or null for a hosted key. */
   local_model: string | null;
   telemetry: TelemetryField;
@@ -79,14 +81,13 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
   if (!install) throw new CliError("NOT_INSTALLED", `No NimbleBrain install in ${home}.`);
   const url = `http://127.0.0.1:${install.port}`;
 
-  const health = await deps.getJson(`${url}/v1/health`);
-  const up =
-    health?.status === 200 && (health.body as { status?: unknown } | undefined)?.status === "ok";
+  const up = await isUp(deps, url);
 
   const workspaces = up ? await readWorkspaces(deps, url) : [];
   // The install's `.env` is the only place a key can come from: every Compose
   // call runs without the shell's key variables. Read for names, never values.
-  const vars = keyVars((await deps.readText(join(home, "docker-compose.yml"))) ?? "");
+  const composeText = (await deps.readText(join(home, "docker-compose.yml"))) ?? "";
+  const vars = keyVars(composeText);
   const envText = (await deps.readText(join(home, ".env"))) ?? "";
   const modelKey = hasKey(envText, vars) ? "set" : "missing";
 
@@ -102,13 +103,22 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
       skill: install.agent ? await skillInstalled(deps, install.agent) : null,
     },
     model_key: modelKey,
+    host_loopback: hostLoopback(composeText),
     local_model: localModelOf(envText) ?? null,
     telemetry: await currentTelemetry(deps, home, url),
   };
 }
 
+/** Whether the instance at `url` answers health. */
+export async function isUp(deps: Deps, url: string): Promise<boolean> {
+  const health = await deps.getJson(`${url}/v1/health`);
+  return (
+    health?.status === 200 && (health.body as { status?: unknown } | undefined)?.status === "ok"
+  );
+}
+
 /** The workspaces the local `dev` identity belongs to, from `/v1/bootstrap`. */
-async function readWorkspaces(deps: Deps, url: string): Promise<Workspace[]> {
+export async function readWorkspaces(deps: Deps, url: string): Promise<Workspace[]> {
   const boot = await deps.getJson(`${url}/v1/bootstrap`);
   if (boot?.status !== 200) return [];
   const body = boot.body as { workspaces?: Array<{ id?: unknown; name?: unknown }> };

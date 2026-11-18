@@ -35,7 +35,7 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 |---|---|
 | `init` (the default) | Checks the machine, starts NimbleBrain, connects the agent named by `--agent`, and installs the `nimblebrain` skill for it. |
 | `doctor` | Checks Docker, Compose v2, CPU architecture, memory and the port. Installs nothing. |
-| `status` | Version, health, URL, each workspace's MCP URL, the connected agent, and whether a model key is set. |
+| `status` | Version, health, URL, each workspace's MCP URL, the connected agent, whether a model key is set, and whether this release can reach a server on your machine (`host_loopback`). |
 | `key` | Takes the model key at a hidden prompt and restarts NimbleBrain so it takes effect. A person runs this. |
 | `local-model [model]` | Runs NimbleBrain's agents on a model served by Ollama instead of a hosted key: prepares the model (default `gemma4:e4b`) and restarts NimbleBrain. See [On a local model](#on-a-local-model). |
 | `up` / `down` | Starts or stops NimbleBrain. Your data survives `down`. |
@@ -43,6 +43,9 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `update` | Moves to the newest NimbleBrain release, or the one `--runtime` names, keeping your data. It never moves backwards. |
 | `uninstall` | Removes the containers, the images, every conversation, and the files `init` wrote. Asks first. |
 | `telemetry [on\|off\|status]` | Whether this install sends anonymous usage data. Changing it needs NimbleBrain running. See [Telemetry](/using/telemetry/). |
+| `mcp add <url>` | Adds an MCP server you run on this machine to a workspace, by its loopback URL. See [Developing a server](#developing-a-server). |
+| `mcp list` | The servers in a workspace: name, URL and status. |
+| `mcp remove <serverName>` | Removes a server from a workspace. |
 
 ## Flags
 
@@ -57,6 +60,8 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). |
 | `--runtime <tag>` | For `init` and `update`: the NimbleBrain release to install, such as `v0.74.0`. Default: the newest release. |
 | `--telemetry <on\|off>` | For `init`: your answer to sending anonymous usage data. Without it, `init` asks you, or, with no one at the terminal, leaves it undecided and sends nothing. |
+| `--name <serverName>` | For `mcp add`: the name to add the server under. Default: the name in its Server Card, else the URL's host and port. |
+| `--workspace <id>` | For `mcp`: the workspace to act in. Default: the first workspace `status` lists, the one `init` connected your agent to. |
 
 ## Versions
 
@@ -67,6 +72,31 @@ The CLI and NimbleBrain are versioned separately. `nimblebrain --version` is the
 `init --agent <name>` registers the workspace's MCP URL, `http://127.0.0.1:27246/mcp/<workspaceId>`, with the agent: through `claude mcp add` for Claude Code, `codex mcp add` for Codex, and `~/.cursor/mcp.json` for Cursor. The local instance needs no login. If the agent's own CLI is not installed, `init` still succeeds and returns `manual`: the exact command or setting to add by hand. An agent loads a new MCP server when its next session starts. `status` reports the skill as the agent has it now, read from the agent's own skills folder, so a skill added later with `npx skills add nimblebraininc/skills --skill nimblebrain --agent <agent> -g` counts. Connecting an agent gives it NimbleBrain's tools; it does not change the model NimbleBrain runs on. NimbleBrain's own agents run on the model key you entered, billed by that provider, or on the local model you chose.
 
 To connect another client by hand, take the MCP URL from `npx nimblebrain status` and follow [Connecting External Clients](/connect/external-clients/).
+
+## Developing a server
+
+The loop for building an MCP server against your local NimbleBrain:
+
+1. Run your server over HTTP on `127.0.0.1`, for example at `http://127.0.0.1:8000/mcp`.
+2. Add it, once:
+
+   ```bash
+   npx nimblebrain mcp add http://127.0.0.1:8000/mcp
+   ```
+
+3. Ask the agent in the workspace to use it. Restart your server as often as you like; NimbleBrain reconnects at the same URL, and the server stays added across `down`, `up` and `update`.
+
+NimbleBrain reads the server's Server Card at `<url>/server-card` for its title, description, icon and sidebar placements ([Host manifest](/host/manifest/)). Without a card, the server is named from its URL unless you pass `--name`, shown under the name it reports when it connects, and gets no placements. The server need not be running when you add it: the answer then carries a `warning`, and it connects once you start it and reconnect it from the Connectors page.
+
+```json
+{"ok": true, "serverName": "notes", "url": "http://127.0.0.1:8000/mcp", "dialed": "http://host.docker.internal:8000/mcp", "placements": [], "wsId": "ws_..."}
+```
+
+`url` is the URL as you gave it, and `dialed` is where NimbleBrain, inside Docker, connects: the same port and path on `host.docker.internal`, the name Docker gives your machine. Only `localhost`, `127.0.0.1` and `::1` URLs are accepted, and only on an install made by `npx nimblebrain`. An install from before this feature reports `host_loopback: false` in `status`, and `mcp add` answers `UPDATE_REQUIRED` until you run `npx nimblebrain update`.
+
+<Aside type="caution" title="Linux">
+On Linux, `host.docker.internal` is the Docker bridge's address, not your machine's loopback, so a server listening on `127.0.0.1` is not reachable from NimbleBrain. Bind it to the bridge address (usually `172.17.0.1`) or to `0.0.0.0`. `0.0.0.0` listens on every interface, so the server can be reached from your network too unless a firewall stops it.
+</Aside>
 
 ## The JSON
 
@@ -83,6 +113,13 @@ Every command answers `{"ok": true, ...}` or `{"ok": false, "error": "<CODE>", "
 | `RUNTIME_UNSUPPORTED` | The release `--runtime` names is older than this CLI supports, or its Compose file cannot be driven. |
 | `LOCAL_MODEL_UNREACHABLE`, `LOCAL_MODEL_MISSING`, `LOCAL_MODEL_NO_TOOLS`, `LOCAL_CONTEXT_SMALL` | Ollama does not answer, the model is not on it (or its download was declined or failed), the model cannot call tools, or its context window is below the 32k NimbleBrain needs. |
 | `INTERRUPTED` | The CLI was stopped (a signal, Ctrl-C) before it finished; `exit_code` says how. Check `status`, then run the command again. |
+| `NOT_RUNNING` | The command needs NimbleBrain running (`telemetry on`/`off`, every `mcp` command); run `npx nimblebrain up`. |
+| `UPDATE_REQUIRED` | `mcp add` on a release that cannot reach your machine; run `npx nimblebrain update`. |
+| `WORKSPACE_NOT_FOUND`, `SERVER_NOT_FOUND` | No such workspace (the answer lists the ones there are in `workspaces`), or no server by that name in it. |
+| `URL_INVALID`, `URL_NOT_LOOPBACK` | The URL is not an `http`/`https` URL NimbleBrain accepts, or is not on this machine. |
+| `INVALID_SERVER_NAME`, `NAME_TAKEN`, `NAME_IS_CATALOG_ENTRY` | The name cannot name a server, the workspace already has one by that name, or a catalog connector owns it. Pass another `--name`. |
+| `DIRECT_URL_NOT_ALLOWED` | The instance is not a local install with the `dev` sign-in, so it adds servers only from its catalog. |
+| `REQUEST_FAILED` | NimbleBrain refused the request for another reason; `message` carries its text. |
 
 Each error's `fix` is the next thing to do.
 

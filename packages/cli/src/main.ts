@@ -14,6 +14,7 @@ import {
   update,
 } from "./lifecycle.ts";
 import { checkLocalModel, localModelOf } from "./local-model.ts";
+import { mcp } from "./mcp.ts";
 import { CliError, exitCodeFor, type Failure, failure, type Ok } from "./result.ts";
 import { readInstall, type StatusResult, status } from "./status.ts";
 import { settleWaiting } from "./telemetry.ts";
@@ -37,6 +38,9 @@ Commands:
   logs        Recent runtime log lines
   update      Move to the newest release, keeping data
   uninstall   Remove NimbleBrain and its data
+  mcp add <url>          Add an MCP server you run on this machine to a workspace
+  mcp list               The servers in a workspace
+  mcp remove <name>      Remove a server from a workspace
 
 Flags:
   --json            One JSON object on stdout
@@ -48,6 +52,8 @@ Flags:
   --local-model <model>  init: run on this Ollama model instead of a hosted key
   --runtime <tag>   The NimbleBrain release to install or update to (default the newest)
   --telemetry <on|off>  The person's answer to sending anonymous usage data; without it, init asks or leaves it undecided
+  --name <name>     For mcp add: the server name (default from the server's card, else its URL)
+  --workspace <id>  For mcp: the workspace (default the one init connected, the first in status)
   --help, --version
 `;
 
@@ -68,7 +74,7 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
       : { stdout: `${VERSION}\n`, code: 0 };
   }
 
-  const { command, flags, arg } = parsed;
+  const { command, flags, arg, operand } = parsed;
   const home = installHome(deps, flags.home);
   let result: Ok | Failure;
   try {
@@ -86,7 +92,7 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
         result = { ...(await status(deps, home)) };
         break;
       default: {
-        const ctx = { deps, flags, home, version: VERSION, arg };
+        const ctx = { deps, flags, home, version: VERSION, arg, operand };
         const commands = {
           init,
           up,
@@ -97,6 +103,7 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
           key,
           telemetry,
           "local-model": localModel,
+          mcp,
         };
         result = await commands[command](ctx);
       }
@@ -179,24 +186,30 @@ function statusLines(r: StatusLike, command?: string): string[] {
       : `  model key: ${r.model_key === "set" ? "set (NimbleBrain's own agents use it)" : "missing (run npx nimblebrain key)"}`,
   ];
   const agent = r.agent.connected;
-  if (agent) {
-    const name = AGENT_NAMES[agent] ?? agent;
-    lines.push(
-      `  ${name} can use NimbleBrain's tools (it loads them when its next session starts)`,
-    );
-    if (!r.agent.skill)
-      lines.push(
-        `  skill: not installed; add it with npx skills add nimblebraininc/skills --skill nimblebrain --agent ${agent} -g`,
-      );
-  } else if (r.manual) {
-    lines.push(`  agent: not connected; add it by hand: ${r.manual}`);
-  }
+  lines.push(...agentLines(r));
+  if (!r.host_loopback)
+    lines.push("  servers on this machine: not reachable until npx nimblebrain update");
   lines.push(telemetryLine(r.telemetry));
   lines.push(`  CLI ${r.cli_version}`);
   if (command === "init" && !r.already && r.health === "ok") {
     const ask = agent ? `, or ask ${AGENT_NAMES[agent] ?? agent} what NimbleBrain can do` : "";
     lines.push("", `Next: open ${r.url}${ask}. Stop it with npx nimblebrain down.`);
   }
+  return lines;
+}
+
+/** Whether a coding agent is connected, and whether it has the skill, or how to connect one by hand. */
+function agentLines(r: StatusLike): string[] {
+  const agent = r.agent.connected;
+  if (!agent) return r.manual ? [`  agent: not connected; add it by hand: ${r.manual}`] : [];
+  const name = AGENT_NAMES[agent] ?? agent;
+  const lines = [
+    `  ${name} can use NimbleBrain's tools (it loads them when its next session starts)`,
+  ];
+  if (!r.agent.skill)
+    lines.push(
+      `  skill: not installed; add it with npx skills add nimblebraininc/skills --skill nimblebrain --agent ${agent} -g`,
+    );
   return lines;
 }
 
@@ -221,6 +234,12 @@ function genericLines(result: Ok): string[] {
 
 function field(key: string, value: unknown): string[] {
   if (value === undefined || value === null) return [];
+  if (key === "servers" && Array.isArray(value)) {
+    if (value.length === 0) return ["  no servers in this workspace"];
+    return (value as Array<{ serverName: string; url?: string; status?: string }>).map(
+      (s) => `  ${s.serverName}: ${s.url ?? "(no URL)"}${s.status ? ` (${s.status})` : ""}`,
+    );
+  }
   if (key === "checks" && Array.isArray(value)) {
     return (value as Array<{ check: string; ok: boolean; detail: string }>).map(
       (c) => `  ${c.ok ? "✓" : "✗"} ${c.check}: ${c.detail}`,
@@ -231,7 +250,11 @@ function field(key: string, value: unknown): string[] {
       field(`${key} ${k}`, v),
     );
   }
-  return [`  ${key}: ${Array.isArray(value) ? value.join(", ") : String(value)}`];
+  if (Array.isArray(value)) {
+    const items = value.map((v) => (typeof v === "object" ? JSON.stringify(v) : String(v)));
+    return [`  ${key}: ${items.join(", ")}`];
+  }
+  return [`  ${key}: ${String(value)}`];
 }
 
 /**

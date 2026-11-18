@@ -46,6 +46,22 @@ export const ERRORS = {
     "Run `npx nimblebrain local-model` to prepare the model again with a 32k context window.",
   INTERRUPTED:
     "Run `npx nimblebrain status` to see what is in place, then run the same command again.",
+  UPDATE_REQUIRED:
+    "Run `npx nimblebrain update`; this install's NimbleBrain cannot reach servers on this machine yet.",
+  WORKSPACE_NOT_FOUND:
+    "Run `npx nimblebrain status` for the workspace ids, then pass one with --workspace.",
+  SERVER_NOT_FOUND: "Run `npx nimblebrain mcp list` for the server names in this workspace.",
+  DIRECT_URL_NOT_ALLOWED:
+    "Adding a server by URL needs a local install made by `npx nimblebrain`; run `npx nimblebrain update`, or add the server to the instance's connector catalog.",
+  URL_NOT_LOOPBACK:
+    "Run the server on this machine and pass its localhost, 127.0.0.1 or [::1] URL, such as http://127.0.0.1:8000/mcp.",
+  URL_INVALID: "Pass the server's full MCP URL, such as http://127.0.0.1:8000/mcp.",
+  INVALID_SERVER_NAME: "Pass another name with --name: lowercase letters, digits and hyphens.",
+  NAME_TAKEN:
+    "Pass another name with --name, or remove the existing one with `npx nimblebrain mcp remove <serverName>`.",
+  NAME_IS_CATALOG_ENTRY: "Pass another name with --name; this one belongs to a catalog connector.",
+  REQUEST_FAILED:
+    "Run `npx nimblebrain logs` and look at the last error line, then run this again.",
 } as const;
 
 export type ErrorCode = keyof typeof ERRORS;

@@ -12,6 +12,7 @@ export const COMMANDS = [
   "update",
   "uninstall",
   "telemetry",
+  "mcp",
   "local-model",
 ] as const;
 export type Command = (typeof COMMANDS)[number];
@@ -31,10 +32,14 @@ export interface Flags {
   runtime?: string;
   /** `--telemetry on|off`: an answer a person already gave. */
   telemetry?: "on" | "off";
+  /** `mcp add --name`: the server name to add it under. */
+  name?: string;
+  /** `mcp --workspace`: the workspace to act in, instead of the one `init` connected. */
+  workspace?: string;
 }
 
 export type Parsed =
-  | { kind: "run"; command: Command; flags: Flags; arg?: string }
+  | { kind: "run"; command: Command; flags: Flags; arg?: string; operand?: string }
   | { kind: "help"; flags: Flags }
   | { kind: "version"; flags: Flags };
 
@@ -50,6 +55,8 @@ const options = {
   "local-model": { type: "string" },
   runtime: { type: "string" },
   telemetry: { type: "string" },
+  name: { type: "string" },
+  workspace: { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } satisfies ParseArgsOptionsConfig;
@@ -85,13 +92,21 @@ export function parse(argv: string[]): Parsed {
     localModel: values["local-model"],
     runtime: values.runtime,
     telemetry,
+    name: values.name,
+    workspace: values.workspace,
   };
 
   if (values.help) return { kind: "help", flags };
   if (values.version) return { kind: "version", flags };
   const name = positionals[0] ?? "init";
   if (name === "help") return { kind: "help", flags };
-  return { kind: "run", command: command(name, positionals), flags, arg: positionals[1] };
+  return {
+    kind: "run",
+    command: command(name, positionals),
+    flags,
+    arg: positionals[1],
+    operand: positionals[2],
+  };
 }
 
 function telemetryFlag(value: string | undefined): "on" | "off" | undefined {
@@ -99,17 +114,42 @@ function telemetryFlag(value: string | undefined): "on" | "off" | undefined {
   throw new CliError("USAGE", `--telemetry must be on or off, not "${value}".`);
 }
 
-/** The command named, checked with its argument: `telemetry` takes on, off or status; `local-model` a model. */
+/** What each `mcp` subcommand takes after it: the URL to add, nothing, or the server to remove. */
+export const MCP_SUBCOMMANDS = { add: "url", list: null, remove: "serverName" } as const;
+export type McpSubcommand = keyof typeof MCP_SUBCOMMANDS;
+
+/**
+ * The command named, checked with its arguments: `telemetry` takes one (on, off
+ * or status), `local-model` a model, `mcp` a subcommand and that subcommand's
+ * operand; nothing else takes any.
+ */
 function command(name: string, positionals: string[]): Command {
+  if (!(COMMANDS as readonly string[]).includes(name))
+    throw new CliError("USAGE", `Unknown command "${name}".`);
+  if (name === "mcp") return mcpCommand(positionals);
   const maxArgs = name === "telemetry" || name === "local-model" ? 2 : 1;
   if (positionals.length > maxArgs)
     throw new CliError("USAGE", `Unexpected argument "${positionals[maxArgs]}".`);
-  if (!(COMMANDS as readonly string[]).includes(name))
-    throw new CliError("USAGE", `Unknown command "${name}".`);
   const arg = positionals[1];
   if (name === "telemetry" && arg !== undefined && !["on", "off", "status"].includes(arg))
     throw new CliError("USAGE", `telemetry takes on, off or status, not "${arg}".`);
   return name as Command;
+}
+
+function mcpCommand(positionals: string[]): Command {
+  const sub = positionals[1];
+  if (sub === undefined || !Object.hasOwn(MCP_SUBCOMMANDS, sub))
+    throw new CliError(
+      "USAGE",
+      `mcp takes add <url>, list or remove <serverName>${sub === undefined ? "" : `, not "${sub}"`}.`,
+    );
+  const operand = MCP_SUBCOMMANDS[sub as McpSubcommand];
+  const maxArgs = operand === null ? 2 : 3;
+  if (positionals.length > maxArgs)
+    throw new CliError("USAGE", `Unexpected argument "${positionals[maxArgs]}".`);
+  if (operand !== null && positionals[2] === undefined)
+    throw new CliError("USAGE", `mcp ${sub} needs a ${operand}.`);
+  return "mcp";
 }
 
 function parseStrict(argv: string[]) {

@@ -54,7 +54,17 @@ Set `asyncio_mode = "auto"` under `[tool.pytest.ini_options]` in `pyproject.toml
 
 ## 5. Connect it to NimbleBrain
 
-NimbleBrain connects to a server by URL and never starts one. With the server running, point a development workspace at it and allow the loopback address:
+NimbleBrain connects to a server by URL and never starts one. With the server running, add it to your local NimbleBrain ([`npx nimblebrain`](/cli/nimblebrain/)):
+
+```bash
+npx nimblebrain mcp add http://127.0.0.1:8000/mcp
+```
+
+It is added to the workspace your coding agent is connected to, and stays added across restarts of either side. Ask the agent to save a note. On Linux, run the server on `0.0.0.0` or the Docker bridge address instead of `127.0.0.1`; see [Developing a server](/cli/nimblebrain/#developing-a-server).
+
+### From a source checkout
+
+Running NimbleBrain with `bun run dev` from the platform repository instead, point a development workspace at the server and allow the loopback address:
 
 ```json title="<workDir>/workspaces/<wsId>/workspace.json"
 {
@@ -67,8 +77,6 @@ NimbleBrain connects to a server by URL and never starts one. With the server ru
 ```json title="<workDir>/nimblebrain.json"
 { "allowInsecureRemotes": true }
 ```
-
-Start NimbleBrain (`bun run dev` in the platform repository) and ask the agent to save a note.
 
 <Aside type="caution">
   `allowInsecureRemotes` lets connectors use plain `http` to `localhost`, `127.0.0.1` and `::1`, for every connector in the instance. Private ranges and cloud-metadata hosts are refused whatever it is set to. It is a development switch. For a deployed NimbleBrain, serve the connector over HTTPS and add it to the [connectors catalog](/config/connectors-catalog/).

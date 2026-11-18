@@ -61,6 +61,15 @@ export function asksConsent(composeText: string): boolean {
   return composeText.includes("NB_TELEMETRY_CONSENT");
 }
 
+/**
+ * Whether the runtime of this Compose file can reach a server on this machine:
+ * its file maps the host and sets `NB_HOST_LOOPBACK` (ADR-0065). An install on
+ * an older release gets it through `update`.
+ */
+export function hostLoopback(composeText: string): boolean {
+  return composeText.includes("NB_HOST_LOOPBACK");
+}
+
 /** The provider names `key` offers, each mapped to its variable. */
 export function providers(composeText: string): Record<string, string> {
   return Object.fromEntries(

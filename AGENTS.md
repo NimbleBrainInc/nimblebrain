@@ -84,7 +84,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`web/AGENTS.md`](./web/AGENTS.md) | Web shell: gating workspace writes, forms that save as they change and notices, shell rules, chat panel workspace scope, main-area views |
 | [`test/conformance/AGENTS.md`](./test/conformance/AGENTS.md) | The MCP conformance suite against `/mcp/<wsId>`: what it measures, the per-version baselines, the pin, where it runs in CI |
 | [`web/src/bridge/AGENTS.md`](./web/src/bridge/AGENTS.md) | MCP App Bridge rules: iframe scoping, handshake gate, notification relay, host capabilities |
-| [`packages/cli/AGENTS.md`](./packages/cli/AGENTS.md) | The `nimblebrain` CLI (`npx nimblebrain`): setup and running only, Node 20 with no dependencies, the `{ok, error, fix}` JSON contract, the model key never in output, never touching an install it did not make |
+| [`packages/cli/AGENTS.md`](./packages/cli/AGENTS.md) | The `nimblebrain` CLI (`npx nimblebrain`): setup and running, plus a thin client of the local instance's API (`mcp add`), Node 20 with no dependencies, the `{ok, error, fix}` JSON contract, the model key never in output, never touching an install it did not make |
 
 ## Conventions
 

@@ -70,6 +70,18 @@ step "status"
 out=$(nb status)
 expect "$out" '.ok == true and .health == "ok" and .model_key == "missing"' "status reports health and no key"
 
+step "mcp: list, and add and remove where the release can reach this machine"
+expect "$(nb mcp list)" '.ok == true and (.servers | type) == "array"' "mcp list answers the workspace's servers"
+if [ "$(nb status | jq -r .host_loopback)" = "true" ]; then
+  # Nothing listens on port 1: the add succeeds with a warning, and the row is there to remove.
+  out=$(nb mcp add http://127.0.0.1:1/mcp --name e2e-probe)
+  expect "$out" '.ok == true and .serverName == "e2e-probe" and (.dialed | test("host.docker.internal"))' "mcp add stores the server and dials the host"
+  expect "$(nb mcp list)" 'any(.servers[]; .serverName == "e2e-probe")' "mcp list shows it"
+  expect "$(nb mcp remove e2e-probe)" '.ok == true' "mcp remove removes it"
+else
+  expect "$(nb mcp add http://127.0.0.1:1/mcp)" '.error == "UPDATE_REQUIRED"' "a release without host loopback needs update"
+fi
+
 step "logs"
 out=$(nb logs)
 expect "$out" '.ok == true and (.lines | length) > 0' "logs returns runtime lines"

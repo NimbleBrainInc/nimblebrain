@@ -28,6 +28,8 @@ later.
 | `update` | Move to the newest release, keeping data |
 | `uninstall` | Remove it and its data |
 | `telemetry [on\|off\|status]` | Whether this install sends anonymous usage data |
+| `mcp add <url>` | Add an MCP server you run on this machine to a workspace (`--name`, `--workspace`) |
+| `mcp list` / `mcp remove <name>` | The servers in a workspace, or remove one |
 
 `--json` makes every command answer one JSON object, `{"ok": true, ...}` or
 `{"ok": false, "error": "<CODE>", "fix": "..."}`, for scripts and coding agents.
