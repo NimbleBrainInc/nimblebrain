@@ -3,7 +3,7 @@ import { type Deps, installHome } from "./deps.ts";
 import { doctor } from "./doctor.ts";
 import { down, init, key, logs, telemetry, uninstall, up, update } from "./lifecycle.ts";
 import { CliError, exitCodeFor, type Failure, failure, type Ok } from "./result.ts";
-import { readInstall, status } from "./status.ts";
+import { readInstall, type StatusResult, status } from "./status.ts";
 import { settleWaiting } from "./telemetry.ts";
 
 import { VERSION } from "./version.ts";
@@ -85,7 +85,7 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
   if (!["init", "telemetry", "uninstall", "doctor"].includes(command)) {
     await settleWaiting(deps, home, VERSION);
   }
-  return render(result, flags.json);
+  return render(result, flags.json, command);
 }
 
 async function isHealthy(deps: Deps, port: number): Promise<boolean> {
@@ -99,34 +99,92 @@ function toFailure(err: unknown): Failure {
   return failure(new CliError("USAGE", err instanceof Error ? err.message : String(err)));
 }
 
-function render(result: Ok | Failure, json: boolean): { stdout: string; code: number } {
+function render(
+  result: Ok | Failure,
+  json: boolean,
+  command?: string,
+): { stdout: string; code: number } {
   const code = exitCodeFor(result);
   if (json) return { stdout: `${JSON.stringify(result)}\n`, code };
   if (!result.ok) return { stdout: `error: ${result.message}\nfix: ${result.fix}\n`, code };
-  return { stdout: human(result), code };
+  const lines = isStatus(result) ? statusLines(result, command) : genericLines(result);
+  return { stdout: `${lines.join("\n")}\n`, code };
 }
 
-/** The same fields as the JSON, as lines a person reads. */
-function human(result: Ok): string {
-  const lines = Object.entries(result)
+type StatusLike = Ok & StatusResult & { manual?: string; already?: boolean; from?: string };
+
+function isStatus(result: Ok): result is StatusLike {
+  return "health" in result && "url" in result && "workspaces" in result;
+}
+
+const AGENT_NAMES: Record<string, string> = {
+  "claude-code": "Claude Code",
+  cursor: "Cursor",
+  codex: "Codex",
+};
+
+/** An install's state as a person reads it; the JSON carries the same facts. */
+function statusLines(r: StatusLike, command?: string): string[] {
+  const lines = [
+    ...changeLines(r),
+    `  NimbleBrain ${r.version.startsWith("v") ? r.version : `v${r.version}`}: ${r.health === "ok" ? "running" : "stopped"} at ${r.url}`,
+    ...r.workspaces.map((w) => `  workspace ${w.name}: ${w.mcp}`),
+    `  model key: ${r.model_key === "set" ? "set (NimbleBrain's own agents use it)" : "missing (run npx nimblebrain key)"}`,
+  ];
+  const agent = r.agent.connected;
+  if (agent) {
+    const name = AGENT_NAMES[agent] ?? agent;
+    lines.push(
+      `  ${name} can use NimbleBrain's tools (it loads them when its next session starts)`,
+    );
+    if (!r.agent.skill)
+      lines.push(
+        `  skill: not installed; add it with npx skills add nimblebraininc/skills --skill nimblebrain`,
+      );
+  } else if (r.manual) {
+    lines.push(`  agent: not connected; add it by hand: ${r.manual}`);
+  }
+  lines.push(telemetryLine(r.telemetry));
+  lines.push(`  CLI ${r.cli_version}`);
+  if (command === "init" && !r.already && r.health === "ok") {
+    const ask = agent ? `, or ask ${AGENT_NAMES[agent] ?? agent} what NimbleBrain can do` : "";
+    lines.push("", `Next: open ${r.url}${ask}. Stop it with npx nimblebrain down.`);
+  }
+  return lines;
+}
+
+/** What this run did to an existing install: nothing (a rerun), or which version it left. */
+function changeLines(r: StatusLike): string[] {
+  if (r.already) return ["  already installed"];
+  return r.from ? [`  updated from ${r.from}`] : [];
+}
+
+/** The answer, with why it is fixed or how to give one. */
+function telemetryLine(t: StatusLike["telemetry"]): string {
+  const how = t.locked ? ` (${t.locked})` : t.set ? ` (answer with ${t.set})` : "";
+  return `  telemetry: ${t.state}${how}`;
+}
+
+/** Any other answer: its fields as lines, nested values flattened, nothing empty. */
+function genericLines(result: Ok): string[] {
+  return Object.entries(result)
     .filter(([key]) => key !== "ok")
     .flatMap(([key, value]) => field(key, value));
-  return `${lines.join("\n")}\n`;
 }
 
 function field(key: string, value: unknown): string[] {
+  if (value === undefined || value === null) return [];
   if (key === "checks" && Array.isArray(value)) {
     return (value as Array<{ check: string; ok: boolean; detail: string }>).map(
       (c) => `  ${c.ok ? "✓" : "✗"} ${c.check}: ${c.detail}`,
     );
   }
-  if (key === "workspaces" && Array.isArray(value)) {
-    return (value as Array<{ name: string; mcp: string }>).map(
-      (w) => `  workspace ${w.name}: ${w.mcp}`,
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) =>
+      field(`${key} ${k}`, v),
     );
   }
-  const text = typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
-  return [`  ${key}: ${text}`];
+  return [`  ${key}: ${Array.isArray(value) ? value.join(", ") : String(value)}`];
 }
 
 /**
