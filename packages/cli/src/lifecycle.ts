@@ -1,4 +1,10 @@
-import { connectAgent, installSkill, SERVER_NAME } from "./agents.ts";
+import {
+  connectAgent,
+  installSkill,
+  refreshSkill,
+  SERVER_NAME,
+  type SkillRefresh,
+} from "./agents.ts";
 import { AGENTS, type Agent, type Flags } from "./args.ts";
 import {
   asksConsent,
@@ -230,9 +236,11 @@ export async function logs(ctx: Ctx): Promise<Ok> {
 
 /**
  * Moves the install to the newest runtime release, or the one `--runtime`
- * names, keeping the data volume. The CLI is versioned on its own (ADR-0064),
- * so updating the runtime needs no newer CLI. Refuses to move an install
- * backwards, since a release's data may not read on an older one.
+ * names, keeping the data volume, then refreshes the connected agent's skill,
+ * so everything the CLI installed is current. The CLI is versioned on its own
+ * (ADR-0064), so updating the runtime needs no newer CLI. Refuses to move an
+ * install backwards, since a release's data may not read on an older one. The
+ * skill is refreshed on a current runtime too; its refresh never fails `update`.
  */
 export async function update(ctx: Ctx): Promise<Ok> {
   const { deps, home } = ctx;
@@ -240,7 +248,10 @@ export async function update(ctx: Ctx): Promise<Ok> {
   const tag = await runtimeTag(deps, ctx.flags.runtime);
   const from = `v${install.version}`;
   const order = compareVersions(tag, from);
-  if (order === 0) return { ...(await status(deps, home)), already: true };
+  if (order === 0) {
+    const skill_update = await refreshAgentSkill(deps, install);
+    return { ...(await status(deps, home)), already: true, ...skill_update };
+  }
   if (order < 0) {
     throw new CliError(
       "USAGE",
@@ -255,7 +266,17 @@ export async function update(ctx: Ctx): Promise<Ok> {
   if (pull.code !== 0) throw startError(pull);
   await start(deps, home, install.port);
   await writeState(deps, home, { ...install, version: tag.replace(/^v/, "") });
-  return { ...(await status(deps, home)), from };
+  const skill_update = await refreshAgentSkill(deps, install);
+  return { ...(await status(deps, home)), from, ...skill_update };
+}
+
+/** `skill_update` for the answer, when an agent is connected. */
+async function refreshAgentSkill(
+  deps: Deps,
+  install: InstallState,
+): Promise<{ skill_update?: SkillRefresh }> {
+  if (!install.agent || install.agent === "none") return {};
+  return { skill_update: await refreshSkill(deps, install.agent) };
 }
 
 /**

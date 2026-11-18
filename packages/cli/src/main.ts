@@ -1,3 +1,4 @@
+import type { SkillRefresh } from "./agents.ts";
 import { type Parsed, parse, wantsJson } from "./args.ts";
 import { paths } from "./compose.ts";
 import { type Deps, installHome } from "./deps.ts";
@@ -184,7 +185,13 @@ function render(result: Ok | Failure, json: boolean, command?: string): Answer {
   return { stdout: `${lines.join("\n")}\n`, code };
 }
 
-type StatusLike = Ok & StatusResult & { manual?: string; already?: boolean; from?: string };
+type StatusLike = Ok &
+  StatusResult & {
+    manual?: string;
+    already?: boolean;
+    from?: string;
+    skill_update?: SkillRefresh;
+  };
 
 function isStatus(result: Ok): result is StatusLike {
   return "health" in result && "url" in result && "workspaces" in result;
@@ -227,12 +234,22 @@ function agentLines(r: StatusLike): string[] {
   const lines = [
     `  ${name} can use NimbleBrain's tools (it loads them when its next session starts)`,
   ];
+  const refresh = r.skill_update && SKILL_REFRESH_LINES[r.skill_update];
+  if (refresh) lines.push(`  skill: ${refresh}`);
   if (!r.agent.skill)
     lines.push(
       `  skill: not installed; add it with npx skills add nimblebraininc/skills --skill nimblebrain --agent ${agent} -g`,
     );
   return lines;
 }
+
+/** What `update` did to the skill, as a person reads it; a skill that is not there has its own line. */
+const SKILL_REFRESH_LINES: Record<SkillRefresh, string | undefined> = {
+  updated: "updated to the newest nimblebrain skill",
+  unchanged: "the nimblebrain skill is current",
+  failed: "could not refresh the nimblebrain skill; try npx skills update nimblebrain -g",
+  not_installed: undefined,
+};
 
 /** What this run did to an existing install: nothing (a rerun), or which version it left. */
 function changeLines(r: StatusLike): string[] {
