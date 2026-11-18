@@ -11,7 +11,7 @@ NimbleBrain can send anonymous usage data so we can see where installs fail and 
 
 | Install | Who answers | How |
 |---|---|---|
-| `npx nimblebrain` | You | `init` asks once in your terminal. Only a typed `y` is a yes. |
+| `npx nimblebrain` | You | `init` asks once in your terminal, before it checks your machine. The question shows `[Y/n]`: Enter is yes, `n` is no, and either can be changed later. |
 | `npx nimblebrain` run by a coding agent | You, through the agent | The agent passes the question on (below) and runs `npx nimblebrain telemetry on` or `off` with your answer. |
 | Any install, still unanswered | An org admin | The web UI asks once, at the foot of the sidebar. |
 | A deployment that set it | The operator | `telemetry.enabled` in `nimblebrain.json`, or `NB_TELEMETRY_DISABLED` / `DO_NOT_TRACK`. Nobody is asked. |
