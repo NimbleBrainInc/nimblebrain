@@ -305,6 +305,8 @@ describe("after install", () => {
     expect((await json(["update", "--runtime", "v0.74.0-rc.1"], m)).body.error).toBe("USAGE");
     expect((await json(["update", "--runtime", "latest"], m)).body.error).toBe("USAGE");
     expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_TAG=v0.74.0");
+    const { stdout } = await run(["update", "--runtime", "v0.75.0"], m.deps);
+    expect(stdout).toContain("updated from v0.74.0");
   });
 
   test("uninstall without --yes from an agent changes nothing", async () => {
