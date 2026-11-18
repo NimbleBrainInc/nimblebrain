@@ -80,7 +80,7 @@ export async function installSkill(deps: Deps, agent: Agent): Promise<string | n
       "add",
       "nimblebraininc/skills",
       "--skill",
-      "nimblebrain",
+      SKILL_NAME,
       "--agent",
       agent,
       "-g",
@@ -88,5 +88,30 @@ export async function installSkill(deps: Deps, agent: Agent): Promise<string | n
     ],
     { timeoutMs: 120_000 },
   );
-  return res.code === 0 ? "nimblebrain" : null;
+  return res.code === 0 ? SKILL_NAME : null;
+}
+
+/** The skill `init` installs, by the name the skills CLI installs it under. */
+export const SKILL_NAME = "nimblebrain";
+
+/**
+ * Where the skills CLI (`npx skills add -g`) puts a user-level skill for each
+ * agent: the same folders it uses, so a skill added by hand counts too.
+ */
+function globalSkillsDir(deps: Deps, agent: Agent): string | undefined {
+  if (agent === "claude-code")
+    return join(deps.env.CLAUDE_CONFIG_DIR?.trim() || join(deps.home, ".claude"), "skills");
+  if (agent === "codex") return join(deps.home, ".agents", "skills");
+  if (agent === "cursor") return join(deps.home, ".cursor", "skills");
+  return undefined;
+}
+
+/**
+ * Whether the agent has the skill now, read from its skills folder rather than
+ * from what `init` recorded: a skill added or removed later is seen as it is.
+ */
+export async function skillInstalled(deps: Deps, agent: Agent): Promise<string | null> {
+  const dir = globalSkillsDir(deps, agent);
+  if (!dir) return null;
+  return (await deps.readText(join(dir, SKILL_NAME, "SKILL.md"))) === undefined ? null : SKILL_NAME;
 }

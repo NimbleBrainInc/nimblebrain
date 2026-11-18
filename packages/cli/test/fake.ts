@@ -89,6 +89,18 @@ export function machine(opts: MachineOptions = {}): Machine {
         }
       }
       if (res.code === 0 && line.startsWith("docker compose down")) m.healthy = false;
+      // As the skills CLI does: a user-level skill lands in the agent's skills folder.
+      const added = line.match(/^npx -y skills add \S+ --skill (\S+) --agent (\S+) -g/);
+      if (res.code === 0 && added) {
+        const dirs: Record<string, string> = {
+          "claude-code": ".claude",
+          codex: ".agents",
+          cursor: ".cursor",
+        };
+        const dir = dirs[added[2] ?? ""];
+        if (dir)
+          m.files.set(`/home/dana/${dir}/skills/${added[1]}/SKILL.md`, { text: "", mode: 0o644 });
+      }
       return res;
     },
     portFree: async () => opts.portFree ?? true,

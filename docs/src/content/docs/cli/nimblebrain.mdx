@@ -62,7 +62,7 @@ The CLI and NimbleBrain are versioned separately. `nimblebrain --version` is the
 
 ## Connecting an agent
 
-`init --agent <name>` registers the workspace's MCP URL, `http://127.0.0.1:27246/mcp/<workspaceId>`, with the agent: through `claude mcp add` for Claude Code, `codex mcp add` for Codex, and `~/.cursor/mcp.json` for Cursor. The local instance needs no login. If the agent's own CLI is not installed, `init` still succeeds and returns `manual`: the exact command or setting to add by hand. An agent loads a new MCP server when its next session starts. Connecting an agent gives it NimbleBrain's tools; it does not change the model NimbleBrain runs on. NimbleBrain's own agents always run on the model key you entered, billed by that provider.
+`init --agent <name>` registers the workspace's MCP URL, `http://127.0.0.1:27246/mcp/<workspaceId>`, with the agent: through `claude mcp add` for Claude Code, `codex mcp add` for Codex, and `~/.cursor/mcp.json` for Cursor. The local instance needs no login. If the agent's own CLI is not installed, `init` still succeeds and returns `manual`: the exact command or setting to add by hand. An agent loads a new MCP server when its next session starts. `status` reports the skill as the agent has it now, read from the agent's own skills folder, so a skill added later with `npx skills add nimblebraininc/skills --skill nimblebrain --agent <agent> -g` counts. Connecting an agent gives it NimbleBrain's tools; it does not change the model NimbleBrain runs on. NimbleBrain's own agents always run on the model key you entered, billed by that provider.
 
 To connect another client by hand, take the MCP URL from `npx nimblebrain status` and follow [Connecting External Clients](/connect/external-clients/).
 

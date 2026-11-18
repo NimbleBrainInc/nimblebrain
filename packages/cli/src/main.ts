@@ -139,7 +139,7 @@ function statusLines(r: StatusLike, command?: string): string[] {
     );
     if (!r.agent.skill)
       lines.push(
-        `  skill: not installed; add it with npx skills add nimblebraininc/skills --skill nimblebrain`,
+        `  skill: not installed; add it with npx skills add nimblebraininc/skills --skill nimblebrain --agent ${agent} -g`,
       );
   } else if (r.manual) {
     lines.push(`  agent: not connected; add it by hand: ${r.manual}`);

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { skillInstalled } from "./agents.ts";
 import type { Agent } from "./args.ts";
 import { hasKey, keyVars } from "./compose.ts";
 import type { Deps } from "./deps.ts";
@@ -95,7 +96,10 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
     health: up ? "ok" : "down",
     url,
     workspaces,
-    agent: { connected: install.agent ?? null, skill: install.skill ?? null },
+    agent: {
+      connected: install.agent ?? null,
+      skill: install.agent ? await skillInstalled(deps, install.agent) : null,
+    },
     model_key: modelKey,
     telemetry: await currentTelemetry(deps, home, url),
   };
