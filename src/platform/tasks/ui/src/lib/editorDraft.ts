@@ -325,7 +325,6 @@ function readEvent(e: EventDraft, out: BuiltDefinition): void {
     out.problems.push("The wait is at most 900 seconds.");
   if (fires !== undefined && fires > 60) out.problems.push("At most 60 runs per hour.");
   out.schedule = {
-    type: "event",
     match,
     ...(debounce !== undefined ? { debounceMs: Math.round(debounce * 1000) } : {}),
     ...(fires !== undefined ? { maxFiresPerHour: Math.round(fires) } : {}),
@@ -337,7 +336,16 @@ function readTrigger(d: EditorDraft, out: BuiltDefinition): void {
   if (d.trigger !== "schedule") return;
   const problem = scheduleProblem(d.schedule);
   if (problem) out.problems.push(problem);
-  else out.schedule = { ...(d.schedule as ScheduleSpec) };
+  else out.schedule = scheduleArg(d.schedule as ScheduleSpec);
+}
+
+/**
+ * The picker's schedule as `tasks__create` / `tasks__update` take it: the field
+ * that is set names the kind (`cron`, `at`, `intervalMs`), with no `type`.
+ */
+export function scheduleArg(spec: ScheduleSpec): Record<string, unknown> {
+  const { type: _type, expression, ...rest } = spec;
+  return { ...(expression !== undefined ? { cron: expression } : {}), ...rest };
 }
 
 /** Read every field of the draft, collecting what is wrong rather than stopping at the first. */

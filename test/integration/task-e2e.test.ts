@@ -176,7 +176,7 @@ describe("task e2e: create -> run -> verify", () => {
       {
         manifest: {
           name: "Daily Summary",
-          schedule: { type: "cron", expression: "0 8 * * *", timezone: "Pacific/Honolulu" },
+          schedule: { cron: "0 8 * * *", timezone: "Pacific/Honolulu" },
           description: "Generates a daily activity summary",
         },
         body: "Summarize today's activity",
@@ -213,7 +213,7 @@ describe("task e2e: create -> run -> verify", () => {
       {
         manifest: {
           name: "Weekly Report",
-          schedule: { type: "interval", intervalMs: 3_600_000 },
+          schedule: { intervalMs: 3_600_000 },
           description: "Compiles weekly metrics",
           skills: ["reporting"],
           maxIterations: 8,
@@ -252,7 +252,7 @@ describe("task e2e: create -> run -> verify", () => {
       {
         manifest: {
           name: "Scoped Task",
-          schedule: { type: "interval", intervalMs: 120_000 },
+          schedule: { intervalMs: 120_000 },
         },
         body: "Do scoped work",
       },
@@ -296,7 +296,7 @@ describe("task e2e: run records metrics", () => {
       {
         manifest: {
           name: "Multi Tool Job",
-          schedule: { type: "interval", intervalMs: 60_000 },
+          schedule: { intervalMs: 60_000 },
         },
         body: "Use many tools",
       },
@@ -318,7 +318,7 @@ describe("task e2e: run records metrics", () => {
       {
         manifest: {
           name: "Status Check",
-          schedule: { type: "interval", intervalMs: 60_000 },
+          schedule: { intervalMs: 60_000 },
         },
         body: "Check status",
       },

@@ -20,6 +20,7 @@ import type {
   TaskEffectiveLimits,
   TaskRunResultBody,
   TaskRunStats,
+  TaskScheduleInput,
   TaskSummary,
   TasksAssessInput,
   TasksAssessOutput,
@@ -679,8 +680,46 @@ function timezoneOf(task: Task, ctx: ToolContext): string {
  * LLM-facing handler stamps `source: "agent"`. An internal caller bypasses it
  * and calls `createTask` from `domain.ts` directly with the full shape.
  */
+/** The kind a caller's schedule names, by the one field it gives. */
+const SCHEDULE_KINDS = [
+  ["cron", "cron"],
+  ["at", "once"],
+  ["intervalMs", "interval"],
+  ["match", "event"],
+] as const;
+
+/**
+ * The stored schedule for the one a caller wrote. The field present names the
+ * type (`cron` is stored as `expression`); a schedule naming none, or several,
+ * is refused. `keepTimezone` is the task's current zone, kept for a cron that
+ * omits one, so changing the time of an update never moves its zone.
+ */
+export function toStoredSchedule(input: TaskScheduleInput, keepTimezone?: string): ScheduleSpec {
+  const given = SCHEDULE_KINDS.filter(([field]) => input[field] !== undefined);
+  const [only] = given;
+  if (!only || given.length !== 1) {
+    const named = given.map(([field]) => field).join(", ") || "none of them";
+    throw new Error(
+      `A schedule gives exactly one of cron, at, intervalMs, or match; this gives ${named}.`,
+    );
+  }
+  const type = only[1];
+  const { cron, timezone, ...rest } = input;
+  const zone = timezone ?? (type === "cron" ? keepTimezone : undefined);
+  return {
+    type,
+    ...(cron !== undefined ? { expression: cron } : {}),
+    ...(zone !== undefined ? { timezone: zone } : {}),
+    ...rest,
+  };
+}
+
 export function handleCreate(args: TasksCreateInput, ctx: ToolContext): TasksCreateOutput {
-  const { manifest, body } = args;
+  const { body } = args;
+  const manifest = {
+    ...args.manifest,
+    schedule: args.manifest.schedule && toStoredSchedule(args.manifest.schedule),
+  };
 
   validateTaskFields(manifest);
 
@@ -733,7 +772,23 @@ function withEffectiveLimits<T extends { task: Task; message: string }>(
 }
 
 export function handleUpdate(args: TasksUpdateInput, ctx: ToolContext): TasksUpdateOutput {
-  const { taskId, manifest: patch, body } = args;
+  const { taskId, body } = args;
+  // The schedule a caller writes becomes the stored one here; `null` still clears it.
+  const { schedule, ...fields } = args.manifest ?? {};
+  const patch = args.manifest && {
+    ...fields,
+    ...(schedule === undefined
+      ? {}
+      : {
+          schedule:
+            schedule === null
+              ? null
+              : toStoredSchedule(
+                  schedule,
+                  requireTask(ctx.definitions(), taskId).schedule?.timezone,
+                ),
+        }),
+  };
   if (patch) validateTaskFields(patch);
   const result = updateTask(
     taskId,

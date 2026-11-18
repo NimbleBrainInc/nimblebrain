@@ -18,6 +18,7 @@ import {
   handleUpdate,
   type ToolContext,
   toKebabCase,
+  toStoredSchedule,
   validateTaskFields,
 } from "../../../../src/platform/tasks/server.ts";
 import {
@@ -258,7 +259,7 @@ describe("handleCreate", () => {
       {
         manifest: {
           name: "Daily Report",
-          schedule: { type: "cron", expression: "0 8 * * *", timezone: "Pacific/Honolulu" },
+          schedule: { cron: "0 8 * * *", timezone: "Pacific/Honolulu" },
         },
         body: "Generate daily report",
       },
@@ -282,7 +283,7 @@ describe("handleCreate", () => {
       {
         manifest: {
           name: "Daily Report",
-          schedule: { type: "interval", intervalMs: 60_000 },
+          schedule: { intervalMs: 60_000 },
         },
         body: "Generate daily report",
       },
@@ -294,7 +295,7 @@ describe("handleCreate", () => {
         {
           manifest: {
             name: "Daily Report",
-            schedule: { type: "interval", intervalMs: 120_000 },
+            schedule: { intervalMs: 120_000 },
           },
           body: "Different prompt",
         },
@@ -316,7 +317,7 @@ describe("create → list", () => {
       {
         manifest: {
           name: "Daily Report",
-          schedule: { type: "interval", intervalMs: 1_800_000 },
+          schedule: { intervalMs: 1_800_000 },
         },
         body: "Generate daily report",
       },
@@ -525,10 +526,7 @@ describe("handleList paging", () => {
 describe("handleUpdate", () => {
   test("updates enabled status", () => {
     const ctx = makeCtx();
-    handleCreate(
-      createArgs("Daily Report", "Generate report", { type: "interval", intervalMs: 60_000 }),
-      ctx,
-    );
+    handleCreate(createArgs("Daily Report", "Generate report", { intervalMs: 60_000 }), ctx);
 
     const result = handleUpdate(updateArgs("daily-report", { enabled: false }), ctx);
 
@@ -544,12 +542,12 @@ describe("handleUpdate", () => {
 
   test("updates schedule and reloads scheduler", () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("My Task", "Do it", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("My Task", "Do it", { intervalMs: 60_000 }), ctx);
 
     schedulerReloaded = false;
     handleUpdate(
       updateArgs("my-task", {
-        schedule: { type: "cron", expression: "0 9 * * 1", timezone: "Pacific/Honolulu" },
+        schedule: { cron: "0 9 * * 1", timezone: "Pacific/Honolulu" },
       }),
       ctx,
     );
@@ -563,7 +561,7 @@ describe("handleUpdate", () => {
   });
   test("sets allowedTools", () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Scoped", "Do it", { intervalMs: 60_000 }), ctx);
 
     const result = handleUpdate(updateArgs("scoped", { allowedTools: ["crm__*"] }), ctx);
 
@@ -572,7 +570,7 @@ describe("handleUpdate", () => {
 
   test("refuses allowedTools that name a task-authoring tool", () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Scoped", "Do it", { intervalMs: 60_000 }), ctx);
 
     expect(() =>
       handleUpdate(updateArgs("scoped", { allowedTools: ["tasks__update"] }), ctx),
@@ -587,7 +585,7 @@ describe("handleCreate — allowedTools", () => {
       createArgs(
         "Scoped",
         "Do it",
-        { type: "interval", intervalMs: 60_000 },
+        { intervalMs: 60_000 },
         {
           allowedTools: ["crm__*", "files__read"],
         },
@@ -605,7 +603,7 @@ describe("handleCreate — allowedTools", () => {
         createArgs(
           "Loop",
           "Do it",
-          { type: "interval", intervalMs: 60_000 },
+          { intervalMs: 60_000 },
           {
             allowedTools: ["files__*", "tasks__create"],
           },
@@ -623,7 +621,7 @@ describe("handleCreate — allowedTools", () => {
 describe("handleDelete", () => {
   test("removes task from list", () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("Temp", "Temporary", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Temp", "Temporary", { intervalMs: 60_000 }), ctx);
 
     const delResult = handleDelete({ taskId: "temp" }, ctx);
     expect(delResult.deleted).toBe(true);
@@ -647,17 +645,9 @@ describe("handleList filters", () => {
   // schema doesn't accept it. To exercise filter-by-source, seed the store
   // directly with tasks whose `source` is set as an operator would.
   function seedTasks(ctx: ToolContext): void {
-    handleCreate(createArgs("Active Operator", "p", { type: "interval", intervalMs: 60_000 }), ctx);
-    handleCreate(
-      createArgs(
-        "Disabled User",
-        "p",
-        { type: "interval", intervalMs: 60_000 },
-        { enabled: false },
-      ),
-      ctx,
-    );
-    handleCreate(createArgs("Active Agent", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Active Operator", "p", { intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Disabled User", "p", { intervalMs: 60_000 }, { enabled: false }), ctx);
+    handleCreate(createArgs("Active Agent", "p", { intervalMs: 60_000 }), ctx);
     // Stamp non-default sources directly — bypasses the tool input contract,
     // which is the right shape for this test (filtering, not authoring).
     const defs = ctx.definitions();
@@ -729,7 +719,7 @@ describe("handleList filters", () => {
 describe("handleStatus", () => {
   test("returns task with recent runs (newest first)", () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("Status Test", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Status Test", "p", { intervalMs: 60_000 }), ctx);
 
     // Seed some runs
     const runs = [
@@ -780,7 +770,7 @@ describe("handleStatus", () => {
 describe("handleRuns", () => {
   test("filters by label and by effective verdict", () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("Run Filter Test", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Run Filter Test", "p", { intervalMs: 60_000 }), ctx);
     const at = "2025-06-15T10:00:00.000Z";
     const uncertain = { verdict: "uncertain" as const, assessedAt: at };
     const runs = [
@@ -812,7 +802,7 @@ describe("handleRuns", () => {
 
   test("a filtered page stops at the limit and hands on from its last run", () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("Paged Filter", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Paged Filter", "p", { intervalMs: 60_000 }), ctx);
     for (let i = 0; i < 6; i++) {
       seedRun(
         "paged-filter",
@@ -835,8 +825,8 @@ describe("handleRuns", () => {
 
   test("queries across all tasks", () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("A", "p", { type: "interval", intervalMs: 60_000 }), ctx);
-    handleCreate(createArgs("B", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("A", "p", { intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("B", "p", { intervalMs: 60_000 }), ctx);
 
     seedRun("a", makeRun({ taskId: "a", startedAt: "2025-06-15T10:00:00.000Z" }));
     seedRun("b", makeRun({ taskId: "b", startedAt: "2025-06-15T11:00:00.000Z" }));
@@ -853,7 +843,7 @@ describe("handleRuns", () => {
 describe("handleRun", () => {
   test("triggers immediate execution and returns result", async () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("Immediate", "Run now", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Immediate", "Run now", { intervalMs: 60_000 }), ctx);
 
     const result = await handleRun({ taskId: "immediate" }, ctx);
 
@@ -869,10 +859,7 @@ describe("handleRun", () => {
 
   test("runs a disabled task and says it is disabled", async () => {
     const ctx = makeCtx();
-    handleCreate(
-      createArgs("Paused", "Run now", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
-      ctx,
-    );
+    handleCreate(createArgs("Paused", "Run now", { intervalMs: 60_000 }, { enabled: false }), ctx);
 
     const result = await handleRun({ taskId: "paused" }, ctx);
 
@@ -886,7 +873,7 @@ describe("handleRun", () => {
 
   test("an enabled task's run carries no disabled message", async () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("Live", "Run now", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Live", "Run now", { intervalMs: 60_000 }), ctx);
 
     const result = await handleRun({ taskId: "live" }, ctx);
 
@@ -910,7 +897,7 @@ describe("handleRun", () => {
         return ticket;
       },
     });
-    handleCreate(createArgs("Trips", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Trips", "p", { intervalMs: 60_000 }), ctx);
 
     const result = await handleRun({ taskId: "trips" }, ctx);
 
@@ -931,7 +918,7 @@ describe("handleRun", () => {
       runNow: () => ({ state: "started", run: runPromise }),
     });
     handleCreate(
-      createArgs("Slow paused", "p", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
+      createArgs("Slow paused", "p", { intervalMs: 60_000 }, { enabled: false }),
       slowCtx,
     );
 
@@ -972,10 +959,7 @@ describe("handleRun", () => {
       handleRunSyncWaitMs: 20,
       runNow: () => ({ state: "started", run: runPromise }),
     });
-    handleCreate(
-      createArgs("Slow", "Takes forever", { type: "interval", intervalMs: 60_000 }),
-      slowCtx,
-    );
+    handleCreate(createArgs("Slow", "Takes forever", { intervalMs: 60_000 }), slowCtx);
 
     try {
       const result = await handleRun({ taskId: "slow" }, slowCtx);
@@ -1010,7 +994,7 @@ describe("handleRun", () => {
       resolveRun = resolve;
     });
     const ctx = makeCtx({ runNow: () => ({ state: "queued", position: 3, run }) });
-    handleCreate(createArgs("Waits", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Waits", "p", { intervalMs: 60_000 }), ctx);
 
     try {
       const result = await handleRun({ taskId: "waits" }, ctx);
@@ -1034,7 +1018,7 @@ describe("handleRun", () => {
       error: "Already queued (runNow)",
     });
     const ctx = makeCtx({ runNow: () => ({ state: "refused", run: skipped }) });
-    handleCreate(createArgs("Refused", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Refused", "p", { intervalMs: 60_000 }), ctx);
 
     const result = await handleRun({ taskId: "refused" }, ctx);
     if (!("run" in result)) throw new Error(`expected run shape, got ${JSON.stringify(result)}`);
@@ -1062,7 +1046,7 @@ describe("create and update report effective run limits", () => {
       createArgs(
         "Greedy",
         "p",
-        { type: "interval", intervalMs: 60_000 },
+        { intervalMs: 60_000 },
         { maxIterations: 40, maxInputTokens: 900_000, maxRunDurationMs: 300_000 },
       ),
       ctx,
@@ -1080,10 +1064,7 @@ describe("create and update report effective run limits", () => {
   });
 
   test("create reports the defaults a task runs under when it sets no caps", () => {
-    const result = handleCreate(
-      createArgs("Plain", "p", { type: "interval", intervalMs: 60_000 }),
-      makeCtx(),
-    );
+    const result = handleCreate(createArgs("Plain", "p", { intervalMs: 60_000 }), makeCtx());
     // No input ceiling is configured, so a run with no cap of its own has none.
     expect(result.effectiveLimits).toEqual({ maxIterations: 25, maxRunDurationMs: 120_000 });
     expect(result.effectiveLimits.maxInputTokens).toBeUndefined();
@@ -1092,7 +1073,7 @@ describe("create and update report effective run limits", () => {
 
   test("create reports a configured input ceiling for a task that sets no cap", () => {
     const result = handleCreate(
-      createArgs("Bounded", "p", { type: "interval", intervalMs: 60_000 }),
+      createArgs("Bounded", "p", { intervalMs: 60_000 }),
       makeCtx({ runLimitsOf }),
     );
     expect(result.effectiveLimits.maxInputTokens).toBe(50_000);
@@ -1101,7 +1082,7 @@ describe("create and update report effective run limits", () => {
 
   test("update reports the clamped value of a patched cap", () => {
     const ctx = makeCtx({ runLimitsOf });
-    handleCreate(createArgs("Patched", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Patched", "p", { intervalMs: 60_000 }), ctx);
     const result = handleUpdate(updateArgs("patched", { maxIterations: 30 }), ctx);
     expect(result.effectiveLimits.maxIterations).toBe(10);
     expect(result.message).toContain("maxIterations 30 is above");
@@ -1115,7 +1096,7 @@ describe("create and update report effective run limits", () => {
 describe("delete preserves run history", () => {
   test("runs still accessible after deletion", () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("Deletable", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Deletable", "p", { intervalMs: 60_000 }), ctx);
 
     seedRun("deletable", makeRun({ taskId: "deletable", status: "success" }));
 
@@ -1142,7 +1123,7 @@ describe("handleCreate — new fields", () => {
       createArgs(
         "Budget Test",
         "test",
-        { type: "interval", intervalMs: 60_000 },
+        { intervalMs: 60_000 },
         {
           maxRunDurationMs: 60_000,
           tokenBudget: { maxInputTokens: 10000, period: "daily" },
@@ -1166,7 +1147,7 @@ describe("thinkingEffort", () => {
       createArgs(
         "Effort Test",
         "test",
-        { type: "interval", intervalMs: 60_000 },
+        { intervalMs: 60_000 },
         {
           thinkingEffort: "low",
         },
@@ -1208,10 +1189,7 @@ describe("handleUpdate — re-enable clears disable state", () => {
   test("enabled=true clears disabledAt, disabledReason, and consecutiveErrors", () => {
     const ctx = makeCtx();
     // Create a task first
-    handleCreate(
-      createArgs("Disabled Test", "test", { type: "interval", intervalMs: 60_000 }),
-      ctx,
-    );
+    handleCreate(createArgs("Disabled Test", "test", { intervalMs: 60_000 }), ctx);
 
     // Simulate auto-disable by writing directly
     const defs = loadDefs();
@@ -1271,10 +1249,7 @@ describe("handleCancel", () => {
 describe("handleList — disable info", () => {
   test("includes disabledReason when auto-disabled", () => {
     const ctx = makeCtx();
-    handleCreate(
-      createArgs("List Disabled", "test", { type: "interval", intervalMs: 60_000 }),
-      ctx,
-    );
+    handleCreate(createArgs("List Disabled", "test", { intervalMs: 60_000 }), ctx);
 
     // Simulate auto-disable
     const defs = loadDefs();
@@ -1393,37 +1368,28 @@ describe("handleCreate — validation", () => {
   test("rejects creation with invalid intervalMs", () => {
     const ctx = makeCtx();
     expect(() =>
-      handleCreate(
-        createArgs("Bad Interval", "test", { type: "interval", intervalMs: 10_000 }),
-        ctx,
-      ),
+      handleCreate(createArgs("Bad Interval", "test", { intervalMs: 10_000 }), ctx),
     ).toThrow("at least 1 minute");
   });
 
   test("rejects creation with invalid cron", () => {
     const ctx = makeCtx();
-    expect(() =>
-      handleCreate(createArgs("Bad Cron", "test", { type: "cron", expression: "nope" }), ctx),
-    ).toThrow("Invalid cron");
+    expect(() => handleCreate(createArgs("Bad Cron", "test", { cron: "nope" }), ctx)).toThrow(
+      "Invalid cron",
+    );
   });
 
   test("rejects creation with a cron that matches no date", () => {
     const ctx = makeCtx();
     expect(() =>
-      handleCreate(
-        createArgs("February 31", "test", { type: "cron", expression: "0 9 31 2 *" }),
-        ctx,
-      ),
+      handleCreate(createArgs("February 31", "test", { cron: "0 9 31 2 *" }), ctx),
     ).toThrow("matches no future date");
   });
 
   test("rejects creation with a cron whose year has passed", () => {
     const ctx = makeCtx();
     expect(() =>
-      handleCreate(
-        createArgs("Past Year", "test", { type: "cron", expression: "0 0 9 1 1 * 2020" }),
-        ctx,
-      ),
+      handleCreate(createArgs("Past Year", "test", { cron: "0 0 9 1 1 * 2020" }), ctx),
     ).toThrow("matches no future date");
   });
 
@@ -1432,8 +1398,7 @@ describe("handleCreate — validation", () => {
     expect(() =>
       handleCreate(
         createArgs("Bad Zone", "test", {
-          type: "cron",
-          expression: "0 9 * * *",
+          cron: "0 9 * * *",
           timezone: "Bogus/Zone",
         }),
         ctx,
@@ -1449,15 +1414,12 @@ describe("handleCreate — validation", () => {
 describe("handleUpdate — validation", () => {
   test("rejects update with invalid intervalMs", () => {
     const ctx = makeCtx();
-    handleCreate(
-      createArgs("Update Target", "test", { type: "interval", intervalMs: 60_000 }),
-      ctx,
-    );
+    handleCreate(createArgs("Update Target", "test", { intervalMs: 60_000 }), ctx);
 
     expect(() =>
       handleUpdate(
         updateArgs("update-target", {
-          schedule: { type: "interval", intervalMs: 5_000 },
+          schedule: { intervalMs: 5_000 },
         }),
         ctx,
       ),
@@ -1466,15 +1428,12 @@ describe("handleUpdate — validation", () => {
 
   test("rejects update to a cron that matches no date", () => {
     const ctx = makeCtx();
-    handleCreate(
-      createArgs("Update To Feb 31", "test", { type: "cron", expression: "0 9 * * *" }),
-      ctx,
-    );
+    handleCreate(createArgs("Update To Feb 31", "test", { cron: "0 9 * * *" }), ctx);
 
     expect(() =>
       handleUpdate(
         updateArgs("update-to-feb-31", {
-          schedule: { type: "cron", expression: "0 9 31 2 *" },
+          schedule: { cron: "0 9 31 2 *" },
         }),
         ctx,
       ),
@@ -1483,14 +1442,11 @@ describe("handleUpdate — validation", () => {
 
   test("accepts valid schedule update", () => {
     const ctx = makeCtx();
-    handleCreate(
-      createArgs("Update Target Valid", "test", { type: "interval", intervalMs: 60_000 }),
-      ctx,
-    );
+    handleCreate(createArgs("Update Target Valid", "test", { intervalMs: 60_000 }), ctx);
 
     const result = handleUpdate(
       updateArgs("update-target-valid", {
-        schedule: { type: "cron", expression: "0 9 * * 1" },
+        schedule: { cron: "0 9 * * 1" },
       }),
       ctx,
     );
@@ -1507,7 +1463,6 @@ describe("task ownership", () => {
     const ctx = makeCtx({ currentUserId: "usr_alice" });
     const result = handleCreate(
       createArgs("Owned Task", "do something", {
-        type: "interval",
         intervalMs: 60_000,
       }),
       ctx,
@@ -1520,7 +1475,6 @@ describe("task ownership", () => {
     const ctx = makeCtx({ currentWorkspaceId: "ws_0030a37f450693bf" });
     const result = handleCreate(
       createArgs("Workspace Task", "do something", {
-        type: "interval",
         intervalMs: 60_000,
       }),
       ctx,
@@ -1536,8 +1490,7 @@ describe("task ownership", () => {
     });
     const result = handleCreate(
       createArgs("Full Context Task", "do something", {
-        type: "cron",
-        expression: "0 9 * * *",
+        cron: "0 9 * * *",
       }),
       ctx,
     );
@@ -1553,7 +1506,6 @@ describe("task ownership", () => {
     const ctx = makeCtx(); // no currentUserId or currentWorkspaceId
     const result = handleCreate(
       createArgs("Legacy Task", "do something", {
-        type: "interval",
         intervalMs: 120_000,
       }),
       ctx,
@@ -1621,7 +1573,7 @@ describe("event schedules", () => {
       {
         manifest: {
           name: "Reply triage",
-          schedule: { type: "event", match, debounceMs: 60_000, maxFiresPerHour: 6 },
+          schedule: { match, debounceMs: 60_000, maxFiresPerHour: 6 },
         },
         body: "Triage the replies in the event block.",
       },
@@ -1655,7 +1607,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
         return base.runNow(id);
       },
     });
-    handleCreate(createArgs("Typed", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Typed", "p", { intervalMs: 60_000 }), ctx);
 
     await handleRun({ taskId: "typed", input: { n: 1 }, idempotencyKey: "k-1" }, ctx);
 
@@ -1687,7 +1639,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
 
   test("refuses both a task and an inline definition", async () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("Saved", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Saved", "p", { intervalMs: 60_000 }), ctx);
     await expect(
       handleRun({ taskId: "saved", definition: { body: "other" } }, ctx),
     ).rejects.toThrow("not both");
@@ -1716,7 +1668,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
 
   test("refuses an input over the size limit", async () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("Big", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Big", "p", { intervalMs: 60_000 }), ctx);
     await expect(handleRun({ taskId: "big", input: "x".repeat(70 * 1024) }, ctx)).rejects.toThrow(
       "at most",
     );
@@ -1728,7 +1680,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
       createArgs(
         "Needs input",
         "p",
-        { type: "interval", intervalMs: 60_000 },
+        { intervalMs: 60_000 },
         {
           inputSchema: { type: "object", required: ["url"] },
         },
@@ -1756,7 +1708,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
             }
           : null,
     });
-    handleCreate(createArgs("Keyed", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Keyed", "p", { intervalMs: 60_000 }), ctx);
 
     const result = await handleRun({ taskId: "keyed", idempotencyKey: "k" }, ctx);
     if (!("run" in result)) throw new Error(`expected a run, got ${JSON.stringify(result)}`);
@@ -1775,7 +1727,7 @@ describe("create and update — input and output schemas", () => {
       createArgs(
         "Schemas",
         "p",
-        { type: "interval", intervalMs: 60_000 },
+        { intervalMs: 60_000 },
         {
           inputSchema,
           outputSchema,
@@ -1793,7 +1745,7 @@ describe("create and update — input and output schemas", () => {
         createArgs(
           "Bad schema",
           "p",
-          { type: "interval", intervalMs: 60_000 },
+          { intervalMs: 60_000 },
           {
             inputSchema: { type: 12 },
           },
@@ -1809,7 +1761,7 @@ describe("create and update — input and output schemas", () => {
       createArgs(
         "Clearable",
         "p",
-        { type: "interval", intervalMs: 60_000 },
+        { intervalMs: 60_000 },
         {
           outputSchema: { type: "object" },
         },
@@ -1833,7 +1785,7 @@ describe("the tool surface an agent reads", () => {
       createArgs(
         "Full",
         "p",
-        { type: "interval", intervalMs: 60_000 },
+        { intervalMs: 60_000 },
         {
           description: "d",
           skills: ["s"],
@@ -1866,25 +1818,19 @@ describe("the tool surface an agent reads", () => {
   test("create and status say which timezone the schedule is read in", () => {
     const ctx = makeCtx({ defaultTimezone: "America/Chicago" });
     const own = handleCreate(
-      createArgs("Own Zone", "p", { type: "cron", expression: "0 7 * * 1-5", timezone: "UTC" }),
+      createArgs("Own Zone", "p", { cron: "0 7 * * 1-5", timezone: "UTC" }),
       ctx,
     );
     expect(own.timezone).toBe("UTC");
-    const instance = handleCreate(
-      createArgs("Instance Zone", "p", { type: "cron", expression: "0 7 * * 1-5" }),
-      ctx,
-    );
+    const instance = handleCreate(createArgs("Instance Zone", "p", { cron: "0 7 * * 1-5" }), ctx);
     expect(instance.timezone).toBe("America/Chicago");
     expect(handleStatus({ taskId: "instance-zone" }, ctx).task.timezone).toBe("America/Chicago");
   });
 
   test("list gives ISO times, and no next fire for a disabled task", () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("On", "p", { type: "interval", intervalMs: 3_600_000 }), ctx);
-    handleCreate(
-      createArgs("Off", "p", { type: "interval", intervalMs: 3_600_000 }, { enabled: false }),
-      ctx,
-    );
+    handleCreate(createArgs("On", "p", { intervalMs: 3_600_000 }), ctx);
+    handleCreate(createArgs("Off", "p", { intervalMs: 3_600_000 }, { enabled: false }), ctx);
     const rows = new Map(handleList({}, ctx).tasks.map((t) => [t.id, t]));
     const next = rows.get("on")?.nextRunAt;
     expect(next).toBeString();
@@ -1913,7 +1859,7 @@ describe("the tool surface an agent reads", () => {
 
   test("run_result gives an ended run its record and, when it left one, its result", () => {
     const ctx = makeCtx();
-    handleCreate(createArgs("Ended", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Ended", "p", { intervalMs: 60_000 }), ctx);
     seedRun("ended", makeRun({ id: "run_skip00000000", taskId: "ended", status: "skipped" }));
     const out = handleRunResult({ runId: "run_skip00000000" }, ctx);
     expect(out.status).toBe("ended");
@@ -1924,7 +1870,7 @@ describe("the tool surface an agent reads", () => {
   test("run_result answers a recorded run still being assessed as running, not Succeeded", () => {
     let assessing = true;
     const ctx = makeCtx({ isAssessing: (id) => assessing && id === "run_judg00000000" });
-    handleCreate(createArgs("Judged", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("Judged", "p", { intervalMs: 60_000 }), ctx);
     seedRun("judged", makeRun({ id: "run_judg00000000", taskId: "judged", status: "success" }));
     const out = handleRunResult({ runId: "run_judg00000000" }, ctx);
     if (out.status !== "running") throw new Error(`expected running, got ${JSON.stringify(out)}`);
@@ -1932,5 +1878,75 @@ describe("the tool surface an agent reads", () => {
     expect(out.message).toContain("being assessed");
     assessing = false;
     expect(handleRunResult({ runId: "run_judg00000000" }, ctx).status).toBe("ended");
+  });
+});
+
+describe("the schedule a caller writes", () => {
+  test("the field given names the kind, stored in the typed form", () => {
+    expect(toStoredSchedule({ cron: "0 8 * * 1-5", timezone: "UTC" })).toEqual({
+      type: "cron",
+      expression: "0 8 * * 1-5",
+      timezone: "UTC",
+    });
+    expect(toStoredSchedule({ at: "2099-07-01T13:00:00-07:00" })).toEqual({
+      type: "once",
+      at: "2099-07-01T13:00:00-07:00",
+    });
+    expect(toStoredSchedule({ intervalMs: 60_000 })).toEqual({
+      type: "interval",
+      intervalMs: 60_000,
+    });
+    expect(toStoredSchedule({ match: { source: "mail" }, maxFiresPerHour: 6 })).toEqual({
+      type: "event",
+      match: { source: "mail" },
+      maxFiresPerHour: 6,
+    });
+  });
+
+  test("a schedule naming no kind, or two, is refused", () => {
+    expect(() => toStoredSchedule({})).toThrow(/exactly one of cron, at, intervalMs, or match/);
+    expect(() => toStoredSchedule({ cron: "0 8 * * *", at: "2099-07-01T13:00:00-07:00" })).toThrow(
+      /this gives cron, at/,
+    );
+  });
+
+  test("the input schemas take the flat shape and refuse the stored one", () => {
+    const create = (schedule: unknown) =>
+      validateToolInput({ manifest: { name: "x", schedule }, body: "b" }, TasksCreateInput).valid;
+    expect(create({ cron: "0 8 * * *", timezone: "UTC" })).toBe(true);
+    expect(create({ type: "cron", expression: "0 8 * * *" })).toBe(false);
+  });
+
+  test("an update whose cron omits the timezone keeps the task's own", async () => {
+    const ctx = makeCtx();
+    handleCreate(
+      createArgs("Zoned", "p", { cron: "0 8 * * 1-5", timezone: "Pacific/Honolulu" }),
+      ctx,
+    );
+
+    handleUpdate({ taskId: "zoned", manifest: { schedule: { cron: "0 9 * * 1-5" } } }, ctx);
+
+    const { task } = await handleStatus({ taskId: "zoned" }, ctx);
+    expect(task.schedule).toEqual({
+      type: "cron",
+      expression: "0 9 * * 1-5",
+      timezone: "Pacific/Honolulu",
+    });
+  });
+
+  test("an update that names a timezone moves it", async () => {
+    const ctx = makeCtx();
+    handleCreate(
+      createArgs("Moving", "p", { cron: "0 8 * * *", timezone: "Pacific/Honolulu" }),
+      ctx,
+    );
+
+    handleUpdate(
+      { taskId: "moving", manifest: { schedule: { cron: "0 8 * * *", timezone: "UTC" } } },
+      ctx,
+    );
+
+    const { task } = await handleStatus({ taskId: "moving" }, ctx);
+    expect(task.schedule?.timezone).toBe("UTC");
   });
 });

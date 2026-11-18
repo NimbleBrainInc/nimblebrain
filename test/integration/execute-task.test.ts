@@ -564,7 +564,7 @@ describe("runtime.executeTask", () => {
     // the call even when the model emits the name directly (the injection /
     // hallucination path), with VALID input so the refusal is the run-wall, not
     // schema validation.
-    const validSchedule = { type: "interval", intervalMs: 60_000 };
+    const validSchedule = { intervalMs: 60_000 };
     const forbiddenCalls: Array<{ tool: string; input: unknown }> = [
       { tool: "tasks__update", input: { taskId: "target" } },
       {

@@ -38,48 +38,48 @@ const RunIdField = Type.String({
   description: "The run's id, as tasks__run, tasks__runs, or tasks__upcoming return it.",
 });
 
+// The schedule as a caller writes it: the one field present names what fires
+// the task, so there is no separate `type` to get wrong. The handler stores the
+// typed form a task file holds (`toStoredSchedule` in tasks/server.ts), so
+// storage, the scheduler and every reader keep one shape.
 const Schedule = Type.Object(
   {
-    type: StringEnum(["cron", "interval", "event", "once"] as const, {
-      description:
-        "`cron` (needs `expression`) and `interval` (needs `intervalMs`) recur. `once` (needs " +
-        "`at`) fires one time, and then the task is disabled with no next run until a new `at` " +
-        "re-arms it: use it for a single action at a set time instead of a cron with a fixed " +
-        "date, which recurs every year. `event` (needs `match`) has no next run: the task fires " +
-        "when a notification a workspace admin routed to it arrives.",
-    }),
-    expression: Type.Optional(
-      Type.String({ description: "5-field cron expression (type=cron), e.g. `0 7 * * 1-5`." }),
-    ),
-    timezone: Type.Optional(
+    cron: Type.Optional(
       Type.String({
         description:
-          "IANA timezone the cron expression is read in (type=cron). Default: this instance's " +
-          "timezone, which tasks__create and tasks__update return as `timezone`.",
+          "Recurs on a 5-field cron expression, e.g. `0 7 * * 1-5` for weekdays at 7, read in " +
+          "`timezone`.",
       }),
     ),
     at: Type.Optional(
       Type.String({
         description:
-          "When a once schedule fires (type=once): an ISO-8601 timestamp with an explicit " +
-          "offset, e.g. 2026-07-01T13:12:00-07:00. Must be in the future. A once whose time " +
-          "passes while the runtime is down fires on restart if it is at most an hour late, " +
-          "and is recorded as skipped otherwise.",
+          "Fires once, at an ISO-8601 timestamp with an explicit offset, e.g. " +
+          "2026-07-01T13:12:00-07:00. Must be in the future. The task is then disabled with no " +
+          "next run until a new `at` re-arms it: use it for a single action at a set time, " +
+          "never a cron with a fixed date, which recurs every year. A time that passes while " +
+          "the runtime is down fires on restart if it is at most an hour late, and is recorded " +
+          "as skipped otherwise.",
       }),
     ),
     intervalMs: Type.Optional(
-      Type.Integer({
-        minimum: 60000,
-        description: "Interval in ms (type=interval). Min 60000.",
-      }),
+      Type.Integer({ minimum: 60000, description: "Recurs every this many ms. Min 60000." }),
     ),
     match: Type.Optional(
       Type.Object(NotificationRouteMatch.properties, {
         additionalProperties: false,
         description:
-          "Which notifications this task wants (type=event). Required for an event " +
-          "schedule. A workspace admin must ALSO have written a delivery route naming this " +
-          "task — this narrows what arrives down that route, it does not open one.",
+          "Fires on routed notifications that match. There is no next run: a workspace admin " +
+          "must ALSO have written a delivery route naming this task. This narrows what " +
+          "arrives down that route, it does not open one.",
+      }),
+    ),
+    timezone: Type.Optional(
+      Type.String({
+        description:
+          "IANA timezone a `cron` is read in. Default: this instance's timezone, which " +
+          "tasks__create and tasks__update return as `timezone`. An update that omits it " +
+          "keeps the task's current one.",
       }),
     ),
     debounceMs: Type.Optional(
@@ -88,9 +88,9 @@ const Schedule = Type.Object(
         minimum: 1000,
         maximum: 900000,
         description:
-          "How long matching notifications coalesce into one batch before the run starts, in " +
-          "ms (type=event). Default 30000, max 900000. A burst becomes one run with a " +
-          "list in it, not one run per item.",
+          "With `match`: how long matching notifications coalesce into one batch before the " +
+          "run starts, in ms. Default 30000, max 900000. A burst becomes one run with a list " +
+          "in it, not one run per item.",
       }),
     ),
     maxFiresPerHour: Type.Optional(
@@ -98,20 +98,20 @@ const Schedule = Type.Object(
         minimum: 1,
         maximum: 60,
         description:
-          "Most runs this task may fire from events in a rolling hour (type=event). " +
-          "Default 12, max 60. Exceeding it disables the task — it is what terminates a " +
-          "loop in which a run's own work produces the event that fires it again.",
+          "With `match`: most runs this task may fire from events in a rolling hour. Default " +
+          "12, max 60. Exceeding it disables the task; it is what ends a loop in which a " +
+          "run's own work produces the event that fires it again.",
       }),
     ),
   },
   {
-    required: ["type"],
     additionalProperties: false,
     description:
-      "What fires it unattended. Omit for a task that runs only when someone runs it " +
-      "(tasks__run).",
+      "What fires it unattended: exactly one of `cron`, `at`, `intervalMs`, or `match`. Omit " +
+      "for a task that runs only when someone runs it (tasks__run).",
   },
 );
+export type TaskScheduleInput = Static<typeof Schedule>;
 
 const TokenBudget = Type.Object(
   {
