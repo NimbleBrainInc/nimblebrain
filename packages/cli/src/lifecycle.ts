@@ -164,8 +164,8 @@ async function confirmStart(ctx: Ctx, tag: string): Promise<void> {
 
 /**
  * Registers the first workspace with the agent named by `--agent` (or chosen
- * at the prompt), then installs the skill for it, recording both in the
- * install's state. Returns the settings to add by hand when connecting failed.
+ * at the prompt), records the agent in the install's state, and installs the
+ * skill for it. Returns the settings to add by hand when connecting failed.
  */
 async function connectChosenAgent(ctx: Ctx, state: InstallState): Promise<string | undefined> {
   const { deps, flags, home } = ctx;
@@ -176,7 +176,7 @@ async function connectChosenAgent(ctx: Ctx, state: InstallState): Promise<string
   const conn = await connectAgent(deps, agent, first.mcp);
   if (conn.connected) {
     state.agent = conn.connected;
-    state.skill = (await installSkill(deps, conn.connected)) ?? undefined;
+    await installSkill(deps, conn.connected);
     await writeState(deps, home, state);
   }
   return conn.manual;

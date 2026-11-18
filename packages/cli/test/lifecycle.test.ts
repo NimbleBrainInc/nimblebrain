@@ -168,7 +168,9 @@ describe("init", () => {
     expect(stdout).toContain("NimbleBrain v0.73.0: running at http://127.0.0.1:27246");
     expect(stdout).toContain("model key: set (NimbleBrain's own agents use it)");
     expect(stdout).toContain("Claude Code can use NimbleBrain's tools");
-    expect(stdout).toContain("skill: not installed");
+    expect(stdout).toContain(
+      "skill: not installed; add it with npx skills add nimblebraininc/skills --skill nimblebrain --agent claude-code -g",
+    );
     expect(stdout).toContain("Next: open http://127.0.0.1:27246, or ask Claude Code");
     expect(stdout).toContain("telemetry: off (no_destination)");
     expect(stdout).not.toContain("undefined");
@@ -184,6 +186,34 @@ describe("init", () => {
     expect(stdout).not.toContain("Next:");
     expect(stdout).not.toContain("skill:");
     expect(stdout).toContain("Claude Code can use NimbleBrain's tools");
+  });
+
+  test("status reads the skill from the agent's skills folder, so one added or removed later counts", async () => {
+    const m = machine({
+      env,
+      exec: {
+        "npx -y skills add nimblebraininc/skills --skill nimblebrain --agent claude-code -g -y":
+          fail(),
+      },
+    });
+    await json(["--yes", "--agent", "claude-code"], m);
+    expect((await json(["status"], m)).body.agent).toEqual({
+      connected: "claude-code",
+      skill: null,
+    });
+    const skill = "/home/dana/.claude/skills/nimblebrain/SKILL.md";
+    m.files.set(skill, { text: "", mode: 0o644 });
+    expect((await json(["status"], m)).body.agent.skill).toBe("nimblebrain");
+    m.files.delete(skill);
+    expect((await json(["status"], m)).body.agent.skill).toBeNull();
+  });
+
+  test("CLAUDE_CONFIG_DIR moves Claude Code's skills folder", async () => {
+    const m = machine({ env: { ...env, CLAUDE_CONFIG_DIR: "/cfg/claude" } });
+    await json(["--yes", "--agent", "claude-code"], m);
+    expect((await json(["status"], m)).body.agent.skill).toBeNull();
+    m.files.set("/cfg/claude/skills/nimblebrain/SKILL.md", { text: "", mode: 0o644 });
+    expect((await json(["status"], m)).body.agent.skill).toBe("nimblebrain");
   });
 
   test("declining the confirmation installs nothing", async () => {
@@ -328,7 +358,10 @@ describe("after install", () => {
     const m = await installed();
     m.files.set(`${HOME}/notes.txt`, { text: "mine", mode: 0o644 });
     await json(["uninstall", "--yes"], m);
-    expect([...m.files.keys()]).toEqual([`${HOME}/notes.txt`]);
+    // The agent's skill stays: it is how the agent installs NimbleBrain again.
+    expect([...m.files.keys()].sort()).toEqual(
+      [`${HOME}/notes.txt`, "/home/dana/.claude/skills/nimblebrain/SKILL.md"].sort(),
+    );
   });
 
   test("commands on a machine with no install say NOT_INSTALLED", async () => {
