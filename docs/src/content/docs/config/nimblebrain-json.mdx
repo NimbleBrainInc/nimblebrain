@@ -117,7 +117,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `tasks` | `object` | — | Task run slots, queue, and per-run ceilings. See [tasks](#tasks). |
 | `execution` | `object` | native engine | Which agent runtime executes a run: the native engine, or an agent worker the runtime dials. Experimental. See [execution](#execution). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
-| `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote connector connections. Dev only. |
+| `allowInsecureRemotes` | `boolean` | `false` | Allow plain HTTP to `localhost`, `127.0.0.1` and `::1` for remote connectors. Private ranges and cloud-metadata hosts stay refused. Dev only. |
 | `telemetry` | `object` | unset (a person decides) | Anonymous usage telemetry. See [telemetry](#telemetry). |
 | `brand` | `object` | — | White-label name, logos, accent colour and fonts. See [Branding](/config/branding). |
 | `workDir` | `string` | `"~/.nimblebrain"` | Working directory for runtime state (conversations, logs, workspaces). |

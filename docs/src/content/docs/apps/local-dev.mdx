@@ -89,8 +89,8 @@ the same shape as production: a URL your workspace holds.
 uv run python -m mcp_myapp.server --http --port 8765
 ```
 
-Add it to the dev workspace's `workspace.json`, and allow the loopback host
-(the SSRF guard refuses it otherwise):
+Add it to the dev workspace's `workspace.json`, and allow plain `http` to the
+loopback host (connector URLs must use HTTPS otherwise):
 
 ```json title="<workDir>/workspaces/<wsId>/workspace.json"
 {
@@ -105,9 +105,8 @@ Add it to the dev workspace's `workspace.json`, and allow the loopback host
 ```
 
 <Aside type="caution">
-  `allowInsecureRemotes` disables the loopback / RFC1918 / cloud-metadata
-  refusal for every connector in the instance. It is a development switch —
-  never set it on a deployed platform.
+  `allowInsecureRemotes` lets connectors use plain `http` to `localhost`, `127.0.0.1` and `::1`, for every connector in the instance. Private ranges and cloud-metadata hosts are refused whatever it is set to. It is a development switch — never set it on a deployed
+  platform.
 </Aside>
 
 This gives you everything — data sync, agent interactions, theme injection, keyboard forwarding, multi-app navigation — plus Vite HMR on your UI.
@@ -230,24 +229,6 @@ curl -X POST http://localhost:8001/mcp \
 </Steps>
 
 See the [Hello World example](/apps/hello-world) for a complete walkthrough.
-
-## The `deps/` gotcha
-
-<Aside type="danger">
-This is the most common source of confusion during local development.
-</Aside>
-
-When you build your app for distribution (via `mcpb-pack`), dependencies are bundled into a `deps/` directory. If your project has a `deps/` directory, **the platform uses it as the primary import path**, placing it before `src/` on `PYTHONPATH`.
-
-This means edits to files in `src/` are invisible to the running server — Python imports the stale copy from `deps/` instead.
-
-**Fix:** Delete the bundled copy of your package from `deps/` during local development:
-
-```bash
-rm -rf deps/mcp_my_app
-```
-
-Then restart the dev server so the change takes effect (`bun run dev` restarts the API on source changes).
 
 ## Debugging
 

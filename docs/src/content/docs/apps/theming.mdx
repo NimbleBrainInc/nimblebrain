@@ -254,7 +254,6 @@ Common issues:
 | Dark mode doesn't toggle | Missing `ui/notifications/host-context-changed` handler | Add the `applyTokens` message listener (see code above) |
 | `--color-text-accent` or an `--nb-*` color doesn't flip on toggle | Your handler applies `styles.variables` but not `ai.nimblebrain/styles` | Apply both fields, as in the `applyTokens` listener above, or use Synapse 0.31 or later |
 | Scrollbars or form controls keep the old mode after a toggle | Nothing updates the document's `color-scheme` | Set it from `theme`, as `applyColorScheme` above does, or use Synapse 0.32 or later |
-| Tokens are stale after restart | `deps/` directory contains an old bundled copy | Delete `deps/<your-package>` during local development (see [Local Development](/apps/local-dev)) |
 
 ## Full example
 
