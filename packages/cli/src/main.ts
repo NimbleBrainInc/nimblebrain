@@ -1,7 +1,19 @@
 import { type Parsed, parse, wantsJson } from "./args.ts";
+import { paths } from "./compose.ts";
 import { type Deps, installHome } from "./deps.ts";
 import { doctor } from "./doctor.ts";
-import { down, init, key, logs, telemetry, uninstall, up, update } from "./lifecycle.ts";
+import {
+  down,
+  init,
+  key,
+  localModel,
+  logs,
+  telemetry,
+  uninstall,
+  up,
+  update,
+} from "./lifecycle.ts";
+import { checkLocalModel, localModelOf } from "./local-model.ts";
 import { CliError, exitCodeFor, type Failure, failure, type Ok } from "./result.ts";
 import { readInstall, type StatusResult, status } from "./status.ts";
 import { settleWaiting } from "./telemetry.ts";
@@ -19,6 +31,7 @@ Commands:
   doctor      Check Docker, Compose, architecture, memory and the port; installs nothing
   status      Version, health, URL and each workspace's MCP URL
   key         Enter the model key at a hidden prompt
+  local-model [model]  Run NimbleBrain's agents on a model served by Ollama (default gemma4:e4b)
   telemetry   [on|off|status] Whether this install sends anonymous usage data
   up, down    Start or stop NimbleBrain; data survives down
   logs        Recent runtime log lines
@@ -32,6 +45,7 @@ Flags:
   --port <n>        Local port (default 27246)
   --home <dir>      Where the install lives (default ~/.nimblebrain-local, or NIMBLEBRAIN_HOME)
   --provider <name> The model provider for key (default anthropic)
+  --local-model <model>  init: run on this Ollama model instead of a hosted key
   --runtime <tag>   The NimbleBrain release to install or update to (default the newest)
   --telemetry <on|off>  The person's answer to sending anonymous usage data; without it, init asks or leaves it undecided
   --help, --version
@@ -65,7 +79,7 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
           install !== undefined &&
           install.port === flags.port &&
           (await isHealthy(deps, flags.port));
-        result = { ...(await doctor(deps, flags.port, ours)) };
+        result = { ...(await doctorInstall(deps, home, flags.port, ours)) };
         break;
       }
       case "status":
@@ -73,7 +87,17 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
         break;
       default: {
         const ctx = { deps, flags, home, version: VERSION, arg };
-        const commands = { init, up, down, logs, update, uninstall, key, telemetry };
+        const commands = {
+          init,
+          up,
+          down,
+          logs,
+          update,
+          uninstall,
+          key,
+          telemetry,
+          "local-model": localModel,
+        };
         result = await commands[command](ctx);
       }
     }
@@ -86,6 +110,27 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
     await settleWaiting(deps, home, VERSION);
   }
   return render(result, flags.json, command);
+}
+
+/**
+ * The machine's checks, then, for an install on a local model, Ollama's: it
+ * answers, has the model, the model calls tools, and its window is the one the
+ * runtime budgets against. A failure carries every check run so far.
+ */
+async function doctorInstall(deps: Deps, home: string, port: number, ours: boolean) {
+  const machine = await doctor(deps, port, ours);
+  const model = localModelOf((await deps.readText(paths(home).env)) ?? "");
+  if (!model) return machine;
+  try {
+    return { ...machine, checks: [...machine.checks, ...(await checkLocalModel(deps, model))] };
+  } catch (err) {
+    if (!(err instanceof CliError)) throw err;
+    const local = (err.detail.checks as unknown[] | undefined) ?? [];
+    throw new CliError(err.code, err.message, {
+      ...err.detail,
+      checks: [...machine.checks, ...local],
+    });
+  }
 }
 
 async function isHealthy(deps: Deps, port: number): Promise<boolean> {
@@ -129,7 +174,9 @@ function statusLines(r: StatusLike, command?: string): string[] {
     ...changeLines(r),
     `  NimbleBrain ${r.version.startsWith("v") ? r.version : `v${r.version}`}: ${r.health === "ok" ? "running" : "stopped"} at ${r.url}`,
     ...r.workspaces.map((w) => `  workspace ${w.name}: ${w.mcp}`),
-    `  model key: ${r.model_key === "set" ? "set (NimbleBrain's own agents use it)" : "missing (run npx nimblebrain key)"}`,
+    r.local_model
+      ? `  model: ${r.local_model} on Ollama (NimbleBrain's own agents use it)`
+      : `  model key: ${r.model_key === "set" ? "set (NimbleBrain's own agents use it)" : "missing (run npx nimblebrain key)"}`,
   ];
   const agent = r.agent.connected;
   if (agent) {

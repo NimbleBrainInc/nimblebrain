@@ -36,6 +36,14 @@ export const ERRORS = {
   NOT_RUNNING: "Run `npx nimblebrain up`, then run this again.",
   TELEMETRY_LOCKED:
     "Nothing to change: DO_NOT_TRACK or the install's configuration decides telemetry here.",
+  LOCAL_MODEL_UNREACHABLE:
+    "Install Ollama (https://ollama.com/download) and start it, then run this again.",
+  LOCAL_MODEL_MISSING:
+    "Download the model with `ollama pull <model>`, or check that Ollama has disk space, then run this again.",
+  LOCAL_MODEL_NO_TOOLS:
+    "Choose a model with tool calling, such as gemma4:e4b; https://docs.nimblebrain.ai/config/local-models/ lists the ones run with NimbleBrain.",
+  LOCAL_CONTEXT_SMALL:
+    "Run `npx nimblebrain local-model` to prepare the model again with a 32k context window.",
   INTERRUPTED:
     "Run `npx nimblebrain status` to see what is in place, then run the same command again.",
 } as const;

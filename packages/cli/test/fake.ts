@@ -4,6 +4,28 @@ import type { Deps, ExecResult } from "../src/deps.ts";
 
 export const REPO_COMPOSE: string = repoCompose;
 
+/** A release's Compose file that passes a local model through, as releases with `providers.local` do. */
+export const LOCAL_COMPOSE: string = REPO_COMPOSE.includes("NB_LOCAL_MODEL_URL")
+  ? REPO_COMPOSE
+  : REPO_COMPOSE.replace(
+      "      - DO_NOT_TRACK=${DO_NOT_TRACK:-}\n",
+      "      - DO_NOT_TRACK=${DO_NOT_TRACK:-}\n      - NB_LOCAL_MODEL_URL=${NB_LOCAL_MODEL_URL:-}\n      - NB_LOCAL_MODEL=${NB_LOCAL_MODEL:-}\n      - NB_LOCAL_MODEL_CONTEXT=${NB_LOCAL_MODEL_CONTEXT:-}\n",
+    );
+
+/** A model as Ollama's `/api/show` describes it. */
+export interface OllamaModel {
+  capabilities: string[];
+  /** `/api/show`'s parameters text, e.g. `num_ctx 32768`. */
+  parameters?: string;
+}
+
+export interface FakeOllama {
+  /** Models already on the machine, by name. */
+  models?: Record<string, OllamaModel>;
+  /** Models `/api/pull` can download, by name. */
+  library?: Record<string, OllamaModel>;
+}
+
 export const GB = 1024 ** 3;
 export const ok = (stdout = ""): ExecResult => ({ code: 0, stdout, stderr: "", missing: false });
 export const fail = (stderr = "", code = 1): ExecResult => ({
@@ -30,6 +52,8 @@ export interface Machine {
   posts: Array<{ url: string; body: unknown }>;
   /** The runtime's telemetry answer, read from `.env` when it starts, as the real one does. */
   runtimeConsent: "on" | "off" | "undecided";
+  /** Ollama's models after the run, by name. */
+  ollamaModels: Record<string, OllamaModel>;
 }
 
 export interface MachineOptions {
@@ -45,6 +69,8 @@ export interface MachineOptions {
   tags?: string[];
   /** What a release tag's `docker-compose.yml` answers; default the repo's file with 200. */
   compose?: { status: number; body: string } | null;
+  /** Ollama on `127.0.0.1:11434`; absent, nothing answers there. */
+  ollama?: FakeOllama;
 }
 
 /**
@@ -63,6 +89,7 @@ export function machine(opts: MachineOptions = {}): Machine {
     healthy: false,
     posts: [] as Array<{ url: string; body: unknown }>,
     runtimeConsent: "undecided" as "on" | "off" | "undecided",
+    ollamaModels: { ...(opts.ollama?.models ?? {}) } as Record<string, OllamaModel>,
   };
   const m = state;
   const exec: Record<string, ExecResult> = {
@@ -118,6 +145,12 @@ export function machine(opts: MachineOptions = {}): Machine {
       return opts.compose ?? { status: 200, body: REPO_COMPOSE };
     },
     async getJson(url) {
+      if (url.startsWith("http://127.0.0.1:11434/")) {
+        if (!opts.ollama) return undefined;
+        return url.endsWith("/api/version")
+          ? { status: 200, body: { version: "0.32.5" } }
+          : undefined;
+      }
       if (!m.healthy) return undefined;
       if (url.endsWith("/v1/health")) return { status: 200, body: { status: "ok" } };
       if (url.endsWith("/v1/bootstrap")) {
@@ -135,6 +168,7 @@ export function machine(opts: MachineOptions = {}): Machine {
     },
     async postJson(url, body) {
       m.posts.push({ url, body });
+      if (url.startsWith("http://127.0.0.1:11434/")) return ollama(url, body);
       if (url.includes("posthog.com")) return { status: 200, body: { status: 1 } };
       if (!m.healthy || !url.endsWith("/v1/tools/call")) return undefined;
       const call = body as { tool: string; arguments: { consent?: "on" | "off" } };
@@ -167,5 +201,33 @@ export function machine(opts: MachineOptions = {}): Machine {
     env: { NIMBLEBRAIN_TELEMETRY_KEY: "", ...opts.env },
     home: "/home/dana",
   };
+  /** Ollama's API, as the real one answers the calls the CLI makes. */
+  function ollama(url: string, body: unknown): { status: number; body: unknown } | undefined {
+    if (!opts.ollama) return undefined;
+    const req = body as { model: string; from?: string; parameters?: { num_ctx?: number } };
+    if (url.endsWith("/api/show")) {
+      const found = m.ollamaModels[req.model];
+      return found ? { status: 200, body: found } : { status: 404, body: { error: "not found" } };
+    }
+    if (url.endsWith("/api/pull")) {
+      const found = opts.ollama.library?.[req.model];
+      if (!found)
+        return { status: 500, body: { error: "pull model manifest: file does not exist" } };
+      m.ollamaModels[req.model] = found;
+      return { status: 200, body: { status: "success" } };
+    }
+    if (url.endsWith("/api/create")) {
+      const from = req.from ? m.ollamaModels[req.from] : undefined;
+      if (!from) return { status: 404, body: { error: "base model not found" } };
+      const ctx = req.parameters?.num_ctx;
+      m.ollamaModels[req.model] = {
+        capabilities: from.capabilities,
+        parameters: ctx ? `num_ctx                        ${ctx}` : from.parameters,
+      };
+      return { status: 200, body: { status: "success" } };
+    }
+    return undefined;
+  }
+
   return Object.assign(state, { deps });
 }

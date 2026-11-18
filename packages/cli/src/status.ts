@@ -3,6 +3,7 @@ import { skillInstalled } from "./agents.ts";
 import type { Agent } from "./args.ts";
 import { hasKey, keyVars } from "./compose.ts";
 import type { Deps } from "./deps.ts";
+import { localModelOf } from "./local-model.ts";
 import { CliError } from "./result.ts";
 import { currentTelemetry, type TelemetryField } from "./telemetry.ts";
 import { VERSION } from "./version.ts";
@@ -54,6 +55,8 @@ export interface StatusResult {
   workspaces: Workspace[];
   agent: { connected: Agent | null; skill: string | null };
   model_key: "set" | "missing";
+  /** The local model NimbleBrain's agents run on (`npx nimblebrain local-model`), or null for a hosted key. */
+  local_model: string | null;
   telemetry: TelemetryField;
 }
 
@@ -84,9 +87,8 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
   // The install's `.env` is the only place a key can come from: every Compose
   // call runs without the shell's key variables. Read for names, never values.
   const vars = keyVars((await deps.readText(join(home, "docker-compose.yml"))) ?? "");
-  const modelKey = hasKey((await deps.readText(join(home, ".env"))) ?? "", vars)
-    ? "set"
-    : "missing";
+  const envText = (await deps.readText(join(home, ".env"))) ?? "";
+  const modelKey = hasKey(envText, vars) ? "set" : "missing";
 
   return {
     ok: true,
@@ -100,6 +102,7 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
       skill: install.agent ? await skillInstalled(deps, install.agent) : null,
     },
     model_key: modelKey,
+    local_model: localModelOf(envText) ?? null,
     telemetry: await currentTelemetry(deps, home, url),
   };
 }
