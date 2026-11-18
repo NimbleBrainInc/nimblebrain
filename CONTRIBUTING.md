@@ -4,7 +4,7 @@ Thanks for your interest in contributing. This guide covers how to set up the de
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) >= 1.1
+- [Bun](https://bun.sh) >= 1.2 (the repo pins the exact version in `package.json`'s `packageManager`)
 - [Node.js](https://nodejs.org) >= 22 (required by some web tooling)
 - Docker (optional, for container-based development)
 
@@ -20,6 +20,9 @@ bun install
 # Install web client dependencies
 cd web && bun install && cd ..
 
+# Install each platform app's UI dependencies (src/platform/*/ui)
+bun run install:platform-apps
+
 # Copy the environment template and fill in at least one LLM provider key
 cp .env.example .env
 # Edit .env — set ANTHROPIC_API_KEY (or OPENAI_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY / GREENPT_API_KEY / NEBIUS_API_KEY / XAI_API_KEY)
@@ -31,23 +34,23 @@ cp .env.example .env
 bun run dev        # API (:27247, auto-restart) + web client (:27246, HMR) — single terminal
 bun run dev:api    # API only
 bun run dev:web    # Web client only
-bun run dev:tui    # Interactive TUI (no web client)
 ```
 
 Output is prefixed `[api]` / `[web]`. Ctrl+C stops both.
 
 ## Verification
 
-Before submitting a PR, run the full verification suite:
+Before submitting a PR, run the full verification suite. It is what CI runs, and it needs the
+`web/` and platform app installs from Setup:
 
 ```bash
-bun run verify     # lint → typecheck → unit tests → web tests → integration tests
+bun run verify     # format check, lint, typecheck and checks → unit, web, platform app and CLI tests → integration tests
 ```
 
 Individual steps:
 
 ```bash
-bun run lint       # Biome linter (src/ only)
+bun run lint       # Biome linter, over the paths in package.json's lint script
 bun run check      # TypeScript type check
 bun run test       # Unit + integration tests
 bun run eval       # LLM evals — requires ANTHROPIC_API_KEY (not in CI)
