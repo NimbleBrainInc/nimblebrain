@@ -133,7 +133,7 @@ Every command answers `{"ok": true, ...}` or `{"ok": false, "error": "<CODE>", "
 | `MODEL_KEY_MISSING` | NimbleBrain is running; chat needs a key (`npx nimblebrain key`). |
 | `NEEDS_TERMINAL`, `CANCELLED`, `AGENT_UNSUPPORTED`, `USAGE` | `key` needs a person, the action was declined, an unknown agent, or a bad command or flag. |
 | `RUNTIME_UNSUPPORTED` | The release `--runtime` names is older than this CLI supports, or its Compose file cannot be driven. |
-| `LOCAL_MODEL_UNREACHABLE`, `LOCAL_MODEL_MISSING`, `LOCAL_MODEL_NO_TOOLS`, `LOCAL_CONTEXT_SMALL` | Ollama does not answer, the model is not on it (or its download was declined or failed), the model cannot call tools, or its context window is below the 32k NimbleBrain needs. |
+| `LOCAL_MODEL_UNREACHABLE`, `LOCAL_MODEL_MISSING`, `LOCAL_MODEL_NO_TOOLS`, `LOCAL_CONTEXT_SMALL` | Ollama does not answer (it is not installed, starting it was declined, or it did not answer after a start; `fix` names the step for this machine), the model is not on it (or its download was declined or failed), the model cannot call tools, or its context window is below the 32k NimbleBrain needs. |
 | `INTERRUPTED` | The CLI was stopped (a signal, Ctrl-C) before it finished; `exit_code` says how. Check `status`, then run the command again. |
 | `NOT_RUNNING` | The command needs NimbleBrain running (`telemetry on`/`off`, every `mcp` command); run `npx nimblebrain up`. |
 | `UPDATE_REQUIRED` | `mcp add` on a release that cannot reach your machine; run `npx nimblebrain update`. |
@@ -160,14 +160,14 @@ A flag without `commands` applies to every command. An agent reads this rather t
 
 ## On a local model
 
-NimbleBrain's agents can run on a model served by [Ollama](https://ollama.com) on this machine, with no key and no per-call cost. Install Ollama and start it, then answer `local` when `init` asks, or run:
+NimbleBrain's agents can run on a model served by [Ollama](https://ollama.com) on this machine, with no key and no per-call cost. Install Ollama, then answer `local` when `init` asks, or run:
 
 ```bash
 npx nimblebrain --local-model gemma4:e4b     # a new install
 npx nimblebrain local-model gemma4:e4b       # an install that has one already
 ```
 
-The CLI checks that Ollama answers on `127.0.0.1:11434`, downloads the model if it is missing (it asks first), refuses a model that cannot call tools, and creates `nimblebrain-<model>` from it: the same model with a 32k context window, so Ollama never picks a smaller one and cuts the prompt. It then writes `NB_LOCAL_MODEL_URL`, `NB_LOCAL_MODEL` and `NB_LOCAL_MODEL_CONTEXT` to `.env`, and the runtime reaches Ollama at `host.docker.internal`. `doctor` checks all of this again, and `status` reports `local_model`.
+The CLI checks that Ollama answers on `127.0.0.1:11434`. When Ollama is installed but not running, the CLI asks once and starts it the way it was installed: the macOS app (`open -g -a Ollama`), Homebrew's service (`brew services start ollama`, which also starts it at login), or the Linux service (`systemctl start ollama`, without `sudo`; when that needs `sudo`, the fix says so). It never installs Ollama and never runs `ollama serve` itself: when Ollama is missing, the fix names the install step for this machine (`brew install ollama`, or the download page). `--yes` and a run with no terminal take the default, yes, and the answer carries the command it ran in `ollama_started`. It then downloads the model if it is missing (it asks first), refuses a model that cannot call tools, and creates `nimblebrain-<model>` from it: the same model with a 32k context window, so Ollama never picks a smaller one and cuts the prompt. It then writes `NB_LOCAL_MODEL_URL`, `NB_LOCAL_MODEL` and `NB_LOCAL_MODEL_CONTEXT` to `.env`, and the runtime reaches Ollama at `host.docker.internal`. `up` checks Ollama again before starting NimbleBrain, since a reboot can leave it stopped, and offers to start it the same way; if Ollama stays down, NimbleBrain still starts and `up` answers `LOCAL_MODEL_UNREACHABLE`. `doctor` checks all of this again, and starts Ollama only when a person at the terminal says yes. `status` reports `local_model`.
 
 Gemma 4 E4B is the smallest model run end to end on NimbleBrain's tasks (reliable on everyday ones, partial on scheduled tasks); [Local Models](/config/local-models/) lists what has been tested, what failed, and what has not been tried. It needs about 7 GB of memory beside NimbleBrain's 2 GB. On Linux, Ollama listens on `127.0.0.1` by default, which a container cannot reach: set `OLLAMA_HOST=0.0.0.0`. This needs a NimbleBrain release that takes a local model; an older one answers `RUNTIME_UNSUPPORTED`.
 

@@ -1,8 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { parse } from "../src/args.ts";
+import type { Deps } from "../src/deps.ts";
 import { nimblebrainModelName, numCtxOf, takesLocalModel } from "../src/local-model.ts";
 import { run } from "../src/main.ts";
-import { LOCAL_COMPOSE, type MachineOptions, machine, REPO_COMPOSE } from "./fake.ts";
+import { ERRORS, FIX_VARIANTS } from "../src/result.ts";
+import {
+  fail,
+  LOCAL_COMPOSE,
+  type MachineOptions,
+  machine,
+  OLLAMA_STARTS,
+  ok,
+  REPO_COMPOSE,
+} from "./fake.ts";
 
 const HOME = "/home/dana/.nimblebrain-local";
 const ENV = `${HOME}/.env`;
@@ -173,6 +183,212 @@ describe("local-model on an install", () => {
     const body = JSON.parse((await run(["doctor", "--json"], m.deps)).stdout);
     expect(body.error).toBe("LOCAL_CONTEXT_SMALL");
     expect(body.checks.some((c: { check: string }) => c.check === "docker")).toBe(true);
+  });
+});
+
+const FIX = FIX_VARIANTS.LOCAL_MODEL_UNREACHABLE;
+const APP = { "/Applications/Ollama.app/Contents/Info.plist": "<plist/>" };
+const BREW = { "brew list --versions ollama": ok("ollama 0.32.5") };
+const UNIT = { "/etc/systemd/system/ollama.service": "[Unit]" };
+const started = (m: { calls: string[] }) =>
+  m.calls.filter((c) => OLLAMA_STARTS.some((s) => c.endsWith(`$ ${s}`)));
+
+describe("starting Ollama when it is installed but down", () => {
+  test("the macOS app is opened in the background, and the answer says so", async () => {
+    const { body, code, m } = await json(["--yes", "--local-model", "gemma4:e4b"], {
+      platform: "darwin",
+      files: APP,
+      ollama: { down: "until-started", models: { "gemma4:e4b": GEMMA } },
+    });
+    expect(code).toBe(0);
+    expect(body.ollama_started).toBe("open -g -a Ollama");
+    expect(started(m)).toEqual(["$ open -g -a Ollama"]);
+    expect(body.local_model).toBe("nimblebrain-gemma4-e4b");
+  });
+
+  test("a person is asked once, and Homebrew's service is named with its login start", async () => {
+    const { stdout, m } = await atTerminal(["--local-model", "gemma4:e4b"], {
+      platform: "darwin",
+      exec: BREW,
+      answers: ["", "n"],
+      ollama: { down: "until-started", models: { "gemma4:e4b": GEMMA } },
+    });
+    const asked = m.asked.filter((q) => q.startsWith("Ollama isn't running"));
+    expect(asked).toEqual([
+      "Ollama isn't running. Start it with `brew services start ollama`? It then also starts at login. [Y/n] ",
+    ]);
+    expect(started(m)).toEqual([]);
+    // init rebuilds the error with its telemetry field; the machine's fix survives that.
+    expect(stdout).toContain(`fix: ${FIX.brew}`);
+  });
+
+  test("a systemd unit that will not start without sudo names the sudo command", async () => {
+    const { body, m } = await json(["--yes", "--local-model", "gemma4:e4b"], {
+      files: UNIT,
+      exec: {
+        "systemctl start --no-ask-password ollama": fail("Interactive authentication required."),
+      },
+      ollama: { down: "until-started" },
+    });
+    expect(body.error).toBe("LOCAL_MODEL_UNREACHABLE");
+    expect(body.fix).toBe(FIX.systemd);
+    expect(body.message).toContain("Interactive authentication required.");
+    expect(m.calls.some((c) => c.includes("sudo"))).toBe(false);
+  });
+
+  test("Ollama that never answers after a start times out with that machine's fix", async () => {
+    const { body } = await json(["--yes", "--local-model", "gemma4:e4b"], {
+      platform: "darwin",
+      files: APP,
+      ollama: { down: "stays" },
+    });
+    expect(body.error).toBe("LOCAL_MODEL_UNREACHABLE");
+    expect(body.fix).toBe(FIX.app);
+    expect(body.ollama_started).toBe("open -g -a Ollama");
+  });
+
+  test("a later failure still says what was started", async () => {
+    const { body } = await json(["--yes", "--local-model", "gemma3:4b"], {
+      files: UNIT,
+      ollama: { down: "until-started", models: { "gemma3:4b": { capabilities: ["completion"] } } },
+    });
+    expect(body.error).toBe("LOCAL_MODEL_NO_TOOLS");
+    expect(body.ollama_started).toBe("systemctl start --no-ask-password ollama");
+  });
+
+  test("a bare ollama binary is never started; the fix says to run ollama serve", async () => {
+    const { body, m } = await json(["--yes", "--local-model", "gemma4:e4b"], {
+      programs: ["ollama"],
+    });
+    expect(body.fix).toBe(FIX.serve);
+    expect(started(m)).toEqual([]);
+    expect(m.asked).toEqual([]);
+  });
+
+  test("not installed, with Homebrew: the fix is brew install, and nothing is installed", async () => {
+    const { body, m } = await json(["--yes", "--local-model", "gemma4:e4b"], {
+      exec: { "brew list --versions ollama": fail("", 1) },
+    });
+    expect(body.fix).toBe(FIX.brew_install);
+    expect(m.calls.some((c) => c.includes("brew install"))).toBe(false);
+  });
+
+  test("not installed, without Homebrew: the fix is the download page", async () => {
+    const { body } = await json(["--yes", "--local-model", "gemma4:e4b"]);
+    expect(body.fix).toBe(ERRORS.LOCAL_MODEL_UNREACHABLE);
+  });
+});
+
+describe("Ollama after a reboot", () => {
+  async function rebooted(opts: MachineOptions) {
+    const m = machine({
+      env,
+      compose,
+      ...opts,
+      ollama: { models: { "gemma4:e4b": GEMMA }, ...opts.ollama },
+    });
+    await run(["--yes", "--json", "--local-model", "gemma4:e4b"], m.deps);
+    await run(["down", "--json"], m.deps);
+    m.ollamaUp = false;
+    m.calls.length = 0;
+    return m;
+  }
+
+  test("up starts Ollama before NimbleBrain", async () => {
+    const m = await rebooted({ platform: "darwin", exec: BREW });
+    const body = JSON.parse((await run(["up", "--json"], m.deps)).stdout);
+    expect(body.ok).toBe(true);
+    expect(body.ollama_started).toBe("brew services start ollama");
+    const at = (s: string) => m.calls.findIndex((c) => c.includes(s));
+    expect(at("brew services start ollama")).toBeLessThan(at("docker compose up"));
+  });
+
+  test("up with Ollama still down starts NimbleBrain and says what is missing", async () => {
+    const m = await rebooted({
+      files: UNIT,
+      exec: { "systemctl start --no-ask-password ollama": fail("Access denied") },
+    });
+    const body = JSON.parse((await run(["up", "--json"], m.deps)).stdout);
+    expect(body.error).toBe("LOCAL_MODEL_UNREACHABLE");
+    expect(body.message).toStartWith("NimbleBrain is running, but ");
+    expect(body.health).toBe("ok");
+    expect(body.fix).toBe(FIX.systemd);
+  });
+
+  test("up on a hosted key never looks for Ollama", async () => {
+    const m = machine({ env, compose, files: UNIT });
+    await run(["--yes", "--json"], m.deps);
+    m.calls.length = 0;
+    const body = JSON.parse((await run(["up", "--json"], m.deps)).stdout);
+    expect(body.ok).toBe(true);
+    expect(started(m)).toEqual([]);
+    expect(m.calls.some((c) => c.includes("brew"))).toBe(false);
+  });
+
+  test("a Compose failure after Ollama started still says what was started", async () => {
+    const UP = "docker compose up -d --no-build";
+    const failingUp = (deps: Deps): Deps => ({
+      ...deps,
+      exec: (cmd, args, o) =>
+        [cmd, ...args].join(" ") === UP
+          ? Promise.resolve(fail("container platform exited with code 1"))
+          : deps.exec(cmd, args, o),
+    });
+    const brew = { platform: "darwin", exec: BREW } as const;
+
+    const fresh = machine({
+      env,
+      compose,
+      ...brew,
+      ollama: { down: "until-started", models: { "gemma4:e4b": GEMMA } },
+    });
+    const init = JSON.parse(
+      (await run(["--yes", "--json", "--local-model", "gemma4:e4b"], failingUp(fresh.deps))).stdout,
+    );
+    for (const argv of [["up"], ["local-model", "gemma4:e4b"]]) {
+      const m = await rebooted(brew);
+      const body = JSON.parse((await run([...argv, "--yes", "--json"], failingUp(m.deps))).stdout);
+      expect(body.error).toBe("START_FAILED");
+      expect(body.ollama_started).toBe("brew services start ollama");
+    }
+    expect(init.error).toBe("START_FAILED");
+    expect(init.ollama_started).toBe("brew services start ollama");
+
+    // Ollama started but never answered, then Compose failed.
+    const m = await rebooted(brew);
+    const silent = failingUp(m.deps);
+    const body = JSON.parse(
+      (
+        await run(["up", "--yes", "--json"], {
+          ...silent,
+          exec: (cmd, args, o) =>
+            [cmd, ...args].join(" ") === "brew services start ollama"
+              ? Promise.resolve(ok(""))
+              : silent.exec(cmd, args, o),
+        })
+      ).stdout,
+    );
+    expect(body.error).toBe("START_FAILED");
+    expect(body.ollama_started).toBe("brew services start ollama");
+  });
+
+  test("doctor without a person reports Ollama down and starts nothing", async () => {
+    const m = await rebooted({ platform: "darwin", files: APP });
+    const body = JSON.parse((await run(["doctor", "--json"], m.deps)).stdout);
+    expect(body.error).toBe("LOCAL_MODEL_UNREACHABLE");
+    expect(body.fix).toBe(FIX.app);
+    expect(body.checks.at(-1)).toMatchObject({ check: "ollama", ok: false });
+    expect(body.checks.some((c: { check: string }) => c.check === "docker")).toBe(true);
+    expect(started(m)).toEqual([]);
+  });
+
+  test("doctor at a terminal starts Ollama on a yes", async () => {
+    const m = await rebooted({ platform: "darwin", files: APP, answers: ["y"] });
+    const term = { ...m.deps, interactive: true };
+    const { stdout, code } = await run(["doctor"], term);
+    expect(code).toBe(0);
+    expect(started(m)).toEqual(["$ open -g -a Ollama"]);
+    expect(stdout).toContain("ollama: 0.32.5 (started: open -g -a Ollama)");
   });
 });
 

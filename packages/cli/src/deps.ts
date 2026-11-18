@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, chmod, mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 
 /**
  * Everything the CLI does to the world goes through here, so a command is a
@@ -12,6 +13,8 @@ import { dirname, join, resolve } from "node:path";
 export interface Deps {
   /** Run a program. `missing` is true when it is not installed at all. */
   exec(cmd: string, args: string[], opts?: ExecOptions): Promise<ExecResult>;
+  /** Whether a program is on `PATH`, found without running it. */
+  which(cmd: string): Promise<boolean>;
   /** Whether nothing on this machine listens on `127.0.0.1:<port>`. */
   portFree(port: number): Promise<boolean>;
   /** A GET with a timeout; never throws, a connection failure is `undefined`. */
@@ -37,6 +40,7 @@ export interface Deps {
   /** A progress line for a person, on stderr, so `--json` stdout stays one object. */
   say(line: string): void;
   env: NodeJS.ProcessEnv;
+  platform: NodeJS.Platform;
   home: string;
   /** The working directory a relative `--home` is taken from. */
   cwd: string;
@@ -80,6 +84,20 @@ export function realDeps(): Deps {
         });
         child.on("close", (code) => resolve({ code, stdout, stderr, missing }));
       });
+    },
+    async which(cmd) {
+      const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE").split(";") : [""];
+      for (const dir of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
+        for (const ext of exts) {
+          try {
+            await access(join(dir, cmd + ext), constants.X_OK);
+            return true;
+          } catch {
+            // Not in this folder; try the next.
+          }
+        }
+      }
+      return false;
     },
     portFree(port) {
       return new Promise((resolve) => {
@@ -133,6 +151,7 @@ export function realDeps(): Deps {
       process.stderr.write(`${line}\n`);
     },
     env: process.env,
+    platform: process.platform,
     home: homedir(),
     cwd: process.cwd(),
   };

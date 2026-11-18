@@ -66,17 +66,49 @@ export const ERRORS = {
 
 export type ErrorCode = keyof typeof ERRORS;
 
+/**
+ * A code's fix on a machine the CLI recognized, where the one in `ERRORS` would
+ * be too general. A closed set, so every fix a code can carry is listed here.
+ */
+export const FIX_VARIANTS = {
+  LOCAL_MODEL_UNREACHABLE: {
+    brew_install:
+      "Install Ollama with `brew install ollama`, then run this again; it offers to start Ollama for you.",
+    app: "Open the Ollama app, then run this again.",
+    brew: "Run `brew services start ollama` (it then also starts at login), then run this again.",
+    systemd: "Run `sudo systemctl start ollama`, then run this again.",
+    serve: "Run `ollama serve` in another terminal, then run this again.",
+  },
+} as const;
+
+type Variants = typeof FIX_VARIANTS;
+export type FixVariant = { [C in keyof Variants]: keyof Variants[C] }[keyof Variants];
+
 export class CliError extends Error {
   readonly code: ErrorCode;
   readonly fix: string;
   /** Extra fields carried into the JSON, such as which check failed. */
   readonly detail: Record<string, unknown>;
 
-  constructor(code: ErrorCode, message?: string, detail: Record<string, unknown> = {}) {
+  readonly variant: FixVariant | undefined;
+
+  constructor(
+    code: ErrorCode,
+    message?: string,
+    detail: Record<string, unknown> = {},
+    variant?: FixVariant,
+  ) {
     super(message ?? code);
     this.code = code;
-    this.fix = ERRORS[code];
+    const variants = (FIX_VARIANTS as Partial<Record<ErrorCode, Record<string, string>>>)[code];
+    this.fix = (variant && variants?.[variant]) || ERRORS[code];
+    this.variant = variant;
     this.detail = detail;
+  }
+
+  /** The same error with more detail (and another message), keeping its code and fix. */
+  with(detail: Record<string, unknown>, message = this.message): CliError {
+    return new CliError(this.code, message, { ...this.detail, ...detail }, this.variant);
   }
 }
 

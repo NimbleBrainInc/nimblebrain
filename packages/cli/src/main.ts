@@ -5,6 +5,7 @@ import { BARE_CLI, type Deps, forInstall, installHome, invocation } from "./deps
 import { doctor } from "./doctor.ts";
 import { describe, helpText } from "./help.ts";
 import {
+  confirmOllamaStart,
   down,
   init,
   key,
@@ -83,7 +84,9 @@ export async function run(argv: string[], deps: Deps): Promise<Answer> {
           install !== undefined &&
           install.port === flags.port &&
           (await isHealthy(deps, flags.port));
-        result = { ...(await doctorInstall(deps, home, flags.port, ours)) };
+        // Doctor starts Ollama only when a person at the terminal says yes, never by default.
+        const startOllama = confirmOllamaStart({ deps, flags }, false);
+        result = { ...(await doctorInstall(deps, home, flags.port, ours, startOllama)) };
         break;
       }
       case "status":
@@ -165,22 +168,31 @@ function isStatusShaped(result: Ok | Failure): result is (Ok | Failure) & { vers
 
 /**
  * The machine's checks, then, for an install on a local model, Ollama's: it
- * answers, has the model, the model calls tools, and its window is the one the
- * runtime budgets against. A failure carries every check run so far.
+ * answers (`startOllama` decides whether a down one is started), has the
+ * model, the model calls tools, and its window is the one the runtime budgets
+ * against. A failure carries every check run so far.
  */
-async function doctorInstall(deps: Deps, home: string, port: number, ours: boolean) {
+async function doctorInstall(
+  deps: Deps,
+  home: string,
+  port: number,
+  ours: boolean,
+  startOllama: (command: string) => Promise<boolean>,
+) {
   const machine = await doctor(deps, port, ours);
   const model = localModelOf((await deps.readText(paths(home).env)) ?? "");
   if (!model) return machine;
   try {
-    return { ...machine, checks: [...machine.checks, ...(await checkLocalModel(deps, model))] };
+    const local = await checkLocalModel(deps, model, startOllama);
+    return {
+      ...machine,
+      checks: [...machine.checks, ...local.checks],
+      ollama_started: local.started,
+    };
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
     const local = (err.detail.checks as unknown[] | undefined) ?? [];
-    throw new CliError(err.code, err.message, {
-      ...err.detail,
-      checks: [...machine.checks, ...local],
-    });
+    throw err.with({ checks: [...machine.checks, ...local] });
   }
 }
 

@@ -55,6 +55,7 @@ For comparison, Claude Sonnet 4.6 passed every task above with no tool errors.
 ## Setup and reachability
 
 - **Verified:** `npx nimblebrain --local-model gemma4:e4b` (CLI 0.2.0) installed the v0.75.0 release candidate against Ollama on its default settings, prepared the model with a 32k window, and passed every `doctor` check. The runtime offered only the local model.
+- **Starting Ollama:** when Ollama is installed but not running, `npx nimblebrain` (`init`, `local-model`, `up`) offers to start it the way it was installed, and `doctor` does on a person's yes; it never installs Ollama. See [the CLI reference](/cli/nimblebrain/#on-a-local-model). A Linux service started this way still listens on `127.0.0.1` unless `OLLAMA_HOST=0.0.0.0` is set for it.
 - **Verified:** Docker Desktop on macOS reaches a model server on the host at `host.docker.internal`, including one listening only on `127.0.0.1`, as Ollama does by default.
 
 ## Not yet verified

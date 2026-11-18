@@ -24,10 +24,23 @@ export interface FakeOllama {
   models?: Record<string, OllamaModel>;
   /** Models `/api/pull` can download, by name. */
   library?: Record<string, OllamaModel>;
+  /**
+   * Installed but not running: `until-started` answers once one of the start
+   * commands (`OLLAMA_STARTS`) runs; `stays` never answers.
+   */
+  down?: "until-started" | "stays";
 }
+
+/** The commands that start an installed Ollama, by how it was installed. */
+export const OLLAMA_STARTS = [
+  "open -g -a Ollama",
+  "brew services start ollama",
+  "systemctl start --no-ask-password ollama",
+];
 
 export const GB = 1024 ** 3;
 export const ok = (stdout = ""): ExecResult => ({ code: 0, stdout, stderr: "", missing: false });
+export const missing = (): ExecResult => ({ code: null, stdout: "", stderr: "", missing: true });
 export const fail = (stderr = "", code = 1): ExecResult => ({
   code,
   stdout: "",
@@ -54,6 +67,8 @@ export interface Machine {
   runtimeConsent: "on" | "off" | "undecided";
   /** Ollama's models after the run, by name. */
   ollamaModels: Record<string, OllamaModel>;
+  /** Whether Ollama answers. */
+  ollamaUp: boolean;
 }
 
 export interface MachineOptions {
@@ -79,6 +94,10 @@ export interface MachineOptions {
   ) => { status: number; body: unknown } | undefined;
   /** Ollama on `127.0.0.1:11434`; absent, nothing answers there. */
   ollama?: FakeOllama;
+  /** Default `linux`. */
+  platform?: NodeJS.Platform;
+  /** Programs on `PATH` (`which`); default none. */
+  programs?: string[];
   /** The CLI's npm `latest`; absent, the registry does not answer. */
   npmLatest?: string;
 }
@@ -100,6 +119,7 @@ export function machine(opts: MachineOptions = {}): Machine {
     posts: [] as Array<{ url: string; body: unknown }>,
     runtimeConsent: "undecided" as "on" | "off" | "undecided",
     ollamaModels: { ...(opts.ollama?.models ?? {}) } as Record<string, OllamaModel>,
+    ollamaUp: Boolean(opts.ollama && !opts.ollama.down),
   };
   const m = state;
   const exec: Record<string, ExecResult> = {
@@ -109,6 +129,8 @@ export function machine(opts: MachineOptions = {}): Machine {
     ),
     "docker compose version --short": ok("2.29.1"),
     "docker compose ls -a --format json": ok("[]"),
+    // No Homebrew unless a test gives it.
+    "brew list --versions ollama": missing(),
     ...opts.exec,
   };
   const deps: Deps = {
@@ -126,6 +148,13 @@ export function machine(opts: MachineOptions = {}): Machine {
         }
       }
       if (res.code === 0 && line.startsWith("docker compose down")) m.healthy = false;
+      if (
+        res.code === 0 &&
+        OLLAMA_STARTS.includes(line) &&
+        opts.ollama &&
+        opts.ollama.down !== "stays"
+      )
+        m.ollamaUp = true;
       // As the skills CLI does: a user-level skill lands in the agent's skills folder.
       const added = line.match(/^npx -y skills add \S+ --skill (\S+) --agent (\S+) -g/);
       if (res.code === 0 && added) {
@@ -140,6 +169,7 @@ export function machine(opts: MachineOptions = {}): Machine {
       }
       return res;
     },
+    which: async (cmd) => (opts.programs ?? []).includes(cmd),
     portFree: async () => opts.portFree ?? true,
     async getText(url) {
       if (url.endsWith("info/refs?service=git-upload-pack")) {
@@ -159,7 +189,7 @@ export function machine(opts: MachineOptions = {}): Machine {
         return opts.npmLatest ? { status: 200, body: { version: opts.npmLatest } } : undefined;
       }
       if (url.startsWith("http://127.0.0.1:11434/")) {
-        if (!opts.ollama) return undefined;
+        if (!m.ollamaUp) return undefined;
         return url.endsWith("/api/version")
           ? { status: 200, body: { version: "0.32.5" } }
           : undefined;
@@ -220,12 +250,13 @@ export function machine(opts: MachineOptions = {}): Machine {
     // them, so a test about something else is never asked the telemetry
     // question and never looks for a newer release.
     env: { NIMBLEBRAIN_TELEMETRY_KEY: "", NIMBLEBRAIN_NO_UPDATE_CHECK: "1", ...opts.env },
+    platform: opts.platform ?? "linux",
     home: "/home/dana",
     cwd: "/home/dana/src",
   };
   /** Ollama's API, as the real one answers the calls the CLI makes. */
   function ollama(url: string, body: unknown): { status: number; body: unknown } | undefined {
-    if (!opts.ollama) return undefined;
+    if (!opts.ollama || !m.ollamaUp) return undefined;
     const req = body as { model: string; from?: string; parameters?: { num_ctx?: number } };
     if (url.endsWith("/api/show")) {
       const found = m.ollamaModels[req.model];
