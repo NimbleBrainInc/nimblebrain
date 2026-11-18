@@ -28,7 +28,7 @@ When you add a server to a local NimbleBrain by its URL, NimbleBrain reads its c
 
 ## The rules
 
-- **Refused at import:** a name that is not reverse-DNS, an empty or over-long description or title, a version range, a placement whose `resourceUri` is not `ui://<authority>/<path>`, placements under two authorities, an unknown placement key, and a second card on one server. A host would drop each of these.
+- **Refused at import:** a name that is not reverse-DNS, an empty or over-long description or title, a version range, a placement whose `resourceUri` is not `ui://<authority>/<path>`, placements under two authorities, an unknown placement key, and a second card on one server. The name, version, description and title limits are the Server Card schema's, so a reader that validates against it refuses such a card; NimbleBrain drops the placement ones.
 - **Streamable HTTP only.** The card follows the MCP path (`mcp.http_app(path="/api/mcp")` serves `/api/mcp/server-card`). Over stdio, or on the SSE transport, nothing is served.
 - **Public and read-only.** `GET` only, with no authentication even when the server has an auth provider, CORS open to any origin, `Cache-Control: public, max-age=3600`, and an `ETag` that `If-None-Match` revalidates. FastMCP's host and origin checks still apply to a server bound to a loopback address.
 - **No `remotes`.** A server cannot reliably know the URL its clients reach it at (it binds `0.0.0.0`, sits behind a proxy, or is reached through a container's host alias), and a client that fetched the card already has it.
