@@ -26,6 +26,17 @@ services:
       - NB_TELEMETRY_ID=${NB_TELEMETRY_ID:-}
       - NB_TELEMETRY_CONSENT=${NB_TELEMETRY_CONSENT:-}
       - DO_NOT_TRACK=${DO_NOT_TRACK:-}
+      # A name that reaches this machine from inside the container, so a local
+      # install can connect to an MCP server you run on the host
+      # (`npx nimblebrain mcp add http://127.0.0.1:8000/mcp`). The runtime
+      # honours it only with the `dev` adapter in instance.json; under any other
+      # adapter it logs a warning and ignores it, so a self-hosted instance with
+      # real sign-in is unaffected. ADR-0065.
+      - NB_HOST_LOOPBACK=host.docker.internal
+    # On Linux, `host-gateway` is the Docker bridge's address, not the host's
+    # loopback: a server there must listen on the bridge or 0.0.0.0 to be reached.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - internal
 
