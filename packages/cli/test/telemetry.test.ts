@@ -150,9 +150,10 @@ describe("telemetry consent at init", () => {
 
   test("--yes never answers the telemetry question", async () => {
     const m = machine({ env, interactive: true });
-    const { body } = await json(["--yes"], m);
+    await run(["--yes"], m.deps);
     expect(m.asked.some((q) => q.startsWith("Help improve"))).toBe(false);
-    expect(body.telemetry.state).toBe("undecided");
+    expect(sent(m)).toHaveLength(0);
+    expect(m.files.get(ENV)?.text).not.toContain("NB_TELEMETRY_CONSENT");
   });
 
   test("with no destination no one is asked and nothing is written", async () => {
