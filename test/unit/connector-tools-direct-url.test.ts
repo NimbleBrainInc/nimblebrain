@@ -28,6 +28,7 @@ import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycl
 import {
   isAcceptedIconUrl,
   parseServerCard,
+  SERVER_CARD_MAX_BYTES,
   SERVER_CARD_MEDIA_TYPE,
   serverCardUrl,
 } from "../../src/connectors/runtime/server-card.ts";
@@ -90,7 +91,7 @@ interface Harness {
   lifecycle: ConnectorLifecycleManager;
   /** URL → host header of every request the fake network saw. */
   requests: Array<{ url: string; host: string | null; accept: string | null }>;
-  card: { body: unknown; status: number };
+  card: { body: unknown; status: number; headers?: Record<string, string> };
   tool: ReturnType<typeof createManageConnectorsTool>;
 }
 
@@ -154,7 +155,7 @@ beforeEach(async () => {
     if (url.endsWith("/server-card")) {
       return new Response(JSON.stringify(h.card.body), {
         status: h.card.status,
-        headers: { "content-type": SERVER_CARD_MEDIA_TYPE },
+        headers: { "content-type": SERVER_CARD_MEDIA_TYPE, ...h.card.headers },
       });
     }
     // The MCP endpoint itself: nothing listens in a unit test.
@@ -321,6 +322,18 @@ describe("an install with no usable card", () => {
     ["a 404", { body: "not found", status: 404 }],
     ["a body that is not JSON", { body: "<html>", status: 200 }],
     ["a JSON array", { body: [], status: 200 }],
+    [
+      "a card streamed past the size cap",
+      { body: { ...CARD, description: "x".repeat(SERVER_CARD_MAX_BYTES) }, status: 200 },
+    ],
+    [
+      "a card whose declared length is past the size cap",
+      {
+        body: CARD,
+        status: 200,
+        headers: { "content-length": String(SERVER_CARD_MAX_BYTES + 1) },
+      },
+    ],
   ])("%s installs under the host-port name with no display or placements", async (_l, card) => {
     h.card = card;
     const result = await install("http://localhost:8123/mcp");
