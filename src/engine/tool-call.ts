@@ -16,6 +16,14 @@ import type { ToolResult, ToolSchema } from "./types.ts";
 import { formatUnknownArgumentsError, unknownArgumentNames } from "./unknown-tool-args.ts";
 
 /**
+ * `structuredContent.reason` of a call rejected for its arguments before
+ * anything ran: an unknown argument name or a value the schema refuses. The
+ * same code a connector's error envelope carries for its own rejection (see
+ * {@link errorReasonField}), so a consumer reads one value either way.
+ */
+export const INVALID_TOOL_INPUT = "bad_input";
+
+/**
  * Coerce a model tool call's input against its declared schema, then validate it.
  * Coerce first: models occasionally emit nested object/array values as
  * JSON-encoded strings (`{ manifest: "{...}" }`); the coerce pass uses the
@@ -26,14 +34,6 @@ import { formatUnknownArgumentsError, unknownArgumentNames } from "./unknown-too
  * (possibly coerced) input plus an isError result when validation fails. With
  * no schema the input passes through unchanged.
  */
-/**
- * `structuredContent.reason` of a call rejected for its arguments before
- * anything ran: an unknown argument name or a value the schema refuses. The
- * same code a connector's error envelope carries for its own rejection (see
- * {@link errorReasonField}), so a consumer reads one value either way.
- */
-export const INVALID_TOOL_INPUT = "bad_input";
-
 export function coerceAndValidateToolInput(
   input: Record<string, unknown>,
   toolSchema: ToolSchema | undefined,

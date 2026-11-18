@@ -505,9 +505,16 @@ function argumentNames(input: unknown): string {
  * on one item is still unresolved when later writes of the same shape succeed
  * on other items.
  *
+ * The log cannot tell a corrected value from a different item: a write
+ * rejected for item B, abandoned, then a successful write of item C reads as
+ * B corrected, so B counts as resolved. That is the accepted cost of
+ * resolving a rejection by the next success whatever its input; nothing ran
+ * for B, so the run hid an omission, not a failed side effect.
+ *
  * Read from the activity log alone. Tool annotations (`readOnlyHint`) would
- * separate a failed read from a failed write, but they are the server's claim
- * about itself and must not relax a check (see `ToolSchema.annotations`).
+ * separate a failed read from a failed write, and so limit the rejection rule
+ * to reads, but they are the server's claim about itself and must not relax a
+ * check (see `ToolSchema.annotations`), and the call records do not carry them.
  */
 function unresolvedFailures(
   toolCalls: TaskFnResult["toolCalls"],

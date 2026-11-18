@@ -6698,11 +6698,12 @@ function createPartialRunAccumulator(): {
         // `errorReason` is intentionally absent here: this accumulator only
         // feeds the abort/timeout path, which always returns
         // `stopReason: "aborted"` (never "complete"), so the tasks
-        // de-masker's `status === "success"` guard never reads it. (The
-        // `tool.done` event doesn't carry `errorReason` either — no point
-        // threading it through for a path that can't de-mask.) `held` is
-        // carried: the run's recorded unresolved failures read it on every
-        // path, this one included.
+        // de-masker's `status === "success"` guard never reads it. The
+        // run's recorded unresolved failures do read it, so without it a
+        // rejection here counts as an ordinary failure: the stricter rule,
+        // on a run that stopped short anyway. (The `tool.done` event doesn't
+        // carry `errorReason` either.) `held` is carried: those unresolved
+        // failures read it on every path, this one included.
         toolCalls.push({
           id: data.id,
           name: data.name,

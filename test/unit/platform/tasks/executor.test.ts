@@ -1073,6 +1073,17 @@ describe("createDirectExecutor — degraded runs", () => {
     expect(run.error).toMatch(/records__create ×1/);
   });
 
+  test("a rejected write abandoned for another item reads as resolved (accepted limit)", async () => {
+    // The log cannot tell a corrected value from a different item, so the next
+    // success to the tool resolves the rejection whatever its input.
+    const run = await runWith([
+      call("records__create", { id: "a", note: "x" }, true),
+      call("records__create", { id: "b", note: 1 }, false, { errorReason: "bad_input" }),
+      call("records__create", { id: "c", note: "z" }, true),
+    ]);
+    expect(run.status).toBe("success");
+  });
+
   test("an upstream failure is not resolved by the next success on another input", async () => {
     // Only a rejected argument makes the next call its retry; a call that ran and failed upstream did not.
     const run = await runWith([
