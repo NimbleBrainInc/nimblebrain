@@ -143,6 +143,8 @@ import {
   getProviderFromModel,
   isModelAllowed,
   isModelInPolicy,
+  localCatalogModels,
+  setConfiguredModels,
 } from "../model/catalog.ts";
 import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../model/gateway-refusal.ts";
 import { isQualifiedModelId, requireQualifiedModelId } from "../model/model-id.ts";
@@ -6298,6 +6300,9 @@ function resolveModel(
   config: RuntimeConfig,
   gateway: ModelGatewayAccess | undefined,
 ): (modelString: string) => LanguageModelV4 {
+  // A local model server's models enter the catalog from config, with the
+  // limits the operator gave, so every reader of the catalog sees them.
+  setConfiguredModels("local", "Local", localCatalogModels(config.providers?.local ?? {}));
   const adapter = config.languageModel;
   if (adapter) return () => adapter;
   // No providers configured means Anthropic, keyed from the environment.

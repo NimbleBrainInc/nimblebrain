@@ -26,6 +26,16 @@ A provider's API key can be supplied here or in `nimblebrain.json` under `provid
 | `NEBIUS_API_KEY` | For Nebius models | — | Nebius Token Factory API key. Also settable via `providers.nebius.apiKey`. |
 | `XAI_API_KEY` | For xAI models | — | xAI (Grok) API key. Also settable via `providers.xai.apiKey`. |
 
+### Local model server
+
+Set by `npx nimblebrain` when you choose a local model, and passed through by the release's `docker-compose.yml`. With `NB_LOCAL_MODEL_URL` set, the runtime builds [`providers.local`](/config/nimblebrain-json/#a-local-model-server) and points the `default` and `fast` slots at the model, unless `nimblebrain.json` sets them itself. Anthropic stays configured beside it only when `ANTHROPIC_API_KEY` is set.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NB_LOCAL_MODEL_URL` | No | — | The model server's OpenAI-compatible endpoint, e.g. `http://host.docker.internal:11434/v1`. |
+| `NB_LOCAL_MODEL` | With `NB_LOCAL_MODEL_URL` | — | The model's id on that server. The runtime refuses to start without it. |
+| `NB_LOCAL_MODEL_CONTEXT` | No | `32768` | The context window the server allocates, in tokens. |
+
 ### Runtime & server
 
 | Variable | Required | Default | Description |

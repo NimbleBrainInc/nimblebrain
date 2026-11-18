@@ -27,7 +27,22 @@ export interface ProvidersConfig {
     greenpt?: { apiKey?: string; baseURL?: string; models?: string[] };
     nebius?: { apiKey?: string; baseURL?: string; models?: string[] };
     xai?: { apiKey?: string; baseURL?: string; models?: string[] };
+    local?: LocalProviderConfig;
   };
+}
+
+/**
+ * A model server on this machine or network (Ollama, llama.cpp, LM Studio, vLLM)
+ * that speaks OpenAI's Chat Completions. `models` names what it serves, and the
+ * catalog takes their limits from `contextWindow` and `maxOutputTokens`
+ * (`localCatalogModels` in catalog.ts), since no public catalog knows them.
+ */
+export interface LocalProviderConfig {
+  baseURL?: string;
+  apiKey?: string;
+  models?: string[];
+  contextWindow?: number;
+  maxOutputTokens?: number;
 }
 
 /**
@@ -124,6 +139,12 @@ function assertNothingBesideGateway(config: ProvidersConfig): void {
  * with its own key.
  */
 export function buildRegistry(config: ProvidersConfig, gateway?: ModelGatewayAccess): Provider {
+  if (gateway && config.providers?.local) {
+    throw new Error(
+      "providers.local is set, but execution.modelGateway reaches hosted providers only; " +
+        "remove providers.local, or run without the gateway to use a local model server",
+    );
+  }
   if (gateway) assertNothingBesideGateway(config);
   const providersCfg = gateway
     ? Object.fromEntries(MODEL_PROVIDERS.map((id) => [id, config.providers?.[id] ?? {}]))
@@ -138,6 +159,7 @@ export function buildRegistry(config: ProvidersConfig, gateway?: ModelGatewayAcc
   if (providersCfg.greenpt) providers.greenpt = greenptProvider(providersCfg.greenpt, gateway);
   if (providersCfg.nebius) providers.nebius = nebiusProvider(providersCfg.nebius, gateway);
   if (providersCfg.xai) providers.xai = xaiProvider(providersCfg.xai, gateway);
+  if (!gateway && config.providers?.local) providers.local = localProvider(config.providers.local);
 
   return createProviderRegistry(providers);
 }
@@ -318,14 +340,39 @@ function xaiProvider(
   return { ...xai, languageModel: (modelId: string) => xai.chat(modelId) };
 }
 
+function localProvider(cfg: LocalProviderConfig): ProviderV4 {
+  const { baseURL, apiKey } = cfg;
+  if (!baseURL) {
+    throw new Error(
+      "Provider 'local' is configured but has no baseURL. Set providers.local.baseURL to the " +
+        "model server's OpenAI-compatible endpoint, e.g. http://localhost:11434/v1 for Ollama.",
+    );
+  }
+  // Chat Completions, through the adapter written for OpenAI-compatible servers
+  // (see the nebius branch). Not `createOpenAI`: its default is the Responses
+  // API, which local servers implement partly or not at all (Ollama rejects the
+  // stored-item references the SDK sends on a tool loop's second call; the
+  // llama.cpp server's stream events fail the SDK's schema). No key guard: a
+  // local server usually takes none, and the adapter then sends no
+  // Authorization header. `includeUsage` asks for the usage chunk, without which
+  // every turn would meter at zero tokens.
+  return createOpenAICompatible({
+    name: "local",
+    baseURL,
+    ...(apiKey ? { apiKey } : {}),
+    includeUsage: true,
+  });
+}
+
 /**
  * Each configured provider's model allowlist (`providers.<id>.models`), the one
  * provider field `buildRegistry` does not read. With no `providers` block it
  * reports `{ anthropic: {} }`, the provider the registry builds by default.
  *
- * `buildRegistry` and this function are the only readers of a provider's
- * config, which `test/unit/model-provider-config.test.ts` holds against the
- * config schema: a declared field neither reads fails the build.
+ * `buildRegistry`, this function and `localCatalogModels` (catalog.ts, for a
+ * local server's limits) are the only readers of a provider's config, which
+ * `test/unit/model-provider-config.test.ts` holds against the config schema: a
+ * declared field none of them reads fails the build.
  */
 export function providerModelAllowlists(
   config: ProvidersConfig,

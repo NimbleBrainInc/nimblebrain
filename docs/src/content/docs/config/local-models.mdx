@@ -1,0 +1,65 @@
+---
+title: Local Models
+description: Which local model servers and models NimbleBrain has been run on, what worked, what did not, and what has not been tested.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+NimbleBrain can run its own agents on a model served from your machine or network, through the [`local` provider](/config/nimblebrain-json/#a-local-model-server). This page records what has been run end to end against NimbleBrain, what failed, and what has not been tried. Treat anything not listed as untested.
+
+<Aside type="caution" title="Results, not guarantees">
+Each result below is from a small number of runs (one to three per cell) on one machine: an Apple M3 Max with 64 GB, Docker Desktop, Ollama 0.32.5, and llama.cpp build 11669. Small models vary from run to run. A model marked verified did the job in those runs; it may still fail one.
+</Aside>
+
+## What "verified" means here
+
+A task is verified when the model completed it in a real NimbleBrain chat and the result was checked against what was stored: the file's contents, or the saved task's schedule, timezone, tools and run count. A reply that says it worked does not count. The tasks:
+
+- **Everyday:** list the installed apps; create a file; create a file, read it back, list the workspace's files, and answer from them.
+- **Scheduled tasks:** create a task that runs every weekday at 8am, approve it, move it to 9am in a later message, and run it once.
+
+## Model servers
+
+`local` speaks OpenAI's Chat Completions API. A server's Responses API is not used.
+
+| Server | Status | Notes |
+|---|---|---|
+| Ollama 0.32.5 | **Verified** | Tool calling, streaming, and usage reporting. The server most results below come from. |
+| llama.cpp `llama-server` (build 11669, `--jinja`) | **Verified** on Gemma 4 E4B | One multi-step task, correct. Tool calls work on both Chat Completions and Responses at the server; NimbleBrain uses Chat Completions. |
+| LM Studio | Not tested | Serves Chat Completions. Its bug tracker has open Gemma 4 tool-calling issues ([#1756](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues/1756), [#1927](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues/1927)). |
+| vLLM | Not tested | Built for NVIDIA GPU servers rather than laptops. |
+| Any server through the `openai` provider with a `baseURL` | **Broken** | That provider uses OpenAI's Responses API. Ollama rejects the stored-item references sent on a tool loop's second call (`unknown input item type: "item_reference"`), and llama.cpp's streamed events fail the client's schema check. Use `local`. |
+
+## Models
+
+On Ollama, at a 32k context, unless noted.
+
+| Model | Tool calling | Everyday tasks | Scheduled tasks | Resident memory at 32k |
+|---|---|---|---|---|
+| **Gemma 4 E4B** (`gemma4:e4b`) | Yes | **Verified** | **Verified**: created, moved to 9am and ran with no tool errors in the latest run. Earlier runs, before the task schedule took its flat shape, failed most of the time on the schedule's shape. | About 7 GB |
+| **Qwen3 8B** (`qwen3:8b`) | Yes | **Verified** | **Partial**: it created the task, but on later turns it sometimes answered with nothing. Tested before the latest changes; not rerun since. | About 10 GB |
+| Qwen2.5 3B (`qwen2.5:3b`) | Yes | **Failed**: empty replies, malformed arguments, and a claim of success after a refused call | **Failed** | Not measured |
+| Gemma 3 (any size) | **No**, on Ollama | Not usable | Not usable | — |
+| Gemma 4 26B / 31B, Qwen 3.6, Llama | — | Not tested | Not tested | 18 GB+ downloads |
+
+For comparison, Claude Sonnet 4.6 passed every task above with no tool errors.
+
+## Known issues
+
+- **A context window smaller than the prompt fails silently.** Ollama picks a default window from GPU memory: 4k below about 23 GiB, 32k up to about 47 GiB, 256k above that. A prompt longer than the window is cut without an error, and the model loses its tools. In testing, a 4k window turned a file request into "I do not have the capability to create files", reported as a successful turn. Set the window explicitly (`OLLAMA_CONTEXT_LENGTH=32768`, or `PARAMETER num_ctx 32768` in a Modelfile) and give the same number as `contextWindow`.
+- **Small models sometimes run dependent calls together.** Gemma 4 E4B was seen to create a file and list the files in one step. The list can finish first and not show the new file.
+- **Small models may stop instead of retrying.** When a call is refused (a wrong argument, or a tool held until its guide is read), a small model sometimes reports the problem or asks the person instead of correcting the call.
+- **Turns are slower than a hosted model.** On the test machine, Gemma 4 E4B took about 10 to 15 seconds for a one-step turn and 20 to 60 seconds for a multi-step one; Claude Sonnet 4.6 took 5 to 15. The prompt (about 5k tokens on an ordinary turn) is processed in full on a conversation's first call, and later calls reuse the server's cache. Slower machines were not measured.
+
+## Not yet verified
+
+Verified: Docker Desktop on macOS reaches a model server on the host at `host.docker.internal`, including one listening only on `127.0.0.1`, as Ollama does by default.
+
+- **Linux.** The release's `docker-compose.yml` maps `host.docker.internal` to the host on Linux too, but a Linux host has not been tested. Ollama on Linux listens on `127.0.0.1` by default, which a container cannot reach; set `OLLAMA_HOST=0.0.0.0`.
+- **Windows.**
+- **Machines with less than 64 GB**, apart from the 4k-window failure above.
+- **Long conversations.** The tests ran up to four turns in a conversation.
+
+## Choosing a model
+
+Use a model with tool calling (on Ollama, `ollama show <model>` lists `tools` under capabilities). Gemma 4 E4B is the smallest model verified on scheduled tasks. Allow its resident memory plus about 2 GB for NimbleBrain's containers and room for the operating system: 16 GB is tight, and 24 GB is a comfortable floor.
