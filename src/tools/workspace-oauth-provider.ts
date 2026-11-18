@@ -9,6 +9,7 @@ import type {
 } from "@modelcontextprotocol/client";
 import { type FetchLike, UnauthorizedError } from "@modelcontextprotocol/client";
 import { DEFAULT_OAUTH_CLIENT_IDENTITY, type OAuthClientIdentity } from "../brand/index.ts";
+import { loopbackDial } from "../connectors/runtime/host-loopback.ts";
 import { validateConnectorUrl } from "../connectors/runtime/url-validator.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { log } from "../observability/log.ts";
@@ -1557,10 +1558,13 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // Honor lifecycle's timeout: when the controller aborts, the in-flight TCP
     // read terminates with an AbortError instead of running its full network
     // timeout in the background.
-    const res = await fetch(current.toString(), {
+    // Dialed at the host alias on a local install; the hop was validated, and
+    // the next one resolves, against `current` as stored.
+    const dial = loopbackDial(current, {
       redirect: "manual",
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
     });
+    const res = await fetch(dial.url.toString(), dial.init);
     // Non-redirect response — provider sent us a login page (200) or an error
     // (4xx/5xx). Not headless.
     if (res.status < 300 || res.status >= 400) return {};

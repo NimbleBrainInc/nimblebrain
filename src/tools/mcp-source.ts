@@ -350,6 +350,18 @@ interface RecoveryShape<T> {
  * remains.
  */
 export function sanitizeReportedVersion(raw: string): string | undefined {
+  return sanitizeServerString(raw, 64);
+}
+
+/**
+ * Sanitize an untrusted `serverInfo.title` the same way, capped at 128 code
+ * points. Display-only: a catalog entry's title outranks it.
+ */
+export function sanitizeReportedTitle(raw: string): string | undefined {
+  return sanitizeServerString(raw, 128);
+}
+
+function sanitizeServerString(raw: string, max: number): string | undefined {
   const printable = Array.from(raw)
     .filter((ch) => {
       const cp = ch.codePointAt(0) ?? 0;
@@ -358,8 +370,8 @@ export function sanitizeReportedVersion(raw: string): string | undefined {
     .join("")
     .trim();
   // Cap by code points, not UTF-16 units: slicing the string directly could cut
-  // an astral character at the 64-unit boundary and leave a lone surrogate.
-  const capped = Array.from(printable).slice(0, 64).join("");
+  // an astral character at the boundary and leave a lone surrogate.
+  const capped = Array.from(printable).slice(0, max).join("");
   return capped || undefined;
 }
 
@@ -540,6 +552,8 @@ export class McpSource implements ToolSource {
    *  Untrusted (the server sets it); display-only. Undefined until start()
    *  completes, if the server reports none, or after stop(). */
   private _serverVersion: string | undefined;
+  /** Sanitized `serverInfo.title` from the same response, on the same terms. */
+  private _serverTitle: string | undefined;
   /**
    * The server's `resources/templates/list`, fetched on first ask after each
    * connect and kept until the next one. Null means not fetched on this
@@ -777,9 +791,13 @@ export class McpSource implements ToolSource {
     // that sets no version reports its framework's instead; that's still what it
     // claims, so we keep it and let the UI decide (running version primary,
     // catalog version shown only on drift).
-    const reportedVersion = this.client.getServerVersion()?.version;
+    const serverInfo = this.client.getServerVersion();
+    const reportedVersion = serverInfo?.version;
     this._serverVersion =
       typeof reportedVersion === "string" ? sanitizeReportedVersion(reportedVersion) : undefined;
+    const reportedTitle = serverInfo?.title;
+    this._serverTitle =
+      typeof reportedTitle === "string" ? sanitizeReportedTitle(reportedTitle) : undefined;
 
     this.startTaskSweeper();
 
@@ -1784,6 +1802,7 @@ export class McpSource implements ToolSource {
     this.toolListGeneration += 1;
     this._instructions = undefined;
     this._serverVersion = undefined;
+    this._serverTitle = undefined;
   }
 
   /** Server `instructions` string from the MCP `initialize` response.
@@ -1839,6 +1858,12 @@ export class McpSource implements ToolSource {
    *  stop(). Display-only — the server is untrusted. */
   getReportedVersion(): string | undefined {
     return this._serverVersion;
+  }
+
+  /** Sanitized `serverInfo.title` from the MCP `initialize` response, on the
+   *  same terms as {@link getReportedVersion}. */
+  getReportedTitle(): string | undefined {
+    return this._serverTitle;
   }
 
   /**
