@@ -6,17 +6,17 @@ import { doNotTrack } from "./telemetry.ts";
 /**
  * Whether a newer CLI or runtime exists, so a person or an agent hears about
  * it without asking. One lookup at most every 24 hours, kept in a small file;
- * it starts when a command starts and is never waited on for long: a person's
- * run waits at most `NOTICE_WAIT_MS` after its answer for a lookup still
- * running, and a `--json` run not at all. A slow or failed lookup changes
- * nothing and leaves the old answer. It only tells: nothing here updates
+ * it starts when a command starts, and the answer never waits on it: the
+ * answer carries what the cache knew, and once it is written the run waits at
+ * most `NOTICE_WAIT_MS` for a lookup still running. A slow or failed lookup
+ * changes nothing and leaves the old answer. It only tells: nothing here updates
  * anything.
  */
 
 const NPM_LATEST = "https://registry.npmjs.org/nimblebrain/latest";
 const FRESH_MS = 24 * 60 * 60_000;
 const LOOKUP_TIMEOUT_MS = 5_000;
-/** How long a person's run waits, after its own answer, for a lookup still running. */
+/** How long a run waits, after its answer is written, for a lookup still running. */
 export const NOTICE_WAIT_MS = 1_000;
 
 const SEMVER = /^v?\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
@@ -60,8 +60,8 @@ export function updateCheckOff(deps: Deps): boolean {
 
 export interface UpdateCheck {
   /**
-   * What is known once the command has answered: the cache, or a lookup that
-   * finished within `waitMs` (0 waits for nothing). Never rejects.
+   * What is known now: the cache, or a lookup that finished within `waitMs`
+   * (0 waits for nothing). Never rejects.
    */
   known(waitMs: number): Promise<Known | undefined>;
 }
@@ -150,8 +150,10 @@ export function updatesField(
   return updates.cli || updates.runtime ? updates : undefined;
 }
 
-/** A person's notices: one line for each side that is behind. */
-/** `run` is how to run this CLI against the install the run acted on, so `update` reaches it. */
+/**
+ * A person's notices: one line for each side that is behind. `run` is how to
+ * run this CLI against the install the run acted on, so `update` reaches it.
+ */
 export function noticeLines(
   updates: Updates | undefined,
   withRuntime: boolean,

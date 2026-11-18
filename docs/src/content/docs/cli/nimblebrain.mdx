@@ -70,14 +70,14 @@ The CLI and NimbleBrain are versioned separately. `nimblebrain --version` is the
 
 ### Update notices
 
-Once a day at most, the CLI asks npm for its newest version and GitHub for the newest NimbleBrain release, and keeps the answer in `~/.cache/nimblebrain/update-check.json` (under `$XDG_CACHE_HOME` when that is set), shared by every install. The lookup runs alongside the command; a slow or failed one changes nothing. When something is newer, a person sees a line on stderr after the command's own output:
+Once a day at most, the CLI asks npm for its newest version and GitHub for the newest NimbleBrain release, and keeps the answer in `~/.cache/nimblebrain/update-check.json` (under `$XDG_CACHE_HOME` when that is set), shared by every install. The lookup runs alongside the command, and once the command has answered the CLI waits at most a second for it to finish; a slow or failed one changes nothing. When something is newer, a person sees a line on stderr after the command's own output:
 
 ```text
 nimblebrain 0.4.0 is available (you have 0.3.0): npx nimblebrain@latest
 NimbleBrain v0.75.0 is available (you have v0.74.0): npx nimblebrain update
 ```
 
-The NimbleBrain line appears on `status`, `up` and `init`; the CLI line on any command. With `--json` the CLI never waits on the lookup: `status`, `init`, `up` and `update` carry what the last lookup found as `updates`, with each side it knows:
+The NimbleBrain line appears on `status`, `up` and `init`; the CLI line on any command. The command's answer never waits on the lookup; with `--json`, `status`, `init`, `up` and `update` carry what the last lookup found as `updates`, with each side it knows:
 
 ```json
 "updates": {"cli": {"current": "0.3.0", "latest": "0.4.0"}, "runtime": {"current": "0.74.0", "latest": "0.75.0"}}

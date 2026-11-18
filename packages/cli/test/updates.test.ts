@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { run, VERSION } from "../src/main.ts";
+import type { Deps } from "../src/deps.ts";
+import { run as runOnly, VERSION } from "../src/main.ts";
 import { cachePath, noticeLines } from "../src/updates.ts";
 import { type MachineOptions, machine } from "./fake.ts";
 
@@ -37,6 +38,15 @@ const cache = (ageMs: number, known: { cli?: string; runtime?: string }) =>
 
 const never = () => new Promise<undefined>(() => {});
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** A run as `bin.ts` makes it: the answer, then the notices it waits for after writing it. */
+async function run(argv: string[], deps: Deps) {
+  const begun = Date.now();
+  const answer = await runOnly(argv, deps);
+  const answeredIn = Date.now() - begun;
+  const stderr = await answer.notices?.();
+  return { ...answer, stderr, answeredIn, tookIn: Date.now() - begun };
+}
 
 describe("update notices", () => {
   test("a person sees one line each for a newer CLI and runtime, on stderr after the answer", async () => {
@@ -112,30 +122,46 @@ describe("update notices", () => {
     expect(stderr).toContain(`nimblebrain ${LATEST_CLI} is available`);
   });
 
-  test("a person's run waits at most a second for a hanging lookup, then uses the cache", async () => {
-    const m = installed({ files: { [CACHE]: cache(25 * HOUR, { cli: LATEST_CLI }) } });
-    m.deps.getJson = async (url, t) =>
-      url.startsWith("https://registry.npmjs.org/") ? never() : machine().deps.getJson(url, t);
-    m.deps.getText = async () => never();
-    m.deps.sleep = realSleep;
-    const begun = Date.now();
-    const { stderr } = await run(["status"], m.deps);
-    const took = Date.now() - begun;
-    expect(took).toBeGreaterThanOrEqual(900);
-    expect(took).toBeLessThan(1_500);
-    expect(stderr).toContain(`nimblebrain ${LATEST_CLI} is available`);
+  test("a hanging lookup never delays the answer; the run waits at most a second after it", async () => {
+    for (const argv of [["status"], ["status", "--json"]]) {
+      const m = installed({ files: { [CACHE]: cache(25 * HOUR, { cli: LATEST_CLI }) } });
+      m.deps.getJson = async (url, t) =>
+        url.startsWith("https://registry.npmjs.org/") ? never() : machine().deps.getJson(url, t);
+      m.deps.getText = async () => never();
+      m.deps.sleep = realSleep;
+      const res = await run(argv, m.deps);
+      expect(res.answeredIn).toBeLessThan(300);
+      expect(res.tookIn).toBeGreaterThanOrEqual(900);
+      expect(res.tookIn).toBeLessThan(1_500);
+      if (argv.includes("--json")) {
+        expect(res.stderr).toBeUndefined();
+        expect(JSON.parse(res.stdout).updates.cli).toEqual({
+          current: VERSION,
+          latest: LATEST_CLI,
+        });
+      } else {
+        expect(res.stderr).toContain(`nimblebrain ${LATEST_CLI} is available`);
+      }
+    }
   });
 
-  test("a --json run never waits on the network for it", async () => {
-    const m = installed({ files: { [CACHE]: cache(25 * HOUR, { cli: LATEST_CLI }) } });
-    m.deps.getJson = async (url, t) =>
-      url.startsWith("https://registry.npmjs.org/") ? never() : machine().deps.getJson(url, t);
-    m.deps.getText = async () => never();
+  test("a --json run on a stale cache answers from it, then lets the lookup rewrite it", async () => {
+    const m = installed({ files: { [CACHE]: cache(25 * HOUR, { cli: "0.0.1" }) } });
+    let release = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const { getJson } = m.deps;
+    m.deps.getJson = async (url, t) => {
+      if (url.startsWith("https://registry.npmjs.org/")) await gate;
+      return getJson(url, t);
+    };
     m.deps.sleep = realSleep;
-    const begun = Date.now();
-    const { stdout } = await run(["status", "--json"], m.deps);
-    expect(Date.now() - begun).toBeLessThan(300);
-    expect(JSON.parse(stdout).updates.cli).toEqual({ current: VERSION, latest: LATEST_CLI });
+    const answer = await runOnly(["status", "--json"], m.deps);
+    expect(JSON.parse(answer.stdout).updates.cli.latest).toBe("0.0.1");
+    release();
+    expect(await answer.notices?.()).toBeUndefined();
+    expect(JSON.parse(m.files.get(CACHE)?.text ?? "{}").cli).toBe(LATEST_CLI);
   });
 
   test("CI, NIMBLEBRAIN_NO_UPDATE_CHECK=1 and DO_NOT_TRACK=1 each turn it off", async () => {

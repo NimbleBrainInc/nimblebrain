@@ -32,11 +32,16 @@ import { VERSION } from "./version.ts";
 
 export { VERSION };
 
-/** What one run prints: the answer on stdout, a person's notices on stderr after it, and the exit code. */
+/** What one run prints: the answer on stdout and the exit code. */
 export interface Answer {
   stdout: string;
-  stderr?: string;
   code: number;
+  /**
+   * Called once the answer is written: gives an update lookup still running
+   * up to `NOTICE_WAIT_MS` to finish and write its cache, then returns a
+   * person's notices for stderr. Never rejects.
+   */
+  notices?: () => Promise<string | undefined>;
 }
 
 /** The commands whose answer is an install's state, where a newer runtime is worth a line. */
@@ -114,10 +119,10 @@ export async function run(argv: string[], deps: Deps): Promise<Answer> {
 }
 
 /**
- * The answer with what the update check knows: `updates` in an answer that
- * carries an install's state, and, for a person, a notice per newer side on
- * stderr. A person may wait a moment for a lookup still running; an agent
- * never does.
+ * The answer with what the update check knows: `updates`, from the cache, in
+ * an answer that carries an install's state. The answer never waits on a
+ * lookup; its `notices` does, after the answer is written, so a short run
+ * still refreshes a stale cache, and a person hears what is newer.
  */
 async function answerWithUpdates(
   result: Ok | Failure,
@@ -127,17 +132,25 @@ async function answerWithUpdates(
   cli: string,
 ): Promise<Answer> {
   if (!check) return render(result, json, cli, command);
-  const known = await check.known(json ? 0 : NOTICE_WAIT_MS);
   const runtime = isStatusShaped(result) ? result.version : undefined;
-  const updates = updatesField(known, VERSION, runtime);
+  const updates = updatesField(await check.known(0), VERSION, runtime);
   const answer = render(
     updates && runtime !== undefined ? { ...result, updates } : result,
     json,
     cli,
     command,
   );
-  const notices = json ? [] : noticeLines(updates, RUNTIME_NOTICE.includes(command), cli);
-  return notices.length > 0 ? { ...answer, stderr: `${notices.join("\n")}\n` } : answer;
+  const notices = async () => {
+    const known = await check.known(NOTICE_WAIT_MS);
+    if (json) return undefined;
+    const lines = noticeLines(
+      updatesField(known, VERSION, runtime),
+      RUNTIME_NOTICE.includes(command),
+      cli,
+    );
+    return lines.length > 0 ? `${lines.join("\n")}\n` : undefined;
+  };
+  return { ...answer, notices };
 }
 
 /** An answer that carries an install's state (`status`, `init`, `up`, `update`), even inside a failure. */
