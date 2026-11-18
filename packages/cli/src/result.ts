@@ -31,6 +31,8 @@ export const ERRORS = {
   NEEDS_TERMINAL:
     "A person runs this in their own terminal; it asks for input no agent should give.",
   CANCELLED: "Nothing was changed. Run the command again to go ahead.",
+  RUNTIME_UNSUPPORTED:
+    "Pass a newer runtime with --runtime, or leave it out to install the newest release.",
   NOT_RUNNING: "Run `npx nimblebrain up`, then run this again.",
   TELEMETRY_LOCKED:
     "Nothing to change: DO_NOT_TRACK or the install's configuration decides telemetry here.",

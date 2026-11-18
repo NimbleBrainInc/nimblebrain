@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import pkg from "../package.json" with { type: "json" };
 import type { Deps } from "./deps.ts";
 import { CliError } from "./result.ts";
 
@@ -45,11 +44,17 @@ interface Event {
 export const reportPath = (home: string) => join(home, "telemetry-report.jsonl");
 
 /**
- * A published CLI. A development build (`0.0.0-dev`) has no destination of its
- * own: it installs whatever release is newest, which may predate asking before
- * sending, and it must never put test runs into the project.
+ * Set to `true` only by the release build (`build:release`, run by the CLI's
+ * release workflow). The version cannot tell a release apart: it is committed
+ * in package.json (ADR-0064), so a local or CI build carries it too.
  */
-const RELEASED = !pkg.version.startsWith("0.0.0");
+declare const NIMBLEBRAIN_CLI_RELEASE: boolean | undefined;
+
+/**
+ * A published CLI. Any other build has no destination of its own, so test and
+ * development runs never reach the project.
+ */
+const RELEASED = typeof NIMBLEBRAIN_CLI_RELEASE !== "undefined" && NIMBLEBRAIN_CLI_RELEASE === true;
 
 export function telemetryKey(deps: Deps): string {
   return deps.env.NIMBLEBRAIN_TELEMETRY_KEY ?? (RELEASED ? TELEMETRY_KEY : "");
@@ -201,20 +206,19 @@ export async function settleWaiting(deps: Deps, home: string, version: string): 
 
 /**
  * The answer the CLI holds before the runtime runs, and the install's telemetry
- * settings, as `.env` lines. `ownRelease`: the runtime installed is this CLI's
- * own release. Only then does
- * it get the key, because only a runtime that asks before sending may hold
- * one; an older release sends by default once it has a key.
+ * settings, as `.env` lines. `asksFirst`: the runtime installed asks before
+ * sending (`asksConsent` on its Compose file). Only then does it get the key;
+ * an older release sends by default once it has a key.
  */
 export function envValues(
   deps: Deps,
   id: string,
   consent: Consent,
-  ownRelease: boolean,
+  asksFirst: boolean,
 ): Record<string, string> {
   const values: Record<string, string> = {
     NB_TELEMETRY_ID: id,
-    NB_TELEMETRY_KEY: ownRelease ? telemetryKey(deps) : "",
+    NB_TELEMETRY_KEY: asksFirst ? telemetryKey(deps) : "",
   };
   if (consent !== "undecided") values.NB_TELEMETRY_CONSENT = consent;
   return values;

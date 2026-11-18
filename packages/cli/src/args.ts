@@ -25,6 +25,7 @@ export interface Flags {
   port: number;
   home?: string;
   provider?: string;
+  runtime?: string;
   /** `--telemetry on|off`: an answer a person already gave. */
   telemetry?: "on" | "off";
 }
@@ -43,6 +44,7 @@ const options = {
   port: { type: "string" },
   home: { type: "string" },
   provider: { type: "string" },
+  runtime: { type: "string" },
   telemetry: { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
@@ -76,6 +78,7 @@ export function parse(argv: string[]): Parsed {
     port,
     home: values.home,
     provider: values.provider,
+    runtime: values.runtime,
     telemetry,
   };
 

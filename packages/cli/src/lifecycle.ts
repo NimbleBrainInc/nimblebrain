@@ -1,20 +1,22 @@
 import { connectAgent, installSkill, SERVER_NAME } from "./agents.ts";
 import { AGENTS, type Agent, type Flags } from "./args.ts";
 import {
-  COMPOSE_FILE,
+  asksConsent,
   compose,
+  fetchCompose,
   hasKey,
   INSTANCE_JSON,
+  keyVars,
   PROJECT,
-  PROVIDERS,
   paths,
+  providers,
   setEnvLines,
   startError,
   VOLUME,
 } from "./compose.ts";
 import type { Deps } from "./deps.ts";
 import { doctor } from "./doctor.ts";
-import { compareVersions, releaseTag } from "./release.ts";
+import { compareVersions, runtimeTag } from "./release.ts";
 import { CliError, type Ok } from "./result.ts";
 import { type InstallState, readInstall, type StatusResult, status } from "./status.ts";
 import {
@@ -40,6 +42,7 @@ export interface Ctx {
   deps: Deps;
   flags: Flags;
   home: string;
+  /** This CLI's own version, which telemetry reports; it says nothing about the runtime (ADR-0064). */
   version: string;
   /** The command's argument; only `telemetry` takes one. */
   arg?: string;
@@ -94,19 +97,20 @@ async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number)
   const { deps, flags, home } = ctx;
   await doctor(deps, flags.port);
   await guardOurs(deps, home);
-  const tag = await releaseTag(deps, ctx.version);
+  const tag = await runtimeTag(deps, flags.runtime);
+  const composeText = await fetchCompose(deps, tag);
   await confirmStart(ctx, tag);
 
-  const ownRelease = tag === `v${ctx.version}`;
   await writeInstallFiles(
     deps,
     home,
     tag,
     flags.port,
-    envValues(deps, rec.id, consent, ownRelease),
+    composeText,
+    envValues(deps, rec.id, consent, asksConsent(composeText)),
   );
   // Asked before the start: the runtime reads `.env` only when its container is created.
-  if (!hasKey((await deps.readText(paths(home).env)) ?? "") && asks(ctx))
+  if (!hasKey((await deps.readText(paths(home).env)) ?? "", keyVars(composeText)) && asks(ctx))
     await enterKey(ctx, false);
   deps.say(`Starting NimbleBrain ${tag}. The first start downloads about 2 GB of images.`);
   await start(deps, home, flags.port);
@@ -189,25 +193,27 @@ export async function logs(ctx: Ctx): Promise<Ok> {
 }
 
 /**
- * Moves the install to the release this CLI carries, keeping the data volume.
- * Run as `npx nimblebrain@latest update` to reach the newest. Refuses to move
- * an install backwards, since a release's data may not read on an older one.
+ * Moves the install to the newest runtime release, or the one `--runtime`
+ * names, keeping the data volume. The CLI is versioned on its own (ADR-0064),
+ * so updating the runtime needs no newer CLI. Refuses to move an install
+ * backwards, since a release's data may not read on an older one.
  */
 export async function update(ctx: Ctx): Promise<Ok> {
   const { deps, home } = ctx;
   const install = await requireInstall(ctx);
-  const tag = await releaseTag(deps, ctx.version);
+  const tag = await runtimeTag(deps, ctx.flags.runtime);
   const from = `v${install.version}`;
   const order = compareVersions(tag, from);
   if (order === 0) return { ...(await status(deps, home)), already: true };
   if (order < 0) {
     throw new CliError(
       "USAGE",
-      `This CLI installs ${tag}, older than the installed ${from}. Run \`npx nimblebrain@latest update\`.`,
+      `${tag} is older than the installed ${from}; NimbleBrain does not move backwards.`,
     );
   }
 
-  await writeInstallFiles(deps, home, tag, install.port);
+  const composeText = await fetchCompose(deps, tag);
+  await writeInstallFiles(deps, home, tag, install.port, composeText);
   deps.say(`Updating NimbleBrain ${from} → ${tag}.`);
   const pull = await compose(deps, home, ["pull"], START_TIMEOUT_MS);
   if (pull.code !== 0) throw startError(pull);
@@ -295,13 +301,14 @@ export async function key(ctx: Ctx): Promise<Ok> {
 
 async function enterKey(ctx: Ctx, restart: boolean): Promise<Ok> {
   const { deps, flags, home } = ctx;
-  const names = Object.keys(PROVIDERS);
+  const offered = providers((await deps.readText(paths(home).compose)) ?? "");
+  const names = Object.keys(offered);
   let provider = flags.provider;
   if (!provider) {
     const answer = await deps.prompt(`Model provider (${names.join(", ")}) [anthropic]: `);
     provider = answer || "anthropic";
   }
-  const variable = PROVIDERS[provider];
+  const variable = offered[provider];
   if (!variable)
     throw new CliError("USAGE", `Unknown provider "${provider}"; one of ${names.join(", ")}.`);
   const value = await deps.prompt(`${variable} (nothing is shown as you type): `, { hidden: true });
@@ -343,8 +350,8 @@ async function waitHealthy(deps: Deps, port: number): Promise<void> {
 }
 
 /**
- * The release's Compose file, the `dev` adapter, and `.env` with the pinned
- * release and port. `.env` keeps any key already in it; `instance.json` is
+ * The chosen release's Compose file, the `dev` adapter, and `.env` with the
+ * pinned release and port. `.env` keeps any key already in it; `instance.json` is
  * never overwritten, so a person who chose another adapter keeps it.
  */
 async function writeInstallFiles(
@@ -352,10 +359,11 @@ async function writeInstallFiles(
   home: string,
   tag: string,
   port: number,
+  composeText: string,
   extra: Record<string, string> = {},
 ): Promise<void> {
   const p = paths(home);
-  await deps.writeText(p.compose, COMPOSE_FILE);
+  await deps.writeText(p.compose, composeText);
   if ((await deps.readText(p.instance)) === undefined)
     await deps.writeText(p.instance, INSTANCE_JSON);
   const env = setEnvLines((await deps.readText(p.env)) ?? "", {

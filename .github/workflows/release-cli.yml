@@ -1,0 +1,181 @@
+name: Release the CLI
+
+# Triggered by tags matching `cli/v*` (e.g. `cli/v0.1.0`). The CLI (`packages/cli`,
+# npm `nimblebrain`) is versioned on its own (ADR-0064): it does not carry a runtime
+# release, so the runtime's `v*` tags (`release.yml`) and these never trigger each other.
+#
+# The order is: check the tag, test, build the tarball once, check that exact tarball
+# runs under Node 20, stage it on npm, then create the GitHub Release. The version is the
+# one committed in packages/cli/package.json; the tag has to agree.
+#
+# npm side, one-time: the `nimblebrain` package's trusted publisher names this
+# repository, workflow `release-cli.yml` and environment `npm`, with direct publish and
+# dist-tag changes not allowed, so this workflow can only STAGE a version. A maintainer
+# approves it on npmjs.com with 2FA before it is public (RELEASING.md, "Releasing the
+# CLI"). The `npm` environment admits only `cli/v*` tags.
+
+on:
+  push:
+    tags:
+      - 'cli/v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-cli-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-tag:
+    name: Check the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      dist: ${{ steps.v.outputs.dist }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tagged commit is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main"
+            exit 1
+          fi
+      - name: Tag matches the package version
+        id: v
+        working-directory: packages/cli
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#cli/v}"
+          pkg="$(node -p 'require("./package.json").version')"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::Tag version ($tag) does not match packages/cli/package.json ($pkg)"
+            exit 1
+          fi
+          case "$tag" in
+            *-*) dist=next ;;
+            *) dist=latest ;;
+          esac
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+          echo "dist=$dist" >> "$GITHUB_OUTPUT"
+          echo "nimblebrain@$tag for dist-tag $dist"
+
+  build:
+    name: Test and build the tarball
+    needs: check-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Test
+        run: bun run test:cli && bun run check:cli
+      - name: Pack
+        working-directory: packages/cli
+        run: |
+          set -euo pipefail
+          # The release build is the only one with a telemetry destination.
+          bun run build:release
+          npm pack
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cli-tarball
+          path: packages/cli/nimblebrain-*.tgz
+          if-no-files-found: error
+
+  check-tarball:
+    name: The tarball runs under Node 20
+    needs: [check-tag, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - uses: actions/download-artifact@v8
+        with:
+          name: cli-tarball
+      - name: Install the tarball and ask its version
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          npm install -g ./nimblebrain-*.tgz
+          got="$(nimblebrain --version)"
+          test "$got" = "$VERSION" || { echo "tarball says $got, expected $VERSION"; exit 1; }
+          nimblebrain --help >/dev/null
+
+  stage:
+    name: Stage on npm for approval
+    needs: [check-tag, check-tarball]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      id-token: write   # npm trusted publishing; nothing else in this job writes
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # `npm stage` is newer than the npm a Node 24 runner may bundle; pin one that has it.
+      - name: Use an npm with staged publishing
+        run: npm install -g npm@11.16.0
+      - uses: actions/download-artifact@v8
+        with:
+          name: cli-tarball
+      - name: Stage it
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+          DIST: ${{ needs.check-tag.outputs.dist }}
+        run: |
+          set -uo pipefail
+          # Published: nothing to do. Not found (E404): stage it. Anything else is not an answer.
+          if out=$(npm view "nimblebrain@$VERSION" version 2>&1); then
+            echo "nimblebrain@$VERSION is already on npm; nothing to stage."
+            exit 0
+          elif ! grep -q E404 <<<"$out"; then
+            echo "$out"
+            echo "::error::Could not tell whether nimblebrain@$VERSION is on npm."
+            exit 1
+          fi
+          if npm stage publish ./nimblebrain-*.tgz --access public --tag "$DIST"; then
+            msg="nimblebrain@$VERSION is staged for dist-tag $DIST. Approve it on npmjs.com, or run npm stage list nimblebrain then npm stage approve <stage-id>, to publish it."
+            echo "::notice title=Approve the CLI on npm::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          else
+            # A staged, unapproved version is invisible to `npm view` but holds its
+            # version number, so a re-run lands here: say what to do, then fail.
+            echo "::error title=Staging failed::If nimblebrain@$VERSION is already staged (npm stage list nimblebrain), approve or reject it on npmjs.com; otherwise read the npm error above."
+            exit 1
+          fi
+
+  github-release:
+    name: Create the GitHub Release
+    needs: [check-tag, stage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: cli-tarball
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: nimblebrain CLI ${{ needs.check-tag.outputs.version }}
+          generate_release_notes: true
+          prerelease: ${{ contains(needs.check-tag.outputs.version, '-') }}
+          # A runtime release is the repository's "latest"; a CLI release never takes it.
+          make_latest: false
+          files: nimblebrain-*.tgz

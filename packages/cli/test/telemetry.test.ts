@@ -1,16 +1,17 @@
 import { describe, expect, test } from "bun:test";
+import { keyVars, providers } from "../src/compose.ts";
 import { run } from "../src/main.ts";
 import { QUESTION } from "../src/telemetry.ts";
-import { fail, type Machine, machine } from "./fake.ts";
+import { fail, type Machine, machine, REPO_COMPOSE } from "./fake.ts";
 
 const HOME = "/home/dana/.nimblebrain-local";
 const ENV = `${HOME}/.env`;
 const REPORT = `${HOME}/telemetry-report.jsonl`;
 /**
- * The CLI's own release pinned (a dev build's version is `0.0.0-dev`), and a
- * destination to send to: without a key no one is asked.
+ * A runtime that asks before sending (the repo's Compose file passes the
+ * answer through), and a destination to send to: without a key no one is asked.
  */
-const env = { NIMBLEBRAIN_TAG: "v0.0.0-dev", NIMBLEBRAIN_TELEMETRY_KEY: "phc_test" };
+const env = { NIMBLEBRAIN_TAG: "v0.74.0", NIMBLEBRAIN_TELEMETRY_KEY: "phc_test" };
 
 async function json(argv: string[], m: Machine) {
   const { stdout, code } = await run([...argv, "--json"], m.deps);
@@ -79,7 +80,7 @@ describe("telemetry consent at init", () => {
   });
 
   test("with no destination no one is asked and nothing is written", async () => {
-    const m = machine({ env: { NIMBLEBRAIN_TAG: "v0.70.0" } });
+    const m = machine({ env: { NIMBLEBRAIN_TAG: "v0.74.0" } });
     const { body } = await json(["--yes"], m);
     expect(body.telemetry).toEqual({ state: "off", locked: "no_destination" });
     expect(m.files.has(REPORT)).toBe(false);
@@ -103,8 +104,11 @@ describe("telemetry consent at init", () => {
     expect(reportEvents(m)).toEqual(["cli.init_started", "cli.doctor_failed"]);
   });
 
-  test("a runtime that is not this CLI's own release gets no key, since it may send without asking", async () => {
-    const m = machine({ env: { ...env, NIMBLEBRAIN_TAG: "v0.70.0" } });
+  test("a runtime that does not ask before sending gets no key, since it would send without asking", async () => {
+    const older = REPO_COMPOSE.split("\n")
+      .filter((l) => !l.includes("NB_TELEMETRY"))
+      .join("\n");
+    const m = machine({ env, compose: { status: 200, body: older } });
     await json(["--yes", "--telemetry", "on"], m);
     expect(m.files.get(ENV)?.text).toMatch(/^NB_TELEMETRY_KEY=$/m);
   });
@@ -119,9 +123,8 @@ describe("telemetry consent at init", () => {
   });
 
   test("the telemetry key is not offered as a model provider", async () => {
-    const { PROVIDERS, KEY_VARS } = await import("../src/compose.ts");
-    expect(KEY_VARS).not.toContain("POSTHOG_API_KEY");
-    expect(Object.keys(PROVIDERS)).not.toContain("posthog");
+    expect(keyVars(REPO_COMPOSE)).not.toContain("POSTHOG_API_KEY");
+    expect(Object.keys(providers(REPO_COMPOSE))).not.toContain("posthog");
   });
 });
 

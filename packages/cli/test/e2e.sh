@@ -74,10 +74,13 @@ step "logs"
 out=$(nb logs)
 expect "$out" '.ok == true and (.lines | length) > 0' "logs returns runtime lines"
 
-step "down, then up"
-expect "$(nb down)" '.health == "down"' "down stops it"
-expect "$(nb status)" '.health == "down"' "status sees it down"
-expect "$(nb up)" '.health == "ok"' "up brings it back"
+# Three times: a run once ended early here, mid-restart, with the event loop drained.
+for round in 1 2 3; do
+  step "down, then up ($round of 3)"
+  expect "$(nb down)" '.health == "down"' "down stops it"
+  expect "$(nb status)" '.health == "down"' "status sees it down"
+  expect "$(nb up)" '.health == "ok"' "up brings it back"
+done
 
 step "key refuses without a terminal"
 expect "$(nb key </dev/null)" '.error == "NEEDS_TERMINAL"' "key is for a person"

@@ -1,6 +1,6 @@
 {
   "name": "nimblebrain",
-  "version": "0.0.0-dev",
+  "version": "0.1.0",
   "description": "Install, run and connect NimbleBrain, the open-source runtime for agents and MCP apps, on this machine.",
   "license": "Apache-2.0",
   "type": "module",
@@ -19,6 +19,7 @@
   },
   "scripts": {
     "build": "bun build src/bin.ts --target=node --outfile=dist/nimblebrain.js --banner='#!/usr/bin/env node'",
+    "build:release": "bun run build --define NIMBLEBRAIN_CLI_RELEASE=true",
     "test": "bun test --no-env-file test/"
   }
 }

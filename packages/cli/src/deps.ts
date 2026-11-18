@@ -16,6 +16,8 @@ export interface Deps {
   portFree(port: number): Promise<boolean>;
   /** A GET with a timeout; never throws, a connection failure is `undefined`. */
   getJson(url: string, timeoutMs?: number): Promise<{ status: number; body: unknown } | undefined>;
+  /** A GET for a text file, with a timeout; never throws, a connection failure is `undefined`. */
+  getText(url: string, timeoutMs?: number): Promise<{ status: number; body: string } | undefined>;
   /** A JSON POST with a timeout; never throws, a connection failure is `undefined`. */
   postJson(
     url: string,
@@ -85,17 +87,21 @@ export function realDeps(): Deps {
         server.listen(port, "127.0.0.1");
       });
     },
-    getJson: (url, timeoutMs = 3_000) =>
+    getJson: async (url, timeoutMs = 3_000) =>
+      asJson(await request(url, { headers: { "user-agent": "nimblebrain-cli" } }, timeoutMs)),
+    getText: (url, timeoutMs = 10_000) =>
       request(url, { headers: { "user-agent": "nimblebrain-cli" } }, timeoutMs),
-    postJson: (url, body, timeoutMs = 5_000) =>
-      request(
-        url,
-        {
-          method: "POST",
-          headers: { "user-agent": "nimblebrain-cli", "content-type": "application/json" },
-          body: JSON.stringify(body),
-        },
-        timeoutMs,
+    postJson: async (url, body, timeoutMs = 5_000) =>
+      asJson(
+        await request(
+          url,
+          {
+            method: "POST",
+            headers: { "user-agent": "nimblebrain-cli", "content-type": "application/json" },
+            body: JSON.stringify(body),
+          },
+          timeoutMs,
+        ),
       ),
     async readText(path) {
       try {
@@ -130,33 +136,38 @@ export function realDeps(): Deps {
 }
 
 /**
- * One request with a deadline; never throws, a failure or a timeout is
- * `undefined`. The deadline is a plain timer, not `AbortSignal.timeout`: that
- * one is unref'd, so a request that stalls without a live socket leaves Node
- * nothing to wait on, and it exits mid-command with code 13 (an unsettled
- * top-level await) and no output at all.
+ * One request with a deadline, its body read inside the deadline too; never
+ * throws, a failure or a timeout is `undefined`. The deadline is a plain timer,
+ * not `AbortSignal.timeout`: that one is unref'd, so a request that stalls
+ * without a live socket (a container restarting behind a published port)
+ * leaves Node nothing to wait on, and it exits mid-command, with no answer.
  */
 async function request(
   url: string,
   init: RequestInit,
   timeoutMs: number,
-): Promise<{ status: number; body: unknown } | undefined> {
+): Promise<{ status: number; body: string } | undefined> {
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), timeoutMs);
   try {
     const res = await fetch(url, { ...init, signal: abort.signal });
-    const text = await res.text();
-    let body: unknown = text;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      // Not JSON: hand back the text; the caller decides whether that is an answer.
-    }
-    return { status: res.status, body };
+    return { status: res.status, body: await res.text() };
   } catch {
     return undefined;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** A body parsed as JSON; text that is not JSON is handed back as it is, for the caller to judge. */
+function asJson(
+  res: { status: number; body: string } | undefined,
+): { status: number; body: unknown } | undefined {
+  if (!res) return undefined;
+  try {
+    return { status: res.status, body: JSON.parse(res.body) };
+  } catch {
+    return res;
   }
 }
 

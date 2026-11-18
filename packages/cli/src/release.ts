@@ -1,31 +1,62 @@
 import type { Deps } from "./deps.ts";
 import { CliError } from "./result.ts";
 
-const TAGS_URL = "https://api.github.com/repos/NimbleBrainInc/nimblebrain/tags?per_page=100";
+/**
+ * The repository's refs as Git's smart HTTP protocol lists them for a clone.
+ * Unlike GitHub's REST API it has no 60-requests-an-hour limit per address, so
+ * a shared address (CI, an agent sandbox, an office NAT) can still find the
+ * newest release; every tag is listed, not one page of them.
+ */
+const REFS_URL =
+  "https://github.com/NimbleBrainInc/nimblebrain.git/info/refs?service=git-upload-pack";
 
 /** A release tag: `vX.Y.Z`, optionally with a pre-release such as `-rc.1`. */
 const VERSION = /^v\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
 
 /**
- * The runtime release this CLI installs: its own version, because a CLI
- * release and a runtime release share one tag. `NIMBLEBRAIN_TAG` overrides it.
- * A development build (`0.0.0-dev`) has no release of its own, so it takes the
- * newest plain `vX.Y.Z` tag; SDK tags and pre-releases do not count.
+ * The oldest runtime release this CLI can install: the first that publishes
+ * `linux/arm64` images and reads the web port from `NIMBLEBRAIN_WEB_PORT` in
+ * its Compose file. Raise it when the CLI starts to depend on something a
+ * newer runtime's Compose file or API provides (ADR-0064).
  */
-export async function releaseTag(deps: Deps, version: string): Promise<string> {
-  const pinned = deps.env.NIMBLEBRAIN_TAG;
+export const MIN_RUNTIME = "v0.73.0";
+
+/**
+ * The runtime release to install. The CLI is versioned on its own, so it does
+ * not carry a runtime: `--runtime` names one, `NIMBLEBRAIN_TAG` pins one, and
+ * otherwise it takes the newest plain `vX.Y.Z` release (SDK tags and
+ * pre-releases do not count). Anything older than `MIN_RUNTIME` is refused
+ * before a file is written.
+ */
+export async function runtimeTag(deps: Deps, requested?: string): Promise<string> {
+  const pinned = requested ?? deps.env.NIMBLEBRAIN_TAG;
+  let tag: string;
   if (pinned) {
-    if (!VERSION.test(pinned))
-      throw new CliError("USAGE", `NIMBLEBRAIN_TAG "${pinned}" is not a release tag like v1.2.3.`);
-    return pinned;
+    if (!VERSION.test(pinned)) {
+      throw new CliError("USAGE", `"${pinned}" is not a runtime release tag like v1.2.3.`);
+    }
+    tag = pinned;
+  } else {
+    tag = await newestRuntime(deps);
   }
-  if (!version.startsWith("0.0.0")) return `v${version}`;
-  const res = await deps.getJson(TAGS_URL, 10_000);
-  const names = Array.isArray(res?.body)
-    ? (res.body as Array<{ name?: unknown }>)
-        .map((t) => t.name)
-        .filter((n): n is string => typeof n === "string")
-    : [];
+  if (compareVersions(tag, MIN_RUNTIME) < 0) {
+    throw new CliError(
+      "RUNTIME_UNSUPPORTED",
+      `This CLI installs NimbleBrain ${MIN_RUNTIME} or newer, not ${tag}.`,
+    );
+  }
+  return tag;
+}
+
+async function newestRuntime(deps: Deps): Promise<string> {
+  const res = await deps.getText(REFS_URL, 10_000);
+  if (res && res.status !== 200) {
+    throw new CliError(
+      "NETWORK",
+      `GitHub answered ${res.status} when asked for the newest NimbleBrain release. Pass --runtime vX.Y.Z to skip the lookup.`,
+    );
+  }
+  const names = [...(res?.body ?? "").matchAll(/refs\/tags\/([^\s\0^]+)/g)].map((m) => m[1] ?? "");
   const newest = newestRelease(names);
   if (!newest) throw new CliError("NETWORK", "Could not find the newest NimbleBrain release.");
   return newest;
