@@ -526,7 +526,10 @@ export declare const TaskRunRecord: import("@sinclair/typebox").TObject<{
     trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"event" | "manual" | "scheduled">>;
     resultPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit">>;
-    /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
+    /**
+     * The spend account that stopped the run, when `stopReason` is `spend_limit`;
+     * with `max_input_tokens`, the model gateway's id when the gateway held the cap.
+     */
     spendAccountId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /** The JSON input the run was given. */
     input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;

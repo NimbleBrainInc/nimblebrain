@@ -554,7 +554,12 @@ export interface TaskRun {
     | "content_filter"
     | "error"
     | "other";
-  /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
+  /**
+   * The spend account that stopped the run, when `stopReason` is `spend_limit`.
+   * With `max_input_tokens`, `MODEL_GATEWAY_BUDGET_ACCOUNT` when the model
+   * gateway held the cap and refused the run's next call; absent when the
+   * engine did.
+   */
   spendAccountId?: string;
   /** The JSON input the run was given (`tasks__run` `input`). */
   input?: unknown;
