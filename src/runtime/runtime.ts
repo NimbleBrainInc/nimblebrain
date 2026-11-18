@@ -298,6 +298,11 @@ import { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { createRunAdmission, type RunAdmission } from "./admission.ts";
 import { chatResponseBody } from "./chat-response.ts";
 import {
+  type ConversationCarry,
+  conversationCarry,
+  matchConversation,
+} from "./conversation-carry.ts";
+import {
   ConversationAccessDeniedError,
   ConversationNotFoundError,
   ConversationWorkspaceAccessDeniedError,
@@ -1869,7 +1874,21 @@ export class Runtime {
     const userMessage = buildOpeningMessage(spec.input);
     if (binding) await binding.store.append(binding.conversation, userMessage);
 
-    const composed = await this.composeRun(spec, { attended, briefingWsId, activeWorkspace });
+    // Read the resumed conversation once, before composition: calibration, the
+    // history projection, and what the conversation already carries (ADR-0066)
+    // all come from this one read. The append-only JSONL can be large even after
+    // history compaction.
+    const { recordedHistory, estimateCorrection } = await calibrationForConversation(
+      binding,
+      spec.model,
+    );
+
+    const composed = await this.composeRun(spec, {
+      attended,
+      briefingWsId,
+      activeWorkspace,
+      carry: conversationCarry(recordedHistory),
+    });
     const { tools, skill, systemPrompt, stableSystem, volatileHead } = composed;
 
     // ── The budget ──────────────────────────────────────────────────────────
@@ -1891,12 +1910,6 @@ export class Runtime {
     // window minus the static per-call overhead. The configured value is
     // treated as a CAP — never a target. Per-run override beats config beats
     // default. See `src/runtime/resolve-message-budget.ts`.
-    // Read the resumed conversation once for both calibration and history.
-    // The append-only JSONL can be large even after history compaction.
-    const { recordedHistory, estimateCorrection } = await calibrationForConversation(
-      binding,
-      spec.model,
-    );
     const messageBudget = resolveMessageBudget({
       model: spec.model,
       configMaxInputTokens: this.getMaxInputTokens(),
@@ -2292,9 +2305,11 @@ export class Runtime {
       attended: boolean;
       briefingWsId: string | undefined;
       activeWorkspace: Workspace | null;
+      /** What the conversation already brought into context (ADR-0066). */
+      carry: ConversationCarry;
     },
   ): Promise<RunComposition> {
-    const { attended, briefingWsId, activeWorkspace } = ctx;
+    const { attended, briefingWsId, activeWorkspace, carry } = ctx;
     const { identity } = spec.principal;
     const binding = spec.conversation;
 
@@ -2394,11 +2409,19 @@ export class Runtime {
     // Pool order is load-bearing: `match()` returns the FIRST hit and at most
     // one skill per message, so a workspace-authored skill wins a phrase a
     // connector also claims. The tenant's own authoring beats a vendor's.
+    //
+    // A chat matches this turn's text first, then its earlier user messages
+    // newest first (ADR-0066): a skill a trigger loaded stays composed, and its
+    // `allowed-tools` stay direct, until a newer message matches another one.
     let skillMatch: SkillMatch | null = null;
     if (spec.input.matchOn !== undefined) {
       const requestMatcher = new SkillMatcher();
       requestMatcher.load([...poolCapability, ...connectorPool.capability]);
-      skillMatch = requestMatcher.match(spec.input.matchOn);
+      skillMatch = matchConversation(
+        (text) => requestMatcher.match(text),
+        spec.input.matchOn,
+        carry.userTexts,
+      );
     }
     // The trigger match drives both prompt composition (`skill`, the matched
     // Skill) and load telemetry (`skillMatch`, which also carries the phrase).
@@ -2412,11 +2435,10 @@ export class Runtime {
     // expensive cache bust. `synthesizeConnectorSkill` stamps no `allowedTools`, so a
     // server-published skill firing does not move the block; a workspace-authored
     // one that declares the field always could, before and after this.
-    const { direct: tools, proxied } = surfaceTools(
-      allTools,
-      skill,
-      buildSurfaceOptions(focusedServerName, spec.input.allowedTools),
-    );
+    const { direct: tools, proxied } = surfaceTools(allTools, skill, {
+      ...buildSurfaceOptions(focusedServerName, spec.input.allowedTools),
+      carriedTools: carry.calledTools,
+    });
 
     // Per-user preferences from the authenticated identity.
     const prefs = buildPromptPrefs(identity);

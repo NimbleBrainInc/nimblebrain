@@ -252,10 +252,12 @@ NimbleBrain uses tiered tool surfacing to keep the LLM's tool list manageable:
 | Condition | What the LLM sees |
 |-----------|-------------------|
 | Total tools ≤ 30 | All tools surfaced directly |
-| Total tools > 30, no skill matched | Only `nb__*` system tools. Others available via `nb__search` (`scope: "tools"`). |
-| Skill matched with `allowed-tools` | Tools matching the globs + system tools. Others via `nb__search`. |
+| Total tools > 30, no skill matched | A small core set: `nb__search`, `nb__manage_tools`, `nb__status`, `nb__use_skill`, `files__read`, `files__create`, `files__list`. Everything else is found with `nb__search` (`scope: "tools"`) and activated on demand. |
+| Skill matched with `allowed-tools` | The core set plus the tools the skill names. A message about tasks (scheduling, "every weekday", "remind me") matches the built-in task skill, which brings the `tasks__*` tools. |
 
 The threshold is configurable via `maxDirectTools` (default: 30).
+
+Within a conversation, the set only grows. A skill a message matched stays loaded until a later message matches another one, and a tool the conversation has called stays in the list for the rest of the conversation. The tool list sits at the front of every model request, so keeping it fixed lets the provider's prompt cache reuse it turn after turn.
 
 <Aside type="tip">
 When you have many connectors installed, the agent uses `nb__search` to find the right tool before calling it. You don't need to manage this — the bootstrap skill teaches the agent how to use meta-tools automatically.
