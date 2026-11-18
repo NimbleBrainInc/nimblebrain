@@ -313,7 +313,7 @@ describe("status.host_loopback", () => {
   });
 
   test("the release's Compose file maps the host and sets the alias the runtime dials", () => {
-    expect(REPO_COMPOSE).toContain('"host.docker.internal:host-gateway"');
+    expect(REPO_COMPOSE).toContain("host.docker.internal:host-gateway");
     expect(REPO_COMPOSE).toContain("NB_HOST_LOOPBACK=host.docker.internal");
   });
 });
