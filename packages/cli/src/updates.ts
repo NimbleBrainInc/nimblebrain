@@ -166,9 +166,7 @@ export function noticeLines(
   }
   const rt = updates?.runtime;
   if (withRuntime && rt && compareVersions(rt.latest, rt.current) > 0) {
-    lines.push(
-      `NimbleBrain v${rt.latest} is available (you have v${rt.current}): ${run} update`,
-    );
+    lines.push(`NimbleBrain v${rt.latest} is available (you have v${rt.current}): ${run} update`);
   }
   return lines;
 }
