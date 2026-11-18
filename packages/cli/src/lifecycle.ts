@@ -6,6 +6,7 @@ import {
   fetchCompose,
   hasKey,
   INSTANCE_JSON,
+  keyProvider,
   keyVars,
   PROJECT,
   paths,
@@ -154,9 +155,13 @@ async function install(
   if (state.agent) rec.record("cli.agent_connected", { agent: state.agent });
 
   const result: StatusResult & { manual?: string } = { ...(await status(deps, home)), manual };
+  const finalEnv = (await deps.readText(paths(home).env)) ?? "";
   rec.record("cli.init_completed", {
     duration_ms: Date.now() - begun,
     model_key: result.model_key,
+    // A provider's name, never a model's: a local model is reported only as `ollama`.
+    provider: localModelOf(finalEnv) ? "ollama" : keyProvider(finalEnv, composeText),
+    agent: state.agent ?? null,
   });
   await rec.settle(home, consent);
   if (result.model_key === "missing" && !result.local_model) {
