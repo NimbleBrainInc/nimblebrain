@@ -1,6 +1,6 @@
 # 0065. A server in development connects to a local install by URL, and describes itself with a Server Card
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-17
 - Serves: run NimbleBrain on a developer's machine; build for NimbleBrain
 

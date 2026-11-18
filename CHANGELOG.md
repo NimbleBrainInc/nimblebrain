@@ -33,6 +33,7 @@
 
 ### Added
 
+- **A server in development can be added to a local install by URL.** `manage_connectors install` with `kind: "direct-url"` takes a loopback URL, reads the server's Server Card for its title, icon and placements, and reaches the host through `NB_HOST_LOOPBACK`; it is refused unless that is set and the `dev` adapter is in use ([ADR-0065](https://github.com/NimbleBrainInc/nimblebrain/blob/main/adr/0065-a-server-in-development-connects-to-a-local-install-by-url-and-describes-itself-with-a-server-card.md), [docs](https://docs.nimblebrain.ai/config/environment/)).
 - **`docker-compose.yml` takes the image tag from `NIMBLEBRAIN_TAG`.** Both images default to `latest`; set it to a release tag to stay on that release ([docs](https://docs.nimblebrain.ai/deploy/docker/#update-to-a-new-version)).
 - **Budgeted and capped task runs can execute on an agent worker.** Behind a model gateway that says it enforces grants, a run's model credential carries a token `grant` (its share of each spend account, or its input-token cap), and the gateway holds it there; without one, such runs stay on the native engine ([ADR-0063](https://github.com/NimbleBrainInc/nimblebrain/blob/main/adr/0063-a-runs-model-credential-carries-the-spend-it-is-allowed.md)).
 - **Apps learn which of a connector's tools the viewer may call.** The host context's `connector` key carries `allowedTools` on the connector's settings page and on the app's own page, so an app can leave out an action the viewer would be refused ([docs](https://docs.nimblebrain.ai/host/settings-sections/#which-tools-the-viewer-may-call), [#1879](https://github.com/NimbleBrainInc/nimblebrain/pull/1879)).
@@ -123,6 +124,7 @@
 
 ### Changed
 
+- **`POST /v1/workspaces/:wsId/tools/call` and `POST /v1/tools/call` refuse an untrusted browser `Origin` with `403`**, as `/mcp/<wsId>` does, so a DNS-rebound page cannot call tools; a request with no `Origin` and the web shell's own origin pass.
 - **Rate limits slow a caller instead of shutting it out.** Each per-identity limit is now a token bucket at the same rate and burst, so a caller slightly over the rate is admitted at the rate rather than refused for the rest of the minute, and `Retry-After` names the wait for the next request. In the browser, an app view whose `/mcp` call is refused gets JSON-RPC error `-32029` (`RATE_LIMITED`) with `data.retryAfterMs`, not a generic failure.
 - **The runtime asks the model gateway what it serves every minute**, not only at startup, so a redeployed gateway (a provider added, or grant enforcement turned on) is picked up without restarting the runtime; a gateway briefly unreachable leaves its last answer standing ([docs](https://docs.nimblebrain.ai/config/nimblebrain-json/)).
 - **A run the default runtime cannot hold runs on the native runtime instead of being refused.** With `execution.default` set to a worker, a task run that names spend accounts (a token budget) or caps its input tokens executes on the native runtime, which checks each model call against them; chat and uncapped runs execute on the default ([docs](https://docs.nimblebrain.ai/config/nimblebrain-json/#execution)).

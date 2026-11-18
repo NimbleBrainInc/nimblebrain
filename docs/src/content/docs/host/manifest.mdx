@@ -54,6 +54,16 @@ servers:
 | `admin_tools` | `string[]` | No | Names of tools on your server that only a workspace admin may call, at most 64. Read from a catalog entry only. See [Admin-only tools](/host/admin-tools/). |
 | `record_arguments` | `boolean` | No | `true` grants your server record arguments in every workspace that installs it: the host reads the resources your tools' declared arguments name, from the servers in the workspace that serve them. Without it the host reads none. A workspace admin can narrow or revoke it. Read from a catalog entry only. See [The grant](/extensions/resource-arguments/#the-grant). |
 
+<Aside type="note" title="A server added by URL on a local install">
+  On a local install (`npx nimblebrain`), a server in development can be added
+  by its loopback URL instead of a catalog entry. The runtime then reads the
+  server's MCP Server Card (SEP-2127) at `<url>/server-card` and takes its `title`, `description`, `icons`, and,
+  from this block, `placements` only. `hooks`, `notifications`, `admin_tools`
+  and `record_arguments` are grants an operator makes in a catalog entry, and a
+  card's are ignored. A card icon may be `https:`, a `data:` image, or a loopback
+  `http:` URL. Without a card the server is added with no placements.
+</Aside>
+
 The block has no `name`, `icon`, `category` or `primaryView`; a block that still declares them loads, and the host ignores them like any unknown key. A connector's display name is its catalog entry's `title` (or `name`), and its icon the entry's `icons`, the fields the MCP Registry `ServerDetail` already defines. A sidebar entry's label is its placement's own `label`.
 
 ### `PlacementDeclaration`
