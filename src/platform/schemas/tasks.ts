@@ -46,20 +46,13 @@ const Schedule = Type.Object(
   {
     cron: Type.Optional(
       Type.String({
-        description:
-          "Recurs on a 5-field cron expression, e.g. `0 7 * * 1-5` for weekdays at 7, read in " +
-          "`timezone`.",
+        description: "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
       }),
     ),
     at: Type.Optional(
       Type.String({
         description:
-          "Fires once, at an ISO-8601 timestamp with an explicit offset, e.g. " +
-          "2026-07-01T13:12:00-07:00. Must be in the future. The task is then disabled with no " +
-          "next run until a new `at` re-arms it: use it for a single action at a set time, " +
-          "never a cron with a fixed date, which recurs every year. A time that passes while " +
-          "the runtime is down fires on restart if it is at most an hour late, and is recorded " +
-          "as skipped otherwise.",
+          "Fires once, at a future ISO-8601 time with an offset. The task is then disabled until a new `at` re-arms it.",
       }),
     ),
     intervalMs: Type.Optional(
@@ -69,17 +62,13 @@ const Schedule = Type.Object(
       Type.Object(NotificationRouteMatch.properties, {
         additionalProperties: false,
         description:
-          "Fires on routed notifications that match. There is no next run: a workspace admin " +
-          "must ALSO have written a delivery route naming this task. This narrows what " +
-          "arrives down that route, it does not open one.",
+          "Fires on routed notifications that match. A workspace admin's delivery route must name this task; this narrows it, it does not open one.",
       }),
     ),
     timezone: Type.Optional(
       Type.String({
         description:
-          "IANA timezone a `cron` is read in. Default: this instance's timezone, which " +
-          "tasks__create and tasks__update return as `timezone`. An update that omits it " +
-          "keeps the task's current one.",
+          "IANA timezone for `cron`. Default: the instance's, returned as `timezone`. An update that omits it keeps the current one.",
       }),
     ),
     debounceMs: Type.Optional(
@@ -88,9 +77,7 @@ const Schedule = Type.Object(
         minimum: 1000,
         maximum: 900000,
         description:
-          "With `match`: how long matching notifications coalesce into one batch before the " +
-          "run starts, in ms. Default 30000, max 900000. A burst becomes one run with a list " +
-          "in it, not one run per item.",
+          "With `match`: ms that matching notifications coalesce into one run. Default 30000.",
       }),
     ),
     maxFiresPerHour: Type.Optional(
@@ -98,17 +85,14 @@ const Schedule = Type.Object(
         minimum: 1,
         maximum: 60,
         description:
-          "With `match`: most runs this task may fire from events in a rolling hour. Default " +
-          "12, max 60. Exceeding it disables the task; it is what ends a loop in which a " +
-          "run's own work produces the event that fires it again.",
+          "With `match`: most runs events may fire in a rolling hour; exceeding it disables the task. Default 12.",
       }),
     ),
   },
   {
     additionalProperties: false,
     description:
-      "What fires it unattended: exactly one of `cron`, `at`, `intervalMs`, or `match`. Omit " +
-      "for a task that runs only when someone runs it (tasks__run).",
+      "Exactly one of `cron`, `at`, `intervalMs`, or `match`. Omit to run only on demand.",
   },
 );
 export type TaskScheduleInput = Static<typeof Schedule>;
@@ -118,32 +102,25 @@ const TokenBudget = Type.Object(
     maxInputTokens: Type.Optional(
       Type.Integer({
         minimum: 1,
-        description: "Most input tokens this task's runs may use in total per period.",
+        description: "Input tokens its runs may use per period.",
       }),
     ),
     maxOutputTokens: Type.Optional(
       Type.Integer({
         minimum: 1,
-        description: "Most output tokens this task's runs may use in total per period.",
+        description: "Output tokens its runs may use per period.",
       }),
     ),
     period: Type.Optional(
       StringEnum(["daily", "monthly"] as const, {
-        description:
-          "When the running totals reset: at the start of each day or month. Omit for a " +
-          "lifetime total that never resets.",
+        description: "`daily` or `monthly` reset. Omit for a lifetime total.",
       }),
     ),
   },
   {
     additionalProperties: false,
     description:
-      "Spending limit across runs, in tokens (not dollars). Checked before each model " +
-      "call: each step may write only what is left of the period's budget, and a run with " +
-      "too little left for another step stops with stopReason spend_limit. The task " +
-      "is then disabled and stays disabled until someone re-enables it. To bound a single " +
-      "run, use maxInputTokens and maxIterations. Offer one when the task runs often " +
-      "or unattended for long.",
+      "Token limit across runs (not dollars). A run with too little left stops with spend_limit, and the task stays disabled until re-enabled.",
   },
 );
 
@@ -161,14 +138,11 @@ function jsonSchemaField(description: string) {
 }
 
 const InputSchemaField = jsonSchemaField(
-  "JSON Schema each run's `input` must match (tasks__run `input`, tasks__run_batch `items`). " +
-    "A run whose input does not match is refused before it starts. Omit to take any JSON input.",
+  "JSON Schema each run's `input` must match, or the run is refused. Omit to take any input.",
 );
 
 const OutputSchemaField = jsonSchemaField(
-  "JSON Schema the deliverable must match. The run is told to answer with JSON matching it; " +
-    "the final output is parsed and checked, kept as the result's `structured`, and a " +
-    "deliverable that does not match is assessed `fail` without a judge call.",
+  "JSON Schema the deliverable must match. One that does not is assessed fail without a judge call.",
 );
 
 // ── Acceptance criteria and the judge ────────────────────────────────────
@@ -182,19 +156,17 @@ const Criterion = Type.Object(
   {
     id: Type.String({
       pattern: "^[A-Za-z0-9_.-]{1,64}$",
-      description: "Unique within the task; names the criterion in the assessment.",
+      description: "Unique within the task.",
     }),
     rule: Type.String({
       minLength: 1,
       maxLength: 4000,
       description:
-        'The rule, in plain language, e.g. "Every claim cites a source fetched during this run." ' +
-        "A rule can name the run's `input`, `deliverable`, or `activity` (its tool calls).",
+        "The rule in plain language. It may name the run's `input`, `deliverable`, or `activity` (its tool calls).",
     }),
     type: StringEnum(["boolean", "score", "choice"] as const, {
       description:
-        "boolean: is the rule true. score: which of the ordered `levels` holds. choice: which of " +
-        "the `options` holds.",
+        "boolean: is it true. score: which of `levels` holds. choice: which of `options` holds.",
     }),
     levels: Type.Optional(
       Type.Array(Type.String(), {
@@ -207,15 +179,13 @@ const Criterion = Type.Object(
       Type.Array(Type.String(), {
         minItems: 2,
         maxItems: 255,
-        description: "choice only: the distinct options.",
+        description: "choice only: the options.",
       }),
     ),
     pass: Type.Optional(
       Type.Union([Type.Boolean(), Type.Integer(), Type.String(), Type.Array(Type.String())], {
         description:
-          "What passes. boolean: true (default) or false. score: the lowest passing level index " +
-          "(default: the upper half of the levels). choice: the passing option or options " +
-          "(required).",
+          "What passes. boolean: true (default) or false. score: the lowest passing level index. choice: the passing option or options (required).",
       }),
     ),
   },
@@ -236,110 +206,79 @@ const CriteriaField = Type.Array(Criterion, {
 const ConfidenceThresholdField = Type.Number({
   minimum: 0,
   maximum: 1,
-  description:
-    "Judge confidence below which a run whose criteria all passed is `uncertain` rather than " +
-    "`pass`. Default 0.7.",
+  description: "Judge confidence below which a passing run is `uncertain`. Default 0.7.",
 });
 
 const JudgeField = Type.Object(
   {
     server: Type.Optional(
       Type.String({
-        description:
-          "The connected judge server to use (tasks__judges lists them). Needed only when the " +
-          "workspace has more than one.",
+        description: "The judge server (tasks__judges). Needed only when several are connected.",
       }),
     ),
     id: Type.Optional(
-      Type.String({ description: "A judge from that server's list_judges. Default: its default." }),
+      Type.String({ description: "A judge from that server. Default: its default." }),
     ),
     options: Type.Optional(
       Type.Unsafe<Record<string, unknown>>({
         type: "object",
         properties: {},
         additionalProperties: true,
-        description: "That judge's settings (its options_schema). Needs `id`.",
+        description: "That judge's settings. Needs `id`.",
       }),
     ),
   },
   {
     additionalProperties: false,
-    description: "Which judge answers the criteria. Omit to use the one connected judge server.",
+    description: "Which judge answers the criteria. Omit for the one connected.",
   },
 );
 
 const OnPoorResultField = StringEnum(["record", "notify", "retry_once"] as const, {
   description:
-    "What a `fail` assessment does. record: nothing more. notify (default): an item in the " +
-    "workspace inbox saying a run was judged poor, with its run id; it never names the task " +
-    "or its criteria, since the inbox is shared and the task is private to its owner. " +
-    "retry_once: run again once, with the failed criteria as guidance. Batch runs ignore it.",
+    "What a `fail` does: record, notify (default; an inbox item), or retry_once with the failed criteria as guidance. Batch runs ignore it.",
 });
 
 const MaxIterationsField = Type.Integer({
   minimum: 1,
   maximum: 50,
-  description:
-    "Max LLM iterations per run, 1 to 50. Default 25. Runs are also held to the runtime's " +
-    "per-run ceiling; create and update report the effective value.",
+  description: "Max model iterations per run. Default 25.",
 });
 
 const MaxInputTokensField = Type.Integer({
   minimum: 1000,
   maximum: 1000000,
   description:
-    "Input tokens one run may spend in total, summed over every model call (1000 to " +
-    "1000000), counting cache reads. Before each model call the run stops with stopReason " +
-    "max_input_tokens if that call's projected input would pass the cap. Omit for no " +
-    "per-run cap unless the runtime sets a per-run ceiling, which also bounds a set value; " +
-    "create and update report the effective value.",
+    "Input tokens one run may spend over all its model calls, cache reads included. Omit for no per-run cap.",
 });
 
 const MaxRunDurationField = Type.Integer({
   minimum: 10000,
   maximum: 600000,
-  description:
-    "Max wall-clock per run (ms), 10000 to 600000. Default 120000. Runs are also held to " +
-    "the runtime's per-run ceiling; create and update report the effective value.",
+  description: "Max wall-clock per run, in ms. Default 120000.",
 });
 
 const AllowedToolsField = Type.Array(Type.String({ minLength: 1 }), {
   minItems: 1,
   description:
-    "Tools this task's runs may use, as names or globs: `gmail__*` for a workspace " +
-    "connector's tools, `my_gmail__*` for your personal one, `files__read` for one tool. A " +
-    "run cannot activate or call a tool outside the list, and a run is refused before it " +
-    "starts when an entry matches no tool it can reach. nb__search, nb__manage_tools and " +
-    "nb__use_skill pass without being listed, so name any other nb__ tool a run needs " +
-    "(nb__read_resource for resources). Prefer a `<connector>__*` glob, since a " +
-    "connector can rename its tools. Omit for every tool in the workspace; an empty list is " +
-    "refused. Listing tasks__create, tasks__update, or tasks__delete is refused, and a run is " +
-    "barred from tasks__run, tasks__run_batch, tasks__batch_control, and tasks__assess whatever " +
-    "the list says.",
+    "Tools its runs may use: names or globs, one `<connector>__*` per connector (`my_<connector>__*` for a personal one). A run is refused when an entry matches no tool it can reach. nb__search, nb__manage_tools and nb__use_skill always pass. Omit it for every tool; an empty list is refused. tasks__create, tasks__update and tasks__delete cannot be listed.",
 });
 
 const SkillsField = Type.Array(Type.String({ minLength: 1 }), {
   minItems: 1,
   maxItems: 5,
   description:
-    "Skills every run is given in full before its first model call, named as the skill " +
-    "catalog lists them (nb__use_skill takes the same names). A run is refused before it " +
-    "starts when a named skill is not available in the task's workspace. With no body, " +
-    "each run carries the skills out on its input.",
+    "Skills each run is given in full, by catalog name. A run is refused when one is not available. With no body, each run carries the skills out on its input.",
 });
 
 const ModelField = Type.String({
   minLength: 1,
-  description:
-    "Model for this task's runs, as provider:model-id (e.g. anthropic:claude-sonnet-4-6) or a slot name (fast). Omit to use the workspace default.",
+  description: "provider:model-id or a slot name (fast). Omit for the workspace default.",
 });
 
 // Mirrors `ThinkingEffort` (`src/engine/types.ts`); this tree cannot import it.
 const ThinkingEffortField = StringEnum(["low", "medium", "high", "xhigh", "max"] as const, {
-  description:
-    "How hard this task's runs reason, when the model reasons: low, medium, high, xhigh, or max. " +
-    "Omit to use the workspace setting. Has no effect when the operator turned thinking off or " +
-    "set it adaptive, or on a model that does not reason.",
+  description: "Reasoning depth for its runs. Omit for the workspace setting.",
 });
 
 // The definition fields every shape shares: create's manifest, update's patch
@@ -363,12 +302,7 @@ const DefinitionFields = {
 
 const BodyField = Type.String({
   description:
-    "The prompt that opens every run, whatever starts it: its schedule, an event, or " +
-    "someone running it. Describe the job, not tool names: a name such as " +
-    "`gmail__send_email` changes with how its connector is installed (`my_` for a personal " +
-    "one). List the tools in `manifest.allowedTools`, where one the run cannot reach refuses " +
-    "the run. A run's `input` is given to it as data beside this prompt. Nothing delivers the " +
-    "deliverable: to post or send it, say so here and allow the tool.",
+    "The prompt that opens every run. Describe the job, not tool names; list the tools in `manifest.allowedTools`. To post or send the deliverable, say so here. A run's `input` arrives as data beside it.",
 });
 
 const CreateManifest = Type.Object(
@@ -381,16 +315,13 @@ const CreateManifest = Type.Object(
     schedule: Type.Optional(Schedule),
     enabled: Type.Optional(
       Type.Boolean({
-        description:
-          "Whether its schedule or events fire it. Default true. tasks__run runs it either way.",
+        description: "Whether its schedule fires it. Default true; tasks__run runs it either way.",
       }),
     ),
     kind: Type.Optional(
       StringEnum(["saved", "oneoff"] as const, {
         description:
-          "`saved` (default) for a task to keep and list. `oneoff` for one made to be run " +
-          "once with no schedule: it is left out of tasks__list unless asked for, and deleted " +
-          "with its runs once past the runtime's retention window.",
+          "`saved` (default), or `oneoff` for a task run once: hidden from tasks__list and deleted after the retention window.",
       }),
     ),
     ...DefinitionFields,
@@ -410,50 +341,25 @@ const UpdateManifest = Type.Object(
     description: clearable(Type.String(), "New description, or null to remove it."),
     schedule: clearable(
       Schedule,
-      "New schedule, or null to remove it so nothing fires it unattended. Setting a new once " +
-        "`at` on a task that already ran once (or missed its time) re-arms and enables it.",
+      "null removes it. A new `at` on a task that already fired re-arms and enables it.",
     ),
     enabled: Type.Optional(
       Type.Boolean({ description: "Whether its schedule or events fire it." }),
     ),
-    skills: clearable(SkillsField, "Skills every run is given, or null for none."),
-    model: clearable(ModelField, "Model for its runs, or null for the workspace default."),
-    thinkingEffort: clearable(
-      ThinkingEffortField,
-      "Reasoning depth for its runs, or null for the workspace setting.",
-    ),
-    allowedTools: clearable(
-      AllowedToolsField,
-      "Tools its runs may use (see tasks__create), or null to allow every tool.",
-    ),
-    maxIterations: clearable(MaxIterationsField, "Per-run iteration cap, or null for the default."),
-    maxInputTokens: clearable(MaxInputTokensField, "Per-run input-token cap, or null for none."),
-    maxRunDurationMs: clearable(MaxRunDurationField, "Per-run time cap, or null for the default."),
-    tokenBudget: clearable(TokenBudget, "Spending limit across runs, or null to remove it."),
-    inputSchema: clearable(
-      InputSchemaField,
-      "New input schema, or null to remove it so runs take any input.",
-    ),
-    outputSchema: clearable(
-      OutputSchemaField,
-      "New output schema, or null to remove it so the deliverable is not checked.",
-    ),
-    criteria: clearable(
-      CriteriaField,
-      "New acceptance criteria (the whole list), or null to remove them.",
-    ),
-    confidenceThreshold: clearable(
-      ConfidenceThresholdField,
-      "New confidence threshold, or null for the default (0.7).",
-    ),
-    judge: clearable(
-      JudgeField,
-      "Which judge to use, or null to use the one connected judge server.",
-    ),
-    onPoorResult: clearable(
-      OnPoorResultField,
-      "What a fail assessment does, or null for the default (notify).",
-    ),
+    skills: clearable(SkillsField, "null: none."),
+    model: clearable(ModelField, "null: the workspace default."),
+    thinkingEffort: clearable(ThinkingEffortField, "null: the workspace setting."),
+    allowedTools: clearable(AllowedToolsField, "null: every tool."),
+    maxIterations: clearable(MaxIterationsField, "null: the default."),
+    maxInputTokens: clearable(MaxInputTokensField, "null: no cap."),
+    maxRunDurationMs: clearable(MaxRunDurationField, "null: the default."),
+    tokenBudget: clearable(TokenBudget, "null: no limit."),
+    inputSchema: clearable(InputSchemaField, "null: any input."),
+    outputSchema: clearable(OutputSchemaField, "null: not checked."),
+    criteria: clearable(CriteriaField, "The whole list. null: none."),
+    confidenceThreshold: clearable(ConfidenceThresholdField, "null: the default."),
+    judge: clearable(JudgeField, "null: the one connected."),
+    onPoorResult: clearable(OnPoorResultField, "null: the default."),
   },
   {
     additionalProperties: false,
