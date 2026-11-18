@@ -151,7 +151,12 @@ export function updatesField(
 }
 
 /** A person's notices: one line for each side that is behind. */
-export function noticeLines(updates: Updates | undefined, withRuntime: boolean): string[] {
+/** `run` is how to run this CLI against the install the run acted on, so `update` reaches it. */
+export function noticeLines(
+  updates: Updates | undefined,
+  withRuntime: boolean,
+  run = "npx nimblebrain",
+): string[] {
   const lines: string[] = [];
   const cli = updates?.cli;
   if (cli && compareVersions(cli.latest, cli.current) > 0) {
@@ -162,7 +167,7 @@ export function noticeLines(updates: Updates | undefined, withRuntime: boolean):
   const rt = updates?.runtime;
   if (withRuntime && rt && compareVersions(rt.latest, rt.current) > 0) {
     lines.push(
-      `NimbleBrain v${rt.latest} is available (you have v${rt.current}): npx nimblebrain update`,
+      `NimbleBrain v${rt.latest} is available (you have v${rt.current}): ${run} update`,
     );
   }
   return lines;

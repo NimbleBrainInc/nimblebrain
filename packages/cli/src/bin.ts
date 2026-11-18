@@ -18,11 +18,12 @@ import { realDeps } from "./deps.ts";
 import { interrupted, run } from "./main.ts";
 
 const argv = process.argv.slice(2);
+const deps = realDeps();
 let answered = false;
 
 process.on("exit", (code) => {
   if (answered) return;
-  const out = interrupted(argv, code);
+  const out = interrupted(argv, code, deps);
   writeSync(1, out.stdout);
   writeSync(2, `nimblebrain: stopped before answering (exit code ${code})\n`);
   process.exitCode = out.code;
@@ -38,7 +39,7 @@ for (const [signal, n] of [
   process.on(signal, () => process.exit(128 + n));
 }
 
-const { stdout, stderr, code } = await run(argv, realDeps());
+const { stdout, stderr, code } = await run(argv, deps);
 writeSync(1, stdout);
 answered = true;
 if (stderr) writeSync(2, stderr);

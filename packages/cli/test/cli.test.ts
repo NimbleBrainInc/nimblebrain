@@ -220,14 +220,14 @@ describe("status", () => {
 
 describe("a run that ends without answering", () => {
   test("still answers once, as INTERRUPTED with the exit code, in the format asked for", () => {
-    const asJson = interrupted(["init", "--json"], 143);
+    const asJson = interrupted(["init", "--json"], 143, machine().deps);
     expect(asJson.code).toBe(1);
     expect(JSON.parse(asJson.stdout)).toMatchObject({
       ok: false,
       error: "INTERRUPTED",
       exit_code: 143,
     });
-    const plain = interrupted(["init"], 130);
+    const plain = interrupted(["init"], 130, machine().deps);
     expect(plain.stdout).toContain("exit code 130");
     expect(plain.stdout).toContain("fix: ");
   });

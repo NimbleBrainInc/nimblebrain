@@ -1,7 +1,7 @@
 import type { SkillRefresh } from "./agents.ts";
 import { type Parsed, parse, wantsJson } from "./args.ts";
 import { paths } from "./compose.ts";
-import { type Deps, installHome } from "./deps.ts";
+import { BARE_CLI, type Deps, forInstall, installHome, invocation } from "./deps.ts";
 import { doctor } from "./doctor.ts";
 import { describe, helpText } from "./help.ts";
 import {
@@ -49,17 +49,18 @@ export async function run(argv: string[], deps: Deps): Promise<Answer> {
   try {
     parsed = parse(argv);
   } catch (err) {
-    return render(toFailure(err), json);
+    // No home is known before the flags parse, so a usage error's fix stays bare.
+    return render(toFailure(err), json, BARE_CLI);
   }
 
   if (parsed.kind === "help") {
     return parsed.flags.json
-      ? render(describe(VERSION), true)
+      ? render(describe(VERSION), true, BARE_CLI)
       : { stdout: helpText(VERSION), code: 0 };
   }
   if (parsed.kind === "version") {
     return parsed.flags.json
-      ? render({ ok: true, version: VERSION }, true)
+      ? render({ ok: true, version: VERSION }, true, BARE_CLI)
       : { stdout: `${VERSION}\n`, code: 0 };
   }
 
@@ -67,6 +68,7 @@ export async function run(argv: string[], deps: Deps): Promise<Answer> {
   // Started first, so a lookup has the whole command to finish in.
   const check = startUpdateCheck(deps);
   const home = installHome(deps, flags.home);
+  const cli = invocation(deps, home);
   let result: Ok | Failure;
   try {
     switch (command) {
@@ -102,12 +104,13 @@ export async function run(argv: string[], deps: Deps): Promise<Answer> {
   } catch (err) {
     result = toFailure(err);
   }
+  if (!result.ok) result = { ...result, fix: forInstall(result.fix, cli) };
   // `init` and `telemetry` settle their own; any other command sends or drops
   // a report left waiting, once someone has answered (perhaps in the web UI).
   if (!["init", "telemetry", "uninstall", "doctor"].includes(command)) {
     await settleWaiting(deps, home, VERSION);
   }
-  return answerWithUpdates(result, command, flags.json, check);
+  return answerWithUpdates(result, command, flags.json, check, cli);
 }
 
 /**
@@ -121,17 +124,19 @@ async function answerWithUpdates(
   command: string,
   json: boolean,
   check: UpdateCheck | undefined,
+  cli: string,
 ): Promise<Answer> {
-  if (!check) return render(result, json, command);
+  if (!check) return render(result, json, cli, command);
   const known = await check.known(json ? 0 : NOTICE_WAIT_MS);
   const runtime = isStatusShaped(result) ? result.version : undefined;
   const updates = updatesField(known, VERSION, runtime);
   const answer = render(
     updates && runtime !== undefined ? { ...result, updates } : result,
     json,
+    cli,
     command,
   );
-  const notices = json ? [] : noticeLines(updates, RUNTIME_NOTICE.includes(command));
+  const notices = json ? [] : noticeLines(updates, RUNTIME_NOTICE.includes(command), cli);
   return notices.length > 0 ? { ...answer, stderr: `${notices.join("\n")}\n` } : answer;
 }
 
@@ -177,11 +182,12 @@ function toFailure(err: unknown): Failure {
   return failure(new CliError("USAGE", err instanceof Error ? err.message : String(err)));
 }
 
-function render(result: Ok | Failure, json: boolean, command?: string): Answer {
+/** `cli` is how to run this CLI against the install the run acted on (`invocation`). */
+function render(result: Ok | Failure, json: boolean, cli: string, command?: string): Answer {
   const code = exitCodeFor(result);
   if (json) return { stdout: `${JSON.stringify(result)}\n`, code };
   if (!result.ok) return { stdout: `error: ${result.message}\nfix: ${result.fix}\n`, code };
-  const lines = isStatus(result) ? statusLines(result, command) : genericLines(result);
+  const lines = isStatus(result) ? statusLines(result, cli, command) : genericLines(result);
   return { stdout: `${lines.join("\n")}\n`, code };
 }
 
@@ -204,24 +210,23 @@ const AGENT_NAMES: Record<string, string> = {
 };
 
 /** An install's state as a person reads it; the JSON carries the same facts. */
-function statusLines(r: StatusLike, command?: string): string[] {
+function statusLines(r: StatusLike, cli: string, command?: string): string[] {
   const lines = [
     ...changeLines(r),
     `  NimbleBrain ${r.version.startsWith("v") ? r.version : `v${r.version}`}: ${r.health === "ok" ? "running" : "stopped"} at ${r.url}`,
     ...r.workspaces.map((w) => `  workspace ${w.name}: ${w.mcp}`),
     r.local_model
       ? `  model: ${r.local_model} on Ollama (NimbleBrain's own agents use it)`
-      : `  model key: ${r.model_key === "set" ? "set (NimbleBrain's own agents use it)" : "missing (run npx nimblebrain key)"}`,
+      : `  model key: ${r.model_key === "set" ? "set (NimbleBrain's own agents use it)" : `missing (run ${cli} key)`}`,
   ];
   const agent = r.agent.connected;
   lines.push(...agentLines(r));
-  if (!r.host_loopback)
-    lines.push("  servers on this machine: not reachable until npx nimblebrain update");
+  if (!r.host_loopback) lines.push(`  servers on this machine: not reachable until ${cli} update`);
   lines.push(telemetryLine(r.telemetry));
   lines.push(`  CLI ${r.cli_version}`);
   if (command === "init" && !r.already && r.health === "ok") {
     const ask = agent ? `, or ask ${AGENT_NAMES[agent] ?? agent} what NimbleBrain can do` : "";
-    lines.push("", `Next: open ${r.url}${ask}. Stop it with npx nimblebrain down.`);
+    lines.push("", `Next: open ${r.url}${ask}. Stop it with ${cli} down.`);
   }
   return lines;
 }
@@ -300,11 +305,18 @@ function field(key: string, value: unknown): string[] {
  * promise of "one JSON object for every run" would leave an agent with nothing
  * to act on. `exitCode` is the code the process was about to end with.
  */
-export function interrupted(argv: string[], exitCode: number): Answer {
+export function interrupted(argv: string[], exitCode: number, deps: Deps): Answer {
   const err = new CliError(
     "INTERRUPTED",
     `The CLI stopped before it answered (exit code ${exitCode}).`,
     { exit_code: exitCode },
   );
-  return render(failure(err), wantsJson(argv));
+  let cli = BARE_CLI;
+  try {
+    cli = invocation(deps, installHome(deps, parse(argv).flags.home));
+  } catch {
+    // Arguments that do not parse never started a command; the fix stays bare.
+  }
+  const result = failure(err);
+  return render({ ...result, fix: forInstall(result.fix, cli) }, wantsJson(argv), cli);
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { run, VERSION } from "../src/main.ts";
-import { cachePath } from "../src/updates.ts";
+import { cachePath, noticeLines } from "../src/updates.ts";
 import { type MachineOptions, machine } from "./fake.ts";
 
 const HOME = "/home/dana/.nimblebrain-local";
@@ -165,5 +165,29 @@ describe("update notices", () => {
     expect(cachePath(m.deps)).toBe(CACHE);
     m.deps.env = { ...m.deps.env, XDG_CACHE_HOME: "/var/cache/dana" };
     expect(cachePath(m.deps)).toBe("/var/cache/dana/nimblebrain/update-check.json");
+  });
+});
+
+describe("noticeLines", () => {
+  const updates = {
+    cli: { current: "0.3.0", latest: "0.3.1" },
+    runtime: { current: "0.76.0", latest: "0.77.0" },
+  };
+
+  test("the runtime line names the install the run acted on, so update reaches it", () => {
+    const lines = noticeLines(updates, true, "npx nimblebrain --home /home/dana/nb-try");
+    expect(lines).toContain(
+      "NimbleBrain v0.77.0 is available (you have v0.76.0): npx nimblebrain --home /home/dana/nb-try update",
+    );
+    // A newer CLI is the same for every install, so its line carries no home.
+    expect(lines).toContain(
+      "nimblebrain 0.3.1 is available (you have 0.3.0): npx nimblebrain@latest",
+    );
+  });
+
+  test("the default install's runtime line is the bare command", () => {
+    expect(noticeLines(updates, true)).toContain(
+      "NimbleBrain v0.77.0 is available (you have v0.76.0): npx nimblebrain update",
+    );
   });
 });
