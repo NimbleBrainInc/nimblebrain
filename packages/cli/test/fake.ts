@@ -22,6 +22,8 @@ export interface Machine {
   /** The environment each `docker compose` call got. */
   composeEnvs: NodeJS.ProcessEnv[];
   said: string[];
+  /** Each question the CLI put to the person, in order. */
+  asked: string[];
   /** Whether the instance answers health; `docker compose up` turns it on, `down` off. */
   healthy: boolean;
   /** Every JSON POST, by URL: the runtime's tool calls and telemetry sent to PostHog. */
@@ -57,6 +59,7 @@ export function machine(opts: MachineOptions = {}): Machine {
     calls: [] as string[],
     composeEnvs: [] as NodeJS.ProcessEnv[],
     said: [] as string[],
+    asked: [] as string[],
     healthy: false,
     posts: [] as Array<{ url: string; body: unknown }>,
     runtimeConsent: "undecided" as "on" | "off" | "undecided",
@@ -138,7 +141,8 @@ export function machine(opts: MachineOptions = {}): Machine {
     async remove(path) {
       m.files.delete(path);
     },
-    async prompt() {
+    async prompt(question) {
+      m.asked.push(question);
       return answers.shift() ?? "";
     },
     interactive: opts.interactive ?? false,

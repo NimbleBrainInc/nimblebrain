@@ -153,6 +153,37 @@ describe("init", () => {
     expect(envAtStart[0]).toContain("ANTHROPIC_API_KEY=sk-typed");
   });
 
+  test("a person reads a plain summary: what the agent got, a missing skill, what to do next", async () => {
+    const m = machine({
+      env,
+      interactive: true,
+      answers: ["", "", "sk-typed", "claude-code"],
+      exec: {
+        "npx -y skills add nimblebraininc/skills --skill nimblebrain --agent claude-code -g -y":
+          fail(),
+      },
+    });
+    const { stdout, code } = await run([], m.deps);
+    expect(code).toBe(0);
+    expect(stdout).toContain("NimbleBrain v0.73.0: running at http://127.0.0.1:27246");
+    expect(stdout).toContain("model key: set (NimbleBrain's own agents use it)");
+    expect(stdout).toContain("Claude Code can use NimbleBrain's tools");
+    expect(stdout).toContain("skill: not installed");
+    expect(stdout).toContain("Next: open http://127.0.0.1:27246, or ask Claude Code");
+    expect(stdout).not.toContain("undefined");
+    expect(stdout).not.toContain("{");
+    expect(m.asked.at(-1)).toStartWith("Connect a coding agent?");
+  });
+
+  test("a rerun's summary has no next step and the skill line only when it is missing", async () => {
+    const m = machine({ env, interactive: true, answers: ["", "", "sk-typed", "claude-code"] });
+    await run([], m.deps);
+    const { stdout } = await run([], m.deps);
+    expect(stdout).not.toContain("Next:");
+    expect(stdout).not.toContain("skill:");
+    expect(stdout).toContain("Claude Code can use NimbleBrain's tools");
+  });
+
   test("declining the confirmation installs nothing", async () => {
     const m = machine({ env, interactive: true, answers: ["n"] });
     const { stdout } = await run(["--json"], machine({ env }).deps);

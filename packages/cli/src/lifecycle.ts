@@ -61,45 +61,54 @@ export async function init(ctx: Ctx): Promise<Ok> {
   const { deps, flags, home } = ctx;
   if (await readInstall(deps, home)) return { ...(await status(deps, home)), already: true };
 
-  // Asked first, so a failure on this machine is reported only with a yes.
-  const consent = await chooseConsent(ctx);
+  // A person is asked after agreeing to the install (in `install`); until then the
+  // answer is what a flag or the environment already gave, so a failure before the
+  // question waits in the report and leaves only on a later yes.
+  const answer = { consent: await chooseConsent(ctx, false) };
   const rec = recorder(deps, ctx.version, await reportId(deps, home));
   const begun = Date.now();
   rec.record("cli.init_started", { agent: flags.agent ?? null, interactive: deps.interactive });
   try {
-    return await install(ctx, consent, rec, begun);
+    return await install(ctx, answer, rec, begun);
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
     if (err.code !== "MODEL_KEY_MISSING") {
       const check = typeof err.detail.check === "string" ? err.detail.check : undefined;
       rec.record(check ? "cli.doctor_failed" : "cli.init_failed", { error: err.code, check });
     }
-    await rec.settle(home, consent);
+    await rec.settle(home, answer.consent);
     throw new CliError(err.code, err.message, {
       ...err.detail,
-      telemetry: field(consent, lockedHere(deps)),
+      telemetry: field(answer.consent, lockedHere(deps)),
     });
   }
 }
 
 /**
- * The answer, in order: `--telemetry`, then the person at the terminal, else
- * undecided. Never asked when `DO_NOT_TRACK` is set or there is nowhere to send.
+ * The answer, in order: `--telemetry`, then the person at the terminal (when
+ * `ask`), else undecided. Never asked when `DO_NOT_TRACK` is set or there is nowhere to send.
  */
-async function chooseConsent(ctx: Ctx): Promise<Consent> {
+async function chooseConsent(ctx: Ctx, ask: boolean): Promise<Consent> {
   if (lockedHere(ctx.deps)) return "off";
   if (ctx.flags.telemetry) return ctx.flags.telemetry;
-  if (!asks(ctx)) return "undecided";
+  if (!ask || !asks(ctx)) return "undecided";
   return parseAnswer(await ctx.deps.prompt(`${QUESTION} [y/N] `));
 }
 
-async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number): Promise<Ok> {
+async function install(
+  ctx: Ctx,
+  answer: { consent: Consent },
+  rec: Recorder,
+  begun: number,
+): Promise<Ok> {
   const { deps, flags, home } = ctx;
   await doctor(deps, flags.port);
   await guardOurs(deps, home);
   const tag = await runtimeTag(deps, flags.runtime);
   const composeText = await fetchCompose(deps, tag);
   await confirmStart(ctx, tag);
+  answer.consent = await chooseConsent(ctx, true);
+  const { consent } = answer;
 
   await writeInstallFiles(
     deps,
@@ -304,6 +313,7 @@ async function enterKey(ctx: Ctx, restart: boolean): Promise<Ok> {
   const offered = providers((await deps.readText(paths(home).compose)) ?? "");
   const names = Object.keys(offered);
   let provider = flags.provider;
+  deps.say("NimbleBrain's own agents run on a model key you give it, billed by that provider.");
   if (!provider) {
     const answer = await deps.prompt(`Model provider (${names.join(", ")}) [anthropic]: `);
     provider = answer || "anthropic";
@@ -329,7 +339,10 @@ async function enterKey(ctx: Ctx, restart: boolean): Promise<Ok> {
 }
 
 async function chooseAgent(deps: Deps): Promise<Agent> {
-  const answer = await deps.prompt(`Connect which coding agent? (${AGENTS.join(", ")}) [none]: `);
+  deps.say(
+    "A coding agent you connect can use NimbleBrain's tools. NimbleBrain's own agents still run on the model key above.",
+  );
+  const answer = await deps.prompt(`Connect a coding agent? (${AGENTS.join(", ")}) [none]: `);
   return (AGENTS as readonly string[]).includes(answer) ? (answer as Agent) : "none";
 }
 

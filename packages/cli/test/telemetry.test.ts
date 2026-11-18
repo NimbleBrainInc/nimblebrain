@@ -66,17 +66,30 @@ describe("telemetry consent at init", () => {
     expect(m.files.has(REPORT)).toBe(false);
   });
 
-  test("a person at the terminal is asked first; only a typed yes is yes", async () => {
+  test("a person is asked after agreeing to start; only a typed yes is yes", async () => {
     for (const [answer, state] of [
       ["y", "on"],
       ["", "off"],
       ["no", "off"],
     ] as const) {
-      // Consent, then start. The key prompt gets no key, so init stops there with the answer kept.
-      const m = machine({ env, interactive: true, answers: [answer, "y"] });
+      // Start, then consent. The key prompt gets no key, so init stops there with the answer kept.
+      const m = machine({ env, interactive: true, answers: ["y", answer] });
       await run([], m.deps);
       expect(m.files.get(ENV)?.text).toContain(`NB_TELEMETRY_CONSENT=${state}`);
     }
+  });
+
+  test("declining the start never asks about telemetry", async () => {
+    const m = machine({ env, interactive: true, answers: ["n"] });
+    await run([], m.deps);
+    expect(m.asked.some((q) => q.startsWith("Help improve"))).toBe(false);
+  });
+
+  test("the telemetry question comes right after the start is agreed", async () => {
+    const m = machine({ env, interactive: true, answers: ["y", "y"] });
+    await run([], m.deps);
+    expect(m.asked[0]).toStartWith("Start NimbleBrain");
+    expect(m.asked[1]).toStartWith("Help improve");
   });
 
   test("with no destination no one is asked and nothing is written", async () => {
