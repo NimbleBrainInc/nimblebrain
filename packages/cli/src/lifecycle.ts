@@ -16,6 +16,12 @@ import {
 } from "./compose.ts";
 import type { Deps } from "./deps.ts";
 import { doctor } from "./doctor.ts";
+import {
+  DEFAULT_LOCAL_MODEL,
+  localModelOf,
+  setupLocalModel,
+  takesLocalModel,
+} from "./local-model.ts";
 import { compareVersions, runtimeTag } from "./release.ts";
 import { CliError, type Ok } from "./result.ts";
 import { type InstallState, readInstall, type StatusResult, status } from "./status.ts";
@@ -128,8 +134,15 @@ async function install(
     envValues(deps, rec.id, consent, asksConsent(composeText)),
   );
   // Asked before the start: the runtime reads `.env` only when its container is created.
-  if (!hasKey((await deps.readText(paths(home).env)) ?? "", keyVars(composeText)) && asks(ctx))
-    await enterKey(ctx, false);
+  const envText = (await deps.readText(paths(home).env)) ?? "";
+  const hasModel = hasKey(envText, keyVars(composeText)) || localModelOf(envText) !== undefined;
+  const local =
+    flags.localModel ??
+    (!hasModel && asks(ctx) && takesLocalModel(composeText)
+      ? await chooseModelSource(deps)
+      : undefined);
+  if (local) await useLocalModel(ctx, composeText, local);
+  else if (!hasModel && asks(ctx)) await enterKey(ctx, false);
   deps.say(`Starting NimbleBrain ${tag}. The first start downloads about 2 GB of images.`);
   await start(deps, home, flags.port);
 
@@ -148,7 +161,7 @@ async function install(
     model_key: result.model_key,
   });
   await rec.settle(home, consent);
-  if (result.model_key === "missing") {
+  if (result.model_key === "missing" && !result.local_model) {
     throw new CliError("MODEL_KEY_MISSING", "NimbleBrain is running; chat needs a model key.", {
       ...result,
     });
@@ -345,6 +358,53 @@ async function enterKey(ctx: Ctx, restart: boolean): Promise<Ok> {
     await start(deps, home, install?.port ?? flags.port);
   }
   return { ok: true, provider, model_key: "set" };
+}
+
+/**
+ * Prepares a local model on this machine's Ollama and points the install's
+ * `.env` at it, then starts the runtime again so its container reads it.
+ */
+export async function localModel(ctx: Ctx): Promise<Ok> {
+  const install = await requireInstall(ctx);
+  const composeText = (await ctx.deps.readText(paths(ctx.home).compose)) ?? "";
+  const model = ctx.arg ?? ctx.flags.localModel ?? DEFAULT_LOCAL_MODEL;
+  const name = await useLocalModel(ctx, composeText, model);
+  // `up` recreates the runtime container, which is what makes it read `.env` again.
+  await start(ctx.deps, ctx.home, install.port);
+  return { ok: true, local_model: name };
+}
+
+/** Asks which model NimbleBrain's own agents run on: a local model's name, or undefined for a hosted key. */
+async function chooseModelSource(deps: Deps): Promise<string | undefined> {
+  deps.say(
+    "NimbleBrain's own agents need a model: a hosted one with your API key, or a local one through Ollama (free, slower; https://docs.nimblebrain.ai/config/local-models/).",
+  );
+  const answer = (await deps.prompt("Model (hosted, local) [hosted]: ")).trim().toLowerCase();
+  return answer === "local" ? DEFAULT_LOCAL_MODEL : undefined;
+}
+
+/** Prepares `model` on Ollama and writes its `.env` lines; answers the name the runtime will use. */
+async function useLocalModel(ctx: Ctx, composeText: string, model: string): Promise<string> {
+  const { deps, home } = ctx;
+  if (!takesLocalModel(composeText)) {
+    throw new CliError(
+      "RUNTIME_UNSUPPORTED",
+      "This release's runtime takes no local model; a newer release does.",
+    );
+  }
+  const values = await setupLocalModel(deps, model, (m) => confirmPull(ctx, m));
+  const p = paths(home);
+  await deps.writeText(p.env, setEnvLines((await deps.readText(p.env)) ?? "", values), 0o600);
+  return values.NB_LOCAL_MODEL ?? model;
+}
+
+/** Whether a missing model may be downloaded: asked at a terminal, taken as yes otherwise (`--yes`). */
+async function confirmPull(ctx: Ctx, model: string): Promise<boolean> {
+  if (!asks(ctx)) return true;
+  const answer = (await ctx.deps.prompt(`Download ${model} with Ollama? It is several GB. [Y/n] `))
+    .trim()
+    .toLowerCase();
+  return answer === "" || answer === "y" || answer === "yes";
 }
 
 async function chooseAgent(deps: Deps): Promise<Agent> {

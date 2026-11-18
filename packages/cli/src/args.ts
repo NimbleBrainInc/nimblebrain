@@ -13,6 +13,7 @@ export const COMMANDS = [
   "uninstall",
   "telemetry",
   "mcp",
+  "local-model",
 ] as const;
 export type Command = (typeof COMMANDS)[number];
 
@@ -26,6 +27,8 @@ export interface Flags {
   port: number;
   home?: string;
   provider?: string;
+  /** `--local-model <model>`: run NimbleBrain's agents on this Ollama model instead of a hosted key. */
+  localModel?: string;
   runtime?: string;
   /** `--telemetry on|off`: an answer a person already gave. */
   telemetry?: "on" | "off";
@@ -49,6 +52,7 @@ const options = {
   port: { type: "string" },
   home: { type: "string" },
   provider: { type: "string" },
+  "local-model": { type: "string" },
   runtime: { type: "string" },
   telemetry: { type: "string" },
   name: { type: "string" },
@@ -85,6 +89,7 @@ export function parse(argv: string[]): Parsed {
     port,
     home: values.home,
     provider: values.provider,
+    localModel: values["local-model"],
     runtime: values.runtime,
     telemetry,
     name: values.name,
@@ -115,14 +120,14 @@ export type McpSubcommand = keyof typeof MCP_SUBCOMMANDS;
 
 /**
  * The command named, checked with its arguments: `telemetry` takes one (on, off
- * or status), `mcp` a subcommand and that subcommand's operand; nothing else
- * takes any.
+ * or status), `local-model` a model, `mcp` a subcommand and that subcommand's
+ * operand; nothing else takes any.
  */
 function command(name: string, positionals: string[]): Command {
   if (!(COMMANDS as readonly string[]).includes(name))
     throw new CliError("USAGE", `Unknown command "${name}".`);
   if (name === "mcp") return mcpCommand(positionals);
-  const maxArgs = name === "telemetry" ? 2 : 1;
+  const maxArgs = name === "telemetry" || name === "local-model" ? 2 : 1;
   if (positionals.length > maxArgs)
     throw new CliError("USAGE", `Unexpected argument "${positionals[maxArgs]}".`);
   const arg = positionals[1];

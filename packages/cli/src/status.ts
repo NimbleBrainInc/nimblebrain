@@ -3,6 +3,7 @@ import { skillInstalled } from "./agents.ts";
 import type { Agent } from "./args.ts";
 import { hasKey, hostLoopback, keyVars } from "./compose.ts";
 import type { Deps } from "./deps.ts";
+import { localModelOf } from "./local-model.ts";
 import { CliError } from "./result.ts";
 import { currentTelemetry, type TelemetryField } from "./telemetry.ts";
 import { VERSION } from "./version.ts";
@@ -56,6 +57,8 @@ export interface StatusResult {
   model_key: "set" | "missing";
   /** Whether the installed release can reach a server on this machine (`mcp add`); false until `update`. */
   host_loopback: boolean;
+  /** The local model NimbleBrain's agents run on (`npx nimblebrain local-model`), or null for a hosted key. */
+  local_model: string | null;
   telemetry: TelemetryField;
 }
 
@@ -85,9 +88,8 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
   // call runs without the shell's key variables. Read for names, never values.
   const composeText = (await deps.readText(join(home, "docker-compose.yml"))) ?? "";
   const vars = keyVars(composeText);
-  const modelKey = hasKey((await deps.readText(join(home, ".env"))) ?? "", vars)
-    ? "set"
-    : "missing";
+  const envText = (await deps.readText(join(home, ".env"))) ?? "";
+  const modelKey = hasKey(envText, vars) ? "set" : "missing";
 
   return {
     ok: true,
@@ -102,6 +104,7 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
     },
     model_key: modelKey,
     host_loopback: hostLoopback(composeText),
+    local_model: localModelOf(envText) ?? null,
     telemetry: await currentTelemetry(deps, home, url),
   };
 }
