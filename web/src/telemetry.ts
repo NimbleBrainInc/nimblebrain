@@ -1,4 +1,4 @@
-import posthog, { type CaptureResult } from "posthog-js";
+import posthog, { type CaptureResult, type PostHogConfig } from "posthog-js";
 import { getConfig } from "./config";
 import { isHttpUrl, withoutQuery } from "./lib/url-scrub";
 
@@ -10,6 +10,35 @@ const POSTHOG_KEY = posthogCfg?.enabled === false ? "" : (posthogCfg?.key ?? "")
 
 let initialized = false;
 
+/**
+ * Everything off except the events this client captures by name. posthog-js
+ * takes any feature left unset from the PostHog project's settings, so a
+ * project toggle (heatmaps, web vitals, dead clicks, exceptions, surveys)
+ * would otherwise start sending data the telemetry docs say is never sent.
+ * `advanced_disable_flags` stops the remote-config request altogether.
+ * Exported for tests.
+ */
+export const INIT_OPTIONS = {
+  api_host: "https://us.i.posthog.com",
+  ip: false,
+  autocapture: false,
+  capture_pageview: false,
+  capture_pageleave: false,
+  capture_heatmaps: false,
+  capture_performance: false,
+  capture_dead_clicks: false,
+  capture_exceptions: false,
+  disable_scroll_properties: true,
+  disable_session_recording: true,
+  disable_surveys: true,
+  disable_product_tours: true,
+  disable_conversations: true,
+  disable_web_experiments: true,
+  advanced_disable_flags: true,
+  persistence: "memory",
+  before_send: scrubUrls,
+} satisfies Partial<PostHogConfig>;
+
 export function initTelemetry(installId?: string): void {
   if (initialized || !installId || !POSTHOG_KEY) return;
 
@@ -18,15 +47,7 @@ export function initTelemetry(installId?: string): void {
   // second init, which PostHog logs as "already initialized".
   initialized = true;
 
-  posthog.init(POSTHOG_KEY, {
-    api_host: "https://us.i.posthog.com",
-    ip: false,
-    autocapture: false,
-    capture_pageview: false,
-    disable_session_recording: true,
-    persistence: "memory",
-    before_send: scrubUrls,
-  });
+  posthog.init(POSTHOG_KEY, INIT_OPTIONS);
 
   posthog.register({ installId });
 }

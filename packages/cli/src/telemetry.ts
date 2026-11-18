@@ -4,10 +4,12 @@ import type { Deps } from "./deps.ts";
 import { CliError } from "./result.ts";
 
 /**
- * The write-only key of the PostHog project that holds local installs'
- * anonymous telemetry, and nothing else. Empty until that project exists: with
- * no key the CLI asks no one and sends nothing. `NIMBLEBRAIN_TELEMETRY_KEY`
- * overrides it (a development project, or a test).
+ * The write-only key of the "NimbleBrain Self-hosted" PostHog project, which
+ * holds anonymous telemetry from installs we do not run, and nothing else. It
+ * is public by design (it ships in this package), so that project must never
+ * hold customer data. Empty until the key is set: with no key the CLI asks no
+ * one and sends nothing. `NIMBLEBRAIN_TELEMETRY_KEY` overrides it (a
+ * development project, or a test).
  */
 export const TELEMETRY_KEY = "";
 const ENDPOINT = "https://us.i.posthog.com/batch/";

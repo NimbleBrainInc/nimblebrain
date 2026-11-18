@@ -22,7 +22,7 @@ Published to npm as `nimblebrain`; run as `npx nimblebrain`. It installs, starts
 
 ## Not here yet
 
-- **The telemetry key.** `TELEMETRY_KEY` in `src/telemetry.ts` is empty until the PostHog project for local installs exists; until then no one is asked and nothing is sent.
+- **The telemetry key.** `TELEMETRY_KEY` in `src/telemetry.ts` is empty until it holds the write-only key of the "NimbleBrain Self-hosted" PostHog project; until then no one is asked and nothing is sent.
 - **A skill matched to the release.** `installSkill` takes the `nimblebrain` skill from the skills repo's default branch; that repo has no release tags to pin to yet.
 
 ## Releasing
