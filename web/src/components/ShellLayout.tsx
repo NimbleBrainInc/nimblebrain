@@ -20,6 +20,7 @@ import { TopBar } from "./shell/TopBar";
 import { WorkspaceNav } from "./shell/WorkspaceNav";
 import { WorkspaceSwitcher } from "./shell/WorkspaceSwitcher";
 import { TelemetryConsentCard } from "./TelemetryConsentCard";
+import { TourProvider } from "./tour/ShellTour";
 import { UserMenu } from "./UserMenu";
 import { TooltipProvider } from "./ui/tooltip";
 
@@ -98,84 +99,87 @@ export const ShellLayout = memo(function ShellLayout({
   const sidebarBottom = forSlot("sidebar.bottom").filter((p) => p.route !== "settings");
 
   return (
-    <div className="flex h-dvh overflow-hidden">
-      {/* Desktop / tablet sidebar */}
-      {!isHidden && (
-        <nav
-          aria-label="Workspace"
-          className={cn(
-            "shrink-0 h-dvh flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-[width] duration-200",
-            isCollapsed ? "w-16" : "w-60",
-            sidebarClass,
-          )}
-        >
-          <SidebarBody collapsed={isCollapsed} onLogout={onLogout} />
-        </nav>
-      )}
+    // The tour lives here, not on a page: its steps open other pages.
+    <TourProvider>
+      <div className="flex h-dvh overflow-hidden">
+        {/* Desktop / tablet sidebar */}
+        {!isHidden && (
+          <nav
+            aria-label="Workspace"
+            className={cn(
+              "shrink-0 h-dvh flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-[width] duration-200",
+              isCollapsed ? "w-16" : "w-60",
+              sidebarClass,
+            )}
+          >
+            <SidebarBody collapsed={isCollapsed} onLogout={onLogout} />
+          </nav>
+        )}
 
-      {/* Main content — pushes over to make room for the chat panel
+        {/* Main content — pushes over to make room for the chat panel
           when it's open in sidebar mode. The marginRight + transition
           here is what every route relies on. Mobile / fullscreen
           modes don't need this push: mobile chat is full-width;
           fullscreen chat covers the content overlay-style. It is the
           `main` container the page gutter follows (`theme/palette.ts`
           `spacing`), since an app's iframe fills this same column. */}
-      <main
-        className="@container/main relative flex-1 h-dvh overflow-hidden bg-background text-foreground flex flex-col"
-        style={{
-          marginRight: mainMarginRight,
-          transition: `margin-right ${CHAT_TRANSITION_STANDARD}`,
-        }}
-      >
-        <TopBar />
-        <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
-        <NoticeViewport />
-      </main>
+        <main
+          className="@container/main relative flex-1 h-dvh overflow-hidden bg-background text-foreground flex flex-col"
+          style={{
+            marginRight: mainMarginRight,
+            transition: `margin-right ${CHAT_TRANSITION_STANDARD}`,
+          }}
+        >
+          <TopBar />
+          <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
+          <NoticeViewport />
+        </main>
 
-      {/* Chat chrome (toggle + sliding panel + resize handle) — the single,
+        {/* Chat chrome (toggle + sliding panel + resize handle) — the single,
           global mount point, gated to workspace routes: chat exists only
           inside a workspace, so home / profile render no panel. The push-over
           that makes room for the panel is the `marginRight` on <main> above;
           the panel and handle live inside ChatChrome itself. */}
-      {isWorkspaceRoute && <ChatChrome />}
+        {isWorkspaceRoute && <ChatChrome />}
 
-      {/* Artifact document panel — the single, global mount point (sibling
+        {/* Artifact document panel — the single, global mount point (sibling
           of ChatChrome), so an artifact chip in any conversation opens its
           report into one shared right-side drawer. Renders nothing until an
           artifact is opened via ArtifactPanelContext. */}
-      <ArtifactPanel />
+        <ArtifactPanel />
 
-      {/* Mobile drawer — single-column layout mirroring desktop. */}
-      {isHidden && (
-        <MobileSidebarDrawer>
-          <div className="flex flex-col h-full">
-            <SidebarBody
-              collapsed={false}
-              onLogout={() => {
-                setDrawerOpen(false);
-                onLogout();
-              }}
-              // Bottom pinned items (sidebar.bottom placements; settings is
-              // reached from the workspace switcher).
-              tray={
-                sidebarBottom.length > 0 && (
-                  <div className="shrink-0 border-t border-sidebar-border py-2">
-                    {sidebarBottom.map((p) => (
-                      <MobileNavItem
-                        key={p.resourceUri}
-                        to={resolveRoute(p, wsSlug)}
-                        icon={p.icon}
-                        label={p.label ?? "Settings"}
-                      />
-                    ))}
-                  </div>
-                )
-              }
-            />
-          </div>
-        </MobileSidebarDrawer>
-      )}
-    </div>
+        {/* Mobile drawer — single-column layout mirroring desktop. */}
+        {isHidden && (
+          <MobileSidebarDrawer>
+            <div className="flex flex-col h-full">
+              <SidebarBody
+                collapsed={false}
+                onLogout={() => {
+                  setDrawerOpen(false);
+                  onLogout();
+                }}
+                // Bottom pinned items (sidebar.bottom placements; settings is
+                // reached from the workspace switcher).
+                tray={
+                  sidebarBottom.length > 0 && (
+                    <div className="shrink-0 border-t border-sidebar-border py-2">
+                      {sidebarBottom.map((p) => (
+                        <MobileNavItem
+                          key={p.resourceUri}
+                          to={resolveRoute(p, wsSlug)}
+                          icon={p.icon}
+                          label={p.label ?? "Settings"}
+                        />
+                      ))}
+                    </div>
+                  )
+                }
+              />
+            </div>
+          </MobileSidebarDrawer>
+        )}
+      </div>
+    </TourProvider>
   );
 });
 

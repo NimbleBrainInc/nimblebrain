@@ -284,6 +284,7 @@ export function ConnectorBrowsePage() {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search the directory…"
+        data-tour="catalog"
         className="w-full text-sm px-3 py-2 rounded border border-border bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
       />
 

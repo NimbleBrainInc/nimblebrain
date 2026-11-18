@@ -10,11 +10,13 @@
 // ---------------------------------------------------------------------------
 
 import { Menu } from "@base-ui/react/menu";
-import { BookOpen, CircleHelp, ExternalLink, Keyboard } from "lucide-react";
+import { BookOpen, CircleHelp, ExternalLink, Keyboard, Map as MapIcon } from "lucide-react";
 import { memo, useState } from "react";
+import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { DOCS_URL } from "../lib/docs";
 import { cn } from "../lib/utils";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
+import { useTour } from "./tour/ShellTour";
 import { Tooltip } from "./ui/tooltip";
 
 const itemClass =
@@ -22,6 +24,9 @@ const itemClass =
 
 export const HelpMenu = memo(function HelpMenu({ collapsed }: { collapsed: boolean }) {
   const [showShortcuts, setShowShortcuts] = useState(false);
+  // The tour walks a workspace's pages, so it is offered only with one open.
+  const { activeWorkspace } = useWorkspaceContext();
+  const tour = useTour();
 
   // Sized and aligned like a nav row (`WorkspaceNav`'s rowClass), so it reads
   // as the nav's last item rather than part of the account below.
@@ -41,7 +46,10 @@ export const HelpMenu = memo(function HelpMenu({ collapsed }: { collapsed: boole
   );
 
   return (
-    <div className={cn("shrink-0 pb-2", collapsed ? "flex justify-center px-3" : "px-2")}>
+    <div
+      data-tour="help"
+      className={cn("shrink-0 pb-2", collapsed ? "flex justify-center px-3" : "px-2")}
+    >
       <Menu.Root>
         {collapsed ? (
           <Tooltip label="Help" side="right">
@@ -75,6 +83,12 @@ export const HelpMenu = memo(function HelpMenu({ collapsed }: { collapsed: boole
                 <Keyboard aria-hidden="true" className="size-4" />
                 <span className="flex-1">Keyboard shortcuts</span>
               </Menu.Item>
+              {activeWorkspace && (
+                <Menu.Item className={itemClass} data-testid="help-menu-tour" onClick={tour.start}>
+                  <MapIcon aria-hidden="true" className="size-4" />
+                  <span className="flex-1">Take the tour</span>
+                </Menu.Item>
+              )}
             </Menu.Popup>
           </Menu.Positioner>
         </Menu.Portal>

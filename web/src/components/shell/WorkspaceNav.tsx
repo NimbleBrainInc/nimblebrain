@@ -129,6 +129,7 @@ function WorkspaceViews({
     <div
       className={cn("group/nav flex flex-col gap-px", collapsed ? "items-center px-3" : "px-2")}
       data-testid="sidebar-workspace-nav"
+      data-tour="nav"
       data-workspace-id={workspace.id}
       data-collapsed={collapsed ? "true" : "false"}
     >

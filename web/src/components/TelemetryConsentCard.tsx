@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { callToolWithoutWorkspace } from "../api/client";
 import { roleAtLeast, useScopedRole } from "../hooks/useScopedRole";
 import { initTelemetry } from "../telemetry";
+import { useTourRunning } from "./tour/ShellTour";
 import { Button } from "./ui/button";
 
 interface TelemetryInfo {
@@ -13,8 +14,9 @@ interface TelemetryInfo {
  * Asks an org admin, once, whether this install may send anonymous usage
  * telemetry, when no one has answered yet (`consent: "undecided"`). Nothing is
  * sent before the answer. Renders nothing when the deployment decided
- * (`locked`), when the install has nowhere to send it, after an answer, or on
- * the icon rail, where there is no room to ask properly.
+ * (`locked`), when the install has nowhere to send it, after an answer, on
+ * the icon rail, where there is no room to ask properly, or while the tour is
+ * on screen, so a first visit asks one thing at a time.
  *
  * The answer is the install's, kept by the runtime, so the CLI's `telemetry`
  * command and this card set the same thing.
@@ -23,6 +25,8 @@ export function TelemetryConsentCard({ collapsed = false }: { collapsed?: boolea
   const isOrgAdmin = roleAtLeast(useScopedRole(), "org_admin");
   const [info, setInfo] = useState<TelemetryInfo | null>(null);
   const [busy, setBusy] = useState(false);
+  // One ask at a time: the question waits while the tour is on screen.
+  const tourRunning = useTourRunning();
 
   useEffect(() => {
     if (!isOrgAdmin) return;
@@ -32,7 +36,8 @@ export function TelemetryConsentCard({ collapsed = false }: { collapsed?: boolea
   }, [isOrgAdmin]);
 
   const t = info?.telemetry;
-  if (collapsed || !isOrgAdmin || t?.consent !== "undecided" || t.locked) return null;
+  if (collapsed || tourRunning || !isOrgAdmin || t?.consent !== "undecided" || t.locked)
+    return null;
 
   const answer = (consent: "on" | "off") => {
     setBusy(true);
