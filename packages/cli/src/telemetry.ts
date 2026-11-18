@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import pkg from "../package.json" with { type: "json" };
 import type { Deps } from "./deps.ts";
 import { CliError } from "./result.ts";
 
@@ -43,8 +44,15 @@ interface Event {
 
 export const reportPath = (home: string) => join(home, "telemetry-report.jsonl");
 
+/**
+ * A published CLI. A development build (`0.0.0-dev`) has no destination of its
+ * own: it installs whatever release is newest, which may predate asking before
+ * sending, and it must never put test runs into the project.
+ */
+const RELEASED = !pkg.version.startsWith("0.0.0");
+
 export function telemetryKey(deps: Deps): string {
-  return deps.env.NIMBLEBRAIN_TELEMETRY_KEY ?? TELEMETRY_KEY;
+  return deps.env.NIMBLEBRAIN_TELEMETRY_KEY ?? (RELEASED ? TELEMETRY_KEY : "");
 }
 
 /** Whether no one can be asked: the person set `DO_NOT_TRACK`, or there is nowhere to send. */
@@ -191,11 +199,22 @@ export async function settleWaiting(deps: Deps, home: string, version: string): 
   }
 }
 
-/** The answer the CLI holds before the runtime runs, and the install's telemetry settings, as `.env` lines. */
-export function envValues(deps: Deps, id: string, consent: Consent): Record<string, string> {
+/**
+ * The answer the CLI holds before the runtime runs, and the install's telemetry
+ * settings, as `.env` lines. `ownRelease`: the runtime installed is this CLI's
+ * own release. Only then does
+ * it get the key, because only a runtime that asks before sending may hold
+ * one; an older release sends by default once it has a key.
+ */
+export function envValues(
+  deps: Deps,
+  id: string,
+  consent: Consent,
+  ownRelease: boolean,
+): Record<string, string> {
   const values: Record<string, string> = {
     NB_TELEMETRY_ID: id,
-    NB_TELEMETRY_KEY: telemetryKey(deps),
+    NB_TELEMETRY_KEY: ownRelease ? telemetryKey(deps) : "",
   };
   if (consent !== "undecided") values.NB_TELEMETRY_CONSENT = consent;
   return values;

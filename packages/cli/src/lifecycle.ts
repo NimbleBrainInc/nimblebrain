@@ -97,7 +97,14 @@ async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number)
   const tag = await releaseTag(deps, ctx.version);
   await confirmStart(ctx, tag);
 
-  await writeInstallFiles(deps, home, tag, flags.port, envValues(deps, rec.id, consent));
+  const ownRelease = tag === `v${ctx.version}`;
+  await writeInstallFiles(
+    deps,
+    home,
+    tag,
+    flags.port,
+    envValues(deps, rec.id, consent, ownRelease),
+  );
   // Asked before the start: the runtime reads `.env` only when its container is created.
   if (!hasKey((await deps.readText(paths(home).env)) ?? "") && asks(ctx))
     await enterKey(ctx, false);

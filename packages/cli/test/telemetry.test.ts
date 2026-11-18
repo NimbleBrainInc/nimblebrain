@@ -6,8 +6,11 @@ import { fail, type Machine, machine } from "./fake.ts";
 const HOME = "/home/dana/.nimblebrain-local";
 const ENV = `${HOME}/.env`;
 const REPORT = `${HOME}/telemetry-report.jsonl`;
-/** A release pinned, and a destination to send to: without a key no one is asked. */
-const env = { NIMBLEBRAIN_TAG: "v0.70.0", NIMBLEBRAIN_TELEMETRY_KEY: "phc_test" };
+/**
+ * The CLI's own release pinned (a dev build's version is `0.0.0-dev`), and a
+ * destination to send to: without a key no one is asked.
+ */
+const env = { NIMBLEBRAIN_TAG: "v0.0.0-dev", NIMBLEBRAIN_TELEMETRY_KEY: "phc_test" };
 
 async function json(argv: string[], m: Machine) {
   const { stdout, code } = await run([...argv, "--json"], m.deps);
@@ -98,6 +101,21 @@ describe("telemetry consent at init", () => {
     expect(body.telemetry.state).toBe("undecided");
     expect(sent(m)).toHaveLength(0);
     expect(reportEvents(m)).toEqual(["cli.init_started", "cli.doctor_failed"]);
+  });
+
+  test("a runtime that is not this CLI's own release gets no key, since it may send without asking", async () => {
+    const m = machine({ env: { ...env, NIMBLEBRAIN_TAG: "v0.70.0" } });
+    await json(["--yes", "--telemetry", "on"], m);
+    expect(m.files.get(ENV)?.text).toMatch(/^NB_TELEMETRY_KEY=$/m);
+  });
+
+  test("a development build has no destination of its own", async () => {
+    const { NIMBLEBRAIN_TELEMETRY_KEY: _, ...noOverride } = env;
+    const m = machine({ env: noOverride });
+    // The fake defaults the override to empty; drop it to see the build's own key.
+    delete m.deps.env.NIMBLEBRAIN_TELEMETRY_KEY;
+    const { body } = await json(["--yes"], m);
+    expect(body.telemetry).toEqual({ state: "off", locked: "no_destination" });
   });
 
   test("the telemetry key is not offered as a model provider", async () => {

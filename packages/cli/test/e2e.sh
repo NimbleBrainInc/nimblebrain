@@ -30,6 +30,10 @@ expect "$out" '.error == "MODEL_KEY_MISSING"' "init ends asking for a model key"
 expect "$out" '.health == "ok"' "the runtime is healthy"
 expect "$out" '(.workspaces | length) >= 1' "a workspace exists"
 expect "$out" '.url == "http://127.0.0.1:27246"' "the UI is on 127.0.0.1:27246"
+# A development build has no telemetry destination, and its runtime gets no key.
+expect "$out" '.telemetry.locked == "no_destination"' "a development build sends nothing"
+if grep -q '^NB_TELEMETRY_KEY=.' "$NIMBLEBRAIN_HOME/.env"; then echo "FAILED: the runtime was given a telemetry key"; exit 1; fi
+echo "ok: the runtime has no telemetry key"
 mcp=$(jq -r '.workspaces[0].mcp' <<<"$out")
 
 step "the workspace MCP endpoint lists tools, as a connected agent would"
