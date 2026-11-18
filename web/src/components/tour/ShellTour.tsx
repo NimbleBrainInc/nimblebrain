@@ -47,6 +47,7 @@ import {
   type TooltipRenderProps,
 } from "react-joyride";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useSidebar } from "../../context/SidebarContext";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { useIsMobile } from "../../lib/hooks/use-is-mobile";
 import { type LocalPref, usePref, writePref } from "../../lib/local-pref";
@@ -265,6 +266,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { activeWorkspace } = useWorkspaceContext();
+  const { setDrawerOpen } = useSidebar();
   const slug = activeWorkspace ? toSlug(activeWorkspace.id) : null;
   const [run, setRun] = useState<{ slug: string; steps: TourStep[] } | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
@@ -275,11 +277,15 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const begin = useCallback(
     (origin: "first_visit" | "help") => {
       if (!slug) return;
+      // On a phone, Help sits in the sidebar drawer, which is modal and would
+      // cover the page the tour points at; only a navigation closes it, and the
+      // first stops are on the page already open.
+      setDrawerOpen(false);
       setStepIndex(0);
       setRun({ slug, steps: stepsFor(mobile) });
       captureEvent("web.tour_started", { origin });
     },
-    [slug, mobile],
+    [slug, mobile, setDrawerOpen],
   );
 
   // First visit: offered on a workspace's Overview, one frame after it renders
