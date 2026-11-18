@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Deps, ExecResult } from "../src/deps.ts";
-import { run, VERSION } from "../src/main.ts";
+import { interrupted, run, VERSION } from "../src/main.ts";
 import { GB, machine, ok } from "./fake.ts";
 
 /** A machine where everything passes unless a test overrides one answer. */
@@ -211,5 +214,57 @@ describe("status", () => {
     await json(["status"], deps);
     expect(seen).toContain("/srv/nb/install.json");
     expect(seen.every((p) => p.startsWith("/srv/nb/"))).toBe(true);
+  });
+});
+
+describe("a run that ends without answering", () => {
+  test("still answers once, as INTERRUPTED with the exit code, in the format asked for", () => {
+    const asJson = interrupted(["init", "--json"], 143);
+    expect(asJson.code).toBe(1);
+    expect(JSON.parse(asJson.stdout)).toMatchObject({
+      ok: false,
+      error: "INTERRUPTED",
+      exit_code: 143,
+    });
+    const plain = interrupted(["init"], 130);
+    expect(plain.stdout).toContain("exit code 130");
+    expect(plain.stdout).toContain("fix: ");
+  });
+});
+
+describe("the entry point", () => {
+  const bin = join(import.meta.dir, "../src/bin.ts");
+
+  test("a normal run answers once", async () => {
+    const proc = Bun.spawn(["bun", bin, "--version", "--json"], { stdout: "pipe", stderr: "pipe" });
+    const out = await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+    expect(out.trim().split("\n")).toHaveLength(1);
+    expect(JSON.parse(out)).toEqual({ ok: true, version: VERSION });
+  });
+
+  test("a signal mid-command answers once, as INTERRUPTED with 128 + n, and exits 1", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nb-bin-"));
+    const started = join(dir, "started");
+    const docker = join(dir, "docker");
+    writeFileSync(docker, `#!/bin/sh\ntouch "${started}"\nexec sleep 30\n`);
+    chmodSync(docker, 0o755);
+    const proc = Bun.spawn(["bun", bin, "doctor", "--json"], {
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH}`,
+        NIMBLEBRAIN_HOME: join(dir, "home"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    for (let i = 0; i < 100 && !existsSync(started); i++) await Bun.sleep(50);
+    proc.kill("SIGTERM");
+    const out = await new Response(proc.stdout).text();
+    const err = await new Response(proc.stderr).text();
+    expect(await proc.exited).toBe(1);
+    expect(out.trim().split("\n")).toHaveLength(1);
+    expect(JSON.parse(out)).toMatchObject({ ok: false, error: "INTERRUPTED", exit_code: 143 });
+    expect(err).toContain("stopped before answering (exit code 143)");
   });
 });

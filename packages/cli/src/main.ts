@@ -126,3 +126,17 @@ function field(key: string, value: unknown): string[] {
   const text = typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
   return [`  ${key}: ${text}`];
 }
+
+/**
+ * What to print when the process is ending without having answered: a broken
+ * promise of "one JSON object for every run" would leave an agent with nothing
+ * to act on. `exitCode` is the code the process was about to end with.
+ */
+export function interrupted(argv: string[], exitCode: number): { stdout: string; code: number } {
+  const err = new CliError(
+    "INTERRUPTED",
+    `The CLI stopped before it answered (exit code ${exitCode}).`,
+    { exit_code: exitCode },
+  );
+  return render(failure(err), wantsJson(argv));
+}
