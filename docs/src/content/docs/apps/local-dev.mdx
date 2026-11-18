@@ -10,6 +10,7 @@ import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 | Workflow | What it gives you | When to use |
 |----------|-------------------|-------------|
 | **Synapse Preview** | Standalone preview with tool calls and HMR | Building a new app, iterating on UI |
+| **npx nimblebrain mcp add** | Your server in a local NimbleBrain install, no checkout | Testing data sync and agent interactions against a release |
 | **bun run dev --app** | Full NimbleBrain platform with HMR | Testing data sync, agent interactions, multi-app |
 | **bun run dev + reload** | Full platform, manual restart | Quick tool changes, no UI build step |
 | **Tools only** | MCP server in Claude Desktop or any client | Testing tools without UI |
@@ -71,7 +72,32 @@ synapseVite({
 })
 ```
 
-## NimbleBrain dev mode
+## A local install (`npx nimblebrain`)
+
+The quickest way to see your app inside NimbleBrain, with no platform checkout.
+Install NimbleBrain with [`npx nimblebrain`](/cli/nimblebrain/), run your MCP
+server over HTTP, and add it by URL, once:
+
+```bash
+# Terminal 1 — your server, over streamable HTTP
+uv run python -m mcp_myapp.server --http --port 8765
+
+# Terminal 2 — add it to the workspace your coding agent is connected to
+npx nimblebrain mcp add http://127.0.0.1:8765/mcp
+```
+
+NimbleBrain reads the server's Server Card at `/server-card` for its title, icon
+and sidebar placements ([Host manifest](/host/manifest/)), so an app with a
+placement shows in the sidebar without a catalog entry. Restart the server as
+often as you like; NimbleBrain reconnects at the same URL. `npx nimblebrain mcp
+list` and `mcp remove <serverName>` show and remove what you added. On Linux,
+bind the server to `0.0.0.0` or the Docker bridge address; see [Developing a
+server](/cli/nimblebrain/#developing-a-server).
+
+UI changes need a rebuild and a server restart, as in [Without UI
+hot-reload](#without-ui-hot-reload); for HMR use the platform's dev mode below.
+
+## NimbleBrain dev mode (source checkout)
 
 ### With UI hot-reload (`bun run dev --app`)
 
