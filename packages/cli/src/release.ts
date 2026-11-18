@@ -1,7 +1,14 @@
 import type { Deps } from "./deps.ts";
 import { CliError } from "./result.ts";
 
-const TAGS_URL = "https://api.github.com/repos/NimbleBrainInc/nimblebrain/tags?per_page=100";
+/**
+ * The repository's refs as Git's smart HTTP protocol lists them for a clone.
+ * Unlike GitHub's REST API it has no 60-requests-an-hour limit per address, so
+ * a shared address (CI, an agent sandbox, an office NAT) can still find the
+ * newest release; every tag is listed, not one page of them.
+ */
+const REFS_URL =
+  "https://github.com/NimbleBrainInc/nimblebrain.git/info/refs?service=git-upload-pack";
 
 /** A release tag: `vX.Y.Z`, optionally with a pre-release such as `-rc.1`. */
 const VERSION = /^v\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
@@ -42,12 +49,14 @@ export async function runtimeTag(deps: Deps, requested?: string): Promise<string
 }
 
 async function newestRuntime(deps: Deps): Promise<string> {
-  const res = await deps.getJson(TAGS_URL, 10_000);
-  const names = Array.isArray(res?.body)
-    ? (res.body as Array<{ name?: unknown }>)
-        .map((t) => t.name)
-        .filter((n): n is string => typeof n === "string")
-    : [];
+  const res = await deps.getText(REFS_URL, 10_000);
+  if (res && res.status !== 200) {
+    throw new CliError(
+      "NETWORK",
+      `GitHub answered ${res.status} when asked for the newest NimbleBrain release. Pass --runtime vX.Y.Z to skip the lookup.`,
+    );
+  }
+  const names = [...(res?.body ?? "").matchAll(/refs\/tags\/([^\s\0^]+)/g)].map((m) => m[1] ?? "");
   const newest = newestRelease(names);
   if (!newest) throw new CliError("NETWORK", "Could not find the newest NimbleBrain release.");
   return newest;

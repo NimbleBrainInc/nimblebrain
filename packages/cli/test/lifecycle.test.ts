@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { keyVars, PROJECT, providers } from "../src/compose.ts";
 import { run } from "../src/main.ts";
 import { compareVersions, MIN_RUNTIME, newestRelease, runtimeTag } from "../src/release.ts";
+import { VERSION } from "../src/version.ts";
 import { fail, machine, ok, REPO_COMPOSE } from "./fake.ts";
 
 const HOME = "/home/dana/.nimblebrain-local";
@@ -9,7 +10,7 @@ const INSTALL = `${HOME}/install.json`;
 const ENV = `${HOME}/.env`;
 /** What an earlier, unfinished `init` leaves in `.env`: the mark that the home is the CLI's. */
 const MARK = `COMPOSE_PROJECT_NAME=${PROJECT}\n`;
-/** A dev build of the CLI pins no release, so tests pin one the way a release build would. */
+/** Pins the runtime, so a test does not depend on which release is newest. */
 const env = { NIMBLEBRAIN_TAG: "v0.73.0" };
 
 async function json(argv: string[], m = machine({ env })) {
@@ -67,6 +68,7 @@ describe("init", () => {
       error: "MODEL_KEY_MISSING",
       health: "ok",
       version: "0.73.0",
+      cli_version: VERSION,
       url: "http://127.0.0.1:27246",
       workspaces: [{ id: "ws_1", mcp: "http://127.0.0.1:27246/mcp/ws_1" }],
       agent: { connected: "claude-code", skill: "nimblebrain" },
@@ -312,6 +314,18 @@ describe("releases", () => {
     expect(await runtimeTag(m.deps, MIN_RUNTIME)).toBe(MIN_RUNTIME);
     await expect(runtimeTag(m.deps, "v0.72.9")).rejects.toMatchObject({
       code: "RUNTIME_UNSUPPORTED",
+    });
+  });
+
+  test("GitHub refusing the lookup says so and points at --runtime", async () => {
+    const m = machine();
+    m.deps.getText = async () => ({ status: 403, body: "rate limited" });
+    await expect(runtimeTag(m.deps)).rejects.toMatchObject({
+      code: "NETWORK",
+      message: expect.stringContaining("answered 403"),
+    });
+    await expect(runtimeTag(m.deps)).rejects.toMatchObject({
+      message: expect.stringContaining("--runtime"),
     });
   });
 
