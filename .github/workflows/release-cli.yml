@@ -83,7 +83,8 @@ jobs:
         working-directory: packages/cli
         run: |
           set -euo pipefail
-          bun run build
+          # The release build is the only one with a telemetry destination.
+          bun run build:release
           npm pack
       - uses: actions/upload-artifact@v7
         with:

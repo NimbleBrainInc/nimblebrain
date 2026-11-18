@@ -127,9 +127,11 @@ Release is taken from the runtime's existing `NB_VERSION` → `NB_BUILD_SHA` (no
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `NB_TELEMETRY_DISABLED` | No | — | Set to `1` to disable anonymous usage telemetry. |
-| `DO_NOT_TRACK` | No | — | Standard opt-out signal. Set to `1` to disable telemetry. Equivalent to `NB_TELEMETRY_DISABLED=1`. |
-| `POSTHOG_API_KEY` | No | — | Override the built-in PostHog key. Rarely needed. |
+| `NB_TELEMETRY_DISABLED` | No | — | Set to `1` to turn anonymous usage telemetry off. No one is asked. |
+| `DO_NOT_TRACK` | No | — | Standard opt-out signal. Equivalent to `NB_TELEMETRY_DISABLED=1`. |
+| `POSTHOG_API_KEY` | No | — | Where telemetry goes. Unset ⇒ nowhere, so no one is asked and nothing is sent. |
+| `NB_TELEMETRY_ID` | No | — | The install's anonymous ID (a UUID). `npx nimblebrain` sets it so its own events and the runtime's count as one install. Unset ⇒ a random ID kept in `.telemetry-id`. |
+| `NB_TELEMETRY_CONSENT` | No | — | `on` or `off`: an answer a person gave an installer before the runtime first ran. An answer recorded in the runtime wins over it. |
 
 ### Web client (runtime config)
 
@@ -142,7 +144,7 @@ The web UI is a static build, so it cannot read pod env from JS. Instead Caddy s
 | `NB_SENTRY_ENV` | No | — | Sentry `environment` label (e.g. `staging`, `production`). |
 | `NB_SENTRY_TRACES_SAMPLE_RATE` | No | `0` | Performance-trace sample rate, `0`–`1`. |
 | `NB_POSTHOG_KEY` | No | — | PostHog write-only key for web analytics. |
-| `NB_POSTHOG_ENABLED` | No | `false` | Set `true` to enable web analytics (also requires a key). |
+| `NB_POSTHOG_ENABLED` | No | `false` | Set `true` to allow web analytics (also requires a key). The client still sends nothing until the runtime reports a yes. |
 
 Sentry tags every event with `tenant_id` (from `NB_TENANT_ID`), `workspace_id`, and an opaque `user.id` — never email, display name, prompts, or tool content. For local development, the same values can be supplied to `bun run dev` as `VITE_*` fallbacks (see `.env.example`).
 
@@ -194,7 +196,7 @@ The same list decides which browser origins may call `/mcp/<workspaceId>`. See [
 
 ## Telemetry variables
 
-Either variable disables anonymous telemetry:
+Either variable turns anonymous telemetry off and stops anyone from being asked (see [Telemetry](/using/telemetry/) for who decides otherwise):
 
 ```bash
 export NB_TELEMETRY_DISABLED=1

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TelemetryClient, TelemetryClientFactory } from "../../src/telemetry/manager.ts";
-import { TelemetryManager } from "../../src/telemetry/manager.ts";
+import { TelemetryLockedError, TelemetryManager } from "../../src/telemetry/manager.ts";
 
 class MockTelemetryClient implements TelemetryClient {
   events: Array<{ distinctId: string; event: string; properties: Record<string, unknown> }> = [];
@@ -85,14 +85,94 @@ describe("TelemetryManager", () => {
     expect(mgr.isEnabled()).toBe(false);
   });
 
-  it("enabled by default", () => {
+  it("sends nothing until a person answers", () => {
     const mock = new MockTelemetryClient();
     const mgr = TelemetryManager.create({
       workDir: makeTmpDir(),
       clientFactory: mockFactory(mock),
     });
 
-    expect(mgr.isEnabled()).toBe(true);
+    expect(mgr.status()).toEqual({ consent: "undecided" });
+    expect(mgr.isEnabled()).toBe(false);
+    mgr.capture("test.event");
+    expect(mock.events).toHaveLength(0);
+  });
+
+  it("a yes takes effect at once and is kept for the next start", () => {
+    const dir = makeTmpDir();
+    const mock = new MockTelemetryClient();
+    const mgr = TelemetryManager.create({ workDir: dir, clientFactory: mockFactory(mock) });
+    mgr.setConsent("on");
+    mgr.capture("test.event");
+    expect(mock.events).toHaveLength(1);
+
+    const again = TelemetryManager.create({ workDir: dir, clientFactory: mockFactory(mock) });
+    expect(again.status()).toEqual({ consent: "on" });
+  });
+
+  it("a no stops sending and is kept", () => {
+    const dir = makeTmpDir();
+    const mock = new MockTelemetryClient();
+    const mgr = TelemetryManager.create({ workDir: dir, clientFactory: mockFactory(mock) });
+    mgr.setConsent("on");
+    mgr.setConsent("off");
+    mgr.capture("test.event");
+    expect(mock.events).toHaveLength(0);
+    expect(
+      TelemetryManager.create({ workDir: dir, clientFactory: mockFactory(mock) }).status(),
+    ).toEqual({ consent: "off" });
+  });
+
+  it("an installer's answer seeds the first start; a recorded answer wins over it", () => {
+    const dir = makeTmpDir();
+    const mock = new MockTelemetryClient();
+    const seeded = TelemetryManager.create({
+      workDir: dir,
+      clientFactory: mockFactory(mock),
+      env: { NB_TELEMETRY_CONSENT: "on" },
+    });
+    expect(seeded.status()).toEqual({ consent: "on" });
+    seeded.setConsent("off");
+    const later = TelemetryManager.create({
+      workDir: dir,
+      clientFactory: mockFactory(mock),
+      env: { NB_TELEMETRY_CONSENT: "on" },
+    });
+    expect(later.status()).toEqual({ consent: "off" });
+  });
+
+  it("the deployment's decision cannot be changed by a person", () => {
+    const mock = new MockTelemetryClient();
+    const off = TelemetryManager.create({
+      workDir: makeTmpDir(),
+      enabled: false,
+      clientFactory: mockFactory(mock),
+    });
+    expect(off.status()).toEqual({ consent: "off", locked: "operator" });
+    expect(() => off.setConsent("on")).toThrow(TelemetryLockedError);
+
+    const on = TelemetryManager.create({
+      workDir: makeTmpDir(),
+      enabled: true,
+      clientFactory: mockFactory(mock),
+    });
+    expect(on.status()).toEqual({ consent: "on", locked: "operator" });
+  });
+
+  it("with no key there is nothing to agree to", () => {
+    const mgr = TelemetryManager.create({ workDir: makeTmpDir(), env: {} });
+    expect(mgr.status()).toEqual({ consent: "off", locked: "no_destination" });
+    expect(() => mgr.setConsent("on")).toThrow(TelemetryLockedError);
+  });
+
+  it("uses an installer's NB_TELEMETRY_ID so the install reports as one", () => {
+    const id = "6f1c2c0e-2a4b-4d7e-9a35-0b8f3f1d2c11";
+    const mgr = TelemetryManager.create({
+      workDir: makeTmpDir(),
+      clientFactory: mockFactory(new MockTelemetryClient()),
+      env: { NB_TELEMETRY_ID: id },
+    });
+    expect(mgr.getAnonymousId()).toBe(id);
   });
 
   it("creates .telemetry-id on first run", () => {
@@ -149,11 +229,13 @@ describe("TelemetryManager", () => {
       workDir: makeTmpDir(),
       clientFactory: mockFactory(mock),
     });
+    mgr.setConsent("on");
 
     mgr.capture("test.event", { custom: "value" });
 
     expect(mock.events).toHaveLength(1);
     const props = mock.events[0].properties;
+    expect(props.nb_version).not.toBe("0.1.0");
     expect(props.nb_version).toBeDefined();
     expect(props.os).toBe(process.platform);
     expect(props.arch).toBe(process.arch);
@@ -178,6 +260,7 @@ describe("TelemetryManager", () => {
       workDir: makeTmpDir(),
       clientFactory: mockFactory(mock),
     });
+    mgr.setConsent("on");
 
     await mgr.shutdown();
     expect(mock.shutdownCalled).toBe(true);

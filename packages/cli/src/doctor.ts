@@ -4,9 +4,8 @@ import { CliError, type ErrorCode } from "./result.ts";
 /**
  * The CPU architectures the runtime publishes images for, as Docker reports
  * them (`docker info` says `x86_64` or `aarch64`; some hosts say `amd64` or
- * `arm64`). Releases from v0.73.0 publish `linux/amd64` and `linux/arm64`; an
- * install older than that on arm64 has no image to pull, which `init` reports
- * as a failed start rather than here, since the CLI installs its own release.
+ * `arm64`). Releases from v0.73.0 publish `linux/amd64` and `linux/arm64`, and
+ * the CLI installs nothing older (`MIN_RUNTIME`).
  */
 export const SUPPORTED_ARCH = ["x86_64", "amd64", "aarch64", "arm64"];
 

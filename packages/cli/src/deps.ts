@@ -18,6 +18,12 @@ export interface Deps {
   getJson(url: string, timeoutMs?: number): Promise<{ status: number; body: unknown } | undefined>;
   /** A GET for a text file, with a timeout; never throws, a connection failure is `undefined`. */
   getText(url: string, timeoutMs?: number): Promise<{ status: number; body: string } | undefined>;
+  /** A JSON POST with a timeout; never throws, a connection failure is `undefined`. */
+  postJson(
+    url: string,
+    body: unknown,
+    timeoutMs?: number,
+  ): Promise<{ status: number; body: unknown } | undefined>;
   readText(path: string): Promise<string | undefined>;
   /** Write a file, creating its folder (mode 700). `mode` applies to a new file and to an existing one. */
   writeText(path: string, text: string, mode?: number): Promise<void>;
@@ -81,29 +87,22 @@ export function realDeps(): Deps {
         server.listen(port, "127.0.0.1");
       });
     },
-    async getJson(url, timeoutMs = 3_000) {
-      try {
-        const res = await fetchHeld(url, timeoutMs);
-        const text = await res.text();
-        let body: unknown = text;
-        try {
-          body = JSON.parse(text);
-        } catch {
-          // Not JSON: hand back the text; the caller decides whether that is an answer.
-        }
-        return { status: res.status, body };
-      } catch {
-        return undefined;
-      }
-    },
-    async getText(url, timeoutMs = 10_000) {
-      try {
-        const res = await fetchHeld(url, timeoutMs);
-        return { status: res.status, body: await res.text() };
-      } catch {
-        return undefined;
-      }
-    },
+    getJson: async (url, timeoutMs = 3_000) =>
+      asJson(await request(url, { headers: { "user-agent": "nimblebrain-cli" } }, timeoutMs)),
+    getText: (url, timeoutMs = 10_000) =>
+      request(url, { headers: { "user-agent": "nimblebrain-cli" } }, timeoutMs),
+    postJson: async (url, body, timeoutMs = 5_000) =>
+      asJson(
+        await request(
+          url,
+          {
+            method: "POST",
+            headers: { "user-agent": "nimblebrain-cli", "content-type": "application/json" },
+            body: JSON.stringify(body),
+          },
+          timeoutMs,
+        ),
+      ),
     async readText(path) {
       try {
         return await readFile(path, "utf8");
@@ -137,26 +136,38 @@ export function realDeps(): Deps {
 }
 
 /**
- * A GET whose timeout holds the process open until it settles. `AbortSignal.timeout`
- * uses an unref'd timer, so while a request's connection is still being set up
- * (a container restarting behind a published port) nothing kept Node alive: the
- * event loop drained and the process exited mid-`await` with code 0, before the
- * CLI had answered. A plain `setTimeout` is ref'd; it aborts the request on time
- * and is cleared as soon as the body has arrived.
+ * One request with a deadline, its body read inside the deadline too; never
+ * throws, a failure or a timeout is `undefined`. The deadline is a plain timer,
+ * not `AbortSignal.timeout`: that one is unref'd, so a request that stalls
+ * without a live socket (a container restarting behind a published port)
+ * leaves Node nothing to wait on, and it exits mid-command, with no answer.
  */
-async function fetchHeld(url: string, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+async function request(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<{ status: number; body: string } | undefined> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: { "user-agent": "nimblebrain-cli" },
-    });
-    // Read the body inside the window too, so a stalled body is cut off as well.
-    const body = await res.text();
-    return new Response(body, { status: res.status, headers: res.headers });
+    const res = await fetch(url, { ...init, signal: abort.signal });
+    return { status: res.status, body: await res.text() };
+  } catch {
+    return undefined;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** A body parsed as JSON; text that is not JSON is handed back as it is, for the caller to judge. */
+function asJson(
+  res: { status: number; body: string } | undefined,
+): { status: number; body: unknown } | undefined {
+  if (!res) return undefined;
+  try {
+    return { status: res.status, body: JSON.parse(res.body) };
+  } catch {
+    return res;
   }
 }
 

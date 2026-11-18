@@ -27,10 +27,18 @@ later.
 | `logs` | Recent log lines |
 | `update` | Move to the newest release, keeping data |
 | `uninstall` | Remove it and its data |
+| `telemetry [on\|off\|status]` | Whether this install sends anonymous usage data |
 
 `--json` makes every command answer one JSON object, `{"ok": true, ...}` or
 `{"ok": false, "error": "<CODE>", "fix": "..."}`, for scripts and coding agents.
 `--yes` takes every default. `--agent claude-code|cursor|codex|none` names the agent to
 connect.
+
+## Usage data
+
+Nothing is sent until you say yes. `init` asks once in your terminal; run by a coding
+agent, it sends nothing and hands the agent the question to ask you, which it answers
+with `npx nimblebrain telemetry on` or `off`. `DO_NOT_TRACK=1` keeps it off. What is
+sent and what never is: [Telemetry](https://docs.nimblebrain.ai/using/telemetry/).
 
 Docs: [docs.nimblebrain.ai](https://docs.nimblebrain.ai)

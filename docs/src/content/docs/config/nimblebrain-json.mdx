@@ -88,7 +88,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
   },
 
   "allowInsecureRemotes": false,
-  "telemetry":            { "enabled": true },
+  "telemetry":            { "enabled": false },
   "workDir":              "~/.nimblebrain"
 }
 ```
@@ -118,7 +118,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `execution` | `object` | native engine | Which agent runtime executes a run: the native engine, or an agent worker the runtime dials. Experimental. See [execution](#execution). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote connector connections. Dev only. |
-| `telemetry` | `object` | `{ "enabled": true }` | Anonymous usage telemetry. See [telemetry](#telemetry). |
+| `telemetry` | `object` | unset (a person decides) | Anonymous usage telemetry. See [telemetry](#telemetry). |
 | `brand` | `object` | — | White-label name, logos, accent colour and fonts. See [Branding](/config/branding). |
 | `workDir` | `string` | `"~/.nimblebrain"` | Working directory for runtime state (conversations, logs, workspaces). |
 
@@ -712,13 +712,13 @@ An upload to the workspace file store (the Files app, or an app's file picker) i
 
 ## telemetry
 
-NimbleBrain collects anonymized, aggregate usage data with no PII — no connector names, tool names, error messages, or file paths are sent.
+Anonymous, aggregate usage data, with no content, names, error messages or paths. Left unset, a person decides: nothing is sent until someone says yes in the CLI or the web UI. Setting `enabled` is the operator deciding for everyone, and no one is asked.
 
 ```json
 { "telemetry": { "enabled": false } }
 ```
 
-Disable with `NB_TELEMETRY_DISABLED=1` or `DO_NOT_TRACK=1` env vars, or set `telemetry.enabled: false` as shown above.
+`NB_TELEMETRY_DISABLED=1` and `DO_NOT_TRACK=1` turn it off too. `"enabled": true` turns it on without asking anyone. See [Telemetry](/using/telemetry/).
 
 ## Validation
 

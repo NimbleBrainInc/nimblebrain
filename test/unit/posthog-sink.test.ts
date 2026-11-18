@@ -39,6 +39,7 @@ function createTestSetup(): { mock: MockTelemetryClient; sink: PostHogEventSink 
     workDir: makeTmpDir(),
     clientFactory: factory,
   });
+  mgr.setConsent("on");
   const sink = new PostHogEventSink(mgr);
   return { mock, sink };
 }
@@ -63,6 +64,11 @@ function llmDone(runId: string, llmMs: number, input: number, output: number, ca
 /** One tool call's latency. */
 function toolDone(runId: string, ms: number) {
   return engineEvent("tool.done", toolDonePayload({ runId, name: "t1", ms }));
+}
+
+/** One finished call to a named tool. */
+function toolDoneNamed(runId: string, name: string, ok = true) {
+  return engineEvent("tool.done", toolDonePayload({ runId, name, ms: 1, ok }));
 }
 
 describe("PostHogEventSink", () => {
@@ -253,5 +259,34 @@ describe("PostHogEventSink", () => {
     expect(freshDone).toBeDefined();
     expect(freshDone!.properties.llm_latency_ms).toBe(10);
     expect(freshDone!.properties.iterations).toBe(1);
+  });
+
+  it("counts calls to connector tools apart from the kernel's own", () => {
+    const { mock, sink } = createTestSetup();
+    sink.addBuiltinSources(["tasks", "usage"]);
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+    for (const name of [
+      "nb__search",
+      "files__read",
+      "usage__report",
+      "linear__list_issues",
+      "my_gmail__send",
+    ]) {
+      sink.emit(toolDoneNamed("r1", name));
+    }
+    sink.emit(runDone("r1"));
+    const done = mock.events.find((e) => e.event === "agent.chat_completed");
+    expect(done?.properties.tool_calls).toBe(5);
+    expect(done?.properties.connector_tool_calls).toBe(2);
+  });
+
+  it("reports an automation the agent created, by event alone", () => {
+    const { mock, sink } = createTestSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+    sink.emit(toolDoneNamed("r1", "tasks__create"));
+    sink.emit(toolDoneNamed("r1", "tasks__create", false));
+    const created = mock.events.filter((e) => e.event === "task.created");
+    expect(created).toHaveLength(1);
+    expect(Object.keys(created[0]?.properties ?? {})).not.toContain("name");
   });
 });

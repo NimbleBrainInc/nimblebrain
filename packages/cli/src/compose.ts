@@ -39,9 +39,26 @@ export async function fetchCompose(deps: Deps, tag: string): Promise<string> {
   return res.body;
 }
 
-/** The model-key variables a Compose file passes to the runtime, read from the file itself. */
+/**
+ * The model-key variables a Compose file passes to the runtime, read from the
+ * file itself: each passed through under its own name (`X_API_KEY=${X_API_KEY`).
+ * A key renamed on the way in (the telemetry key) is not a model key.
+ */
 export function keyVars(composeText: string): string[] {
-  return [...new Set(composeText.match(/\b[A-Z][A-Z0-9_]*_API_KEY\b/g) ?? [])];
+  return [
+    ...new Set(
+      [...composeText.matchAll(/\b([A-Z][A-Z0-9_]*_API_KEY)=\$\{\1\b/g)].map((m) => m[1] ?? ""),
+    ),
+  ];
+}
+
+/**
+ * Whether the runtime of this Compose file asks before sending telemetry. Only
+ * such a runtime may be given the telemetry key: an older one sends by default
+ * once it has a key. Its Compose file is the one that passes the answer through.
+ */
+export function asksConsent(composeText: string): boolean {
+  return composeText.includes("NB_TELEMETRY_CONSENT");
 }
 
 /** The provider names `key` offers, each mapped to its variable. */
@@ -65,7 +82,15 @@ export function providers(composeText: string): Record<string, string> {
  */
 export function composeEnv(deps: Deps, vars: string[]): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...deps.env };
-  for (const v of [...vars, "NIMBLEBRAIN_TAG", "NIMBLEBRAIN_WEB_PORT", "COMPOSE_PROJECT_NAME"]) {
+  for (const v of [
+    ...vars,
+    "NIMBLEBRAIN_TAG",
+    "NIMBLEBRAIN_WEB_PORT",
+    "COMPOSE_PROJECT_NAME",
+    "NB_TELEMETRY_KEY",
+    "NB_TELEMETRY_ID",
+    "NB_TELEMETRY_CONSENT",
+  ]) {
     delete env[v];
   }
   return env;

@@ -3,6 +3,7 @@ import type { Agent } from "./args.ts";
 import { hasKey, keyVars } from "./compose.ts";
 import type { Deps } from "./deps.ts";
 import { CliError } from "./result.ts";
+import { currentTelemetry, type TelemetryField } from "./telemetry.ts";
 import { VERSION } from "./version.ts";
 
 /**
@@ -53,6 +54,7 @@ export interface StatusResult {
   workspaces: Workspace[];
   agent: { connected: Agent | null; skill: string | null };
   model_key: "set" | "missing";
+  telemetry: TelemetryField;
 }
 
 /**
@@ -95,6 +97,7 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
     workspaces,
     agent: { connected: install.agent ?? null, skill: install.skill ?? null },
     model_key: modelKey,
+    telemetry: await currentTelemetry(deps, home, url),
   };
 }
 

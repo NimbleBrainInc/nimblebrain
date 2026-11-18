@@ -1,9 +1,10 @@
 import { type Parsed, parse, wantsJson } from "./args.ts";
 import { type Deps, installHome } from "./deps.ts";
 import { doctor } from "./doctor.ts";
-import { down, init, key, logs, uninstall, up, update } from "./lifecycle.ts";
+import { down, init, key, logs, telemetry, uninstall, up, update } from "./lifecycle.ts";
 import { CliError, exitCodeFor, type Failure, failure, type Ok } from "./result.ts";
 import { readInstall, status } from "./status.ts";
+import { settleWaiting } from "./telemetry.ts";
 
 import { VERSION } from "./version.ts";
 
@@ -18,6 +19,7 @@ Commands:
   doctor      Check Docker, Compose, architecture, memory and the port; installs nothing
   status      Version, health, URL and each workspace's MCP URL
   key         Enter the model key at a hidden prompt
+  telemetry   [on|off|status] Whether this install sends anonymous usage data
   up, down    Start or stop NimbleBrain; data survives down
   logs        Recent runtime log lines
   update      Move to the newest release, keeping data
@@ -31,6 +33,7 @@ Flags:
   --home <dir>      Where the install lives (default ~/.nimblebrain-local, or NIMBLEBRAIN_HOME)
   --provider <name> The model provider for key (default anthropic)
   --runtime <tag>   The NimbleBrain release to install or update to (default the newest)
+  --telemetry <on|off>  The person's answer to sending anonymous usage data; without it, init asks or leaves it undecided
   --help, --version
 `;
 
@@ -51,7 +54,7 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
       : { stdout: `${VERSION}\n`, code: 0 };
   }
 
-  const { command, flags } = parsed;
+  const { command, flags, arg } = parsed;
   const home = installHome(deps, flags.home);
   let result: Ok | Failure;
   try {
@@ -69,13 +72,18 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
         result = { ...(await status(deps, home)) };
         break;
       default: {
-        const ctx = { deps, flags, home };
-        const commands = { init, up, down, logs, update, uninstall, key };
+        const ctx = { deps, flags, home, version: VERSION, arg };
+        const commands = { init, up, down, logs, update, uninstall, key, telemetry };
         result = await commands[command](ctx);
       }
     }
   } catch (err) {
     result = toFailure(err);
+  }
+  // `init` and `telemetry` settle their own; any other command sends or drops
+  // a report left waiting, once someone has answered (perhaps in the web UI).
+  if (!["init", "telemetry", "uninstall", "doctor"].includes(command)) {
+    await settleWaiting(deps, home, VERSION);
   }
   return render(result, flags.json);
 }
