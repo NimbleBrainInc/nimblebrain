@@ -57,6 +57,8 @@ Until someone answers, these events wait in `telemetry-report.jsonl` in the inst
 | `connector.installed` | Whether the connector has a UI |
 | `connector.uninstalled` | Nothing beyond the event |
 | `web.chat_sent` | Whether the conversation was resumed, whether an app was in focus |
+| `web.tour_started` | Whether it was offered on a first visit or replayed from Help |
+| `web.tour_finished`, `web.tour_skipped` | The step it ended on, and how many steps it had |
 
 Runtime events also carry the NimbleBrain version, OS, CPU architecture and Bun version. Before a web event leaves the browser, every URL in it loses its query string and fragment, which can name what is on screen.
 

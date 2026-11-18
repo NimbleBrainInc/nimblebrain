@@ -10,10 +10,13 @@
 // ---------------------------------------------------------------------------
 
 import { Menu } from "@base-ui/react/menu";
-import { BookOpen, CircleHelp, ExternalLink, Keyboard } from "lucide-react";
+import { BookOpen, CircleHelp, ExternalLink, Keyboard, Map as MapIcon } from "lucide-react";
 import { memo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { DOCS_URL } from "../lib/docs";
 import { cn } from "../lib/utils";
+import { toSlug } from "../lib/workspace-slug";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import { Tooltip } from "./ui/tooltip";
 
@@ -22,6 +25,9 @@ const itemClass =
 
 export const HelpMenu = memo(function HelpMenu({ collapsed }: { collapsed: boolean }) {
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const navigate = useNavigate();
+  // The tour runs on a workspace's Overview, so it is offered only with one open.
+  const { activeWorkspace } = useWorkspaceContext();
 
   // Sized and aligned like a nav row (`WorkspaceNav`'s rowClass), so it reads
   // as the nav's last item rather than part of the account below.
@@ -41,7 +47,10 @@ export const HelpMenu = memo(function HelpMenu({ collapsed }: { collapsed: boole
   );
 
   return (
-    <div className={cn("shrink-0 pb-2", collapsed ? "flex justify-center px-3" : "px-2")}>
+    <div
+      data-tour="help"
+      className={cn("shrink-0 pb-2", collapsed ? "flex justify-center px-3" : "px-2")}
+    >
       <Menu.Root>
         {collapsed ? (
           <Tooltip label="Help" side="right">
@@ -75,6 +84,16 @@ export const HelpMenu = memo(function HelpMenu({ collapsed }: { collapsed: boole
                 <Keyboard aria-hidden="true" className="size-4" />
                 <span className="flex-1">Keyboard shortcuts</span>
               </Menu.Item>
+              {activeWorkspace && (
+                <Menu.Item
+                  className={itemClass}
+                  data-testid="help-menu-tour"
+                  onClick={() => navigate(`/w/${toSlug(activeWorkspace.id)}/?tour=1`)}
+                >
+                  <MapIcon aria-hidden="true" className="size-4" />
+                  <span className="flex-1">Take the tour</span>
+                </Menu.Item>
+              )}
             </Menu.Popup>
           </Menu.Positioner>
         </Menu.Portal>
