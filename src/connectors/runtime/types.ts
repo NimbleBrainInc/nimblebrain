@@ -209,7 +209,21 @@ export type ConnectorRef = {
    * nothing.
    */
   recordSources?: string[];
+  /**
+   * How to show a connector no catalog entry names, from the server's own
+   * Server Card at a `direct-url` install (ADR-0065). Advisory and
+   * display-only: a catalog entry naming the connector wins, and a title the
+   * live connection reports wins over this one.
+   */
+  display?: ConnectorDisplay;
 };
+
+/** A connector's self-description, stored for display. See `ConnectorRef.display`. */
+export interface ConnectorDisplay {
+  title?: string;
+  description?: string;
+  iconUrl?: string;
+}
 
 /**
  * The brokered coordinates a `ConnectorRef` carries — who brokered this install,

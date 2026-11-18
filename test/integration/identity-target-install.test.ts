@@ -83,7 +83,7 @@ function unsupportedEntry(): CatalogListing {
   return {
     id: "dev.example/tool",
     name: "Some Tool",
-    description: "A pasted-URL entry (the direct-url kind, not yet supported)",
+    description: "A pasted-URL entry (the direct-url kind, workspace-only)",
     install: { kind: "direct-url", url: "https://tool.example.com/mcp" },
   };
 }

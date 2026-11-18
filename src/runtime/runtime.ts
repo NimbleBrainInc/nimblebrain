@@ -3779,7 +3779,13 @@ export class Runtime {
     registry: ToolRegistry | undefined,
     titles: ReadonlyMap<string, string>,
   ): Promise<PromptAppInfo> {
-    const ui: PromptAppInfo["ui"] = namedUi(instance.serverName, instance.ui, titles);
+    const source = registry?.getSource(instance.serverName);
+    // A connector no catalog entry names goes by the title its live connection
+    // reports, else the one its Server Card gave at install.
+    const ownTitle =
+      (source instanceof McpSource ? source.getReportedTitle() : undefined) ??
+      instance.ref?.display?.title;
+    const ui: PromptAppInfo["ui"] = namedUi(instance.serverName, instance.ui, titles, ownTitle);
 
     // Surface the MCP server's `initialize.instructions` (when set) so the
     // LLM sees per-connector guidance — typically a pointer to `skill://`
@@ -3787,7 +3793,6 @@ export class Runtime {
     // agent cannot discover that such resources exist.
     let instructions: string | undefined;
     let resourceTemplates: PromptAppInfo["resourceTemplates"] = [];
-    const source = registry?.getSource(instance.serverName);
     if (source instanceof McpSource) {
       instructions = source.getInstructions();
       const templates = await source.resourceTemplates();

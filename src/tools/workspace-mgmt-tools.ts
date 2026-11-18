@@ -530,7 +530,7 @@ function describeConnectorTeardown(total: number, failed: Array<{ serverName: st
 interface ConnectorSummary {
   serverName: string;
   name: string;
-  /** The catalog entry's icon, when it ships one; the UI falls back to a letter avatar. */
+  /** The catalog entry's icon (or, with none, the connector's own), when there is one; the UI falls back to a letter avatar. */
   iconUrl?: string;
 }
 
@@ -538,7 +538,7 @@ interface ConnectorSummary {
  * How every action of this tool reports a workspace's connectors: by name, never
  * by ref. A ref carries transport auth, headers and OAuth client config, any of
  * which may hold an inline secret. The name and icon come from the catalog, as
- * on the Connectors page. Resolves the catalog once, so a caller maps many refs cheaply.
+ * on the Connectors page, else from the connector's stored `display`. Resolves the catalog once, so a caller maps many refs cheaply.
  */
 async function connectorDescriber(
   ctx: ManageWorkspacesContext,
@@ -548,8 +548,11 @@ async function connectorDescriber(
   return (ref) => {
     const serverName = serverNameFromRef(ref) ?? ref.url;
     const entry = catalogEntryForRef(ref, byUrl, byId);
-    const name = entry?.name ?? serverName;
-    return { serverName, name, ...(entry?.iconUrl ? { iconUrl: entry.iconUrl } : {}) };
+    // A connector no catalog entry names (one added by URL) shows what its
+    // Server Card gave at install.
+    const name = entry?.name ?? (ref.display?.title || serverName);
+    const iconUrl = entry ? entry.iconUrl : ref.display?.iconUrl;
+    return { serverName, name, ...(iconUrl ? { iconUrl } : {}) };
   };
 }
 

@@ -10,6 +10,7 @@ import {
 import type {
   CatalogListing,
   ConnectorCatalogEntry,
+  DirectUrlInstall,
   RemoteOAuthInstall,
 } from "../connectors/catalog/types.ts";
 import type {
@@ -20,6 +21,7 @@ import type {
 import { brokeredRef } from "../connectors/runtime/brokered.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../connectors/runtime/connection.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
+import { isLoopbackHostname, loopbackDial } from "../connectors/runtime/host-loopback.ts";
 import { instanceOAuthClient } from "../connectors/runtime/instance-oauth-clients.ts";
 import {
   isReservedServerName,
@@ -27,9 +29,11 @@ import {
   serverNameFromRef,
   slugifyServerName,
 } from "../connectors/runtime/paths.ts";
+import { fetchServerCard, type ServerCardInfo } from "../connectors/runtime/server-card.ts";
 import { startConnectorSource } from "../connectors/runtime/startup.ts";
 import {
   type BrokeredRef,
+  type ConnectorDisplay,
   type ConnectorInstance,
   type ConnectorRef,
   isInstanceOAuthClientRef,
@@ -38,6 +42,7 @@ import {
   type RemoteTransportConfig,
 } from "../connectors/runtime/types.ts";
 import { uninstallWorkspaceConnector } from "../connectors/runtime/uninstall.ts";
+import { validateConnectorUrl } from "../connectors/runtime/url-validator.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import { HookContractError } from "../hooks/provisioning.ts";
@@ -63,6 +68,7 @@ import { CREDENTIAL_PROVIDER } from "./credential-transport-credential.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { hasMcpOAuthTokens, McpOAuthRecords } from "./mcp-oauth-records.ts";
 import { McpSource, REMOTE_TOOL_LIST_MAX_AGE_MS } from "./mcp-source.ts";
+import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 import type { Tool, ToolSource } from "./types.ts";
 import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
 
@@ -288,7 +294,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         entry: {
           type: "object",
           description:
-            "CatalogListing to install (required for `install`). The same shape returned by list_directory — server dispatches by entry.install.kind. No id-to-action lookup; the registry that produced the entry is the source of truth for the install payload.",
+            'CatalogListing to install (required for `install`). The same shape returned by list_directory — server dispatches by entry.install.kind. No id-to-action lookup; the registry that produced the entry is the source of truth for the install payload. On a local install only, `install: { kind: "direct-url", url, serverName? }` adds a server in development by its loopback URL (e.g. http://127.0.0.1:8000/mcp); the server\'s Server Card supplies its title, icon and placements.',
         },
         wsId: {
           type: "string",
@@ -863,19 +869,27 @@ async function readConnectorTools(source: ToolSource): Promise<Tool[]> {
 async function probeToolsAndVersion(
   registry: ReturnType<Runtime["getRegistryForWorkspace"]>,
   serverName: string,
-): Promise<{ tools: Tool[]; handshakeVersion: string | undefined }> {
+): Promise<{
+  tools: Tool[];
+  handshakeVersion: string | undefined;
+  handshakeTitle: string | undefined;
+}> {
   let tools: Tool[] = [];
   let handshakeVersion: string | undefined;
+  let handshakeTitle: string | undefined;
   try {
     const src = registry.getSource(serverName);
     if (src) {
       tools = await readConnectorTools(src);
-      if (src instanceof McpSource) handshakeVersion = src.getReportedVersion();
+      if (src instanceof McpSource) {
+        handshakeVersion = src.getReportedVersion();
+        handshakeTitle = src.getReportedTitle();
+      }
     }
   } catch {
     // ignore
   }
-  return { tools, handshakeVersion };
+  return { tools, handshakeVersion, handshakeTitle };
 }
 
 /** The bare names of `tools` that `admission` lets the caller call. */
@@ -1074,6 +1088,31 @@ async function applyConnectionProbes(
 }
 
 /**
+ * The name and icon to show for a connector. Both come from its catalog entry.
+ * A connector no catalog entry names (one added by URL) falls back to what it
+ * says of itself: the title its live connection reports, then what its Server
+ * Card gave at install (`ref.display`). No icon is fine — the UI falls back to
+ * a deterministic letter avatar.
+ */
+function connectorFace(
+  cat: ConnectorCatalogEntry | undefined,
+  instance: ConnectorInstance,
+  handshakeTitle: string | undefined,
+): { displayName: string; iconUrl?: string } {
+  if (cat) {
+    return {
+      displayName: cat.name || instance.serverName,
+      ...(cat.iconUrl ? { iconUrl: cat.iconUrl } : {}),
+    };
+  }
+  const display = instance.ref?.display;
+  return {
+    displayName: handshakeTitle || display?.title || instance.serverName,
+    ...(display?.iconUrl ? { iconUrl: display.iconUrl } : {}),
+  };
+}
+
+/**
  * Build one InstalledEntry for a connector instance, or null to skip it (wrong
  * workspace, or filtered out by `onlyServerName`). All per-instance IO
  * (tools() round-trip, manifest probe, credential reads) happens here so the
@@ -1087,7 +1126,7 @@ async function buildInstalledEntry(
   if (deps.onlyServerName && instance.serverName !== deps.onlyServerName) return null;
 
   const { url, cat } = resolveInstanceCatalog(instance, deps.catalogByUrl, deps.catalogById);
-  const { tools, handshakeVersion } = await probeToolsAndVersion(
+  const { tools, handshakeVersion, handshakeTitle } = await probeToolsAndVersion(
     deps.registry,
     instance.serverName,
   );
@@ -1095,14 +1134,12 @@ async function buildInstalledEntry(
   // so a sole spoofed placement doesn't light the chip while rendering nothing.
   const interactive =
     cat?.interactive === true || sanitizePlacements(instance.ui?.placements).length > 0;
-  // Brand icon comes from the catalog match; undefined is fine — the UI falls
-  // back to a deterministic letter avatar.
-  const iconUrl = cat?.iconUrl;
+  const { displayName, iconUrl } = connectorFace(cat, instance, handshakeTitle);
 
   const entry: InstalledEntry = {
     serverName: instance.serverName,
     connectorName: instance.connectorName,
-    displayName: cat?.name || instance.serverName,
+    displayName,
     disconnectable: deps.ctx.runtime.getLifecycle().isDisconnectable(instance.ref),
     version: instance.version,
     ...(handshakeVersion ? { handshakeVersion } : {}),
@@ -1315,6 +1352,16 @@ async function handleInstall(
         "default-to-personal fallback inside this tool.",
     );
   }
+  // Adding a server by URL is a local-install capability (ADR-0065), refused
+  // before anything else is looked at everywhere the gate is shut.
+  if (entry.install.kind === "direct-url" && ctx.runtime.getHostLoopback() === null) {
+    return codedErr(
+      "DIRECT_URL_NOT_ALLOWED",
+      "Adding a server by URL is available only on a local install (npx nimblebrain). " +
+        "Connectors on this instance come from its catalog.",
+    );
+  }
+
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
 
@@ -1325,7 +1372,7 @@ async function handleInstall(
     case "remote-oauth":
       return handleInstallRemoteOAuth(ctx, wsId, ws, entry);
     case "direct-url":
-      return errResult("direct-url install is not yet supported.");
+      return handleInstallDirectUrl(ctx, wsId, ws, entry.install);
   }
 }
 
@@ -1754,14 +1801,19 @@ function isValidInstallKind(kind: unknown): boolean {
 }
 
 /**
- * Per-kind value-shape gate: remote-oauth URLs must parse as `http(s):` (the
+ * Per-kind value-shape gate: every install URL must parse as `http(s):` (the
  * protocol allowlist that keeps a malformed entry from slipping a
- * `javascript:` / `data:` / `file:` URL into connector creation). direct-url
- * has no value-shape check yet (parked behind an errResult).
+ * `javascript:` / `data:` / `file:` URL into connector creation). A direct-url
+ * `serverName`, when given, is a string; the install slugifies it.
  */
-function isInstallPayloadValid(install: { kind?: unknown; url?: unknown }): boolean {
-  if (install.kind === "remote-oauth") {
-    return typeof install.url === "string" && isHttpUrl(install.url);
+function isInstallPayloadValid(install: {
+  kind?: unknown;
+  url?: unknown;
+  serverName?: unknown;
+}): boolean {
+  if (typeof install.url !== "string" || !isHttpUrl(install.url)) return false;
+  if (install.kind === "direct-url") {
+    return install.serverName === undefined || typeof install.serverName === "string";
   }
   return true;
 }
@@ -1954,6 +2006,206 @@ async function handleInstallRemoteOAuth(
     },
     isError: false,
   };
+}
+
+/**
+ * `direct-url` install — a server in development, added by its loopback URL on
+ * a local install (ADR-0065). The caller has already passed the local-install
+ * gate and the workspace install admission.
+ *
+ * The server describes itself with its Server Card (`<url>/server-card`), read
+ * through the SSRF-guarded fetch so the host alias applies. The card is
+ * advisory: a missing or bad one installs the server with no title, icon or
+ * placements, and of its host block only `placements` is taken.
+ *
+ * The row stores the URL as given, so it works both inside the container
+ * (dialed at the alias) and under `bun run dev` (dialed as is). Its transport
+ * declares no auth (`auth: none`), so it starts like a static-auth connector,
+ * at install and at every boot, with no credential stored.
+ */
+async function handleInstallDirectUrl(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  ws: Workspace,
+  install: DirectUrlInstall,
+): Promise<ToolResult> {
+  const url = new URL(install.url);
+  const allowInsecure = ctx.runtime.getAllowInsecureRemotes();
+  const urlRefusal = refuseDirectUrl(url, allowInsecure);
+  if (urlRefusal) return urlRefusal;
+
+  const card = await fetchServerCard(
+    url,
+    createSsrfGuardedFetch(undefined, { allowInsecure, fleetInternal: false }),
+  );
+  const serverName = directServerName(install.serverName, card, url);
+  const nameRefusal = await refuseDirectServerName(ctx, wsId, ws, serverName, install.serverName);
+  if (nameRefusal) return nameRefusal;
+
+  const display = cardDisplay(card);
+  const ref: ConnectorRef = {
+    url: install.url,
+    serverName,
+    transport: { type: "streamable-http", auth: { type: "none" } },
+    oauthScope: "workspace",
+    ...(card?.ui ? { ui: card.ui } : {}),
+    ...(display ? { display } : {}),
+  };
+  const lifecycle = ctx.runtime.getLifecycle();
+  await ctx.runtime.getWorkspaceStore().update(wsId, { connectors: [...ws.connectors, ref] });
+  await lifecycle.seedInstance(serverName, install.url, ref, undefined, wsId);
+  lifecycle.notifyInstalled(serverName, wsId);
+
+  const startWarning = await startDirectSource(ctx, ref, wsId, allowInsecure);
+  // No catalog entry grants this connector hooks, notifications or admin
+  // tools, so these find nothing to do; they run so a URL connector goes
+  // through the same steps as any other.
+  const hookWarning = await provisionDeclaredHooks(ctx, wsId, serverName);
+  const ready = await notifyConnectorReady(ctx, wsId, serverName);
+  const contractWarning = [hookWarning, ready.warning].filter(Boolean).join(" ") || undefined;
+  const warning = [startWarning, contractWarning].filter(Boolean).join(" ") || undefined;
+
+  const parts = [`Added "${display?.title ?? serverName}" (${install.url}) to this workspace.`];
+  if (startWarning) {
+    parts.push(`It did not connect (${startWarning}); start the server, then Reconnect.`);
+  }
+  if (contractWarning) parts.push(contractWarning);
+  if (ready.notice) parts.push(ready.notice);
+  return {
+    content: textContent(parts.join(" ")),
+    structuredContent: {
+      ok: true,
+      serverName,
+      url: install.url,
+      // The URL the runtime actually dials: the stored one with the host alias applied.
+      dialed: loopbackDial(url, undefined).url.toString(),
+      placements: sanitizePlacements(ref.ui?.placements),
+      wsId,
+      ...(warning ? { warning } : {}),
+      ...(ready.notice ? { notice: ready.notice } : {}),
+    },
+    isError: false,
+  };
+}
+
+/** Refuse a URL that is not on a loopback host, or that the URL policy refuses. */
+function refuseDirectUrl(url: URL, allowInsecure: boolean): ToolResult | null {
+  if (!isLoopbackHostname(url.hostname)) {
+    return codedErr(
+      "URL_NOT_LOOPBACK",
+      `Only a server on this machine can be added by URL (localhost, 127.0.0.1 or ::1); got "${url.hostname}".`,
+    );
+  }
+  try {
+    validateConnectorUrl(url, { allowInsecure });
+    return null;
+  } catch (err) {
+    return codedErr("URL_INVALID", err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Refuse a server name that cannot name a connector, that this workspace
+ * already uses, or that a catalog entry slugifies to: boot replaces such a
+ * row's `ui` with the entry's (`catalog-ui.ts`), so the card's placements
+ * would not survive a restart.
+ */
+async function refuseDirectServerName(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  ws: Workspace,
+  serverName: string,
+  given: string | undefined,
+): Promise<ToolResult | null> {
+  if (!serverName || isReservedServerName(serverName)) {
+    return codedErr(
+      "INVALID_SERVER_NAME",
+      `"${serverName || given || ""}" cannot name a connector. Pass another serverName.`,
+    );
+  }
+  if (
+    ws.connectors.some((b) => matchesServerName(b, serverName)) ||
+    ctx.runtime.getLifecycle().getInstance(serverName, wsId)
+  ) {
+    return codedErr(
+      "NAME_TAKEN",
+      `This workspace already has a connector named "${serverName}". Remove it first, or pass another serverName.`,
+    );
+  }
+  const catalog = await ctx.runtime.getConnectorCatalog().catalogEntries();
+  if (catalog.some((e) => slugifyServerName(e.id) === serverName)) {
+    return codedErr(
+      "NAME_IS_CATALOG_ENTRY",
+      `"${serverName}" is the name of a catalog connector. Pass another serverName.`,
+    );
+  }
+  return null;
+}
+
+/**
+ * Start a freshly-added URL connector. Returns a warning when it does not
+ * connect (the server is not running yet): the row is written and the
+ * instance seeded, so the install has succeeded and Reconnect retries.
+ */
+async function startDirectSource(
+  ctx: ManageConnectorsContext,
+  ref: ConnectorRef,
+  wsId: string,
+  allowInsecure: boolean,
+): Promise<string | undefined> {
+  try {
+    await startConnectorSource(
+      ref,
+      ctx.runtime.getRegistryForWorkspace(wsId),
+      ctx.runtime.getEventSink(),
+      {
+        allowInsecureRemotes: allowInsecure,
+        workspaceContext: new WorkspaceContext({ wsId, workDir: ctx.runtime.getWorkDir() }),
+        connectorMcp: ctx.runtime.getConnectorMcpDeps(wsId),
+        readCatalog: () => ctx.runtime.getConnectorCatalog().catalogEntries(),
+      },
+    );
+    return undefined;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    log.warn("[connector-tools] direct-url start failed; installed, not connected", {
+      connector: ref.serverName,
+      workspace_id: wsId,
+      reason,
+    });
+    return reason;
+  }
+}
+
+/**
+ * The server name for a URL connector: the caller's, else the card's `name`,
+ * else the URL's `host-port`, each slugified to the `[a-z0-9-]` shape every
+ * server name has. Empty when nothing usable remains.
+ */
+function directServerName(
+  given: string | undefined,
+  card: ServerCardInfo | null,
+  url: URL,
+): string {
+  if (given?.trim()) return slugifyServerName(given.trim());
+  if (card?.name) {
+    const fromCard = slugifyServerName(card.name);
+    if (fromCard) return fromCard;
+  }
+  return slugifyServerName(
+    `${url.hostname}-${url.port || (url.protocol === "https:" ? "443" : "80")}`,
+  );
+}
+
+/** The card's display fields, or undefined when it gave none. */
+function cardDisplay(card: ServerCardInfo | null): ConnectorDisplay | undefined {
+  if (!card) return undefined;
+  const display: ConnectorDisplay = {
+    ...(card.title ? { title: card.title } : {}),
+    ...(card.description ? { description: card.description } : {}),
+    ...(card.iconUrl ? { iconUrl: card.iconUrl } : {}),
+  };
+  return Object.keys(display).length > 0 ? display : undefined;
 }
 
 /**
@@ -4105,4 +4357,13 @@ function isWorkspaceAdmin(ws: Workspace, identity: UserIdentity): boolean {
 
 function errResult(msg: string): ToolResult {
   return { content: textContent(msg), isError: true };
+}
+
+/** An error with a stable code a client can branch on, beside the message. */
+function codedErr(code: string, msg: string): ToolResult {
+  return {
+    content: textContent(msg),
+    structuredContent: { ok: false, error: code },
+    isError: true,
+  };
 }
