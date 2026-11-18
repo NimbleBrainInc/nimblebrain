@@ -27,6 +27,8 @@ Tell your agent:
 
 An agent runs it with `--yes --agent <its name> --json` and reads the result. When no model key is set, everything else still starts, and the result says `MODEL_KEY_MISSING`. The agent then asks you to run `npx nimblebrain key` in your own terminal, so the key never passes through the agent.
 
+The agent never decides whether usage data is sent. The result carries `telemetry.state: "undecided"` and the question to ask you; the agent runs `npx nimblebrain telemetry on` or `off` with your answer. See [Telemetry](/using/telemetry/).
+
 ## Commands
 
 | Command | Does |
@@ -39,6 +41,7 @@ An agent runs it with `--yes --agent <its name> --json` and reads the result. Wh
 | `logs` | Recent log lines from the runtime. |
 | `update` | Moves to the release this CLI carries, keeping your data. Run `npx nimblebrain@latest update` for the newest. |
 | `uninstall` | Removes the containers, the images, every conversation, and the files `init` wrote. Asks first. |
+| `telemetry [on\|off\|status]` | Whether this install sends anonymous usage data. Changing it needs NimbleBrain running. See [Telemetry](/using/telemetry/). |
 
 ## Flags
 
@@ -50,6 +53,7 @@ An agent runs it with `--yes --agent <its name> --json` and reads the result. Wh
 | `--port <n>` | The local port (default `27246`). |
 | `--provider <name>` | For `key`: `anthropic` (default), `openai`, `google`, `greenpt`, `nebius` or `xai`. |
 | `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). |
+| `--telemetry <on\|off>` | For `init`: your answer to sending anonymous usage data. Without it, `init` asks you, or, with no one at the terminal, leaves it undecided and sends nothing. |
 
 ## Connecting an agent
 

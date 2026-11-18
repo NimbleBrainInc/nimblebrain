@@ -8,6 +8,8 @@ import type {
   ToolDonePayload,
 } from "../engine/schemas/events.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
+import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
+import { splitInnerToolName } from "../util/tool-name.ts";
 import type { TelemetryManager } from "./manager.ts";
 
 /** Per-run metric accumulator. */
@@ -15,6 +17,7 @@ interface RunMetrics {
   startedAt: number;
   iterations: number;
   toolCalls: number;
+  connectorToolCalls: number;
   llmMs: number;
   toolMs: number;
   inputTokens: number;
@@ -27,6 +30,7 @@ function createRunMetrics(): RunMetrics {
     startedAt: Date.now(),
     iterations: 0,
     toolCalls: 0,
+    connectorToolCalls: 0,
     llmMs: 0,
     toolMs: 0,
     inputTokens: 0,
@@ -63,8 +67,19 @@ export class PostHogEventSink implements EventSink {
     "connector.uninstalled": () => this.captureConnectorUninstalled(),
   };
 
+  /**
+   * Tool sources the kernel ships (`nb`, the identity sources, and the platform
+   * apps the runtime adds at start). A call to any other source is a call to a
+   * connector the person installed, the step that shows the install is in use.
+   */
+  private readonly builtinSources = new Set<string>(["nb", ...IDENTITY_SOURCES]);
+
   constructor(telemetry: TelemetryManager) {
     this.telemetry = telemetry;
+  }
+
+  addBuiltinSources(names: Iterable<string>): void {
+    for (const name of names) this.builtinSources.add(name);
   }
 
   emit(event: EngineEvent): void {
@@ -92,6 +107,11 @@ export class PostHogEventSink implements EventSink {
 
     metrics.toolCalls++;
     metrics.toolMs += data.ms;
+    const { sourcePrefix, hasSeparator } = splitInnerToolName(data.name);
+    if (hasSeparator && sourcePrefix.length > 0 && !this.builtinSources.has(sourcePrefix))
+      metrics.connectorToolCalls++;
+    // The agent made an automation: a kernel tool, so naming it reveals nothing.
+    if (data.ok && data.name === "tasks__create") this.telemetry.capture("task.created");
   }
 
   /** Start a per-run metrics accumulator and capture the chat-started event. */
@@ -110,6 +130,7 @@ export class PostHogEventSink implements EventSink {
     this.telemetry.capture("agent.chat_completed", {
       iterations: metrics?.iterations ?? 0,
       tool_calls: metrics?.toolCalls ?? 0,
+      connector_tool_calls: metrics?.connectorToolCalls ?? 0,
       stop_reason: data.stopReason,
       llm_latency_ms: metrics?.llmMs ?? 0,
       tool_latency_ms: metrics?.toolMs ?? 0,

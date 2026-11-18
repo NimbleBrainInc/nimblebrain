@@ -5,11 +5,13 @@ import { join } from "node:path";
 import { loadConfig } from "../../src/cli/config.ts";
 import { deriveOverridePath, OVERRIDE_WRITABLE_KEYS } from "../../src/config/overrides.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
+import type { UserIdentity } from "../../src/identity/provider.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { DEFAULT_MAX_ITERATIONS } from "../../src/limits.ts";
 import { log } from "../../src/observability/log.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { TelemetryManager } from "../../src/telemetry/manager.ts";
 import { createCoreToolDefs } from "../../src/tools/core-source.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import {
@@ -79,12 +81,12 @@ async function makeRuntime(): Promise<Runtime> {
 }
 
 describe("Core Source", () => {
-  it("tools() returns 8 tools with nb__ prefix", async () => {
+  it("tools() returns 9 tools with nb__ prefix", async () => {
     const runtime = await makeRuntime();
     try {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const tools = await source.tools();
-      expect(tools).toHaveLength(8);
+      expect(tools).toHaveLength(9);
       for (const tool of tools) {
         expect(tool.name).toMatch(/^nb__/);
       }
@@ -97,8 +99,38 @@ describe("Core Source", () => {
         "nb__read_artifact",
         "nb__set_model_config",
         "nb__set_preferences",
+        "nb__set_telemetry",
         "nb__workspace_info",
       ]);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("set_telemetry records an org admin's answer and refuses anyone else", async () => {
+    const runtime = await makeRuntime();
+    try {
+      // A manager with a destination, so only the org-admin check can refuse.
+      const manager = TelemetryManager.create({
+        workDir: join(testDir, `telemetry-${Date.now()}`),
+        clientFactory: () => ({ capture: () => {}, shutdown: async () => {} }),
+        env: {},
+      });
+      runtime.getTelemetryManager = () => manager;
+      const tool = createCoreToolDefs(runtime).find((t) => t.name === "set_telemetry");
+      const ask = (orgRole: UserIdentity["orgRole"]) =>
+        runWithRequestContext({ identity: makeIdentity({ id: `user-${orgRole}`, orgRole }) }, () =>
+          tool?.handler({ consent: "on" }),
+        );
+
+      const refused = await ask("member");
+      expect(refused?.isError).toBe(true);
+      expect(extractText(refused?.content ?? [])).toContain("Only an org admin");
+      expect(manager.status().consent).toBe("undecided");
+
+      const recorded = await ask("admin");
+      expect(recorded?.isError).toBe(false);
+      expect(manager.status().consent).toBe("on");
     } finally {
       await runtime.shutdown();
     }

@@ -20,6 +20,12 @@ services:
       - GREENPT_API_KEY=${GREENPT_API_KEY:-}
       - NEBIUS_API_KEY=${NEBIUS_API_KEY:-}
       - XAI_API_KEY=${XAI_API_KEY:-}
+      # Anonymous telemetry. Nothing is sent without a key, and nothing until a
+      # person says yes (`npx nimblebrain` asks, or the web UI does once).
+      - POSTHOG_API_KEY=${NB_TELEMETRY_KEY:-}
+      - NB_TELEMETRY_ID=${NB_TELEMETRY_ID:-}
+      - NB_TELEMETRY_CONSENT=${NB_TELEMETRY_CONSENT:-}
+      - DO_NOT_TRACK=${DO_NOT_TRACK:-}
     networks:
       - internal
 
@@ -36,6 +42,9 @@ services:
       - "127.0.0.1:${NIMBLEBRAIN_WEB_PORT:-27246}:8080"
     environment:
       - PLATFORM_URL=http://platform:27247
+      # Sends only after the runtime reports that a person said yes.
+      - NB_POSTHOG_KEY=${NB_TELEMETRY_KEY:-}
+      - NB_POSTHOG_ENABLED=${NB_TELEMETRY_KEY:+true}
     depends_on:
       platform:
         condition: service_healthy
