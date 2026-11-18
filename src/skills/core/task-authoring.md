@@ -162,7 +162,8 @@ The same `idempotencyKey` with the same definition returns the same run.
   name. Name the skill a job is written in, so no run depends on loading it. A
   run whose skill is not available is refused. With no `body`, each run carries
   the skills out on its input.
-- **Tools**: `allowedTools`, as above. A run is never allowed `tasks__create`,
+- **Tools**: `allowedTools`, as above. Name any other `nb__` tool a run needs
+  (`nb__read_resource` for resources). A run is never allowed `tasks__create`,
   `tasks__update`, `tasks__delete`, `tasks__run`, `tasks__run_batch`,
   `tasks__batch_control`, or `tasks__assess`.
 - **`inputSchema`**: each run's input must match, or the run is refused before
@@ -170,7 +171,8 @@ The same `idempotencyKey` with the same definition returns the same run.
 - **`outputSchema`**: the run is told to answer with matching JSON. A
   deliverable that does not match is assessed fail without a judge call.
 - **`criteria`**: plain-language rules (`boolean`, `score` with `levels`, or
-  `choice` with `options`) a judge server answers after each run.
+  `choice` with `options`) a judge server answers after each run. The judge
+  receives the deliverable, the input, and a summary of the run's tool calls.
   `confidenceThreshold` (default 0.7) makes a low-confidence pass uncertain.
   `judge.server` picks a judge when more than one is connected.
 - **`onPoorResult`**: what a fail does. `notify` (default) puts an item in the
@@ -192,7 +194,8 @@ Give exactly one of these; the field you give is the kind of schedule.
 - `intervalMs` (at least 60000) for "every 30 minutes": `{"intervalMs": 1800000}`.
 - `at`, an ISO time with an offset (`{"at": "2026-07-01T13:00:00-07:00"}`),
   for one action at a set time. Never use a cron with a fixed date, since that
-  recurs every year.
+  recurs every year. A time missed while the runtime was down fires on restart
+  if it is at most an hour late, and is recorded as skipped otherwise.
 - No `schedule`: the task runs only when someone runs it.
 - `enabled: false` pauses the schedule; `tasks__run` still runs it.
 
