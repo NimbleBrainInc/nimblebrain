@@ -131,7 +131,7 @@ which keeps the rule that connectors there come from what the operator controls.
 The plugins a workspace should have are a declared list. The runtime makes the
 installed state match it at boot and whenever the list changes, and writes the
 result to a lock that records each plugin's identity, catalog, version, source
-digest, and the connectors and skills it produced. The CLI, the web UI and
+commit, and the connectors and skills it produced. The CLI, the web UI and
 the platform API edit the declared list through the runtime; none of them
 installs anything itself.
 
@@ -139,7 +139,7 @@ Installing a plugin:
 
 1. resolves its alias in the policy's catalogs to an identity and a pinned
    source;
-2. fetches the source and verifies it against the pinned digest;
+2. fetches the source at its pinned commit;
 3. validates the manifest;
 4. for each server, resolves the named `ServerDetail` and connects as a catalog
    install does, or, with none named, connects by URL as ADR-0065 does where
