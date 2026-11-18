@@ -236,3 +236,32 @@ export function installHome(deps: Deps, flag?: string): string {
     flag ?? deps.env.NIMBLEBRAIN_HOME ?? join(deps.home, ".nimblebrain-local"),
   );
 }
+
+/**
+ * How a person runs this CLI against `home`, for every command it prints. Bare
+ * only when a bare command lands on the same install: `home` is the default and
+ * `NIMBLEBRAIN_HOME` does not point elsewhere. Otherwise it names the home,
+ * however this run chose it, because the printed command may run in a shell
+ * without that flag or variable, and another home is another install. Quoted
+ * for a POSIX shell.
+ */
+export const BARE_CLI = "npx nimblebrain";
+
+export function invocation(deps: Deps, home: string): string {
+  const fallback = resolve(deps.cwd, join(deps.home, ".nimblebrain-local"));
+  if (home === fallback && installHome(deps) === fallback) return BARE_CLI;
+  return `${BARE_CLI} --home ${shellQuote(home)}`;
+}
+
+function shellQuote(s: string): string {
+  return /^[A-Za-z0-9_./,:@%+=-]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * Text that names commands, pointed at the install that `cli` (`invocation`)
+ * runs against. Identity for the default home. A function replacer, so `$` in
+ * a home is never read as a replacement pattern.
+ */
+export function forInstall(text: string, cli: string): string {
+  return text.replaceAll(BARE_CLI, () => cli);
+}
