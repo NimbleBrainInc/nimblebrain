@@ -26,6 +26,15 @@ services:
       - NB_TELEMETRY_ID=${NB_TELEMETRY_ID:-}
       - NB_TELEMETRY_CONSENT=${NB_TELEMETRY_CONSENT:-}
       - DO_NOT_TRACK=${DO_NOT_TRACK:-}
+      # A model server on the host instead of a hosted key (`npx nimblebrain`
+      # sets these when you choose a local model): its OpenAI-compatible URL,
+      # the model, and the context window it allocates.
+      - NB_LOCAL_MODEL_URL=${NB_LOCAL_MODEL_URL:-}
+      - NB_LOCAL_MODEL=${NB_LOCAL_MODEL:-}
+      - NB_LOCAL_MODEL_CONTEXT=${NB_LOCAL_MODEL_CONTEXT:-}
+    # The host, by the name Docker Desktop already gives it, on Linux too.
+    extra_hosts:
+      - host.docker.internal:host-gateway
     networks:
       - internal
 
