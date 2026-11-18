@@ -81,6 +81,11 @@ Each layer reads the one above it and never writes it.
   extension. When it does, auth, placements and every other runtime field come
   from that `ServerDetail`'s `_meta`. The catalog's build checks that the URL
   in `mcp.json` matches one of the `ServerDetail`'s `remotes`.
+- **A server only NimbleBrain can reach is named in the extension alone.** A
+  brokered connector's session URL comes from its provider at install
+  (ADR-0026), so it has no URL to put in `mcp.json`. Its plugin names the
+  `ServerDetail` in `ai.nimblebrain` and nothing in `mcp.json`, and installs
+  only on NimbleBrain.
 - **A skill-only plugin is a plugin with no `mcp.json`.** A skill is never a
   catalog entry on its own.
 - **A plugin's identity is a reverse-DNS name** whose namespace is verified the
@@ -144,19 +149,29 @@ Installing a plugin:
 
 Removing a plugin reverses each step.
 
-### Skills ride with their plugin
+### A connector's guidance is a skill in its plugin
 
-A plugin's `skills/` are installed with it and removed with it. They are
-handled like a curated overlay (ADR-0013): pinned, content-addressed,
-materialized into their own store, and re-bound at boot. Their names follow the
-publisher-prefix rule of ADR-0034, as `plugin:<plugin>:<skill>`, so two plugins
-never shadow each other.
+A plugin's `skills/` are installed with it and removed with it: pinned,
+content-addressed, materialized into their own store, and re-bound at boot, the
+mechanics of ADR-0013. Their names follow the publisher-prefix rule of
+ADR-0034, as `plugin:<plugin>:<skill>`, so two plugins never shadow each other.
 
-Curated connector overlays are unchanged. An overlay binds to a connector's
-identity, so it arrives whenever that connector is installed, whether through a
-plugin, a catalog install, or a URL. A plugin's own skills are for guidance
-that belongs to the plugin, not to one connector, such as a third-party
-plugin's workflow or a skill-only plugin.
+**A skill binds to a server by naming it.** A skill's `metadata.nimblebrain`
+may name one of its plugin's servers, by its key in the plugin. Install stamps
+that skill as an overlay is stamped today: `dynamic`, tool-affined to that
+connector's namespace in this install, so it reaches the model before the
+connector's first tool call (ADR-0053). A skill that names no server loads by
+the ordinary channels (ADR-0010).
+
+**The curated overlay is a plugin.** Guidance for a connector NimbleBrain does
+not author (a brokered Gmail toolkit, a vendor's remote server) ships as that
+connector's plugin in the NimbleBrain catalog: the server, named by its
+`ServerDetail`, plus a skill bound to it. This supersedes ADR-0013's overlay
+repo and ADR-0016's derived identity. The binding is stated in the plugin, so
+nothing derives a connector's identity from its name.
+
+A server whose author writes its guidance publishes it over the MCP Skills
+Extension (ADR-0011), and its plugin needs no skill for it.
 
 ### A server is shared, not duplicated
 
@@ -197,8 +212,15 @@ renamed *skill index*. ADR-0015 is unchanged in substance.
 - ADR-0020's catalog directory stays the extension point. Reconcile writes the
   resolved `ServerDetail`s into it, so the connector catalog's validation,
   scrubbing and projection apply unchanged.
-- Connector overlays (ADR-0013) are untouched, and a connector installed by
-  any path gets its overlay.
+- One mechanism pairs a connector with its guidance, for our connectors and a
+  third party's alike. The overlay repo's entries move into the catalog as
+  plugins, and the identity derivation and its misreadings go away.
+- Guidance arrives with the plugin, not with the server. A connector added by
+  URL (ADR-0065), or by another publisher's plugin that names the same server,
+  does not get the NimbleBrain catalog's skill for it. On a deployed instance
+  every connector comes through a plugin, so this reaches only local
+  development and a second plugin for the same server.
+- A plugin for a brokered connector installs only on NimbleBrain.
 - A plugin from any Agent Plugins host installs on NimbleBrain. A plugin from
   our catalog installs on those hosts, with its `ai.nimblebrain` fields ignored
   there.
