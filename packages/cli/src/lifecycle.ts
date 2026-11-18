@@ -243,13 +243,14 @@ export async function up(ctx: Ctx): Promise<Ok> {
         throw err;
       })
     : undefined;
-  const result = await carryingStarted(
-    ollama instanceof CliError ? undefined : ollama?.started,
-    async () => {
-      await start(deps, home, install.port);
-      return status(deps, home);
-    },
-  );
+  const started =
+    ollama instanceof CliError
+      ? (ollama.detail.ollama_started as string | undefined)
+      : ollama?.started;
+  const result = await carryingStarted(started, async () => {
+    await start(deps, home, install.port);
+    return status(deps, home);
+  });
   if (ollama instanceof CliError) {
     throw ollama.with({ ...result }, `NimbleBrain is running, but ${lowerFirst(ollama.message)}`);
   }

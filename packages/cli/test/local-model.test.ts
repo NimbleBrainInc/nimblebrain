@@ -353,6 +353,23 @@ describe("Ollama after a reboot", () => {
     }
     expect(init.error).toBe("START_FAILED");
     expect(init.ollama_started).toBe("brew services start ollama");
+
+    // Ollama started but never answered, then Compose failed.
+    const m = await rebooted(brew);
+    const silent = failingUp(m.deps);
+    const body = JSON.parse(
+      (
+        await run(["up", "--yes", "--json"], {
+          ...silent,
+          exec: (cmd, args, o) =>
+            [cmd, ...args].join(" ") === "brew services start ollama"
+              ? Promise.resolve(ok(""))
+              : silent.exec(cmd, args, o),
+        })
+      ).stdout,
+    );
+    expect(body.error).toBe("START_FAILED");
+    expect(body.ollama_started).toBe("brew services start ollama");
   });
 
   test("doctor without a person reports Ollama down and starts nothing", async () => {
