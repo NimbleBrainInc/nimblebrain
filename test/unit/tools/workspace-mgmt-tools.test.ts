@@ -736,6 +736,31 @@ describe("nb__manage_workspaces", () => {
       expect(JSON.stringify(parsed)).not.toContain("inline-secret");
     });
 
+    test("names a connector no catalog entry matches by its stored display", async () => {
+      await tool.handler({ action: "create", name: "Alpha" });
+      const [ws] = await store.list();
+      await store.update(ws.id, {
+        connectors: [
+          {
+            url: "http://localhost:8123/mcp",
+            serverName: "localhost-8123",
+            display: { title: "Weather Dev", iconUrl: "https://static.example.com/weather.svg" },
+          },
+        ],
+      });
+
+      const parsed = parseResult(await tool.handler({ action: "list" })) as {
+        workspaces: Array<{ connectors: Array<Record<string, unknown>> }>;
+      };
+      expect(parsed.workspaces[0].connectors).toEqual([
+        {
+          serverName: "localhost-8123",
+          name: "Weather Dev",
+          iconUrl: "https://static.example.com/weather.svg",
+        },
+      ]);
+    });
+
     test("returns empty array when no workspaces exist", async () => {
       const listResult = await tool.handler({ action: "list" });
 

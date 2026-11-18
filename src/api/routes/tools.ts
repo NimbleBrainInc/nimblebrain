@@ -8,11 +8,12 @@ import {
 import { requireAuth } from "../middleware/auth.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { errorLog } from "../middleware/error-log.ts";
+import { rejectUntrustedOrigin, trustedBrowserOrigins } from "../middleware/origin.ts";
 import { requestRateLimit } from "../middleware/rate-limit.ts";
 import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspace.ts";
 import type { AppContext, AppEnv } from "../types.ts";
 
-export function toolRoutes(ctx: AppContext) {
+export function toolRoutes(ctx: AppContext, allowedOrigins: ReadonlySet<string> | null) {
   // A tool call under `/v1/workspaces/:wsId/` is workspace-scoped whatever its
   // source: a workspace source dispatches into that workspace's registry, and
   // an identity source (conversations, files, tasks) reads and writes
@@ -21,10 +22,18 @@ export function toolRoutes(ctx: AppContext) {
   // its workspace, within the caller's own files.
   const auth = requireAuth(ctx.authOptions);
   const logErrors = errorLog(ctx);
+  // The tool-call doors refuse an untrusted browser origin before
+  // authentication, as `/mcp/<wsId>` does: a DNS-rebound page is same-origin
+  // to the browser, and the `dev` adapter authenticates every request, so
+  // neither CORS nor sign-in stops it from calling `manage_connectors`. The
+  // web shell's own origin is trusted; the CLI and other server callers send
+  // no `Origin` and pass.
+  const trustedOrigin = rejectUntrustedOrigin(trustedBrowserOrigins(allowedOrigins));
   return (
     new Hono<AppEnv>()
       .post(
         `${WORKSPACE_ROUTE_PREFIX}/tools/call`,
+        trustedOrigin,
         auth,
         logErrors,
         requireWorkspace(ctx),
@@ -42,6 +51,7 @@ export function toolRoutes(ctx: AppContext) {
       // work without one (`tools/workspace-optional.ts`). ADR-0043.
       .post(
         "/v1/tools/call",
+        trustedOrigin,
         auth,
         logErrors,
         bodyLimit(1_048_576),

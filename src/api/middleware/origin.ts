@@ -1,6 +1,16 @@
 import { isIP } from "node:net";
 import { createMiddleware } from "hono/factory";
+import { canonicalOrigins, webOrigin } from "../../oauth/public-origin.ts";
 import { apiError } from "../types.ts";
+
+/**
+ * The origins a browser page may call this server's tool doors from: this
+ * deployment's own (canonical and web) and the CORS allowlist. Shared by `/mcp`
+ * and the `/v1` tool-call routes, so the two doors trust the same pages.
+ */
+export function trustedBrowserOrigins(allowedOrigins: ReadonlySet<string> | null): Set<string> {
+  return new Set([...canonicalOrigins(), webOrigin(), ...(allowedOrigins ?? [])]);
+}
 
 /**
  * Refuse a request whose `Origin` this server does not trust, with `403`.

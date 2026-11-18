@@ -48,16 +48,19 @@ export function catalogTitleByServerName(
 
 /**
  * The UI an installed connector shows, named for the system prompt: its
- * catalog title, else its server name, or null when it has no placement that
- * survives the check registration applies (so the shell renders nothing).
+ * catalog title, else `ownTitle` (what a connector no catalog entry names says
+ * of itself, `ConnectorRef.display`), else its server name, or null when it has
+ * no placement that survives the check registration applies (so the shell
+ * renders nothing).
  */
 export function namedUi(
   serverName: string,
   ui: ConnectorUiMeta | null | undefined,
   titles: ReadonlyMap<string, string>,
+  ownTitle?: string,
 ): { name: string } | null {
   if (sanitizePlacements(ui?.placements).length === 0) return null;
-  return { name: titles.get(serverName) ?? serverName };
+  return { name: titles.get(serverName) ?? (ownTitle || serverName) };
 }
 
 /**
