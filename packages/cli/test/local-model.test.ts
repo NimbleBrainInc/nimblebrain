@@ -47,6 +47,25 @@ describe("init on a local model", () => {
     expect(numCtxOf(m.ollamaModels["nimblebrain-gemma4-e4b"]?.parameters)).toBe(32_768);
   });
 
+  test("starts without the shell's local-model settings, so .env is the one source", async () => {
+    const { code, m } = await json(["--yes", "--local-model", "gemma4:e4b"], {
+      env: {
+        ...env,
+        NB_LOCAL_MODEL_URL: "http://localhost:9999/v1",
+        NB_LOCAL_MODEL: "stale-model",
+        NB_LOCAL_MODEL_CONTEXT: "4096",
+      },
+      ollama: { models: { "gemma4:e4b": GEMMA } },
+    });
+    expect(code).toBe(0);
+    expect(m.composeEnvs.length).toBeGreaterThan(0);
+    for (const e of m.composeEnvs) {
+      expect(e.NB_LOCAL_MODEL_URL).toBeUndefined();
+      expect(e.NB_LOCAL_MODEL).toBeUndefined();
+      expect(e.NB_LOCAL_MODEL_CONTEXT).toBeUndefined();
+    }
+  });
+
   test("a person at the terminal chooses local, and is asked before a download", async () => {
     const { code, m } = await atTerminal([], {
       answers: ["", "local", "", "none"],

@@ -77,7 +77,8 @@ export function providers(composeText: string): Record<string, string> {
 /**
  * Compose reads a variable from the shell before `.env`, so a key exported in
  * the person's shell would silently win over the one they entered with `key`,
- * and the version and port this CLI pinned could be overridden the same way.
+ * and the version, port and local model this CLI pinned could be overridden
+ * the same way.
  * Every Compose call runs without them, so `<home>/.env` is the one source.
  */
 export function composeEnv(deps: Deps, vars: string[]): NodeJS.ProcessEnv {
@@ -90,6 +91,9 @@ export function composeEnv(deps: Deps, vars: string[]): NodeJS.ProcessEnv {
     "NB_TELEMETRY_KEY",
     "NB_TELEMETRY_ID",
     "NB_TELEMETRY_CONSENT",
+    "NB_LOCAL_MODEL_URL",
+    "NB_LOCAL_MODEL",
+    "NB_LOCAL_MODEL_CONTEXT",
   ]) {
     delete env[v];
   }
