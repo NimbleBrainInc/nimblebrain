@@ -83,10 +83,7 @@ export function realDeps(): Deps {
     },
     async getJson(url, timeoutMs = 3_000) {
       try {
-        const res = await fetch(url, {
-          signal: AbortSignal.timeout(timeoutMs),
-          headers: { "user-agent": "nimblebrain-cli" },
-        });
+        const res = await fetchHeld(url, timeoutMs);
         const text = await res.text();
         let body: unknown = text;
         try {
@@ -101,10 +98,7 @@ export function realDeps(): Deps {
     },
     async getText(url, timeoutMs = 10_000) {
       try {
-        const res = await fetch(url, {
-          signal: AbortSignal.timeout(timeoutMs),
-          headers: { "user-agent": "nimblebrain-cli" },
-        });
+        const res = await fetchHeld(url, timeoutMs);
         return { status: res.status, body: await res.text() };
       } catch {
         return undefined;
@@ -140,6 +134,30 @@ export function realDeps(): Deps {
     env: process.env,
     home: homedir(),
   };
+}
+
+/**
+ * A GET whose timeout holds the process open until it settles. `AbortSignal.timeout`
+ * uses an unref'd timer, so while a request's connection is still being set up
+ * (a container restarting behind a published port) nothing kept Node alive: the
+ * event loop drained and the process exited mid-`await` with code 0, before the
+ * CLI had answered. A plain `setTimeout` is ref'd; it aborts the request on time
+ * and is cleared as soon as the body has arrived.
+ */
+async function fetchHeld(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { "user-agent": "nimblebrain-cli" },
+    });
+    // Read the body inside the window too, so a stalled body is cut off as well.
+    const body = await res.text();
+    return new Response(body, { status: res.status, headers: res.headers });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function visiblePrompt(question: string): Promise<string> {
