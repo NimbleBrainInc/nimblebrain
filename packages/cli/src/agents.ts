@@ -70,9 +70,9 @@ function manualSettings(agent: Agent, mcpUrl: string): string {
  * Installs the `nimblebrain` skill for the agent, at user level, so it knows
  * how to drive this CLI and the workspace. Best effort, like connecting.
  */
-export async function installSkill(deps: Deps, agent: Agent): Promise<string | null> {
-  if (agent === "none") return null;
-  const res = await deps.exec(
+export async function installSkill(deps: Deps, agent: Agent): Promise<void> {
+  if (agent === "none") return;
+  await deps.exec(
     "npx",
     [
       "-y",
@@ -88,7 +88,6 @@ export async function installSkill(deps: Deps, agent: Agent): Promise<string | n
     ],
     { timeoutMs: 120_000 },
   );
-  return res.code === 0 ? SKILL_NAME : null;
 }
 
 /** The skill `init` installs, by the name the skills CLI installs it under. */
