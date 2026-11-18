@@ -186,18 +186,7 @@ function statusLines(r: StatusLike, command?: string): string[] {
       : `  model key: ${r.model_key === "set" ? "set (NimbleBrain's own agents use it)" : "missing (run npx nimblebrain key)"}`,
   ];
   const agent = r.agent.connected;
-  if (agent) {
-    const name = AGENT_NAMES[agent] ?? agent;
-    lines.push(
-      `  ${name} can use NimbleBrain's tools (it loads them when its next session starts)`,
-    );
-    if (!r.agent.skill)
-      lines.push(
-        `  skill: not installed; add it with npx skills add nimblebraininc/skills --skill nimblebrain --agent ${agent} -g`,
-      );
-  } else if (r.manual) {
-    lines.push(`  agent: not connected; add it by hand: ${r.manual}`);
-  }
+  lines.push(...agentLines(r));
   if (!r.host_loopback)
     lines.push("  servers on this machine: not reachable until npx nimblebrain update");
   lines.push(telemetryLine(r.telemetry));
@@ -206,6 +195,21 @@ function statusLines(r: StatusLike, command?: string): string[] {
     const ask = agent ? `, or ask ${AGENT_NAMES[agent] ?? agent} what NimbleBrain can do` : "";
     lines.push("", `Next: open ${r.url}${ask}. Stop it with npx nimblebrain down.`);
   }
+  return lines;
+}
+
+/** Whether a coding agent is connected, and whether it has the skill, or how to connect one by hand. */
+function agentLines(r: StatusLike): string[] {
+  const agent = r.agent.connected;
+  if (!agent) return r.manual ? [`  agent: not connected; add it by hand: ${r.manual}`] : [];
+  const name = AGENT_NAMES[agent] ?? agent;
+  const lines = [
+    `  ${name} can use NimbleBrain's tools (it loads them when its next session starts)`,
+  ];
+  if (!r.agent.skill)
+    lines.push(
+      `  skill: not installed; add it with npx skills add nimblebraininc/skills --skill nimblebrain --agent ${agent} -g`,
+    );
   return lines;
 }
 
