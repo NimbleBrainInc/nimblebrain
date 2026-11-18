@@ -1,0 +1,45 @@
+---
+title: Server Card
+description: Serve an MCP Server Card from a Python MCP server with add_server_card, so a host can name and place the server before it connects.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import cardServer from '@sdk-examples/card_server.py?raw';
+import testCardServer from '@sdk-examples/test_card_server.py?raw';
+
+An MCP Server Card ([SEP-2127](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2127), extension `io.modelcontextprotocol/server-card`) is a JSON document that names and describes one server. A server on streamable HTTP serves it at `GET <streamable-http-url>/server-card` with the media type `application/mcp-server-card+json`: a server at `http://127.0.0.1:8000/mcp` serves it at `/mcp/server-card`. A client reads it before it connects.
+
+When you add a server to a local NimbleBrain by its URL, NimbleBrain reads its card. The card's `title`, `description` and first icon name the connector, and the `placements` in its `ai.nimblebrain/host` block put the server's views in the sidebar, with no catalog entry. Without a card the server still connects, named by its `serverInfo` and with no placements.
+
+<Code code={cardServer} lang="python" title="card_server.py" />
+
+## What the card carries
+
+| Field | From |
+|---|---|
+| `name` | The server's name, `FastMCP("com.example/notes")`. The card requires reverse-DNS form with one slash. |
+| `version` | `FastMCP(version=...)`. Unset, FastMCP reports its own version, so set it. |
+| `description` | `add_server_card(description=...)`, 1 to 100 characters, for a person choosing the server. Not the `instructions`, which are for the model. |
+| `title` | `add_server_card(title=...)`, 1 to 100 characters. Omitted when not given. |
+| `websiteUrl`, `icons` | `FastMCP(website_url=..., icons=...)`. NimbleBrain shows the first icon that is `https:`, a `data:image/...` URI, or `http:` on a loopback host. |
+| `_meta["ai.nimblebrain/host"]` | `add_server_card(placements=[...])`, as `{"host_version": "1.0", "placements": [...]}`. Each placement has the keys of a [catalog entry's placement](/host/manifest/#placementdeclaration). Omitted when there are none. |
+
+`name`, `version`, `websiteUrl` and `icons` are the values the server's `serverInfo` reports, so the card cannot contradict the live connection. FastMCP has no place for a title or a description, so you declare them, once, in `add_server_card`.
+
+## The rules
+
+- **Refused at import:** a name that is not reverse-DNS, an empty or over-long description or title, a version range, a placement whose `resourceUri` is not `ui://<authority>/<path>`, placements under two authorities, an unknown placement key, and a second card on one server. A host would drop each of these.
+- **Streamable HTTP only.** The card follows the MCP path (`mcp.http_app(path="/api/mcp")` serves `/api/mcp/server-card`). Over stdio, or on the SSE transport, nothing is served.
+- **Public and read-only.** `GET` only, with no authentication even when the server has an auth provider, CORS open to any origin, `Cache-Control: public, max-age=3600`, and an `ETag` that `If-None-Match` revalidates. FastMCP's host and origin checks still apply to a server bound to a loopback address.
+- **No `remotes`.** A server cannot reliably know the URL its clients reach it at (it binds `0.0.0.0`, sits behind a proxy, or is reached through a container's host alias), and a client that fetched the card already has it.
+- **Advisory.** A host prefers what the live connection reports, and nothing in a card decides access. On a card NimbleBrain reads only the `placements` of the host block; hooks, notifications, admin tools and record arguments are grants an operator makes in a catalog entry.
+
+## Test it
+
+<Code code={testCardServer} lang="python" title="test_card_server.py" />
+
+## Related
+
+- [Manifest reference](/host/manifest/): the `ai.nimblebrain/host` block and its placements
+- [Placements & navigation](/host/placements/)
+- [API reference](/server-sdk/reference/core/)

@@ -225,6 +225,7 @@ export default defineConfig({
                       { label: 'Facets', slug: 'server-sdk/facets' },
                       { label: 'Lifecycle', slug: 'server-sdk/lifecycle' },
                       { label: 'Host resources', slug: 'server-sdk/host-resources' },
+                      { label: 'Server Card', slug: 'server-sdk/server-card' },
                       { label: 'Notifications', slug: 'server-sdk/notifications' },
                       { label: 'Data', slug: 'server-sdk/data' },
                     ],
