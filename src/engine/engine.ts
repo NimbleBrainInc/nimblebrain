@@ -55,6 +55,7 @@ import {
   buildToolDoneData,
   coerceAndValidateToolInput,
   enforceMaxToolResultSize,
+  errorReasonField,
 } from "./tool-call.ts";
 import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import {
@@ -1059,11 +1060,10 @@ function buildToolResults(toolResults: ToolExecResult[]): {
       ok: !result.isError,
       ms,
       // Surface the structured failure reason (orchestrator routing
-      // classes, etc.) so consumers can tell an unroutable connector
-      // from a tool that ran and errored. See ToolCallRecord.errorReason.
-      ...(result.isError && typeof result.structuredContent?.reason === "string"
-        ? { errorReason: result.structuredContent.reason }
-        : {}),
+      // classes, a rejected argument, a connector's error code) so consumers
+      // can tell an unroutable connector or a rejected call from a tool that
+      // ran and errored. See ToolCallRecord.errorReason.
+      ...(result.isError ? errorReasonField(result) : {}),
       ...(held ? { held } : {}),
       ...(uri ? { resourceUri: uri } : {}),
       ...(links && links.length > 0 ? { resourceLinks: links } : {}),

@@ -1022,6 +1022,68 @@ describe("createDirectExecutor — degraded runs", () => {
     expect(run.status).toBe("degraded");
   });
 
+  test("a rejected argument value corrected on the next call to a many-job tool stays success", async () => {
+    // Same argument names, another value: neither the same input nor another shape.
+    const run = await runWith([
+      call("web__fetch", { urls: ["https://example.com"] }, true),
+      call("web__fetch", { urls: ["https://example.org/a"], mode: '"always"' }, false, {
+        errorReason: "bad_input",
+      }),
+      call("web__fetch", { urls: ["https://example.org/a"], mode: "always" }, true),
+    ]);
+    expect(run.status).toBe("success");
+    expect(run.unrecoveredToolFailures).toBeUndefined();
+  });
+
+  test("several rejections in a row are resolved by the success that follows them", async () => {
+    const run = await runWith([
+      call("web__fetch", { urls: ["https://example.com"] }, true),
+      call("web__fetch", { urls: ["https://example.org"], mode: "x" }, false, {
+        errorReason: "bad_input",
+      }),
+      call("web__fetch", { urls: ["https://example.org"], mode: "y" }, false, {
+        errorReason: "bad_input",
+      }),
+      call("web__fetch", { urls: ["https://example.org"], mode: "always" }, true),
+    ]);
+    expect(run.status).toBe("success");
+  });
+
+  test("a rejection whose next call to the tool also fails stays degraded", async () => {
+    const run = await runWith([
+      call("web__fetch", { urls: ["https://example.com"] }, true),
+      call("web__fetch", { urls: ["https://example.org"], mode: "x" }, false, {
+        errorReason: "bad_input",
+      }),
+      call("web__fetch", { urls: ["https://example.org"], mode: "always" }, false, {
+        errorReason: "upstream_unavailable",
+      }),
+      call("web__fetch", { urls: ["https://example.net"], mode: "always" }, true),
+    ]);
+    expect(run.status).toBe("degraded");
+    expect(run.error).toMatch(/web__fetch ×2/);
+  });
+
+  test("a rejection never retried stays degraded", async () => {
+    const run = await runWith([
+      call("records__create", { id: "a" }, true),
+      call("records__create", { id: "b", note: 1 }, false, { errorReason: "bad_input" }),
+    ]);
+    expect(run.status).toBe("degraded");
+    expect(run.error).toMatch(/records__create ×1/);
+  });
+
+  test("an upstream failure is not resolved by the next success on another input", async () => {
+    // Only a rejected argument makes the next call its retry; a call that ran and failed upstream did not.
+    const run = await runWith([
+      call("web__search", { query: "a" }, true),
+      call("web__search", { query: "b" }, false, { errorReason: "upstream_unavailable" }),
+      call("web__search", { query: "c" }, true),
+    ]);
+    expect(run.status).toBe("degraded");
+    expect(run.error).toMatch(/web__search ×1/);
+  });
+
   test("a misnamed tool the agent corrected is not counted", async () => {
     const run = await runWith([
       call("people_search", {}, false, { errorReason: "invalid_tool_name" }),

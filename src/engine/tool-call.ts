@@ -26,6 +26,14 @@ import { formatUnknownArgumentsError, unknownArgumentNames } from "./unknown-too
  * (possibly coerced) input plus an isError result when validation fails. With
  * no schema the input passes through unchanged.
  */
+/**
+ * `structuredContent.reason` of a call rejected for its arguments before
+ * anything ran: an unknown argument name or a value the schema refuses. The
+ * same code a connector's error envelope carries for its own rejection (see
+ * {@link errorReasonField}), so a consumer reads one value either way.
+ */
+export const INVALID_TOOL_INPUT = "bad_input";
+
 export function coerceAndValidateToolInput(
   input: Record<string, unknown>,
   toolSchema: ToolSchema | undefined,
@@ -41,6 +49,7 @@ export function coerceAndValidateToolInput(
       errorResult: {
         content: textContent(formatUnknownArgumentsError(toolSchema.name, unknown, schema)),
         isError: true,
+        structuredContent: { reason: INVALID_TOOL_INPUT },
       },
     };
   }
@@ -52,10 +61,31 @@ export function coerceAndValidateToolInput(
       errorResult: {
         content: textContent(`Invalid tool input: ${validation.error}`),
         isError: true,
+        structuredContent: { reason: INVALID_TOOL_INPUT },
       },
     };
   }
   return { input: coerced };
+}
+
+/**
+ * The failure reason a tool error result states, as `ToolCallRecord.errorReason`.
+ *
+ * Two shapes carry one: `structuredContent.reason` (the orchestrator's routing
+ * classes, the engine's own holds and rejections) and the error envelope a
+ * connector on the platform error contract returns, `structuredContent.error`
+ * with a string `code` (`bad_input`, `upstream_unavailable`, …). `reason` wins
+ * when both are present. Empty when the result states neither.
+ */
+export function errorReasonField(result: ToolResult): { errorReason?: string } {
+  const structured = result.structuredContent;
+  if (typeof structured?.reason === "string") return { errorReason: structured.reason };
+  const envelope = structured?.error;
+  if (envelope !== null && typeof envelope === "object" && !Array.isArray(envelope)) {
+    const code = (envelope as { code?: unknown }).code;
+    if (typeof code === "string") return { errorReason: code };
+  }
+  return {};
 }
 
 /**

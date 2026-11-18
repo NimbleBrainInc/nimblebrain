@@ -221,6 +221,93 @@ describe("AgentEngine", () => {
     expect(result.toolCalls[0]!.errorReason).toBe("reauth_required");
   });
 
+  /** One tool call, then a final answer: the run's single ToolCallRecord. */
+  async function recordOfOneCall(tool: ToolSchema, input: unknown, result: ToolResult) {
+    let callCount = 0;
+    const model = createMockModel(() => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: tool.name,
+              input: JSON.stringify(input),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "ok" }], inputTokens: 10, outputTokens: 5 };
+    });
+    const tools = { schemas: [tool], handler: (): ToolResult => result };
+    const engine = makeEngine(model, tools);
+    const run = await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "go" }] }],
+      tools.schemas,
+    );
+    expect(run.toolCalls).toHaveLength(1);
+    return run.toolCalls[0]!;
+  }
+
+  it("lifts the code of a connector's error envelope onto errorReason", async () => {
+    // The platform error contract: `structuredContent.error` carries
+    // `{ code, retryable, message }`, with no `reason`.
+    const record = await recordOfOneCall(
+      { name: "web__fetch", description: "fetch", inputSchema: {} },
+      {},
+      {
+        content: textContent("Invalid mode."),
+        isError: true,
+        structuredContent: {
+          error: { code: "bad_input", retryable: false, message: "Invalid mode." },
+        },
+      },
+    );
+    expect(record.ok).toBe(false);
+    expect(record.errorReason).toBe("bad_input");
+  });
+
+  it("records an argument the tool's schema refuses as bad_input", async () => {
+    const tool: ToolSchema = {
+      name: "web__fetch",
+      description: "fetch",
+      inputSchema: {
+        type: "object",
+        properties: { mode: { type: "string", enum: ["always", "never"] } },
+      },
+    };
+    const refused = await recordOfOneCall(
+      tool,
+      { mode: '"always"' },
+      { content: textContent("unused"), isError: false },
+    );
+    expect(refused.ok).toBe(false);
+    expect(refused.errorReason).toBe("bad_input");
+
+    const unknownName = await recordOfOneCall(
+      tool,
+      { modes: "always" },
+      { content: textContent("unused"), isError: false },
+    );
+    expect(unknownName.ok).toBe(false);
+    expect(unknownName.errorReason).toBe("bad_input");
+  });
+
+  it("leaves errorReason off a failed result that states no reason", async () => {
+    const record = await recordOfOneCall(
+      { name: "web__fetch", description: "fetch", inputSchema: {} },
+      {},
+      { content: textContent("boom"), isError: true },
+    );
+    expect(record.ok).toBe(false);
+    expect(record.errorReason).toBeUndefined();
+  });
+
   it("does not promote tools discovered by nb__search implicitly", async () => {
     let callCount = 0;
     const seenToolLists: string[][] = [];
