@@ -8,6 +8,7 @@
 import { log } from "../observability/log.ts";
 import catalogData from "./catalog-data.json";
 import nebiusData from "./catalog-nebius.json";
+import type { LocalProviderConfig } from "./registry.ts";
 
 // ============================================================================
 // Types
@@ -93,6 +94,53 @@ type CatalogData = Record<
 const data = { ...catalogData, ...nebiusData } as CatalogData;
 
 /**
+ * Models a deployment's config defines, which no bundled catalog can know: a
+ * local model server's models, whose limits come from the operator. Read before
+ * the bundled data, so budgets, output caps, pricing and the picker treat them
+ * as any other model. Set once at boot (`setConfiguredModels`).
+ */
+const configured: CatalogData = {};
+
+function providerData(provider: string): CatalogData[string] | undefined {
+  return configured[provider] ?? data[provider];
+}
+
+/** Replace a provider's configured models; an empty list removes the provider. */
+export function setConfiguredModels(
+  provider: string,
+  name: string,
+  models: Omit<CatalogModel, "provider">[],
+): void {
+  if (models.length === 0) {
+    delete configured[provider];
+    return;
+  }
+  configured[provider] = { name, models: Object.fromEntries(models.map((m) => [m.id, m])) };
+}
+
+/** A local server's context window when the config gives none. */
+export const DEFAULT_LOCAL_CONTEXT_WINDOW = 32_768;
+
+/**
+ * The catalog entries for `providers.local`: each model it serves, with the
+ * configured window, an output cap of a quarter of it (at most 8,192) unless one
+ * is given, tool calling, text in and out, and no price, since it runs on the
+ * operator's own hardware.
+ */
+export function localCatalogModels(cfg: LocalProviderConfig): Omit<CatalogModel, "provider">[] {
+  const context = cfg.contextWindow ?? DEFAULT_LOCAL_CONTEXT_WINDOW;
+  const output = cfg.maxOutputTokens ?? Math.min(8_192, Math.floor(context / 4));
+  return (cfg.models ?? []).map((id) => ({
+    id,
+    name: id,
+    cost: { input: 0, output: 0 },
+    limits: { context, output },
+    capabilities: { toolCall: true, reasoning: false, attachment: false },
+    modalities: { input: ["text"], output: ["text"] },
+  }));
+}
+
+/**
  * Reverse lookup: bare model id → owning provider. Built once at module
  * load (O(N) over all catalog entries). Lets `findProviderForModelId`
  * answer in O(1) and gives us a place to surface duplicate ids — if the
@@ -127,7 +175,7 @@ const idToProvider: Map<string, string> = (() => {
  * Returns undefined if not in catalog.
  */
 export function getModel(provider: string, modelId: string): CatalogModel | undefined {
-  const p = data[provider];
+  const p = providerData(provider);
   if (!p) return undefined;
   const m = p.models[modelId];
   if (!m) return undefined;
@@ -159,7 +207,7 @@ export function findProviderForModelId(modelId: string): string | null {
  * List all models for a provider. Optionally filter by an allowlist.
  */
 export function listModels(provider: string, allowedModelIds?: string[]): CatalogModel[] {
-  const p = data[provider];
+  const p = providerData(provider);
   if (!p) return [];
   const entries = Object.values(p.models);
   const models = entries.map((m) => ({ ...m, provider }));
@@ -171,12 +219,12 @@ export function listModels(provider: string, allowedModelIds?: string[]): Catalo
 
 /** List all provider IDs in the catalog. */
 export function listProviders(): string[] {
-  return Object.keys(data);
+  return [...new Set([...Object.keys(data), ...Object.keys(configured)])];
 }
 
 /** Get provider display name. */
 export function getProviderName(provider: string): string {
-  return data[provider]?.name ?? provider;
+  return providerData(provider)?.name ?? provider;
 }
 
 /**

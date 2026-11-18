@@ -378,6 +378,38 @@ Reasoning models hosted here stream their thinking back and it is shown in the c
 
 The exact model lineup is account- and tier-specific and changes over time. The authoritative list for your key is `GET https://api.tokenfactory.nebius.com/v1/models`; use those ids verbatim (they're case-sensitive, e.g. `Qwen/Qwen3-235B-A22B-Instruct-2507`).
 
+### A local model server
+
+`local` reaches a model server on your own machine or network that speaks OpenAI's Chat Completions API: [Ollama](https://ollama.com), llama.cpp's `llama-server`, LM Studio, or vLLM. It needs no key and costs nothing per call. Reference models with the `local:` prefix and the id the server knows them by:
+
+```json
+{
+  "providers": {
+    "local": {
+      "baseURL": "http://localhost:11434/v1",
+      "models": ["gemma4:e4b"],
+      "contextWindow": 32768
+    }
+  },
+  "models": {
+    "default": "local:gemma4:e4b",
+    "fast": "local:gemma4:e4b"
+  }
+}
+```
+
+- `baseURL` (required) is the server's OpenAI-compatible endpoint. From inside Docker, the host is `host.docker.internal`, e.g. `http://host.docker.internal:11434/v1`.
+- `models` lists what the server serves. Each appears in the model picker, priced at zero.
+- `contextWindow` (default 32768) is the context the server **allocates**, not the model's maximum. The runtime budgets each turn against it and compacts history before it is reached. Set it to what the server uses: Ollama picks a default from your GPU memory (4k on smaller machines) and silently truncates a longer prompt, which leaves the model without its tools. Raise Ollama's with `OLLAMA_CONTEXT_LENGTH=32768 ollama serve` or a Modelfile's `PARAMETER num_ctx 32768`.
+- `maxOutputTokens` caps one call's output (default a quarter of `contextWindow`, at most 8192).
+- `apiKey` is sent as a Bearer token for a server that asks for one.
+
+A local model needs tool calling. Gemma 4 and Qwen 3 serve it on Ollama; Gemma 3 does not. A turn sends about 5k tokens of system prompt and tool schemas before the person's message, more on a turn about tasks, so 16k is the least workable window and 32k is comfortable. `local` is not offered through `execution.modelGateway`, which reaches hosted providers only.
+
+A Docker install can name the server in its `.env` instead; see [`NB_LOCAL_MODEL_URL`](/config/environment/#local-model-server).
+
+Which servers and models have been run with NimbleBrain, and how they did: [Local Models](/config/local-models/).
+
 ### xAI (Grok)
 
 `xai` reaches Grok over the Chat Completions API. Configure it like any other provider and reference models with the `xai:` prefix:

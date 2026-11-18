@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { loadBrand } from "../brand/index.ts";
 import { getValidator } from "../config/index.ts";
+import { localModelFromEnv } from "../config/local-model.ts";
 import { deriveOverridePath, mergeConfigs, OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
 import { log } from "../observability/log.ts";
 import type { RuntimeConfig } from "../runtime/types.ts";
@@ -229,6 +230,12 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     secrets: fileConfig.secrets as RuntimeConfig["secrets"],
     brand: fileConfig.brand as RuntimeConfig["brand"],
   };
+
+  // A local model server the environment names (a Docker install's `.env`).
+  // The file wins wherever it speaks; see `src/config/local-model.ts`.
+  const local = localModelFromEnv(config, process.env);
+  if (local.providers) config.providers = local.providers as RuntimeConfig["providers"];
+  if (local.models) config.models = local.models;
 
   // Contrast is checked here, at load, so a brand that would paint an
   // unreadable interface stops the boot with the failing pair named rather

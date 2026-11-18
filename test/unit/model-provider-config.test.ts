@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { localCatalogModels } from "../../src/model/catalog.ts";
 import {
   buildRegistry,
   type ProvidersConfig,
@@ -11,9 +12,10 @@ import {
  * Every field the config schema declares under `providers.<id>` is read by the
  * runtime.
  *
- * A provider's config has two readers: `buildRegistry` (credentials and
- * endpoint) and `providerModelAllowlists` (the model allowlist). This test
- * hands both a config carrying every declared field, records which fields they
+ * A provider's config has three readers: `buildRegistry` (credentials and
+ * endpoint), `providerModelAllowlists` (the model allowlist), and, for a local
+ * server, `localCatalogModels` (its models' limits). This test
+ * hands them a config carrying every declared field, records which fields they
  * read, and fails on any field neither touches. A field in the schema and the
  * TypeScript type alike, read by nothing, is a knob that reads as configurable
  * and does nothing; the schema-to-type drift guard cannot see it, because the
@@ -65,6 +67,7 @@ describe("config schema ↔ provider config readers", () => {
 
       buildRegistry(config);
       providerModelAllowlists(config);
+      localCatalogModels(config.providers?.local ?? {});
 
       expect(fields.filter((f) => !reads.has(f))).toEqual([]);
     });
