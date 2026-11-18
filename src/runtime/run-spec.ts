@@ -249,7 +249,11 @@ export interface RunHandle {
   finishReason?: string;
   /** The last model call's provider-native stop reason. See `EngineResult.finishReasonRaw`. */
   finishReasonRaw?: string;
-  /** The account that stopped the run, when `stopReason` is `spend_limit`. */
+  /**
+   * The account that stopped the run, when `stopReason` is `spend_limit`. With
+   * `max_input_tokens`, `MODEL_GATEWAY_BUDGET_ACCOUNT` when the model gateway
+   * held the cap and refused the run's next call; absent when the engine did.
+   */
   spendAccountId?: string;
   /** See `EngineResult.wrapUpLimit`. */
   wrapUpLimit?: WrapUpLimit;

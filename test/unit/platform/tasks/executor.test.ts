@@ -409,6 +409,36 @@ describe("createDirectExecutor — stopReason → status", () => {
     expect(run.error).toContain("its own Max Input Tokens");
   });
 
+  test("max_input_tokens without the gateway's id → the engine's projection", async () => {
+    const executor = createDirectExecutor(taskFnWithStop("max_input_tokens"), () => ({}));
+    const { run } = await executor(makeTask({ maxInputTokens: 200_000 }));
+    expect(run.error).toContain("projected to pass the cap");
+    expect(run.error).not.toContain("model gateway");
+  });
+
+  test("max_input_tokens held by the model gateway → the gateway refused the next call, not a projection", async () => {
+    const executor = createDirectExecutor(
+      async (req): Promise<TaskFnResult> => ({
+        output: "",
+        runId: req.runId ?? "run_test000000",
+        toolCalls: [],
+        stopReason: "max_input_tokens",
+        spendAccountId: MODEL_GATEWAY_BUDGET_ACCOUNT,
+        usage: { inputTokens: 300_000, outputTokens: 9_000, iterations: 4 },
+      }),
+      () => ({}),
+    );
+    const { run } = await executor(makeTask({ maxInputTokens: 1_000_000 }));
+    expect(run.status).toBe("failure");
+    expect(run.stopReason).toBe("max_input_tokens");
+    expect(run.error).toContain("input-token cap of 1,000,000");
+    expect(run.error).toContain("its own Max Input Tokens");
+    expect(run.error).toContain("the model gateway refused the run's next model call");
+    expect(run.error).toContain("300,000 input and 9,000 output tokens");
+    expect(run.error).not.toContain("projected");
+    expect(run.error).not.toContain("Model budget reached");
+  });
+
   test("max_input_tokens under the operator ceiling names the ceiling, not the task's cap", async () => {
     const ceilings = resolveTasksConfig({ maxRunInputTokens: 50_000 });
     const executor = createDirectExecutor(
@@ -1020,6 +1050,79 @@ describe("createDirectExecutor — degraded runs", () => {
       call("crm__update", { id: "b" }, false),
     ]);
     expect(run.status).toBe("degraded");
+  });
+
+  test("a rejected argument value corrected on the next call to a many-job tool stays success", async () => {
+    // Same argument names, another value: neither the same input nor another shape.
+    const run = await runWith([
+      call("web__fetch", { urls: ["https://example.com"] }, true),
+      call("web__fetch", { urls: ["https://example.org/a"], mode: '"always"' }, false, {
+        errorReason: "bad_input",
+      }),
+      call("web__fetch", { urls: ["https://example.org/a"], mode: "always" }, true),
+    ]);
+    expect(run.status).toBe("success");
+    expect(run.unrecoveredToolFailures).toBeUndefined();
+  });
+
+  test("several rejections in a row are resolved by the success that follows them", async () => {
+    const run = await runWith([
+      call("web__fetch", { urls: ["https://example.com"] }, true),
+      call("web__fetch", { urls: ["https://example.org"], mode: "x" }, false, {
+        errorReason: "bad_input",
+      }),
+      call("web__fetch", { urls: ["https://example.org"], mode: "y" }, false, {
+        errorReason: "bad_input",
+      }),
+      call("web__fetch", { urls: ["https://example.org"], mode: "always" }, true),
+    ]);
+    expect(run.status).toBe("success");
+  });
+
+  test("a rejection whose next call to the tool also fails stays degraded", async () => {
+    const run = await runWith([
+      call("web__fetch", { urls: ["https://example.com"] }, true),
+      call("web__fetch", { urls: ["https://example.org"], mode: "x" }, false, {
+        errorReason: "bad_input",
+      }),
+      call("web__fetch", { urls: ["https://example.org"], mode: "always" }, false, {
+        errorReason: "upstream_unavailable",
+      }),
+      call("web__fetch", { urls: ["https://example.net"], mode: "always" }, true),
+    ]);
+    expect(run.status).toBe("degraded");
+    expect(run.error).toMatch(/web__fetch ×2/);
+  });
+
+  test("a rejection never retried stays degraded", async () => {
+    const run = await runWith([
+      call("records__create", { id: "a" }, true),
+      call("records__create", { id: "b", note: 1 }, false, { errorReason: "bad_input" }),
+    ]);
+    expect(run.status).toBe("degraded");
+    expect(run.error).toMatch(/records__create ×1/);
+  });
+
+  test("a rejected write abandoned for another item reads as resolved (accepted limit)", async () => {
+    // The log cannot tell a corrected value from a different item, so the next
+    // success to the tool resolves the rejection whatever its input.
+    const run = await runWith([
+      call("records__create", { id: "a", note: "x" }, true),
+      call("records__create", { id: "b", note: 1 }, false, { errorReason: "bad_input" }),
+      call("records__create", { id: "c", note: "z" }, true),
+    ]);
+    expect(run.status).toBe("success");
+  });
+
+  test("an upstream failure is not resolved by the next success on another input", async () => {
+    // Only a rejected argument makes the next call its retry; a call that ran and failed upstream did not.
+    const run = await runWith([
+      call("web__search", { query: "a" }, true),
+      call("web__search", { query: "b" }, false, { errorReason: "upstream_unavailable" }),
+      call("web__search", { query: "c" }, true),
+    ]);
+    expect(run.status).toBe("degraded");
+    expect(run.error).toMatch(/web__search ×1/);
   });
 
   test("a misnamed tool the agent corrected is not counted", async () => {
