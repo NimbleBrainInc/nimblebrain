@@ -16,7 +16,7 @@ import {
   startError,
   volumeOf,
 } from "./compose.ts";
-import type { Deps } from "./deps.ts";
+import { type Deps, invocation } from "./deps.ts";
 import { doctor } from "./doctor.ts";
 import {
   DEFAULT_LOCAL_MODEL,
@@ -85,7 +85,7 @@ export async function init(ctx: Ctx): Promise<Ok> {
       await settleFailure(rec, home, consent, err);
     throw new CliError(err.code, err.message, {
       ...err.detail,
-      telemetry: field(consent, lockedHere(deps)),
+      telemetry: field(consent, invocation(deps, home), lockedHere(deps)),
     });
   }
 }
@@ -109,10 +109,11 @@ async function chooseConsent(ctx: Ctx): Promise<Consent> {
   if (ctx.flags.telemetry) return ctx.flags.telemetry;
   if (!asks(ctx)) return "undecided";
   const consent = parseAnswer(await ctx.deps.prompt(`${QUESTION} [Y/n] `));
+  const cli = invocation(ctx.deps, ctx.home);
   ctx.deps.say(
     consent === "on"
-      ? "Sending anonymous usage data. Turn it off any time: npx nimblebrain telemetry off"
-      : "No usage data will be sent. Turn it on any time: npx nimblebrain telemetry on",
+      ? `Sending anonymous usage data. Turn it off any time: ${cli} telemetry off`
+      : `No usage data will be sent. Turn it on any time: ${cli} telemetry on`,
   );
   return consent;
 }
@@ -323,7 +324,7 @@ export async function telemetry(ctx: Ctx): Promise<Ok> {
   );
   const rec = recorder(deps, ctx.version, await reportId(deps, home));
   await rec.settle(home, ctx.arg);
-  return { ok: true, telemetry: field(ctx.arg) };
+  return { ok: true, telemetry: field(ctx.arg, invocation(deps, home)) };
 }
 
 /** Takes the model key at a hidden prompt. A person runs this; an agent never handles the key. */

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { Deps } from "./deps.ts";
+import { type Deps, invocation } from "./deps.ts";
 import { CliError } from "./result.ts";
 
 /**
@@ -68,10 +68,15 @@ export function lockedHere(deps: Deps): TelemetryField["locked"] {
   return undefined;
 }
 
-export function field(state: Consent, locked?: TelemetryField["locked"]): TelemetryField {
+/** `cli` is how to run this CLI against the install (`invocation`), which `set` names. */
+export function field(
+  state: Consent,
+  cli: string,
+  locked?: TelemetryField["locked"],
+): TelemetryField {
   if (locked) return { state: state === "undecided" ? "off" : state, locked };
   if (state !== "undecided") return { state };
-  return { state, ask: QUESTION, set: "npx nimblebrain telemetry on|off" };
+  return { state, ask: QUESTION, set: `${cli} telemetry on|off` };
 }
 
 /**
@@ -181,7 +186,7 @@ export async function currentTelemetry(
   const state = rt?.consent ?? seededConsent((await deps.readText(join(home, ".env"))) ?? "");
   const lock =
     here ?? (rt?.locked === "operator" || rt?.locked === "no_destination" ? rt.locked : undefined);
-  return field(state, lock);
+  return field(state, invocation(deps, home), lock);
 }
 
 /**
