@@ -27,11 +27,10 @@
 
 import { ArrowUp, MessageSquare, Plus, Settings, UserPlus } from "lucide-react";
 import { type FormEvent, useCallback, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { BriefingView } from "../components/briefing/BriefingView";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { relativeTime } from "../components/RecentConversationsPopover";
-import { OverviewTour } from "../components/tour/OverviewTour";
 import { Tooltip } from "../components/ui/tooltip";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
@@ -92,20 +91,6 @@ export function WorkspaceOverviewPage() {
     [navigate, slug],
   );
 
-  // Help → "Take the tour" arrives as `?tour=1`; the param goes once the tour ends.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const replayTour = searchParams.get("tour") === "1";
-  const endTour = useCallback(() => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("tour");
-        return next;
-      },
-      { replace: true },
-    );
-  }, [setSearchParams]);
-
   if (!workspace) {
     return (
       <div
@@ -142,7 +127,6 @@ export function WorkspaceOverviewPage() {
 
   return (
     <div className="@container h-full overflow-y-auto" data-testid="workspace-overview-page">
-      <OverviewTour replay={replayTour} onEnd={endTour} />
       <div className="px-(--page-gutter) pt-8 pb-10">
         <header className="mb-6 flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -163,7 +147,6 @@ export function WorkspaceOverviewPage() {
           <Link
             to={`${slugPath}/settings/general`}
             data-testid="workspace-overview-settings"
-            data-tour="settings"
             className="shrink-0 inline-flex h-8 items-center gap-2 px-3 rounded-md border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
           >
             <Settings className="size-4" aria-hidden />

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { callToolWithoutWorkspace } from "../api/client";
 import { roleAtLeast, useScopedRole } from "../hooks/useScopedRole";
 import { initTelemetry } from "../telemetry";
-import { useTourRunning } from "./tour/OverviewTour";
+import { useTourRunning } from "./tour/ShellTour";
 import { Button } from "./ui/button";
 
 interface TelemetryInfo {

@@ -539,10 +539,12 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
 
   return (
     <div className="space-y-6">
-      <SettingsPageHeader
-        title="Skills"
-        description={headerDescription(lockedScope, isWorkspaceSurface)}
-      />
+      <div data-tour="skills">
+        <SettingsPageHeader
+          title="Skills"
+          description={headerDescription(lockedScope, isWorkspaceSurface)}
+        />
+      </div>
 
       {/* Loading message only when we have nothing to render yet — a
        * refetch triggered by a toggle/edit keeps the list mounted so the
