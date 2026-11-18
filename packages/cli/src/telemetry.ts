@@ -60,10 +60,14 @@ export function telemetryKey(deps: Deps): string {
   return deps.env.NIMBLEBRAIN_TELEMETRY_KEY ?? (RELEASED ? TELEMETRY_KEY : "");
 }
 
+/** The person asked not to be tracked (`DO_NOT_TRACK=1`): no telemetry, and no update check. */
+export function doNotTrack(deps: Deps): boolean {
+  return deps.env.DO_NOT_TRACK === "1";
+}
+
 /** Whether no one can be asked: the person set `DO_NOT_TRACK`, or there is nowhere to send. */
 export function lockedHere(deps: Deps): TelemetryField["locked"] {
-  if (deps.env.DO_NOT_TRACK === "1" || deps.env.NB_TELEMETRY_DISABLED === "1")
-    return "do_not_track";
+  if (doNotTrack(deps) || deps.env.NB_TELEMETRY_DISABLED === "1") return "do_not_track";
   if (!telemetryKey(deps)) return "no_destination";
   return undefined;
 }

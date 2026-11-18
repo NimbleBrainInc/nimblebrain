@@ -205,7 +205,8 @@ describe("status", () => {
   test("NIMBLEBRAIN_HOME moves the install", async () => {
     const seen: string[] = [];
     const deps = fakeDeps({
-      env: { NIMBLEBRAIN_HOME: "/srv/nb" },
+      // The update check's cache is not the install's, so it is off here.
+      env: { NIMBLEBRAIN_HOME: "/srv/nb", NIMBLEBRAIN_NO_UPDATE_CHECK: "1" },
       readText: async (p) => {
         seen.push(p);
         return undefined;
@@ -254,6 +255,7 @@ describe("the entry point", () => {
         ...process.env,
         PATH: `${dir}:${process.env.PATH}`,
         NIMBLEBRAIN_HOME: join(dir, "home"),
+        NIMBLEBRAIN_NO_UPDATE_CHECK: "1",
       },
       stdout: "pipe",
       stderr: "pipe",

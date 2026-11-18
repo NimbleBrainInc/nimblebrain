@@ -19,13 +19,30 @@ import { mcp } from "./mcp.ts";
 import { CliError, exitCodeFor, type Failure, failure, type Ok } from "./result.ts";
 import { readInstall, type StatusResult, status } from "./status.ts";
 import { settleWaiting } from "./telemetry.ts";
+import {
+  NOTICE_WAIT_MS,
+  noticeLines,
+  startUpdateCheck,
+  type UpdateCheck,
+  updatesField,
+} from "./updates.ts";
 
 import { VERSION } from "./version.ts";
 
 export { VERSION };
 
+/** What one run prints: the answer on stdout, a person's notices on stderr after it, and the exit code. */
+export interface Answer {
+  stdout: string;
+  stderr?: string;
+  code: number;
+}
+
+/** The commands whose answer is an install's state, where a newer runtime is worth a line. */
+const RUNTIME_NOTICE: readonly string[] = ["status", "up", "init"];
+
 /** Runs one invocation and returns what to print and the exit code. Never throws. */
-export async function run(argv: string[], deps: Deps): Promise<{ stdout: string; code: number }> {
+export async function run(argv: string[], deps: Deps): Promise<Answer> {
   const json = wantsJson(argv);
   let parsed: Parsed;
   try {
@@ -46,6 +63,8 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
   }
 
   const { command, flags, arg, operand } = parsed;
+  // Started first, so a lookup has the whole command to finish in.
+  const check = startUpdateCheck(deps);
   const home = installHome(deps, flags.home);
   let result: Ok | Failure;
   try {
@@ -87,7 +106,42 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
   if (!["init", "telemetry", "uninstall", "doctor"].includes(command)) {
     await settleWaiting(deps, home, VERSION);
   }
-  return render(result, flags.json, command);
+  return answerWithUpdates(result, command, flags.json, check);
+}
+
+/**
+ * The answer with what the update check knows: `updates` in an answer that
+ * carries an install's state, and, for a person, a notice per newer side on
+ * stderr. A person may wait a moment for a lookup still running; an agent
+ * never does.
+ */
+async function answerWithUpdates(
+  result: Ok | Failure,
+  command: string,
+  json: boolean,
+  check: UpdateCheck | undefined,
+): Promise<Answer> {
+  if (!check) return render(result, json, command);
+  const known = await check.known(json ? 0 : NOTICE_WAIT_MS);
+  const runtime = isStatusShaped(result) ? result.version : undefined;
+  const updates = updatesField(known, VERSION, runtime);
+  const answer = render(
+    updates && runtime !== undefined ? { ...result, updates } : result,
+    json,
+    command,
+  );
+  const notices = json ? [] : noticeLines(updates, RUNTIME_NOTICE.includes(command));
+  return notices.length > 0 ? { ...answer, stderr: `${notices.join("\n")}\n` } : answer;
+}
+
+/** An answer that carries an install's state (`status`, `init`, `up`, `update`), even inside a failure. */
+function isStatusShaped(result: Ok | Failure): result is (Ok | Failure) & { version: string } {
+  return (
+    typeof result.version === "string" &&
+    "health" in result &&
+    "url" in result &&
+    "workspaces" in result
+  );
 }
 
 /**
@@ -122,11 +176,7 @@ function toFailure(err: unknown): Failure {
   return failure(new CliError("USAGE", err instanceof Error ? err.message : String(err)));
 }
 
-function render(
-  result: Ok | Failure,
-  json: boolean,
-  command?: string,
-): { stdout: string; code: number } {
+function render(result: Ok | Failure, json: boolean, command?: string): Answer {
   const code = exitCodeFor(result);
   if (json) return { stdout: `${JSON.stringify(result)}\n`, code };
   if (!result.ok) return { stdout: `error: ${result.message}\nfix: ${result.fix}\n`, code };
@@ -233,7 +283,7 @@ function field(key: string, value: unknown): string[] {
  * promise of "one JSON object for every run" would leave an agent with nothing
  * to act on. `exitCode` is the code the process was about to end with.
  */
-export function interrupted(argv: string[], exitCode: number): { stdout: string; code: number } {
+export function interrupted(argv: string[], exitCode: number): Answer {
   const err = new CliError(
     "INTERRUPTED",
     `The CLI stopped before it answered (exit code ${exitCode}).`,
