@@ -494,15 +494,23 @@
             "properties": {
               "driver": {
                 "type": "string",
-                "enum": ["nimblebrain-agent"],
+                "enum": ["nimblebrain-agent", "claude-managed-agents"],
                 "description": "The agent the worker serves, which names the driver that speaks to it. nimblebrain-agent: NimbleBrain's agent loop as a standalone worker."
               },
               "url": {
                 "type": "string",
                 "description": "The worker's ACP endpoint, dialed over Streamable HTTP, e.g. http://agent-pool.<namespace>.svc:8080/acp. In a cluster, an internal Service only the runtime can reach."
+              },
+              "agent": {
+                "type": "string",
+                "description": "claude-managed-agents (prototype): the stored agent id each run's session is created from."
+              },
+              "environment": {
+                "type": "string",
+                "description": "claude-managed-agents (prototype): the environment id sessions run in."
               }
             },
-            "required": ["driver", "url"],
+            "required": ["driver"],
             "additionalProperties": false
           }
         }

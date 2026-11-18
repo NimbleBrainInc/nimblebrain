@@ -13,12 +13,16 @@
  * runtime mints per turn.
  */
 
-/** One runtime beside the native engine: a worker serving an ACP agent. */
+/** One runtime beside the native engine: a worker serving an ACP agent, or (prototype) Claude Managed Agents. */
 export interface AgentRuntimeConfig {
   /** The agent the worker serves, which names the driver that speaks to it. */
-  driver: "nimblebrain-agent";
-  /** The worker's ACP endpoint, dialed over Streamable HTTP. */
-  url: string;
+  driver: "nimblebrain-agent" | "claude-managed-agents";
+  /** The worker's ACP endpoint, dialed over Streamable HTTP. Absent for `claude-managed-agents`. */
+  url?: string;
+  /** `claude-managed-agents` only: the stored CMA agent each run's session is created from. */
+  agent?: string;
+  /** `claude-managed-agents` only: the CMA environment sessions run in. */
+  environment?: string;
 }
 
 /** The `execution` block, as an operator writes it. */
@@ -45,4 +49,9 @@ export const EXECUTION_CONFIG_KEYS: (keyof ExecutionConfig)[] = [
 ];
 
 /** Every key a runtime entry may carry, for the config schema drift guard. */
-export const AGENT_RUNTIME_CONFIG_KEYS: (keyof AgentRuntimeConfig)[] = ["driver", "url"];
+export const AGENT_RUNTIME_CONFIG_KEYS: (keyof AgentRuntimeConfig)[] = [
+  "driver",
+  "url",
+  "agent",
+  "environment",
+];

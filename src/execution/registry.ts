@@ -11,6 +11,7 @@ import { createAcpRuntime } from "./acp/acp-runtime.ts";
 import type { AcpDriver } from "./acp/driver.ts";
 import { createNimbleBrainAgentDriver } from "./acp/drivers/nimblebrain-agent.ts";
 import { createHttpConnection } from "./acp/http-connection.ts";
+import { createCmaRuntime } from "./cma/cma-runtime.ts";
 import { createNativeRuntime, NATIVE_RUNTIME_ID } from "./native-runtime.ts";
 import type { AgentRuntime } from "./types.ts";
 
@@ -56,10 +57,25 @@ export function createAgentRuntimes(
     }
     runtimes.set(runtime.id, runtime);
   };
-  const entries = Object.entries(config?.runtimes ?? {});
+  const all = Object.entries(config?.runtimes ?? {});
+  // PROTOTYPE: CMA calls models with the Anthropic org's key, past the gateway
+  // ADR-0057 requires, so it is allowed only under the dev identity provider.
+  for (const [id, entry] of all.filter(([, e]) => e.driver === "claude-managed-agents")) {
+    if (!deps.dev) throw new Error(`execution.runtimes.${id}: claude-managed-agents is dev-only`);
+    if (!entry.agent || !entry.environment)
+      throw new Error(`execution.runtimes.${id} needs agent and environment`);
+    add(
+      createCmaRuntime(id, {
+        agentId: entry.agent,
+        environmentId: entry.environment,
+        retainSessions: process.env.NB_CMA_RETAIN === "1",
+      }),
+    );
+  }
+  const entries = all.filter(([, e]) => e.driver !== "claude-managed-agents");
   if (entries.length > 0) assertGatewayed(config ?? {}, deps);
   for (const [id, entry] of entries) {
-    if (!isHttpUrl(entry.url))
+    if (!entry.url || !isHttpUrl(entry.url))
       throw new Error(`execution.runtimes.${id}.url must be an http(s) URL`);
     const connection = createHttpConnection({
       url: entry.url,
@@ -91,6 +107,8 @@ function driverFor(entry: AgentRuntimeConfig): AcpDriver {
   switch (entry.driver) {
     case "nimblebrain-agent":
       return createNimbleBrainAgentDriver();
+    case "claude-managed-agents":
+      throw new Error("claude-managed-agents is not an ACP driver");
   }
 }
 
