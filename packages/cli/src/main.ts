@@ -2,6 +2,7 @@ import { type Parsed, parse, wantsJson } from "./args.ts";
 import { paths } from "./compose.ts";
 import { type Deps, installHome } from "./deps.ts";
 import { doctor } from "./doctor.ts";
+import { describe, helpText } from "./help.ts";
 import {
   down,
   init,
@@ -23,41 +24,6 @@ import { VERSION } from "./version.ts";
 
 export { VERSION };
 
-const HELP = `nimblebrain ${VERSION}: install and run NimbleBrain on this machine
-
-Usage: npx nimblebrain [command] [flags]
-
-Commands:
-  init        Check this machine, start NimbleBrain, connect your coding agent (default)
-  doctor      Check Docker, Compose, architecture, memory and the port; installs nothing
-  status      Version, health, URL and each workspace's MCP URL
-  key         Enter the model key at a hidden prompt
-  local-model [model]  Run NimbleBrain's agents on a model served by Ollama (default gemma4:e4b)
-  telemetry   [on|off|status] Whether this install sends anonymous usage data
-  up, down    Start or stop NimbleBrain; data survives down
-  logs        Recent runtime log lines
-  update      Move to the newest release, keeping data
-  uninstall   Remove NimbleBrain and its data
-  mcp add <url>          Add an MCP server you run on this machine to a workspace
-  mcp list               The servers in a workspace
-  mcp remove <name>      Remove a server from a workspace
-
-Flags:
-  --json            One JSON object on stdout
-  --yes, -y         Take every default; implied when no terminal is attached
-  --agent <name>    claude-code, cursor, codex or none
-  --port <n>        Local port (default 27246)
-  --home <dir>      Where the install lives (default ~/.nimblebrain-local, or NIMBLEBRAIN_HOME);
-                    a home with another folder name is a separate install
-  --provider <name> The model provider for key (default anthropic)
-  --local-model <model>  init: run on this Ollama model instead of a hosted key
-  --runtime <tag>   The NimbleBrain release to install or update to (default the newest)
-  --telemetry <on|off>  The person's answer to sending anonymous usage data; without it, init asks or leaves it undecided
-  --name <name>     For mcp add: the server name (default from the server's card, else its URL)
-  --workspace <id>  For mcp: the workspace (default the one init connected, the first in status)
-  --help, --version
-`;
-
 /** Runs one invocation and returns what to print and the exit code. Never throws. */
 export async function run(argv: string[], deps: Deps): Promise<{ stdout: string; code: number }> {
   const json = wantsJson(argv);
@@ -68,7 +34,11 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
     return render(toFailure(err), json);
   }
 
-  if (parsed.kind === "help") return { stdout: HELP, code: 0 };
+  if (parsed.kind === "help") {
+    return parsed.flags.json
+      ? render(describe(VERSION), true)
+      : { stdout: helpText(VERSION), code: 0 };
+  }
   if (parsed.kind === "version") {
     return parsed.flags.json
       ? render({ ok: true, version: VERSION }, true)
