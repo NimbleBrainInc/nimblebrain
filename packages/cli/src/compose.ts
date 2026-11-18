@@ -1,14 +1,35 @@
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Deps, ExecResult } from "./deps.ts";
 import { CliError } from "./result.ts";
 
 /**
- * The Compose project name. It names the containers, the network and the data
- * volume (`nimblebrain-local_workspace`), and it is how the CLI tells its own
- * install from anyone else's.
+ * The Compose project of the default home, and of every install an older CLI
+ * made, whatever its home.
  */
-export const PROJECT = "nimblebrain-local";
-export const VOLUME = `${PROJECT}_workspace`;
+export const DEFAULT_PROJECT = "nimblebrain-local";
+
+/**
+ * The Compose project for a new install in `home`. The project names the
+ * containers, the network and the data volume (`volumeOf`), and it is how the
+ * CLI tells its own install from anyone else's. It follows the home folder's
+ * name, so another home is another install: `~/.nimblebrain-local` gives
+ * `nimblebrain-local`, `~/nb-rc` gives `nimblebrain-nb-rc`. `init` chooses it
+ * once and writes it to `install.json` and `.env`; every later command reads
+ * it from there, so moving the folder changes nothing. Two homes whose folders
+ * share a name share a project, which `init` refuses as `NOT_OURS`.
+ */
+export function projectFor(home: string): string {
+  const slug = basename(home)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^[^a-z0-9]+/, "")
+    .replace(/[^a-z0-9]+$/, "");
+  if (!slug) return "nimblebrain";
+  return slug.startsWith("nimblebrain") ? slug : `nimblebrain-${slug}`;
+}
+
+/** The project's data volume, as Compose names it. */
+export const volumeOf = (project: string) => `${project}_workspace`;
 
 const RAW = "https://raw.githubusercontent.com/NimbleBrainInc/nimblebrain";
 

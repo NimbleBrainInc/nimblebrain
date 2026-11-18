@@ -22,7 +22,7 @@ export const ERRORS = {
   PORT_IN_USE: "Stop whatever holds the port, or pass --port with a free one.",
   NOT_INSTALLED: "Run `npx nimblebrain` to install it.",
   NOT_OURS:
-    "Another install holds this name or its data. Remove it yourself, or choose another --home.",
+    "Another install holds this name or its data. Remove it yourself, or choose a --home whose folder has another name.",
   NETWORK: "Check the network connection, then run the same command again.",
   MODEL_KEY_MISSING: "Run `npx nimblebrain key` in your own terminal to enter a model key.",
   HEALTH_TIMEOUT: "Run `npx nimblebrain logs` and look at the last error line.",

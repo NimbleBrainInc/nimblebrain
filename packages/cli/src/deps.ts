@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { chmod, mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 /**
  * Everything the CLI does to the world goes through here, so a command is a
@@ -38,6 +38,8 @@ export interface Deps {
   say(line: string): void;
   env: NodeJS.ProcessEnv;
   home: string;
+  /** The working directory a relative `--home` is taken from. */
+  cwd: string;
 }
 
 export interface ExecOptions {
@@ -132,6 +134,7 @@ export function realDeps(): Deps {
     },
     env: process.env,
     home: homedir(),
+    cwd: process.cwd(),
   };
 }
 
@@ -224,8 +227,12 @@ export function typeHidden(
 /**
  * Where an install keeps its Compose file, `.env` and state. Separate from
  * `~/.nimblebrain`, the work directory a source checkout's `bun run dev` uses,
- * so the two never read each other's files.
+ * so the two never read each other's files. Always absolute: the Compose
+ * project follows the folder's name (`projectFor`), which `.` would not give.
  */
 export function installHome(deps: Deps, flag?: string): string {
-  return flag ?? deps.env.NIMBLEBRAIN_HOME ?? join(deps.home, ".nimblebrain-local");
+  return resolve(
+    deps.cwd,
+    flag ?? deps.env.NIMBLEBRAIN_HOME ?? join(deps.home, ".nimblebrain-local"),
+  );
 }

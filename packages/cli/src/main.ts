@@ -47,7 +47,8 @@ Flags:
   --yes, -y         Take every default; implied when no terminal is attached
   --agent <name>    claude-code, cursor, codex or none
   --port <n>        Local port (default 27246)
-  --home <dir>      Where the install lives (default ~/.nimblebrain-local, or NIMBLEBRAIN_HOME)
+  --home <dir>      Where the install lives (default ~/.nimblebrain-local, or NIMBLEBRAIN_HOME);
+                    a home with another folder name is a separate install
   --provider <name> The model provider for key (default anthropic)
   --local-model <model>  init: run on this Ollama model instead of a hosted key
   --runtime <tag>   The NimbleBrain release to install or update to (default the newest)

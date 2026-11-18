@@ -57,7 +57,7 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `--port <n>` | The local port (default `27246`). |
 | `--provider <name>` | For `key`: `anthropic` (default), `openai`, `google`, `greenpt`, `nebius` or `xai`. |
 | `--local-model <model>` | For `init`: run on this Ollama model instead of a hosted key, without asking. |
-| `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). |
+| `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). A home whose folder has another name is a separate install. See [A second install](#a-second-install). |
 | `--runtime <tag>` | For `init` and `update`: the NimbleBrain release to install, such as `v0.74.0`. Default: the newest release. |
 | `--telemetry <on\|off>` | For `init`: your answer to sending anonymous usage data. Without it, `init` asks you, or, with no one at the terminal, leaves it undecided and sends nothing. |
 | `--name <serverName>` | For `mcp add`: the name to add the server under. Default: the name in its Server Card, else the URL's host and port. |
@@ -136,6 +136,18 @@ The CLI checks that Ollama answers on `127.0.0.1:11434`, downloads the model if 
 
 Gemma 4 E4B is the smallest model run end to end on NimbleBrain's tasks (reliable on everyday ones, partial on scheduled tasks); [Local Models](/config/local-models/) lists what has been tested, what failed, and what has not been tried. It needs about 7 GB of memory beside NimbleBrain's 2 GB. On Linux, Ollama listens on `127.0.0.1` by default, which a container cannot reach: set `OLLAMA_HOST=0.0.0.0`. This needs a NimbleBrain release that takes a local model; an older one answers `RUNTIME_UNSUPPORTED`.
 
+## A second install
+
+Each home is its own install: its own containers, data volume and port. The Compose project takes the home folder's name, so `~/.nimblebrain-local` stays `nimblebrain-local` and `~/nb-rc` becomes `nimblebrain-nb-rc`. To try a release candidate beside the NimbleBrain you use every day:
+
+```bash
+npx nimblebrain init --home ~/nb-rc --port 27300 --runtime vX.Y.Z-rc.N --agent none
+npx nimblebrain status --home ~/nb-rc
+npx nimblebrain uninstall --home ~/nb-rc --yes
+```
+
+Pass the same `--home` to every command for that install. The name is chosen once, at `init`, so moving the folder later changes nothing. Two homes whose folders share a name would share a project; the second `init` refuses with `NOT_OURS`. An agent has one `nimblebrain` server, so `--agent` on the second install points that agent at it instead of the first, and that install's `uninstall` removes the registration; `--agent none` leaves your agent on the first.
+
 ## What it writes
 
-Everything lives in `~/.nimblebrain-local`: the installed release's `docker-compose.yml`, downloaded from that release, an `instance.json` naming the `dev` sign-in, a `.env` that only your user can read (the release, the port, and your model key or local model), and `install.json`. Your conversations live in the Docker volume `nimblebrain-local_workspace`. A key exported in your shell is not used: `.env` is the only source, so the key you entered with `key` is the one that runs.
+Everything lives in `~/.nimblebrain-local`: the installed release's `docker-compose.yml`, downloaded from that release, an `instance.json` naming the `dev` sign-in, a `.env` that only your user can read (the release, the port, and your model key or local model), and `install.json`. Your conversations live in the Docker volume `nimblebrain-local_workspace`, named after the install's Compose project, which `install.json` and `.env` record. A key exported in your shell is not used: `.env` is the only source, so the key you entered with `key` is the one that runs.
