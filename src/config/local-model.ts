@@ -4,9 +4,10 @@
  * A Docker install's only channel from the installer to the runtime is its
  * `.env`, which Compose passes through; the config file lives in the data
  * volume. So when `NB_LOCAL_MODEL_URL` is set, the runtime builds
- * `providers.local` and the default model from the environment. The config file
- * wins wherever it speaks: a `providers.local` block, or a default model, set
- * there is kept.
+ * `providers.local` and the `default` and `fast` model slots from the
+ * environment. The config file wins wherever it speaks: a `providers.local`
+ * block, or a model slot, set there is kept, and each slot it leaves unset gets
+ * the local model.
  */
 
 export const LOCAL_MODEL_ENV = {
@@ -57,9 +58,11 @@ export function localModelFromEnv(
         };
 
   const qualified = `local:${model}`;
-  const models = config.models?.default
-    ? config.models
-    : { ...config.models, default: qualified, fast: config.models?.fast ?? qualified };
+  const models = {
+    ...config.models,
+    default: config.models?.default ?? qualified,
+    fast: config.models?.fast ?? qualified,
+  };
 
   return { providers, models };
 }

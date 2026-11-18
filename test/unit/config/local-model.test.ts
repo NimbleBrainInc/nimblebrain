@@ -39,7 +39,19 @@ describe("localModelFromEnv", () => {
     };
     const result = localModelFromEnv(file, env);
     expect(result.providers).toEqual(file.providers);
-    expect(result.models).toEqual(file.models);
+    expect(result.models).toEqual({
+      default: "local:qwen3:8b",
+      fast: "local:nimblebrain-gemma4-e4b",
+    });
+  });
+
+  it("fills each model slot the file leaves unset", () => {
+    expect(localModelFromEnv({ models: { fast: "local:qwen3:8b" } }, env).models).toEqual({
+      default: "local:nimblebrain-gemma4-e4b",
+      fast: "local:qwen3:8b",
+    });
+    const both = { default: "local:a", fast: "local:b" };
+    expect(localModelFromEnv({ models: both }, env).models).toEqual(both);
   });
 
   it("adds the local server beside the file's providers", () => {
