@@ -150,6 +150,12 @@ export function setEnvLines(text: string, values: Record<string, string>): strin
   return `${out.join("\n")}\n`;
 }
 
+/** The provider whose key `.env` sets, by the names `providers` gives; null when none is set. */
+export function keyProvider(envText: string, composeText: string): string | null {
+  const set = Object.entries(providers(composeText)).find(([, v]) => hasKey(envText, [v]));
+  return set ? set[0] : null;
+}
+
 /** Whether `.env` sets a non-empty value for any model-key variable. Reads names, never prints values. */
 export function hasKey(envText: string, vars: string[]): boolean {
   return vars.some((v) => new RegExp(`^${v}=\\S`, "m").test(envText));

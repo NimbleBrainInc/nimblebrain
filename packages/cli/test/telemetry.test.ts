@@ -21,7 +21,18 @@ async function json(argv: string[], m: Machine) {
 const sent = (m: Machine) =>
   m.posts
     .filter((p) => p.url.includes("posthog.com"))
-    .flatMap((p) => (p.body as { batch: Array<{ event: string; distinct_id: string }> }).batch);
+    .flatMap(
+      (p) =>
+        (
+          p.body as {
+            batch: Array<{
+              event: string;
+              distinct_id: string;
+              properties: Record<string, unknown>;
+            }>;
+          }
+        ).batch,
+    );
 
 const reportEvents = (m: Machine) =>
   (m.files.get(REPORT)?.text ?? "")
@@ -58,6 +69,28 @@ describe("telemetry consent at init", () => {
     const id = m.files.get(ENV)?.text.match(/^NB_TELEMETRY_ID=(.+)$/m)?.[1];
     expect(sent(m).every((e) => e.distinct_id === id)).toBe(true);
     expect(m.files.has(REPORT)).toBe(false);
+  });
+
+  test("init_completed names the provider and the connected agent, never the key", async () => {
+    const files = {
+      [ENV]: `COMPOSE_PROJECT_NAME=nimblebrain-local\nANTHROPIC_API_KEY=sk-secret\n`,
+    };
+    const m = machine({ env, files });
+    await json(["--yes", "--telemetry", "on", "--agent", "claude-code"], m);
+    const done = sent(m).find((e) => e.event === "cli.init_completed");
+    expect(done?.properties).toMatchObject({
+      model_key: "set",
+      provider: "anthropic",
+      agent: "claude-code",
+    });
+    expect(JSON.stringify(sent(m))).not.toContain("sk-secret");
+  });
+
+  test("init_completed with no key and no agent sends null for both", async () => {
+    const m = machine({ env });
+    await json(["--yes", "--telemetry", "on", "--agent", "none"], m);
+    const done = sent(m).find((e) => e.event === "cli.init_completed");
+    expect(done?.properties).toMatchObject({ model_key: "missing", provider: null, agent: null });
   });
 
   test("--telemetry off sends nothing and keeps nothing", async () => {

@@ -47,6 +47,19 @@ describe("init on a local model", () => {
     expect(numCtxOf(m.ollamaModels["nimblebrain-gemma4-e4b"]?.parameters)).toBe(32_768);
   });
 
+  test("telemetry names a local model's provider as ollama, never the model", async () => {
+    const { m } = await json(["--yes", "--telemetry", "on", "--local-model", "gemma4:e4b"], {
+      env: { ...env, NIMBLEBRAIN_TELEMETRY_KEY: "phc_test" },
+      ollama: { models: { "gemma4:e4b": GEMMA } },
+    });
+    const batch = m.posts
+      .filter((p) => p.url.includes("posthog.com"))
+      .flatMap((p) => (p.body as { batch: Array<{ event: string; properties: object }> }).batch);
+    const done = batch.find((e) => e.event === "cli.init_completed");
+    expect(done?.properties).toMatchObject({ provider: "ollama" });
+    expect(JSON.stringify(batch)).not.toContain("gemma");
+  });
+
   test("starts without the shell's local-model settings, so .env is the one source", async () => {
     const { code, m } = await json(["--yes", "--local-model", "gemma4:e4b"], {
       env: {
