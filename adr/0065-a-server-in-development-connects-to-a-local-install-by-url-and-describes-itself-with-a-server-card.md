@@ -17,10 +17,10 @@ locally, and on that install the documented way does not work at all:
 - The work dir is a Docker volume, so `workspace.json` and `nimblebrain.json`
   are not files the developer can open.
 - Inside the container `127.0.0.1` is the container, not the developer's machine.
-- The address guard (`src/connectors/runtime/url-validator.ts`) refuses every
-  private or reserved address but loopback, even with `allowInsecureRemotes`, so
-  `host.docker.internal`, the name that does reach the host, is refused. The
-  flag only admits plain `http` to `localhost`, `127.x` and `::1`.
+- `host.docker.internal`, the name that does reach the host, is refused over
+  `http` by the HTTPS rule (`src/connectors/runtime/url-validator.ts`):
+  `allowInsecureRemotes` admits plain `http` only to `localhost`, `127.0.0.1`
+  and `::1`.
 - `manage_connectors` has a `direct-url` install kind that answers "not yet
   supported", and the tool is app-only, so no agent can call it over
   `/mcp/<wsId>`.
@@ -44,6 +44,8 @@ Options considered:
 - **A tool on `/mcp/<wsId>`.** Any agent could add a server, including the
   workspace's own chat agent, which reads untrusted content: an injected
   instruction could point the runtime at any port on the developer's machine.
+  The same holds for a browser page whose hostname rebinds to `127.0.0.1`:
+  it is same-origin to the browser, and the `dev` adapter authenticates it.
 - **A dev catalog directory mounted from the host.** `NB_CURATED_CATALOG_DIR`
   replaces the built-in catalog, and mounting it needs a Compose change the CLI
   may not make.
@@ -72,20 +74,26 @@ runtime, and describes itself with an MCP Server Card.
   else `direct-url` keeps refusing, and connectors come from the catalog.
 - **The runtime reaches the host.** The release Compose file maps
   `host.docker.internal` to the host gateway and sets `NB_HOST_LOOPBACK` to it.
-  When the gate holds, the remote transport dials that alias for a stored
-  loopback URL and keeps the original `Host` header. The stored URL stays as
+  When the gate holds, every runtime dial of a stored loopback URL (the card
+  fetch, the MCP transport, OAuth discovery) goes to that alias, through one
+  helper, and keeps the original `Host` header. The stored URL stays as
   typed, so the same row works under `bun run dev`. The exception covers
   loopback names over `http` only; private ranges and metadata hosts stay
   refused. Installs get it through `npx nimblebrain update`.
 - **The CLI is a thin client.** `npx nimblebrain mcp add <url> [--name]`,
   `mcp list` and `mcp remove <name>` call the `manage_connectors` actions the web
-  shell's Connectors page calls, on the local instance, and print the answer in
-  the CLI's JSON contract. No new `/v1` route. The CLI stores nothing and
+  shell's Connectors page calls, on the local instance, in the workspace `init`
+  connected (`--workspace` overrides it), and print the answer in the CLI's JSON
+  contract. No new `/v1` route. The CLI stores nothing and
   restarts nothing. `status` reports `host_loopback`, so an agent can tell when
   an install needs `update`. The CLI rule becomes: setup and running, plus a
   thin client of the local instance's API for developing against it; the
   runtime owns what it stores. A coding agent can run `mcp add` because it holds
   a shell on the developer's machine; the workspace's chat agent cannot reach it.
+- **A browser page cannot reach it.** The `/v1` tool-call routes chain
+  `rejectUntrustedOrigin`, as `/mcp/<wsId>` does, so a DNS-rebound page is
+  refused before authentication. The web shell's own origin is trusted, and the
+  CLI sends no `Origin`.
 - **The server describes itself with a Server Card** (SEP-2127, extension
   `io.modelcontextprotocol/server-card`). The runtime requests
   `GET <url>/server-card` with `Accept: application/mcp-server-card+json`, and
@@ -128,6 +136,8 @@ runtime, and describes itself with an MCP Server Card.
 - `quickstart`, `apps/local-dev`, `cli/nimblebrain`, `config/environment` and
   `host/manifest` describe this path, and `allowInsecureRemotes` is described as
   what it is: plain `http` to loopback names, on any instance that sets it.
+  `packages/cli/AGENTS.md` takes the amended CLI rule, and the `nimblebrain`
+  skill's `references/cli.md` documents the `mcp` commands.
 - To check while building: that Bun's `fetch` lets the transport set the `Host`
   header; how a server inside WSL2 is reached; that a server with no auth
   connects with no credential stored.
