@@ -44,8 +44,10 @@ export interface Ctx {
   home: string;
   /** This CLI's own version, which telemetry reports; it says nothing about the runtime (ADR-0064). */
   version: string;
-  /** The command's argument; only `telemetry` takes one. */
+  /** The command's argument: `telemetry`'s answer, or the `mcp` subcommand. */
   arg?: string;
+  /** The `mcp` subcommand's operand: the URL to add or the server to remove. */
+  operand?: string;
 }
 
 /** A person is there to answer, and did not ask for defaults or machine output. */

@@ -45,6 +45,14 @@ export interface MachineOptions {
   tags?: string[];
   /** What a release tag's `docker-compose.yml` answers; default the repo's file with 200. */
   compose?: { status: number; body: string } | null;
+  /**
+   * How the instance answers a workspace tool call (`/v1/workspaces/<wsId>/tools/call`),
+   * given the workspace id and the call; undefined is a connection failure.
+   */
+  workspaceToolCall?: (
+    wsId: string,
+    call: { server: string; tool: string; arguments: Record<string, unknown> },
+  ) => { status: number; body: unknown } | undefined;
 }
 
 /**
@@ -136,6 +144,13 @@ export function machine(opts: MachineOptions = {}): Machine {
     async postJson(url, body) {
       m.posts.push({ url, body });
       if (url.includes("posthog.com")) return { status: 200, body: { status: 1 } };
+      const ws = url.match(/\/v1\/workspaces\/([^/]+)\/tools\/call$/);
+      if (m.healthy && ws && opts.workspaceToolCall) {
+        return opts.workspaceToolCall(
+          decodeURIComponent(ws[1] ?? ""),
+          body as { server: string; tool: string; arguments: Record<string, unknown> },
+        );
+      }
       if (!m.healthy || !url.endsWith("/v1/tools/call")) return undefined;
       const call = body as { tool: string; arguments: { consent?: "on" | "off" } };
       if (call.tool === "set_telemetry" && call.arguments.consent) {
