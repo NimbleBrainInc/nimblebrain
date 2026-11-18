@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parse } from "../src/args.ts";
+import type { Deps } from "../src/deps.ts";
 import { nimblebrainModelName, numCtxOf, takesLocalModel } from "../src/local-model.ts";
 import { run } from "../src/main.ts";
 import { ERRORS, FIX_VARIANTS } from "../src/result.ts";
@@ -322,6 +323,36 @@ describe("Ollama after a reboot", () => {
     expect(body.ok).toBe(true);
     expect(started(m)).toEqual([]);
     expect(m.calls.some((c) => c.includes("brew"))).toBe(false);
+  });
+
+  test("a Compose failure after Ollama started still says what was started", async () => {
+    const UP = "docker compose up -d --no-build";
+    const failingUp = (deps: Deps): Deps => ({
+      ...deps,
+      exec: (cmd, args, o) =>
+        [cmd, ...args].join(" ") === UP
+          ? Promise.resolve(fail("container platform exited with code 1"))
+          : deps.exec(cmd, args, o),
+    });
+    const brew = { platform: "darwin", exec: BREW } as const;
+
+    const fresh = machine({
+      env,
+      compose,
+      ...brew,
+      ollama: { down: "until-started", models: { "gemma4:e4b": GEMMA } },
+    });
+    const init = JSON.parse(
+      (await run(["--yes", "--json", "--local-model", "gemma4:e4b"], failingUp(fresh.deps))).stdout,
+    );
+    for (const argv of [["up"], ["local-model", "gemma4:e4b"]]) {
+      const m = await rebooted(brew);
+      const body = JSON.parse((await run([...argv, "--yes", "--json"], failingUp(m.deps))).stdout);
+      expect(body.error).toBe("START_FAILED");
+      expect(body.ollama_started).toBe("brew services start ollama");
+    }
+    expect(init.error).toBe("START_FAILED");
+    expect(init.ollama_started).toBe("brew services start ollama");
   });
 
   test("doctor without a person reports Ollama down and starts nothing", async () => {

@@ -162,38 +162,40 @@ async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number)
   let ollamaStarted: string | undefined;
   if (local) ollamaStarted = (await useLocalModel(ctx, composeText, local)).started;
   else if (!hasModel && asks(ctx)) await enterKey(ctx, false);
-  deps.say(`Starting NimbleBrain ${tag}. The first start downloads about 2 GB of images.`);
-  await start(deps, home, flags.port);
+  return carryingStarted(ollamaStarted, async () => {
+    deps.say(`Starting NimbleBrain ${tag}. The first start downloads about 2 GB of images.`);
+    await start(deps, home, flags.port);
 
-  const state: InstallState = {
-    version: tag.replace(/^v/, ""),
-    port: flags.port,
-    project,
-  };
-  await writeState(deps, home, state);
-  const manual = await connectChosenAgent(ctx, state);
-  if (state.agent) rec.record("cli.agent_connected", { agent: state.agent });
+    const state: InstallState = {
+      version: tag.replace(/^v/, ""),
+      port: flags.port,
+      project,
+    };
+    await writeState(deps, home, state);
+    const manual = await connectChosenAgent(ctx, state);
+    if (state.agent) rec.record("cli.agent_connected", { agent: state.agent });
 
-  const result: StatusResult & { manual?: string; ollama_started?: string } = {
-    ...(await status(deps, home)),
-    manual,
-    ollama_started: ollamaStarted,
-  };
-  const finalEnv = (await deps.readText(paths(home).env)) ?? "";
-  rec.record("cli.init_completed", {
-    duration_ms: Date.now() - begun,
-    model_key: result.model_key,
-    // A provider's name, never a model's: a local model is reported only as `ollama`.
-    provider: localModelOf(finalEnv) ? "ollama" : keyProvider(finalEnv, composeText),
-    agent: state.agent ?? null,
-  });
-  await rec.settle(home, consent);
-  if (result.model_key === "missing" && !result.local_model) {
-    throw new CliError("MODEL_KEY_MISSING", "NimbleBrain is running; chat needs a model key.", {
-      ...result,
+    const result: StatusResult & { manual?: string; ollama_started?: string } = {
+      ...(await status(deps, home)),
+      manual,
+      ollama_started: ollamaStarted,
+    };
+    const finalEnv = (await deps.readText(paths(home).env)) ?? "";
+    rec.record("cli.init_completed", {
+      duration_ms: Date.now() - begun,
+      model_key: result.model_key,
+      // A provider's name, never a model's: a local model is reported only as `ollama`.
+      provider: localModelOf(finalEnv) ? "ollama" : keyProvider(finalEnv, composeText),
+      agent: state.agent ?? null,
     });
-  }
-  return { ...result };
+    await rec.settle(home, consent);
+    if (result.model_key === "missing" && !result.local_model) {
+      throw new CliError("MODEL_KEY_MISSING", "NimbleBrain is running; chat needs a model key.", {
+        ...result,
+      });
+    }
+    return { ...result };
+  });
 }
 
 async function confirmStart(ctx: Ctx, tag: string): Promise<void> {
@@ -240,8 +242,13 @@ export async function up(ctx: Ctx): Promise<Ok> {
         throw err;
       })
     : undefined;
-  await start(deps, home, install.port);
-  const result = await status(deps, home);
+  const result = await carryingStarted(
+    ollama instanceof CliError ? undefined : ollama?.started,
+    async () => {
+      await start(deps, home, install.port);
+      return status(deps, home);
+    },
+  );
   if (ollama instanceof CliError) {
     throw ollama.with({ ...result }, `NimbleBrain is running, but ${lowerFirst(ollama.message)}`);
   }
@@ -417,8 +424,18 @@ export async function localModel(ctx: Ctx): Promise<Ok> {
   const model = ctx.arg ?? ctx.flags.localModel ?? DEFAULT_LOCAL_MODEL;
   const { name, started } = await useLocalModel(ctx, composeText, model);
   // `up` recreates the runtime container, which is what makes it read `.env` again.
-  await start(ctx.deps, ctx.home, install.port);
+  await carryingStarted(started, () => start(ctx.deps, ctx.home, install.port));
   return { ok: true, local_model: name, ollama_started: started };
+}
+
+/** Runs what follows an Ollama start; an error from it still says what started Ollama. */
+async function carryingStarted<T>(started: string | undefined, next: () => Promise<T>): Promise<T> {
+  try {
+    return await next();
+  } catch (err) {
+    if (err instanceof CliError && started) throw err.with({ ollama_started: started });
+    throw err;
+  }
 }
 
 /** Asks which model NimbleBrain's own agents run on: a local model's name, or undefined for a hosted key. */
