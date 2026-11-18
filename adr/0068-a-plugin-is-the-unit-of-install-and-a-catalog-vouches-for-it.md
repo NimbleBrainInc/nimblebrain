@@ -47,9 +47,9 @@ The ecosystem has meanwhile settled on formats for each part:
   plugins by link. Both are drafts, and their well-known path is not settled.
 
 Two constraints frame the choice. The runtime connects to servers; it does not
-acquire, verify, or execute their code (ADR-0020). Many published plugins
-declare local `stdio` servers, which only something that executes code can
-run. And on a deployed instance, connectors come only from what its operator
+acquire, verify, or execute their code (ADR-0020), so it reaches a server only
+over Streamable HTTP, and a plugin's local `stdio` server is code it would have
+to run. And on a deployed instance, connectors come only from what its operator
 controls; a URL a person types is accepted only on a local install (ADR-0065).
 
 ## Decision
@@ -146,12 +146,17 @@ Removing a plugin reverses each step.
 
 ### Skills ride with their plugin
 
-A plugin's skills use the overlay mechanics of ADR-0013: pinned,
-content-addressed, materialized into their own store, and re-bound at boot.
-Their names follow the publisher-prefix rule of ADR-0034, as
-`plugin:<plugin>:<skill>`, so two plugins never shadow each other, and they take
-the overlay's place in ADR-0019's order. The curated overlay repo becomes the
-skills of the NimbleBrain catalog's plugins.
+A plugin's `skills/` are installed with it and removed with it. They are
+handled like a curated overlay (ADR-0013): pinned, content-addressed,
+materialized into their own store, and re-bound at boot. Their names follow the
+publisher-prefix rule of ADR-0034, as `plugin:<plugin>:<skill>`, so two plugins
+never shadow each other.
+
+Curated connector overlays are unchanged. An overlay binds to a connector's
+identity, so it arrives whenever that connector is installed, whether through a
+plugin, a catalog install, or a URL. A plugin's own skills are for guidance
+that belongs to the plugin, not to one connector, such as a third-party
+plugin's workflow or a skill-only plugin.
 
 ### A server is shared, not duplicated
 
@@ -159,14 +164,14 @@ Two plugins that name the same server produce one connection, authorized once
 and counted by the plugins that hold it. Removing one plugin leaves the
 connection while another still holds it.
 
-### Code runs outside the runtime
+### Every server is remote
 
-The runtime still does not execute server code. A `stdio` server runs under an
-**executor** outside the runtime that exposes it by URL, and the runtime
-connects to that URL. On a local install the executor is the CLI on the host,
-after the person consents at install. On the managed platform it is hosted
-execution. Where policy allows no executor, the install is refused, and the
-refusal is shown before install, not after.
+A plugin's servers are reached over Streamable HTTP, and nothing runs a
+`stdio` server: not the runtime, not the CLI, not the platform. A plugin whose
+`mcp.json` names a `stdio` server is not installable, as a `packages[]`-only
+`ServerDetail` is not (ADR-0020). The refusal names the server and is shown
+before install. An author who wants their server on NimbleBrain runs it as a
+remote MCP server.
 
 ### What a plugin carries that the runtime does not use
 
@@ -192,8 +197,8 @@ renamed *skill index*. ADR-0015 is unchanged in substance.
 - ADR-0020's catalog directory stays the extension point. Reconcile writes the
   resolved `ServerDetail`s into it, so the connector catalog's validation,
   scrubbing and projection apply unchanged.
-- ADR-0013 is amended: the overlay repo is replaced by plugin skills under the
-  same mechanics.
+- Connector overlays (ADR-0013) are untouched, and a connector installed by
+  any path gets its overlay.
 - A plugin from any Agent Plugins host installs on NimbleBrain. A plugin from
   our catalog installs on those hosts, with its `ai.nimblebrain` fields ignored
   there.
@@ -202,16 +207,14 @@ renamed *skill index*. ADR-0015 is unchanged in substance.
   reach the parser.
 - A curated catalog is ongoing work: review, pinning, and checking the
   `mcp.json` and `ServerDetail` URLs against each other.
-- Without an executor, a plugin with only `stdio` servers installs nothing
-  useful, and a large share of published plugins are like that. The executor is
-  the build step that decides how much of the ecosystem an instance can use.
+- Published plugins that ship only local `stdio` servers do not install, and
+  many do. Reach into that part of the ecosystem depends on their authors
+  offering remote servers; the refusal says so, so a person knows why.
 - Reverse-DNS identity needs namespace verification for plugins, which no
   spec defines.
 
 ### Open
 
-- How hosted execution isolates a third party's `stdio` server, and who pays
-  for it.
 - Whether mpak hosts plugin archives (signed, immutable, scanned) beside git
   sources.
 - The `ai-catalog.json` well-known path, while the AI Catalog and ARD drafts
@@ -229,23 +232,25 @@ Each step stands alone:
    as clients;
 3. policy: catalogs and allow and deny lists per instance;
 4. third-party sources, pinning and the lock;
-5. the executor, local first;
-6. the generated `ai-catalog.json`.
+5. the generated `ai-catalog.json`.
 
 ## Alternatives considered
 
 - **An AI Catalog as the install source.** It links to Server Cards, which
   carry no auth configuration and no local packages, and the spec is a draft.
   It is an output here.
-- **Servers only, with skills kept in a separate repo.** The guidance and the
-  connector it describes stay apart, and nothing installs the two together.
+- **Servers only, with no bundle.** A third-party author has no way to ship
+  guidance with their servers, and only NimbleBrain's overlay repo can pair a
+  connector with a skill.
 - **A NimbleBrain bundle format.** The ecosystem has one, and a private format
   makes every plugin a port.
 - **The catalog accepting publishes.** That is a registry's job, with namespace
   verification and moderation. Servers already have one, and plugins publish to
   their own sources.
-- **The runtime executing `stdio` servers.** That reverses ADR-0020. An executor
-  outside the runtime gives the same reach without code in the kernel.
+- **Running `stdio` servers, in the runtime or beside it.** In the runtime it
+  reverses ADR-0020. Beside it (the CLI on the host, hosted execution on the
+  platform) it makes NimbleBrain responsible for third-party code, its
+  isolation and its cost. A remote server puts that with its author.
 - **A per-entry "included by default" flag in the catalog.** What an instance
   starts with is the operator's decision, not the curator's, and one flag
   cannot differ between instances.
