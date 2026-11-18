@@ -85,44 +85,18 @@ export function realDeps(): Deps {
         server.listen(port, "127.0.0.1");
       });
     },
-    async getJson(url, timeoutMs = 3_000) {
-      try {
-        const res = await fetch(url, {
-          signal: AbortSignal.timeout(timeoutMs),
-          headers: { "user-agent": "nimblebrain-cli" },
-        });
-        const text = await res.text();
-        let body: unknown = text;
-        try {
-          body = JSON.parse(text);
-        } catch {
-          // Not JSON: hand back the text; the caller decides whether that is an answer.
-        }
-        return { status: res.status, body };
-      } catch {
-        return undefined;
-      }
-    },
-    async postJson(url, body, timeoutMs = 5_000) {
-      try {
-        const res = await fetch(url, {
+    getJson: (url, timeoutMs = 3_000) =>
+      request(url, { headers: { "user-agent": "nimblebrain-cli" } }, timeoutMs),
+    postJson: (url, body, timeoutMs = 5_000) =>
+      request(
+        url,
+        {
           method: "POST",
-          signal: AbortSignal.timeout(timeoutMs),
           headers: { "user-agent": "nimblebrain-cli", "content-type": "application/json" },
           body: JSON.stringify(body),
-        });
-        const text = await res.text();
-        let parsed: unknown = text;
-        try {
-          parsed = JSON.parse(text);
-        } catch {
-          // Not JSON: hand back the text.
-        }
-        return { status: res.status, body: parsed };
-      } catch {
-        return undefined;
-      }
-    },
+        },
+        timeoutMs,
+      ),
     async readText(path) {
       try {
         return await readFile(path, "utf8");
@@ -153,6 +127,37 @@ export function realDeps(): Deps {
     env: process.env,
     home: homedir(),
   };
+}
+
+/**
+ * One request with a deadline; never throws, a failure or a timeout is
+ * `undefined`. The deadline is a plain timer, not `AbortSignal.timeout`: that
+ * one is unref'd, so a request that stalls without a live socket leaves Node
+ * nothing to wait on, and it exits mid-command with code 13 (an unsettled
+ * top-level await) and no output at all.
+ */
+async function request(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<{ status: number; body: unknown } | undefined> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...init, signal: abort.signal });
+    const text = await res.text();
+    let body: unknown = text;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // Not JSON: hand back the text; the caller decides whether that is an answer.
+    }
+    return { status: res.status, body };
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function visiblePrompt(question: string): Promise<string> {
