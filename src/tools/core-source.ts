@@ -18,6 +18,7 @@ import { getAvailableModels, isModelAllowed, isModelInPolicy } from "../model/ca
 import { unqualifiedModelIdError } from "../model/model-id.ts";
 import { isModelSlot, MODEL_SLOTS } from "../model/slots.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import { TelemetryLockedError } from "../telemetry/manager.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
 import { createOpenAppTool } from "./open-app.ts";
@@ -782,9 +783,57 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             version: VERSION,
             telemetryEnabled: tm.isEnabled(),
             installId: tm.getAnonymousId(),
+            telemetry: tm.status(),
           },
           isError: false,
         };
+      },
+    },
+    {
+      name: "set_telemetry",
+      description:
+        "Record a person's answer to whether this install sends anonymous usage telemetry. Org admins only. Fails when the deployment's configuration decides it.",
+      // The person answers; the model never decides this for them.
+      meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
+      inputSchema: {
+        type: "object",
+        properties: {
+          consent: { type: "string", enum: ["on", "off"] },
+        },
+        required: ["consent"],
+        additionalProperties: false,
+      },
+      handler: async (input): Promise<ToolResult> => {
+        const identity = runtime.getCurrentIdentity();
+        if (!identity || !ORG_ADMIN_ROLES.has(identity.orgRole)) {
+          return {
+            content: textContent(
+              "Only an org admin can decide whether this install sends telemetry.",
+            ),
+            isError: true,
+          };
+        }
+        const consent = (input as { consent?: unknown }).consent;
+        if (consent !== "on" && consent !== "off") {
+          return { content: textContent('consent must be "on" or "off".'), isError: true };
+        }
+        try {
+          const status = runtime.getTelemetryManager().setConsent(consent);
+          return {
+            content: textContent(`Telemetry is ${status.consent}.`),
+            structuredContent: { telemetry: status },
+            isError: false,
+          };
+        } catch (err) {
+          if (err instanceof TelemetryLockedError) {
+            return {
+              content: textContent(err.message),
+              structuredContent: { telemetry: runtime.getTelemetryManager().status() },
+              isError: true,
+            };
+          }
+          throw err;
+        }
       },
     },
     {

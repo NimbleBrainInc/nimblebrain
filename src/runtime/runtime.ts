@@ -831,7 +831,8 @@ export class Runtime {
       workDir,
       enabled: declaredConfig.telemetry?.enabled,
     });
-    const events = buildRuntimeEventSink(declaredConfig, telemetryManager);
+    const telemetrySink = new PostHogEventSink(telemetryManager);
+    const events = buildRuntimeEventSink(declaredConfig, telemetrySink);
     registerBuiltinCredentialStoreBackends();
     const credentialStore = createCredentialStore({
       workDir,
@@ -1174,6 +1175,8 @@ export class Runtime {
       // `createPlatformSources` returns sources already started.
       const { createPlatformSources } = await import("../platform/index.ts");
       const platformSources = await createPlatformSources(rt, events);
+      // Telemetry counts calls to connector tools apart from the kernel's own.
+      telemetrySink.addBuiltinSources(platformSources.map((s) => s.name));
       // Make the host-resources factory accessible on `rt` so non-lifecycle
       // install paths (connector-tools, boot reload) can pull deps directly.
       rt._connectorMcpDepsFactory = connectorMcpDepsFactory;
@@ -6320,13 +6323,11 @@ function buildEventSink(config: Pick<RuntimeConfig, "workDir" | "events" | "logg
  */
 function buildRuntimeEventSink(
   config: Pick<RuntimeConfig, "workDir" | "events" | "logging">,
-  telemetry: TelemetryManager,
+  telemetry: PostHogEventSink,
 ): EventSink {
-  const sinks: EventSink[] = [buildEventSink(config), new MetricsEventSink()];
-  if (telemetry.isEnabled()) {
-    sinks.push(new PostHogEventSink(telemetry));
-  }
-  return new MultiEventSink(sinks);
+  // Always attached: a person can turn telemetry on while the runtime runs, and
+  // the sink drops every event while it is off or undecided.
+  return new MultiEventSink([buildEventSink(config), new MetricsEventSink(), telemetry]);
 }
 
 function buildSkills(config: RuntimeConfig): {

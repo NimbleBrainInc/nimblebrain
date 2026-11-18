@@ -292,13 +292,12 @@
       "additionalProperties": false
     },
     "telemetry": {
-      "description": "Anonymous usage telemetry. Disable with telemetry.enabled: false, NB_TELEMETRY_DISABLED=1, or DO_NOT_TRACK=1.",
+      "description": "Anonymous usage telemetry. Unset, a person decides (the CLI or the web UI asks; nothing is sent before a yes). Turn off with telemetry.enabled: false, NB_TELEMETRY_DISABLED=1, or DO_NOT_TRACK=1.",
       "type": "object",
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Enable anonymous telemetry. Default: true.",
-          "default": true
+          "description": "The operator's decision. false: off, no one is asked. true: on, no one is asked. Unset: a person decides."
         }
       },
       "additionalProperties": false

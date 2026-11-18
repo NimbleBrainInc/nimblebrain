@@ -15,9 +15,15 @@ export const COMPOSE_FILE: string = composeFile;
 export const PROJECT = "nimblebrain-local";
 export const VOLUME = `${PROJECT}_workspace`;
 
-/** The model-key variables the Compose file passes to the runtime, read from the file itself. */
+/**
+ * The model-key variables the Compose file passes to the runtime, read from the
+ * file itself: each passed through under its own name (`X_API_KEY=${X_API_KEY`).
+ * A key renamed on the way in (the telemetry key) is not a model key.
+ */
 export const KEY_VARS: string[] = [
-  ...new Set(COMPOSE_FILE.match(/\b[A-Z][A-Z0-9_]*_API_KEY\b/g) ?? []),
+  ...new Set(
+    [...COMPOSE_FILE.matchAll(/\b([A-Z][A-Z0-9_]*_API_KEY)=\$\{\1\b/g)].map((m) => m[1] ?? ""),
+  ),
 ];
 
 /** The provider names `key` offers, each mapped to its variable. */
@@ -44,6 +50,9 @@ export function composeEnv(deps: Deps): NodeJS.ProcessEnv {
     "NIMBLEBRAIN_TAG",
     "NIMBLEBRAIN_WEB_PORT",
     "COMPOSE_PROJECT_NAME",
+    "NB_TELEMETRY_KEY",
+    "NB_TELEMETRY_ID",
+    "NB_TELEMETRY_CONSENT",
   ]) {
     delete env[v];
   }

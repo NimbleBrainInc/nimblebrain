@@ -230,7 +230,7 @@ export interface RuntimeConfig {
 
   /** Anonymous telemetry configuration. */
   telemetry?: {
-    /** Enable anonymous telemetry. Default: true. */
+    /** The operator's decision: `false` off, `true` on, both without asking anyone. Unset, a person decides. */
     enabled?: boolean;
   };
 
