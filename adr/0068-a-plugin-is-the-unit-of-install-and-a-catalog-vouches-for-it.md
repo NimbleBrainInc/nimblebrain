@@ -94,8 +94,8 @@ Each layer reads the one above it and never writes it.
 
 ### A source is pinned content
 
-A plugin is fetched from a git repository or from mpak, and an install records
-the commit or digest it resolved to, never a branch or tag. A catalog is pinned
+A plugin is fetched from a git repository, and an install records the commit
+it resolved to, never a branch or tag. A catalog is pinned
 the same way.
 
 ### A catalog vouches, and takes no submissions
@@ -237,8 +237,6 @@ renamed *skill index*. ADR-0015 is unchanged in substance.
 
 ### Open
 
-- Whether mpak hosts plugin archives (signed, immutable, scanned) beside git
-  sources.
 - The `ai-catalog.json` well-known path, while the AI Catalog and ARD drafts
   disagree.
 - Whether one plugin can carry brokered toolkits that share one auth flow and
