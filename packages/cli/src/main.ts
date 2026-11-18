@@ -111,7 +111,7 @@ function render(
   return { stdout: `${lines.join("\n")}\n`, code };
 }
 
-type StatusLike = Ok & StatusResult & { manual?: string; already?: boolean };
+type StatusLike = Ok & StatusResult & { manual?: string; already?: boolean; from?: string };
 
 function isStatus(result: Ok): result is StatusLike {
   return "health" in result && "url" in result && "workspaces" in result;
@@ -126,6 +126,7 @@ const AGENT_NAMES: Record<string, string> = {
 /** An install's state as a person reads it; the JSON carries the same facts. */
 function statusLines(r: StatusLike, command?: string): string[] {
   const lines = [
+    ...changeLines(r),
     `  NimbleBrain ${r.version.startsWith("v") ? r.version : `v${r.version}`}: ${r.health === "ok" ? "running" : "stopped"} at ${r.url}`,
     ...r.workspaces.map((w) => `  workspace ${w.name}: ${w.mcp}`),
     `  model key: ${r.model_key === "set" ? "set (NimbleBrain's own agents use it)" : "missing (run npx nimblebrain key)"}`,
@@ -143,13 +144,25 @@ function statusLines(r: StatusLike, command?: string): string[] {
   } else if (r.manual) {
     lines.push(`  agent: not connected; add it by hand: ${r.manual}`);
   }
-  lines.push(`  telemetry: ${r.telemetry.state}`);
+  lines.push(telemetryLine(r.telemetry));
   lines.push(`  CLI ${r.cli_version}`);
   if (command === "init" && !r.already && r.health === "ok") {
     const ask = agent ? `, or ask ${AGENT_NAMES[agent] ?? agent} what NimbleBrain can do` : "";
     lines.push("", `Next: open ${r.url}${ask}. Stop it with npx nimblebrain down.`);
   }
   return lines;
+}
+
+/** What this run did to an existing install: nothing (a rerun), or which version it left. */
+function changeLines(r: StatusLike): string[] {
+  if (r.already) return ["  already installed"];
+  return r.from ? [`  updated from ${r.from}`] : [];
+}
+
+/** The answer, with why it is fixed or how to give one. */
+function telemetryLine(t: StatusLike["telemetry"]): string {
+  const how = t.locked ? ` (${t.locked})` : t.set ? ` (answer with ${t.set})` : "";
+  return `  telemetry: ${t.state}${how}`;
 }
 
 /** Any other answer: its fields as lines, nested values flattened, nothing empty. */

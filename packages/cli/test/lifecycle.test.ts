@@ -170,6 +170,7 @@ describe("init", () => {
     expect(stdout).toContain("Claude Code can use NimbleBrain's tools");
     expect(stdout).toContain("skill: not installed");
     expect(stdout).toContain("Next: open http://127.0.0.1:27246, or ask Claude Code");
+    expect(stdout).toContain("telemetry: off (no_destination)");
     expect(stdout).not.toContain("undefined");
     expect(stdout).not.toContain("{");
     expect(m.asked.at(-1)).toStartWith("Connect a coding agent?");
@@ -179,6 +180,7 @@ describe("init", () => {
     const m = machine({ env, interactive: true, answers: ["", "", "sk-typed", "claude-code"] });
     await run([], m.deps);
     const { stdout } = await run([], m.deps);
+    expect(stdout).toContain("already installed");
     expect(stdout).not.toContain("Next:");
     expect(stdout).not.toContain("skill:");
     expect(stdout).toContain("Claude Code can use NimbleBrain's tools");

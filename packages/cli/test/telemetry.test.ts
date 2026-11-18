@@ -45,6 +45,8 @@ describe("telemetry consent at init", () => {
     expect(dotenv).toMatch(/^NB_TELEMETRY_ID=[0-9a-f-]{36}$/m);
     expect(dotenv).toContain("NB_TELEMETRY_KEY=phc_test");
     expect(dotenv).not.toContain("NB_TELEMETRY_CONSENT");
+    const { stdout } = await run(["status"], m.deps);
+    expect(stdout).toContain("telemetry: undecided (answer with npx nimblebrain telemetry on|off)");
   });
 
   test("--telemetry on records the answer for the runtime and sends this run's events", async () => {
@@ -83,6 +85,7 @@ describe("telemetry consent at init", () => {
     const m = machine({ env, interactive: true, answers: ["n"] });
     await run([], m.deps);
     expect(m.asked.some((q) => q.startsWith("Help improve"))).toBe(false);
+    expect(m.files.size).toBe(0);
   });
 
   test("the telemetry question comes right after the start is agreed", async () => {

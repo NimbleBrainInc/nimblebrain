@@ -72,16 +72,23 @@ export async function init(ctx: Ctx): Promise<Ok> {
     return await install(ctx, answer, rec, begun);
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
-    if (err.code !== "MODEL_KEY_MISSING") {
-      const check = typeof err.detail.check === "string" ? err.detail.check : undefined;
-      rec.record(check ? "cli.doctor_failed" : "cli.init_failed", { error: err.code, check });
-    }
-    await rec.settle(home, answer.consent);
+    // Declining the start before any answer changed nothing, so it leaves no report either.
+    if (err.code !== "CANCELLED" || answer.consent !== "undecided")
+      await settleFailure(rec, home, answer.consent, err);
     throw new CliError(err.code, err.message, {
       ...err.detail,
       telemetry: field(answer.consent, lockedHere(deps)),
     });
   }
+}
+
+/** Records why `init` stopped (a missing key is not a failure) and settles the run. */
+async function settleFailure(rec: Recorder, home: string, consent: Consent, err: CliError) {
+  if (err.code !== "MODEL_KEY_MISSING") {
+    const check = typeof err.detail.check === "string" ? err.detail.check : undefined;
+    rec.record(check ? "cli.doctor_failed" : "cli.init_failed", { error: err.code, check });
+  }
+  await rec.settle(home, consent);
 }
 
 /**
