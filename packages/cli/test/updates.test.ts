@@ -159,7 +159,7 @@ describe("update notices", () => {
     m.deps.sleep = realSleep;
     const answer = await runOnly(["status", "--json"], m.deps);
     expect(JSON.parse(answer.stdout).updates.cli.latest).toBe("0.0.1");
-    release();
+    setTimeout(release, 100);
     expect(await answer.notices?.()).toBeUndefined();
     expect(JSON.parse(m.files.get(CACHE)?.text ?? "{}").cli).toBe(LATEST_CLI);
   });
