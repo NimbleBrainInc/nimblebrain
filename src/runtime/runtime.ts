@@ -6569,6 +6569,8 @@ function agentExecutionContext(reqCtx: RequestContext, agentRuntime: AgentRuntim
  * input-token cap. The gateway answers every spent grant alike
  * (`MODEL_GATEWAY_BUDGET_ACCOUNT`); the door alone knows which term the grant
  * stood for, and a source reads that term (a batch tells its own account apart).
+ * A cap stop keeps the gateway's id, so a source can say the gateway refused the
+ * run's next call rather than that the engine projected it past the cap.
  */
 function attributeGrantStop(
   result: Pick<
@@ -6589,7 +6591,7 @@ function attributeGrantStop(
   const { spendAccountId: _gateway, ...rest } = detail;
   return spend.boundBy !== undefined
     ? { stopReason: "spend_limit", ...rest, spendAccountId: spend.boundBy }
-    : { stopReason: "max_input_tokens", ...rest };
+    : { stopReason: "max_input_tokens", ...detail };
 }
 
 /**

@@ -143,7 +143,11 @@ export interface TaskFnResult {
   finishReason?: string;
   /** The last model call's provider-native stop reason (see runtime `TaskResult`). */
   finishReasonRaw?: string;
-  /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
+  /**
+   * The spend account that stopped the run, when `stopReason` is `spend_limit`;
+   * with `max_input_tokens`, the gateway's id when the gateway held the cap (see
+   * runtime `TaskResult`).
+   */
   spendAccountId?: string;
   /** See runtime `TaskResult.wrapUpLimit`. */
   wrapUpLimit?: WrapUpLimit;
@@ -706,6 +710,40 @@ function runInputCapError(
   );
 }
 
+/** The error for a run stopped at its input-token cap, by the gateway or the engine. */
+function inputCapStopError(
+  data: Pick<TaskFnResult, "spendAccountId" | "usage">,
+  limits: EffectiveRunLimits,
+  task: Pick<Task, "maxInputTokens">,
+): string {
+  return data.spendAccountId === MODEL_GATEWAY_BUDGET_ACCOUNT
+    ? gatewayInputCapError(data.usage, limits.maxInputTokens, task.maxInputTokens)
+    : runInputCapError(data.usage.inputTokens, limits.maxInputTokens, task.maxInputTokens);
+}
+
+/**
+ * The error for a run the model gateway stopped at its input-token cap. A run
+ * whose calls the door cannot check one by one carries its cap to the gateway
+ * as its grant (ADR-0063), and the gateway refuses the run's next call once its
+ * count reaches it. Nothing projected that call: the gateway counts input and
+ * output tokens together, rounded down to a limit it can hold, so the run can
+ * stop with less input spent than the cap.
+ */
+function gatewayInputCapError(
+  spent: { inputTokens: number; outputTokens: number },
+  applied: number | undefined,
+  own: number | undefined,
+): string {
+  const { limit, which, remedy } = inputCapTerms(applied, own);
+  const n = (v: number) => v.toLocaleString("en-US");
+  return (
+    `Stopped at the input-token cap${limit}, which is ${which}: the model gateway refused ` +
+    `the run's next model call at its token grant, after the run had spent ` +
+    `${n(spent.inputTokens)} input and ${n(spent.outputTokens)} output tokens. The gateway ` +
+    `counts input and output tokens together against the cap. ${remedy}`
+  );
+}
+
 /**
  * The error for a run stopped at `spend_limit`: what was left of its token
  * budget's window could not pay for its next model call, even with that call's
@@ -796,9 +834,7 @@ function mapResultToRun(
       error = verdict.error;
     }
   }
-  if (stopReason === "max_input_tokens") {
-    error = runInputCapError(data.usage.inputTokens, limits.maxInputTokens, task.maxInputTokens);
-  }
+  if (stopReason === "max_input_tokens") error = inputCapStopError(data, limits, task);
   if (stopReason === "spend_limit") {
     error = budgetStopError(
       data.spendAccountId,
