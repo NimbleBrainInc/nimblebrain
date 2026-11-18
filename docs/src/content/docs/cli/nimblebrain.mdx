@@ -110,7 +110,7 @@ Every command answers `{"ok": true, ...}` or `{"ok": false, "error": "<CODE>", "
 | `NEEDS_TERMINAL`, `CANCELLED`, `AGENT_UNSUPPORTED`, `USAGE` | `key` needs a person, the action was declined, an unknown agent, or a bad command or flag. |
 | `RUNTIME_UNSUPPORTED` | The release `--runtime` names is older than this CLI supports, or its Compose file cannot be driven. |
 | `INTERRUPTED` | The CLI was stopped (a signal, Ctrl-C) before it finished; `exit_code` says how. Check `status`, then run the command again. |
-| `NOT_RUNNING` | An `mcp` command needs NimbleBrain running (`npx nimblebrain up`). |
+| `NOT_RUNNING` | The command needs NimbleBrain running (`telemetry on`/`off`, every `mcp` command); run `npx nimblebrain up`. |
 | `UPDATE_REQUIRED` | `mcp add` on a release that cannot reach your machine; run `npx nimblebrain update`. |
 | `WORKSPACE_NOT_FOUND`, `SERVER_NOT_FOUND` | No such workspace (the answer lists the ones there are in `workspaces`), or no server by that name in it. |
 | `URL_INVALID`, `URL_NOT_LOOPBACK` | The URL is not an `http`/`https` URL NimbleBrain accepts, or is not on this machine. |
