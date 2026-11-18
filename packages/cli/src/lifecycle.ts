@@ -20,6 +20,7 @@ import type { Deps } from "./deps.ts";
 import { doctor } from "./doctor.ts";
 import {
   DEFAULT_LOCAL_MODEL,
+  ensureOllama,
   localModelOf,
   setupLocalModel,
   takesLocalModel,
@@ -59,7 +60,26 @@ export interface Ctx {
 }
 
 /** A person is there to answer, and did not ask for defaults or machine output. */
-const asks = ({ deps, flags }: Ctx) => deps.interactive && !flags.yes && !flags.json;
+const asks = ({ deps, flags }: Pick<Ctx, "deps" | "flags">) =>
+  deps.interactive && !flags.yes && !flags.json;
+
+/** `[Y/n]`: Enter or an answer starting with y is yes. */
+const yes = (answer: string) => /^(y|yes)?$/i.test(answer.trim());
+
+/**
+ * Whether to start a down Ollama with `command`: asked once at a terminal;
+ * otherwise `unasked`, which is yes for the commands that set up or start
+ * NimbleBrain and no for `doctor`, which only starts what a person agreed to.
+ */
+export function confirmOllamaStart(ctx: Pick<Ctx, "deps" | "flags">, unasked: boolean) {
+  return async (command: string): Promise<boolean> => {
+    if (!asks(ctx)) return unasked;
+    const login = command.startsWith("brew services") ? " It then also starts at login." : "";
+    return yes(
+      await ctx.deps.prompt(`Ollama isn't running. Start it with \`${command}\`?${login} [Y/n] `),
+    );
+  };
+}
 
 /**
  * Check, write, start, wait, then connect. Safe to run again: an existing
@@ -83,10 +103,7 @@ export async function init(ctx: Ctx): Promise<Ok> {
     // Declining the start with no answer given changed nothing, so it leaves no report either.
     if (err.code !== "CANCELLED" || consent !== "undecided")
       await settleFailure(rec, home, consent, err);
-    throw new CliError(err.code, err.message, {
-      ...err.detail,
-      telemetry: field(consent, lockedHere(deps)),
-    });
+    throw err.with({ telemetry: field(consent, lockedHere(deps)) });
   }
 }
 
@@ -142,7 +159,8 @@ async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number)
     (!hasModel && asks(ctx) && takesLocalModel(composeText)
       ? await chooseModelSource(deps)
       : undefined);
-  if (local) await useLocalModel(ctx, composeText, local);
+  let ollamaStarted: string | undefined;
+  if (local) ollamaStarted = (await useLocalModel(ctx, composeText, local)).started;
   else if (!hasModel && asks(ctx)) await enterKey(ctx, false);
   deps.say(`Starting NimbleBrain ${tag}. The first start downloads about 2 GB of images.`);
   await start(deps, home, flags.port);
@@ -156,7 +174,11 @@ async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number)
   const manual = await connectChosenAgent(ctx, state);
   if (state.agent) rec.record("cli.agent_connected", { agent: state.agent });
 
-  const result: StatusResult & { manual?: string } = { ...(await status(deps, home)), manual };
+  const result: StatusResult & { manual?: string; ollama_started?: string } = {
+    ...(await status(deps, home)),
+    manual,
+    ollama_started: ollamaStarted,
+  };
   const finalEnv = (await deps.readText(paths(home).env)) ?? "";
   rec.record("cli.init_completed", {
     duration_ms: Date.now() - begun,
@@ -202,11 +224,31 @@ async function connectChosenAgent(ctx: Ctx, state: InstallState): Promise<string
   return conn.manual;
 }
 
+/**
+ * Starts NimbleBrain. On a local model, Ollama is checked first and started
+ * when it is installed but down (after a reboot, say); NimbleBrain starts
+ * either way, and an Ollama still down ends `up` with `LOCAL_MODEL_UNREACHABLE`
+ * carrying the status, since every agent's message would fail.
+ */
 export async function up(ctx: Ctx): Promise<Ok> {
+  const { deps, home } = ctx;
   const install = await requireInstall(ctx);
-  await start(ctx.deps, ctx.home, install.port);
-  return { ...(await status(ctx.deps, ctx.home)) };
+  const local = localModelOf((await deps.readText(paths(home).env)) ?? "");
+  const ollama = local
+    ? await ensureOllama(deps, confirmOllamaStart(ctx, true)).catch((err: unknown) => {
+        if (err instanceof CliError) return err;
+        throw err;
+      })
+    : undefined;
+  await start(deps, home, install.port);
+  const result = await status(deps, home);
+  if (ollama instanceof CliError) {
+    throw ollama.with({ ...result }, `NimbleBrain is running, but ${lowerFirst(ollama.message)}`);
+  }
+  return { ...result, ollama_started: ollama?.started };
 }
+
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 export async function down(ctx: Ctx): Promise<Ok> {
   await requireInstall(ctx);
@@ -373,10 +415,10 @@ export async function localModel(ctx: Ctx): Promise<Ok> {
   const install = await requireInstall(ctx);
   const composeText = (await ctx.deps.readText(paths(ctx.home).compose)) ?? "";
   const model = ctx.arg ?? ctx.flags.localModel ?? DEFAULT_LOCAL_MODEL;
-  const name = await useLocalModel(ctx, composeText, model);
+  const { name, started } = await useLocalModel(ctx, composeText, model);
   // `up` recreates the runtime container, which is what makes it read `.env` again.
   await start(ctx.deps, ctx.home, install.port);
-  return { ok: true, local_model: name };
+  return { ok: true, local_model: name, ollama_started: started };
 }
 
 /** Asks which model NimbleBrain's own agents run on: a local model's name, or undefined for a hosted key. */
@@ -388,8 +430,16 @@ async function chooseModelSource(deps: Deps): Promise<string | undefined> {
   return answer === "local" ? DEFAULT_LOCAL_MODEL : undefined;
 }
 
-/** Prepares `model` on Ollama and writes its `.env` lines; answers the name the runtime will use. */
-async function useLocalModel(ctx: Ctx, composeText: string, model: string): Promise<string> {
+/**
+ * Prepares `model` on Ollama (starting Ollama when it is installed but down)
+ * and writes its `.env` lines; answers the name the runtime will use and the
+ * command that started Ollama, if any.
+ */
+async function useLocalModel(
+  ctx: Ctx,
+  composeText: string,
+  model: string,
+): Promise<{ name: string; started?: string }> {
   const { deps, home } = ctx;
   if (!takesLocalModel(composeText)) {
     throw new CliError(
@@ -397,19 +447,19 @@ async function useLocalModel(ctx: Ctx, composeText: string, model: string): Prom
       "This release's runtime takes no local model; a newer release does.",
     );
   }
-  const values = await setupLocalModel(deps, model, (m) => confirmPull(ctx, m));
+  const { values, started } = await setupLocalModel(deps, model, {
+    start: confirmOllamaStart(ctx, true),
+    pull: (m) => confirmPull(ctx, m),
+  });
   const p = paths(home);
   await deps.writeText(p.env, setEnvLines((await deps.readText(p.env)) ?? "", values), 0o600);
-  return values.NB_LOCAL_MODEL ?? model;
+  return { name: values.NB_LOCAL_MODEL ?? model, started };
 }
 
 /** Whether a missing model may be downloaded: asked at a terminal, taken as yes otherwise (`--yes`). */
 async function confirmPull(ctx: Ctx, model: string): Promise<boolean> {
   if (!asks(ctx)) return true;
-  const answer = (await ctx.deps.prompt(`Download ${model} with Ollama? It is several GB. [Y/n] `))
-    .trim()
-    .toLowerCase();
-  return answer === "" || answer === "y" || answer === "yes";
+  return yes(await ctx.deps.prompt(`Download ${model} with Ollama? It is several GB. [Y/n] `));
 }
 
 async function chooseAgent(deps: Deps): Promise<Agent> {
