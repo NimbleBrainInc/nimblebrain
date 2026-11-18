@@ -200,6 +200,7 @@ export function machine(opts: MachineOptions = {}): Machine {
     // something else is never asked the telemetry question.
     env: { NIMBLEBRAIN_TELEMETRY_KEY: "", ...opts.env },
     home: "/home/dana",
+    cwd: "/home/dana/src",
   };
   /** Ollama's API, as the real one answers the calls the CLI makes. */
   function ollama(url: string, body: unknown): { status: number; body: unknown } | undefined {

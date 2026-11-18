@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { keyVars, PROJECT, providers } from "../src/compose.ts";
+import { DEFAULT_PROJECT, keyVars, projectFor, providers } from "../src/compose.ts";
 import { run } from "../src/main.ts";
 import { compareVersions, MIN_RUNTIME, newestRelease, runtimeTag } from "../src/release.ts";
 import { VERSION } from "../src/version.ts";
@@ -9,7 +9,7 @@ const HOME = "/home/dana/.nimblebrain-local";
 const INSTALL = `${HOME}/install.json`;
 const ENV = `${HOME}/.env`;
 /** What an earlier, unfinished `init` leaves in `.env`: the mark that the home is the CLI's. */
-const MARK = `COMPOSE_PROJECT_NAME=${PROJECT}\n`;
+const MARK = `COMPOSE_PROJECT_NAME=${DEFAULT_PROJECT}\n`;
 /** Pins the runtime, so a test does not depend on which release is newest. */
 const env = { NIMBLEBRAIN_TAG: "v0.73.0" };
 
@@ -91,7 +91,7 @@ describe("init", () => {
     });
     const dotenv = m.files.get(ENV);
     expect(dotenv?.mode).toBe(0o600);
-    expect(dotenv?.text).toContain(`COMPOSE_PROJECT_NAME=${PROJECT}`);
+    expect(dotenv?.text).toContain(`COMPOSE_PROJECT_NAME=${DEFAULT_PROJECT}`);
     expect(dotenv?.text).toContain("NIMBLEBRAIN_TAG=v0.73.0");
     expect(dotenv?.text).toContain("NIMBLEBRAIN_WEB_PORT=27246");
   });
@@ -283,6 +283,90 @@ describe("init", () => {
     const { body } = await json(["--yes", "--runtime", "v0.72.0"], m);
     expect(body.error).toBe("RUNTIME_UNSUPPORTED");
     expect(m.files.size).toBe(0);
+  });
+});
+
+describe("another home", () => {
+  const RC = "/home/dana/nb-rc";
+  /** Docker as it is with the default install present: its project and its data volume. */
+  const defaultInstalled = {
+    "docker compose ls -a --format json": ok(
+      '[{"Name":"nimblebrain-local","ConfigFiles":"/home/dana/.nimblebrain-local/docker-compose.yml"}]',
+    ),
+    "docker volume ls -q --filter name=^nimblebrain-local_workspace$": ok(
+      "nimblebrain-local_workspace",
+    ),
+  };
+
+  test("the project follows the home folder's name, and the default home keeps nimblebrain-local", () => {
+    expect(projectFor("/home/dana/.nimblebrain-local")).toBe("nimblebrain-local");
+    expect(projectFor("/tmp/tmp.x1/nimblebrain-local")).toBe("nimblebrain-local");
+    expect(projectFor("/home/dana/nb-rc")).toBe("nimblebrain-nb-rc");
+    expect(projectFor("/home/dana/nb-rc/")).toBe("nimblebrain-nb-rc");
+    expect(projectFor("/home/dana/.nimblebrain-local-rc")).toBe("nimblebrain-local-rc");
+    expect(projectFor("/home/dana/RC 0.80.0")).toBe("nimblebrain-rc-0-80-0");
+    expect(projectFor("/")).toBe("nimblebrain");
+  });
+
+  test("installs beside the default install as its own project, port and data", async () => {
+    const m = machine({ env, exec: defaultInstalled });
+    const { body } = await json(["--yes", "--home", RC, "--port", "27300"], m);
+    expect(body).toMatchObject({ error: "MODEL_KEY_MISSING", url: "http://127.0.0.1:27300" });
+    expect(m.files.get(`${RC}/.env`)?.text).toContain("COMPOSE_PROJECT_NAME=nimblebrain-nb-rc\n");
+    expect(JSON.parse(m.files.get(`${RC}/install.json`)?.text ?? "")).toMatchObject({
+      project: "nimblebrain-nb-rc",
+      port: 27300,
+    });
+    expect(m.calls).toContain(`${RC}$ docker compose up -d --no-build`);
+  });
+
+  test("a relative --home is taken from the working directory", async () => {
+    const m = machine({ env, exec: defaultInstalled });
+    await json(["--yes", "--home", "../nb-rc", "--port", "27300"], m);
+    expect(m.files.get(`${RC}/.env`)?.text).toContain("COMPOSE_PROJECT_NAME=nimblebrain-nb-rc\n");
+  });
+
+  test("a home whose own project is taken refuses with NOT_OURS, naming it", async () => {
+    const m = machine({
+      env,
+      exec: { "docker compose ls -a --format json": ok('[{"Name":"nimblebrain-nb-rc"}]') },
+    });
+    const { body } = await json(["--yes", "--home", RC], m);
+    expect(body.error).toBe("NOT_OURS");
+    expect(body.message).toContain('"nimblebrain-nb-rc"');
+    expect(m.files.size).toBe(0);
+  });
+
+  test("a project whose name only starts with this one is not this one", async () => {
+    const m = machine({
+      env,
+      exec: { "docker compose ls -a --format json": ok('[{"Name":"nimblebrain-local-rc"}]') },
+    });
+    expect((await json(["--yes"], m)).body.error).toBe("MODEL_KEY_MISSING");
+  });
+
+  test("a .env naming another project is not this home's mark", async () => {
+    const m = machine({ env, files: { [ENV]: "COMPOSE_PROJECT_NAME=nimblebrain-local-rc\n" } });
+    const { body } = await json(["--yes"], m);
+    expect(body.error).toBe("NOT_OURS");
+    expect(m.files.get(ENV)?.text).toBe("COMPOSE_PROJECT_NAME=nimblebrain-local-rc\n");
+  });
+
+  test("an older CLI's unfinished init in another home resumes on the project it chose", async () => {
+    const m = machine({ env, files: { [`${RC}/.env`]: MARK } });
+    await json(["--yes", "--home", RC, "--port", "27300"], m);
+    expect(m.files.get(`${RC}/.env`)?.text).toContain(`COMPOSE_PROJECT_NAME=${DEFAULT_PROJECT}\n`);
+    expect(JSON.parse(m.files.get(`${RC}/install.json`)?.text ?? "").project).toBe(DEFAULT_PROJECT);
+  });
+
+  test("update keeps the project the install recorded", async () => {
+    const m = machine({ env, exec: defaultInstalled });
+    await json(["--yes", "--home", RC, "--port", "27300"], m);
+    await json(["update", "--home", RC, "--runtime", "v0.74.0"], m);
+    const dotenv = m.files.get(`${RC}/.env`)?.text ?? "";
+    expect(dotenv).toContain("NIMBLEBRAIN_TAG=v0.74.0");
+    expect(dotenv).toContain("COMPOSE_PROJECT_NAME=nimblebrain-nb-rc\n");
+    expect(dotenv).not.toContain(`COMPOSE_PROJECT_NAME=${DEFAULT_PROJECT}\n`);
   });
 });
 

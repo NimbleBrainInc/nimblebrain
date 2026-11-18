@@ -3,16 +3,17 @@ import { AGENTS, type Agent, type Flags } from "./args.ts";
 import {
   asksConsent,
   compose,
+  DEFAULT_PROJECT,
   fetchCompose,
   hasKey,
   INSTANCE_JSON,
   keyVars,
-  PROJECT,
   paths,
+  projectFor,
   providers,
   setEnvLines,
   startError,
-  VOLUME,
+  volumeOf,
 } from "./compose.ts";
 import type { Deps } from "./deps.ts";
 import { doctor } from "./doctor.ts";
@@ -116,7 +117,7 @@ async function install(
 ): Promise<Ok> {
   const { deps, flags, home } = ctx;
   await doctor(deps, flags.port);
-  await guardOurs(deps, home);
+  const project = await guardOurs(deps, home);
   const tag = await runtimeTag(deps, flags.runtime);
   const composeText = await fetchCompose(deps, tag);
   await confirmStart(ctx, tag);
@@ -126,6 +127,7 @@ async function install(
   await writeInstallFiles(
     deps,
     home,
+    project,
     tag,
     flags.port,
     composeText,
@@ -147,7 +149,7 @@ async function install(
   const state: InstallState = {
     version: tag.replace(/^v/, ""),
     port: flags.port,
-    project: PROJECT,
+    project,
   };
   await writeState(deps, home, state);
   const manual = await connectChosenAgent(ctx, state);
@@ -242,7 +244,7 @@ export async function update(ctx: Ctx): Promise<Ok> {
   }
 
   const composeText = await fetchCompose(deps, tag);
-  await writeInstallFiles(deps, home, tag, install.port, composeText);
+  await writeInstallFiles(deps, home, install.project, tag, install.port, composeText);
   deps.say(`Updating NimbleBrain ${from} → ${tag}.`);
   const pull = await compose(deps, home, ["pull"], START_TIMEOUT_MS);
   if (pull.code !== 0) throw startError(pull);
@@ -437,6 +439,7 @@ async function waitHealthy(deps: Deps, port: number): Promise<void> {
 async function writeInstallFiles(
   deps: Deps,
   home: string,
+  project: string,
   tag: string,
   port: number,
   composeText: string,
@@ -447,7 +450,7 @@ async function writeInstallFiles(
   if ((await deps.readText(p.instance)) === undefined)
     await deps.writeText(p.instance, INSTANCE_JSON);
   const env = setEnvLines((await deps.readText(p.env)) ?? "", {
-    COMPOSE_PROJECT_NAME: PROJECT,
+    COMPOSE_PROJECT_NAME: project,
     NIMBLEBRAIN_TAG: tag,
     NIMBLEBRAIN_WEB_PORT: String(port),
     ...extra,
@@ -469,23 +472,44 @@ async function requireInstall({ deps, home }: Ctx): Promise<InstallState> {
  * Refuses to start over another install's containers or data, or over files
  * in the home that the CLI did not write (`uninstall` deletes them). A home,
  * project or volume counts as ours only when this home's `.env` names the
- * project, which is the mark a previous, unfinished `init` leaves.
+ * project, which is the mark a previous, unfinished `init` leaves: the project
+ * this home gets, or the one an older CLI gave every home. Answers the project
+ * the install uses.
  */
-async function guardOurs(deps: Deps, home: string): Promise<void> {
+async function guardOurs(deps: Deps, home: string): Promise<string> {
+  const project = projectFor(home);
   const env = await deps.readText(paths(home).env);
-  if (env?.includes(`COMPOSE_PROJECT_NAME=${PROJECT}`)) return;
+  const marked = env?.match(/^COMPOSE_PROJECT_NAME=(.*?)\r?$/m)?.[1];
+  if (marked === project || marked === DEFAULT_PROJECT) return marked;
   for (const file of Object.values(paths(home))) {
     if ((await deps.readText(file)) !== undefined) {
       throw new CliError("NOT_OURS", `${file} already exists and this CLI did not write it.`);
     }
   }
   const projects = await deps.exec("docker", ["compose", "ls", "-a", "--format", "json"]);
-  const taken = projects.code === 0 && /"Name"\s*:\s*"nimblebrain-local"/.test(projects.stdout);
-  const volumes = await deps.exec("docker", ["volume", "ls", "-q", "--filter", `name=^${VOLUME}$`]);
+  const taken = projects.code === 0 && listsProject(projects.stdout, project);
+  const volumes = await deps.exec("docker", [
+    "volume",
+    "ls",
+    "-q",
+    "--filter",
+    `name=^${volumeOf(project)}$`,
+  ]);
   if (taken || volumes.stdout.trim() !== "") {
     throw new CliError(
       "NOT_OURS",
-      `Docker already has a "${PROJECT}" project or volume that this install did not make.`,
+      `Docker already has a "${project}" project or volume that this install did not make.`,
     );
+  }
+  return project;
+}
+
+/** Whether `docker compose ls --format json` lists a project by exactly this name. */
+function listsProject(stdout: string, project: string): boolean {
+  try {
+    const list = JSON.parse(stdout) as unknown;
+    return Array.isArray(list) && list.some((p) => (p as { Name?: unknown })?.Name === project);
+  } catch {
+    return false;
   }
 }
