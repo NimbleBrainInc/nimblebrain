@@ -101,31 +101,58 @@ describe("telemetry consent at init", () => {
     expect(m.files.has(REPORT)).toBe(false);
   });
 
-  test("a person is asked after agreeing to start; only a typed yes is yes", async () => {
+  test("a person is asked first; Enter is yes, and only an answer starting with n is no", async () => {
     for (const [answer, state] of [
+      ["", "on"],
       ["y", "on"],
-      ["", "off"],
-      ["no", "off"],
+      ["n", "off"],
+      ["No", "off"],
     ] as const) {
-      // Start, then consent. The key prompt gets no key, so init stops there with the answer kept.
-      const m = machine({ env, interactive: true, answers: ["y", answer] });
+      // Consent, then start. The key prompt gets no key, so init stops there with the answer kept.
+      const m = machine({ env, interactive: true, answers: [answer, "y"] });
       await run([], m.deps);
       expect(m.files.get(ENV)?.text).toContain(`NB_TELEMETRY_CONSENT=${state}`);
+      expect(m.said.join("\n")).toContain(
+        `npx nimblebrain telemetry ${state === "on" ? "off" : "on"}`,
+      );
     }
   });
 
-  test("declining the start never asks about telemetry", async () => {
-    const m = machine({ env, interactive: true, answers: ["n"] });
+  test("the telemetry question comes before the checks and the start", async () => {
+    const m = machine({ env, interactive: true, answers: ["", "y"] });
     await run([], m.deps);
-    expect(m.asked.some((q) => q.startsWith("Help improve"))).toBe(false);
-    expect(m.files.size).toBe(0);
+    expect(m.asked[0]).toStartWith("Help improve");
+    expect(m.asked[0]).toEndWith("[Y/n] ");
+    expect(m.asked[1]).toStartWith("Start NimbleBrain");
   });
 
-  test("the telemetry question comes right after the start is agreed", async () => {
-    const m = machine({ env, interactive: true, answers: ["y", "y"] });
+  test("a failed check after a yes is sent at once", async () => {
+    const m = machine({
+      env,
+      interactive: true,
+      answers: [""],
+      exec: { "docker --version": { ...fail(), missing: true } },
+    });
     await run([], m.deps);
-    expect(m.asked[0]).toStartWith("Start NimbleBrain");
-    expect(m.asked[1]).toStartWith("Help improve");
+    expect(sent(m).map((e) => e.event)).toEqual(["cli.init_started", "cli.doctor_failed"]);
+    expect(m.files.has(REPORT)).toBe(false);
+  });
+
+  test("declining the start after a yes reports the cancel; after a no, nothing is kept", async () => {
+    const yes = machine({ env, interactive: true, answers: ["", "n"] });
+    await run([], yes.deps);
+    expect(sent(yes).map((e) => e.event)).toEqual(["cli.init_started", "cli.init_failed"]);
+    const no = machine({ env, interactive: true, answers: ["n", "n"] });
+    await run([], no.deps);
+    expect(sent(no)).toHaveLength(0);
+    expect(no.files.has(REPORT)).toBe(false);
+  });
+
+  test("--yes never answers the telemetry question", async () => {
+    const m = machine({ env, interactive: true });
+    const { body } = await json(["--yes"], m);
+    expect(m.asked.some((q) => q.startsWith("Help improve"))).toBe(false);
+    expect(body.telemetry.state).toBe("undecided");
   });
 
   test("with no destination no one is asked and nothing is written", async () => {

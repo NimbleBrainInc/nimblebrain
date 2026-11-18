@@ -156,9 +156,9 @@ async function readReport(deps: Deps, home: string): Promise<Event[]> {
 
 const toLines = (events: Event[]) => `${events.map((e) => JSON.stringify(e)).join("\n")}\n`;
 
-/** Only a typed yes is a yes: Enter alone, or anything else, is no. */
+/** The question shows `[Y/n]`: Enter is yes, and an answer starting with n is no. */
 export function parseAnswer(answer: string): "on" | "off" {
-  return /^y/i.test(answer.trim()) ? "on" : "off";
+  return /^n/i.test(answer.trim()) ? "off" : "on";
 }
 
 /** The answer the CLI holds in `.env` (`NB_TELEMETRY_CONSENT`), before the runtime owns it. */
