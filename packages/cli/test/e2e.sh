@@ -9,8 +9,13 @@ NB=${1:?usage: e2e.sh "<command that runs the CLI>"}
 export NIMBLEBRAIN_HOME=${NIMBLEBRAIN_HOME:-$(mktemp -d)/nimblebrain-local}
 
 step() { printf '\n== %s\n' "$*"; }
-# Runs the CLI with --json; prints the object; never stops the script on a non-zero exit.
-nb() { $NB "$@" --json || true; }
+# Runs the CLI with --json; prints the object; never stops the script on a non-zero
+# exit, but logs the exit code, so an empty answer can be told from a refusal.
+nb() {
+  local code=0
+  $NB "$@" --json || code=$?
+  echo "($* exited $code)" >&2
+}
 expect() { # expect <json> <jq filter that must be true> <what>
   if ! jq -e "$2" >/dev/null <<<"$1"; then
     echo "FAILED: $3"
