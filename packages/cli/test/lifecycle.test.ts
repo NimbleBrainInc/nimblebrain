@@ -359,7 +359,9 @@ describe("after install", () => {
     m.files.set(`${HOME}/notes.txt`, { text: "mine", mode: 0o644 });
     await json(["uninstall", "--yes"], m);
     // The agent's skill stays: it is how the agent installs NimbleBrain again.
-    expect([...m.files.keys()].filter((f) => f.startsWith(HOME))).toEqual([`${HOME}/notes.txt`]);
+    expect([...m.files.keys()].sort()).toEqual(
+      [`${HOME}/notes.txt`, "/home/dana/.claude/skills/nimblebrain/SKILL.md"].sort(),
+    );
   });
 
   test("commands on a machine with no install say NOT_INSTALLED", async () => {

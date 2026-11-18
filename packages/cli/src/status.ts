@@ -18,7 +18,6 @@ export interface InstallState {
   /** The Compose project name, which is also what marks containers and the data volume as ours. */
   project: string;
   agent?: Agent;
-  skill?: string;
 }
 
 export async function readInstall(deps: Deps, home: string): Promise<InstallState | undefined> {
