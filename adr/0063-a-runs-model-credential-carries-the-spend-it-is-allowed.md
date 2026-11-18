@@ -1,6 +1,6 @@
 # 0063. A run's model credential carries the spend it is allowed
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0067
 - Date: 2026-11-12
 - Serves: orchestrate remote MCP
 - Amends: [ADR-0045](./0045-a-task-is-the-unattended-primitive-and-its-trigger-is-optional.md) (how a run is held to its spend accounts), [ADR-0062](./0062-a-run-executes-on-the-default-runtime-only-when-it-can-hold-the-run.md) (which runtimes hold a run with spend accounts)
@@ -51,6 +51,9 @@ and the gateway refuses the run's calls once its spend reaches that amount.
   claim that is not a whole number, admits one call. A run may be held below its
   terms, never above them, and the runtime knows nothing of the gateway's
   replicas or limits.
+  - *Amended by ADR-0067:* the gateway counts each run on one replica, so it
+    holds the run to the largest of its limits at or below the whole grant, not
+    a share of it per replica.
 - **The gateway counts input and output tokens together.** That is at least what
   an input-token cap counts, so it errs toward stopping early.
 - **The gateway says that it enforces grants, and only then does an external
