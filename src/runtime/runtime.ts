@@ -39,6 +39,7 @@ import {
 } from "../connectors/runtime/catalog-ui.ts";
 import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
+import { resolveHostLoopback, setHostLoopbackAlias } from "../connectors/runtime/host-loopback.ts";
 import { setInBandAuthErrorsCatalog } from "../connectors/runtime/in-band-auth-errors.ts";
 import { bindInstanceOAuthClients } from "../connectors/runtime/instance-oauth-clients.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
@@ -616,6 +617,11 @@ export class Runtime {
   private usageLedger?: UsageLedger;
   private _features: ResolvedFeatures;
   private _instanceConfig: InstanceConfig | null;
+  /**
+   * The host alias loopback URLs are dialed through on a local install, or
+   * null (ADR-0065). Set once at start; see `connectors/runtime/host-loopback.ts`.
+   */
+  private _hostLoopback: string | null = null;
   private _userStore: UserStore;
   private _workspaceStore: WorkspaceStore;
   private _permissionStore: PermissionStore | null = null;
@@ -912,6 +918,24 @@ export class Runtime {
     // through the same dereference as `nimblebrain.json` (inside
     // `loadInstanceConfig`), so the IdP key may be a reference too.
     const instanceConfig = await loadInstanceConfig(workDir);
+    // The local-install gate (ADR-0065): `NB_HOST_LOOPBACK` counts only on an
+    // instance running the `dev` adapter. When it holds, plain `http` to
+    // loopback names is admitted and those URLs are dialed at the alias; every
+    // reader of `allowInsecureRemotes` below takes this one effective value.
+    const hostLoopback = resolveHostLoopback(
+      process.env.NB_HOST_LOOPBACK,
+      instanceConfig?.auth.adapter,
+    );
+    if (process.env.NB_HOST_LOOPBACK?.trim() && hostLoopback === null) {
+      log.warn(
+        "[runtime] NB_HOST_LOOPBACK ignored: it applies only to a bare hostname on an instance using the dev adapter",
+        {
+          adapter: instanceConfig?.auth.adapter ?? "none",
+        },
+      );
+    }
+    setHostLoopbackAlias(hostLoopback);
+    const allowInsecureRemotes = config.allowInsecureRemotes === true || hostLoopback !== null;
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
     // The runtime is the one owner of the identity provider: the server
@@ -931,7 +955,7 @@ export class Runtime {
 
     // Create placement registry and lifecycle manager
     const placementRegistry = new PlacementRegistry();
-    const lifecycle = new ConnectorLifecycleManager(events, config.allowInsecureRemotes);
+    const lifecycle = new ConnectorLifecycleManager(events, allowInsecureRemotes);
     lifecycle.setPlacementRegistry(placementRegistry);
     // Connector-skill cleanup on uninstall resolves the `connector-skills/`
     // store from this same workDir that install + the per-turn loader use, so
@@ -1102,6 +1126,7 @@ export class Runtime {
       null, // systemSource — set after creation
       getWorkspaceId,
     );
+    rt._hostLoopback = hostLoopback;
     rtHolder.rt = rt;
 
     // Everything from here to `return rt` builds what a run is composed over, so
@@ -1194,7 +1219,7 @@ export class Runtime {
       const { registries: workspaceRegistries, entries: workspaceConnectorEntries } =
         await startWorkspaceConnectors(workspaceStore, workspaceSources, systemTools, events, {
           workDir: resolveWorkDir(config),
-          allowInsecureRemotes: config.allowInsecureRemotes,
+          allowInsecureRemotes,
           // Boot re-spawn picks up host-resources handlers per workspace so
           // a platform restart doesn't silently drop the capability for
           // already-installed connectors.
@@ -6011,13 +6036,24 @@ export class Runtime {
   }
 
   /**
-   * Whether the runtime allows OAuth flows / connector URLs to target loopback
-   * / RFC1918 / cloud-metadata hosts. Mirrors `config.allowInsecureRemotes`;
-   * read by `/v1/workspaces/:wsId/mcp-auth/initiate` when constructing the workspace OAuth
-   * provider so the SSRF allowlist matches the boot-time provider's behavior.
+   * Whether the runtime admits plain `http` to loopback names
+   * (`localhost`, `127.0.0.1`, `::1`) for connector URLs and OAuth flows:
+   * `config.allowInsecureRemotes`, or the local-install gate
+   * ({@link getHostLoopback}). Read by `/v1/workspaces/:wsId/mcp-auth/initiate`
+   * when constructing the workspace OAuth provider so the SSRF allowlist
+   * matches the boot-time provider's behavior.
    */
   getAllowInsecureRemotes(): boolean {
-    return this.config.allowInsecureRemotes === true;
+    return this.config.allowInsecureRemotes === true || this._hostLoopback !== null;
+  }
+
+  /**
+   * The host alias loopback URLs are dialed through, or null when this is not
+   * a local install (ADR-0065: `NB_HOST_LOOPBACK` set and the `dev` adapter in
+   * use). `manage_connectors` admits a `direct-url` install only when it is set.
+   */
+  getHostLoopback(): string | null {
+    return this._hostLoopback;
   }
 
   /** Get the file context configuration with defaults applied. */
