@@ -86,7 +86,7 @@ export function createApp(ctx: AppContext, allowedOrigins: Set<string> | null) {
 
   app.route("/", bootstrapRoutes(ctx));
   app.route("/", chatRoutes(ctx));
-  app.route("/", toolRoutes(ctx));
+  app.route("/", toolRoutes(ctx, allowedOrigins));
   app.route("/", resourceRoutes(ctx));
   app.route("/", eventRoutes(ctx));
 
