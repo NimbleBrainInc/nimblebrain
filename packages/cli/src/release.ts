@@ -48,8 +48,9 @@ export async function runtimeTag(deps: Deps, requested?: string): Promise<string
   return tag;
 }
 
-async function newestRuntime(deps: Deps): Promise<string> {
-  const res = await deps.getText(REFS_URL, 10_000);
+/** The newest plain `vX.Y.Z` runtime release on GitHub; `NETWORK` when it cannot be found. */
+export async function newestRuntime(deps: Deps, timeoutMs = 10_000): Promise<string> {
+  const res = await deps.getText(REFS_URL, timeoutMs);
   if (res && res.status !== 200) {
     throw new CliError(
       "NETWORK",

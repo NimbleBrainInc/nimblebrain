@@ -90,6 +90,29 @@ export async function installSkill(deps: Deps, agent: Agent): Promise<void> {
   );
 }
 
+/** What `update` did to the agent's skill; a failure is reported, never an error. */
+export type SkillRefresh = "updated" | "unchanged" | "not_installed" | "failed";
+
+/**
+ * Brings the agent's `nimblebrain` skill to the skills repo's newest, as
+ * `update` brings the runtime to the newest release. Best effort, like
+ * `installSkill`. A skill that is not there is left out: `status` says how
+ * to add it, and a person who removed it meant to. The skills CLI exits
+ * non-zero on a failure and prints `Updated <n> skill(s)` when it changed one.
+ */
+export async function refreshSkill(deps: Deps, agent: Agent): Promise<SkillRefresh> {
+  if (!(await skillInstalled(deps, agent))) return "not_installed";
+  try {
+    const res = await deps.exec("npx", ["-y", "skills", "update", SKILL_NAME, "-g", "-y"], {
+      timeoutMs: 120_000,
+    });
+    if (res.code !== 0) return "failed";
+    return /Updated \d+ skill/.test(res.stdout) ? "updated" : "unchanged";
+  } catch {
+    return "failed";
+  }
+}
+
 /** The skill `init` installs, by the name the skills CLI installs it under. */
 export const SKILL_NAME = "nimblebrain";
 

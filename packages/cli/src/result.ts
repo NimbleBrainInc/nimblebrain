@@ -96,6 +96,10 @@ export function failure(err: CliError): Failure {
 }
 
 export function exitCodeFor(result: Ok | Failure): number {
-  if (result.ok) return 0;
-  return result.error === "USAGE" ? 2 : 1;
+  return result.ok ? 0 : exitCodeOf(result.error);
+}
+
+/** The exit code a failure with this code ends with: 2 for a usage error, else 1. */
+export function exitCodeOf(code: ErrorCode): 1 | 2 {
+  return code === "USAGE" ? 2 : 1;
 }
