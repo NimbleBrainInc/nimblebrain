@@ -146,7 +146,7 @@ npx nimblebrain status --home ~/nb-rc
 npx nimblebrain uninstall --home ~/nb-rc --yes
 ```
 
-Pass the same `--home` to every command for that install. The name is chosen once, at `init`, so moving the folder later changes nothing. Two homes whose folders share a name would share a project; the second `init` refuses with `NOT_OURS`. An agent has one `nimblebrain` server, so `--agent` on the second install points that agent at it instead of the first, and that install's `uninstall` removes the registration; `--agent none` leaves your agent on the first.
+Pass the same `--home` to every command for that install. Every command the CLI prints for it, in its text and in `fix` and `telemetry.set`, already carries that `--home`, as it does for a home chosen with `NIMBLEBRAIN_HOME`; the default home's commands carry none. The name is chosen once, at `init`, so moving the folder later changes nothing. Two homes whose folders share a name would share a project; the second `init` refuses with `NOT_OURS`. An agent has one `nimblebrain` server, so `--agent` on the second install points that agent at it instead of the first, and that install's `uninstall` removes the registration; `--agent none` leaves your agent on the first.
 
 ## What it writes
 
