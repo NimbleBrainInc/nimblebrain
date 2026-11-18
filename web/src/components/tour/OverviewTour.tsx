@@ -3,8 +3,9 @@
 //
 // The first time a person lands on a workspace's Overview, a centred card asks
 // whether they want a quick look around; "Skip" ends it there. The tour points
-// at four places and ends with the cursor in the Ask box, so it finishes on
-// something to do rather than on reading. Help → "Take the tour" replays it
+// at five places: the sidebar, where apps are installed, where skills are
+// added, search and Help, and the Ask box, where it leaves the cursor so it
+// finishes on something to do rather than on reading. Help → "Take the tour" replays it
 // (through `?tour=1` on the Overview route).
 //
 // Kept short on purpose: completion falls off past four or five steps, and a
@@ -53,7 +54,7 @@ export function useTourRunning(): boolean {
 }
 
 /** The anchor each step points at, as `[data-tour="<name>"]`. */
-export type TourAnchor = "nav" | "ask" | "chat" | "help";
+export type TourAnchor = "nav" | "apps" | "settings" | "help" | "ask";
 
 const anchor = (name: TourAnchor) => `[data-tour="${name}"]`;
 
@@ -72,12 +73,17 @@ const STEPS: TourStep[] = [
   {
     anchor: "nav",
     title: "Your workspace",
-    body: "Overview, Conversations, Files and Tasks live here, and below them the apps installed in this workspace. Add an app to connect the tools your agent can use.",
+    body: "Overview, Conversations, Files and Tasks live here. The apps installed in this workspace appear below them.",
   },
   {
-    anchor: "chat",
-    title: "Chat with your agent",
-    body: "Open the chat from any page (⌘J). It stays docked beside whatever you are looking at.",
+    anchor: "apps",
+    title: "Install apps here",
+    body: "Apps and connectors give your agent its tools: your CRM, docs, tickets and more. Add one from the catalog, or ask a workspace admin to.",
+  },
+  {
+    anchor: "settings",
+    title: "Teach it with skills",
+    body: "Skills tell your agent how your team works. Add one under Settings → Skills, where this workspace's connectors and members live too.",
   },
   {
     anchor: "help",
@@ -87,7 +93,7 @@ const STEPS: TourStep[] = [
   {
     anchor: "ask",
     title: "Ask your first question",
-    body: 'Try "What can you do in this workspace?", or "Every Monday at 8am, brief me on what changed this week."',
+    body: 'Try "What can you do here?" or "Every Monday, brief me on what changed." Replies open in the chat (⌘J from any page).',
   },
 ];
 

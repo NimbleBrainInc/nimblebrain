@@ -163,6 +163,7 @@ export function WorkspaceOverviewPage() {
           <Link
             to={`${slugPath}/settings/general`}
             data-testid="workspace-overview-settings"
+            data-tour="settings"
             className="shrink-0 inline-flex h-8 items-center gap-2 px-3 rounded-md border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
           >
             <Settings className="size-4" aria-hidden />
@@ -191,59 +192,61 @@ export function WorkspaceOverviewPage() {
           onOpen={openPanel}
         />
 
-        <SectionLabel className="mb-3">Apps</SectionLabel>
-        {apps === null ? (
-          // Brief shell-catch-up window after a switch — hold the space, don't
-          // flash a skeleton (the page stays mounted, so this is a sub-second gap).
-          <div
-            className="min-h-[4.5rem]"
-            aria-hidden
-            data-testid="workspace-overview-apps-pending"
-          />
-        ) : apps.length === 0 ? (
-          <div
-            className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
-            data-testid="workspace-overview-empty"
-          >
-            <p>No apps installed in this workspace yet.</p>
-            {canAddApps && (
-              <Link
-                to={`${slugPath}/settings/connectors/browse`}
-                className="mt-3 inline-flex h-8 items-center gap-2 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/80 transition-colors"
-              >
-                <Plus className="size-4" aria-hidden />
-                Add an app
-              </Link>
-            )}
-          </div>
-        ) : (
-          <div
-            className="grid grid-cols-1 gap-3 @md:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4 @7xl:grid-cols-5"
-            data-testid="workspace-overview-app-grid"
-          >
-            {apps.map((p) => (
-              <AppCard
-                key={p.resourceUri}
-                placement={p}
-                iconUrl={iconFor(p.serverName)}
-                onOpen={() => {
-                  if (!p.route) return;
-                  navigate(`${slugPath}/app/${p.route}`);
-                }}
-              />
-            ))}
-            {canAddApps && (
-              <Link
-                to={`${slugPath}/settings/connectors/browse`}
-                data-testid="workspace-overview-add-app"
-                className="flex items-center gap-2 p-4 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
-              >
-                <Plus className="size-5" aria-hidden />
-                Add app
-              </Link>
-            )}
-          </div>
-        )}
+        <section data-tour="apps">
+          <SectionLabel className="mb-3">Apps</SectionLabel>
+          {apps === null ? (
+            // Brief shell-catch-up window after a switch — hold the space, don't
+            // flash a skeleton (the page stays mounted, so this is a sub-second gap).
+            <div
+              className="min-h-[4.5rem]"
+              aria-hidden
+              data-testid="workspace-overview-apps-pending"
+            />
+          ) : apps.length === 0 ? (
+            <div
+              className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
+              data-testid="workspace-overview-empty"
+            >
+              <p>No apps installed in this workspace yet.</p>
+              {canAddApps && (
+                <Link
+                  to={`${slugPath}/settings/connectors/browse`}
+                  className="mt-3 inline-flex h-8 items-center gap-2 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/80 transition-colors"
+                >
+                  <Plus className="size-4" aria-hidden />
+                  Add an app
+                </Link>
+              )}
+            </div>
+          ) : (
+            <div
+              className="grid grid-cols-1 gap-3 @md:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4 @7xl:grid-cols-5"
+              data-testid="workspace-overview-app-grid"
+            >
+              {apps.map((p) => (
+                <AppCard
+                  key={p.resourceUri}
+                  placement={p}
+                  iconUrl={iconFor(p.serverName)}
+                  onOpen={() => {
+                    if (!p.route) return;
+                    navigate(`${slugPath}/app/${p.route}`);
+                  }}
+                />
+              ))}
+              {canAddApps && (
+                <Link
+                  to={`${slugPath}/settings/connectors/browse`}
+                  data-testid="workspace-overview-add-app"
+                  className="flex items-center gap-2 p-4 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
+                >
+                  <Plus className="size-5" aria-hidden />
+                  Add app
+                </Link>
+              )}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

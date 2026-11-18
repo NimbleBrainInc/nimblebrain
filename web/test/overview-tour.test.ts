@@ -8,11 +8,14 @@ describe("overview tour steps", () => {
     expect(steps.at(-1)?.anchor).toBe("ask");
   });
 
-  test("stay short: four stops after the welcome", () => {
-    expect(stepsFor(false).length).toBe(5);
+  test("stay short: five stops after the welcome, including where to install apps and add skills", () => {
+    const anchors = stepsFor(false).map((s) => s.anchor);
+    expect(anchors.length).toBe(6);
+    expect(anchors).toContain("apps");
+    expect(anchors).toContain("settings");
   });
 
   test("leave out the sidebar's stops on a phone, where it is a closed drawer", () => {
-    expect(stepsFor(true).map((s) => s.anchor)).toEqual([null, "chat", "ask"]);
+    expect(stepsFor(true).map((s) => s.anchor)).toEqual([null, "apps", "settings", "ask"]);
   });
 });
