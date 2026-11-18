@@ -451,6 +451,13 @@ function abandonedTools(toolCalls: TaskFnResult["toolCalls"]): string[] {
  */
 const MISNAMED_TOOL_REASONS = new Set(["invalid_tool_name", "unknown_identity_source"]);
 
+/**
+ * The failure reason of a call refused for its arguments before anything ran:
+ * the engine's own schema check and a connector's `bad_input` error code use
+ * the same value. Nothing ran, so the next call to that tool is the retry.
+ */
+const REJECTED_INPUT_REASON = "bad_input";
+
 /** A tool call's input as a stable string: object keys sorted, so `{a,b}` and `{b,a}` match. */
 function inputKey(input: unknown): string {
   const seen = new WeakSet<object>();
@@ -478,8 +485,13 @@ function argumentNames(input: unknown): string {
  * Failed tool calls that nothing later in the run made good, as
  * `{ name, count }` per tool in first-failure order.
  *
- * A failed call is resolved when a LATER call to the same tool succeeds on the
- * same job. What counts as the same job depends on how the run used the tool:
+ * A call rejected for its arguments (`bad_input`) ran nothing, so the next
+ * call to the same tool is its correction: it is resolved when that call
+ * succeeds, or is itself a rejection that the call after it resolves. A
+ * corrected value keeps the argument names, so the rules below, which look for
+ * the same input or other argument names, would miss it. Any other failure is
+ * resolved when a LATER call to the same tool succeeds on the same job. What
+ * counts as the same job depends on how the run used the tool:
  *
  *   - Several distinct inputs succeeded → the tool did several jobs (one record
  *     per call), so a failure is resolved only by a later success on the SAME
@@ -497,9 +509,16 @@ function argumentNames(input: unknown): string {
  * on one item is still unresolved when later writes of the same shape succeed
  * on other items.
  *
+ * The log cannot tell a corrected value from a different item: a write
+ * rejected for item B, abandoned, then a successful write of item C reads as
+ * B corrected, so B counts as resolved. That is the accepted cost of
+ * resolving a rejection by the next success whatever its input; nothing ran
+ * for B, so the run hid an omission, not a failed side effect.
+ *
  * Read from the activity log alone. Tool annotations (`readOnlyHint`) would
- * separate a failed read from a failed write, but they are the server's claim
- * about itself and must not relax a check (see `ToolSchema.annotations`).
+ * separate a failed read from a failed write, and so limit the rejection rule
+ * to reads, but they are the server's claim about itself and must not relax a
+ * check (see `ToolSchema.annotations`), and the call records do not carry them.
  */
 function unresolvedFailures(
   toolCalls: TaskFnResult["toolCalls"],
@@ -511,6 +530,7 @@ function unresolvedFailures(
     shape: argumentNames(tc.input),
     ok: tc.ok === true,
     misnamed: typeof tc.errorReason === "string" && MISNAMED_TOOL_REASONS.has(tc.errorReason),
+    rejected: tc.errorReason === REJECTED_INPUT_REASON,
   }));
   const successKeys = new Map<string, Set<string>>();
   for (const c of calls) {
@@ -522,6 +542,11 @@ function unresolvedFailures(
   const counts = new Map<string, number>();
   calls.forEach((c, i) => {
     if (c.ok || c.misnamed) return;
+    if (c.rejected) {
+      // The first later call to this tool that is not itself a rejection.
+      const retry = calls.slice(i + 1).find((later) => later.name === c.name && !later.rejected);
+      if (retry?.ok) return;
+    }
     const oneJob = successKeys.get(c.name)?.size === 1;
     const resolved = calls
       .slice(i + 1)
