@@ -138,8 +138,9 @@ describe("init", () => {
     expect(m.calls.slice(before).some((c) => c.includes("compose up"))).toBe(false);
   });
 
-  test("a person at the terminal is asked to confirm, for the key, and for an agent", async () => {
-    const m = machine({ env, interactive: true, answers: ["", "", "sk-typed", "none"] });
+  test("a person at the terminal is asked to confirm, for the model, the key, and an agent", async () => {
+    // The model question's empty answer is a hosted model, so the key is asked next.
+    const m = machine({ env, interactive: true, answers: ["", "", "", "sk-typed", "none"] });
     const exec = m.deps.exec;
     const envAtStart: string[] = [];
     m.deps.exec = async (cmd, args, o) => {
@@ -151,13 +152,14 @@ describe("init", () => {
     expect(stdout).not.toContain("sk-typed");
     expect(envAtStart).toHaveLength(1);
     expect(envAtStart[0]).toContain("ANTHROPIC_API_KEY=sk-typed");
+    expect(m.asked[1]).toStartWith("Model (hosted, local)");
   });
 
   test("a person reads a plain summary: what the agent got, a missing skill, what to do next", async () => {
     const m = machine({
       env,
       interactive: true,
-      answers: ["", "", "sk-typed", "claude-code"],
+      answers: ["", "", "", "sk-typed", "claude-code"],
       exec: {
         "npx -y skills add nimblebraininc/skills --skill nimblebrain --agent claude-code -g -y":
           fail(),
@@ -179,7 +181,7 @@ describe("init", () => {
   });
 
   test("a rerun's summary has no next step and the skill line only when it is missing", async () => {
-    const m = machine({ env, interactive: true, answers: ["", "", "sk-typed", "claude-code"] });
+    const m = machine({ env, interactive: true, answers: ["", "", "", "sk-typed", "claude-code"] });
     await run([], m.deps);
     const { stdout } = await run([], m.deps);
     expect(stdout).toContain("already installed");
