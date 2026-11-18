@@ -129,7 +129,9 @@ export function machine(opts: MachineOptions = {}): Machine {
     say: (line) => {
       m.said.push(line);
     },
-    env: opts.env ?? {},
+    // No telemetry destination unless a test gives one, so a test about
+    // something else is never asked the telemetry question.
+    env: { NIMBLEBRAIN_TELEMETRY_KEY: "", ...opts.env },
     home: "/home/dana",
   };
   return Object.assign(state, { deps });

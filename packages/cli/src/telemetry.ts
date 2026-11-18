@@ -7,11 +7,11 @@ import { CliError } from "./result.ts";
  * The write-only key of the "NimbleBrain Self-hosted" PostHog project, which
  * holds anonymous telemetry from installs we do not run, and nothing else. It
  * is public by design (it ships in this package), so that project must never
- * hold customer data. Empty until the key is set: with no key the CLI asks no
- * one and sends nothing. `NIMBLEBRAIN_TELEMETRY_KEY` overrides it (a
- * development project, or a test).
+ * hold customer data. `NIMBLEBRAIN_TELEMETRY_KEY` overrides it: another
+ * project's key, or empty for no destination, in which case the CLI asks no
+ * one and sends nothing.
  */
-export const TELEMETRY_KEY = "";
+export const TELEMETRY_KEY = "phc_qKmpYhdDtcFYZchu3KAKFFmYHG88nfUDPCFqxoAmbS7E";
 const ENDPOINT = "https://us.i.posthog.com/batch/";
 
 export const QUESTION =
@@ -44,7 +44,7 @@ interface Event {
 export const reportPath = (home: string) => join(home, "telemetry-report.jsonl");
 
 export function telemetryKey(deps: Deps): string {
-  return deps.env.NIMBLEBRAIN_TELEMETRY_KEY || TELEMETRY_KEY;
+  return deps.env.NIMBLEBRAIN_TELEMETRY_KEY ?? TELEMETRY_KEY;
 }
 
 /** Whether no one can be asked: the person set `DO_NOT_TRACK`, or there is nowhere to send. */

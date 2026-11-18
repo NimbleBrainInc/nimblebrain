@@ -16,13 +16,12 @@ Published to npm as `nimblebrain`; run as `npx nimblebrain`. It installs, starts
 - **Compose runs without the shell's keys, `NIMBLEBRAIN_TAG`, `NIMBLEBRAIN_WEB_PORT` or `COMPOSE_PROJECT_NAME`** (`composeEnv`), so `<home>/.env` is the one source: a key exported in the shell would otherwise silently win over the one entered with `key`.
 - **`up -d --no-build`, always.** The root Compose file keeps `build:` for source checkouts; the install folder has no source, so a missing image must fail as a pull, never fall back to a build.
 - **Connecting an agent and installing the skill never fail `init`.** The instance is usable either way; a failed connection returns `manual`, the exact settings to add by hand.
-- **Telemetry waits for a person's answer (`src/telemetry.ts`).** `init` takes it from `--telemetry`, else asks a person at the terminal (only a typed yes is yes), else leaves it `undecided` and returns the question in `telemetry.ask` for an agent to pass on. Never default it on, and never let `--yes` answer it. Until a yes, events wait in `telemetry-report.jsonl` (mode 600); a yes sends them, a no deletes them. Once the runtime runs, it owns the answer (`nb__set_telemetry`, the same tool the web UI uses); the CLI holds it in `.env` (`NB_TELEMETRY_CONSENT`) only for the runtime's first start. No key or `DO_NOT_TRACK=1`: ask no one, write nothing, send nothing. Telemetry never fails a command.
+- **Telemetry waits for a person's answer (`src/telemetry.ts`).** `init` takes it from `--telemetry`, else asks a person at the terminal (only a typed yes is yes), else leaves it `undecided` and returns the question in `telemetry.ask` for an agent to pass on. Never default it on, and never let `--yes` answer it. Until a yes, events wait in `telemetry-report.jsonl` (mode 600); a yes sends them, a no deletes them. Once the runtime runs, it owns the answer (`nb__set_telemetry`, the same tool the web UI uses); the CLI holds it in `.env` (`NB_TELEMETRY_CONSENT`) only for the runtime's first start. No key or `DO_NOT_TRACK=1`: ask no one, write nothing, send nothing. Telemetry never fails a command. `TELEMETRY_KEY` is the "NimbleBrain Self-hosted" project's write-only key, public by design; never point it at a project that holds customer data.
 - **All I/O goes through `Deps` (`src/deps.ts`).** Tests pass a fake and stay unit tests: no Docker, no ports, no network.
 - **Each CLI release installs the runtime release of the same version.** The version is set from the release tag, like the root package; do not bump `package.json` by hand.
 
 ## Not here yet
 
-- **The telemetry key.** `TELEMETRY_KEY` in `src/telemetry.ts` is empty until it holds the write-only key of the "NimbleBrain Self-hosted" PostHog project; until then no one is asked and nothing is sent.
 - **A skill matched to the release.** `installSkill` takes the `nimblebrain` skill from the skills repo's default branch; that repo has no release tags to pin to yet.
 
 ## Releasing
