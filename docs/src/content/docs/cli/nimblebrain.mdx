@@ -97,7 +97,7 @@ npx nimblebrain local-model gemma4:e4b       # an install that has one already
 
 The CLI checks that Ollama answers on `127.0.0.1:11434`, downloads the model if it is missing (it asks first), refuses a model that cannot call tools, and creates `nimblebrain-<model>` from it: the same model with a 32k context window, so Ollama never picks a smaller one and cuts the prompt. It then writes `NB_LOCAL_MODEL_URL`, `NB_LOCAL_MODEL` and `NB_LOCAL_MODEL_CONTEXT` to `.env`, and the runtime reaches Ollama at `host.docker.internal`. `doctor` checks all of this again, and `status` reports `local_model`.
 
-Gemma 4 E4B is the smallest model run end to end on NimbleBrain's tasks; [Local Models](/config/local-models/) lists what has been tested, what failed, and what has not been tried. It needs about 7 GB of memory beside NimbleBrain's 2 GB. On Linux, Ollama listens on `127.0.0.1` by default, which a container cannot reach: set `OLLAMA_HOST=0.0.0.0`. This needs a NimbleBrain release that takes a local model; an older one answers `RUNTIME_UNSUPPORTED`.
+Gemma 4 E4B is the smallest model run end to end on NimbleBrain's tasks (reliable on everyday ones, partial on scheduled tasks); [Local Models](/config/local-models/) lists what has been tested, what failed, and what has not been tried. It needs about 7 GB of memory beside NimbleBrain's 2 GB. On Linux, Ollama listens on `127.0.0.1` by default, which a container cannot reach: set `OLLAMA_HOST=0.0.0.0`. This needs a NimbleBrain release that takes a local model; an older one answers `RUNTIME_UNSUPPORTED`.
 
 ## What it writes
 

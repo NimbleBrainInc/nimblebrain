@@ -17,7 +17,7 @@ import { CliError } from "./result.ts";
 export const OLLAMA_URL = "http://127.0.0.1:11434";
 /** Ollama as the runtime's container reaches it. */
 export const OLLAMA_FROM_CONTAINER = "http://host.docker.internal:11434/v1";
-/** The smallest model verified end to end on NimbleBrain's tasks (docs: Local Models). */
+/** The smallest model tested end to end on NimbleBrain's tasks (docs: Local Models). */
 export const DEFAULT_LOCAL_MODEL = "gemma4:e4b";
 /** The context window the CLI fixes on the model it creates, in tokens. */
 export const LOCAL_CONTEXT = 32_768;
