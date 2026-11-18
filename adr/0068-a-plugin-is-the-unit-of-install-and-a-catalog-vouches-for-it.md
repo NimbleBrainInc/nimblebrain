@@ -114,7 +114,7 @@ A catalog serves:
   Server Card. It is an output for outside discovery and never an input to
   install.
 
-NimbleBrain's own catalog is `catalog.nimblebrain.ai`. Authors publish servers
+NimbleBrain runs its own catalog. Authors publish servers
 to the MCP Registry and plugins to their own sources; a catalog includes them by
 review.
 
@@ -133,7 +133,8 @@ installed state match it at boot and whenever the list changes, and writes the
 result to a lock that records each plugin's identity, catalog, version, source
 commit, and the connectors and skills it produced. The CLI, the web UI and
 the platform API edit the declared list through the runtime; none of them
-installs anything itself.
+installs anything itself. Whether a plugin belongs to a workspace or a person,
+and what that grants, is ADR-0069's.
 
 Installing a plugin:
 
@@ -175,9 +176,11 @@ Extension (ADR-0011), and its plugin needs no skill for it.
 
 ### A server is shared, not duplicated
 
-Two plugins that name the same server produce one connection, authorized once
-and counted by the plugins that hold it. Removing one plugin leaves the
-connection while another still holds it.
+Two plugins that name the same server for the same owner produce one
+connection, authorized once and counted by the plugins that hold it. Removing
+one plugin leaves the connection while another still holds it. A server
+installed for a workspace and for a person is two connections, each with its
+owner's credential, so neither account reaches the other's runs (ADR-0006).
 
 ### Every server is remote
 
@@ -200,6 +203,8 @@ part.
 - **Plugin**: what a person installs.
 - **Connector**: a connection to one server, inside a plugin.
 - **Skill**: a `SKILL.md` unit of guidance.
+- **App**: a view a plugin's server places (`ui://`, MCP Apps). Some plugins
+  have apps; a plugin is what is installed, an app is what is opened.
 
 The glossary's *Catalog* entry, the model-facing list of ADR-0015, is
 renamed *skill index*. ADR-0015 is unchanged in substance.
@@ -221,9 +226,10 @@ renamed *skill index*. ADR-0015 is unchanged in substance.
   every connector comes through a plugin, so this reaches only local
   development and a second plugin for the same server.
 - A plugin for a brokered connector installs only on NimbleBrain.
-- A plugin from any Agent Plugins host installs on NimbleBrain. A plugin from
-  our catalog installs on those hosts, with its `ai.nimblebrain` fields ignored
-  there.
+- A plugin from any Agent Plugins host installs on NimbleBrain unless it names
+  a `stdio` server. A plugin from our catalog installs on those hosts, with its
+  `ai.nimblebrain` fields ignored there, unless it is for a brokered
+  connector.
 - The runtime reads two manifest formats while Claude Code's differs from
   Agent Plugins. Agent Plugins is a 1.0 spec from 2026-08, so field changes will
   reach the parser.
