@@ -378,3 +378,75 @@ describe("providers through the model gateway", () => {
     expect(url).toBe(`${GATEWAY}/xai/v1/chat/completions`);
   });
 });
+
+describe("local provider", () => {
+  const prompt = [{ role: "user" as const, content: [{ type: "text" as const, text: "x" }] }];
+
+  async function captureLocalRequest(
+    local: { baseURL: string; apiKey?: string },
+    modelString: string,
+  ): Promise<{ url: string; headers: Headers; body: Record<string, unknown> }> {
+    const realFetch = globalThis.fetch;
+    let seen = { url: "", headers: new Headers(), body: {} as Record<string, unknown> };
+    globalThis.fetch = fakeFetch(async (url, init) => {
+      seen = {
+        url: String(url),
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body)),
+      };
+      return new Response(
+        'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    try {
+      await buildModelResolver({ providers: { local } })(modelString).doStream({ prompt });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    return seen;
+  }
+
+  it("resolves local models through Chat Completions, keeping a colon in the model id", () => {
+    const registry = buildRegistry({
+      providers: { local: { baseURL: "http://localhost:11434/v1" } },
+    });
+    const model = registry.languageModel("local:gemma4:e4b") as LanguageModelV4;
+    // Chat Completions, never the Responses API, which local servers do not
+    // fully implement. Pinned so an adapter swap fails here.
+    expect(model.provider).toBe("local.chat");
+    expect(model.modelId).toBe("gemma4:e4b");
+  });
+
+  it("posts to the server's chat completions endpoint, asks for usage, and sends no key", async () => {
+    const seen = await captureLocalRequest(
+      { baseURL: "http://localhost:11434/v1" },
+      "local:gemma4:e4b",
+    );
+    expect(seen.url).toBe("http://localhost:11434/v1/chat/completions");
+    expect(seen.body.model).toBe("gemma4:e4b");
+    expect(seen.body.stream_options).toEqual({ include_usage: true });
+    expect(seen.headers.get("authorization")).toBeNull();
+  });
+
+  it("sends a key as a bearer token when one is set", async () => {
+    const seen = await captureLocalRequest(
+      { baseURL: "http://gpu-box:8000/v1", apiKey: "local-secret" },
+      "local:qwen3:8b",
+    );
+    expect(seen.headers.get("authorization")).toBe("Bearer local-secret");
+  });
+
+  it("refuses a local provider with no baseURL", () => {
+    expect(() => buildRegistry({ providers: { local: {} } })).toThrow(/providers.local.baseURL/);
+  });
+
+  it("refuses a local provider behind the model gateway", () => {
+    expect(() =>
+      buildRegistry(
+        { providers: { local: { baseURL: "http://localhost:11434/v1" } } },
+        { url: "https://gateway.example.com", fetch: globalThis.fetch },
+      ),
+    ).toThrow(/reaches hosted providers only/);
+  });
+});

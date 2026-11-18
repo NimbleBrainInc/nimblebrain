@@ -101,6 +101,11 @@ describe("the UI the system prompt names", () => {
     expect(namedUi("other", atInstall, titles)).toEqual({ name: "other" });
   });
 
+  it("falls back to the connector's own title before the server name", () => {
+    expect(namedUi("other", atInstall, titles, "Weather Dev")).toEqual({ name: "Weather Dev" });
+    expect(namedUi(SN, atInstall, titles, "Weather Dev")).toEqual({ name: "Outbound" });
+  });
+
   it("is absent when no placement survives registration", () => {
     expect(namedUi(SN, null, titles)).toBeNull();
     expect(namedUi(SN, { name: "Stored Name" } as ConnectorUiMeta, titles)).toBeNull();

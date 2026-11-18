@@ -1,4 +1,5 @@
 import type { FetchLike } from "@modelcontextprotocol/server";
+import { loopbackDial } from "../connectors/runtime/host-loopback.ts";
 import { validateConnectorUrl } from "../connectors/runtime/url-validator.ts";
 
 /**
@@ -59,7 +60,12 @@ export function createSsrfGuardedFetch(
         fleetInternal: opts.fleetInternal,
       });
 
-      const res = await doFetch(currentUrl, { ...currentInit, redirect: "manual" });
+      // On a local install a loopback URL is dialed at the host alias, with
+      // its own `Host` kept (`loopbackDial`). Applied after validation and
+      // never fed back into the loop: validation and the same-origin rule
+      // always see the stored URL.
+      const dial = loopbackDial(currentUrl, { ...currentInit, redirect: "manual" });
+      const res = await doFetch(dial.url, dial.init);
 
       const outcome = resolveRedirect(res, currentUrl, currentInit);
       if (!outcome.follow) return outcome.response;

@@ -99,14 +99,14 @@ function dropboxEntry(over: Partial<CatalogListing> = {}): CatalogListing {
 }
 
 /**
- * Build a CatalogListing for the not-yet-supported `direct-url` kind. Used to
- * drive the admission checks that run BEFORE the per-kind install dispatch
- * (workspace resolution, membership, admin role, allow-list, the
- * personal-workspace connectors-only rule): every one of those rejects before
- * the kind is reached, and a call that gets past them lands on the
- * `direct-url` errResult rather than touching a real endpoint.
+ * Build a `direct-url` CatalogListing for a non-loopback URL. Used to drive the
+ * admission checks that run BEFORE the per-kind install dispatch (workspace
+ * resolution, membership, admin role, allow-list, the personal-workspace
+ * connectors-only rule): every one of those rejects before the kind is reached,
+ * and a call that gets past them is refused `URL_NOT_LOOPBACK` rather than
+ * touching a real endpoint. The harness runtime has the local-install gate on.
  */
-function unsupportedEntry(over: { id?: string; name?: string } = {}): CatalogListing {
+function nonLoopbackDirectEntry(over: { id?: string; name?: string } = {}): CatalogListing {
   return {
     id: over.id ?? "com.example/echo",
     name: over.name ?? "Echo",
@@ -208,6 +208,8 @@ function buildHarness(): Harness {
     // test/integration/connector-admin-tools.test.ts.
     connectorAdmission: async () => ADMIT_ALL,
     getAllowInsecureRemotes: () => false,
+    // The local-install gate is on, so a `direct-url` entry reaches admission.
+    getHostLoopback: () => "127.0.0.1",
     // Whether the catalog grants record arguments: the fixture catalog declares
     // none, and a test may flip it to read `set_record_sources`'s reply.
     catalogGrantsRecordArguments: async () => catalogGrantsRecordArguments.value,
@@ -1023,7 +1025,7 @@ describe("manage_connectors.install", () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "install",
-      entry: unsupportedEntry(),
+      entry: nonLoopbackDirectEntry(),
       wsId: h.wsId,
     });
     expect(result.isError).toBe(true);
@@ -1076,7 +1078,7 @@ describe("manage_connectors.install", () => {
     // the no-default-to-personal guard: it fires only when no workspace is
     // in scope at all, not on the normal path where the route supplies one.)
     const tool = buildTool(h, ADMIN_USER, null);
-    const result = await tool.handler({ action: "install", entry: unsupportedEntry() });
+    const result = await tool.handler({ action: "install", entry: nonLoopbackDirectEntry() });
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text.toLowerCase()).toContain("wsid is required");
@@ -1087,7 +1089,11 @@ describe("manage_connectors.install", () => {
     // that omitted the field and stringified `undefined` would land
     // here; the contract is the same as missing.
     const tool = buildTool(h, ADMIN_USER);
-    const result = await tool.handler({ action: "install", entry: unsupportedEntry(), wsId: "" });
+    const result = await tool.handler({
+      action: "install",
+      entry: nonLoopbackDirectEntry(),
+      wsId: "",
+    });
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text.toLowerCase()).toContain("wsid is required");
@@ -1100,7 +1106,7 @@ describe("manage_connectors.install", () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "install",
-      entry: unsupportedEntry(),
+      entry: nonLoopbackDirectEntry(),
       wsId: "ws_002cbcedbb32d4b3",
     });
     expect(result.isError).toBe(true);
@@ -1115,7 +1121,7 @@ describe("manage_connectors.install", () => {
     const tool = buildTool(h, NON_ADMIN_USER);
     const result = await tool.handler({
       action: "install",
-      entry: unsupportedEntry(),
+      entry: nonLoopbackDirectEntry(),
       wsId: h.wsId,
     });
     expect(result.isError).toBe(true);
@@ -1138,7 +1144,7 @@ describe("manage_connectors.install", () => {
     const tool = buildTool(h, orgAdminNonMember);
     const result = await tool.handler({
       action: "install",
-      entry: unsupportedEntry(),
+      entry: nonLoopbackDirectEntry(),
       wsId: h.wsId,
     });
     expect(result.isError).toBe(true);
@@ -1874,7 +1880,7 @@ describe("manage_connectors.install — a single-member workspace admits any ins
 
   test("a non-remote-oauth install is not refused for who belongs to the workspace", async () => {
     const tool = buildTool(h, ADMIN_USER, OWN_WS);
-    const result = await tool.handler({ action: "install", entry: unsupportedEntry() });
+    const result = await tool.handler({ action: "install", entry: nonLoopbackDirectEntry() });
     // Whatever the outcome, it is never a connectors-only rejection.
     expect(structured(result).error).not.toBe("permission_denied");
     const text = (result.content?.[0] as { text?: string })?.text ?? "";

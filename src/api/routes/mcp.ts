@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { TokenGrant } from "../../identity/provider.ts";
-import { canonicalOrigins, publicOrigin, webOrigin } from "../../oauth/public-origin.ts";
+import { publicOrigin } from "../../oauth/public-origin.ts";
 import { authenticateRequest, isAuthError } from "../auth-middleware.ts";
 import { MCP_PATH_PREFIX, mcpResourceMetadataUrl, mcpResourceUrl } from "../mcp-resource.ts";
 import { MAX_MCP_REQUEST_BODY_BYTES, type McpRequestContext } from "../mcp-server.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
-import { rejectUntrustedOrigin } from "../middleware/origin.ts";
+import { rejectUntrustedOrigin, trustedBrowserOrigins } from "../middleware/origin.ts";
 import { requestRateLimit } from "../middleware/rate-limit.ts";
 import type { JsonRpcErrorBody } from "../schemas/responses.ts";
 import { type AppContext, type AuthEnv, apiError, json } from "../types.ts";
@@ -108,7 +108,7 @@ export function mcpRoutes(ctx: AppContext, allowedOrigins: Set<string> | null) {
   // The origins a browser page may call `/mcp` from: this deployment's own and
   // the CORS allowlist. Checked before authentication, so a DNS-rebinding page
   // gets `403`, never a challenge to sign in.
-  const trustedOrigins = new Set([...canonicalOrigins(), webOrigin(), ...(allowedOrigins ?? [])]);
+  const trustedOrigins = trustedBrowserOrigins(allowedOrigins);
 
   app.all(MCP_PATH_PREFIX, bareMcpRefused);
   app.all(`${MCP_PATH_PREFIX}/`, bareMcpRefused);

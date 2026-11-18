@@ -106,6 +106,38 @@
           },
           "additionalProperties": false
         },
+        "local": {
+          "type": "object",
+          "description": "A model server on this machine or network that speaks OpenAI's Chat Completions API: Ollama, llama.cpp's server, LM Studio, vLLM. Reference models as local:<model-id>, the id the server knows them by. With NB_LOCAL_MODEL_URL set, the runtime builds this block from the environment when the file has none.",
+          "properties": {
+            "baseURL": {
+              "type": "string",
+              "description": "The server's OpenAI-compatible endpoint, e.g. http://localhost:11434/v1 for Ollama. From inside Docker, http://host.docker.internal:11434/v1."
+            },
+            "apiKey": {
+              "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+              "description": "Sent as a Bearer token when the server asks for one. Most local servers take none."
+            },
+            "models": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1,
+              "description": "The models the server serves, by its id. Each is offered in the model picker."
+            },
+            "contextWindow": {
+              "type": "integer",
+              "minimum": 4096,
+              "description": "The context window the server allocates for these models, in tokens. Default 32768. Set it to what the server actually uses (Ollama's num_ctx): the runtime budgets each turn against it, and a server that truncates a longer prompt does so silently."
+            },
+            "maxOutputTokens": {
+              "type": "integer",
+              "minimum": 256,
+              "description": "Most tokens one model call may write. Default: a quarter of contextWindow, at most 8192."
+            }
+          },
+          "required": ["baseURL"],
+          "additionalProperties": false
+        },
         "xai": {
           "type": "object",
           "description": "xAI (Grok). Reference models as xai:<model-id>, e.g. xai:grok-4.5.",

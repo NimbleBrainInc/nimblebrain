@@ -245,12 +245,15 @@ export interface RemoteOAuthInstall {
 }
 
 /**
- * User pasted a remote MCP server URL directly. Future. Reserved here
- * so the discriminated union is closed.
+ * A server added by its URL rather than from the catalog: a server in
+ * development on a local install (ADR-0065). Admitted only when the runtime's
+ * local-install gate holds; refused everywhere else. The URL must name a
+ * loopback host. `serverName` overrides the name taken from the server's card.
  */
 export interface DirectUrlInstall {
   kind: "direct-url";
   url: string;
+  serverName?: string;
 }
 
 /**
