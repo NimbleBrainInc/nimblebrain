@@ -36,7 +36,7 @@ On Ollama, at a 32k context, unless noted.
 
 | Model | Tool calling | Everyday tasks | Scheduled tasks | Resident memory at 32k |
 |---|---|---|---|---|
-| **Gemma 4 E4B** (`gemma4:e4b`) | Yes | **Verified** | **Verified**: created, moved to 9am and ran with no tool errors in the latest run. Earlier runs, before the task schedule took its flat shape, failed most of the time on the schedule's shape. | About 7 GB |
+| **Gemma 4 E4B** (`gemma4:e4b`) | Yes | **Verified** | **Partial**: of two runs on the current code, one created the task, moved it to 9am and ran it with no tool errors. The other, on an install made with `npx nimblebrain` against the v0.75.0 release candidate, created the task paused, then on each later turn called `tasks__create` again instead of `tasks__update` and asked a question, so the task was never moved or run. | About 7 GB |
 | **Qwen3 8B** (`qwen3:8b`) | Yes | **Verified** | **Partial**: it created the task, but on later turns it sometimes answered with nothing. Tested before the latest changes; not rerun since. | About 10 GB |
 | Qwen2.5 3B (`qwen2.5:3b`) | Yes | **Failed**: empty replies, malformed arguments, and a claim of success after a refused call | **Failed** | Not measured |
 | Gemma 3 (any size) | **No**, on Ollama | Not usable | Not usable | — |
@@ -48,12 +48,16 @@ For comparison, Claude Sonnet 4.6 passed every task above with no tool errors.
 
 - **A context window smaller than the prompt fails silently.** Ollama picks a default window from GPU memory: 4k below about 23 GiB, 32k up to about 47 GiB, 256k above that. A prompt longer than the window is cut without an error, and the model loses its tools. In testing, a 4k window turned a file request into "I do not have the capability to create files", reported as a successful turn. Set the window explicitly (`OLLAMA_CONTEXT_LENGTH=32768`, or `PARAMETER num_ctx 32768` in a Modelfile) and give the same number as `contextWindow`.
 - **Small models sometimes run dependent calls together.** Gemma 4 E4B was seen to create a file and list the files in one step. The list can finish first and not show the new file.
+- **Small models can mistake one task for another.** Asked not to run a task now, Gemma 4 E4B has created it paused. On later turns it has tried to create the same task again rather than change it. Check a task's schedule and status in the tasks panel after setting it up on a small model.
 - **Small models may stop instead of retrying.** When a call is refused (a wrong argument, or a tool held until its guide is read), a small model sometimes reports the problem or asks the person instead of correcting the call.
 - **Turns are slower than a hosted model.** On the test machine, Gemma 4 E4B took about 10 to 15 seconds for a one-step turn and 20 to 60 seconds for a multi-step one; Claude Sonnet 4.6 took 5 to 15. The prompt (about 5k tokens on an ordinary turn) is processed in full on a conversation's first call, and later calls reuse the server's cache. Slower machines were not measured.
 
-## Not yet verified
+## Setup and reachability
 
-Verified: Docker Desktop on macOS reaches a model server on the host at `host.docker.internal`, including one listening only on `127.0.0.1`, as Ollama does by default.
+- **Verified:** `npx nimblebrain --local-model gemma4:e4b` (CLI 0.2.0) installed the v0.75.0 release candidate against Ollama on its default settings, prepared the model with a 32k window, and passed every `doctor` check. The runtime offered only the local model.
+- **Verified:** Docker Desktop on macOS reaches a model server on the host at `host.docker.internal`, including one listening only on `127.0.0.1`, as Ollama does by default.
+
+## Not yet verified
 
 - **Linux.** The release's `docker-compose.yml` maps `host.docker.internal` to the host on Linux too, but a Linux host has not been tested. Ollama on Linux listens on `127.0.0.1` by default, which a container cannot reach; set `OLLAMA_HOST=0.0.0.0`.
 - **Windows.**
@@ -62,4 +66,4 @@ Verified: Docker Desktop on macOS reaches a model server on the host at `host.do
 
 ## Choosing a model
 
-Use a model with tool calling (on Ollama, `ollama show <model>` lists `tools` under capabilities). Gemma 4 E4B is the smallest model verified on scheduled tasks. Allow its resident memory plus about 2 GB for NimbleBrain's containers and room for the operating system: 16 GB is tight, and 24 GB is a comfortable floor.
+Use a model with tool calling (on Ollama, `ollama show <model>` lists `tools` under capabilities). Gemma 4 E4B is the smallest model tested end to end: verified on everyday tasks, partial on scheduled ones. Allow its resident memory plus about 2 GB for NimbleBrain's containers and room for the operating system: 16 GB is tight, and 24 GB is a comfortable floor.
