@@ -1,7 +1,6 @@
 import { isModelVisible, type ToolSchema } from "../engine/types.ts";
 import { DEFAULT_MAX_DIRECT_TOOLS } from "../limits.ts";
 import type { Skill } from "../skills/types.ts";
-import { isIdentitySource } from "./identity-sources.ts";
 import { toolNameMatchesPattern } from "./tool-pattern.ts";
 
 /**
@@ -15,13 +14,14 @@ import { toolNameMatchesPattern } from "./tool-pattern.ts";
  *     the axis that decides where a tool lands below.
  *
  * By how the agent relates to a tool, it belongs in exactly one of:
- *   1. KERNEL-DIRECT — hot; the agent reaches for it unprompted (`nb__search`,
- *      `nb__manage_tools`, `nb__status`, `nb__use_skill`, the
- *      files/conversations basics). Full schema in the always-cached prefix. `isKernelTool` below.
+ *   1. KERNEL-DIRECT — hot; turns call it often enough that sending it on every
+ *      call costs less than finding it when needed. Full schema in the
+ *      always-cached prefix. The set is named, not derived: {@link DIRECT_KERNEL_TOOLS}.
  *   2. PROXIED — the agent needs it only occasionally. Discovered via
- *      `nb__search` and promoted on demand, so it stays OUT of the default
- *      prefix (Tier 2/3 here). Costs one prefix-bust per promote — worth it for
- *      cold tools, not for hot ones.
+ *      `nb__search` and promoted on demand, or surfaced by a trigger-matched
+ *      skill's `allowed-tools`, so it stays OUT of the default prefix (Tier 2/3
+ *      here). Once a conversation calls it, it stays direct for the rest of that
+ *      conversation (`carriedTools`), so the prefix grows once and then holds.
  *   3. APP-ONLY — the agent NEVER legitimately calls it; it's a UI-driven
  *      affordance the web shell or a view invokes by name (settings/admin ops:
  *      `manage_*`, `set_model_config`, `briefing`, `skills__set_status`).
@@ -38,9 +38,9 @@ import { toolNameMatchesPattern } from "./tool-pattern.ts";
  *      substitutes for this one.
  *
  * Two rules keep this honest:
- *   - A new `nb__*`/identity tool DEFAULTS to kernel-direct (it's a kernel tool
- *     by construction). Pick its slot deliberately — that default is how a
- *     surface accretes cost.
+ *   - A new `nb__*`/identity tool DEFAULTS to proxied. Add it to
+ *     {@link DIRECT_KERNEL_TOOLS} only when turns call it often: every direct
+ *     schema rides every model call, which is how a surface accretes cost.
  *   - ONE TOOL, ONE AUDIENCE. App-only visibility is honest only when the WHOLE tool is
  *     UI-driven. A tool that straddles agent + UI use is mis-sized: split it,
  *     don't flag the aggregate.
@@ -52,24 +52,26 @@ function isSystemTool(t: ToolSchema): boolean {
   return t.name.startsWith(SYSTEM_TOOL_PREFIX);
 }
 
-/** The source segment of a tool's name (`files__read` → `files`). */
-function toolSource(t: ToolSchema): string {
-  const sep = t.name.indexOf("__");
-  return sep === -1 ? t.name : t.name.slice(0, sep);
-}
-
 /**
- * A tool is a KERNEL tool if it's the `nb__` system core or belongs to a
- * kernel identity source (`files`/`conversations`/`tasks`, per
- * {@link isIdentitySource}). Kernel tools are always surfaced DIRECT:
- * they are the substrate the model reaches for unprompted, so they belong in
- * the stable, cached tool prefix rather than being proxied and promoted on
- * demand. Promotion mutates the tools block — which precedes the messages in
- * the request — so proxying a hot kernel tool busts the conversation's cached
- * prefix on every promote. Keeping kernel tools direct keeps that prefix stable.
+ * The kernel tools sent in full on every call (ADR-0066). A tool is here because
+ * turns call it often, never because of who owns its data: an identity source's
+ * tool (`files`/`conversations`/`tasks`) is held to the same test as an `nb__`
+ * one. The task tools reach a turn through the task-authoring skill's
+ * `allowed-tools` when its triggers match. Every other kernel tool is proxied.
  */
+const DIRECT_KERNEL_TOOLS: ReadonlySet<string> = new Set([
+  "nb__use_skill",
+  "nb__status",
+  "nb__search",
+  "nb__manage_tools",
+  "files__read",
+  "files__create",
+  "files__list",
+]);
+
+/** A tool is a KERNEL tool, surfaced DIRECT, when it is in {@link DIRECT_KERNEL_TOOLS}. */
 function isKernelTool(t: ToolSchema): boolean {
-  return isSystemTool(t) || isIdentitySource(toolSource(t));
+  return DIRECT_KERNEL_TOOLS.has(t.name);
 }
 
 /**
@@ -86,13 +88,13 @@ export function filterTools(tools: ToolSchema[], patterns: string[]): ToolSchema
  *
  * - Tier 1 (≤maxDirectTools total): all tools direct, nothing proxied.
  * - Tier 2 (>maxDirectTools, no skill or skill has no allowedTools): only KERNEL tools
- *   direct (nb__* system core + identity sources — files/conversations/tasks),
- *   rest proxied.
+ *   direct ({@link DIRECT_KERNEL_TOOLS}), rest proxied.
  * - Tier 3 (skill matched with allowedTools): tools matching skill globs + kernel tools direct, rest proxied.
  *
- * Kernel tools stay direct because they're the substrate the model reaches for unprompted;
- * proxying them would force a promote (nb__manage_tools) on first use, and each promote mutates
- * the tools block ahead of the messages — busting the conversation's cached prefix.
+ * Then `carriedTools` (the tools the conversation already called) join the direct set.
+ * The run door matches a skill's triggers over the whole conversation and passes every
+ * tool it has called, so a turn's direct set is never smaller than the last one's: the
+ * tools block, which precedes the messages, changes only when something is added (ADR-0066).
  *
  * When `requestAllowedTools` is provided, it acts as a pre-filter: only tools matching those
  * patterns (plus nb__* system tools) survive before tiered surfacing runs. Identity tools are
@@ -105,6 +107,7 @@ export function surfaceTools(
     maxDirectTools?: number;
     focusedServerName?: string;
     requestAllowedTools?: string[];
+    carriedTools?: readonly string[];
   } = {},
 ): { direct: ToolSchema[]; proxied: ToolSchema[] } {
   // Drop tools without "model" in their visibility — they stay callable via bridge/API but never appear in the LLM's tool list
@@ -144,6 +147,17 @@ export function surfaceTools(
       direct: kernelTools,
       proxied: visibleTools.filter((t) => !kernelSet.has(t)),
     };
+  }
+
+  // Post-process: a tool the conversation already called stays direct, appended
+  // after the turn's own set, so the tools block only grows across turns.
+  if (config.carriedTools?.length) {
+    const carried = new Set(config.carriedTools);
+    const kept = result.proxied.filter((t) => carried.has(t.name));
+    if (kept.length > 0) {
+      result.direct = [...result.direct, ...kept];
+      result.proxied = result.proxied.filter((t) => !carried.has(t.name));
+    }
   }
 
   // Post-process: promote focused app's tools to direct

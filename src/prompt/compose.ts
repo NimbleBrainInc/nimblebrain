@@ -949,7 +949,7 @@ function formatSkillCatalogSection(entries: SkillCatalogEntry[]): string {
  * enumerate across the wall the tools enforce.
  */
 const IDENTITY_SCOPE_NOTE =
-  "Files and conversations belong to the workspace you're in, but you never name a workspace to reach them: the `files__*` and `conversations__*` tools are always loaded and automatically resolve to the current workspace. So they show you this workspace's files and conversations, not other workspaces'. Never ask the user which workspace a file lives in, and don't use `nb__search` to find files — just call `files__search`/`files__list`.";
+  "Files and conversations belong to the workspace you're in, but you never name a workspace to reach them: the `files__*` and `conversations__*` tools automatically resolve to the current workspace. So they show you this workspace's files and conversations, not other workspaces'. Never ask the user which workspace a file lives in, and don't use `nb__search` to find files — just call `files__list`, or `files__search` to search by name or content.";
 
 function formatWorkspaceContext(ws: WorkspaceContext): string {
   const lines = ["## Workspace", ""];

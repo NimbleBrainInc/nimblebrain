@@ -71,7 +71,7 @@ NimbleBrain connects to a server by URL and never starts one. With the server ru
 Start NimbleBrain (`bun run dev` in the platform repository) and ask the agent to save a note.
 
 <Aside type="caution">
-  `allowInsecureRemotes` lets every connector in the instance reach loopback and private addresses. It is a development switch. For a deployed NimbleBrain, serve the connector over HTTPS and add it to the [connectors catalog](/config/connectors-catalog/).
+  `allowInsecureRemotes` lets connectors use plain `http` to `localhost`, `127.0.0.1` and `::1`, for every connector in the instance. Private ranges and cloud-metadata hosts are refused whatever it is set to. It is a development switch. For a deployed NimbleBrain, serve the connector over HTTPS and add it to the [connectors catalog](/config/connectors-catalog/).
 </Aside>
 
 

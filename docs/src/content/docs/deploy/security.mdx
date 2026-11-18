@@ -246,7 +246,7 @@ holds tenant credentials.
 What is left to evaluate at install time is the **connection**:
 
 - **Who runs the endpoint.** Install from a curated catalog you control ([Connectors Catalog](/config/connectors-catalog/)) rather than pasting arbitrary URLs; use `connectorsAllowList` to narrow what a given workspace may install at all.
-- **What it can reach.** Connector URLs are checked against the SSRF allowlist — loopback, RFC1918, and cloud-metadata hosts are refused unless `allowInsecureRemotes` is on. Leave it off outside development.
+- **What it can reach.** Connector URLs must use HTTPS, and private ranges (RFC1918, link-local) and cloud-metadata hosts are always refused. `allowInsecureRemotes` admits plain `http` to `localhost`, `127.0.0.1` and `::1` only. Leave it off outside development.
 - **What it is granted.** OAuth scopes are declared on the catalog entry and shown on the consent screen. Credentials are workspace-scoped: a connector authorized in one workspace is not reachable from another.
 - **What its tools may do.** The per-connector permission table (Configure → Tools) is the place to disallow a tool the workspace should not expose to the agent.
 

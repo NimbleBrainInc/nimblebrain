@@ -13,7 +13,7 @@ function makeTool(name: string): ToolSchema {
 }
 
 function makeSystemTools(count = 4): ToolSchema[] {
-  const names = ["nb__search", "nb__use_skill", "nb__status", "nb__set_preferences"];
+  const names = ["nb__search", "nb__use_skill", "nb__status", "nb__manage_tools"];
   return names.slice(0, count).map(makeTool);
 }
 
@@ -362,33 +362,28 @@ describe("composeSystemPrompt — apps injection", () => {
 // and every promote mutates the tools block ahead of the messages — busting
 // the conversation's cached prefix. Keeping them direct keeps the prefix stable.
 
-describe("surfaceTools — kernel identity tools always direct", () => {
-  it("Tier 2: identity-source tools surface direct alongside nb__, connector tools proxy", () => {
-    const system = makeSystemTools(4); // nb__*
-    const identity = [
-      makeTool("files__read"),
+describe("surfaceTools — direct kernel tools are the named hot set", () => {
+  it("Tier 2: the hot identity tools are direct; cold ones are proxied with the connectors", () => {
+    const system = makeSystemTools(4); // all four are in the direct set
+    const hot = [makeTool("files__read"), makeTool("files__create"), makeTool("files__list")];
+    const cold = [
       makeTool("files__search"),
       makeTool("conversations__search"),
       makeTool("tasks__create"),
+      makeTool("nb__set_preferences"),
     ];
-    const app = makeAppTools("todos", 40); // non-kernel connector tools
-    const all = [...system, ...identity, ...app];
+    const app = makeAppTools("todos", 40);
+    const all = [...system, ...hot, ...cold, ...app];
 
     const result = surfaceTools(all, null);
 
     const directNames = new Set(result.direct.map((t) => t.name));
-    expect(result.direct).toHaveLength(system.length + identity.length);
-    for (const t of [...system, ...identity]) {
-      expect(directNames.has(t.name)).toBe(true);
-    }
-    for (const t of app) {
-      expect(directNames.has(t.name)).toBe(false);
-    }
+    expect(result.direct).toHaveLength(system.length + hot.length);
+    for (const t of [...system, ...hot]) expect(directNames.has(t.name)).toBe(true);
+    for (const t of [...cold, ...app]) expect(directNames.has(t.name)).toBe(false);
   });
 
   it("Tier 2: a source that only resembles an identity source is still proxied", () => {
-    // Guards the exact-source match: `filesystem__*` / `fileshare__*` are NOT
-    // the `files` identity source — a prefix check would wrongly promote them.
     const system = makeSystemTools(4);
     const lookalikes = [makeTool("filesystem__list"), makeTool("fileshare__get")];
     const app = makeAppTools("todos", 40);
@@ -397,31 +392,51 @@ describe("surfaceTools — kernel identity tools always direct", () => {
     const result = surfaceTools(all, null);
 
     const directNames = new Set(result.direct.map((t) => t.name));
-    for (const t of lookalikes) {
-      expect(directNames.has(t.name)).toBe(false);
-    }
-    expect(result.direct).toHaveLength(4); // only nb__*
+    for (const t of lookalikes) expect(directNames.has(t.name)).toBe(false);
+    expect(result.direct).toHaveLength(4);
   });
 
-  it("Tier 3: identity tools stay direct even when a skill glob doesn't name them", () => {
+  it("Tier 3: a skill's allowed-tools brings cold kernel tools in; hot ones stay", () => {
     const system = makeSystemTools(4);
-    const identity = [makeTool("files__read"), makeTool("conversations__search")];
-    const tasks = makeAppTools("todos", 10);
-    const weather = makeAppTools("weather", 10);
-    const all = [...system, ...identity, ...tasks, ...weather];
-    const skill = makeSkill({ allowedTools: ["todos__*"] });
+    const hot = [makeTool("files__read")];
+    const tasks = [makeTool("tasks__create"), makeTool("tasks__list"), makeTool("tasks__delete")];
+    const app = makeAppTools("weather", 40);
+    const all = [...system, ...hot, ...tasks, ...app];
+    const skill = makeSkill({ allowedTools: ["tasks__create", "tasks__list"] });
 
     const result = surfaceTools(all, skill);
 
     const directNames = new Set(result.direct.map((t) => t.name));
-    // 4 nb__ + 2 identity + 10 tasks = 16 direct; 10 weather proxied.
-    expect(result.direct).toHaveLength(16);
-    for (const t of identity) {
-      expect(directNames.has(t.name)).toBe(true);
-    }
-    for (const t of weather) {
-      expect(directNames.has(t.name)).toBe(false);
-    }
+    expect(result.direct).toHaveLength(4 + 1 + 2);
+    expect(directNames.has("tasks__create")).toBe(true);
+    expect(directNames.has("tasks__delete")).toBe(false);
+  });
+});
+
+describe("surfaceTools — carried tools", () => {
+  it("a tool the conversation already called stays direct, after the turn's own set", () => {
+    const system = makeSystemTools(4);
+    const app = makeAppTools("todos", 40);
+    const all = [...system, ...app];
+
+    const first = surfaceTools(all, null);
+    const later = surfaceTools(all, null, { carriedTools: ["todos__tool_7"] });
+
+    expect(later.direct.map((t) => t.name)).toEqual([
+      ...first.direct.map((t) => t.name),
+      "todos__tool_7",
+    ]);
+    expect(later.proxied.some((t) => t.name === "todos__tool_7")).toBe(false);
+  });
+
+  it("a carried tool that is already direct, or not visible, adds nothing", () => {
+    const system = makeSystemTools(4);
+    const app = makeAppTools("todos", 40);
+    const all = [...system, ...app];
+
+    const result = surfaceTools(all, null, { carriedTools: ["nb__search", "gone__tool"] });
+
+    expect(result.direct).toHaveLength(4);
   });
 });
 

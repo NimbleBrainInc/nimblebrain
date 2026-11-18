@@ -7,6 +7,18 @@ metadata:
     priority: 50
     tool-affinity:
       - tasks__*
+    triggers:
+      - "task"
+      - "schedule"
+      - "every day"
+      - "every weekday"
+      - "every morning"
+      - "every week"
+      - "every hour"
+      - "remind me"
+      - "recurring"
+      - "automate"
+allowed-tools: tasks__create tasks__update tasks__list tasks__run tasks__run_result tasks__status tasks__runs
 ---
 
 # Tasks
