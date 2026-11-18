@@ -425,6 +425,58 @@ describe("after install", () => {
     expect(stdout).toContain("updated from v0.74.0");
   });
 
+  describe("update refreshes the agent's skill", () => {
+    const REFRESH = "$ npx -y skills update nimblebrain -g -y";
+    async function withAgent(exec: Record<string, ReturnType<typeof ok>> = {}) {
+      const m = machine({ env, files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk-test\n` }, exec });
+      await json(["--yes", "--agent", "claude-code"], m);
+      m.deps.env = { NIMBLEBRAIN_NO_UPDATE_CHECK: "1" };
+      return m;
+    }
+
+    test("after moving the runtime, reporting a changed skill as updated", async () => {
+      const m = await withAgent({
+        "npx -y skills update nimblebrain -g -y": ok("\n✓ Updated 1 skill(s)\n"),
+      });
+      const { body } = await json(["update", "--runtime", "v0.74.0"], m);
+      expect(body).toMatchObject({ ok: true, from: "v0.73.0", skill_update: "updated" });
+      expect(m.calls).toContain(REFRESH);
+      const { stdout } = await run(["update", "--runtime", "v0.75.0"], m.deps);
+      expect(stdout).toContain("skill: updated to the newest nimblebrain skill");
+    });
+
+    test("on a runtime already current too", async () => {
+      const m = await withAgent();
+      const { body } = await json(["update", "--runtime", "v0.73.0"], m);
+      expect(body).toMatchObject({ ok: true, already: true, skill_update: "unchanged" });
+      expect(m.calls).toContain(REFRESH);
+    });
+
+    test("a failed refresh is reported, never an error", async () => {
+      for (const res of [fail("network"), { code: null, stdout: "", stderr: "", missing: true }]) {
+        const m = await withAgent({ "npx -y skills update nimblebrain -g -y": res });
+        const { body, code } = await json(["update", "--runtime", "v0.74.0"], m);
+        expect(code).toBe(0);
+        expect(body).toMatchObject({ ok: true, version: "0.74.0", skill_update: "failed" });
+      }
+    });
+
+    test("a skill that is not there is not added back, and no agent means no refresh", async () => {
+      const m = await withAgent();
+      m.files.delete("/home/dana/.claude/skills/nimblebrain/SKILL.md");
+      const { body } = await json(["update", "--runtime", "v0.74.0"], m);
+      expect(body.skill_update).toBe("not_installed");
+      expect(m.calls).not.toContain(REFRESH);
+
+      const none = machine({ env, files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk-test\n` } });
+      await json(["--yes"], none);
+      none.deps.env = { NIMBLEBRAIN_NO_UPDATE_CHECK: "1" };
+      const plain = await json(["update", "--runtime", "v0.74.0"], none);
+      expect(plain.body.skill_update).toBeUndefined();
+      expect(none.calls.some((c) => c.includes("skills update"))).toBe(false);
+    });
+  });
+
   test("uninstall without --yes from an agent changes nothing", async () => {
     const m = await installed();
     expect((await json(["uninstall"], m)).body.error).toBe("CANCELLED");

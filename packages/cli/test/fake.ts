@@ -98,6 +98,8 @@ export interface MachineOptions {
   platform?: NodeJS.Platform;
   /** Programs on `PATH` (`which`); default none. */
   programs?: string[];
+  /** The CLI's npm `latest`; absent, the registry does not answer. */
+  npmLatest?: string;
 }
 
 /**
@@ -183,6 +185,9 @@ export function machine(opts: MachineOptions = {}): Machine {
       return opts.compose ?? { status: 200, body: REPO_COMPOSE };
     },
     async getJson(url) {
+      if (url.startsWith("https://registry.npmjs.org/")) {
+        return opts.npmLatest ? { status: 200, body: { version: opts.npmLatest } } : undefined;
+      }
       if (url.startsWith("http://127.0.0.1:11434/")) {
         if (!m.ollamaUp) return undefined;
         return url.endsWith("/api/version")
@@ -241,9 +246,10 @@ export function machine(opts: MachineOptions = {}): Machine {
     say: (line) => {
       m.said.push(line);
     },
-    // No telemetry destination unless a test gives one, so a test about
-    // something else is never asked the telemetry question.
-    env: { NIMBLEBRAIN_TELEMETRY_KEY: "", ...opts.env },
+    // No telemetry destination and no update check unless a test gives
+    // them, so a test about something else is never asked the telemetry
+    // question and never looks for a newer release.
+    env: { NIMBLEBRAIN_TELEMETRY_KEY: "", NIMBLEBRAIN_NO_UPDATE_CHECK: "1", ...opts.env },
     platform: opts.platform ?? "linux",
     home: "/home/dana",
     cwd: "/home/dana/src",

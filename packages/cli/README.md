@@ -25,7 +25,7 @@ later.
 | `key` | Enter the model key at a hidden prompt |
 | `up` / `down` | Start or stop it; data survives `down` |
 | `logs` | Recent log lines |
-| `update` | Move to the newest release, keeping data |
+| `update` | Move to the newest release, keeping data, and refresh your agent's `nimblebrain` skill |
 | `uninstall` | Remove it and its data |
 | `telemetry [on\|off\|status]` | Whether this install sends anonymous usage data |
 | `mcp add <url>` | Add an MCP server you run on this machine to a workspace (`--name`, `--workspace`) |
@@ -34,7 +34,11 @@ later.
 `--json` makes every command answer one JSON object, `{"ok": true, ...}` or
 `{"ok": false, "error": "<CODE>", "fix": "..."}`, for scripts and coding agents.
 `--yes` takes every default. `--agent claude-code|cursor|codex|none` names the agent to
-connect.
+connect. `npx nimblebrain help --json` lists every command, flag and error code.
+
+When a newer CLI or NimbleBrain release exists, the CLI says so on stderr after its
+answer (once a day at most; it never updates anything itself).
+`NIMBLEBRAIN_NO_UPDATE_CHECK=1` turns that off.
 
 ## Usage data
 

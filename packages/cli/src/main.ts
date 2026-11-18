@@ -1,7 +1,9 @@
+import type { SkillRefresh } from "./agents.ts";
 import { type Parsed, parse, wantsJson } from "./args.ts";
 import { paths } from "./compose.ts";
 import { BARE_CLI, type Deps, forInstall, installHome, invocation } from "./deps.ts";
 import { doctor } from "./doctor.ts";
+import { describe, helpText } from "./help.ts";
 import {
   confirmOllamaStart,
   down,
@@ -19,48 +21,35 @@ import { mcp } from "./mcp.ts";
 import { CliError, exitCodeFor, type Failure, failure, type Ok } from "./result.ts";
 import { readInstall, type StatusResult, status } from "./status.ts";
 import { settleWaiting } from "./telemetry.ts";
+import {
+  NOTICE_WAIT_MS,
+  noticeLines,
+  startUpdateCheck,
+  type UpdateCheck,
+  updatesField,
+} from "./updates.ts";
 
 import { VERSION } from "./version.ts";
 
 export { VERSION };
 
-const HELP = `nimblebrain ${VERSION}: install and run NimbleBrain on this machine
+/** What one run prints: the answer on stdout and the exit code. */
+export interface Answer {
+  stdout: string;
+  code: number;
+  /**
+   * Called once the answer is written: gives an update lookup still running
+   * up to `NOTICE_WAIT_MS` to finish and write its cache, then returns a
+   * person's notices for stderr. Never rejects.
+   */
+  notices?: () => Promise<string | undefined>;
+}
 
-Usage: npx nimblebrain [command] [flags]
-
-Commands:
-  init        Check this machine, start NimbleBrain, connect your coding agent (default)
-  doctor      Check Docker, Compose, architecture, memory and the port; installs nothing
-  status      Version, health, URL and each workspace's MCP URL
-  key         Enter the model key at a hidden prompt
-  local-model [model]  Run NimbleBrain's agents on a model served by Ollama (default gemma4:e4b)
-  telemetry   [on|off|status] Whether this install sends anonymous usage data
-  up, down    Start or stop NimbleBrain; data survives down
-  logs        Recent runtime log lines
-  update      Move to the newest release, keeping data
-  uninstall   Remove NimbleBrain and its data
-  mcp add <url>          Add an MCP server you run on this machine to a workspace
-  mcp list               The servers in a workspace
-  mcp remove <name>      Remove a server from a workspace
-
-Flags:
-  --json            One JSON object on stdout
-  --yes, -y         Take every default; implied when no terminal is attached
-  --agent <name>    claude-code, cursor, codex or none
-  --port <n>        Local port (default 27246)
-  --home <dir>      Where the install lives (default ~/.nimblebrain-local, or NIMBLEBRAIN_HOME);
-                    a home with another folder name is a separate install
-  --provider <name> The model provider for key (default anthropic)
-  --local-model <model>  init: run on this Ollama model instead of a hosted key
-  --runtime <tag>   The NimbleBrain release to install or update to (default the newest)
-  --telemetry <on|off>  The person's answer to sending anonymous usage data; without it, init asks or leaves it undecided
-  --name <name>     For mcp add: the server name (default from the server's card, else its URL)
-  --workspace <id>  For mcp: the workspace (default the one init connected, the first in status)
-  --help, --version
-`;
+/** The commands whose answer is an install's state, where a newer runtime is worth a line. */
+const RUNTIME_NOTICE: readonly string[] = ["status", "up", "init"];
 
 /** Runs one invocation and returns what to print and the exit code. Never throws. */
-export async function run(argv: string[], deps: Deps): Promise<{ stdout: string; code: number }> {
+export async function run(argv: string[], deps: Deps): Promise<Answer> {
   const json = wantsJson(argv);
   let parsed: Parsed;
   try {
@@ -70,7 +59,11 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
     return render(toFailure(err), json, BARE_CLI);
   }
 
-  if (parsed.kind === "help") return { stdout: HELP, code: 0 };
+  if (parsed.kind === "help") {
+    return parsed.flags.json
+      ? render(describe(VERSION), true, BARE_CLI)
+      : { stdout: helpText(VERSION), code: 0 };
+  }
   if (parsed.kind === "version") {
     return parsed.flags.json
       ? render({ ok: true, version: VERSION }, true, BARE_CLI)
@@ -78,6 +71,8 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
   }
 
   const { command, flags, arg, operand } = parsed;
+  // Started first, so a lookup has the whole command to finish in.
+  const check = startUpdateCheck(deps);
   const home = installHome(deps, flags.home);
   const cli = invocation(deps, home);
   let result: Ok | Failure;
@@ -123,7 +118,52 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
   if (!["init", "telemetry", "uninstall", "doctor"].includes(command)) {
     await settleWaiting(deps, home, VERSION);
   }
-  return render(result, flags.json, cli, command);
+  return answerWithUpdates(result, command, flags.json, check, cli);
+}
+
+/**
+ * The answer with what the update check knows: `updates`, from the cache, in
+ * an answer that carries an install's state. The answer never waits on a
+ * lookup; its `notices` does, after the answer is written, so a short run
+ * still refreshes a stale cache, and a person hears what is newer.
+ */
+async function answerWithUpdates(
+  result: Ok | Failure,
+  command: string,
+  json: boolean,
+  check: UpdateCheck | undefined,
+  cli: string,
+): Promise<Answer> {
+  if (!check) return render(result, json, cli, command);
+  const runtime = isStatusShaped(result) ? result.version : undefined;
+  const updates = updatesField(await check.known(0), VERSION, runtime);
+  const answer = render(
+    updates && runtime !== undefined ? { ...result, updates } : result,
+    json,
+    cli,
+    command,
+  );
+  const notices = async () => {
+    const known = await check.known(NOTICE_WAIT_MS);
+    if (json) return undefined;
+    const lines = noticeLines(
+      updatesField(known, VERSION, runtime),
+      RUNTIME_NOTICE.includes(command),
+      cli,
+    );
+    return lines.length > 0 ? `${lines.join("\n")}\n` : undefined;
+  };
+  return { ...answer, notices };
+}
+
+/** An answer that carries an install's state (`status`, `init`, `up`, `update`), even inside a failure. */
+function isStatusShaped(result: Ok | Failure): result is (Ok | Failure) & { version: string } {
+  return (
+    typeof result.version === "string" &&
+    "health" in result &&
+    "url" in result &&
+    "workspaces" in result
+  );
 }
 
 /**
@@ -168,12 +208,7 @@ function toFailure(err: unknown): Failure {
 }
 
 /** `cli` is how to run this CLI against the install the run acted on (`invocation`). */
-function render(
-  result: Ok | Failure,
-  json: boolean,
-  cli: string,
-  command?: string,
-): { stdout: string; code: number } {
+function render(result: Ok | Failure, json: boolean, cli: string, command?: string): Answer {
   const code = exitCodeFor(result);
   if (json) return { stdout: `${JSON.stringify(result)}\n`, code };
   if (!result.ok) return { stdout: `error: ${result.message}\nfix: ${result.fix}\n`, code };
@@ -181,7 +216,13 @@ function render(
   return { stdout: `${lines.join("\n")}\n`, code };
 }
 
-type StatusLike = Ok & StatusResult & { manual?: string; already?: boolean; from?: string };
+type StatusLike = Ok &
+  StatusResult & {
+    manual?: string;
+    already?: boolean;
+    from?: string;
+    skill_update?: SkillRefresh;
+  };
 
 function isStatus(result: Ok): result is StatusLike {
   return "health" in result && "url" in result && "workspaces" in result;
@@ -223,12 +264,22 @@ function agentLines(r: StatusLike): string[] {
   const lines = [
     `  ${name} can use NimbleBrain's tools (it loads them when its next session starts)`,
   ];
+  const refresh = r.skill_update && SKILL_REFRESH_LINES[r.skill_update];
+  if (refresh) lines.push(`  skill: ${refresh}`);
   if (!r.agent.skill)
     lines.push(
       `  skill: not installed; add it with npx skills add nimblebraininc/skills --skill nimblebrain --agent ${agent} -g`,
     );
   return lines;
 }
+
+/** What `update` did to the skill, as a person reads it; a skill that is not there has its own line. */
+const SKILL_REFRESH_LINES: Record<SkillRefresh, string | undefined> = {
+  updated: "updated to the newest nimblebrain skill",
+  unchanged: "the nimblebrain skill is current",
+  failed: "could not refresh the nimblebrain skill; try npx skills update nimblebrain -g",
+  not_installed: undefined,
+};
 
 /** What this run did to an existing install: nothing (a rerun), or which version it left. */
 function changeLines(r: StatusLike): string[] {
@@ -279,11 +330,7 @@ function field(key: string, value: unknown): string[] {
  * promise of "one JSON object for every run" would leave an agent with nothing
  * to act on. `exitCode` is the code the process was about to end with.
  */
-export function interrupted(
-  argv: string[],
-  exitCode: number,
-  deps: Deps,
-): { stdout: string; code: number } {
+export function interrupted(argv: string[], exitCode: number, deps: Deps): Answer {
   const err = new CliError(
     "INTERRUPTED",
     `The CLI stopped before it answered (exit code ${exitCode}).`,

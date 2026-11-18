@@ -8,6 +8,12 @@
  * and leaves the loop empty), the exit hook writes an `INTERRUPTED` answer
  * carrying the exit code, and says so on stderr, so the cause is visible next
  * time.
+ *
+ * After the answer, the run gives an update lookup still running up to
+ * `NOTICE_WAIT_MS` to finish, so the cache is refreshed even by a short
+ * `--json` run, then writes a person's notices on stderr. The process then
+ * ends at once rather than when its event loop empties: a lookup it stopped
+ * waiting for must not hold it open.
  */
 import { writeSync } from "node:fs";
 import { realDeps } from "./deps.ts";
@@ -35,7 +41,9 @@ for (const [signal, n] of [
   process.on(signal, () => process.exit(128 + n));
 }
 
-const { stdout, code } = await run(argv, deps);
-writeSync(1, stdout);
+const answer = await run(argv, deps);
+writeSync(1, answer.stdout);
 answered = true;
-process.exitCode = code;
+const notices = await answer.notices?.();
+if (notices) writeSync(2, notices);
+process.exit(answer.code);
