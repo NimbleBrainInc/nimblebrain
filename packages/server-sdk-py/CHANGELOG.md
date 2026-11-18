@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- `add_server_card` serves the server's MCP Server Card (SEP-2127) at `<mcp-path>/server-card`, built from its name, version, website and icons plus a declared title, description and `ai.nimblebrain/host` placements; a local NimbleBrain reads it when the server is added by URL. See [Server Card](https://docs.nimblebrain.ai/server-sdk/server-card/).
+- `Placement`, `HOST_META_KEY`, `SERVER_CARD_MEDIA_TYPE` and `SERVER_CARD_SCHEMA`.
+
 ## [0.7.2]
 
 ### Fixed

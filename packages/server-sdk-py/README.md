@@ -163,6 +163,7 @@ uv run pytest
 | Facets | `facet_meta`, `facet_count` | [Facets](https://docs.nimblebrain.ai/server-sdk/facets/) |
 | Lifecycle handlers | `add_lifecycle_extension` | [Lifecycle](https://docs.nimblebrain.ai/server-sdk/lifecycle/) |
 | Host resources | `host(ctx).read`, `host(ctx).list` | [Host resources](https://docs.nimblebrain.ai/server-sdk/host-resources/) |
+| The MCP Server Card | `add_server_card`, `Placement` | [Server Card](https://docs.nimblebrain.ai/server-sdk/server-card/) |
 | Listing rows and record ids | `listing_row`, `new_prefixed_id` | [Tools and annotations](https://docs.nimblebrain.ai/server-sdk/tools/#listing-rows) |
 | The error contract | `ServiceError`, `to_tool_error`, `add_error_contract` | [Errors](https://docs.nimblebrain.ai/server-sdk/errors/) |
 | Test helpers | `served_skills`, `served_facets`, `assert_bounded_rows` | [Testing](https://docs.nimblebrain.ai/server-sdk/testing/) |

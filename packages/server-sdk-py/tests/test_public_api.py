@@ -101,8 +101,19 @@ def test_all_is_unchanged() -> None:
             "add_error_contract",
             "lifecycle_meta",
         }
+        | SERVER_CARD
         | HOST_RESOURCES
     )
+
+
+#: The Server Card a server serves under its MCP path.
+SERVER_CARD = {
+    "HOST_META_KEY",
+    "SERVER_CARD_MEDIA_TYPE",
+    "SERVER_CARD_SCHEMA",
+    "Placement",
+    "add_server_card",
+}
 
 
 #: The names the SDK exported before it took in the server helpers, unchanged by them.
@@ -127,6 +138,11 @@ def test_wire_constants() -> None:
     assert sdk.LIFECYCLE_EXTENSION_ID == "ai.nimblebrain/lifecycle"
     assert sdk.RECORD_VIEW_META == "ai.nimblebrain/view"
     assert sdk.SKILLS_EXTENSION_ID == "io.modelcontextprotocol/skills"
+    assert sdk.SERVER_CARD_MEDIA_TYPE == "application/mcp-server-card+json"
+    assert sdk.SERVER_CARD_SCHEMA == (
+        "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json"
+    )
+    assert sdk.HOST_META_KEY == "ai.nimblebrain/host"
     assert sdk.PREVIEW_CHARS == 200
     assert rows.ELLIPSIS == "…"
     assert sdk.FACET_LEVELS == ("critical", "warning", "info")
@@ -185,6 +201,10 @@ def test_annotations() -> None:
             ],
         ),
         (sdk.announce_resource_list_changed, [("ctx", POS, None), ("tool", KW, None)]),
+        (
+            sdk.add_server_card,
+            [("mcp", POS, E), ("description", KW, E), ("title", KW, None), ("placements", KW, ())],
+        ),
         (sdk.facet_meta, [("level", POS, E)]),
         (sdk.facet_count, [("count", POS, E)]),
         (sdk.lifecycle_meta, [("event", POS, E)]),
