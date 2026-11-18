@@ -18,6 +18,7 @@ export const COMMAND_SPECS = {
     description: "Check Docker, Compose, architecture, memory and the port; installs nothing",
   },
   status: { args: [], description: "Version, health, URL and each workspace's MCP URL" },
+  open: { args: [], description: "Open NimbleBrain's web UI in the default browser" },
   key: { args: [], description: "Enter the model key at a hidden prompt" },
   "local-model": {
     args: ["[model]"],
@@ -62,6 +63,8 @@ export interface Flags {
   runtime?: string;
   /** `--telemetry on|off`: an answer a person already gave. */
   telemetry?: "on" | "off";
+  /** `--no-open`: `init` leaves the browser closed at the end. */
+  noOpen: boolean;
   /** `mcp add --name`: the server name to add it under. */
   name?: string;
   /** `mcp --workspace`: the workspace to act in, instead of the one `init` connected. */
@@ -135,6 +138,11 @@ export const FLAG_SPECS = {
     description: "The NimbleBrain release to install or update to (default the newest)",
     commands: ["init", "update"],
   },
+  "no-open": {
+    type: "boolean",
+    description: "Do not open the web UI in the browser when init finishes",
+    commands: ["init"],
+  },
   telemetry: {
     type: "string",
     takes: "on|off",
@@ -203,6 +211,7 @@ export function parse(argv: string[]): Parsed {
     localModel: values["local-model"],
     runtime: values.runtime,
     telemetry,
+    noOpen: values["no-open"] === true,
     name: values.name,
     workspace: values.workspace,
   };

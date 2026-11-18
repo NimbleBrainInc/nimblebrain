@@ -18,6 +18,7 @@ import {
 } from "./lifecycle.ts";
 import { checkLocalModel, localModelOf } from "./local-model.ts";
 import { mcp } from "./mcp.ts";
+import { open } from "./open.ts";
 import { CliError, exitCodeFor, type Failure, failure, type Ok } from "./result.ts";
 import { readInstall, type StatusResult, status } from "./status.ts";
 import { settleWaiting } from "./telemetry.ts";
@@ -105,6 +106,7 @@ export async function run(argv: string[], deps: Deps): Promise<Answer> {
           telemetry,
           "local-model": localModel,
           mcp,
+          open,
         };
         result = await commands[command](ctx);
       }
@@ -212,13 +214,19 @@ function render(result: Ok | Failure, json: boolean, cli: string, command?: stri
   const code = exitCodeFor(result);
   if (json) return { stdout: `${JSON.stringify(result)}\n`, code };
   if (!result.ok) return { stdout: `error: ${result.message}\nfix: ${result.fix}\n`, code };
-  const lines = isStatus(result) ? statusLines(result, cli, command) : genericLines(result);
+  const lines = isStatus(result)
+    ? statusLines(result, cli, command)
+    : command === "open"
+      ? openLines(result)
+      : genericLines(result);
   return { stdout: `${lines.join("\n")}\n`, code };
 }
 
 type StatusLike = Ok &
   StatusResult & {
     manual?: string;
+    /** Whether `init` opened the web UI; absent when it did not try. */
+    opened?: boolean;
     already?: boolean;
     from?: string;
     skill_update?: SkillRefresh;
@@ -251,9 +259,19 @@ function statusLines(r: StatusLike, cli: string, command?: string): string[] {
   lines.push(`  CLI ${r.cli_version}`);
   if (command === "init" && !r.already && r.health === "ok") {
     const ask = agent ? `, or ask ${AGENT_NAMES[agent] ?? agent} what NimbleBrain can do` : "";
-    lines.push("", `Next: open ${r.url}${ask}. Stop it with ${cli} down.`);
+    const use = r.opened ? `use NimbleBrain in your browser at ${r.url}` : `open ${r.url}`;
+    lines.push("", `Next: ${use}${ask}. Stop it with ${cli} down.`);
   }
   return lines;
+}
+
+/** `open`'s answer as a person reads it: the URL either way, so it can be opened by hand. */
+function openLines(r: Ok): string[] {
+  return [
+    r.opened
+      ? `  Opened ${String(r.url)} in your browser.`
+      : `  Open ${String(r.url)} in your browser; none could be started here.`,
+  ];
 }
 
 /** Whether a coding agent is connected, and whether it has the skill, or how to connect one by hand. */
