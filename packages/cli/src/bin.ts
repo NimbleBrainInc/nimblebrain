@@ -3,11 +3,11 @@
  * apart from `main.ts` so importing `run` in a test never executes a command,
  * without `import.meta.main`, which Node only has from 24.
  *
- * Every run answers exactly once. The answer is written synchronously, and the
- * event loop is held open until it has been, so the process cannot end mid-
- * `await` with nothing on stdout. If it ends anyway (a signal, or something
- * that drained the loop), the exit hook writes an `INTERRUPTED` answer carrying
- * the exit code, and says so on stderr, so the cause is visible next time.
+ * Every run answers exactly once. The answer is written synchronously. If the
+ * process ends before writing it (a signal, or an `await` that never settles
+ * and leaves the loop empty), the exit hook writes an `INTERRUPTED` answer
+ * carrying the exit code, and says so on stderr, so the cause is visible next
+ * time.
  */
 import { writeSync } from "node:fs";
 import { realDeps } from "./deps.ts";
@@ -34,12 +34,7 @@ for (const [signal, n] of [
   process.on(signal, () => process.exit(128 + n));
 }
 
-const hold = setInterval(() => {}, 2 ** 30);
-try {
-  const { stdout, code } = await run(argv, realDeps());
-  writeSync(1, stdout);
-  answered = true;
-  process.exitCode = code;
-} finally {
-  clearInterval(hold);
-}
+const { stdout, code } = await run(argv, realDeps());
+writeSync(1, stdout);
+answered = true;
+process.exitCode = code;
