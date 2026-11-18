@@ -1,11 +1,6 @@
 import { join } from "node:path";
-// The release's own Compose file, embedded at build time, so each CLI version
-// carries the file of the runtime release it installs. Never restated here.
-import composeFile from "../../../docker-compose.yml" with { type: "text" };
 import type { Deps, ExecResult } from "./deps.ts";
 import { CliError } from "./result.ts";
-
-export const COMPOSE_FILE: string = composeFile;
 
 /**
  * The Compose project name. It names the containers, the network and the data
@@ -15,21 +10,52 @@ export const COMPOSE_FILE: string = composeFile;
 export const PROJECT = "nimblebrain-local";
 export const VOLUME = `${PROJECT}_workspace`;
 
-/** The model-key variables the Compose file passes to the runtime, read from the file itself. */
-export const KEY_VARS: string[] = [
-  ...new Set(COMPOSE_FILE.match(/\b[A-Z][A-Z0-9_]*_API_KEY\b/g) ?? []),
-];
+const RAW = "https://raw.githubusercontent.com/NimbleBrainInc/nimblebrain";
+
+/**
+ * The chosen runtime release's own `docker-compose.yml`, from its tag, so the
+ * file always matches the images it runs (ADR-0064). Never restated here. A
+ * file that does not take the image tag and the web port from `.env` is from a
+ * runtime this CLI cannot drive.
+ */
+export async function fetchCompose(deps: Deps, tag: string): Promise<string> {
+  const res = await deps.getText(`${RAW}/${tag}/docker-compose.yml`, 15_000);
+  if (!res) throw new CliError("NETWORK", `Could not download the Compose file for ${tag}.`);
+  if (res.status === 404) {
+    throw new CliError("RUNTIME_UNSUPPORTED", `NimbleBrain ${tag} has no Compose file to install.`);
+  }
+  if (res.status !== 200) {
+    throw new CliError(
+      "NETWORK",
+      `Downloading the Compose file for ${tag} answered ${res.status}.`,
+    );
+  }
+  if (!res.body.includes("${NIMBLEBRAIN_TAG") || !res.body.includes("NIMBLEBRAIN_WEB_PORT")) {
+    throw new CliError(
+      "RUNTIME_UNSUPPORTED",
+      `NimbleBrain ${tag}'s Compose file does not take its image tag and port from .env.`,
+    );
+  }
+  return res.body;
+}
+
+/** The model-key variables a Compose file passes to the runtime, read from the file itself. */
+export function keyVars(composeText: string): string[] {
+  return [...new Set(composeText.match(/\b[A-Z][A-Z0-9_]*_API_KEY\b/g) ?? [])];
+}
 
 /** The provider names `key` offers, each mapped to its variable. */
-export const PROVIDERS: Record<string, string> = Object.fromEntries(
-  KEY_VARS.map((v) => [
-    v
-      .replace(/_API_KEY$/, "")
-      .replace(/_GENERATIVE_AI$/, "")
-      .toLowerCase(),
-    v,
-  ]),
-);
+export function providers(composeText: string): Record<string, string> {
+  return Object.fromEntries(
+    keyVars(composeText).map((v) => [
+      v
+        .replace(/_API_KEY$/, "")
+        .replace(/_GENERATIVE_AI$/, "")
+        .toLowerCase(),
+      v,
+    ]),
+  );
+}
 
 /**
  * Compose reads a variable from the shell before `.env`, so a key exported in
@@ -37,26 +63,27 @@ export const PROVIDERS: Record<string, string> = Object.fromEntries(
  * and the version and port this CLI pinned could be overridden the same way.
  * Every Compose call runs without them, so `<home>/.env` is the one source.
  */
-export function composeEnv(deps: Deps): NodeJS.ProcessEnv {
+export function composeEnv(deps: Deps, vars: string[]): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...deps.env };
-  for (const v of [
-    ...KEY_VARS,
-    "NIMBLEBRAIN_TAG",
-    "NIMBLEBRAIN_WEB_PORT",
-    "COMPOSE_PROJECT_NAME",
-  ]) {
+  for (const v of [...vars, "NIMBLEBRAIN_TAG", "NIMBLEBRAIN_WEB_PORT", "COMPOSE_PROJECT_NAME"]) {
     delete env[v];
   }
   return env;
 }
 
-export function compose(
+/** Runs `docker compose` in the install folder, with the key variables of its installed Compose file withheld. */
+export async function compose(
   deps: Deps,
   home: string,
   args: string[],
   timeoutMs = 120_000,
 ): Promise<ExecResult> {
-  return deps.exec("docker", ["compose", ...args], { cwd: home, env: composeEnv(deps), timeoutMs });
+  const vars = keyVars((await deps.readText(paths(home).compose)) ?? "");
+  return deps.exec("docker", ["compose", ...args], {
+    cwd: home,
+    env: composeEnv(deps, vars),
+    timeoutMs,
+  });
 }
 
 /** Turns a failed Compose call into the error a person can act on. */
@@ -95,8 +122,8 @@ export function setEnvLines(text: string, values: Record<string, string>): strin
 }
 
 /** Whether `.env` sets a non-empty value for any model-key variable. Reads names, never prints values. */
-export function hasKey(envText: string): boolean {
-  return KEY_VARS.some((v) => new RegExp(`^${v}=\\S`, "m").test(envText));
+export function hasKey(envText: string, vars: string[]): boolean {
+  return vars.some((v) => new RegExp(`^${v}=\\S`, "m").test(envText));
 }
 
 export const paths = (home: string) => ({

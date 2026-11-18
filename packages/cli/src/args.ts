@@ -24,6 +24,7 @@ export interface Flags {
   port: number;
   home?: string;
   provider?: string;
+  runtime?: string;
 }
 
 export type Parsed =
@@ -40,6 +41,7 @@ const options = {
   port: { type: "string" },
   home: { type: "string" },
   provider: { type: "string" },
+  runtime: { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } satisfies ParseArgsOptionsConfig;
@@ -71,6 +73,7 @@ export function parse(argv: string[]): Parsed {
     port,
     home: values.home,
     provider: values.provider,
+    runtime: values.runtime,
   };
 
   if (values.help) return { kind: "help", flags };

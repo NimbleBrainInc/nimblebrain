@@ -31,6 +31,8 @@ export const ERRORS = {
   NEEDS_TERMINAL:
     "A person runs this in their own terminal; it asks for input no agent should give.",
   CANCELLED: "Nothing was changed. Run the command again to go ahead.",
+  RUNTIME_UNSUPPORTED:
+    "Pass a newer runtime with --runtime, or leave it out to install the newest release.",
   INTERRUPTED:
     "Run `npx nimblebrain status` to see what is in place, then run the same command again.",
 } as const;

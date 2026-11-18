@@ -131,20 +131,7 @@ docker pull "ghcr.io/nimblebraininc/nimblebrain-web:$TAG"
 
 **Expected:** both pulls succeed. A failure here with "not found" or "denied" for a newly-created image name means §5 is needed.
 
-### 4e. Approve the CLI on npm
-
-The release job stages `nimblebrain@${TAG#v}`; it is not public until a maintainer approves it, with 2FA, on npmjs.com (the package's **Staged** versions) or from a shell:
-
-```bash
-npm stage list nimblebrain            # find the stage id for this version
-npm stage approve <stage-id>          # prompts for 2FA, then publishes
-npm view "nimblebrain@${TAG#v}" version
-npm view nimblebrain dist-tags
-```
-
-**Expected:** after approval the version is published; a GA tag is `latest`, a pre-release is `next`. A hotfix tag (`-hotfix.N`) stages nothing. Until approval, `npx nimblebrain` serves the previous version, so approve before announcing the release. If the job failed with an authentication error, the trusted-publisher link on npmjs.com is missing or names another workflow or environment (§7, job 5); fix it and re-run the job. A re-run skips a version already published, and stops with a pointer to `npm stage list` when the version is staged but not yet approved.
-
-If any of 4a–4e fail, go to §6.
+If any of 4a–4d fail, go to §6.
 
 ## 5. One-time visibility flip for new image names
 
@@ -198,13 +185,12 @@ Then fix the underlying issue on `main` and cut the **next** pre-release number 
 
 ## 7. Workflow reference
 
-`.github/workflows/release.yml` fires on any `v*` tag push (and `workflow_dispatch` with a `tag` input + an EMERGENCY `rebuild` toggle) and runs five jobs:
+`.github/workflows/release.yml` fires on any `v*` tag push (and `workflow_dispatch` with a `tag` input + an EMERGENCY `rebuild` toggle) and runs four jobs:
 
 1. **CI passed on the tagged commit** — the gate; every other job waits on it. It resolves the tag to its commit and reads that commit's `ci.yml` `push` runs, on `main` or on a `hotfix/**` branch (§8), and their jobs from the Actions API (no tests re-run). It passes when one run's four test jobs (`Lint & Typecheck`, `Unit Tests`, `Unit Tests (root deps only)`, `Integration Tests`) all concluded `success`. A failure in the run's other jobs (image build, change detection, edge roll) does not refuse the release on its own. No run, or a test job that failed, was skipped, is missing, or is still running: the release stops before anything is retagged, rebuilt, or published, and the error names the commit and each such job with its run. A pull-request run does not count, since it tested the PR head rather than the commit that landed. The gate applies to pre-release tags and to `rebuild=true` alike, and its job-name list must change with any rename in `ci.yml`. If CI was still running, re-run the release once it passes (`gh run rerun <id> --failed`).
 2. **Promote release images** — **promote-by-retag, not rebuild.** `ci.yml` already built and pushed the staging-verified runtime + web `:<sha>` images to ECR on merge, each a multi-platform index (`linux/amd64` + `linux/arm64`, each platform built natively on its own runner); this re-tags those exact indexes to `:vX.Y.Z` via `aws ecr put-image` (guarded: target repo must be IMMUTABLE, the `:<sha>` source must exist, and a re-run is idempotent — same digest skips, a different digest fails). It then copies the same `:<sha>` manifests to the GHCR tags with `docker buildx imagetools create` (edge never pushes GHCR), and for stable releases moves `:latest`. There is no Verify or rebuild step — job 1 has already confirmed `ci.yml` passed on the commit. The `workflow_dispatch` `rebuild=true` escape hatch rebuilds from source instead (loud warning: prod won't be byte-for-byte), for `linux/amd64` only — only for a tag off a commit that never rode staging.
 3. **GitHub Release** — creates a release with auto-generated notes; `prerelease` flag mirrors the hyphen rule
 4. **Promote to prod (stable channel)** — GA only; dispatches the deploy-config receiver to record the new prod stable image tag, which the auto-sync per-tenant ApplicationSet then rolls. No-ops when the prod-promote App isn't configured (forks/pre-setup CI).
-5. **Publish the CLI to npm** — after job 2, so the images the CLI installs are on GHCR first. Builds `packages/cli` at the tag's version (set in the job, never committed) and **stages** `nimblebrain` for `latest` (GA) or `next` (pre-release); a hotfix tag skips it. A maintainer approves the staged version (§4e) before it is public. Authenticates by npm trusted publishing, so there is no npm token: the package's trusted publisher on npmjs.com names this repository, `release.yml`, and the `npm` environment, and allows staging only (direct publish and dist-tag changes unticked). The `npm` environment admits `v*` tags and `main` as deployment refs, like `deploy-config-prod`: a `workflow_dispatch` run starts from `main`. Skips a version already on npm, and an emergency `rebuild=true` run (its images are amd64 only).
 
 Artifact map:
 
@@ -267,6 +253,16 @@ done
 ```
 
 Releasing still deploys nothing (§9). The deployment that needs the fix is pinned to `$TAG` in its deploy configuration, and the pin comes out once a GA release containing the fix reaches that deployment's channel. A pinned deployment does not move when stable does, so an unremoved pin silently holds it back.
+
+## Releasing the CLI
+
+The `nimblebrain` CLI (`packages/cli`, npm `nimblebrain`) is released on its own, by a `cli/v*` tag, never by a runtime `v*` tag (ADR-0064). It does not carry a runtime: it installs the newest runtime release, or the one `--runtime` names, down to `MIN_RUNTIME` in `packages/cli/src/release.ts`.
+
+1. In a PR, set `packages/cli/package.json` `version` to the new version (semver; a hyphen is a pre-release) and merge it.
+2. Tag the merged commit on `main` and push the tag: `git tag -a cli/v0.2.0 -m "cli/v0.2.0" <sha> && git push origin cli/v0.2.0`. `.github/workflows/release-cli.yml` refuses a tag that is not on `main` or does not match `package.json`, tests, packs the tarball once, checks it runs under Node 20, **stages** it on npm (`latest` for a release, `next` for a pre-release), and creates a GitHub Release that is never marked the repository's latest.
+3. **Approve it on npm.** Nothing is public until a maintainer approves the staged version with 2FA: on npmjs.com (the package's staged versions), or `npm stage list nimblebrain`, then `npm stage approve <stage-id>`. Then check `npm view nimblebrain dist-tags`.
+
+npm's trusted publisher for `nimblebrain` names `release-cli.yml` and the `npm` environment, which admits only `cli/v*` tags; it allows staging only. A re-run skips a version already published and stops, pointing at `npm stage list`, on one that is staged but not yet approved. When a runtime release changes something the CLI depends on (its Compose file's variables, the API `status` reads), release a CLI that handles it, and raise `MIN_RUNTIME` if older runtimes stop working with it.
 
 ## 9. Out of scope for this runbook
 

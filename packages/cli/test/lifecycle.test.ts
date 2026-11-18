@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { COMPOSE_FILE, KEY_VARS, PROJECT, PROVIDERS } from "../src/compose.ts";
+import { keyVars, PROJECT, providers } from "../src/compose.ts";
 import { run } from "../src/main.ts";
-import { compareVersions, newestRelease, releaseTag } from "../src/release.ts";
-import { fail, machine, ok } from "./fake.ts";
+import { compareVersions, MIN_RUNTIME, newestRelease, runtimeTag } from "../src/release.ts";
+import { fail, machine, ok, REPO_COMPOSE } from "./fake.ts";
 
 const HOME = "/home/dana/.nimblebrain-local";
 const INSTALL = `${HOME}/install.json`;
@@ -10,20 +10,51 @@ const ENV = `${HOME}/.env`;
 /** What an earlier, unfinished `init` leaves in `.env`: the mark that the home is the CLI's. */
 const MARK = `COMPOSE_PROJECT_NAME=${PROJECT}\n`;
 /** A dev build of the CLI pins no release, so tests pin one the way a release build would. */
-const env = { NIMBLEBRAIN_TAG: "v0.70.0" };
+const env = { NIMBLEBRAIN_TAG: "v0.73.0" };
 
 async function json(argv: string[], m = machine({ env })) {
   const { stdout, code } = await run([...argv, "--json"], m.deps);
   return { body: JSON.parse(stdout), code, m };
 }
 
-describe("the embedded Compose file", () => {
-  test("is the release's own, and names the model-key variables", () => {
-    expect(COMPOSE_FILE).toContain("ghcr.io/nimblebraininc/nimblebrain-runtime:${NIMBLEBRAIN_TAG");
-    expect(COMPOSE_FILE).toContain("127.0.0.1:${NIMBLEBRAIN_WEB_PORT:-27246}:8080");
-    expect(KEY_VARS).toContain("ANTHROPIC_API_KEY");
-    expect(PROVIDERS.anthropic).toBe("ANTHROPIC_API_KEY");
-    expect(PROVIDERS.google).toBe("GOOGLE_GENERATIVE_AI_API_KEY");
+describe("the release's Compose file", () => {
+  test("names the model-key variables the CLI withholds and offers", () => {
+    expect(REPO_COMPOSE).toContain("ghcr.io/nimblebraininc/nimblebrain-runtime:${NIMBLEBRAIN_TAG");
+    expect(REPO_COMPOSE).toContain("127.0.0.1:${NIMBLEBRAIN_WEB_PORT:-27246}:8080");
+    expect(keyVars(REPO_COMPOSE)).toContain("ANTHROPIC_API_KEY");
+    expect(providers(REPO_COMPOSE).anthropic).toBe("ANTHROPIC_API_KEY");
+    expect(providers(REPO_COMPOSE).google).toBe("GOOGLE_GENERATIVE_AI_API_KEY");
+  });
+
+  test("is fetched from the chosen release's tag, before anything is written", async () => {
+    const seen: string[] = [];
+    const m = machine({ env });
+    const getText = m.deps.getText;
+    m.deps.getText = async (url, t) => {
+      seen.push(url);
+      return getText(url, t);
+    };
+    await json(["--yes"], m);
+    expect(seen).toContain(
+      "https://raw.githubusercontent.com/NimbleBrainInc/nimblebrain/v0.73.0/docker-compose.yml",
+    );
+  });
+
+  test("a release whose Compose file cannot be driven is refused, writing nothing", async () => {
+    for (const compose of [
+      { status: 404, body: "404: Not Found" },
+      { status: 200, body: "services:\n  platform:\n    image: nimblebrain:latest\n" },
+    ]) {
+      const m = machine({ env, compose });
+      const { body } = await json(["--yes"], m);
+      expect(body.error).toBe("RUNTIME_UNSUPPORTED");
+      expect(m.files.size).toBe(0);
+    }
+  });
+
+  test("a Compose file that cannot be downloaded is NETWORK", async () => {
+    const m = machine({ env, compose: null });
+    expect((await json(["--yes"], m)).body.error).toBe("NETWORK");
   });
 });
 
@@ -35,7 +66,7 @@ describe("init", () => {
       ok: false,
       error: "MODEL_KEY_MISSING",
       health: "ok",
-      version: "0.70.0",
+      version: "0.73.0",
       url: "http://127.0.0.1:27246",
       workspaces: [{ id: "ws_1", mcp: "http://127.0.0.1:27246/mcp/ws_1" }],
       agent: { connected: "claude-code", skill: "nimblebrain" },
@@ -52,14 +83,14 @@ describe("init", () => {
 
   test("writes the release's Compose file, the dev adapter, and a .env readable by this user only", async () => {
     const { m } = await json(["--yes"]);
-    expect(m.files.get(`${HOME}/docker-compose.yml`)?.text).toBe(COMPOSE_FILE);
+    expect(m.files.get(`${HOME}/docker-compose.yml`)?.text).toBe(REPO_COMPOSE);
     expect(JSON.parse(m.files.get(`${HOME}/instance.json`)?.text ?? "")).toEqual({
       auth: { adapter: "dev" },
     });
     const dotenv = m.files.get(ENV);
     expect(dotenv?.mode).toBe(0o600);
     expect(dotenv?.text).toContain(`COMPOSE_PROJECT_NAME=${PROJECT}`);
-    expect(dotenv?.text).toContain("NIMBLEBRAIN_TAG=v0.70.0");
+    expect(dotenv?.text).toContain("NIMBLEBRAIN_TAG=v0.73.0");
     expect(dotenv?.text).toContain("NIMBLEBRAIN_WEB_PORT=27246");
   });
 
@@ -166,12 +197,25 @@ describe("init", () => {
     expect((await json(["--yes"], m)).body.error).toBe("HEALTH_TIMEOUT");
   });
 
-  test("a dev build installs the newest plain release tag", async () => {
+  test("with no --runtime it installs the newest plain release", async () => {
     const m = machine({
-      tags: ["server-sdk-py/v0.9.0", "v0.72.0-rc.1", "v0.71.0", "v0.72.0", "v0.9.0"],
+      tags: ["server-sdk-py/v0.9.0", "v0.75.0-rc.1", "v0.73.0", "v0.74.0", "v0.9.0"],
     });
     await json(["--yes"], m);
-    expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_TAG=v0.72.0");
+    expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_TAG=v0.74.0");
+  });
+
+  test("--runtime installs the release it names", async () => {
+    const m = machine({ tags: ["v0.75.0"] });
+    await json(["--yes", "--runtime", "v0.74.0"], m);
+    expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_TAG=v0.74.0");
+  });
+
+  test("a runtime older than the CLI supports is refused, writing nothing", async () => {
+    const m = machine();
+    const { body } = await json(["--yes", "--runtime", "v0.72.0"], m);
+    expect(body.error).toBe("RUNTIME_UNSUPPORTED");
+    expect(m.files.size).toBe(0);
   });
 });
 
@@ -218,17 +262,14 @@ describe("after install", () => {
 
   test("update moves forward, keeps the port, and refuses to move back", async () => {
     const m = await installed();
-    m.deps.env = { NIMBLEBRAIN_TAG: "v0.71.0" };
-    const { body } = await json(["update"], m);
-    expect(body).toMatchObject({ ok: true, version: "0.71.0", from: "v0.70.0" });
-    expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_TAG=v0.71.0");
-    m.deps.env = { NIMBLEBRAIN_TAG: "v0.69.0" };
-    expect((await json(["update"], m)).body.error).toBe("USAGE");
-    m.deps.env = { NIMBLEBRAIN_TAG: "v0.71.0-rc.1" };
-    expect((await json(["update"], m)).body.error).toBe("USAGE");
-    m.deps.env = { NIMBLEBRAIN_TAG: "latest" };
-    expect((await json(["update"], m)).body.error).toBe("USAGE");
-    expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_TAG=v0.71.0");
+    m.deps.env = {};
+    const { body } = await json(["update", "--runtime", "v0.74.0"], m);
+    expect(body).toMatchObject({ ok: true, version: "0.74.0", from: "v0.73.0" });
+    expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_TAG=v0.74.0");
+    expect((await json(["update", "--runtime", "v0.73.0"], m)).body.error).toBe("USAGE");
+    expect((await json(["update", "--runtime", "v0.74.0-rc.1"], m)).body.error).toBe("USAGE");
+    expect((await json(["update", "--runtime", "latest"], m)).body.error).toBe("USAGE");
+    expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_TAG=v0.74.0");
   });
 
   test("uninstall without --yes from an agent changes nothing", async () => {
@@ -261,16 +302,17 @@ describe("after install", () => {
 });
 
 describe("releases", () => {
-  test("a published build installs the runtime release of its own version, with no lookup", async () => {
-    const m = machine();
-    let looked = false;
-    m.deps.getJson = async () => {
-      looked = true;
-      return undefined;
-    };
-    expect(await releaseTag(m.deps, "0.74.0")).toBe("v0.74.0");
-    expect(await releaseTag(m.deps, "0.74.0-rc.1")).toBe("v0.74.0-rc.1");
-    expect(looked).toBe(false);
+  test("the runtime is --runtime, else NIMBLEBRAIN_TAG, else the newest release; never below the minimum", async () => {
+    const m = machine({ tags: ["v0.80.0", "v0.79.0"] });
+    expect(await runtimeTag(m.deps, "v0.74.0")).toBe("v0.74.0");
+    m.deps.env = { NIMBLEBRAIN_TAG: "v0.75.0" };
+    expect(await runtimeTag(m.deps)).toBe("v0.75.0");
+    m.deps.env = {};
+    expect(await runtimeTag(m.deps)).toBe("v0.80.0");
+    expect(await runtimeTag(m.deps, MIN_RUNTIME)).toBe(MIN_RUNTIME);
+    await expect(runtimeTag(m.deps, "v0.72.9")).rejects.toMatchObject({
+      code: "RUNTIME_UNSUPPORTED",
+    });
   });
 
   test("newest plain tag wins; SDK tags and pre-releases do not count", () => {

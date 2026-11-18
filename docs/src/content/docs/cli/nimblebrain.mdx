@@ -37,7 +37,7 @@ An agent runs it with `--yes --agent <its name> --json` and reads the result. Wh
 | `key` | Takes the model key at a hidden prompt and restarts NimbleBrain so it takes effect. A person runs this. |
 | `up` / `down` | Starts or stops NimbleBrain. Your data survives `down`. |
 | `logs` | Recent log lines from the runtime. |
-| `update` | Moves to the release this CLI carries, keeping your data. Run `npx nimblebrain@latest update` for the newest. |
+| `update` | Moves to the newest NimbleBrain release, or the one `--runtime` names, keeping your data. It never moves backwards. |
 | `uninstall` | Removes the containers, the images, every conversation, and the files `init` wrote. Asks first. |
 
 ## Flags
@@ -50,6 +50,11 @@ An agent runs it with `--yes --agent <its name> --json` and reads the result. Wh
 | `--port <n>` | The local port (default `27246`). |
 | `--provider <name>` | For `key`: `anthropic` (default), `openai`, `google`, `greenpt`, `nebius` or `xai`. |
 | `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). |
+| `--runtime <tag>` | For `init` and `update`: the NimbleBrain release to install, such as `v0.74.0`. Default: the newest release. |
+
+## Versions
+
+The CLI and NimbleBrain are versioned separately. `nimblebrain --version` is the CLI's own version; `status` reports both, the running NimbleBrain as `version` and the CLI as `cli_version`. The CLI installs the newest NimbleBrain release unless you name one with `--runtime`, and supports releases from `v0.73.0`. A newer NimbleBrain does not need a newer CLI: `npx nimblebrain update` moves you to the newest release.
 
 ## Connecting an agent
 
@@ -69,10 +74,11 @@ Every command answers `{"ok": true, ...}` or `{"ok": false, "error": "<CODE>", "
 | `NETWORK`, `START_FAILED`, `HEALTH_TIMEOUT` | A download failed, Compose could not start it, or it did not become healthy in time. |
 | `MODEL_KEY_MISSING` | NimbleBrain is running; chat needs a key (`npx nimblebrain key`). |
 | `NEEDS_TERMINAL`, `CANCELLED`, `AGENT_UNSUPPORTED`, `USAGE` | `key` needs a person, the action was declined, an unknown agent, or a bad command or flag. |
+| `RUNTIME_UNSUPPORTED` | The release `--runtime` names is older than this CLI supports, or its Compose file cannot be driven. |
 | `INTERRUPTED` | The CLI was stopped (a signal, Ctrl-C) before it finished; `exit_code` says how. Check `status`, then run the command again. |
 
 Each error's `fix` is the next thing to do.
 
 ## What it writes
 
-Everything lives in `~/.nimblebrain-local`: the release's `docker-compose.yml`, an `instance.json` naming the `dev` sign-in, a `.env` that only your user can read (the release, the port, and your model key), and `install.json`. Your conversations live in the Docker volume `nimblebrain-local_workspace`. A key exported in your shell is not used: `.env` is the only source, so the key you entered with `key` is the one that runs.
+Everything lives in `~/.nimblebrain-local`: the installed release's `docker-compose.yml`, downloaded from that release, an `instance.json` naming the `dev` sign-in, a `.env` that only your user can read (the release, the port, and your model key), and `install.json`. Your conversations live in the Docker volume `nimblebrain-local_workspace`. A key exported in your shell is not used: `.env` is the only source, so the key you entered with `key` is the one that runs.

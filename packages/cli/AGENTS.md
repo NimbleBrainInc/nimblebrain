@@ -13,12 +13,12 @@ Published to npm as `nimblebrain`; run as `npx nimblebrain`. It installs, starts
 - **The model key never appears in arguments, output or logs.** Only `key` takes it, at a hidden prompt, and writes it to `<home>/.env` with mode 600. `status` reports `model_key: set | missing` from the install's `.env` (names only), never from the runtime: bootstrap's `configuredProviders` lists the providers the config allows, key or no key.
 - **The web port is published on `127.0.0.1` only.** The local instance uses the `dev` adapter, which signs nobody in.
 - **Never touch an install the CLI did not make.** The Compose project name in `install.json` marks containers and the data volume as ours; anything else is `NOT_OURS`.
-- **The Compose file is the release's own, embedded at build** (`import … with { type: "text" }` of the root `docker-compose.yml`). Never write a second Compose file here; a change to how the runtime is composed lands in the root file, and the CLI ships it. Model-key variable names and `key`'s provider list are read from that file, not restated.
+- **The CLI is versioned on its own; the runtime is chosen when it runs** (ADR-0064). `--runtime`, then `NIMBLEBRAIN_TAG`, then the newest plain `vX.Y.Z` release; anything below `MIN_RUNTIME` (`src/release.ts`) is `RUNTIME_UNSUPPORTED`. Never tie a CLI version to a runtime version.
+- **The Compose file is the chosen release's own,** fetched from its tag (`fetchCompose`) before anything is written. Never write a second Compose file here. Model-key variable names and `key`'s provider list are read from the installed file, not restated. A Compose file that does not take `NIMBLEBRAIN_TAG` and `NIMBLEBRAIN_WEB_PORT` from `.env` is refused.
 - **Compose runs without the shell's keys, `NIMBLEBRAIN_TAG`, `NIMBLEBRAIN_WEB_PORT` or `COMPOSE_PROJECT_NAME`** (`composeEnv`), so `<home>/.env` is the one source: a key exported in the shell would otherwise silently win over the one entered with `key`.
 - **`up -d --no-build`, always.** The root Compose file keeps `build:` for source checkouts; the install folder has no source, so a missing image must fail as a pull, never fall back to a build.
 - **Connecting an agent and installing the skill never fail `init`.** The instance is usable either way; a failed connection returns `manual`, the exact settings to add by hand.
 - **All I/O goes through `Deps` (`src/deps.ts`).** Tests pass a fake and stay unit tests: no Docker, no ports, no network.
-- **Each CLI release installs the runtime release of the same version.** The version is set from the release tag, like the root package; do not bump `package.json` by hand.
 
 ## Not here yet
 
@@ -26,7 +26,7 @@ Published to npm as `nimblebrain`; run as `npx nimblebrain`. It installs, starts
 
 ## Releasing
 
-`release.yml` job `publish-cli` stages this package at every `v*` tag's version, after the images are on GHCR (RELEASING.md §7, job 5): GA for `latest`, a pre-release for `next`, a hotfix tag nowhere. It goes public only when a maintainer approves it on npm with 2FA (§4e); the workflow cannot publish directly. The version is set from the tag in the job; `package.json` stays `0.0.0-dev`. `cli-e2e` runs the whole lifecycle on `ubuntu-latest` and `ubuntu-24.04-arm` against the newest release.
+Its own `cli/v*` tags and `.github/workflows/release-cli.yml` (RELEASING.md, "Releasing the CLI"), like `packages/server-sdk-py`. The version lives in this `package.json`; bump it in the PR that ships the change, and the tag must match it. A release is staged on npm and goes public only when a maintainer approves it with 2FA. `cli-e2e` runs the whole lifecycle on `ubuntu-latest` and `ubuntu-24.04-arm` against the newest runtime release.
 
 ## Verify
 

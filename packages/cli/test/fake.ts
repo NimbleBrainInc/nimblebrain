@@ -1,4 +1,8 @@
+// The repo's own Compose file stands in for any release's: the fake serves it from raw.githubusercontent.
+import repoCompose from "../../../docker-compose.yml" with { type: "text" };
 import type { Deps, ExecResult } from "../src/deps.ts";
+
+export const REPO_COMPOSE: string = repoCompose;
 
 export const GB = 1024 ** 3;
 export const ok = (stdout = ""): ExecResult => ({ code: 0, stdout, stderr: "", missing: false });
@@ -33,6 +37,8 @@ export interface MachineOptions {
   /** Override for the instance's answers to `/v1/*`. */
   workspaces?: Array<{ id: string; name: string }>;
   tags?: string[];
+  /** What a release tag's `docker-compose.yml` answers; default the repo's file with 200. */
+  compose?: { status: number; body: string } | null;
 }
 
 /**
@@ -70,6 +76,11 @@ export function machine(opts: MachineOptions = {}): Machine {
       return res;
     },
     portFree: async () => opts.portFree ?? true,
+    async getText(url) {
+      if (!url.includes("raw.githubusercontent.com")) return undefined;
+      if (opts.compose === null) return undefined;
+      return opts.compose ?? { status: 200, body: REPO_COMPOSE };
+    },
     async getJson(url) {
       if (url.includes("api.github.com"))
         return { status: 200, body: (opts.tags ?? []).map((name) => ({ name })) };

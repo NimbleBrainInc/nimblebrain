@@ -1,8 +1,9 @@
 import { join } from "node:path";
 import type { Agent } from "./args.ts";
-import { hasKey } from "./compose.ts";
+import { hasKey, keyVars } from "./compose.ts";
 import type { Deps } from "./deps.ts";
 import { CliError } from "./result.ts";
+import { VERSION } from "./version.ts";
 
 /**
  * What an install records about itself, in `<home>/install.json`. Written by
@@ -45,6 +46,8 @@ export interface Workspace {
 export interface StatusResult {
   ok: true;
   version: string;
+  /** This CLI's own version; `version` is the runtime's. They move independently (ADR-0064). */
+  cli_version: string;
   health: "ok" | "down";
   url: string;
   workspaces: Workspace[];
@@ -78,11 +81,15 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
   const workspaces = up ? await readWorkspaces(deps, url) : [];
   // The install's `.env` is the only place a key can come from: every Compose
   // call runs without the shell's key variables. Read for names, never values.
-  const modelKey = hasKey((await deps.readText(join(home, ".env"))) ?? "") ? "set" : "missing";
+  const vars = keyVars((await deps.readText(join(home, "docker-compose.yml"))) ?? "");
+  const modelKey = hasKey((await deps.readText(join(home, ".env"))) ?? "", vars)
+    ? "set"
+    : "missing";
 
   return {
     ok: true,
     version: install.version,
+    cli_version: VERSION,
     health: up ? "ok" : "down",
     url,
     workspaces,

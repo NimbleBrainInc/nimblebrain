@@ -1,4 +1,3 @@
-import pkg from "../package.json" with { type: "json" };
 import { type Parsed, parse, wantsJson } from "./args.ts";
 import { type Deps, installHome } from "./deps.ts";
 import { doctor } from "./doctor.ts";
@@ -6,7 +5,9 @@ import { down, init, key, logs, uninstall, up, update } from "./lifecycle.ts";
 import { CliError, exitCodeFor, type Failure, failure, type Ok } from "./result.ts";
 import { readInstall, status } from "./status.ts";
 
-export const VERSION: string = pkg.version;
+import { VERSION } from "./version.ts";
+
+export { VERSION };
 
 const HELP = `nimblebrain ${VERSION}: install and run NimbleBrain on this machine
 
@@ -29,6 +30,7 @@ Flags:
   --port <n>        Local port (default 27246)
   --home <dir>      Where the install lives (default ~/.nimblebrain-local, or NIMBLEBRAIN_HOME)
   --provider <name> The model provider for key (default anthropic)
+  --runtime <tag>   The NimbleBrain release to install or update to (default the newest)
   --help, --version
 `;
 
@@ -67,7 +69,7 @@ export async function run(argv: string[], deps: Deps): Promise<{ stdout: string;
         result = { ...(await status(deps, home)) };
         break;
       default: {
-        const ctx = { deps, flags, home, version: VERSION };
+        const ctx = { deps, flags, home };
         const commands = { init, up, down, logs, update, uninstall, key };
         result = await commands[command](ctx);
       }
