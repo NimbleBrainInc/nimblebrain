@@ -71,23 +71,21 @@ export async function init(ctx: Ctx): Promise<Ok> {
   const { deps, flags, home } = ctx;
   if (await readInstall(deps, home)) return { ...(await status(deps, home)), already: true };
 
-  // A person is asked after agreeing to the install (in `install`); until then the
-  // answer is what a flag or the environment already gave, so a failure before the
-  // question waits in the report and leaves only on a later yes.
-  const answer = { consent: await chooseConsent(ctx, false) };
+  // Asked before anything else, so a failed check reaches us when the person said yes.
+  const consent = await chooseConsent(ctx);
   const rec = recorder(deps, ctx.version, await reportId(deps, home));
   const begun = Date.now();
   rec.record("cli.init_started", { agent: flags.agent ?? null, interactive: deps.interactive });
   try {
-    return await install(ctx, answer, rec, begun);
+    return await install(ctx, consent, rec, begun);
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
-    // Declining the start before any answer changed nothing, so it leaves no report either.
-    if (err.code !== "CANCELLED" || answer.consent !== "undecided")
-      await settleFailure(rec, home, answer.consent, err);
+    // Declining the start with no answer given changed nothing, so it leaves no report either.
+    if (err.code !== "CANCELLED" || consent !== "undecided")
+      await settleFailure(rec, home, consent, err);
     throw new CliError(err.code, err.message, {
       ...err.detail,
-      telemetry: field(answer.consent, lockedHere(deps)),
+      telemetry: field(consent, lockedHere(deps)),
     });
   }
 }
@@ -102,30 +100,30 @@ async function settleFailure(rec: Recorder, home: string, consent: Consent, err:
 }
 
 /**
- * The answer, in order: `--telemetry`, then the person at the terminal (when
- * `ask`), else undecided. Never asked when `DO_NOT_TRACK` is set or there is nowhere to send.
+ * The answer, in order: `--telemetry`, then the person at the terminal, else
+ * undecided. Never asked when `DO_NOT_TRACK` is set or there is nowhere to send,
+ * and never answered by `--yes`: no person saw the question.
  */
-async function chooseConsent(ctx: Ctx, ask: boolean): Promise<Consent> {
+async function chooseConsent(ctx: Ctx): Promise<Consent> {
   if (lockedHere(ctx.deps)) return "off";
   if (ctx.flags.telemetry) return ctx.flags.telemetry;
-  if (!ask || !asks(ctx)) return "undecided";
-  return parseAnswer(await ctx.deps.prompt(`${QUESTION} [y/N] `));
+  if (!asks(ctx)) return "undecided";
+  const consent = parseAnswer(await ctx.deps.prompt(`${QUESTION} [Y/n] `));
+  ctx.deps.say(
+    consent === "on"
+      ? "Sending anonymous usage data. Turn it off any time: npx nimblebrain telemetry off"
+      : "No usage data will be sent. Turn it on any time: npx nimblebrain telemetry on",
+  );
+  return consent;
 }
 
-async function install(
-  ctx: Ctx,
-  answer: { consent: Consent },
-  rec: Recorder,
-  begun: number,
-): Promise<Ok> {
+async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number): Promise<Ok> {
   const { deps, flags, home } = ctx;
   await doctor(deps, flags.port);
   const project = await guardOurs(deps, home);
   const tag = await runtimeTag(deps, flags.runtime);
   const composeText = await fetchCompose(deps, tag);
   await confirmStart(ctx, tag);
-  answer.consent = await chooseConsent(ctx, true);
-  const { consent } = answer;
 
   await writeInstallFiles(
     deps,
