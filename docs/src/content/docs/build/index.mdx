@@ -34,11 +34,7 @@ Start with a connector. An app is a connector with an interface added, so nothin
 
    The interface is a web app built with `@nimblebrain/synapse`, which gives it a typed way to call the server's tools. The server serves it as a `ui://` resource with FastMCP's `AppConfig`; no extra server package is needed. Both work in any MCP Apps host, so Synapse's documentation is its own site: start with [Serve a Synapse UI from a FastMCP server](https://synapse.nimblebrain.ai/docs/quickstart-python/), and see [ChatGPT compatibility](https://synapse.nimblebrain.ai/docs/guides/chatgpt/) for that host. What NimbleBrain adds for a view (placements, theming, the bridge) is under [App Views](/apps/overview/).
 
-4. **Publish on mpak**
-
-   [mpak](https://mpak.dev/docs/) is the registry for MCP server bundles. Publishing gives the server a versioned, scanned bundle others can install.
-
-5. **Connect it to NimbleBrain**
+4. **Connect it to NimbleBrain**
 
    NimbleBrain connects to a running server by URL. For development, [point a workspace at it](/server-sdk/quickstart/#5-connect-it-to-nimblebrain). For a deployment, an operator adds an entry to the [connectors catalog](/config/connectors-catalog/), and the entry's [`ai.nimblebrain/host` block](/host/overview/) asks for pages, settings sections, webhooks and notifications.
 
