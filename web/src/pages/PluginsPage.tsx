@@ -1,10 +1,15 @@
-import { User } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Check, User } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Plugin, PluginsListOutput } from "../_generated/platform-schemas/plugins";
 import { grantConnector, listPlugins, revokeConnector } from "../api/client";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { connectorStatusSummary } from "../components/connectors/ConnectorList";
+import {
+  type ConnectedTarget,
+  type ReturnedConnector,
+  useConnectedNotice,
+} from "../components/connectors/useConnectedNotice";
 import { SkillsGroup } from "../components/plugins/SkillsGroup";
 import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
 import { Badge } from "../components/ui/badge";
@@ -204,6 +209,15 @@ function InstalledPlugins({
   // A sign-in finishing elsewhere changes a row's status and account.
   useEvents({ onConnectionStateChanged: () => void refresh() });
 
+  // Confirm the connector an OAuth sign-in just connected (`?connected=`): a
+  // notice, and its plugin's row marked while the page is open.
+  const rereadSilently = useCallback(() => void refresh(), [refresh]);
+  const returned = useMemo(
+    () => (listing && listing.wsId === wsId ? listing.plugins.flatMap(toReturnedConnectors) : null),
+    [listing, wsId],
+  );
+  const justConnected = useConnectedNotice(returned, rereadSilently);
+
   const groups = useMemo(
     () => (listing && listing.wsId === wsId ? groupPlugins(listing.plugins) : null),
     [listing, wsId],
@@ -254,7 +268,12 @@ function InstalledPlugins({
         <>
           <PluginSection title="In this workspace" plugins={groups.workspace} testId="workspace">
             {(plugin) => (
-              <PluginRow key={plugin.id} plugin={plugin} to={pluginPath(slug, plugin)} />
+              <PluginRow
+                key={plugin.id}
+                plugin={plugin}
+                to={pluginPath(slug, plugin)}
+                justConnected={justConnected}
+              />
             )}
           </PluginSection>
           <PluginSection title="Yours" plugins={groups.yours} testId="yours">
@@ -263,6 +282,7 @@ function InstalledPlugins({
                 key={plugin.id}
                 plugin={plugin}
                 to={pluginPath(slug, plugin)}
+                justConnected={justConnected}
                 action={
                   <Button
                     type="button"
@@ -290,6 +310,7 @@ function InstalledPlugins({
             key={plugin.id}
             plugin={plugin}
             to={pluginPath(slug, plugin)}
+            justConnected={justConnected}
             muted
             action={
               <Button
@@ -348,19 +369,36 @@ function PluginSection({
 function PluginRow({
   plugin,
   to,
+  justConnected,
   action,
   muted = false,
 }: {
   plugin: Plugin;
   to: string;
+  /** The connector an OAuth sign-in on this page just connected, if any. */
+  justConnected: ConnectedTarget | null;
   action?: React.ReactNode;
   muted?: boolean;
 }) {
   const contents = contentsLine(plugin);
   const notReady = plugin.servers.find((s) => s.status !== "ready");
   const status = notReady ? connectorStatusSummary(notReady.status) : null;
+  // Marked while the page is open, and only once every server is ready.
+  const fresh =
+    !notReady &&
+    justConnected !== null &&
+    justConnected.owner === plugin.owner.kind &&
+    plugin.servers.some((s) => s.serverName === justConnected.serverName);
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  // A long list may hold the plugin below the fold.
+  useEffect(() => {
+    if (fresh) rowRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [fresh]);
+
   return (
     <div
+      ref={rowRef}
       className="flex items-center gap-3 border-b border-border py-2.5"
       data-testid="plugin-row"
       data-plugin-id={plugin.id}
@@ -389,6 +427,12 @@ function PluginRow({
             {contents && ` · ${contents}`}
           </p>
         </div>
+        {fresh && (
+          <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-success">
+            <Check className="h-3.5 w-3.5" aria-hidden />
+            <span>Connected just now</span>
+          </span>
+        )}
         {status && (
           <span className={cn("flex shrink-0 items-center gap-1.5 text-xs", status.tone)}>
             {status.dot && <span className={cn("h-1.5 w-1.5 rounded-full", status.dotColor)} />}
@@ -399,4 +443,19 @@ function PluginRow({
       {action && <div className="shrink-0">{action}</div>}
     </div>
   );
+}
+
+/**
+ * A plugin's servers as the sign-in confirmation reads them, each named by its
+ * plugin and carrying its owner: a ready server is connected, a failed one is
+ * dead, anything else is still settling.
+ */
+function toReturnedConnectors(plugin: Plugin): ReturnedConnector[] {
+  return plugin.servers.map((server) => ({
+    serverName: server.serverName,
+    displayName: plugin.displayName,
+    owner: plugin.owner.kind,
+    state:
+      server.status === "ready" ? "connected" : server.status === "failed" ? "failed" : "pending",
+  }));
 }

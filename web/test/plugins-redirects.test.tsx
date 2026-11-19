@@ -142,6 +142,11 @@ describe("old profile addresses", () => {
     expect(await visit("/profile/connectors?connected=granola", [ALPHA, BETA], BETA.id)).toBe(
       "/w/0076759dbbe19fcc/plugins?connected=granola",
     );
+    // A personal sign-in with no workspace to return to lands on the profile
+    // address; its notice needs both parameters.
+    expect(
+      await visit("/profile/connectors?connected=granola&owner=person", [ALPHA, BETA], BETA.id),
+    ).toBe("/w/0076759dbbe19fcc/plugins?connected=granola&owner=person");
     expect(await visit("/profile/skills", [ALPHA, BETA], BETA.id)).toBe(
       "/w/0076759dbbe19fcc/plugins",
     );

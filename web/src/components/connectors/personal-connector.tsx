@@ -12,17 +12,21 @@ import { ToolPermissionsTable } from "./ToolPermissionsTable";
  * The authorization URL to send the browser to for a personal connector's
  * Connect, or null when it connected without an interactive flow. The route
  * depends on the auth: composio keys on the catalog connector id, DCR on the
- * serverName.
+ * serverName. `returnWorkspaceId` is the workspace the Connect is pressed in, so
+ * the sign-in returns to its Plugins page; omit it on the profile.
  */
-export async function personalConnectUrl(target: {
-  auth: "dcr" | "composio";
-  serverName: string;
-  connectorId?: string;
-}): Promise<string | null> {
+export async function personalConnectUrl(
+  target: {
+    auth: "dcr" | "composio";
+    serverName: string;
+    connectorId?: string;
+  },
+  returnWorkspaceId?: string,
+): Promise<string | null> {
   const { authorizationUrl } =
     target.auth === "composio" && target.connectorId
-      ? await initiateComposioIdentityConnect(target.connectorId)
-      : await initiateIdentityConnect(target.serverName);
+      ? await initiateComposioIdentityConnect(target.connectorId, returnWorkspaceId)
+      : await initiateIdentityConnect(target.serverName, returnWorkspaceId);
   return authorizationUrl ?? null;
 }
 

@@ -114,8 +114,10 @@ export interface ToolSchema {
    * `openWorldHint`.
    *
    * Hints, per the spec, and from an untrusted server: a `destructiveHint` is
-   * what the tool *says* about itself, so read it to be more careful, never to
-   * relax a check.
+   * what the tool *says* about itself. Read a hint to be more careful. A hint
+   * may relax only what the claiming server alone pays for if it lies (the
+   * ordering of its own calls within a turn, its own default skill binding),
+   * never a check that protects anything else.
    */
   annotations?: ToolAnnotations;
   /**

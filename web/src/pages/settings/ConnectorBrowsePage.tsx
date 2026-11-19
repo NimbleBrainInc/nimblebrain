@@ -323,8 +323,8 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
     // connector keys on its catalog id, everything else on its server name.
     const { authorizationUrl } =
       entry.install.kind === "remote-oauth" && entry.install.auth === "composio"
-        ? await initiateComposioIdentityConnect(entry.id)
-        : await initiateIdentityConnect(result.serverName);
+        ? await initiateComposioIdentityConnect(entry.id, wsId)
+        : await initiateIdentityConnect(result.serverName, wsId);
     if (authorizationUrl) {
       window.location.assign(authorizationUrl);
       return;

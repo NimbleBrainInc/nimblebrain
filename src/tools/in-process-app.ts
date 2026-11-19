@@ -55,6 +55,13 @@ export interface InProcessTool {
 }
 
 /**
+ * The annotation for a tool that reads and changes nothing. The engine runs a
+ * model's consecutive calls to such tools together and runs every other call
+ * in the model's order, so a read tool without it is ordered as a write.
+ */
+export const READ_ONLY: ToolAnnotations = { readOnlyHint: true };
+
+/**
  * A failed call. An output schema binds only a success result (the SDK client
  * validates `structuredContent` when `isError` is false), so a failure carries
  * any `structuredContent` it likes, or none.

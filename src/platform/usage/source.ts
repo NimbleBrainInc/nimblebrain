@@ -26,6 +26,7 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import {
   defineInProcessApp,
   type InProcessTool,
+  READ_ONLY,
   type ToolErrorResult,
   type TypedToolResult,
   typedTool,
@@ -81,6 +82,7 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
   const tools: InProcessTool[] = [
     typedTool({
       name: "report",
+      annotations: READ_ONLY,
       description: USAGE_REPORT_DESCRIPTION,
       meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: UsageReportInput,

@@ -14,30 +14,51 @@ const granola = (state: ReturnedConnector["state"]): ReturnedConnector => ({
 
 describe("returnOutcome", () => {
   test("a connected connector is confirmed by its display name", () => {
-    expect(returnOutcome("granola", [granola("connected")])).toEqual({
+    expect(returnOutcome({ serverName: "granola" }, [granola("connected")])).toEqual({
       kind: "connected",
       name: "Granola",
     });
   });
 
   test("waits while the token exchange is still settling", () => {
-    expect(returnOutcome("granola", [granola("pending")])).toEqual({ kind: "wait" });
+    expect(returnOutcome({ serverName: "granola" }, [granola("pending")])).toEqual({
+      kind: "wait",
+    });
   });
 
   test("a connector that failed is reported, not confirmed", () => {
-    expect(returnOutcome("granola", [granola("failed")])).toEqual({
+    expect(returnOutcome({ serverName: "granola" }, [granola("failed")])).toEqual({
       kind: "failed",
       name: "Granola",
     });
   });
 
   test("a name the page does not list announces nothing", () => {
-    expect(returnOutcome("not-installed", [granola("connected")])).toEqual({ kind: "absent" });
+    expect(returnOutcome({ serverName: "not-installed" }, [granola("connected")])).toEqual({
+      kind: "absent",
+    });
+  });
+
+  test("with an owner named, answers for that owner's install of a shared server name", () => {
+    const listed: ReturnedConnector[] = [
+      { ...granola("pending"), owner: "workspace" },
+      { ...granola("connected"), owner: "person" },
+    ];
+    expect(returnOutcome({ serverName: "granola", owner: "person" }, listed)).toEqual({
+      kind: "connected",
+      name: "Granola",
+    });
+    expect(returnOutcome({ serverName: "granola", owner: "workspace" }, listed)).toEqual({
+      kind: "wait",
+    });
   });
 
   test("falls back to the server name when there is no display name", () => {
     const bare = { serverName: "granola", displayName: "", state: "connected" as const };
-    expect(returnOutcome("granola", [bare])).toEqual({ kind: "connected", name: "granola" });
+    expect(returnOutcome({ serverName: "granola" }, [bare])).toEqual({
+      kind: "connected",
+      name: "granola",
+    });
   });
 });
 
@@ -59,9 +80,10 @@ function mount(url: string, connectors: readonly ReturnedConnector[] | null) {
   const location = { current: "" };
   const hook = renderHook(
     ({ connectors }: Props) => {
-      useConnectedNotice(connectors, refresh);
+      const justConnected = useConnectedNotice(connectors, refresh);
       const loc = useLocation();
       location.current = `${loc.pathname}${loc.search}`;
+      return justConnected;
     },
     {
       initialProps: { connectors },
@@ -95,9 +117,28 @@ describe("useConnectedNotice", () => {
     expect(notices).toEqual([{ level: "success", title: "Connected to Granola" }]);
   });
 
-  test("reports a connector that failed", () => {
-    mount("/connectors?connected=granola", [granola("failed")]);
+  test("reports a connector that failed, and marks no row", () => {
+    const { result } = mount("/connectors?connected=granola", [granola("failed")]);
     expect(notices).toEqual([{ level: "error", title: "Couldn't connect to Granola" }]);
+    expect(result.current).toBeNull();
+  });
+
+  test("names the connector to mark once it connects, and keeps it after re-reads", () => {
+    const { result, rerender } = mount("/connectors?connected=granola", [granola("pending")]);
+    expect(result.current).toBeNull();
+    rerender({ connectors: [granola("connected")] });
+    expect(result.current).toEqual({ serverName: "granola" });
+    rerender({ connectors: [granola("connected")] });
+    expect(result.current).toEqual({ serverName: "granola" });
+  });
+
+  test("takes the owner off the URL too, and marks that owner's install", () => {
+    const { result, location } = mount("/w/x/plugins?connected=granola&owner=person", [
+      { ...granola("connected"), owner: "workspace" },
+      { ...granola("connected"), owner: "person" },
+    ]);
+    expect(location.current).toBe("/w/x/plugins");
+    expect(result.current).toEqual({ serverName: "granola", owner: "person" });
   });
 
   test("a name the page does not list announces nothing and stops polling", () => {

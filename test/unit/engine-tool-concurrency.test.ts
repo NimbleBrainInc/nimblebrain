@@ -16,6 +16,12 @@ const config: EngineConfig = {
 
 const USER: LanguageModelV4Message[] = [{ role: "user", content: [{ type: "text", text: "go" }] }];
 
+/** A tool that changes nothing: its calls in one response may run together. */
+function readSchema(name: string): ToolSchema {
+  return { ...schema(name), annotations: { readOnlyHint: true } };
+}
+
+/** A tool with no annotations, which the MCP spec reads as one that may write. */
 function schema(name: string): ToolSchema {
   return { name, description: name, inputSchema: { type: "object", properties: {} } };
 }
@@ -61,16 +67,15 @@ function twoTurnModel(calls: LanguageModelV4ToolCall[]) {
 }
 
 describe("engine tool-call fan-out is bounded per source", () => {
+  // Only read-only calls fan out (writes run in the model's order, below), so
+  // the bound is exercised on reads.
   it("caps simultaneous calls to one source without serializing them", async () => {
-    // The production shape: the model emits a large batch of writes against a
-    // single connector. Unbounded, all 25 hit that one server at once — and
-    // because the source is shared, one rejection that trips transport recovery
-    // takes the in-flight siblings down with it.
-    const tools = [schema("people__log_interaction")];
+    // A large batch of reads against a single connector. Unbounded, all 25 hit
+    // that one server at once — and because the source is shared, one rejection
+    // that trips transport recovery takes the in-flight siblings down with it.
+    const tools = [readSchema("people__list_contacts")];
     const { router, peak } = trackingRouter(tools);
-    const calls = Array.from({ length: 25 }, (_, i) =>
-      toolCall(`c${i}`, "people__log_interaction"),
-    );
+    const calls = Array.from({ length: 25 }, (_, i) => toolCall(`c${i}`, "people__list_contacts"));
 
     const engine = new AgentEngine(twoTurnModel(calls), router, new NoopEventSink());
     await engine.run(config, "system", USER, tools);
@@ -91,11 +96,11 @@ describe("engine tool-call fan-out is bounded per source", () => {
     // Capacity belongs to the server being called, so sources are budgeted
     // independently: a batch touching three connectors must not serialize the
     // small groups behind the large one.
-    const tools = [schema("people__write"), schema("memory__note"), schema("web__fetch")];
+    const tools = [readSchema("people__read"), readSchema("memory__get"), readSchema("web__fetch")];
     const { router, peak, order } = trackingRouter(tools);
     const calls = [
-      ...Array.from({ length: 20 }, (_, i) => toolCall(`p${i}`, "people__write")),
-      ...Array.from({ length: 3 }, (_, i) => toolCall(`m${i}`, "memory__note")),
+      ...Array.from({ length: 20 }, (_, i) => toolCall(`p${i}`, "people__read")),
+      ...Array.from({ length: 3 }, (_, i) => toolCall(`m${i}`, "memory__get")),
       ...Array.from({ length: 2 }, (_, i) => toolCall(`w${i}`, "web__fetch")),
     ];
 
@@ -138,7 +143,7 @@ describe("engine tool-call fan-out is bounded per source", () => {
       await new Promise((resolve) => setTimeout(resolve, (5 - n) * 4));
       return { content: textContent("ok"), isError: false };
     };
-    const numbered = Array.from({ length: 5 }, (_, i) => schema(`people__write${i}`));
+    const numbered = Array.from({ length: 5 }, (_, i) => readSchema(`people__read${i}`));
     const router = new StaticToolRouter(numbered, execute);
     const calls = numbered.map((s, i) => toolCall(`c${i}`, s.name));
 
@@ -146,6 +151,192 @@ describe("engine tool-call fan-out is bounded per source", () => {
     const result = await engine.run(config, "system", USER, numbered);
 
     expect(result.toolCalls.map((c) => c.name)).toEqual(numbered.map((s) => s.name));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Writes keep the model's order
+// ---------------------------------------------------------------------------
+
+/**
+ * A router whose every call waits until the test releases it, so a test
+ * decides when each call ends and reads exactly which calls have started.
+ * `state` is a value a write sets as it ends and a read returns as it starts.
+ */
+function gatedRouter(tools: ToolSchema[]) {
+  const started: string[] = [];
+  const ended: string[] = [];
+  const gates = new Map<string, () => void>();
+  const startWaiters = new Map<string, () => void>();
+  let state = "before";
+
+  const execute = async (call: ToolCall): Promise<ToolResult> => {
+    started.push(call.id);
+    const seen = state;
+    await new Promise<void>((resolve) => {
+      gates.set(call.id, resolve);
+      startWaiters.get(call.id)?.();
+    });
+    if (call.name.endsWith("__record")) state = `after:${call.id}`;
+    ended.push(call.id);
+    return { content: textContent(`${call.id} saw ${seen}`), isError: false };
+  };
+
+  return {
+    router: new StaticToolRouter(tools, execute),
+    started,
+    ended,
+    /** Resolves once `id` is running and waiting for its release. */
+    running(id: string): Promise<void> {
+      if (gates.has(id)) return Promise.resolve();
+      return new Promise((resolve) => startWaiters.set(id, resolve));
+    },
+    release(id: string): void {
+      const gate = gates.get(id);
+      if (!gate) throw new Error(`${id} is not running`);
+      gate();
+    },
+  };
+}
+
+/**
+ * Let every pending promise and I/O callback run, so any call the engine would
+ * start now has started. Turn-based, not a clock: nothing here waits on time.
+ */
+async function drain(): Promise<void> {
+  for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+}
+
+describe("engine runs a write in the model's order", () => {
+  const RECORD = schema("crm__record");
+  const STATUS = readSchema("crm__status");
+  const LIST = readSchema("crm__list");
+
+  it("starts a read after the write before it ends, and the read sees the write", async () => {
+    const tools = [RECORD, STATUS];
+    const gated = gatedRouter(tools);
+    const calls = [toolCall("w", "crm__record"), toolCall("r", "crm__status")];
+    const engine = new AgentEngine(twoTurnModel(calls), gated.router, new NoopEventSink());
+    const run = engine.run(config, "system", USER, tools);
+
+    await gated.running("w");
+    await drain();
+    expect(gated.started).toEqual(["w"]);
+
+    gated.release("w");
+    await gated.running("r");
+    expect(gated.ended).toEqual(["w"]);
+    gated.release("r");
+    const result = await run;
+
+    expect(result.toolCalls.map((c) => c.id)).toEqual(["w", "r"]);
+    expect(result.toolCalls[1]?.output).toContain("r saw after:w");
+  });
+
+  it("runs read, read together, then the write, then the read after it", async () => {
+    const tools = [RECORD, STATUS, LIST];
+    const gated = gatedRouter(tools);
+    const calls = [
+      toolCall("r1", "crm__status"),
+      toolCall("r2", "crm__list"),
+      toolCall("w", "crm__record"),
+      toolCall("r3", "crm__status"),
+    ];
+    const engine = new AgentEngine(twoTurnModel(calls), gated.router, new NoopEventSink());
+    const run = engine.run(config, "system", USER, tools);
+
+    // Both reads are running at once: neither has been released.
+    await gated.running("r1");
+    await gated.running("r2");
+    await drain();
+    expect(gated.started).toEqual(["r1", "r2"]);
+
+    // The write waits for every read before it, not just the first to end.
+    gated.release("r2");
+    await drain();
+    expect(gated.started).toEqual(["r1", "r2"]);
+    gated.release("r1");
+    await gated.running("w");
+    expect(gated.ended).toEqual(["r2", "r1"]);
+
+    // The read after the write waits for it.
+    await drain();
+    expect(gated.started).toEqual(["r1", "r2", "w"]);
+    gated.release("w");
+    await gated.running("r3");
+    gated.release("r3");
+    const result = await run;
+
+    // Results stay in call order whatever order the calls ended in.
+    expect(result.toolCalls.map((c) => c.id)).toEqual(["r1", "r2", "w", "r3"]);
+    expect(result.toolCalls[0]?.output).toContain("r1 saw before");
+    expect(result.toolCalls[3]?.output).toContain("r3 saw after:w");
+  });
+
+  it("runs a response of reads only all at once", async () => {
+    const tools = [STATUS, LIST];
+    const gated = gatedRouter(tools);
+    const ids = ["a", "b", "c", "d"];
+    const calls = ids.map((id, i) => toolCall(id, i % 2 ? "crm__list" : "crm__status"));
+    const engine = new AgentEngine(twoTurnModel(calls), gated.router, new NoopEventSink());
+    const run = engine.run(config, "system", USER, tools);
+
+    // Every read is running before any is released.
+    for (const id of ids) await gated.running(id);
+    expect([...gated.started].sort()).toEqual(ids);
+
+    for (const id of [...ids].reverse()) gated.release(id);
+    const result = await run;
+    expect(result.toolCalls.map((c) => c.id)).toEqual(ids);
+  });
+
+  it("treats a tool with no annotations as a write", async () => {
+    const tools = [schema("crm__note")];
+    const gated = gatedRouter(tools);
+    const calls = [toolCall("n1", "crm__note"), toolCall("n2", "crm__note")];
+    const engine = new AgentEngine(twoTurnModel(calls), gated.router, new NoopEventSink());
+    const run = engine.run(config, "system", USER, tools);
+
+    await gated.running("n1");
+    await drain();
+    expect(gated.started).toEqual(["n1"]);
+    gated.release("n1");
+    await gated.running("n2");
+    gated.release("n2");
+    const result = await run;
+    expect(result.toolCalls.map((c) => c.id)).toEqual(["n1", "n2"]);
+  });
+
+  it("starts no later call once the run is cancelled", async () => {
+    const tools = [RECORD, STATUS];
+    const gated = gatedRouter(tools);
+    const calls = [toolCall("w", "crm__record"), toolCall("r", "crm__status")];
+    const engine = new AgentEngine(twoTurnModel(calls), gated.router, new NoopEventSink());
+    const abort = new AbortController();
+    const run = engine.run({ ...config, signal: abort.signal }, "system", USER, tools);
+
+    await gated.running("w");
+    abort.abort();
+    gated.release("w");
+    await expect(run).rejects.toThrow();
+
+    expect(gated.started).toEqual(["w"]);
+  });
+
+  it("treats readOnlyHint: false as a write", async () => {
+    const tools = [{ ...schema("crm__save"), annotations: { readOnlyHint: false } }, STATUS];
+    const gated = gatedRouter(tools);
+    const calls = [toolCall("s", "crm__save"), toolCall("r", "crm__status")];
+    const engine = new AgentEngine(twoTurnModel(calls), gated.router, new NoopEventSink());
+    const run = engine.run(config, "system", USER, tools);
+
+    await gated.running("s");
+    await drain();
+    expect(gated.started).toEqual(["s"]);
+    gated.release("s");
+    await gated.running("r");
+    gated.release("r");
+    await run;
   });
 });
 
