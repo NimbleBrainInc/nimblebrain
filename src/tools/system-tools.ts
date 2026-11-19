@@ -21,6 +21,7 @@ import {
   describeUngrantedPlugins,
   discoverUngrantedPlugins,
   requestPlugin,
+  ungrantedPluginGuidance,
 } from "./plugin-request.ts";
 import type { ToolRegistry } from "./registry.ts";
 import { READ_RESOURCE_SCHEMES_PROSE } from "./resource-schemes.ts";
@@ -89,6 +90,7 @@ export async function createSystemTools(
   const manageToolsToolDefs: InProcessTool[] = createManageToolsToolDefs(
     toolPromotionCtx,
     pluginCtx ? (serverName) => requestPlugin(pluginCtx, serverName) : undefined,
+    pluginCtx ? (toolName) => ungrantedPluginGuidance(pluginCtx, toolName) : undefined,
   );
 
   const systemToolDefs: InProcessTool[] = [
@@ -128,7 +130,7 @@ export async function createSystemTools(
       },
     },
     createReadResourceTool(getRegistry),
-    createStatusTool(getRegistry, getSkills, runtime),
+    createStatusTool(getRegistry, getSkills, runtime, pluginCtx),
   ];
 
   // Catalog activation. Defined on the skills source's file (it shares that
@@ -324,6 +326,7 @@ function createStatusTool(
   getRegistry: () => ToolRegistry,
   getSkills?: GetSkillsFn,
   runtime?: Runtime,
+  pluginCtx?: ManageConnectorsContext,
 ): InProcessTool {
   return {
     name: "status",
@@ -349,7 +352,14 @@ function createStatusTool(
       const nameQuery = input.name ? String(input.name) : null;
 
       try {
-        return await resolveStatusScope(scope, nameQuery, getRegistry, getSkills, runtime);
+        return await resolveStatusScope(
+          scope,
+          nameQuery,
+          getRegistry,
+          getSkills,
+          runtime,
+          pluginCtx,
+        );
       } catch (err) {
         return {
           content: textContent(
@@ -369,9 +379,10 @@ async function resolveStatusScope(
   getRegistry: () => ToolRegistry,
   getSkills: GetSkillsFn | undefined,
   runtime: Runtime | undefined,
+  pluginCtx: ManageConnectorsContext | undefined,
 ): Promise<ToolResult> {
   if (scope === "connectors") {
-    return handleConnectorStatus(getRegistry, nameQuery);
+    return handleConnectorStatus(getRegistry, nameQuery, pluginCtx);
   }
   if (scope === "skills") {
     const wsId = runtime?.requireWorkspaceId();
@@ -386,9 +397,15 @@ async function resolveStatusScope(
   return handleOverviewStatus(getRegistry, getSkills, runtime);
 }
 
+/**
+ * `status` scope=connectors: each installed connector's health, then the
+ * caller's own plugins that are off here, named as `nb__search` names them, so
+ * a model looking for a missing connector learns it can ask for one.
+ */
 async function handleConnectorStatus(
   getRegistry: () => ToolRegistry,
   nameQuery: string | null,
+  pluginCtx: ManageConnectorsContext | undefined,
 ): Promise<ToolResult> {
   const query = nameQuery?.toLowerCase() ?? null;
   const sources = getRegistry().getSources();
@@ -400,13 +417,12 @@ async function handleConnectorStatus(
   }
 
   if (entries.length === 0) {
-    return {
-      content: textContent(
-        query ? `No installed app matches "${query}".` : "No apps are currently installed.",
-      ),
-      isError: false,
-    };
+    entries.push(
+      query ? `No installed app matches "${query}".` : "No apps are currently installed.",
+    );
   }
+  const offHere = pluginCtx ? await discoverUngrantedPlugins(pluginCtx, query ?? "") : [];
+  if (offHere.length > 0) entries.push(describeUngrantedPlugins(offHere));
   return { content: textContent(entries.join("\n\n")), isError: false };
 }
 

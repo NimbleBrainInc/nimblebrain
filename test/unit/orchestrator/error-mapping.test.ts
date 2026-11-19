@@ -83,7 +83,24 @@ describe("mapOrchestratorErrorToToolResult", () => {
     });
     // Actionable message the agent can relay to the user.
     expect(result.content[0]).toMatchObject({ type: "text" });
-    expect((result.content[0] as { text: string }).text).toContain("Settings");
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain("Plugins");
+    expect(text).not.toContain("Settings");
+  });
+
+  test("plugin guidance replaces the text of a personal-name miss and keeps the reason", () => {
+    const guidance =
+      "Granola is your plugin but isn't turned on in this workspace. To use it, ask.";
+    for (const err of [
+      new ConnectorGrantDenied("u1", "granola", "ws_003eba8844413cd9"),
+      new UnknownIdentitySource("my_granola__read_notes", "my_granola"),
+    ]) {
+      const result = mapOrchestratorErrorToToolResult(err, "my_granola__read_notes", guidance);
+      expect((result.content[0] as { text: string }).text).toBe(guidance);
+      expect(result.structuredContent?.reason).toBe(
+        err instanceof ConnectorGrantDenied ? "connector_grant_denied" : "unknown_identity_source",
+      );
+    }
   });
 
   // Pins: unknown error classes RE-THROW. A naive `?? "unknown"` default

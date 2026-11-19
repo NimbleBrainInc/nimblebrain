@@ -35,9 +35,11 @@ import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/typ
 // going through it would close a cycle for no gain.
 import { mapOrchestratorErrorToToolResult } from "../orchestrator/error-mapping.ts";
 import {
+  ConnectorGrantDenied,
   type OrchestratorRuntime,
   type RoutedToolCall,
   routeToolCall,
+  UnknownIdentitySource,
 } from "../orchestrator/route.ts";
 import type { AdminToolCaller } from "../permissions/admin-tools.ts";
 import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
@@ -183,6 +185,22 @@ export class IdentityToolRouter implements ToolRouter {
   }
 
   /**
+   * For a personal-connector name that did not route, the runtime's answer when
+   * it names one of the caller's own plugins turned off here: what reaches the
+   * model is then how to ask for it, not "no such source".
+   */
+  private async pluginGuidance(err: unknown, call: ToolCall): Promise<string | null> {
+    if (!(err instanceof ConnectorGrantDenied || err instanceof UnknownIdentitySource)) return null;
+    return (
+      (await this.runtime.ungrantedPluginGuidance?.(
+        this.identityId,
+        this.workspaceId,
+        call.name,
+      )) ?? null
+    );
+  }
+
+  /**
    * Route + dispatch a tool call.
    *
    * Every name is bare `<source>__<tool>`; the source segment picks the door.
@@ -215,7 +233,7 @@ export class IdentityToolRouter implements ToolRouter {
         runtime: this.runtime,
       });
     } catch (err) {
-      return mapOrchestratorErrorToToolResult(err, call.name);
+      return mapOrchestratorErrorToToolResult(err, call.name, await this.pluginGuidance(err, call));
     }
 
     if (routed.kind === "workspace" && this.onWorkspaceDispatch) {

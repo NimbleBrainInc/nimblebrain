@@ -226,7 +226,7 @@ describe("a connector whose header carries a workspace secret", () => {
     const warning = (result.structuredContent as { warning?: string }).warning;
     // The remedy the error names is the surface that collects it, not a tool call.
     expect(warning).toContain(KEY);
-    expect(warning).toContain("Settings → Connectors");
+    expect(warning).toContain("under Plugins");
     expect(warning).not.toContain("set_secret");
     expect(workspaceRegistry.hasEstablishedSource(SERVER_NAME)).toBe(false);
   });

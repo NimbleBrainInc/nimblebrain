@@ -35,6 +35,28 @@ function summarize({ promoted, released }: BatchResult): string {
  */
 export type RequestPluginFn = (serverName: string) => Promise<ToolResult>;
 
+/**
+ * What to say instead of "not found" for a name that is one of the caller's own
+ * plugins turned off here, or null to keep the generic answer
+ * (`ungrantedPluginGuidance`, `src/tools/plugin-request.ts`).
+ */
+export type PluginGuidanceFn = (toolName: string) => Promise<string | null>;
+
+/** Each `not_found` add that names the caller's plugin off here, told how to ask for it. */
+async function explainMissing(
+  promoted: ToolPromotionResult[],
+  guidanceFor: PluginGuidanceFn | undefined,
+): Promise<ToolPromotionResult[]> {
+  if (!guidanceFor) return promoted;
+  return Promise.all(
+    promoted.map(async (r) => {
+      if (r.ok || r.reason !== "not_found") return r;
+      const guidance = await guidanceFor(r.toolName);
+      return guidance ? { ...r, message: guidance } : r;
+    }),
+  );
+}
+
 /** `request_plugin`: sent alone, and only where a runtime can answer it. */
 function askForPlugin(
   serverName: string,
@@ -59,6 +81,7 @@ function askForPlugin(
 export function createManageToolsToolDefs(
   toolPromotionCtx?: ToolPromotionControls,
   requestPlugin?: RequestPluginFn,
+  pluginGuidance?: PluginGuidanceFn,
 ): InProcessTool[] {
   return [
     typedTool({
@@ -91,8 +114,9 @@ export function createManageToolsToolDefs(
         const released = remove.map((toolName) => toolPromotionCtx.removeTool(toolName));
         // Sequential, not Promise.all: once the cap is reached the rest are
         // refused, so the adds must land in the order the model listed them.
-        const promoted: ToolPromotionResult[] = [];
-        for (const toolName of add) promoted.push(await toolPromotionCtx.addTool(toolName));
+        const added: ToolPromotionResult[] = [];
+        for (const toolName of add) added.push(await toolPromotionCtx.addTool(toolName));
+        const promoted = await explainMissing(added, pluginGuidance);
         const batch: BatchResult = { promoted, released };
         return {
           content: textContent(summarize(batch)),

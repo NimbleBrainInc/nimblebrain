@@ -274,6 +274,7 @@ import {
   type WithCredentialRefs,
 } from "../tools/instance-credentials.ts";
 import { McpSource } from "../tools/mcp-source.ts";
+import { ungrantedPluginGuidance } from "../tools/plugin-request.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { isReservedResourceScheme, readableRecordTemplates } from "../tools/resource-schemes.ts";
 import {
@@ -3941,6 +3942,20 @@ export class Runtime {
    */
   async getIdentityConnectorSource(userId: string, name: string): Promise<ToolSource | undefined> {
     return this.lifecycle.getIdentityConnectorSource(userId, name, this.getWorkDir());
+  }
+
+  /**
+   * How a model asks for `toolName` when it names one of `userId`'s own plugins
+   * turned off in `wsId`, or null for any other name (see
+   * `ungrantedPluginGuidance`). The routers call it through `OrchestratorRuntime`.
+   */
+  async ungrantedPluginGuidance(
+    userId: string,
+    wsId: string,
+    toolName: string,
+  ): Promise<string | null> {
+    const ctx = { runtime: this, getIdentity: () => null, getWorkspaceId: () => wsId };
+    return ungrantedPluginGuidance(ctx, toolName, { callerId: userId, wsId });
   }
 
   /**
