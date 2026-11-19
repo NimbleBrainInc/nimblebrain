@@ -340,7 +340,7 @@
       "properties": {
         "skillManagement": {
           "type": "boolean",
-          "description": "Enable the skill write surface via the nb__skills tools: create, update, delete, history, restore, set_status, and the conversation-scoped activate/deactivate. Default: true.",
+          "description": "Enable the skill write surface via the nb__skills tools: create, update, delete, history, restore, set_status, set_here, and the conversation-scoped activate/deactivate. Default: true.",
           "default": true
         },
         "toolDiscovery": {

@@ -315,6 +315,7 @@ Manage skills:
 - [0034](adr/0034-a-skills-scope-names-where-it-is-stored.md) — a skill's scope names where it is stored; its name prefix names who published it
 - [0053](adr/0053-a-bound-skill-reaches-the-model-before-its-tools-first-call.md) — a skill bound to a tool reaches the model before that tool's first call; the engine holds the call until it does
 - [0055](adr/0055-guidance-for-one-app-is-a-skill-bound-to-its-tools.md) — guidance for one app is a skill bound to its tools
+- [0072](adr/0072-a-person-turns-their-own-skill-off-in-one-workspace-on-their-own-record.md) — a person's own skill applies in every workspace unless they turn it off in one; the off is stored on their record and dropped where the user tier is collected (proposed)
 - [0068](adr/0068-a-plugin-is-the-unit-of-install-and-a-catalog-vouches-for-it.md) — a plugin is the unit of install, a catalog vouches for it, and the runtime reconciles what is installed
 
 Orchestrate over remote MCP:

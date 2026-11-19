@@ -91,6 +91,12 @@ export declare const PlatformToolCatalog: {
                 id: import("@sinclair/typebox").TString;
             }>;
         };
+        readonly set_here: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                id: import("@sinclair/typebox").TString;
+                on: import("@sinclair/typebox").TBoolean;
+            }>;
+        };
     };
     readonly usage: {
         readonly report: {

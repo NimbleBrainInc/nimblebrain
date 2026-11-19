@@ -17,7 +17,7 @@
  * Resource surfaced:
  *   skill://skills/authoring-guide — Layer 1 vendored markdown
  *
- * Mutation tools (create/update/history/restore/delete/set_status) and the
+ * Mutation tools (create/update/history/restore/delete/set_status/set_here) and the
  * per-conversation mute (activate/deactivate) register here too.
  */
 
@@ -34,6 +34,7 @@ import {
   SKILL_SUPPRESSION_META_KEY,
   type ToolResult,
 } from "../../engine/types.ts";
+import { clearSkillOffs, setSkillOnIn, skillsOffIn } from "../../identity/skills-off-store.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import { log } from "../../observability/log.ts";
 import { formatActivatedSkillBlock } from "../../prompt/containment.ts";
@@ -109,6 +110,8 @@ import {
   SkillsReadOutput,
   SkillsRestoreInput,
   SkillsRestoreOutput,
+  SkillsSetHereInput,
+  SkillsSetHereOutput,
   SkillsSetStatusInput,
   SkillsUpdateInput,
   SkillsUseOutput,
@@ -135,6 +138,7 @@ const SKILLS_LIST_DESCRIPTION =
   "`status` (active | disabled), or `modified_since` (ISO 8601). " +
   "Unfiltered, a name in several tiers lists once, the one conversations load (user over workspace over org); " +
   "a `scope` filter lists that tier whole. " +
+  "With `scope: user` in a workspace, each of your skills reports `onHere`: false when you turned it off there. " +
   "Returns id, name, layer, scope, status, token count, and source metadata for each skill. " +
   "Use this to answer 'what skills do I have?' or 'what's available for the active tool set?'";
 
@@ -202,6 +206,14 @@ const SKILLS_SET_STATUS_DESCRIPTION =
   "user-scope skill's file is read by every conversation that user has, in every workspace, so " +
   "flipping it is a decision for a human looking at the surface that shows what they are changing. " +
   "The agent's `activate`/`deactivate` mute for one conversation instead.";
+
+const SKILLS_SET_HERE_DESCRIPTION =
+  "Turn one of your own (`user`-scope) skills on or off in THIS workspace. INTERNAL: the " +
+  "Plugins page invokes this by name; the model never sees it. Your own skills apply in every " +
+  "workspace you are in unless you turn one off in a workspace. The setting is yours, stored " +
+  "on your own record: other members never see it, and other workspaces are unaffected. " +
+  "While yours is off here, a workspace or org skill with the same name applies instead. " +
+  "Workspace and org skills are not changed here.";
 
 const SKILLS_ACTIVATE_DESCRIPTION =
   "Un-mute a skill previously muted with `deactivate` in this conversation, so it composes again " +
@@ -449,6 +461,20 @@ export function createSkillsSource(
       },
     }),
     typedTool({
+      name: "set_here",
+      description: SKILLS_SET_HERE_DESCRIPTION,
+      meta: { ui: { visibility: ["app"] } },
+      inputSchema: SkillsSetHereInput,
+      outputSchema: SkillsSetHereOutput,
+      handler: async (input) => {
+        try {
+          return await setHereHandler(runtime, input, authoringGuidePath);
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    }),
+    typedTool({
       name: "activate",
       description: SKILLS_ACTIVATE_DESCRIPTION,
       inputSchema: SkillsActivateInput,
@@ -623,8 +649,12 @@ async function listSkills(
   // entry below.
   const layer1SourcePaths = new Set<string>([resolve(authoringGuidePath)]);
   if (includeLayer3) {
+    const offHere = offHereForCaller(runtime);
     for (const skill of loadListedTiers(runtime, filter.scope)) {
-      if (isListableLayer3Skill(skill, layer1SourcePaths)) out.push(skillToListed(skill));
+      if (!isListableLayer3Skill(skill, layer1SourcePaths)) continue;
+      const listed = skillToListed(skill);
+      if (offHere && listed.scope === "user") listed.onHere = !offHere.has(listed.name);
+      out.push(listed);
     }
   }
 
@@ -644,13 +674,25 @@ async function listSkills(
  * The Layer 3 skills `skills__list` draws from. A scope filter lists that tier
  * whole: the overlay merges by name with user > workspace > org precedence, so
  * loading only the tiers at or below the one asked for keeps a skill that a
- * higher tier shadows.
+ * higher tier shadows. For the same reason the `user` tier keeps the skills
+ * its owner turned off in this workspace (each reports `onHere: false`), while
+ * an unfiltered listing shows what conversations here load, which they don't.
  */
 function loadListedTiers(runtime: Runtime, scope: SkillsListInput["scope"]): Skill[] {
   const { wsId, userId } = resolveCallContext(runtime);
   if (scope === "org") return runtime.loadConversationSkills(null, null);
   if (scope === "workspace") return runtime.loadConversationSkills(wsId, null);
-  return runtime.loadConversationSkills(wsId, userId);
+  return runtime.loadConversationSkills(wsId, userId, { keepOffHere: scope === "user" });
+}
+
+/**
+ * The caller's own skills turned off in the request's workspace, or `null`
+ * when the request names no workspace or caller (no `onHere` to report).
+ */
+function offHereForCaller(runtime: Runtime): Set<string> | null {
+  const { wsId, userId } = resolveCallContext(runtime);
+  if (!wsId || !userId) return null;
+  return skillsOffIn(runtime.getWorkDir(), userId, wsId);
 }
 
 /**
@@ -2497,14 +2539,66 @@ async function deleteSkillHandler(
   const name = (id.split("/").pop() ?? "").replace(/\.md$/, "");
   if (!name) return errorResult(new Error(`Cannot derive skill name from path "${id}"`));
 
+  // A user skill's per-workspace offs key on its manifest name; read it before
+  // the file goes, so a later skill of the same name starts on everywhere.
+  const userId = scope === "user" ? runtime.getCurrentIdentity()?.id : undefined;
+  const manifestName = userId ? (parseSkillFile(id)?.manifest.name ?? name) : name;
+
   snapshotSkillVersion(id);
   deleteSkill(dir, name);
+  if (userId) await clearSkillOffs(runtime.getWorkDir(), userId, manifestName);
   await reloadBootSkills(runtime);
 
   eventSink.emit({ type: "skill.deleted", data: { id, name, scope } });
   return {
     content: textContent(`Deleted ${scope} skill "${name}" (snapshotted to _versions/)`),
     structuredContent: { id, name, scope },
+    isError: false,
+  };
+}
+
+/**
+ * Turn one of the caller's own skills on or off in the request's workspace
+ * (ADR-0072). Writes the person's own record, never the skill file and never
+ * the workspace's partition, so no other member or workspace is touched.
+ *
+ * The off list is read where user-tier skills are collected for a run
+ * (`Runtime.loadConversationSkills`), so the change reaches the catalog, the
+ * trigger matcher and bound delivery from the next turn, and moves the catalog's
+ * bytes once, as an authoring edit does (ADR-0015, ADR-0018).
+ */
+async function setHereHandler(
+  runtime: Runtime,
+  input: SkillsSetHereInput,
+  authoringGuidePath: string,
+): Promise<TypedToolResult<typeof SkillsSetHereOutput>> {
+  const { id, on } = input;
+  const wsId = runtime.requireWorkspaceId();
+  const userId = runtime.getCurrentIdentity()?.id;
+  if (!userId) return errorResult(new Error("Turning a skill on or off needs a signed-in person"));
+
+  const gate = await gateSkillPath(runtime, id, authoringGuidePath, "write");
+  if ("error" in gate) return gate.error;
+  if (gate.scope !== "user") {
+    return errorResult(
+      new Error(
+        `Only your own (user-scope) skills are turned on or off per workspace; "${id}" is a ` +
+          `${gate.scope} skill, which its owner changes in that skill's settings.`,
+      ),
+    );
+  }
+  const name = parseSkillFile(id)?.manifest.name;
+  if (!name) return errorResult(new Error(`Skill at "${id}" could not be parsed`));
+
+  await setSkillOnIn(runtime.getWorkDir(), userId, wsId, name, on);
+  return {
+    content: textContent(
+      on
+        ? `Your skill "${name}" applies in this workspace again from the next turn.`
+        : `Your skill "${name}" is off in this workspace from the next turn. It still applies in ` +
+            `your other workspaces, and other members are unaffected.`,
+    ),
+    structuredContent: { id, name, workspaceId: wsId, onHere: on },
     isError: false,
   };
 }

@@ -293,6 +293,25 @@ export const SkillsSetStatusInput = Type.Object(
 export type SkillsSetStatusInput = Static<typeof SkillsSetStatusInput>;
 
 /**
+ * `skills__set_here`: turn one of the caller's own (`user`-scope) skills on or
+ * off in the workspace the call is made in (ADR-0072). Not a field on `update`:
+ * `update` edits the skill file, which is the same in every workspace, while
+ * this writes the person's own per-workspace record and needs a workspace.
+ */
+export const SkillsSetHereInput = Type.Object(
+  {
+    id: Type.String({
+      description: "Filesystem path of one of your own (`user`-scope) skills, from `skills__list`.",
+    }),
+    on: Type.Boolean({
+      description: "`true` applies the skill in this workspace, `false` turns it off here.",
+    }),
+  },
+  { required: ["id", "on"] },
+);
+export type SkillsSetHereInput = Static<typeof SkillsSetHereInput>;
+
+/**
  * The mute pair takes a skill NAME, not a path. `IdOnlyInput`'s description
  * says "filesystem path", which sends the model down the `update`/`delete`
  * shape — and a connector-published skill has no path at all, so a basename
@@ -397,6 +416,12 @@ export const SkillSummary = Type.Object({
   triggers: Type.Optional(Type.Array(Type.String())),
   priority: Type.Optional(Type.Number()),
   loading: Type.Optional(SkillLoading),
+  /**
+   * On a `user`-scope skill listed for a workspace: whether it applies there.
+   * `false` when its owner turned it off in that workspace (ADR-0072). Absent
+   * for other scopes and when the request names no workspace.
+   */
+  onHere: Type.Optional(Type.Boolean()),
 });
 export type SkillSummary = Static<typeof SkillSummary>;
 
@@ -524,6 +549,15 @@ export const SkillsDeleteOutput = Type.Object({
   scope: Type.String(),
 });
 export type SkillsDeleteOutput = Static<typeof SkillsDeleteOutput>;
+
+/** `skills__set_here`: whether the caller's own skill applies in this workspace. */
+export const SkillsSetHereOutput = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  workspaceId: Type.String(),
+  onHere: Type.Boolean(),
+});
+export type SkillsSetHereOutput = Static<typeof SkillsSetHereOutput>;
 
 /** `skills__activate` / `skills__deactivate`: a mute that holds for this conversation only. */
 export const SkillsActivationOutput = Type.Object({
