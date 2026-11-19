@@ -192,6 +192,24 @@ describe("actionsSource", () => {
     expect(calls.navigate).toEqual(["/w/003eba8844413cd9/settings"]);
   });
 
+  test("Plugins, Browse plugins, Skills and New skill each open their page", () => {
+    const ctx = { ...baseCtx, activeWorkspaceSlug: "003eba8844413cd9" };
+    const routes: Record<string, string> = {
+      "action:plugins": "/w/003eba8844413cd9/plugins",
+      "action:browse-plugins": "/w/003eba8844413cd9/plugins/browse",
+      "action:skills": "/w/003eba8844413cd9/skills",
+      "action:new-skill": "/w/003eba8844413cd9/skills/new",
+    };
+    const items = actionsSource.getItems("", ctx);
+    for (const [id, path] of Object.entries(routes)) {
+      const item = items.find((i) => i.id === id);
+      expect(item).toBeDefined();
+      const { ctx: run, calls } = recordRunContext();
+      item!.run(run);
+      expect(calls.navigate).toEqual([path]);
+    }
+  });
+
   test("documentation run opens the docs site and closes the palette", () => {
     const item = actionsSource
       .getItems("docs", baseCtx)

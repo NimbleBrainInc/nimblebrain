@@ -68,10 +68,17 @@ import { GlobalHomePage } from "./pages/GlobalHomePage";
 import { NotFoundPage, WorkspaceNotFoundPage } from "./pages/NotFoundPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
 import { ConnectorPageRedirect, PluginDetailPage } from "./pages/PluginDetailPage";
+import { PluginsBrowsePage } from "./pages/PluginsBrowsePage";
 import { PluginsPage } from "./pages/PluginsPage";
-import { ProfilePluginsRedirect, WorkspacePluginsRedirect } from "./pages/PluginsRedirects";
+import {
+  OldSkillAddressRedirect,
+  ProfilePluginsRedirect,
+  WorkspacePluginsRedirect,
+  WorkspaceSkillsRedirect,
+} from "./pages/PluginsRedirects";
 import { ProfilePage } from "./pages/ProfilePage";
 import { NewSkillPage, SkillPage } from "./pages/SkillPage";
+import { SkillsPage } from "./pages/SkillsPage";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { OrgAboutTab } from "./pages/settings/OrgAboutTab";
 import { OrgArchivesTab } from "./pages/settings/OrgArchivesTab";
@@ -435,14 +442,18 @@ function AuthenticatedAppContent({
                   workspace rather than to any connector, and no connector may
                   claim, reorder, or replace it. */}
               <Route path="notifications" element={<NotificationsPage />} />
-              {/* What the agent can do here: the workspace's plugins, the
-                  viewer's own, and the directory to add more. */}
+              {/* The plugins installed here (the workspace's and the viewer's
+                  own), and the directory to add more. */}
               <Route path="plugins" element={<PluginsPage />} />
+              <Route path="plugins/browse" element={<PluginsBrowsePage />} />
               {/* One plugin: how it is configured, whose account it uses, where it is used. */}
               <Route path="plugins/:pluginRef" element={<PluginDetailPage />} />
-              {/* A skill someone wrote, and a new one, beside the plugins. */}
-              <Route path="plugins/skills/new" element={<NewSkillPage />} />
-              <Route path="plugins/skills/:scope/:name" element={<SkillPage />} />
+              {/* What the agent is taught here, a skill someone wrote, and a new one. */}
+              <Route path="skills" element={<SkillsPage />} />
+              <Route path="skills/new" element={<NewSkillPage />} />
+              <Route path="skills/:scope/:name" element={<SkillPage />} />
+              {/* Skills were under Plugins; their old addresses land on Skills. */}
+              <Route path="plugins/skills/*" element={<OldSkillAddressRedirect />} />
               {/* Workspace settings — General/Members/MCP/Notifications/Webhooks. */}
               <Route path="settings" element={<WorkspaceSettingsPage />}>
                 <Route
@@ -451,7 +462,7 @@ function AuthenticatedAppContent({
                 />
                 <Route path="general" element={<WorkspaceGeneralTab />} />
                 <Route path="members" element={<WorkspaceMembersTab />} />
-                {/* Connectors and skills are managed on Plugins; these keep old
+                {/* Connectors are managed on Plugins and skills on Skills; these keep old
                     links, bookmarks and sign-in callbacks working. The
                     connector address also resolves a server name to its
                     plugin's page (`connectorSettingsPath`). */}
@@ -461,7 +472,7 @@ function AuthenticatedAppContent({
                   element={<WorkspacePluginsRedirect tab="browse" />}
                 />
                 <Route path="connectors/:serverName" element={<ConnectorPageRedirect />} />
-                <Route path="skills" element={<WorkspacePluginsRedirect />} />
+                <Route path="skills" element={<WorkspaceSkillsRedirect />} />
                 <Route path="mcp" element={<WorkspaceMcpTab />} />
                 <Route path="notifications" element={<WorkspaceNotificationsTab />} />
                 <Route path="webhooks" element={<WorkspaceWebhooksTab />} />
@@ -484,9 +495,9 @@ function AuthenticatedAppContent({
 
             {/* Profile — top-level, identity-bound. Tabbed surface
                 following the /org/* pattern. A person's own plugins and
-                skills are on each workspace's Plugins page; the old
-                addresses go there, and a sign-in callback that returns to
-                one keeps its query. */}
+                skills are on each workspace's Plugins and Skills pages; the
+                old addresses go there, and a sign-in callback that returns
+                to one keeps its query. */}
             <Route path="/profile" element={<ProfilePage />}>
               <Route
                 index
@@ -494,7 +505,7 @@ function AuthenticatedAppContent({
               />
               <Route path="general" element={<ProfileTab />} />
               <Route path="connectors" element={<ProfilePluginsRedirect />} />
-              <Route path="skills" element={<ProfilePluginsRedirect />} />
+              <Route path="skills" element={<ProfilePluginsRedirect page="skills" />} />
             </Route>
 
             {/* Organization settings — dedicated top-level home, org-admin

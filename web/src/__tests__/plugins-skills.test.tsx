@@ -1,19 +1,20 @@
 // ---------------------------------------------------------------------------
-// Skills on Plugins — the Installed tab's skills, a skill's page, and writing a
-// new one from Browse.
+// Skills — the Skills page, a skill's page, and writing a new one.
 //
-// Installed lists the skills people wrote under who they act for (the
-// workspace's and the org's under Shared, the viewer's own under Just you),
-// and never one that came with a plugin. A
-// skill's page edits under the server's write rules: a workspace skill needs
-// workspace write, the viewer's own is theirs, an org skill is read-only here.
-// A new skill asks whom it is for, and only a writer may pick everyone. The
-// viewer's own skills, and only theirs, carry On here, on their row and page.
+// Skills lists the skills people wrote, split Workspace (the workspace's and
+// the org's, an org skill tagged) | Personal (the viewer's own, each with On
+// here), and beneath them, muted, the skills that came with the segment's
+// plugins, each opening its plugin. A skill's page edits under the server's
+// write rules: a workspace skill needs workspace write, the viewer's own is
+// theirs, an org skill is read-only here. A new skill asks whom it is for, and
+// only a writer may pick everyone. Skill pages under Plugins' old addresses
+// land on the same page under Skills.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
+import type { Plugin } from "../_generated/platform-schemas/plugins";
 import type { SkillSummary } from "../_generated/platform-schemas/skills";
 import type * as ApiClient from "../api/client";
 import type { ToolCallResponse } from "../types";
@@ -110,7 +111,12 @@ const callTool = mock<typeof ApiClient.callTool>(async (_server, tool, args) =>
 const callToolWithoutWorkspace = mock<typeof ApiClient.callToolWithoutWorkspace>(
   async (_server, tool, args) => answer(tool, args as Record<string, unknown> | undefined),
 );
-const listPlugins = mock<typeof ApiClient.listPlugins>(async (wsId) => ({ wsId, plugins: [] }));
+let plugins: Plugin[] = [];
+const listPlugins = mock<typeof ApiClient.listPlugins>(async (wsId) => ({ wsId, plugins }));
+const listConnectorSkills = mock<typeof ApiClient.listConnectorSkills>(async () => ({
+  overlays: [],
+  published: [],
+}));
 const listDirectory = mock(async () => ({ entries: [], errors: [] }));
 const listPersonalConnectors = mock<typeof ApiClient.listPersonalConnectors>(async () => ({
   connectors: [],
@@ -129,6 +135,7 @@ mock.module("../api/client", () => ({
   callTool,
   callToolWithoutWorkspace,
   listPlugins,
+  listConnectorSkills,
   listDirectory,
   listPersonalConnectors,
   getInstalledConnectors,
@@ -141,8 +148,9 @@ const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { NoticeProvider, NoticeViewport } = await import("../components/notices");
 const { toSlug } = await import("../lib/workspace-slug");
-const { PluginsPage } = await import("../pages/PluginsPage");
+const { SkillsPage } = await import("../pages/SkillsPage");
 const { NewSkillPage, SkillPage } = await import("../pages/SkillPage");
+const { OldSkillAddressRedirect } = await import("../pages/PluginsRedirects");
 
 const SLUG = toSlug(WS_ID);
 
@@ -176,6 +184,7 @@ beforeEach(() => {
     onHere: on,
   }));
   refuse = null;
+  plugins = [];
 });
 
 async function settle(): Promise<void> {
@@ -199,9 +208,11 @@ async function mount(path: string, role: "admin" | "member" = "admin"): Promise<
           <MemoryRouter initialEntries={[path]}>
             <LocationProbe />
             <Routes>
-              <Route path="/w/:slug/plugins" element={<PluginsPage />} />
-              <Route path="/w/:slug/plugins/skills/new" element={<NewSkillPage />} />
-              <Route path="/w/:slug/plugins/skills/:scope/:name" element={<SkillPage />} />
+              <Route path="/w/:slug/skills" element={<SkillsPage />} />
+              <Route path="/w/:slug/skills/new" element={<NewSkillPage />} />
+              <Route path="/w/:slug/skills/:scope/:name" element={<SkillPage />} />
+              <Route path="/w/:slug/plugins/skills/*" element={<OldSkillAddressRedirect />} />
+              <Route path="/w/:slug/plugins/:pluginRef" element={<p>plugin page</p>} />
             </Routes>
           </MemoryRouter>
         </WorkspaceProvider>
@@ -275,25 +286,58 @@ function calls(fn: typeof callTool | typeof callToolWithoutWorkspace, tool: stri
   return fn.mock.calls.filter((c) => c[1] === tool);
 }
 
-describe("Installed — skills", () => {
-  test("lists the workspace's and the org's under Shared, the viewer's under Just you, none from a plugin", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins`);
-    const inSection = (id: string) =>
-      rows(mounted!.container.querySelector(`[data-testid="installed-section-${id}"]`)!);
-    expect(inSection("shared")).toEqual(["workspace/house-style", "org/policy"]);
-    expect(inSection("you")).toEqual(["user/my-voice"]);
-    expect(calls(callTool, "list")[0]?.[3]).toEqual({ workspaceId: WS_ID });
-    expect(mounted.container.textContent).toContain(
-      "Skills that come with a plugin are on that plugin's page.",
+function segment(container: HTMLElement, id: "workspace" | "personal"): HTMLButtonElement {
+  return container.querySelector<HTMLButtonElement>(`[data-segment="${id}"]`)!;
+}
+
+/** Skills, on the Personal segment. */
+async function mountPersonal(): Promise<Mounted> {
+  const m = await mount(`/w/${SLUG}/skills`);
+  await click(segment(m.container, "personal"));
+  return m;
+}
+
+function plugin(over: Partial<Plugin> & Pick<Plugin, "id" | "displayName" | "owner">): Plugin {
+  const serverName = over.id.split(":")[1] ?? over.id;
+  return {
+    granted: true,
+    servers: [{ serverName, status: "ready", account: null }],
+    skills: [],
+    apps: [],
+    ...over,
+  };
+}
+
+describe("Skills page", () => {
+  test("is titled Skills, with New skill as its one action", async () => {
+    mounted = await mount(`/w/${SLUG}/skills`);
+    expect(mounted.container.querySelector("h1")?.textContent).toBe("Skills");
+    const header = mounted.container.querySelector('[data-testid="list-page-header"]')!;
+    expect([...header.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual(
+      ["New skill"],
     );
+    await click(header.querySelector("button"));
+    expect(location).toBe(`/w/${SLUG}/skills/new`);
+  });
+
+  test("Workspace lists the workspace's and the org's; Personal the viewer's; none from a plugin", async () => {
+    mounted = await mount(`/w/${SLUG}/skills`);
+    expect(segment(mounted.container, "workspace").textContent).toBe("Workspace2");
+    expect(segment(mounted.container, "personal").textContent).toBe("Personal1");
+    expect(rows(mounted.container)).toEqual(["workspace/house-style", "org/policy"]);
+    expect(calls(callTool, "list")[0]?.[3]).toEqual({ workspaceId: WS_ID });
+    await click(segment(mounted.container, "personal"));
+    expect(rows(mounted.container)).toEqual(["user/my-voice"]);
+    expect(mounted.container.textContent).not.toContain("plugin's page");
   });
 
   test("each row says how it loads, and an org skill is tagged", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins`);
+    mounted = await mount(`/w/${SLUG}/skills`);
     const tag = (name: string) =>
       rowFor(mounted!.container, name)?.querySelector('[data-testid="skill-org-tag"]')?.textContent;
     expect(tag("policy")).toBe("Org");
     expect(tag("house-style")).toBeUndefined();
+    await click(segment(mounted.container, "personal"));
     expect(tag("my-voice")).toBeUndefined();
     const facts = rowFor(mounted.container, "my-voice")?.querySelector(
       '[data-testid="skill-facts"]',
@@ -302,23 +346,127 @@ describe("Installed — skills", () => {
   });
 
   test("rows link to each skill's page by scope and name", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins`);
+    mounted = await mount(`/w/${SLUG}/skills`);
     const href = (name: string) =>
       rowFor(mounted!.container, name)?.querySelector("a")?.getAttribute("href");
-    expect(href("house-style")).toBe(`/w/${SLUG}/plugins/skills/workspace/house-style`);
-    expect(href("my-voice")).toBe(`/w/${SLUG}/plugins/skills/user/my-voice`);
+    expect(href("house-style")).toBe(`/w/${SLUG}/skills/workspace/house-style`);
+    await click(segment(mounted.container, "personal"));
+    expect(href("my-voice")).toBe(`/w/${SLUG}/skills/user/my-voice`);
   });
 
-  test("a workspace skill named like one of the viewer's own is listed beside it", async () => {
+  test("a workspace skill named like one of the viewer's own is listed in each segment", async () => {
     skills = [WORKSPACE_SKILL, summary({ name: "house-style", scope: "user" })];
-    mounted = await mount(`/w/${SLUG}/plugins`);
-    expect(rows(mounted.container)).toEqual(["workspace/house-style", "user/house-style"]);
+    mounted = await mount(`/w/${SLUG}/skills`);
+    expect(rows(mounted.container)).toEqual(["workspace/house-style"]);
+    await click(segment(mounted.container, "personal"));
+    expect(rows(mounted.container)).toEqual(["user/house-style"]);
+  });
+
+  test("search narrows the segment, and says when nothing matches", async () => {
+    mounted = await mount(`/w/${SLUG}/skills`);
+    const input = mounted.container.querySelector<HTMLInputElement>('[data-testid="list-search"]')!;
+    await type(input, "org policy");
+    await settle();
+    expect(rows(mounted.container)).toEqual(["org/policy"]);
+    await type(input, "zzz");
+    await settle();
+    expect(mounted.container.querySelector('[data-testid="list-empty"]')?.textContent).toBe(
+      'No skills match "zzz".',
+    );
+  });
+
+  test("From your plugins lists each plugin's skills with when it loads, opening the plugin", async () => {
+    plugins = [
+      plugin({
+        id: "workspace:notion",
+        displayName: "Notion",
+        owner: { kind: "workspace" },
+        skills: [{ name: "notion-pages", kind: "overlay", serverName: "notion" }],
+      }),
+      plugin({
+        id: "person:slack",
+        displayName: "Slack",
+        owner: { kind: "person" },
+        skills: [{ name: "slack-threads", kind: "published", serverName: "slack" }],
+      }),
+      plugin({
+        id: "person:granola",
+        displayName: "Granola",
+        owner: { kind: "person" },
+        granted: false,
+        skills: [{ name: "granola-notes", kind: "overlay", serverName: "granola" }],
+      }),
+    ];
+    listConnectorSkills.mockImplementation(async () => ({
+      overlays: [],
+      published: [
+        {
+          server: "slack",
+          name: "slack-threads",
+          description: "Threads",
+          uri: "skill://slack/threads",
+          priority: 50,
+          loadingStrategy: "dynamic",
+          mechanism: "tool_affinity",
+          toolAffinity: ["slack__*"],
+        } as Awaited<ReturnType<typeof ApiClient.listConnectorSkills>>["published"][number],
+      ],
+    }));
+    mounted = await mount(`/w/${SLUG}/skills`);
+    const group = () =>
+      mounted!.container.querySelector<HTMLElement>('[data-testid="skills-from-plugins"]');
+    expect(group()?.querySelector("h2")?.textContent).toBe("From your plugins");
+    const names = () =>
+      [...(group()?.querySelectorAll('[data-testid="plugin-skill-row"]') ?? [])].map((r) =>
+        r.getAttribute("data-skill-name"),
+      );
+    expect(names()).toEqual(["notion-pages"]);
+    const notion = group()!.querySelector('[data-skill-name="notion-pages"]')!;
+    expect(notion.textContent).toContain("Notion · On first tool call");
+    expect(notion.querySelector("a")?.getAttribute("href")).toBe(
+      `/w/${SLUG}/plugins/workspace%3Anotion`,
+    );
+
+    await click(segment(mounted.container, "personal"));
+    // A plugin not on here brings nothing here.
+    expect(names()).toEqual(["slack-threads"]);
+    expect(group()!.textContent).toContain("Slack · On tool match slack__*");
+    // The group is no skill people wrote, so it carries no On here.
+    expect(group()!.querySelector('[data-testid="skill-on-here"]')).toBeNull();
+  });
+
+  test("with no plugin skills, the group is absent", async () => {
+    mounted = await mount(`/w/${SLUG}/skills`);
+    expect(mounted.container.querySelector('[data-testid="skills-from-plugins"]')).toBeNull();
+  });
+
+  test("on a narrow column the header action is an icon and rows stack their name and facts", async () => {
+    mounted = await mount(`/w/${SLUG}/skills`);
+    const action = mounted.container.querySelector('[data-testid="skills-new"]')!;
+    expect(action.getAttribute("aria-label")).toBe("New skill");
+    expect(action.querySelector("span")?.className).toContain("@max-[40rem]/main:sr-only");
+    const row = rowFor(mounted.container, "house-style")!;
+    expect(row.className).toContain("min-h-11");
+    expect(row.firstElementChild?.className).toContain("flex-col");
+  });
+});
+
+describe("Old skill addresses", () => {
+  test("a skill's page under Plugins opens under Skills", async () => {
+    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    expect(location).toBe(`/w/${SLUG}/skills/workspace/house-style`);
+    expect(mounted.container.textContent).toContain("house-style");
+  });
+
+  test("the new skill page under Plugins opens under Skills", async () => {
+    mounted = await mount(`/w/${SLUG}/plugins/skills/new`);
+    expect(location).toBe(`/w/${SLUG}/skills/new`);
   });
 });
 
 describe("A skill's page", () => {
   test("a workspace admin edits a workspace skill, saving in this workspace", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    mounted = await mount(`/w/${SLUG}/skills/workspace/house-style`);
     const body = mounted.container.querySelector<HTMLTextAreaElement>("#rule-body");
     expect(body?.value).toBe("Body of house-style");
     expect(button(mounted.container, "Delete skill")).toBeDefined();
@@ -330,7 +478,7 @@ describe("A skill's page", () => {
   });
 
   test("a member reads a workspace skill without editing it", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`, "member");
+    mounted = await mount(`/w/${SLUG}/skills/workspace/house-style`, "member");
     expect(mounted.container.querySelector("#rule-body")).toBeNull();
     expect(mounted.container.querySelector('[data-testid="skill-read-only"]')).not.toBeNull();
     expect(mounted.container.textContent).toContain("Workspace admins can change it.");
@@ -338,7 +486,7 @@ describe("A skill's page", () => {
   });
 
   test("a member edits their own skill, which is written with no workspace", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins/skills/user/my-voice`, "member");
+    mounted = await mount(`/w/${SLUG}/skills/user/my-voice`, "member");
     expect(mounted.container.querySelector("#rule-body")).not.toBeNull();
     await click(mounted.container.querySelector('button[aria-label="Turn off my-voice"]'));
     expect(calls(callToolWithoutWorkspace, "set_status")).toHaveLength(1);
@@ -346,7 +494,7 @@ describe("A skill's page", () => {
   });
 
   test("an org skill is read-only here, even for a workspace admin", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins/skills/org/policy`, "admin");
+    mounted = await mount(`/w/${SLUG}/skills/org/policy`, "admin");
     expect(mounted.container.querySelector("#rule-body")).toBeNull();
     expect(mounted.container.textContent).toContain("Body of policy");
     expect(mounted.container.textContent).toContain("Org admins change it in org settings.");
@@ -355,7 +503,7 @@ describe("A skill's page", () => {
   test("a workspace skill named like one of the viewer's own opens as itself", async () => {
     const mine = summary({ name: "house-style", scope: "user" });
     skills = [WORKSPACE_SKILL, mine];
-    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    mounted = await mount(`/w/${SLUG}/skills/workspace/house-style`);
     expect(mounted.container.querySelector<HTMLTextAreaElement>("#rule-body")?.value).toBe(
       "Body of house-style",
     );
@@ -363,7 +511,7 @@ describe("A skill's page", () => {
   });
 
   test("an edited workspace skill body saves in this workspace when the field is left", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    mounted = await mount(`/w/${SLUG}/skills/workspace/house-style`);
     await editBody(mounted.container, "Write plainly.");
     const update = calls(callTool, "update")[0];
     expect(update?.[2]).toMatchObject({ id: WORKSPACE_SKILL.id, body: "Write plainly." });
@@ -372,7 +520,7 @@ describe("A skill's page", () => {
   });
 
   test("an edited body of the viewer's own skill saves with no workspace", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins/skills/user/my-voice`, "member");
+    mounted = await mount(`/w/${SLUG}/skills/user/my-voice`, "member");
     await editBody(mounted.container, "Sound like me.");
     const update = calls(callToolWithoutWorkspace, "update")[0];
     expect(update?.[2]).toMatchObject({ id: USER_SKILL.id, body: "Sound like me." });
@@ -381,35 +529,35 @@ describe("A skill's page", () => {
 
   test("a refused body save shows the refusal on the field", async () => {
     refuse = "update";
-    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    mounted = await mount(`/w/${SLUG}/skills/workspace/house-style`);
     await editBody(mounted.container, "Write plainly.");
     const alert = mounted.container.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain("Refused update");
   });
 
-  test("deleting a workspace skill writes in this workspace and returns to Plugins", async () => {
+  test("deleting a workspace skill writes in this workspace and returns to Skills", async () => {
     confirmWith(true);
-    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    mounted = await mount(`/w/${SLUG}/skills/workspace/house-style`);
     await click(button(mounted.container, "Delete skill"));
     const del = calls(callTool, "delete")[0];
     expect(del?.[2]).toEqual({ id: WORKSPACE_SKILL.id });
     expect(del?.[3]).toEqual({ workspaceId: WS_ID });
-    expect(location).toBe(`/w/${SLUG}/plugins`);
+    expect(location).toBe(`/w/${SLUG}/skills`);
   });
 
   test("deleting the viewer's own skill writes with no workspace", async () => {
     confirmWith(true);
-    mounted = await mount(`/w/${SLUG}/plugins/skills/user/my-voice`, "member");
+    mounted = await mount(`/w/${SLUG}/skills/user/my-voice`, "member");
     await click(button(mounted.container, "Delete skill"));
     expect(calls(callToolWithoutWorkspace, "delete")[0]?.[2]).toEqual({ id: USER_SKILL.id });
     expect(calls(callTool, "delete")).toHaveLength(0);
-    expect(location).toBe(`/w/${SLUG}/plugins`);
+    expect(location).toBe(`/w/${SLUG}/skills`);
   });
 
   test("a refused delete stays on the skill and says why", async () => {
     confirmWith(true);
     refuse = "delete";
-    const path = `/w/${SLUG}/plugins/skills/workspace/house-style`;
+    const path = `/w/${SLUG}/skills/workspace/house-style`;
     mounted = await mount(path);
     await click(button(mounted.container, "Delete skill"));
     expect(location).toBe(path);
@@ -420,47 +568,47 @@ describe("A skill's page", () => {
 
   test("a delete not confirmed writes nothing", async () => {
     confirmWith(false);
-    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    mounted = await mount(`/w/${SLUG}/skills/workspace/house-style`);
     await click(button(mounted.container, "Delete skill"));
     expect(calls(callTool, "delete")).toHaveLength(0);
   });
 
   test("a skill that came with a plugin has no page here", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins/skills/provided/authoring-guide`);
+    mounted = await mount(`/w/${SLUG}/skills/provided/authoring-guide`);
     expect(mounted.container.textContent).toContain("This skill is not in this workspace.");
   });
 });
 
 describe("Writing a skill", () => {
-  test("Browse offers Write a skill, which opens the new skill page", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins?tab=browse`);
-    await click(button(mounted.container, "Write a skill"));
-    expect(location).toBe(`/w/${SLUG}/plugins/skills/new`);
+  test("Cancel returns to Skills", async () => {
+    mounted = await mount(`/w/${SLUG}/skills/new`);
+    await click(button(mounted.container, "Cancel"));
+    expect(location).toBe(`/w/${SLUG}/skills`);
   });
 
   test("Just me writes a skill of the viewer's own, with no workspace", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins/skills/new`, "admin");
+    mounted = await mount(`/w/${SLUG}/skills/new`, "admin");
     await fillNewSkill(mounted.container);
     await click(button(mounted.container, "Create"));
     const create = calls(callToolWithoutWorkspace, "create")[0];
     expect((create?.[2] as { scope: string } | undefined)?.scope).toBe("user");
     expect(calls(callTool, "create")).toHaveLength(0);
-    expect(location).toBe(`/w/${SLUG}/plugins/skills/user/release-notes`);
+    expect(location).toBe(`/w/${SLUG}/skills/user/release-notes`);
   });
 
   test("Everyone here writes a workspace skill in this workspace", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins/skills/new`, "admin");
+    mounted = await mount(`/w/${SLUG}/skills/new`, "admin");
     await click(mounted.container.querySelector('input[value="workspace"]'));
     await fillNewSkill(mounted.container);
     await click(button(mounted.container, "Create"));
     const create = calls(callTool, "create")[0];
     expect((create?.[2] as { scope: string } | undefined)?.scope).toBe("workspace");
     expect(create?.[3]).toEqual({ workspaceId: WS_ID });
-    expect(location).toBe(`/w/${SLUG}/plugins/skills/workspace/release-notes`);
+    expect(location).toBe(`/w/${SLUG}/skills/workspace/release-notes`);
   });
 
   test("a member is not offered Everyone here", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins/skills/new`, "member");
+    mounted = await mount(`/w/${SLUG}/skills/new`, "member");
     expect(mounted.container.querySelector('input[value="workspace"]')).toBeNull();
     expect(mounted.container.textContent).toContain(
       "A workspace admin can write a skill for everyone in Helix.",
@@ -476,25 +624,19 @@ describe("On here", () => {
   const switchIn = (el: HTMLElement | null) => el?.querySelector<HTMLElement>('[role="switch"]');
 
   test("only the viewer's own skills carry it, named for the skill", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins`);
+    mounted = await mount(`/w/${SLUG}/skills`);
+    expect(onHere(mounted.container, "house-style")).toBeNull();
+    expect(onHere(mounted.container, "policy")).toBeNull();
+    await click(segment(mounted.container, "personal"));
     const mine = onHere(mounted.container, "my-voice");
     expect(mine?.textContent).toBe("On here");
     expect(switchIn(mine)?.getAttribute("aria-label")).toBe("On here: my-voice");
     expect(switchIn(mine)?.getAttribute("aria-checked")).toBe("true");
-    expect(onHere(mounted.container, "house-style")).toBeNull();
-    expect(onHere(mounted.container, "policy")).toBeNull();
-  });
-
-  test("Just you says the viewer's skills apply everywhere unless turned off here", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins`);
-    expect(
-      mounted.container.querySelector('[data-testid="installed-section-you"]')?.textContent,
-    ).toContain("your skills apply in every workspace unless you turn one off here.");
   });
 
   test("a skill turned off here lists as Off here", async () => {
     skills = [{ ...USER_SKILL, onHere: false }];
-    mounted = await mount(`/w/${SLUG}/plugins`);
+    mounted = await mountPersonal();
     const mine = onHere(mounted.container, "my-voice");
     expect(mine?.textContent).toBe("Off here");
     expect(switchIn(mine)?.getAttribute("aria-checked")).toBe("false");
@@ -508,7 +650,7 @@ describe("On here", () => {
           release = () => resolve({ id, name: "my-voice", workspaceId, onHere: on });
         }),
     );
-    mounted = await mount(`/w/${SLUG}/plugins`);
+    mounted = await mountPersonal();
     await click(switchIn(onHere(mounted.container, "my-voice")));
     const mine = onHere(mounted.container, "my-voice");
     expect(mine?.textContent).toBe("Off here");
@@ -529,7 +671,7 @@ describe("On here", () => {
     setSkillOnHere.mockImplementation(async () => {
       throw new Error("Not yours to change");
     });
-    mounted = await mount(`/w/${SLUG}/plugins`);
+    mounted = await mountPersonal();
     await click(switchIn(onHere(mounted.container, "my-voice")));
     const mine = onHere(mounted.container, "my-voice");
     expect(mine?.textContent).toBe("On here");
@@ -539,7 +681,7 @@ describe("On here", () => {
   });
 
   test("the viewer's own skill's page offers it, with the hint", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins/skills/user/my-voice`);
+    mounted = await mount(`/w/${SLUG}/skills/user/my-voice`);
     const here = mounted.container.querySelector<HTMLElement>('[data-testid="skill-here"]')!;
     expect(here.textContent).toContain(
       "Your skills apply in every workspace unless you turn one off here.",
@@ -550,10 +692,10 @@ describe("On here", () => {
   });
 
   test("a workspace or org skill's page does not", async () => {
-    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    mounted = await mount(`/w/${SLUG}/skills/workspace/house-style`);
     expect(mounted.container.querySelector('[data-testid="skill-here"]')).toBeNull();
     mounted.unmount();
-    mounted = await mount(`/w/${SLUG}/plugins/skills/org/policy`);
+    mounted = await mount(`/w/${SLUG}/skills/org/policy`);
     expect(mounted.container.querySelector('[data-testid="skill-here"]')).toBeNull();
   });
 });

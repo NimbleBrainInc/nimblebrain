@@ -6,7 +6,7 @@
 // another workspace's is to switch to it (WorkspaceSwitcher, above this).
 //
 // Order: Overview, the identity views (Conversations / Tasks / Files),
-// Plugins (what the agent can do here), then APPS (People, Tasks, … — the viewer's pinned apps first, capped with a
+// Plugins (what the agent can do here), Skills (what it is taught), then APPS (People, Tasks, … — the viewer's pinned apps first, capped with a
 // View-all overflow). Each routes
 // into `/w/<slug>/…`. An app that places several views is one entry; while it
 // is open its views list beneath it. The inbox is not here: it is the top
@@ -17,7 +17,7 @@
 // their icons and a count, that opens Plugins, where each is listed and
 // links to its configuration. So every install shows up, and screen-less ones cost one row.
 // With nothing installed, a member who may install sees an "Add an app" row.
-// The header's "+" opens Plugins' Browse tab. The identity views' TOOLS still
+// The header's "+" opens Browse plugins. The identity views' TOOLS still
 // dispatch bare through the identity door (see lib/identity-apps); the slug
 // here is the focused workspace = view scope, not a tool namespace.
 //
@@ -27,7 +27,7 @@
 // ---------------------------------------------------------------------------
 
 import { Menu } from "@base-ui/react/menu";
-import { ArrowRight, Check, LayoutGrid, Pin, Plus, Puzzle } from "lucide-react";
+import { ArrowRight, Check, GraduationCap, LayoutGrid, Pin, Plus, Puzzle } from "lucide-react";
 import { useMemo } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import type { InstalledConnector } from "../../api/client";
@@ -144,7 +144,13 @@ function WorkspaceViews({
           collapsed={collapsed}
         />
       ))}
-      <ViewLink to={`/w/${slug}/plugins`} icon={Puzzle} label="Plugins" end collapsed={collapsed} />
+      <ViewLink to={`/w/${slug}/plugins`} icon={Puzzle} label="Plugins" collapsed={collapsed} />
+      <ViewLink
+        to={`/w/${slug}/skills`}
+        icon={GraduationCap}
+        label="Skills"
+        collapsed={collapsed}
+      />
 
       {hasSection &&
         (collapsed ? (
@@ -188,7 +194,7 @@ function WorkspaceViews({
       )}
       {!collapsed && empty && canInstall && (
         <Link
-          to={`/w/${slug}/plugins?tab=browse`}
+          to={`/w/${slug}/plugins/browse`}
           data-testid="sidebar-workspace-apps-empty"
           className={cn(rowClass(false, false), "text-muted-foreground")}
         >
@@ -201,7 +207,7 @@ function WorkspaceViews({
   );
 }
 
-// The "+" that opens Plugins' Browse tab. Beside the APPS header it shows
+// The "+" that opens Browse plugins. Beside the APPS header it shows
 // while the pointer is over the nav or it has keyboard focus; `hover:` applies
 // only on devices that hover, so a touch screen shows it at rest. In the rail
 // it is an icon button like the rows above it.
@@ -210,7 +216,7 @@ function AddLink({ slug, collapsed }: { slug: string; collapsed: boolean }) {
   return (
     <Tooltip label={label} side="right">
       <Link
-        to={`/w/${slug}/plugins?tab=browse`}
+        to={`/w/${slug}/plugins/browse`}
         aria-label={label}
         data-testid="sidebar-add-connector"
         className={cn(

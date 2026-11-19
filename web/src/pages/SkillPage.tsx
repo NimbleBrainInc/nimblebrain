@@ -10,6 +10,7 @@ import {
 } from "../components/connectors/InstallAudienceDialog";
 import { PanelHeading } from "../components/connectors/personal-connector";
 import { useNotice } from "../components/notices";
+import { SECTION_ROW } from "../components/plugins/list-parts";
 import { SkillHereSwitch } from "../components/plugins/SkillHereSwitch";
 import { SkillScopeBadge } from "../components/plugins/SkillScopeBadge";
 import { Button } from "../components/ui/button";
@@ -22,10 +23,11 @@ import {
   listAuthoredSkills,
   writeResult,
 } from "../lib/authored-skills";
-import { type AuthoredSkillScope, skillPath } from "../lib/plugins";
+import { type AuthoredSkillScope, skillPath, skillsPath } from "../lib/plugins";
 import { skillMechanismLabel } from "../lib/skill-display";
 import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
 import { parseToolResponse } from "../lib/tool-response";
+import { cn } from "../lib/utils";
 import { toWsId } from "../lib/workspace-slug";
 import { InlineError } from "./settings/components";
 import {
@@ -39,8 +41,8 @@ import {
 import type { SkillUpdateArgs } from "./settings/skill-edit-patch";
 
 /**
- * One skill someone wrote, at `/w/:slug/plugins/skills/:scope/:name`, opened
- * from the Skills group on Plugins. Who may change it follows the server's
+ * One skill someone wrote, at `/w/:slug/skills/:scope/:name`, opened from
+ * Skills. Who may change it follows the server's
  * write rules: a workspace skill needs workspace write, the viewer's own skill
  * is theirs, and an org skill is read here and changed in org settings.
  *
@@ -58,7 +60,7 @@ export function SkillPage() {
     name: string;
   }>();
   return (
-    <PluginsColumn slug={slug}>
+    <SkillsColumn slug={slug}>
       {/* Keyed by the route: a param-only change reuses the element, and one
           skill's state and open form must not carry over to the next. */}
       {isAuthoredScope(scope) ? (
@@ -66,15 +68,15 @@ export function SkillPage() {
       ) : (
         <NotHere />
       )}
-    </PluginsColumn>
+    </SkillsColumn>
   );
 }
 
 /**
- * The Plugins column, with its link back to Plugins unless the page brings its
+ * The Skills column, with its link back to Skills unless the page brings its
  * own (the new skill form's header has a back button that cancels it).
  */
-function PluginsColumn({
+function SkillsColumn({
   slug,
   backLink = true,
   children,
@@ -89,10 +91,10 @@ function PluginsColumn({
         {/* A block, not inline: the column's spacing is a margin on each child. */}
         {backLink && (
           <Link
-            to={`/w/${slug}/plugins`}
-            className="block w-fit text-xs text-muted-foreground hover:underline"
+            to={skillsPath(slug)}
+            className="block w-fit py-1 text-xs text-muted-foreground hover:underline"
           >
-            ← Plugins
+            ← Skills
           </Link>
         )}
         {children}
@@ -187,7 +189,7 @@ function SkillDetailView({
     if (!window.confirm("Delete this skill? It will be snapshotted to _versions/ first.")) return;
     void run(async () => {
       writeResult(await callSkillsTool(scope, wsId, "delete", { id: current.id }));
-      navigate(`/w/${slug}/plugins`);
+      navigate(skillsPath(slug));
     });
   };
 
@@ -228,7 +230,7 @@ function SkillDetailView({
 
       {skill.scope === "user" && (
         <section
-          className="flex items-start justify-between gap-4 border-y border-border/60 py-4"
+          className={cn(SECTION_ROW, "border-y border-border/60 py-4")}
           data-testid="skill-here"
         >
           <PanelHeading
@@ -301,7 +303,7 @@ function ReadOnlySkill({ detail, scope }: { detail: SkillDetail; scope: Authored
 }
 
 /**
- * A new skill, at `/w/:slug/plugins/skills/new`, opened from Browse. It asks
+ * A new skill, at `/w/:slug/skills/new`, opened from Skills' New skill. It asks
  * whom the skill is for in the install dialog's words: "Just me" writes it to
  * the viewer's own skills, which follow them into every workspace; "Everyone in
  * <workspace>" writes it to the workspace, offered only to a member who may
@@ -310,9 +312,9 @@ function ReadOnlySkill({ detail, scope }: { detail: SkillDetail; scope: Authored
 export function NewSkillPage() {
   const { slug = "" } = useParams<{ slug: string }>();
   return (
-    <PluginsColumn slug={slug} backLink={false}>
+    <SkillsColumn slug={slug} backLink={false}>
       <NewSkill key={slug} slug={slug} />
-    </PluginsColumn>
+    </SkillsColumn>
   );
 }
 
@@ -354,8 +356,7 @@ function NewSkill({ slug }: { slug: string }) {
     <CreateSkillView
       pending={pending}
       error={error}
-      backLabel="Back to plugins"
-      onCancel={() => navigate(`/w/${slug}/plugins?tab=browse`)}
+      onCancel={() => navigate(skillsPath(slug))}
       onCreate={(draft) => void create(draft)}
       audience={
         <fieldset className="space-y-2">

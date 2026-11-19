@@ -15,28 +15,29 @@ This page is about connectors **shared by a workspace**. To connect a service to
 
 ## Where connectors live
 
-Everything the agent can use in a workspace is on its **Plugins** page, in the sidebar under the workspace's views. Each connector is a plugin there. **Installed** arranges plugins and skills by who they act for:
+The plugins installed in a workspace are on its **Plugins** page, in the sidebar under the workspace's views. Each connector is a plugin there. Skills are on their own page, [Skills](/using/skills/#the-skills-page).
 
-- **Shared in** the workspace: the workspace's own plugins, its skills, and the organization's skills (tagged **Org**). Everyone's agent here uses them.
-- **Just you**: your plugins turned on here and your own skills (see [Personal connectors](/using/personal-connectors)). Only your agent uses them.
-- **Yours, not on here**: your plugins that are off in this workspace, each with **Use here**. This section starts collapsed.
+**Workspace | Personal** above the list splits it by whose a plugin is, each with its count:
 
-Each section's header counts what it holds, and opening or collapsing it is remembered in your browser. Within a section, plugins and skills are listed separately, a few at a time, with **Show all** for the rest. A plugin's row names the account it uses and offers only what needs you: **Connect** when it was never signed in, **Reconnect** when its sign-in expired, **Open** when it failed or needs setup. A healthy row offers nothing; its **⋯** menu holds the rest. Plugins that need you are also gathered at the top under **Needs you**, which appears only when one does. The action is offered once: while a plugin's row shows under Needs you, its row in its section says what is wrong (**Sign-in expired**, **Failed to start**) instead, and a search, which hides Needs you, puts the action back on the row. Click a row to open the plugin's page, where it is configured.
+- **Workspace**: the workspace's own plugins. Everyone's agent here uses them, signed in with the workspace's accounts.
+- **Personal**: your own plugins (see [Personal connectors](/using/personal-connectors)), those on in this workspace first, then those that are not, each with **Use here**. Only your agent uses them.
 
-Above the sections, search finds plugins and skills by name, account, or description, and lists every match in one list, each marked with whose it is. **All · Plugins · Skills** narrows by kind, and **Everyone · Shared · Just you** by owner. **Browse directory** and **Add** (a plugin from the directory, or a skill to write) sit beside the page title.
+The search beside it finds a plugin in the selected list by name or account. A plugin's row names the account it uses and offers only the next step, when there is one: **Connect** when it was never signed in, **Reconnect** when its sign-in expired, **Open** when it failed or needs setup, **Use here** for one of yours that is off here. A healthy row offers nothing; its **⋯** menu holds the rest. Click a row to open the plugin's page, where it is configured.
 
-The **Browse** tab is the full directory of available services. Browse lists what the workspace already has too, in an **Installed** section below the rest, each with a link to its page.
+When something in the selected list needs you, a line above it says so. With one, it names the plugin and what is wrong and carries its action, and that plugin's row says what is wrong (**Sign-in expired**, **Failed to start**) instead, so the action is offered once. With more, it counts them, and **Show them** narrows the list to just those (**Show all** brings the rest back). A plugin settling, or a workspace sign-in only an admin can do, needs nothing from a member, so it shows its status on its row and adds nothing to that line.
 
-An old link to **Settings → Connectors** opens Plugins (its **Browse** link opens the Browse tab), and an old link to a connector's settings page opens its plugin's page.
+**Browse plugins**, the page's one action, opens the full directory of available services. It lists what the workspace already has too, in an **Installed** section below the rest, each with a link to its page; **← Plugins** returns. On a narrow screen the action is a **+** button, and the controls and rows stack.
+
+An old link to **Settings → Connectors** opens Plugins (its **Browse** link opens Browse plugins), and an old link to a connector's settings page opens its plugin's page.
 
 A connected service is **shared by everyone in the workspace** — its tools are available to all members. The credentials behind it are stored once, in the workspace.
 
 ## Connecting a service
 
 <Steps>
-1. Open **Plugins** for your workspace and choose the **Browse** tab. The **+** beside **Apps** in the sidebar opens it too.
+1. Open **Plugins** for your workspace and choose **Browse plugins**. The **+** beside **Apps** in the sidebar opens it too.
 2. Find the service you want. Each card shows its name and a short description; search filters by name, description, or tag.
-3. Click **Install**. When the service can sign in with each person's own account, you're asked who it is for: **Just me** (the default) or **Everyone in** the workspace. Choose **Everyone** to share one sign-in with the workspace; **Just me** adds it as one of your [personal connectors](/using/personal-connectors#adding-one-from-plugins) instead. For a service with a sign-in, you're redirected to the vendor's sign-in page. A **provider** or **smithery** connector has none: the card reads **Installed** and you stay on Browse. If it installed but failed to start, you're taken to its **Configure** page instead, where the reason is shown.
+3. Click **Install**. When the service can sign in with each person's own account, you're asked who it is for: **Just me** (the default) or **Everyone in** the workspace. Choose **Everyone** to share one sign-in with the workspace; **Just me** adds it as one of your [personal connectors](/using/personal-connectors#adding-one-from-plugins) instead. For a service with a sign-in, you're redirected to the vendor's sign-in page. A **provider** or **smithery** connector has none: the card reads **Installed** and you stay on Browse plugins. If it installed but failed to start, you're taken to its **Configure** page instead, where the reason is shown.
 4. Sign in and approve the requested access. You're returned to **Plugins**, where a notice confirms the connection once the handshake settles and the plugin's row reads **Connected just now**.
 </Steps>
 
