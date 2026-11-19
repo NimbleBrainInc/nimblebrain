@@ -26,11 +26,13 @@ A connected service is **shared by everyone in the workspace** — its tools are
 <Steps>
 1. Open **Plugins** for your workspace and choose the **Browse** tab. The **+** beside **Apps** in the sidebar opens it too.
 2. Find the service you want. Each card shows its name and a short description; search filters by name, description, or tag.
-3. Click **Install**. For a service with a sign-in, you're redirected to the vendor's sign-in page. A **provider** or **smithery** connector has none: the card reads **Installed** and you stay on Browse. If it installed but failed to start, you're taken to its **Configure** page instead, where the reason is shown.
+3. Click **Install**. When the service can sign in with each person's own account, you're asked who it is for: **Just me** (the default) or **Everyone in** the workspace. Choose **Everyone** to share one sign-in with the workspace; **Just me** adds it as one of your [personal connectors](/using/personal-connectors#adding-one-from-plugins) instead. For a service with a sign-in, you're redirected to the vendor's sign-in page. A **provider** or **smithery** connector has none: the card reads **Installed** and you stay on Browse. If it installed but failed to start, you're taken to its **Configure** page instead, where the reason is shown.
 4. Sign in and approve the requested access. You're returned to NimbleBrain, and the connector's row updates to **Connected** once the handshake settles.
 </Steps>
 
-Installing or connecting a service requires the **admin** role in the workspace.
+Installing or connecting a service for everyone requires the **admin** role in the workspace. A member without it can still install a service for themselves with **Just me**.
+
+A service that signs in only with one account the workspace or platform holds (a **static** client the workspace sets up, **provider**, **smithery**, a service needing a stored credential) can't be installed for one person. Its card says **Uses one account for the workspace**, and **Install** adds it for everyone. A member without the admin role sees **Workspace admin required** on it.
 
 On a workspace plugin's page, the header shows the connector's name and status ("Connected as …" when there is a sign-in), that it uses the workspace's account, and the apps it places, each a link to the app. Its **⋯** menu holds **Documentation**, **Disconnect**, **Uninstall** (for a workspace admin) and the connector's version and tool count. Under the header come its connection settings, then the connector's own **Settings** section when it has one, then the **Skills** the plugin brings, then **Tool permissions**, collapsed to a summary until you choose **Show tools**. Any member can open the page; only a workspace admin can change it.
 
