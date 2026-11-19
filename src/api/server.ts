@@ -15,12 +15,13 @@ import type { McpSource } from "../tools/mcp-source.ts";
 import { createApp } from "./app.ts";
 import { ConversationEventManager } from "./conversation-events.ts";
 import { SseEventManager } from "./events.ts";
-import { McpServerHost } from "./mcp-server.ts";
+import { MAX_MCP_REQUEST_BODY_BYTES, McpServerHost } from "./mcp-server.ts";
 import {
   registerConnectorHealthGauge,
   registerConnectorReauthGauge,
   registerGatewayProvidersGauge,
 } from "./metrics.ts";
+import { serverBodyCeiling } from "./middleware/body-limit.ts";
 import { RequestRateLimiter } from "./rate-limiter.ts";
 import {
   HOOK_ANON_BUCKET_MAX,
@@ -241,10 +242,19 @@ export function startServer(options: ServerOptions): ServerHandle {
 
   const app = createApp(ctx, allowedOrigins);
 
+  // The largest body any route accepts is an upload (`files.maxTotalSize`);
+  // every JSON route, `/mcp` among them, takes 1 MB. The server refuses
+  // anything past `serverBodyCeiling` itself, chunked bodies included.
+  const largestRouteLimit = Math.max(
+    MAX_MCP_REQUEST_BODY_BYTES,
+    runtime.getFilesConfig().maxTotalSize,
+  );
+
   const server = Bun.serve({
     port,
     hostname,
     idleTimeout: 255, // seconds — max Bun allows; needed for SSE streams and long chat requests
+    maxRequestBodySize: serverBodyCeiling(largestRouteLimit),
     fetch: app.fetch,
   });
 

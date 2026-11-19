@@ -5,14 +5,36 @@ import { bodyLimit } from "../../../src/api/middleware/body-limit.ts";
 import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
 import { readJson } from "../../helpers/http.ts";
 
-/** The middleware's 413: an `apiError` body whose details name the bound it hit. */
+/**
+ * The middleware's 413: an `apiError` body whose details name the bound it hit,
+ * and the body's size when it is known.
+ */
 type PayloadTooLarge = ApiErrorBody & {
-  details: { limit: number; received: number; contentType: string };
+  details: { limit: number; received?: number; contentType: string };
 };
 
 /** What the test app's own `/test` route answers when a request gets through. */
 interface TestRouteBody {
   ok: boolean;
+}
+
+/** What the echo route answers: the body length it read and the length header it saw. */
+interface EchoBody {
+  length: number;
+  contentLength: string | undefined;
+}
+
+/** A body sent in chunks with no declared length, as chunked transfer encoding sends it. */
+function chunkedBody(bytes: number): ReadableStream<Uint8Array> {
+  let sent = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent >= bytes) return controller.close();
+      const size = Math.min(64 * 1024, bytes - sent);
+      controller.enqueue(new Uint8Array(size).fill(120));
+      sent += size;
+    },
+  });
 }
 
 function createTestApp(maxBytes = 1024, opts?: BodyLimitOptions) {
@@ -359,6 +381,78 @@ describe("bodyLimit middleware", () => {
     // Unbounded, this sender dictates 20s. Bounded, it gets the 2s budget.
     expect(elapsed).toBeLessThan(4_000);
     expect(delivered).toBeLessThan(100);
+  });
+
+  test("refuses a chunked body once the bytes received pass the limit", async () => {
+    const app = createTestApp(1024);
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: chunkedBody(4096),
+      duplex: "half",
+    } as RequestInit);
+
+    const res = await app.fetch(request);
+
+    expect(res.status).toBe(413);
+    const body = await readJson<PayloadTooLarge>(res);
+    expect(body.error).toBe("payload_too_large");
+    // The drain reached the body's end, so the size is known.
+    expect(body.details).toEqual({ limit: 1024, received: 4096, contentType: "application/json" });
+    expect(body.message).toBe("Request body is 4 KB; the limit is 1 KB.");
+  });
+
+  test("refuses a chunked upload past the multipart limit", async () => {
+    const app = createTestApp(1024, { multipart: 8 * 1024 });
+    const res = await app.fetch(
+      new Request("http://localhost/test", {
+        method: "POST",
+        headers: { "Content-Type": "multipart/form-data; boundary=abc" },
+        body: chunkedBody(16 * 1024),
+        duplex: "half",
+      } as RequestInit),
+    );
+
+    expect(res.status).toBe(413);
+    const body = await readJson<PayloadTooLarge>(res);
+    expect(body.details?.limit).toBe(8 * 1024);
+  });
+
+  test("names only the limit when a chunked body is too large to drain", async () => {
+    const app = createTestApp(1024);
+    const res = await app.fetch(
+      new Request("http://localhost/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // Past the 8 MB drain overrun, so the read stops before the body's end.
+        body: chunkedBody(10 * 1024 * 1024),
+        duplex: "half",
+      } as RequestInit),
+    );
+
+    expect(res.status).toBe(413);
+    const body = await readJson<PayloadTooLarge>(res);
+    expect(body.details).toEqual({ limit: 1024, contentType: "application/json" });
+    expect(body.message).toBe("Request body is over the limit of 1 KB.");
+  });
+
+  test("hands the route a chunked body within the limit, byte for byte", async () => {
+    const app = new Hono();
+    app.post("/echo", bodyLimit(1024), async (c) => {
+      const text = await c.req.text();
+      return c.json({ length: text.length, contentLength: c.req.header("content-length") });
+    });
+    const res = await app.fetch(
+      new Request("http://localhost/echo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: chunkedBody(1000),
+        duplex: "half",
+      } as RequestInit),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await readJson<EchoBody>(res)).toEqual({ length: 1000, contentLength: "1000" });
   });
 
   // Regression guard: bodyLimit must stay scoped to the route it's attached
