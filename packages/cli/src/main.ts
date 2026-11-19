@@ -168,6 +168,8 @@ function isStatusShaped(result: Ok | Failure): result is (Ok | Failure) & { vers
   );
 }
 
+export type DoctorAnswer = Awaited<ReturnType<typeof doctorInstall>>;
+
 /**
  * The machine's checks, then, for an install on a local model, Ollama's: it
  * answers (`startOllama` decides whether a down one is started), has the

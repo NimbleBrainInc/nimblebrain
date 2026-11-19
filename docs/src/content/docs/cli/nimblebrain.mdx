@@ -47,7 +47,7 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `mcp add <url>` | Adds an MCP server you run on this machine to a workspace, by its loopback URL. See [Developing a server](#developing-a-server). |
 | `mcp list` | The servers in a workspace: name, URL and status. |
 | `mcp remove <serverName>` | Removes a server from a workspace. |
-| `help` | The commands and flags. With `--json`, every command, flag and error code as JSON. See [The CLI describes itself](#the-cli-describes-itself). |
+| `help` | The commands and flags. With `--json`, every command (with the fields it answers), flag and error code as JSON. See [The CLI describes itself](#the-cli-describes-itself). |
 
 ## Flags
 
@@ -57,7 +57,7 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `--yes`, `-y` | Take every default. With no terminal attached, the CLI acts as if this were set and fails rather than wait for input. |
 | `--agent <name>` | `claude-code`, `cursor`, `codex` or `none`. |
 | `--port <n>` | The local port (default `27246`). |
-| `--provider <name>` | For `key`: `anthropic` (default), `openai`, `google`, `greenpt`, `nebius` or `xai`. |
+| `--provider <name>` | For `key`: `anthropic` (default), `openai`, `google`, `greenpt`, `nebius` or `xai`. The installed release decides which it takes, and `key` lists them. |
 | `--local-model <model>` | For `init`: run on this Ollama model instead of a hosted key, without asking. |
 | `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). A home whose folder has another name is a separate install. See [A second install](#a-second-install). |
 | `--runtime <tag>` | For `init` and `update`: the NimbleBrain release to install, such as `v0.74.0`. Default: the newest release. |
@@ -149,16 +149,16 @@ Each error's `fix` is the next thing to do.
 
 ### The CLI describes itself
 
-`npx nimblebrain help --json` (or `--help --json`) answers the commands, flags and error codes of the CLI version that runs, generated from the code it parses and errors with:
+`npx nimblebrain help --json` (or `--help --json`) answers the commands, flags and error codes of the CLI version that runs, and the fields of each command's `{"ok": true}` answer, generated from the code it parses, errors and answers with:
 
 ```json
-{"ok": true, "cli_version": "0.3.0",
- "commands": [{"name": "init", "args": [], "description": "..."}, {"name": "mcp add", "args": ["<url>"], "description": "..."}],
+{"ok": true, "cli_version": "0.5.0",
+ "commands": [{"name": "open", "args": [], "description": "...", "answer": {"url": "...", "opened": "..."}}, {"name": "mcp add", "args": ["<url>"], "description": "...", "answer": {"serverName": "...", "url": "...", "dialed": "..."}}],
  "flags": [{"name": "--port", "takes": "n", "description": "...", "commands": ["init", "doctor"]}, {"name": "--yes", "short": "-y", "takes": null, "description": "..."}],
  "errors": [{"code": "USAGE", "fix": "...", "exit": 2}, {"code": "NOT_INSTALLED", "fix": "...", "exit": 1}]}
 ```
 
-A flag without `commands` applies to every command. An agent reads this rather than a copy of it, so what it knows always matches the CLI it runs.
+A flag without `commands` applies to every command. A command's `answer` names every field it can answer besides `ok`; a field present only sometimes says when. An agent reads this rather than a copy of it, so what it knows always matches the CLI it runs.
 
 ## On a local model
 

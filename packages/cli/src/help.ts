@@ -1,17 +1,28 @@
-import { COMMAND_SPECS, type Command, FLAG_SPECS, MCP_SUBCOMMANDS } from "./args.ts";
-import { ERRORS, type ErrorCode, exitCodeOf, type Ok } from "./result.ts";
+import { ANSWER_FIELDS, type AnswerName } from "./answers.ts";
+import {
+  COMMAND_SPECS,
+  type Command,
+  FLAG_SPECS,
+  MCP_SUBCOMMANDS,
+  type McpSubcommand,
+} from "./args.ts";
+import { ERRORS, type ErrorCode, exitCodeOf } from "./result.ts";
 
 /**
  * The CLI describing itself, for a person (`--help`) and for an agent
  * (`help --json`), both rendered from the tables the CLI parses and errors
- * with (`COMMAND_SPECS`, `MCP_SUBCOMMANDS`, `FLAG_SPECS`, `ERRORS`). Nothing
+ * with (`COMMAND_SPECS`, `MCP_SUBCOMMANDS`, `FLAG_SPECS`, `ERRORS`), and each
+ * command's answer from `ANSWER_FIELDS`, which the type-check holds to the code
+ * that builds it. Nothing
  * here is written by hand, so neither help can drift from the CLI that prints it.
  */
 
 export interface CommandHelp {
-  name: string;
+  name: AnswerName;
   args: string[];
   description: string;
+  /** The fields of its `{ok: true}` answer besides `ok`, each with what it carries. */
+  answer: Record<string, string>;
 }
 
 export interface FlagHelp {
@@ -34,21 +45,34 @@ export interface ErrorHelp {
 const HELP_COMMAND: CommandHelp = {
   name: "help",
   args: [],
-  description: "These commands and flags; with --json, these and every error code as JSON",
+  description:
+    "These commands and flags; with --json, these, each command's answer and every error code as JSON",
+  answer: { ...ANSWER_FIELDS.help },
 };
 
 /** Every command as a person types it: each `mcp` subcommand is its own entry. */
 export function commands(): CommandHelp[] {
   const list = (Object.keys(COMMAND_SPECS) as Command[]).flatMap((name): CommandHelp[] => {
     if (name === "mcp") {
-      return Object.entries(MCP_SUBCOMMANDS).map(([sub, spec]) => ({
-        name: `mcp ${sub}`,
-        args: spec.operand ? [`<${spec.operand}>`] : [],
-        description: spec.description,
-      }));
+      return (Object.keys(MCP_SUBCOMMANDS) as McpSubcommand[]).map((sub) => {
+        const spec = MCP_SUBCOMMANDS[sub];
+        return {
+          name: `mcp ${sub}`,
+          args: spec.operand ? [`<${spec.operand}>`] : [],
+          description: spec.description,
+          answer: { ...ANSWER_FIELDS[`mcp ${sub}`] },
+        };
+      });
     }
     const spec = COMMAND_SPECS[name];
-    return [{ name, args: [...spec.args], description: spec.description }];
+    return [
+      {
+        name,
+        args: [...spec.args],
+        description: spec.description,
+        answer: { ...ANSWER_FIELDS[name] },
+      },
+    ];
   });
   return [...list, HELP_COMMAND];
 }
@@ -74,9 +98,15 @@ export function errors(): ErrorHelp[] {
   }));
 }
 
-/** `help --json`: the commands, flags and error codes this CLI version has. */
-export function describe(version: string): Ok {
-  return { ok: true, cli_version: version, commands: commands(), flags: flags(), errors: errors() };
+/** `help --json`: the commands (with what each answers), flags and error codes this CLI version has. */
+export function describe(version: string) {
+  return {
+    ok: true as const,
+    cli_version: version,
+    commands: commands(),
+    flags: flags(),
+    errors: errors(),
+  };
 }
 
 /** `--help`: the same commands and flags as lines. */
@@ -102,7 +132,7 @@ export function helpText(version: string): string {
     "Flags:",
     ...fls.map(row),
     "",
-    "Every error code and its fix: npx nimblebrain help --json",
+    "What each command answers, and every error code and its fix: npx nimblebrain help --json",
     "",
   ].join("\n");
 }

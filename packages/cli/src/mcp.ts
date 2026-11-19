@@ -22,6 +22,13 @@ export async function mcp(ctx: Ctx): Promise<Ok> {
   return remove(target, ctx.operand ?? "");
 }
 
+/** What each subcommand answers, which `help --json` describes (`src/answers.ts`). */
+export interface McpAnswers {
+  add: Awaited<ReturnType<typeof add>>;
+  list: Awaited<ReturnType<typeof list>>;
+  remove: Awaited<ReturnType<typeof remove>>;
+}
+
 /** The runtime's coded refusals of a `direct-url` install, each its own CLI code. */
 const RUNTIME_CODES = [
   "DIRECT_URL_NOT_ALLOWED",
@@ -74,7 +81,7 @@ async function reach(ctx: Ctx, adding: boolean): Promise<Target> {
   return { ctx, url, wsId: ws.id };
 }
 
-async function add(t: Target, serverUrl: string, name: string | undefined): Promise<Ok> {
+async function add(t: Target, serverUrl: string, name: string | undefined) {
   // The runtime refuses a URL that is not `http(s)` without a code, so it is
   // refused here first, under the code the runtime gives a URL it cannot use.
   const protocol = URL.canParse(serverUrl) ? new URL(serverUrl).protocol : "";
@@ -91,7 +98,7 @@ async function add(t: Target, serverUrl: string, name: string | undefined): Prom
     ADD_TIMEOUT_MS,
   );
   return {
-    ok: true,
+    ok: true as const,
     serverName: s.serverName,
     url: s.url,
     dialed: s.dialed,
@@ -113,7 +120,7 @@ interface Server {
   toolCount?: number;
 }
 
-async function list(t: Target): Promise<Ok> {
+async function list(t: Target) {
   const s = await call(t, { action: "list_installed", scope: "workspace" }, CALL_TIMEOUT_MS);
   const installed = Array.isArray(s.installed) ? (s.installed as Server[]) : [];
   const servers = installed.map((e) => ({
@@ -125,7 +132,7 @@ async function list(t: Target): Promise<Ok> {
     statusReason: e.statusReason,
     toolCount: e.toolCount,
   }));
-  return { ok: true, wsId: t.wsId, servers };
+  return { ok: true as const, wsId: t.wsId, servers };
 }
 
 /**
@@ -133,7 +140,7 @@ async function list(t: Target): Promise<Ok> {
  * is `SERVER_NOT_FOUND`, read from the list first: the runtime's own refusal
  * of it carries no code to branch on.
  */
-async function remove(t: Target, serverName: string): Promise<Ok> {
+async function remove(t: Target, serverName: string) {
   const listed = await call(t, { action: "list_installed", scope: "workspace" }, CALL_TIMEOUT_MS);
   const installed = Array.isArray(listed.installed) ? (listed.installed as Server[]) : [];
   if (!installed.some((e) => e.serverName === serverName)) {
@@ -142,7 +149,7 @@ async function remove(t: Target, serverName: string): Promise<Ok> {
     });
   }
   await call(t, { action: "uninstall", serverName }, CALL_TIMEOUT_MS);
-  return { ok: true, serverName, wsId: t.wsId };
+  return { ok: true as const, serverName, wsId: t.wsId };
 }
 
 interface ToolAnswer {
