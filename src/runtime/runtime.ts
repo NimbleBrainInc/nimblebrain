@@ -1484,6 +1484,7 @@ export class Runtime {
     this.publishTurnEvent(conversationId, "user.message", {
       content: request.message,
       ...(ownerId ? { userId: ownerId } : {}),
+      ...(request.pluginRequestAnswer ? { pluginRequestAnswer: request.pluginRequestAnswer } : {}),
       timestamp: new Date().toISOString(),
     });
 
@@ -1633,6 +1634,9 @@ export class Runtime {
         content: buildUserMessageContent(request),
         userId: requestIdentity.id,
         ...(request.fileRefs?.length ? { fileRefs: request.fileRefs } : {}),
+        ...(request.pluginRequestAnswer
+          ? { pluginRequestAnswer: request.pluginRequestAnswer }
+          : {}),
         // A chat matches trigger phrases against what the person actually typed
         // — not the assembled content blocks, which carry upload placeholders.
         matchOn: request.message,
@@ -6672,7 +6676,16 @@ function buildOpeningMessage(input: RunSpec["input"]): StoredMessage {
     content: input.content,
     timestamp: new Date().toISOString(),
     ...(input.userId ? { userId: input.userId } : {}),
-    ...(input.fileRefs?.length ? { metadata: { files: input.fileRefs } } : {}),
+    ...(input.fileRefs?.length || input.pluginRequestAnswer
+      ? {
+          metadata: {
+            ...(input.fileRefs?.length ? { files: input.fileRefs } : {}),
+            ...(input.pluginRequestAnswer
+              ? { pluginRequestAnswer: input.pluginRequestAnswer }
+              : {}),
+          },
+        }
+      : {}),
   };
 }
 

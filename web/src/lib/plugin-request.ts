@@ -16,7 +16,18 @@ export const USE_HERE_NOTE =
  * never from the call. Null for every other call.
  */
 export function requestedPluginName(call: ToolCallDisplay): string | null {
-  if (call.name !== "nb__manage_tools" || call.status !== "done") return null;
+  return call.status === "done" ? requestPluginArg(call) : null;
+}
+
+/**
+ * The plugin a call asks for, finished or not: the `request_plugin` of an
+ * `nb__manage_tools` call, or null for any other call.
+ */
+export function requestPluginArg(call: {
+  name: string;
+  input?: Record<string, unknown>;
+}): string | null {
+  if (call.name !== "nb__manage_tools") return null;
   const name = call.input?.request_plugin;
   return typeof name === "string" && name ? name : null;
 }

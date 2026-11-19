@@ -190,6 +190,9 @@ function forkUserEventLine(msg: StoredMessage): string {
     type: "user.message",
     content: msg.content,
     ...(msg.userId ? { userId: msg.userId } : {}),
+    ...(msg.metadata?.pluginRequestAnswer
+      ? { pluginRequestAnswer: msg.metadata.pluginRequestAnswer }
+      : {}),
   });
 }
 
@@ -547,6 +550,9 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
         type: "user.message",
         content: message.content as ConversationEvent extends { content: infer C } ? C : never,
         ...(message.userId ? { userId: message.userId } : {}),
+        ...(message.metadata?.pluginRequestAnswer
+          ? { pluginRequestAnswer: message.metadata.pluginRequestAnswer }
+          : {}),
       } as ConversationEvent;
       this.appendEventSync(conversation.id, event);
       return;

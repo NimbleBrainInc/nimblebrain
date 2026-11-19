@@ -6,6 +6,7 @@ import type { ConfirmationGate } from "../config/privilege.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
 import type { TasksConfig } from "../config/tasks.ts";
 import type { ConnectorsConfig } from "../connectors/providers/config.ts";
+import type { PluginRequestAnswer } from "../conversation/types.ts";
 import type { EventSink, ThinkingEffort, WrapUpLimit } from "../engine/types.ts";
 import type { AgentRuntime } from "../execution/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
@@ -322,6 +323,12 @@ export interface ChatRequest {
   fileRefs?: FileReference[];
   /** Arbitrary metadata stored in the conversation's JSONL first line. Pass-through, no validation. */
   metadata?: Record<string, unknown>;
+  /**
+   * Set by a client when this message answers a plugin request card: stored
+   * with the message so a client shows it as that answer. The model reads only
+   * the message text.
+   */
+  pluginRequestAnswer?: PluginRequestAnswer;
   /** Glob patterns filtering which tools are available. Matches use same logic as skill allowed-tools. */
   allowedTools?: string[];
   /** Authenticated user identity for this request. Set by API middleware. */

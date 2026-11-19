@@ -44,7 +44,13 @@ describe("ChatRequest wire shape", () => {
     // Adding `workspaceId` (or anything else) would break `backward`;
     // dropping one of the listed keys would break `forward`.
     type ChatRequestKeys = keyof ChatRequest;
-    type Expected = "message" | "conversationId" | "model" | "maxIterations" | "appContext";
+    type Expected =
+      | "message"
+      | "conversationId"
+      | "model"
+      | "maxIterations"
+      | "appContext"
+      | "pluginRequestAnswer";
 
     const forward: Expected extends ChatRequestKeys ? true : false = true;
     const backward: ChatRequestKeys extends Expected ? true : false = true;

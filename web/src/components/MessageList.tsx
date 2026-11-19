@@ -13,6 +13,7 @@ import type { DisplayDetail } from "../lib/tool-display";
 import { BlockTimeline } from "./BlockTimeline";
 import { FileAttachment } from "./FileAttachment";
 import { LedgerLine } from "./LedgerLine";
+import { PluginRequestAnswerLine } from "./PluginRequestCard";
 
 function formatTokens(count: number): string {
   if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
@@ -491,6 +492,15 @@ function MessageItem({
   const displayContent = contextMatch ? msg.content.slice(contextMatch[0].length) : msg.content;
   const showTimestamp =
     displayDetail === "verbose" || (displayDetail === "balanced" && !!msg.timestamp);
+
+  // The answer to a plugin request card reads as that answer, under the card.
+  if (msg.role === "user" && msg.pluginRequestAnswer) {
+    return (
+      <div className="flex w-full self-start">
+        <PluginRequestAnswerLine answer={msg.pluginRequestAnswer} />
+      </div>
+    );
+  }
 
   return (
     <div

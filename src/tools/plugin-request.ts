@@ -88,10 +88,23 @@ export function describeUngrantedPlugins(plugins: readonly UngrantedPersonalPlug
       `- **${p.serverName}** (${p.displayName})${desc ? `: ${desc.length > 100 ? `${desc.slice(0, 100)}…` : desc}` : ""}`,
     );
   }
-  lines.push(
-    'To use one, ask the person with nb__manage_tools `{"request_plugin": "<name>"}`, then end your turn: their answer arrives as their next message.',
-  );
+  lines.push(askFor(plugins.map((p) => p.serverName)));
   return lines.join("\n");
+}
+
+/**
+ * How to ask for the named plugins, with each exact name filled in. It says to
+ * call the tool, not to tell the person to, and rules out the Plugins page:
+ * the core prompt sends the person there for plugins they do not have, and
+ * without that a model reads "ask the person" as an instruction to them.
+ */
+function askFor(serverNames: readonly string[]): string {
+  const [only] = serverNames;
+  const call =
+    serverNames.length === 1 && only !== undefined
+      ? `To use it, call nb__manage_tools with \`{"request_plugin": "${only}"}\` yourself`
+      : `To use one, call nb__manage_tools yourself with its exact name: ${serverNames.map((n) => `\`{"request_plugin": "${n}"}\``).join(" or ")}`;
+  return `${call}. That shows the person a one-click **Use here**. ${serverNames.length === 1 ? "It is" : "These are"} already theirs, so do not send them to the Plugins page. Then end your turn: their answer arrives as their next message.`;
 }
 
 /**
@@ -121,7 +134,7 @@ export async function ungrantedPluginGuidance(
   if (getRequestContext()?.unattended) {
     return `${off} A task cannot ask for it: a person must turn it on from Plugins.`;
   }
-  return `${off} To use it, ask the person with nb__manage_tools \`{"request_plugin": "${plugin.serverName}"}\`, then end your turn: their answer arrives as their next message.`;
+  return `${off} ${askFor([plugin.serverName])}`;
 }
 
 function refuse(message: string): ToolResult {
@@ -173,7 +186,7 @@ export async function requestPlugin(
   };
   return {
     content: textContent(
-      `Asked the person whether to use ${plugin.displayName} in this workspace. Nothing is turned on yet. End your turn now: their answer arrives as their next message, and if they turn it on, its tools are reachable from then on.`,
+      `The person now sees a card asking whether to use ${plugin.displayName} in this workspace, with **Use here** and **Not now**. Nothing is turned on yet. End your turn now and do not ask them yourself: the card is the question, so write at most one short line, or nothing. Their answer arrives as their next message, and if they turn it on, its tools are reachable from then on.`,
     ),
     structuredContent: structuredContent(output),
     isError: false,

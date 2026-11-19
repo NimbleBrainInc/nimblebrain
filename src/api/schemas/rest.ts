@@ -16,6 +16,7 @@
 
 import { type Static, Type } from "@sinclair/typebox";
 import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
+import { PluginRequestAnswer } from "../../platform/schemas/plugins.ts";
 
 // ── /v1/workspaces/:wsId/tools/call ─────────────────────────────────────────
 
@@ -95,6 +96,7 @@ export const ChatRequestBody = Type.Object(
     ),
     contentParts: Type.Optional(Type.Array(ContentPart)),
     fileRefs: Type.Optional(Type.Array(FileReference)),
+    pluginRequestAnswer: Type.Optional(PluginRequestAnswer),
     metadata: Type.Optional(
       Type.Record(Type.String(), Type.Unknown(), {
         description: "Arbitrary metadata stored in the conversation's first JSONL line.",

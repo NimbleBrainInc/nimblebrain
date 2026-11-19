@@ -1,4 +1,6 @@
+import { Check } from "lucide-react";
 import { useState } from "react";
+import type { PluginRequestAnswer } from "../_generated/platform-schemas/plugins";
 import { grantConnector } from "../api/client";
 import { useChatAnswer } from "../context/ChatAnswerContext";
 import { useChatPlugins } from "../context/ChatPluginsContext";
@@ -58,7 +60,7 @@ export function PluginRequestCard({
         for (const server of plugin.servers) await grantConnector(server.serverName, wsId);
       }
       setAnswer(choice);
-      await chat.send(answerMessage(plugin.displayName, choice));
+      await chat.send(answerMessage(plugin.displayName, choice), { serverName, answer: choice });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -116,5 +118,31 @@ export function PluginRequestCard({
         </div>
       )}
     </fieldset>
+  );
+}
+
+/**
+ * The person's answer to a plugin request card, in the place of the message
+ * that carried it to the agent. The card marks that message when it sends it
+ * (`pluginRequestAnswer`), so a message the person typed with the same words
+ * stays an ordinary bubble.
+ */
+export function PluginRequestAnswerLine({ answer }: { answer: PluginRequestAnswer }) {
+  const plugins = useChatPlugins();
+  const name = personalPluginNamed(plugins, answer.serverName)?.displayName ?? "the plugin";
+  return (
+    <p
+      data-testid="plugin-request-answer"
+      className="flex items-center gap-1.5 text-xs text-muted-foreground"
+    >
+      {answer.answer === "use" ? (
+        <>
+          <Check aria-hidden className="h-3.5 w-3.5" />
+          You turned on {name} here
+        </>
+      ) : (
+        <>You chose not now for {name}</>
+      )}
+    </p>
   );
 }

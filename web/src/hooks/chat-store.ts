@@ -1,3 +1,4 @@
+import type { PluginRequestAnswer } from "../_generated/platform-schemas/plugins";
 import {
   callTool,
   cancelChatTurn,
@@ -119,6 +120,12 @@ export interface ChatMessage {
   timestamp?: string;
   userId?: string;
   files?: MessageFileAttachment[];
+  /**
+   * Set when this user message is the person's answer to a plugin request
+   * card, sent by the card: the timeline shows it as that answer, not as
+   * something they typed.
+   */
+  pluginRequestAnswer?: PluginRequestAnswer;
   /** Skills the runtime composed into this turn's prompt — the Context Ledger
    *  line. Set from the live `skills.loaded` event and re-derived on reopen from
    *  the persisted turn. Absent when the turn loaded no skills. */
@@ -281,6 +288,7 @@ export interface StartTurnParams {
   model?: string;
   files?: File[];
   currentUserId?: string;
+  pluginRequestAnswer?: PluginRequestAnswer;
 }
 
 // ---------------------------------------------------------------------------
@@ -392,6 +400,7 @@ function buildOptimisticUserMessage(
     // but it is not dead code. Keep it.
     ...(params.currentUserId ? { userId: params.currentUserId } : {}),
     ...(userFiles && userFiles.length > 0 ? { files: userFiles } : {}),
+    ...(params.pluginRequestAnswer ? { pluginRequestAnswer: params.pluginRequestAnswer } : {}),
   };
 }
 
@@ -402,6 +411,7 @@ function buildChatRequest(slice: ConversationSlice, params: StartTurnParams): Ch
     ...(slice.conversationId ? { conversationId: slice.conversationId } : {}),
     ...(params.appContext ? { appContext: params.appContext } : {}),
     ...(params.model ? { model: params.model } : {}),
+    ...(params.pluginRequestAnswer ? { pluginRequestAnswer: params.pluginRequestAnswer } : {}),
   };
 }
 
@@ -933,6 +943,7 @@ export function createChatStore(): ChatStore {
         content: evt.content,
         ...(evt.timestamp ? { timestamp: evt.timestamp } : {}),
         ...(evt.userId ? { userId: evt.userId } : {}),
+        ...(evt.pluginRequestAnswer ? { pluginRequestAnswer: evt.pluginRequestAnswer } : {}),
       };
       const assistantMsg: ChatMessage = {
         role: "assistant",

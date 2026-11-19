@@ -29,6 +29,9 @@ const { act } = await import("react");
 const { ChatAnswerContext } = await import("../context/ChatAnswerContext");
 const { ChatPluginsContext } = await import("../context/ChatPluginsContext");
 const { PluginRequestCard } = await import("../components/PluginRequestCard");
+const { MessageList } = await import("../components/MessageList");
+const { MemoryRouter } = await import("react-router-dom");
+type ChatMessage = import("../hooks/chat-store").ChatMessage;
 const { requestedPluginName } = await import("../lib/plugin-request");
 
 const GRANOLA: Plugin = {
@@ -110,7 +113,10 @@ describe("PluginRequestCard", () => {
     render({ serverName: "granola" });
     await act(async () => button("plugin-request-use")?.click());
     expect(grantConnector).toHaveBeenCalledWith("granola", WS_ID);
-    expect(send).toHaveBeenCalledWith("I turned on Granola in this workspace. Go ahead.");
+    expect(send).toHaveBeenCalledWith("I turned on Granola in this workspace. Go ahead.", {
+      serverName: "granola",
+      answer: "use",
+    });
     expect(container.textContent).toContain("Turned on here.");
     expect(button("plugin-request-use")).toBeNull();
   });
@@ -119,7 +125,10 @@ describe("PluginRequestCard", () => {
     render({ serverName: "granola" });
     await act(async () => button("plugin-request-not-now")?.click());
     expect(grantConnector).not.toHaveBeenCalled();
-    expect(send).toHaveBeenCalledWith("Not now: don't use Granola in this workspace.");
+    expect(send).toHaveBeenCalledWith("Not now: don't use Granola in this workspace.", {
+      serverName: "granola",
+      answer: "not_now",
+    });
     expect(container.textContent).toContain("Not turned on.");
   });
 
@@ -166,5 +175,56 @@ describe("requestedPluginName", () => {
     expect(requestedPluginName({ ...call, status: "error" })).toBeNull();
     expect(requestedPluginName({ ...call, input: { add: ["x__y"] } })).toBeNull();
     expect(requestedPluginName({ ...call, name: "crm__manage_tools" })).toBeNull();
+  });
+});
+
+describe("the answer a card sent", () => {
+  const typed: ChatMessage = {
+    role: "user",
+    content: "I turned on Granola in this workspace. Go ahead.",
+    timestamp: "2026-11-18T00:00:00.000Z",
+  };
+
+  function renderMessages(messages: ChatMessage[]) {
+    act(() =>
+      root.render(
+        <MemoryRouter>
+          <ChatPluginsContext value={[GRANOLA]}>
+            <MessageList
+              messages={messages}
+              isStreaming={false}
+              streamingState={null}
+              displayDetail="balanced"
+            />
+          </ChatPluginsContext>
+        </MemoryRouter>,
+      ),
+    );
+  }
+
+  test("Use here's message reads as the answer, not a bubble the person typed", () => {
+    renderMessages([{ ...typed, pluginRequestAnswer: { serverName: "granola", answer: "use" } }]);
+    const line = container.querySelector('[data-testid="plugin-request-answer"]');
+    expect(line?.textContent).toBe("You turned on Granola here");
+    expect(container.querySelector(".presence-user-message")).toBeNull();
+  });
+
+  test("Not now's message reads as the answer", () => {
+    renderMessages([
+      {
+        ...typed,
+        content: "Not now: don't use Granola in this workspace.",
+        pluginRequestAnswer: { serverName: "granola", answer: "not_now" },
+      },
+    ]);
+    expect(container.querySelector('[data-testid="plugin-request-answer"]')?.textContent).toBe(
+      "You chose not now for Granola",
+    );
+  });
+
+  test("the same words typed by the person stay their bubble", () => {
+    renderMessages([typed]);
+    expect(container.querySelector('[data-testid="plugin-request-answer"]')).toBeNull();
+    expect(container.querySelector(".presence-user-message")?.textContent).toBe(typed.content);
   });
 });

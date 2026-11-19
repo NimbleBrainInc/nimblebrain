@@ -7,6 +7,11 @@ import type {
 } from "@ai-sdk/provider";
 import type { ResourceLinkInfo } from "../engine/content-helpers.ts";
 import type { ContextAssembledSource, SkillsLoadedEntry } from "../engine/types.ts";
+import type { PluginRequestAnswer } from "../platform/schemas/plugins.ts";
+
+/** Re-exported for the runtime, which does not import `platform/` (AGENTS.md, Layering). */
+export type { PluginRequestAnswer };
+
 import type { TokenUsage } from "../usage/types.ts";
 
 // Re-export so conversation-event consumers don't need to know these
@@ -240,6 +245,8 @@ export type UserContentPart = LanguageModelV4TextPart | ResourceLinkContentPart;
 
 interface StoredMessageMetadata {
   skill?: string | null;
+  /** On a user message: the plugin request it answers (`PluginRequestAnswer`). */
+  pluginRequestAnswer?: PluginRequestAnswer;
   /**
    * Marks a message the reconstructor synthesized rather than one the model
    * or user produced, paired with `skill`. `"connector_skill_injected"` is a
@@ -345,6 +352,8 @@ export interface UserMessageEvent {
     size: number;
     extracted: boolean;
   }>;
+  /** The plugin request this message answers, set by the client that sent it. */
+  pluginRequestAnswer?: PluginRequestAnswer;
 }
 
 export interface RunStartEvent {

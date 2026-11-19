@@ -356,7 +356,16 @@ function buildUserMessage(event: UserMessageEvent): StoredMessage {
     content: event.content.flatMap(toUserContentPart),
     timestamp: event.ts,
     ...(event.userId ? { userId: event.userId } : {}),
-    ...(event.files ? { metadata: { files: event.files } } : {}),
+    ...(event.files || event.pluginRequestAnswer
+      ? {
+          metadata: {
+            ...(event.files ? { files: event.files } : {}),
+            ...(event.pluginRequestAnswer
+              ? { pluginRequestAnswer: event.pluginRequestAnswer }
+              : {}),
+          },
+        }
+      : {}),
   };
 }
 

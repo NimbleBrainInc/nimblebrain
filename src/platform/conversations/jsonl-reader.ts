@@ -58,6 +58,7 @@ import type {
   DisplayToolResult,
   DisplayUsage,
 } from "../schemas/conversations.ts";
+import type { PluginRequestAnswer } from "../schemas/plugins.ts";
 
 export interface ConversationFile {
   meta: ConversationMeta;
@@ -84,6 +85,7 @@ interface UserMessageEvent {
   content: ContentPart[];
   userId?: string;
   files?: DisplayFile[];
+  pluginRequestAnswer?: PluginRequestAnswer;
 }
 
 interface RunStartEvent {
@@ -351,6 +353,7 @@ function buildUserMessage(evt: UserMessageEvent): DisplayMessage {
     timestamp: evt.ts,
     ...(evt.userId ? { userId: evt.userId } : {}),
     ...(evt.files && evt.files.length > 0 ? { files: evt.files } : {}),
+    ...(evt.pluginRequestAnswer ? { pluginRequestAnswer: evt.pluginRequestAnswer } : {}),
   };
 }
 

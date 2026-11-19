@@ -1,3 +1,5 @@
+import type { PluginRequestAnswer } from "./_generated/platform-schemas/plugins";
+
 // REST response bodies are the server's own types, generated from
 // `src/api/schemas/responses.ts`. Import them from here or from the generated
 // module; never restate one.
@@ -58,6 +60,8 @@ export interface ChatRequest {
   model?: string;
   maxIterations?: number;
   appContext?: AppContext;
+  /** Set when the message answers a plugin request card. */
+  pluginRequestAnswer?: PluginRequestAnswer;
 }
 
 // --- Chat stream projections ---

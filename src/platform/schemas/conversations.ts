@@ -1,5 +1,6 @@
 import { type Static, Type } from "@sinclair/typebox";
 import { StringEnum } from "./_shared.ts";
+import { PluginRequestAnswer } from "./plugins.ts";
 
 export const ConversationsListInput = Type.Object({
   limit: Type.Optional(Type.Number({ description: "Max conversations to return. Default: 20." })),
@@ -283,6 +284,8 @@ export const DisplayMessage = Type.Object({
   /** Aggregate LLM usage for the whole turn; absent on user messages. */
   usage: Type.Optional(DisplayUsage),
   files: Type.Optional(Type.Array(DisplayFile)),
+  /** On a user message: the plugin request card it answers, so a client shows it as that answer. */
+  pluginRequestAnswer: Type.Optional(PluginRequestAnswer),
   /**
    * Non-"complete" run terminations bubble up here: a `run.done` stopReason
    * verbatim ("max_iterations", "cancelled", …), "error" for a `run.error`,
