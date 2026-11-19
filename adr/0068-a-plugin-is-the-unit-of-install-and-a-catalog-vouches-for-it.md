@@ -39,8 +39,10 @@ The ecosystem has meanwhile settled on formats for each part:
   go under reverse-domain names. It deliberately leaves distribution, install,
   permissions and trust undefined. Claude Code has its own manifest at
   `.claude-plugin/plugin.json` with the same `skills/` layout.
-- **Plugin indexes.** Hosts list plugins from a `marketplace.json` in a git
-  repo. Its location differs by host, and no HTTP API for a plugin registry is
+- **Plugin indexes.** Hosts list plugins from a `marketplace.json`, read from a
+  git repo or, in Claude Code, from a URL whose entries name each plugin's source:
+  a git repository at a commit, or an HTTPS zip pinned by its sha256. Its
+  location in a repo differs by host, and no HTTP API for a plugin registry is
   specified anywhere.
 - **Discovery across domains.** The AI Catalog (`ai-catalog.json`) and ARD,
   which builds on it, list a domain's MCP servers, A2A agents, skills and
@@ -88,15 +90,19 @@ Each layer reads the one above it and never writes it.
   only on NimbleBrain.
 - **A skill-only plugin is a plugin with no `mcp.json`.** A skill is never a
   catalog entry on its own.
-- **A plugin's identity is a reverse-DNS name** whose namespace is verified the
-  way the MCP Registry verifies server names. A short name such as `linear` is
-  an alias a catalog assigns, never an identity.
+- **A plugin's name is short and unique within its catalog**, and `name@catalog`
+  addresses it (`linear@nimblebrain`). Claude Code requires a marketplace entry's
+  name to equal the plugin's manifest name and prefixes every skill with it, so a
+  long name reaches every install id and skill name. A plugin's global identifier
+  is its AI Catalog URN, `urn:air:<publisher domain>:<name>:plugin`, whose
+  publisher segment is a domain the publisher controls.
 
 ### A source is pinned content
 
-A plugin is fetched from a git repository, and an install records the commit
-it resolved to, never a branch or tag. A catalog is pinned
-the same way.
+A plugin is fetched from a git repository at a commit, or from an HTTPS zip
+archive with its sha256. An install records the commit or the digest it
+resolved to, never a branch, a tag, or a bare URL. A catalog whose repository
+is private serves its plugins as archives, since no host can clone it.
 
 ### A catalog vouches, and takes no submissions
 
@@ -107,12 +113,14 @@ A catalog serves:
   `_meta` key, `ai.nimblebrain/connector` (with placements under
   `ai.nimblebrain/host`). Servers absent upstream are published by the catalog
   itself.
-- a `marketplace.json` that lists its plugins, their aliases and their pinned
-  sources, in the git-repo convention other hosts read, so a host other than
+- each plugin's archive, built from its server and its skills, with the same
+  bytes for the same content.
+- a `marketplace.json` that lists its plugins by name with their pinned sources,
+  in Claude Code's marketplace format and at a URL, so a host other than
   NimbleBrain can add the catalog as a marketplace.
-- a generated `ai-catalog.json`, which links each plugin and each server's
-  Server Card. It is an output for outside discovery and never an input to
-  install.
+- a generated `ai-catalog.json`, which links each plugin's archive with its
+  digest under the plugin's URN. It is an output for outside discovery and
+  never an input to install.
 
 NimbleBrain runs its own catalog. Authors publish servers
 to the MCP Registry and plugins to their own sources; a catalog includes them by
@@ -130,17 +138,16 @@ which keeps the rule that connectors there come from what the operator controls.
 
 The plugins a workspace should have are a declared list. The runtime makes the
 installed state match it at boot and whenever the list changes, and writes the
-result to a lock that records each plugin's identity, catalog, version, source
-commit, and the connectors and skills it produced. The CLI, the web UI and
+result to a lock that records each plugin's name, catalog, version, source
+commit or digest, and the connectors and skills it produced. The CLI, the web UI and
 the platform API edit the declared list through the runtime; none of them
 installs anything itself. Whether a plugin belongs to a workspace or a person,
 and what that grants, is ADR-0069's.
 
 Installing a plugin:
 
-1. resolves its alias in the policy's catalogs to an identity and a pinned
-   source;
-2. fetches the source at its pinned commit;
+1. resolves its name in the policy's catalogs to a pinned source;
+2. fetches the source and verifies it against its pinned commit or digest;
 3. validates the manifest;
 4. for each server, resolves the named `ServerDetail` and connects as a catalog
    install does, or, with none named, connects by URL as ADR-0065 does where
@@ -238,8 +245,9 @@ renamed *skill index*. ADR-0015 is unchanged in substance.
 - Published plugins that ship only local `stdio` servers do not install, and
   many do. Reach into that part of the ecosystem depends on their authors
   offering remote servers; the refusal says so, so a person knows why.
-- Reverse-DNS identity needs namespace verification for plugins, which no
-  spec defines.
+- Two catalogs can each list a plugin named `linear`. `name@catalog` tells them
+  apart within an instance, and the URN across catalogs; nothing verifies a
+  plugin's name the way the MCP Registry verifies a server's namespace.
 
 ### Open
 
