@@ -26,6 +26,32 @@ function multipartBody(bytes: number) {
   return form;
 }
 
+/** `bytes` sent with no declared length, so the transfer is chunked. */
+function chunked(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  let offset = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (offset === bytes.length) return controller.close();
+      const end = Math.min(offset + 64 * 1024, bytes.length);
+      controller.enqueue(bytes.subarray(offset, end));
+      offset = end;
+    },
+  });
+}
+
+/** A form's encoded bytes and the content type that names its boundary. */
+async function encodeForm(form: FormData): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const encoded = new Response(form);
+  const contentType = encoded.headers.get("content-type") ?? "";
+  return { bytes: new Uint8Array(await encoded.arrayBuffer()), contentType };
+}
+
+function uploadForm(bytes: number): FormData {
+  const form = new FormData();
+  form.append("file", new Blob([new Uint8Array(bytes)], { type: "text/plain" }), "notes.txt");
+  return form;
+}
+
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
@@ -100,6 +126,78 @@ describe("per-route body limits", () => {
     expect(typeof body.details?.received).toBe("number");
     expect(body.details?.received).toBeGreaterThan(1_048_576);
     expect(body.details?.contentType).toContain("application/json");
+  });
+
+  it("rejects a chunked JSON body over 1 MB on /v1/workspaces/:wsId/tools/call", async () => {
+    const body = JSON.stringify({
+      server: "x",
+      tool: "y",
+      arguments: { blob: "x".repeat(3_000_000) },
+    });
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: chunked(new TextEncoder().encode(body)),
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(res.status).toBe(413);
+    const error = await readJson<ApiErrorBody>(res);
+    expect(error.error).toBe("payload_too_large");
+    expect(error.details?.limit).toBe(1_048_576);
+  });
+
+  it("rejects a chunked JSON message over 1 MB on /v1/workspaces/:wsId/chat/start", async () => {
+    const body = JSON.stringify({ message: "x".repeat(3_000_000) });
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: chunked(new TextEncoder().encode(body)),
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(res.status).toBe(413);
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("payload_too_large");
+  });
+
+  it("rejects a chunked upload over filesConfig.maxTotalSize on /v1/workspaces/:wsId/resources", async () => {
+    const { bytes, contentType } = await encodeForm(uploadForm(12 * 1024 * 1024));
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
+      method: "POST",
+      headers: { "Content-Type": contentType },
+      body: chunked(bytes),
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(res.status).toBe(413);
+    const error = await readJson<ApiErrorBody>(res);
+    expect(error.error).toBe("payload_too_large");
+    expect(error.details?.limit).toBe(MAX_TOTAL_SIZE);
+    // Refused by the route's limit as the bytes arrived, not by the upload
+    // handler after reading the whole form.
+    expect(error.details?.contentType).toContain("multipart/form-data");
+  });
+
+  it("stores a chunked upload within filesConfig.maxTotalSize on /v1/workspaces/:wsId/resources", async () => {
+    // Over the 1 MB JSON cap, under the upload limit: the route reads it whole.
+    const { bytes, contentType } = await encodeForm(uploadForm(2 * 1024 * 1024));
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
+      method: "POST",
+      headers: { "Content-Type": contentType },
+      body: chunked(bytes),
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('"size":2097152');
+  });
+
+  // Routes that chain no `bodyLimit` are still bounded: the server itself
+  // refuses a body past the largest route limit plus the drain overrun.
+  it("refuses a chunked body past the server's ceiling on a route without its own limit", async () => {
+    const res = await fetch(`${baseUrl}/v1/mcp-auth/initiate-identity`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: chunked(new Uint8Array(MAX_TOTAL_SIZE + 9 * 1024 * 1024).fill(32)),
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(res.status).toBe(413);
   });
 
   it("rejects >1MB JSON on /v1/workspaces/:wsId/chat/start", async () => {

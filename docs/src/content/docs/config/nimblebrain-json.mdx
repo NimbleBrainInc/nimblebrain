@@ -742,6 +742,8 @@ File upload limits applied when `features.fileContext` is enabled.
 
 An upload to the workspace file store (the Files app, or an app's file picker) is not a chat message: `maxFilesPerMessage` does not apply to it. It takes up to 100 files at a time, each within `maxFileSize` and all together within `maxTotalSize`. The chat composer shows the per-message limits before you send.
 
+Request bodies are limited by bytes received, including chunked bodies. A JSON request (a chat message, a tool call) takes up to 1 MB, and an upload, a chat message's or the file store's, takes up to `maxTotalSize`; a larger one is refused with `413 payload_too_large`. The server refuses any body more than 8 MB past the larger of the two before a route sees it.
+
 ## telemetry
 
 Anonymous, aggregate usage data, with no content, names, error messages or paths. Left unset, a person decides: nothing is sent until someone says yes in the CLI or the web UI. Setting `enabled` is the operator deciding for everyone, and no one is asked.
