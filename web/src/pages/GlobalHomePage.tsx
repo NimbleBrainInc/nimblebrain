@@ -205,7 +205,9 @@ function WorkspaceTileLink({
       data-workspace-id={workspace.id}
       className={cn(
         // Right padding leaves room for the two toggles laid over the tile.
-        "group flex items-center gap-3 p-4 pr-20 rounded-sm border border-border bg-card",
+        // Full height so the link fills its grid cell: the toggles center on
+        // the cell, which the New workspace tile's min height can make taller.
+        "group flex h-full items-center gap-3 p-4 pr-20 rounded-sm border border-border bg-card",
         "hover:border-foreground/20 hover:bg-foreground/[0.02] transition-colors",
       )}
     >
