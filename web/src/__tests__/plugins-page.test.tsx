@@ -1,11 +1,14 @@
 // ---------------------------------------------------------------------------
 // PluginsPage — what the agent can do in a workspace.
 //
-// Installed groups the listing by whose each plugin is and whether it acts
-// here, says whose account each uses, and offers the viewer's own plugins a
-// Use here (after a confirm) or Stop using here. Browse is the connector
-// directory, whose install actions only a member who may write the workspace
-// sees. Use here is the viewer's own grant, so any member gets it.
+// Installed arranges the listing by who each item acts for (Shared, Just you,
+// Yours not on here), gathers what needs the viewer at the top, and offers
+// each row only what needs the viewer, with the rest in its ⋯ menu. A
+// person's own plugin gets Use here (after a confirm) or, from its menu, Stop
+// using here and Disconnect. Browse is the connector directory, whose install
+// actions only a member who may write the workspace sees. Use here is the
+// viewer's own grant, so any member gets it. The arrangement at scale (search,
+// filters, show-all, collapse) is in plugins-installed-view.test.tsx.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -25,6 +28,12 @@ let plugins: Plugin[] = [];
 const listPlugins = mock<typeof ApiClient.listPlugins>(async (wsId) => ({ wsId, plugins }));
 const grantConnector = mock<typeof ApiClient.grantConnector>(async () => {});
 const revokeConnector = mock<typeof ApiClient.revokeConnector>(async () => {});
+const listPersonalConnectors = mock<typeof ApiClient.listPersonalConnectors>(async () => ({
+  connectors: [],
+}));
+const disconnectPersonalConnector = mock<typeof ApiClient.disconnectPersonalConnector>(
+  async (serverName) => ({ ok: true, scope: "identity", serverName, revokedWorkspaces: 0 }),
+);
 const listDirectory = mock(async () => ({
   entries: [
     {
@@ -56,6 +65,8 @@ mock.module("../api/client", () => ({
   listPlugins,
   grantConnector,
   revokeConnector,
+  listPersonalConnectors,
+  disconnectPersonalConnector,
   listDirectory,
   getInstalledConnectors,
 }));
@@ -117,6 +128,8 @@ beforeEach(() => {
   listPlugins.mockClear();
   grantConnector.mockClear();
   revokeConnector.mockClear();
+  disconnectPersonalConnector.mockClear();
+  localStorage.clear();
 });
 
 async function settle(): Promise<void> {
@@ -161,7 +174,7 @@ async function mount(opts: { role?: "admin" | "member"; path?: string } = {}): P
 }
 
 function section(container: HTMLElement, id: string): HTMLElement | null {
-  return container.querySelector(`[data-testid="plugins-${id}"]`);
+  return container.querySelector(`[data-testid="installed-section-${id}"]`);
 }
 
 function rowNames(el: HTMLElement | null): string[] {
@@ -186,40 +199,76 @@ async function click(el: Element | null | undefined): Promise<void> {
   await settle();
 }
 
+/** Open a collapsed section by its header. */
+async function expand(container: HTMLElement, id: string): Promise<void> {
+  const s = section(container, id);
+  if (s?.getAttribute("data-collapsed") === "true") await click(s.querySelector("h2 button"));
+}
+
+/** Open the row's ⋯ menu; the menu renders in a portal. */
+async function openMenu(r: HTMLElement): Promise<HTMLElement> {
+  await click(r.querySelector('[data-testid="plugin-menu"]'));
+  const popup = document.body.querySelector<HTMLElement>('[data-testid="plugin-menu-popup"]');
+  if (!popup) throw new Error("the row's menu did not open");
+  return popup;
+}
+
+function menuItems(popup: HTMLElement): string[] {
+  return [...popup.querySelectorAll('[role="menuitem"]')].map((i) => i.textContent?.trim() ?? "");
+}
+
+function menuItem(popup: HTMLElement, text: string): HTMLElement | undefined {
+  return [...popup.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+    (i) => i.textContent?.trim() === text,
+  );
+}
+
+function dialog(): HTMLElement {
+  return document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+}
+
 describe("PluginsPage — Installed", () => {
   test("reads the listing for the workspace the route names", async () => {
     mounted = await mount();
     expect(listPlugins).toHaveBeenCalledWith(WS_ID);
   });
 
-  test("groups plugins by owner, with the ungranted ones last", async () => {
+  test("sections plugins by who they act for, with the ungranted ones last", async () => {
     plugins = [GRANOLA, GMAIL, GITHUB];
     mounted = await mount();
-    expect(rowNames(section(mounted.container, "workspace"))).toEqual(["workspace:github"]);
-    expect(rowNames(section(mounted.container, "yours"))).toEqual(["person:gmail"]);
-    expect(rowNames(section(mounted.container, "yours-not-here"))).toEqual(["person:granola"]);
+    expect(rowNames(section(mounted.container, "shared"))).toEqual(["workspace:github"]);
+    expect(rowNames(section(mounted.container, "you"))).toEqual(["person:gmail"]);
+    await expand(mounted.container, "not-here");
+    expect(rowNames(section(mounted.container, "not-here"))).toEqual(["person:granola"]);
+    const order = [
+      ...mounted.container.querySelectorAll('section[data-testid^="installed-section-"]'),
+    ].map((s) => s.getAttribute("data-testid"));
+    expect(order).toEqual([
+      "installed-section-shared",
+      "installed-section-you",
+      "installed-section-not-here",
+    ]);
   });
 
-  test("a person's plugin carries the person badge and a workspace plugin does not", async () => {
+  test("a row inside its section carries no owner mark", async () => {
     plugins = [GITHUB, GMAIL];
     mounted = await mount();
-    const badge = '[data-testid="plugin-person-badge"]';
-    expect(row(mounted.container, "person:gmail")?.querySelector(badge)).not.toBeNull();
-    expect(row(mounted.container, "workspace:github")?.querySelector(badge)).toBeNull();
+    expect(mounted.container.querySelector('[data-testid="owner-mark"]')).toBeNull();
   });
 
   test("the account line names the account when the sign-in recorded one", async () => {
     plugins = [GITHUB, GMAIL, GRANOLA];
     mounted = await mount();
+    await expand(mounted.container, "not-here");
     const account = (id: string) =>
       row(mounted!.container, id)?.querySelector('[data-testid="plugin-account"]')?.textContent;
     expect(account("person:gmail")).toBe("Uses your account · pat@acme.test");
     expect(account("person:granola")).toBe("Uses your account · Pat");
     // No account recorded: the line says whose, and invents no account.
-    expect(account("workspace:github")).toBe("Uses the workspace's account · 1 skill");
+    expect(account("workspace:github")).toBe("Uses the workspace's account");
   });
 
-  test("a server that is not ready shows the connector list's status words", async () => {
+  test("a workspace sign-in a member cannot do shows the connector list's status words", async () => {
     plugins = [
       plugin({
         id: "workspace:linear",
@@ -228,8 +277,18 @@ describe("PluginsPage — Installed", () => {
         servers: [{ serverName: "linear", status: "needs_auth", account: null }],
       }),
     ];
+    mounted = await mount({ role: "member" });
+    const r = row(mounted.container, "workspace:linear")!;
+    expect(r.querySelector('[data-testid="plugin-status"]')?.textContent).toBe("Reconnect");
+    expect(button(r, "Reconnect")).toBeUndefined();
+  });
+
+  test("a healthy row offers nothing but its menu", async () => {
+    plugins = [GITHUB];
     mounted = await mount();
-    expect(row(mounted.container, "workspace:linear")?.textContent).toContain("Reconnect");
+    const r = row(mounted.container, "workspace:github")!;
+    expect(r.querySelector('[data-testid="plugin-action"]')).toBeNull();
+    expect(r.querySelectorAll("button")).toHaveLength(1);
   });
 
   test("marks the plugin an OAuth sign-in just connected, and only that one", async () => {
@@ -287,40 +346,89 @@ describe("PluginsPage — Installed", () => {
   test("Use here grants only after the confirm, naming the account and workspace", async () => {
     plugins = [GRANOLA];
     mounted = await mount();
+    await expand(mounted.container, "not-here");
     await click(button(row(mounted.container, "person:granola")!, "Use here"));
     expect(grantConnector).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain("Use Granola (Pat) in Helix?");
     expect(document.body.textContent).toContain("Only you can use it here; other members can't.");
 
     plugins = [{ ...GRANOLA, granted: true }];
-    const dialog = document.body.querySelector('[role="dialog"]')!;
-    await click(button(dialog, "Use here"));
+    await click(button(dialog(), "Use here"));
     expect(grantConnector).toHaveBeenCalledWith("granola", WS_ID);
-    expect(rowNames(section(mounted.container, "yours"))).toEqual(["person:granola"]);
-    expect(section(mounted.container, "yours-not-here")).toBeNull();
+    expect(rowNames(section(mounted.container, "you"))).toEqual(["person:granola"]);
+    expect(section(mounted.container, "not-here")).toBeNull();
   });
 
-  test("Stop using here revokes the grant in this workspace", async () => {
+  test("a person's granted, connected row's menu offers Open, Stop using here, and Disconnect", async () => {
     plugins = [GMAIL];
     mounted = await mount();
-    await click(button(row(mounted.container, "person:gmail")!, "Stop using here"));
+    const popup = await openMenu(row(mounted.container, "person:gmail")!);
+    expect(menuItems(popup)).toEqual(["Open", "Stop using here", "Disconnect"]);
+    expect(menuItem(popup, "Open")?.getAttribute("href")).toBe(`/w/${SLUG}/plugins/person%3Agmail`);
+  });
+
+  test("a workspace row's menu offers Open only", async () => {
+    plugins = [GITHUB];
+    mounted = await mount();
+    const popup = await openMenu(row(mounted.container, "workspace:github")!);
+    expect(menuItems(popup)).toEqual(["Open"]);
+  });
+
+  test("Stop using here revokes the grant in this workspace after its confirm", async () => {
+    plugins = [GMAIL];
+    mounted = await mount();
+    const popup = await openMenu(row(mounted.container, "person:gmail")!);
+    await click(menuItem(popup, "Stop using here"));
+    expect(revokeConnector).not.toHaveBeenCalled();
+    await click(button(dialog(), "Stop using here"));
     expect(revokeConnector).toHaveBeenCalledWith("gmail", WS_ID);
+  });
+
+  test("Disconnect signs out after its confirm", async () => {
+    plugins = [GMAIL];
+    mounted = await mount();
+    const popup = await openMenu(row(mounted.container, "person:gmail")!);
+    await click(menuItem(popup, "Disconnect"));
+    expect(disconnectPersonalConnector).not.toHaveBeenCalled();
+    await click(button(dialog(), "Disconnect"));
+    expect(disconnectPersonalConnector).toHaveBeenCalledWith("gmail");
   });
 
   test("a member who cannot write the workspace still gets Use here", async () => {
     plugins = [GRANOLA];
     mounted = await mount({ role: "member" });
+    await expand(mounted.container, "not-here");
     expect(button(row(mounted.container, "person:granola")!, "Use here")).toBeDefined();
   });
 
-  test("with nothing acting here, only a writer is offered Browse", async () => {
+  test("with nothing installed, only a writer is offered Browse; anyone may write a skill", async () => {
     mounted = await mount({ role: "admin" });
+    expect(mounted.container.textContent).toContain("Nothing is installed here yet.");
     expect(button(mounted.container, "Browse plugins")).toBeDefined();
+    expect(button(mounted.container, "Write a skill")).toBeDefined();
     mounted.unmount();
 
     mounted = await mount({ role: "member" });
-    expect(mounted.container.textContent).toContain("No plugins act in this workspace yet.");
+    expect(mounted.container.textContent).toContain("Nothing is installed here yet.");
     expect(button(mounted.container, "Browse plugins")).toBeUndefined();
+    expect(button(mounted.container, "Write a skill")).toBeDefined();
+  });
+
+  test("Browse directory in the header opens Browse", async () => {
+    plugins = [GITHUB];
+    mounted = await mount();
+    await click(button(mounted.container, "Browse directory"));
+    expect(mounted.container.textContent).toContain("Acme Tasks");
+  });
+
+  test("Add offers a plugin from the directory and writing a skill", async () => {
+    plugins = [GITHUB];
+    mounted = await mount();
+    await click(mounted.container.querySelector('[data-testid="plugins-add"]'));
+    const popup = document.body.querySelector<HTMLElement>('[data-testid="plugins-add-popup"]')!;
+    expect(menuItems(popup)).toEqual(["Plugin from the directory", "Write a skill"]);
+    await click(menuItem(popup, "Plugin from the directory"));
+    expect(mounted.container.textContent).toContain("Acme Tasks");
   });
 });
 

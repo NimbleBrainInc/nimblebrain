@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
-// Skills on Plugins — the Installed tab's Skills group, a skill's page, and
-// writing a new one from Browse.
+// Skills on Plugins — the Installed tab's skills, a skill's page, and writing a
+// new one from Browse.
 //
-// The group lists the skills people wrote (the workspace's, the viewer's own,
-// the org's) with whose each is, and never one that came with a plugin. A
+// Installed lists the skills people wrote under who they act for (the
+// workspace's and the org's under Shared, the viewer's own under Just you),
+// and never one that came with a plugin. A
 // skill's page edits under the server's write rules: a workspace skill needs
 // workspace write, the viewer's own is theirs, an org skill is read-only here.
 // A new skill asks whom it is for, and only a writer may pick everyone.
@@ -110,6 +111,9 @@ const callToolWithoutWorkspace = mock<typeof ApiClient.callToolWithoutWorkspace>
 );
 const listPlugins = mock<typeof ApiClient.listPlugins>(async (wsId) => ({ wsId, plugins: [] }));
 const listDirectory = mock(async () => ({ entries: [], errors: [] }));
+const listPersonalConnectors = mock<typeof ApiClient.listPersonalConnectors>(async () => ({
+  connectors: [],
+}));
 const getInstalledConnectors = mock(async () => ({ installed: [] }));
 
 mock.module("../api/client", () => ({
@@ -118,6 +122,7 @@ mock.module("../api/client", () => ({
   callToolWithoutWorkspace,
   listPlugins,
   listDirectory,
+  listPersonalConnectors,
   getInstalledConnectors,
 }));
 
@@ -253,32 +258,30 @@ function calls(fn: typeof callTool | typeof callToolWithoutWorkspace, tool: stri
   return fn.mock.calls.filter((c) => c[1] === tool);
 }
 
-describe("Installed — the Skills group", () => {
-  test("lists the workspace's, the viewer's, and the org's skills, and none from a plugin", async () => {
+describe("Installed — skills", () => {
+  test("lists the workspace's and the org's under Shared, the viewer's under Just you, none from a plugin", async () => {
     mounted = await mount(`/w/${SLUG}/plugins`);
-    expect(rows(mounted.container)).toEqual([
-      "workspace/house-style",
-      "user/my-voice",
-      "org/policy",
-    ]);
+    const inSection = (id: string) =>
+      rows(mounted!.container.querySelector(`[data-testid="installed-section-${id}"]`)!);
+    expect(inSection("shared")).toEqual(["workspace/house-style", "org/policy"]);
+    expect(inSection("you")).toEqual(["user/my-voice"]);
     expect(calls(callTool, "list")[0]?.[3]).toEqual({ workspaceId: WS_ID });
     expect(mounted.container.textContent).toContain(
       "Skills that come with a plugin are on that plugin's page.",
     );
   });
 
-  test("each row says whose it is and how it loads", async () => {
+  test("each row says how it loads, and an org skill is tagged", async () => {
     mounted = await mount(`/w/${SLUG}/plugins`);
-    const badge = (name: string) =>
-      rowFor(mounted!.container, name)?.querySelector('[data-testid="skill-scope-badge"]')
-        ?.textContent;
-    expect(badge("house-style")).toBe("Workspace");
-    expect(badge("my-voice")).toBe("Yours");
-    expect(badge("policy")).toBe("Org");
+    const tag = (name: string) =>
+      rowFor(mounted!.container, name)?.querySelector('[data-testid="skill-org-tag"]')?.textContent;
+    expect(tag("policy")).toBe("Org");
+    expect(tag("house-style")).toBeUndefined();
+    expect(tag("my-voice")).toBeUndefined();
     const facts = rowFor(mounted.container, "my-voice")?.querySelector(
       '[data-testid="skill-facts"]',
     )?.textContent;
-    expect(facts).toBe("My voice · On tool match docs__*");
+    expect(facts).toBe("On tool match docs__*");
   });
 
   test("rows link to each skill's page by scope and name", async () => {

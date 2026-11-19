@@ -1,23 +1,40 @@
-import { Check, User } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Menu } from "@base-ui/react/menu";
+import { ChevronDown } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Plugin, PluginsListOutput } from "../_generated/platform-schemas/plugins";
-import { grantConnector, listPlugins, revokeConnector } from "../api/client";
-import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
+import {
+  disconnectPersonalConnector,
+  grantConnector,
+  listPersonalConnectors,
+  listPlugins,
+  type PersonalConnector,
+  revokeConnector,
+} from "../api/client";
 import { connectorStatusSummary } from "../components/connectors/ConnectorList";
 import {
-  type ConnectedTarget,
+  disconnectConsequence,
+  personalConnectUrl,
+} from "../components/connectors/personal-connector";
+import {
   type ReturnedConnector,
   useConnectedNotice,
 } from "../components/connectors/useConnectedNotice";
-import { SkillsGroup } from "../components/plugins/SkillsGroup";
+import { InstalledView, type RowMenuItem } from "../components/plugins/InstalledView";
 import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
-import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { ConfirmDialog } from "../components/ui/confirm-dialog";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useEvents } from "../hooks/useEvents";
 import { useCanWriteActiveWorkspace } from "../hooks/useScopedRole";
-import { accountLine, newSkillPath, pluginPath } from "../lib/plugins";
+import { type AuthoredSkill, listAuthoredSkills } from "../lib/authored-skills";
+import {
+  type AttentionStep,
+  buildInstalledModel,
+  type InstalledFilters,
+  pluginAttention,
+} from "../lib/installed-view";
+import { newSkillPath, pluginPath, skillPath } from "../lib/plugins";
 import { cn } from "../lib/utils";
 import { toWsId } from "../lib/workspace-slug";
 import { ConnectorDirectory } from "./settings/ConnectorBrowsePage";
@@ -26,14 +43,18 @@ import { EmptyState, InlineError } from "./settings/components";
 /**
  * Plugins — what the agent can do in this workspace, in one place.
  *
- * Installed lists the workspace's plugins and the viewer's own ones granted
- * here, then the viewer's plugins not used here, each with the one action that
- * changes that, then the skills people wrote (`SkillsGroup`). Browse offers
- * writing a skill above the connector directory, which asks whom an install
- * is for: the viewer alone (granted here in the same act) or everyone in the
- * workspace. Each row shows a plugin by the facts the listing carries (whose it
- * is, whether it is granted, the account it signs in as) and needs no rule of
- * its own to tell a personal plugin from a workspace one (ADR-0069).
+ * Installed arranges, for a listing of any length (`InstalledView`), what the
+ * agent can use here by who it acts for: **Shared** (the workspace's plugins,
+ * its skills, and the org's), **Just you** (the viewer's plugins granted here
+ * and their own skills), and **Yours, not on here**. Plugins whose next step is
+ * an action are also gathered at the top under **Needs you**. A row names the
+ * plugin and the account it uses, offers only what needs the viewer, and opens
+ * the plugin's page; the rest is in its ⋯ menu. Whose a plugin is reads from
+ * the facts the listing carries (ADR-0069).
+ *
+ * Browse offers writing a skill above the connector directory, which asks
+ * whom an install is for: the viewer alone (granted here in the same act) or
+ * everyone in the workspace.
  *
  * One column, because this renders in the main area beside the docked chat
  * (`web/DESIGN.md`).
@@ -41,6 +62,9 @@ import { EmptyState, InlineError } from "./settings/components";
 export function PluginsPage() {
   const { slug = "" } = useParams<{ slug: string }>();
   const wsId = toWsId(slug);
+  const navigate = useNavigate();
+  const { workspaces } = useWorkspaceContext();
+  const workspaceName = workspaces.find((w) => w.id === wsId)?.name ?? "this workspace";
   const [params, setParams] = useSearchParams();
   const tab: PluginsTab = params.get("tab") === "browse" ? "browse" : "installed";
   const showTab = (next: PluginsTab) =>
@@ -49,11 +73,24 @@ export function PluginsPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto px-(--page-gutter) py-6 space-y-6">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Plugins</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            What your agent can do in this workspace.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold tracking-tight">Plugins</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              What your agent can do in {workspaceName}.
+            </p>
+          </div>
+          {tab === "installed" && (
+            <div className="flex shrink-0 gap-2" data-testid="plugins-header-actions">
+              <Button type="button" variant="outline" size="sm" onClick={() => showTab("browse")}>
+                Browse directory
+              </Button>
+              <AddMenu
+                onPlugin={() => showTab("browse")}
+                onSkill={() => navigate(newSkillPath(slug))}
+              />
+            </div>
+          )}
         </div>
 
         <div role="tablist" aria-label="Plugins" className="flex gap-4 border-b border-border">
@@ -66,7 +103,13 @@ export function PluginsPage() {
         </div>
 
         {tab === "installed" ? (
-          <InstalledPlugins key={wsId} wsId={wsId} slug={slug} onBrowse={() => showTab("browse")} />
+          <InstalledPlugins
+            key={wsId}
+            wsId={wsId}
+            slug={slug}
+            workspaceName={workspaceName}
+            onBrowse={() => showTab("browse")}
+          />
         ) : (
           <Browse slug={slug} />
         )}
@@ -76,6 +119,38 @@ export function PluginsPage() {
 }
 
 type PluginsTab = "installed" | "browse";
+
+/** Add ▾: a plugin from the directory, or a skill written here. */
+function AddMenu({ onPlugin, onSkill }: { onPlugin: () => void; onSkill: () => void }) {
+  const itemClass =
+    "flex w-full cursor-default items-center px-3 py-1.5 text-sm outline-none data-[highlighted]:bg-foreground/5";
+  return (
+    <Menu.Root>
+      <Menu.Trigger
+        render={<Button type="button" size="sm" data-testid="plugins-add" />}
+        className="gap-1"
+      >
+        Add
+        <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner align="end" sideOffset={4} className="z-50">
+          <Menu.Popup
+            data-testid="plugins-add-popup"
+            className="min-w-48 rounded-sm border bg-popover py-1 text-popover-foreground shadow-md outline-none"
+          >
+            <Menu.Item className={itemClass} onClick={onPlugin}>
+              Plugin from the directory
+            </Menu.Item>
+            <Menu.Item className={itemClass} onClick={onSkill}>
+              Write a skill
+            </Menu.Item>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
 
 /**
  * Browse: writing a skill, then the plugin directory. A skill written here is
@@ -137,50 +212,37 @@ function TabButton({
   );
 }
 
-/** The listing split by whose each plugin is and whether it acts here. */
-export function groupPlugins(plugins: readonly Plugin[]): {
-  workspace: Plugin[];
-  yours: Plugin[];
-  yoursNotHere: Plugin[];
-} {
-  const byName = (a: Plugin, b: Plugin) =>
-    a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" });
-  const sorted = [...plugins].sort(byName);
-  return {
-    workspace: sorted.filter((p) => p.owner.kind === "workspace"),
-    yours: sorted.filter((p) => p.owner.kind === "person" && p.granted),
-    yoursNotHere: sorted.filter((p) => p.owner.kind === "person" && !p.granted),
-  };
-}
-
-/** What the plugin brings besides its tools: its skills and its apps. */
-export function contentsLine(plugin: Plugin): string | undefined {
-  const parts: string[] = [];
-  const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
-  if (plugin.skills.length > 0) parts.push(count(plugin.skills.length, "skill"));
-  if (plugin.apps.length > 0) parts.push(count(plugin.apps.length, "app"));
-  return parts.length > 0 ? parts.join(" · ") : undefined;
-}
+const NO_FILTERS: InstalledFilters = { query: "", kind: "all", owner: "everyone" };
 
 function InstalledPlugins({
   wsId,
   slug,
+  workspaceName,
   onBrowse,
 }: {
   wsId: string;
   slug: string;
+  workspaceName: string;
   onBrowse: () => void;
 }) {
-  const { workspaces } = useWorkspaceContext();
-  // Installing writes the workspace; granting your own plugin does not, so
-  // only the install affordance is gated.
-  const canInstall = useCanWriteActiveWorkspace();
-  const workspaceName = workspaces.find((w) => w.id === wsId)?.name ?? "this workspace";
+  const navigate = useNavigate();
+  // Installing and signing in a workspace plugin write the workspace; granting
+  // your own plugin does not, so only those affordances are gated.
+  const canManage = useCanWriteActiveWorkspace();
   const [listing, setListing] = useState<PluginsListOutput | null>(null);
+  const [skills, setSkills] = useState<AuthoredSkill[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [filters, setFilters] = useState<InstalledFilters>(NO_FILTERS);
   const [confirming, setConfirming] = useState<Plugin | null>(null);
+  const [stopping, setStopping] = useState<Plugin | null>(null);
+  const [disconnecting, setDisconnecting] = useState<Plugin | null>(null);
+  // The viewer's connector records, which say which route each sign-in takes
+  // and where each plugin is on. An action that signs in waits for them rather
+  // than guess the route.
+  const [connectors, setConnectors] = useState<PersonalConnector[] | null>(null);
 
   const refresh = useCallback(
     async (signal?: { cancelled: boolean }) => {
@@ -200,26 +262,52 @@ function InstalledPlugins({
   useEffect(() => {
     const signal = { cancelled: false };
     void refresh(signal);
+    listAuthoredSkills(wsId).then(
+      (next) => {
+        if (!signal.cancelled) setSkills(next);
+      },
+      (err: unknown) => {
+        if (signal.cancelled) return;
+        setSkillsError(err instanceof Error ? err.message : String(err));
+        setSkills([]);
+      },
+    );
     return () => {
       signal.cancelled = true;
     };
-  }, [refresh]);
+  }, [refresh, wsId]);
+
+  const loadConnectors = useCallback(async (signal?: { cancelled: boolean }) => {
+    try {
+      const { connectors: mine } = await listPersonalConnectors();
+      if (!signal?.cancelled) setConnectors(mine);
+    } catch (err) {
+      if (!signal?.cancelled) setActionError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    const signal = { cancelled: false };
+    void loadConnectors(signal);
+    return () => {
+      signal.cancelled = true;
+    };
+  }, [loadConnectors]);
 
   // A sign-in finishing elsewhere changes a row's status and account.
   useEvents({ onConnectionStateChanged: () => void refresh() });
 
+  const plugins = listing && listing.wsId === wsId ? listing.plugins : null;
+
   // Confirm the connector an OAuth sign-in just connected (`?connected=`): a
   // notice, and its plugin's row marked while the page is open.
   const rereadSilently = useCallback(() => void refresh(), [refresh]);
-  const returned = useMemo(
-    () => (listing && listing.wsId === wsId ? listing.plugins.flatMap(toReturnedConnectors) : null),
-    [listing, wsId],
-  );
+  const returned = useMemo(() => plugins?.flatMap(toReturnedConnectors) ?? null, [plugins]);
   const justConnected = useConnectedNotice(returned, rereadSilently);
 
-  const groups = useMemo(
-    () => (listing && listing.wsId === wsId ? groupPlugins(listing.plugins) : null),
-    [listing, wsId],
+  const model = useMemo(
+    () => (plugins && skills ? buildInstalledModel(plugins, skills, filters, { canManage }) : null),
+    [plugins, skills, filters, canManage],
   );
 
   const grantHere = async (plugin: Plugin) => {
@@ -228,107 +316,144 @@ function InstalledPlugins({
     setConfirming(null);
   };
 
-  const revokeHere = async (plugin: Plugin) => {
+  const connectHere = async (plugin: Plugin) => {
     setActionError(null);
     setBusyId(plugin.id);
     try {
-      for (const server of plugin.servers) await revokeConnector(server.serverName, wsId);
+      // The redirect leaves the page, so the row stays busy until it does.
+      if ((await signInHere(plugin, connectors ?? [], wsId)) === "redirected") return;
       await refresh();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusyId(null);
     }
+    setBusyId(null);
   };
 
-  if (loadError && !groups) {
+  // Both throw on failure, so the confirm stays open with the error shown.
+  const stopHere = async (plugin: Plugin) => {
+    for (const server of plugin.servers) await revokeConnector(server.serverName, wsId);
+    await refresh();
+    setStopping(null);
+  };
+
+  const disconnect = async (plugin: Plugin) => {
+    for (const server of plugin.servers) await disconnectPersonalConnector(server.serverName);
+    await Promise.all([refresh(), loadConnectors()]);
+    setDisconnecting(null);
+  };
+
+  // The workspaces a person's plugin is on in, which Disconnect turns it off in.
+  const grantCount = (plugin: Plugin) => {
+    const names = plugin.servers.map((s) => s.serverName);
+    const ids = (connectors ?? [])
+      .filter((c) => names.includes(c.serverName))
+      .flatMap((c) => c.grantedWorkspaces);
+    return new Set(ids).size;
+  };
+
+  if (loadError && !plugins) {
     return <InlineError message={`Unable to load plugins: ${loadError}. Reload to retry.`} />;
   }
-  if (!groups) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (!model) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
-  const nothingHere = groups.workspace.length === 0 && groups.yours.length === 0;
+  // Only what needs the viewer: nothing for a healthy plugin.
+  const rowAction = (plugin: Plugin): React.ReactNode => {
+    if (plugin.owner.kind === "person" && !plugin.granted) {
+      return (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setActionError(null);
+            setConfirming(plugin);
+          }}
+          data-testid="plugin-use-here"
+        >
+          Use here
+        </Button>
+      );
+    }
+    const step = pluginAttention(plugin, { canManage });
+    if (!step) return statusWords(plugin);
+    // A workspace plugin signs in on its page, where its admin connects it, and
+    // a failed or unset-up one is fixed there; only a person's own sign-in
+    // starts from the row.
+    const fromRow = step !== "open" && plugin.owner.kind === "person";
+    const busy = busyId === plugin.id;
+    return (
+      <AttentionButton
+        step={step}
+        busy={busy}
+        disabled={fromRow && (busy || connectors === null)}
+        onClick={() => (fromRow ? void connectHere(plugin) : navigate(pluginPath(slug, plugin)))}
+      />
+    );
+  };
+
+  const rowMenu = (plugin: Plugin): RowMenuItem[] => {
+    const items: RowMenuItem[] = [{ kind: "link", label: "Open", to: pluginPath(slug, plugin) }];
+    if (plugin.owner.kind !== "person") return items;
+    if (plugin.granted) {
+      items.push({ kind: "action", label: "Stop using here", onSelect: () => setStopping(plugin) });
+    }
+    if (plugin.servers.every((s) => s.status === "ready")) {
+      items.push({
+        kind: "action",
+        label: "Disconnect",
+        destructive: true,
+        onSelect: () => setDisconnecting(plugin),
+      });
+    }
+    return items;
+  };
+
+  const total = (plugins?.length ?? 0) + (skills?.length ?? 0);
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       {actionError && <InlineError message={actionError} />}
+      {skillsError && <InlineError message={`Unable to load skills: ${skillsError}`} />}
 
-      {nothingHere ? (
-        <EmptyState
-          message="No plugins act in this workspace yet."
-          action={
-            canInstall ? (
-              <Button type="button" variant="outline" size="sm" onClick={onBrowse}>
-                Browse plugins
-              </Button>
-            ) : undefined
-          }
-        />
-      ) : (
-        <>
-          <PluginSection title="In this workspace" plugins={groups.workspace} testId="workspace">
-            {(plugin) => (
-              <PluginRow
-                key={plugin.id}
-                plugin={plugin}
-                to={pluginPath(slug, plugin)}
-                justConnected={justConnected}
-              />
-            )}
-          </PluginSection>
-          <PluginSection title="Yours" plugins={groups.yours} testId="yours">
-            {(plugin) => (
-              <PluginRow
-                key={plugin.id}
-                plugin={plugin}
-                to={pluginPath(slug, plugin)}
-                justConnected={justConnected}
-                action={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={busyId === plugin.id}
-                    onClick={() => void revokeHere(plugin)}
-                  >
-                    {busyId === plugin.id ? "Stopping…" : "Stop using here"}
-                  </Button>
-                }
-              />
-            )}
-          </PluginSection>
-        </>
-      )}
-
-      <PluginSection
-        title="Yours, not used here"
-        plugins={groups.yoursNotHere}
-        testId="yours-not-here"
-      >
-        {(plugin) => (
-          <PluginRow
-            key={plugin.id}
-            plugin={plugin}
-            to={pluginPath(slug, plugin)}
-            justConnected={justConnected}
-            muted
+      <InstalledView
+        model={model}
+        filters={filters}
+        onFiltersChange={setFilters}
+        workspaceName={workspaceName}
+        total={total}
+        pluginTo={(plugin) => pluginPath(slug, plugin)}
+        skillTo={(skill) => skillPath(slug, skill.scope, skill.name)}
+        rowAction={rowAction}
+        rowMenu={rowMenu}
+        justConnected={(plugin) =>
+          justConnected !== null &&
+          plugin.servers.every((s) => s.status === "ready") &&
+          justConnected.owner === plugin.owner.kind &&
+          plugin.servers.some((s) => s.serverName === justConnected.serverName)
+        }
+        emptyState={
+          <EmptyState
+            message="Nothing is installed here yet. Add a plugin to give your agent tools, or write a skill to teach it how you work."
             action={
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setActionError(null);
-                  setConfirming(plugin);
-                }}
-              >
-                Use here
-              </Button>
+              <div className="flex gap-2">
+                {canManage && (
+                  <Button type="button" variant="outline" size="sm" onClick={onBrowse}>
+                    Browse plugins
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(newSkillPath(slug))}
+                >
+                  Write a skill
+                </Button>
+              </div>
             }
           />
-        )}
-      </PluginSection>
-
-      <SkillsGroup wsId={wsId} slug={slug} />
+        }
+      />
 
       <UsePluginHereDialog
         plugin={confirming}
@@ -336,112 +461,99 @@ function InstalledPlugins({
         onClose={() => setConfirming(null)}
         onConfirm={grantHere}
       />
+      <ConfirmDialog
+        open={stopping !== null}
+        onOpenChange={(open) => !open && setStopping(null)}
+        title={`Stop using ${stopping?.displayName ?? ""} here?`}
+        description={`Your agent can't use it in ${workspaceName} until you turn it back on. It stays connected to your account.`}
+        confirmLabel="Stop using here"
+        pendingLabel="Stopping…"
+        onConfirm={() => (stopping ? stopHere(stopping) : undefined)}
+      />
+      <ConfirmDialog
+        open={disconnecting !== null}
+        onOpenChange={(open) => !open && setDisconnecting(null)}
+        title={`Disconnect ${disconnecting?.displayName ?? ""}?`}
+        description={disconnectConsequence(disconnecting ? grantCount(disconnecting) : 0)}
+        confirmLabel="Disconnect"
+        pendingLabel="Disconnecting…"
+        destructive
+        onConfirm={() => (disconnecting ? disconnect(disconnecting) : undefined)}
+      />
     </div>
-  );
-}
-
-function PluginSection({
-  title,
-  plugins,
-  testId,
-  children,
-}: {
-  title: string;
-  plugins: Plugin[];
-  testId: string;
-  children: (plugin: Plugin) => React.ReactNode;
-}) {
-  if (plugins.length === 0) return null;
-  return (
-    <section className="space-y-2" data-testid={`plugins-${testId}`}>
-      <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
-      <div className="border-t border-border">{plugins.map(children)}</div>
-    </section>
   );
 }
 
 /**
- * One plugin. The name and its facts link to where it is configured; the
- * action, when there is one, sits beside the link because a control cannot
- * nest inside one.
+ * A plugin that is not ready but asks the viewer nothing (settling, or a
+ * workspace sign-in only its admin does) reads the connector list's status
+ * words; a ready one shows nothing.
  */
-function PluginRow({
-  plugin,
-  to,
-  justConnected,
-  action,
-  muted = false,
-}: {
-  plugin: Plugin;
-  to: string;
-  /** The connector an OAuth sign-in on this page just connected, if any. */
-  justConnected: ConnectedTarget | null;
-  action?: React.ReactNode;
-  muted?: boolean;
-}) {
-  const contents = contentsLine(plugin);
+function statusWords(plugin: Plugin): React.ReactNode {
   const notReady = plugin.servers.find((s) => s.status !== "ready");
   const status = notReady ? connectorStatusSummary(notReady.status) : null;
-  // Marked while the page is open, and only once every server is ready.
-  const fresh =
-    !notReady &&
-    justConnected !== null &&
-    justConnected.owner === plugin.owner.kind &&
-    plugin.servers.some((s) => s.serverName === justConnected.serverName);
-  const rowRef = useRef<HTMLDivElement>(null);
-
-  // A long list may hold the plugin below the fold.
-  useEffect(() => {
-    if (fresh) rowRef.current?.scrollIntoView?.({ block: "nearest" });
-  }, [fresh]);
-
+  if (!status) return null;
   return (
-    <div
-      ref={rowRef}
-      className="flex items-center gap-3 border-b border-border py-2.5"
-      data-testid="plugin-row"
-      data-plugin-id={plugin.id}
+    <span
+      className={cn("flex items-center gap-1.5 px-2 text-xs", status.tone)}
+      data-testid="plugin-status"
     >
-      <Link
-        to={to}
-        className="-ml-2 flex min-w-0 flex-1 items-center gap-3 rounded px-2 py-0.5 transition-colors hover:bg-muted/50"
-      >
-        <ConnectorIcon
-          name={plugin.displayName}
-          iconUrl={plugin.iconUrl}
-          className={cn("h-7 w-7 rounded text-xs", muted && "opacity-60")}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium">{plugin.displayName}</span>
-            {plugin.owner.kind === "person" && (
-              <Badge variant="outline" data-testid="plugin-person-badge">
-                <User aria-hidden="true" />
-                Yours
-              </Badge>
-            )}
-          </div>
-          <p className="truncate text-xs text-muted-foreground" data-testid="plugin-account">
-            {accountLine(plugin)}
-            {contents && ` · ${contents}`}
-          </p>
-        </div>
-        {fresh && (
-          <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-success">
-            <Check className="h-3.5 w-3.5" aria-hidden />
-            <span>Connected just now</span>
-          </span>
-        )}
-        {status && (
-          <span className={cn("flex shrink-0 items-center gap-1.5 text-xs", status.tone)}>
-            {status.dot && <span className={cn("h-1.5 w-1.5 rounded-full", status.dotColor)} />}
-            <span>{status.label}</span>
-          </span>
-        )}
-      </Link>
-      {action && <div className="shrink-0">{action}</div>}
-    </div>
+      {status.dot && <span className={cn("h-1.5 w-1.5 rounded-full", status.dotColor)} />}
+      <span>{status.label}</span>
+    </span>
   );
+}
+
+/** The button for what a plugin's row asks of the viewer (`pluginAttention`). */
+function AttentionButton({
+  step,
+  busy,
+  disabled,
+  onClick,
+}: {
+  step: AttentionStep;
+  busy: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const label = step === "connect" ? "Connect" : step === "reconnect" ? "Reconnect" : "Open";
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant={step === "connect" ? "default" : "secondary"}
+      disabled={disabled}
+      onClick={onClick}
+      data-testid={`plugin-${step}`}
+    >
+      {busy ? "Connecting…" : label}
+    </Button>
+  );
+}
+
+/**
+ * Sign in each of a person's plugin's servers that is not connected, returning
+ * to this workspace's Plugins page. The route follows each connector's record,
+ * which the caller has loaded. The first server that needs the browser sends it
+ * there and answers `redirected`; when every one connected without an
+ * interactive flow, it answers `connected`.
+ */
+async function signInHere(
+  plugin: Plugin,
+  connectors: readonly PersonalConnector[],
+  wsId: string,
+): Promise<"redirected" | "connected"> {
+  for (const server of plugin.servers) {
+    if (server.status === "ready") continue;
+    const connector = connectors.find((c) => c.serverName === server.serverName);
+    if (!connector) throw new Error(`${plugin.displayName} is not one of your connectors.`);
+    const url = await personalConnectUrl(connector, wsId);
+    if (url) {
+      window.location.assign(url);
+      return "redirected";
+    }
+  }
+  return "connected";
 }
 
 /**
