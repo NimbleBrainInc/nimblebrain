@@ -27,6 +27,28 @@ describe("parseFrontmatter", () => {
     expect(() => parseFrontmatter("---toml\nname = 'x'\n---\nbody")).toThrow();
   });
 
+  it("refuses a ---json fence", () => {
+    expect(() => parseFrontmatter('---json\n{"name":"x"}\n---\nbody')).toThrow();
+  });
+
+  for (const lang of ["json", "js", "toml"]) {
+    it(`refuses an empty ---${lang} block`, () => {
+      expect(() => parseFrontmatter(`---${lang}\n---\nbody`)).toThrow();
+    });
+  }
+
+  it("accepts a ---yml fence and an empty YAML block", () => {
+    expect(parseFrontmatter("---yml\nname: demo\n---\nbody").data).toEqual({ name: "demo" });
+    expect(parseFrontmatter("---\n---\nbody").data).toEqual({});
+  });
+
+  it("stringifyFrontmatter refuses a body opening with a JavaScript fence without evaluating it", () => {
+    probe.__frontmatterProbe = 0;
+    const body = "---js\n(globalThis.__frontmatterProbe = 1, {})\n---\nbody";
+    expect(() => stringifyFrontmatter(body, { name: "x" })).toThrow();
+    expect(probe.__frontmatterProbe).toBe(0);
+  });
+
   it("round-trips what stringifyFrontmatter writes", () => {
     const text = stringifyFrontmatter("\nbody\n", { name: "demo" });
     expect(parseFrontmatter(text).data).toEqual({ name: "demo" });
