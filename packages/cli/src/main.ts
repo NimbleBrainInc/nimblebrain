@@ -168,14 +168,14 @@ function isStatusShaped(result: Ok | Failure): result is (Ok | Failure) & { vers
   );
 }
 
+export type DoctorAnswer = Awaited<ReturnType<typeof doctorInstall>>;
+
 /**
  * The machine's checks, then, for an install on a local model, Ollama's: it
  * answers (`startOllama` decides whether a down one is started), has the
  * model, the model calls tools, and its window is the one the runtime budgets
  * against. A failure carries every check run so far.
  */
-export type DoctorAnswer = Awaited<ReturnType<typeof doctorInstall>>;
-
 async function doctorInstall(
   deps: Deps,
   home: string,

@@ -6,7 +6,7 @@ import { COMMANDS, FLAG_SPECS, MCP_SUBCOMMANDS, parse } from "../src/args.ts";
 import { DEFAULT_PROJECT } from "../src/compose.ts";
 import { run, VERSION } from "../src/main.ts";
 import { ERRORS } from "../src/result.ts";
-import { machine } from "./fake.ts";
+import { LOCAL_COMPOSE, type Machine, machine } from "./fake.ts";
 
 interface Help {
   ok: true;
@@ -93,7 +93,24 @@ describe("help --json", () => {
   test("every field a command answers is one help --json describes", async () => {
     // The type-check holds each builder to ANSWER_FIELDS; this runs the commands to catch a cast that hides a field.
     const home = "/home/dana/.nimblebrain-local";
+    const help = await helpJson(["help", "--json"]);
+    const answers = async (argv: string[], m: Machine) => {
+      const { stdout } = await run([...argv, "--json"], m.deps);
+      const body = JSON.parse(stdout) as Record<string, unknown>;
+      expect({ argv, body }).toMatchObject({ argv, body: { ok: true } });
+      const name = argv[0] === "mcp" ? `mcp ${argv[1]}` : (argv[0] ?? "");
+      const described = Object.keys(help.commands.find((c) => c.name === name)?.answer ?? {});
+      const answered = Object.keys(body).filter((k) => k !== "ok");
+      expect({ name, undescribed: answered.filter((k) => !described.includes(k)) }).toEqual({
+        name,
+        undescribed: [],
+      });
+      return answered;
+    };
+    // `key` asks a person for the key even with --json; nothing else here asks.
     const m = machine({
+      interactive: true,
+      answers: ["openai", "sk-openai"],
       env: { NIMBLEBRAIN_TAG: "v0.73.0" },
       workspaceToolCall: (_ws, call) => ({
         status: 200,
@@ -108,10 +125,10 @@ describe("help --json", () => {
         [`${home}/.env`]: `COMPOSE_PROJECT_NAME=${DEFAULT_PROJECT}\nANTHROPIC_API_KEY=sk-test\n`,
       },
     });
-    const help = await helpJson(["help", "--json"]);
     const runs: string[][] = [
       ["doctor"],
       ["init", "--yes", "--agent", "none"],
+      ["key"],
       ["status"],
       ["open"],
       ["up"],
@@ -125,18 +142,29 @@ describe("help --json", () => {
       ["uninstall", "--yes"],
       ["help"],
     ];
-    for (const argv of runs) {
-      const { stdout } = await run([...argv, "--json"], m.deps);
-      const body = JSON.parse(stdout) as Record<string, unknown>;
-      expect({ argv, body }).toMatchObject({ argv, body: { ok: true } });
-      const name = argv[0] === "mcp" ? `mcp ${argv[1]}` : (argv[0] ?? "");
-      const described = Object.keys(help.commands.find((c) => c.name === name)?.answer ?? {});
-      const answered = Object.keys(body).filter((k) => k !== "ok");
-      expect({ name, undescribed: answered.filter((k) => !described.includes(k)) }).toEqual({
-        name,
-        undescribed: [],
-      });
-    }
+    for (const argv of runs) await answers(argv, m);
+    expect(
+      new Set([...runs.map((a) => (a[0] === "mcp" ? `mcp ${a[1]}` : a[0])), "local-model"]),
+    ).toEqual(new Set(help.commands.map((c) => c.name)));
+
+    // On a local model: Ollama installed but down, so each command that starts it says so.
+    const local = machine({
+      env: { NIMBLEBRAIN_TAG: "v0.73.0" },
+      compose: { status: 200, body: LOCAL_COMPOSE },
+      platform: "darwin",
+      files: { "/Applications/Ollama.app/Contents/Info.plist": "<plist/>" },
+      ollama: {
+        down: "until-started",
+        models: { "gemma4:e4b": { capabilities: ["completion", "tools"] } },
+      },
+    });
+    expect(await answers(["init", "--yes", "--local-model", "gemma4:e4b"], local)).toContain(
+      "ollama_started",
+    );
+    local.ollamaUp = false;
+    expect(await answers(["local-model", "gemma4:e4b"], local)).toContain("ollama_started");
+    // doctor with --json never starts Ollama, so its local checks answer without ollama_started.
+    await answers(["doctor"], local);
   });
 
   test("lists every error code the CLI raises, with its fix and exit code", async () => {
