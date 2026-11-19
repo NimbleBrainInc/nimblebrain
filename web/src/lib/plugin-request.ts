@@ -9,6 +9,11 @@ import type { ToolCallDisplay } from "../hooks/chat-store";
 export const USE_HERE_NOTE =
   "Only you can use it here; other members can't. What your agent does with it is saved in this workspace, private to you unless you share it.";
 
+/** {@link USE_HERE_NOTE} for a workspace other than the one the person is in, named. */
+export function elsewhereNote(workspaceName: string): string {
+  return `Only you can use it in ${workspaceName}; other members can't. What your agent does with it is saved in ${workspaceName}, private to you unless you share it.`;
+}
+
 /**
  * The plugin a finished call asked the person to turn on, when it is one
  * (`nb__manage_tools` with `request_plugin`). Read from the call's input, which
