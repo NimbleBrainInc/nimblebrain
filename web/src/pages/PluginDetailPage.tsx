@@ -118,8 +118,12 @@ function PluginDetail({ slug, pluginRef }: { slug: string; pluginRef: string }) 
     };
   }, [refresh]);
 
-  // A sign-in finishing elsewhere changes the plugin's status and account.
-  useEvents({ onConnectionStateChanged: () => void refresh() });
+  // A sign-in finishing elsewhere changes the plugin's status and account; a
+  // grant changed from another tab or the chat changes whether it is on here.
+  useEvents({
+    onConnectionStateChanged: () => void refresh(),
+    onConnectorGrantChanged: () => void refresh(),
+  });
 
   if (loadError && plugin === undefined) {
     return <InlineError message={`Unable to load this plugin: ${loadError}. Reload to retry.`} />;
@@ -356,6 +360,8 @@ function PersonalPlugin({
   useEffect(() => {
     void loadConnectors();
   }, [loadConnectors]);
+  // The Workspaces list reads each grant from the connector records.
+  useEvents({ onConnectorGrantChanged: () => void loadConnectors() });
 
   const serverNames = plugin.servers.map((s) => s.serverName);
   const mine = (connectors ?? []).filter((c) => serverNames.includes(c.serverName));

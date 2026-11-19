@@ -539,3 +539,34 @@ describe("SseEventManager — identity-scoped clients", () => {
     expect(alice.events).toEqual(["connector.installed"]);
   });
 });
+
+describe("SseEventManager — connector.grant_changed reaches the granter alone", () => {
+  let mgr: SseEventManager;
+  const released: Array<() => void> = [];
+
+  beforeEach(() => {
+    mgr = new SseEventManager(1_000_000);
+    mgr.start();
+  });
+
+  afterEach(() => {
+    for (const r of released.splice(0)) r();
+    mgr.stop();
+  });
+
+  test("a member of the same workspace does not learn of another's personal grant", async () => {
+    const ws = "ws_0071a5bbf40116e6";
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set([ws])));
+    const bob = collect(mgr.addIdentityClient("usr_bob", new Set([ws])));
+    released.push(alice.release, bob.release);
+
+    mgr.emit({
+      type: "connector.grant_changed",
+      data: { userId: "usr_alice", serverName: "granola", wsId: ws, granted: false },
+    });
+    await flush();
+
+    expect(alice.events).toEqual(["connector.grant_changed"]);
+    expect(bob.events).toEqual([]);
+  });
+});

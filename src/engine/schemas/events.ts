@@ -516,6 +516,20 @@ export const ConnectorUninstalledPayload = Type.Object({
 export type ConnectorUninstalledPayload = Static<typeof ConnectorUninstalledPayload>;
 
 /**
+ * A person turned their personal connector on or off in a workspace: the
+ * stored grant changed. The grant is that person's own, so the event names
+ * them (`userId`) and reaches their connections alone, never the workspace's
+ * other members. `wsId` says which workspace the grant is for.
+ */
+export const ConnectorGrantChangedPayload = Type.Object({
+  userId: Type.String(),
+  serverName: Type.String(),
+  wsId: Type.String(),
+  granted: Type.Boolean(),
+});
+export type ConnectorGrantChangedPayload = Static<typeof ConnectorGrantChangedPayload>;
+
+/**
  * A remote connector's connection changed state for one principal:
  * `_workspace` for a workspace-scoped connector, else a member's id.
  */
@@ -749,6 +763,12 @@ export interface EngineEventPayloads {
   "context.overflow_recovery": ContextOverflowRecoveryPayload;
   "connector.installed": ConnectorInstalledPayload;
   "connector.uninstalled": ConnectorUninstalledPayload;
+  /**
+   * A personal connector's grant into a workspace changed (`grant_connector`,
+   * `revoke_connector`, a personal disconnect's revokes, an identity install
+   * that grants). Emitted only when the stored grants changed.
+   */
+  "connector.grant_changed": ConnectorGrantChangedPayload;
   /**
    * Per-principal connection state change for a remote URL connector.
    * Payload: { wsId, serverName, principalId, state, authorizationUrl? }.
