@@ -21,19 +21,39 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { readJson } from "../helpers/http.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 
 const CATALOG_DIR = join(import.meta.dir, "../../.environments/plugins-demo/catalog");
 const { workDir, cleanup } = makeTestWorkDir("plugins-demo-seed");
 
-let fleet: MockFleet;
-let runtime: Runtime;
-let handle: ServerHandle;
+let fleet: MockFleet | undefined;
+let runtime: Runtime | undefined;
+let handle: ServerHandle | undefined;
 let summary: SeedSummary;
 const previousCatalogDir = process.env[CATALOG_DIR_ENV];
+const realFetch = globalThis.fetch;
+
+/**
+ * Loopback reaches the mock fleet; anything else is a 404. Boot binds curated
+ * connector skills for every seeded connector, and the lifecycle resolves them
+ * with the global `fetch` it holds from construction, before a test could call
+ * `setConnectorSkillFetch`. A 404 is the "nothing curated" answer, so boot
+ * stays offline and every connector boots without skills, as the fixtures expect.
+ */
+const offlineFetch = fakeFetch(async (input, init) => {
+  const url = new URL(input instanceof Request ? input.url : input);
+  if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return realFetch(input, init);
+  return new Response("", { status: 404 });
+});
+
+// Two seeds, a mock fleet, and a boot of ~40 connectors: more than bun's 5s
+// hook default should be asked to cover when the integration suite loads the machine.
+const SETUP_TIMEOUT_MS = 30_000;
 
 beforeAll(async () => {
+  globalThis.fetch = offlineFetch;
   process.env[CATALOG_DIR_ENV] = CATALOG_DIR;
   fleet = startMockFleet(MOCK_SERVERS);
   await seedPluginsDemo({ workDir, catalogDir: CATALOG_DIR, fleet });
@@ -46,19 +66,20 @@ beforeAll(async () => {
     allowInsecureRemotes: true,
   });
   handle = startServer({ runtime, port: 0 });
-});
+}, SETUP_TIMEOUT_MS);
 
 afterAll(async () => {
-  handle.stop(true);
-  await runtime.shutdown();
-  fleet.close();
+  handle?.stop(true);
+  await runtime?.shutdown();
+  fleet?.close();
+  globalThis.fetch = realFetch;
   if (previousCatalogDir === undefined) delete process.env[CATALOG_DIR_ENV];
   else process.env[CATALOG_DIR_ENV] = previousCatalogDir;
   cleanup();
 });
 
 async function listPlugins(wsId: string): Promise<PluginsListOutput> {
-  const res = await fetch(`http://localhost:${handle.port}/v1/workspaces/${wsId}/tools/call`, {
+  const res = await fetch(`http://localhost:${handle?.port}/v1/workspaces/${wsId}/tools/call`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
