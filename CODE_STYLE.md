@@ -204,7 +204,8 @@ by construction.
 mounted route table.
 
 **Override.** None. The global middleware in `src/api/app.ts` (tracing,
-metrics, CORS, security headers, the cross-site guard) is app-wide by design
+metrics, the host allowlist without sign-in, CORS, security headers, the
+cross-site guard) is app-wide by design
 and is the only place `.use()` belongs.
 
 ### A route's JSON body is a named response type

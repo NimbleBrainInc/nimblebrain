@@ -124,6 +124,21 @@ A request to `/mcp/<workspaceId>`, `POST /v1/tools/call` or `POST /v1/workspaces
 
 This is the MCP transport's DNS-rebinding protection: a page on another hostname whose DNS was pointed at your instance sends requests the browser treats as same-origin, and its `Origin` names that hostname. The web UI calls tools through the `/v1` routes, so if you reach it by a hostname that is not your public origin (for example, a LAN name for a self-hosted instance), add that hostname to `ALLOWED_ORIGINS`, or every tool call from the UI is refused: settings, Connectors and notifications as well as apps. MCP clients and services calling the API send no `Origin` and are unaffected.
 
+### Addressed hosts without sign-in
+
+Under the `dev` adapter every request is the built-in admin, so the server answers only a request addressed to a loopback or configured host. A request whose `Host` header is not one of these is refused with `403 untrusted_host`, on every route:
+
+- `localhost` or an IP address (`127.0.0.1`, `[::1]`, a LAN address such as `192.168.1.20`), on any port;
+- the host of the instance's public origin (`NB_PUBLIC_ORIGIN`, or the platform host or custom domain), of `NB_WEB_URL`, or of an origin in `ALLOWED_ORIGINS`.
+
+A page served under another hostname that resolves to your machine is same-origin to the browser, and its `GET` requests carry no `Origin`, so this is what keeps it from reading your conversations or starting chats. The launchers, `npx nimblebrain` and the Docker Compose file all open the instance at `localhost` or `127.0.0.1`, so they need nothing. If you reach a `dev` instance by a hostname (a LAN name such as `http://nimblebrain.lan:27246`), add that origin to `ALLOWED_ORIGINS`:
+
+```bash
+export ALLOWED_ORIGINS=http://nimblebrain.lan:27246
+```
+
+The `Host` the runtime sees is the one the browser sent: the web container's Caddy passes it through. A proxy that rewrites `Host` to its upstream name needs that name listed too. The `oidc` and `workos` adapters check a credential on every request and answer any `Host`.
+
 ## Network architecture
 
 ### Keep the platform internal
