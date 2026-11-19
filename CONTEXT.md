@@ -219,9 +219,8 @@ unmodified, with the runtime's own configuration nested under
 the filesystem, from an MCP server's `skills/list` under the MCP Skills
 Extension (a peer, not a lesser kind; its body fetched when needed and verified
 against the listed digest — ADR-0011), or from a curated connector overlay
-(ADR-0013). Under ADR-0068 a connector's curated guidance is a skill in that
-connector's plugin, bound to the server it names, and the overlay repo goes
-away (see *Plugin*).
+(ADR-0013). A connector's curated guidance is a skill in that connector's plugin
+in the pinned catalog, bound to the server it names (ADR-0068, see *Plugin*).
 
 ### Role / channel
 A skill's declared `loading-strategy`, and the prompt channel that follows from

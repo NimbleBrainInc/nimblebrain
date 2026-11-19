@@ -351,45 +351,6 @@ export function getNimbleBrainHostMeta(s: ServerDetail): HostManifestMeta | unde
   return s._meta?.[NIMBLEBRAIN_HOST_META_KEY] as HostManifestMeta | undefined;
 }
 
-/**
- * The connector-skill identity rule, over the two values that determine it.
- * Identity is a FLAT connector slug — a gmail connector is `gmail` whether it
- * is Composio-backed or a remote MCP server. For a Composio connector that is
- * the toolkit slug (stable across deployments, unlike the per-account auth
- * config id); otherwise it is the connector segment of the reverse-DNS server
- * name (`com.notion/mcp` -> `notion`, `app.linear/mcp` -> `linear`). Shared by
- * {@link connectorSkillIdentity} (ServerDetail callers) and the install path
- * (which has the toolkit + server name directly, not a ServerDetail).
- *
- * The non-Composio rule takes the LAST dotted label before the path, which fits
- * our curated first-party forms (`com.notion`, `app.linear`). It would derive
- * `<org>` (not `<server>`) from the registry-standard `io.github.<org>/<server>`
- * form — harmless today (overlays exist only for curated first-party connectors
- * and a wrong slug is a non-fatal 404), but revisit if an
- * `io.github.*`-style connector ever needs an overlay.
- */
-export function connectorSkillIdentityFrom(
-  composioToolkit: string | undefined,
-  serverName: string,
-): string {
-  const toolkit = composioToolkit?.trim();
-  if (toolkit) return toolkit;
-  return serverName.split("/")[0]?.split(".").pop() || serverName;
-}
-
-/**
- * Stable identity used to look up a curated connector-skill overlay in the
- * public overlay repo, laid out as `<identity>/SKILL.md`. See
- * {@link connectorSkillIdentityFrom} for the rule. `name` is required on
- * `ServerDetail`, so a usable identity is always derivable.
- */
-export function connectorSkillIdentity(detail: ServerDetail): string {
-  return connectorSkillIdentityFrom(
-    getNimbleBrainConnectorMeta(detail)?.composio?.toolkit,
-    detail.name,
-  );
-}
-
 // ── ajv validator (compiled once at module load) ────────────────────
 
 const schemaPath = join(import.meta.dir, "schemas", "server.schema.json");

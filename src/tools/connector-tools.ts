@@ -3,10 +3,7 @@ import { brandName } from "../brand/index.ts";
 import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import { catalogEntryForRef } from "../connectors/catalog/catalog.ts";
-import {
-  connectorSkillIdentityFrom,
-  type SecretHeaderRef,
-} from "../connectors/catalog/server-detail.ts";
+import type { SecretHeaderRef } from "../connectors/catalog/server-detail.ts";
 import type {
   CatalogListing,
   ConnectorCatalogEntry,
@@ -2031,27 +2028,15 @@ async function handleInstallRemoteOAuth(
     wiring.brokeredWiring,
     wiring.staticOAuthClient,
   );
-  // Bind the curated connector-skill overlay, if one is curated for this
-  // connector's identity. Best-effort + non-fatal (see `syncBoundSkills`): the
-  // returned lock rides the persisted ref so uninstall cleans it up and the
-  // dedupe path knows the connector has an overlay. The overlay materializes
-  // into the workspace's `connector-skills/` store, NEVER the system prompt.
+  // Bind the curated skills the catalog's plugin for this server carries, if
+  // any. The plugin names its server by registry name, which is the catalog
+  // entry's id (`com.dropbox/mcp`), not the slugified serverName. Best-effort +
+  // non-fatal (see `syncBoundSkills`): the returned lock rides the persisted ref
+  // so uninstall cleans it up and the dedupe path knows the connector has an
+  // overlay. The skills materialize into the workspace's `connector-skills/`
+  // store, NEVER the system prompt.
   const skillsLock = await lifecycle.syncBoundSkills(
-    connectorSkillIdentityFrom(
-      // From the operator-trusted catalog entry, NEVER the caller's action: the
-      // identity is interpolated into the overlay fetch path, so a field the
-      // caller controls chooses which repository is read. `action` carries the
-      // caller's own object for every auth kind the install does not re-resolve
-      // (`parseCatalogListing` strips no unknown install fields), which is
-      // exactly the provenance this must not depend on. Same source
-      // `connector-skill-reconcile` reads it from.
-      trusted?.composio?.toolkit,
-      // Derive the overlay identity from the canonical reverse-DNS name
-      // (`com.dropbox/mcp` → `dropbox`), NOT the slugified serverName
-      // (`com-dropbox-mcp`) — the slug has no dotted structure to split on, so
-      // it derives the whole slug and 404s the overlay for every DCR connector.
-      entry.id,
-    ),
+    entry.id,
     serverName,
     wsId,
     ctx.runtime.getWorkDir(),

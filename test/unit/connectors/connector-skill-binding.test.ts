@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
@@ -9,13 +9,15 @@ import { CONNECTOR_SKILLS_SUBDIR } from "../../../src/skills/connector-skill-sto
 import type { ToolRegistry } from "../../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { fakeFetch } from "../../helpers/fake-fetch.ts";
+import { buildCatalog, type FixtureCatalog } from "../../helpers/plugin-catalog.ts";
 import { stub } from "../../helpers/stub.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 /**
- * Lifecycle binding hooks (P4): `syncBoundSkills` resolves + materializes a
- * curated overlay at install; `removeBoundSkills` cleans up at uninstall. The
- * resolver fetch is injected so these stay hermetic (no network).
+ * Lifecycle binding hooks: `syncBoundSkills` resolves + materializes the skill
+ * a catalog plugin binds to a connector's server at install;
+ * `removeBoundSkills` cleans up at uninstall. The catalog is a fixture served
+ * by an injected fetch, so these stay hermetic (no network).
  */
 
 const OVERLAY = `---
@@ -25,10 +27,13 @@ metadata:
   nimblebrain:
     loading-strategy: dynamic
     priority: 40
+    server: gmail
 ---
 
 Confirm the recipient before calling gmail__send.
 `;
+
+const GMAIL_SERVER = "com.google/gmail";
 
 const WS_ID = "ws_0000000000000001";
 
@@ -46,67 +51,89 @@ function workDir(): string {
   return d;
 }
 
-function manager(
-  routes: Record<string, { status: number; body?: string }>,
-): ConnectorLifecycleManager {
+function gmailCatalog(): FixtureCatalog {
+  return buildCatalog([
+    { name: "gmail", servers: { gmail: GMAIL_SERVER }, skills: { "gmail-usage": OVERLAY } },
+    { name: "close", servers: { close: "com.close/mcp" } },
+  ]);
+}
+
+/** A manager reading `catalog`, pinned to it through the env the runtime reads. */
+function manager(catalog: FixtureCatalog): ConnectorLifecycleManager {
+  process.env.NB_PLUGIN_CATALOG_URL = "https://catalog.test";
+  process.env.NB_PLUGIN_CATALOG_SHA256 = catalog.pin;
   const m = new ConnectorLifecycleManager(new NoopEventSink());
-  m.setConnectorSkillFetch(
-    fakeFetch(async (url) => {
-      const u = typeof url === "string" ? url : url.toString();
-      const r = routes[u];
-      return r
-        ? new Response(r.body ?? "", { status: r.status })
-        : new Response("", { status: 404 });
-    }),
-  );
+  m.setConnectorSkillFetch(catalog.fetch);
   return m;
 }
 
-const gmailUrl =
-  "https://raw.githubusercontent.com/NimbleBrainInc/connector-skills/v0.5.0/gmail/SKILL.md";
+afterEach(() => {
+  delete process.env.NB_PLUGIN_CATALOG_URL;
+  delete process.env.NB_PLUGIN_CATALOG_SHA256;
+});
 
 function connectorSkillsDir(wd: string): string {
   return new WorkspaceContext({ wsId: WS_ID, workDir: wd }).getDataPath(CONNECTOR_SKILLS_SUBDIR);
 }
 
-describe("ConnectorLifecycleManager.syncBoundSkills (P4)", () => {
-  it("resolves, materializes, and returns a lock entry", async () => {
+describe("ConnectorLifecycleManager.syncBoundSkills", () => {
+  it("binds the plugin's skill by the server it names, and locks it to the pin and digests", async () => {
     const wd = workDir();
-    const m = manager({ [gmailUrl]: { status: 200, body: OVERLAY } });
+    const catalog = gmailCatalog();
+    const m = manager(catalog);
 
-    const lock = await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
-    expect(lock).toHaveLength(1);
-    expect(lock[0]!.identity).toBe("gmail");
-    expect(lock[0]!.version).toBe("v0.5.0");
+    const lock = await m.syncBoundSkills(GMAIL_SERVER, "com-google-gmail", WS_ID, wd);
+    expect(lock).toEqual([
+      {
+        plugin: "gmail@nimblebrain",
+        server: GMAIL_SERVER,
+        skill: "gmail-usage",
+        version: catalog.pin,
+        digest: catalog.digests.gmail!,
+        sha: lock[0]!.sha,
+      },
+    ]);
     expect(lock[0]!.sha).toMatch(/^[0-9a-f]{64}$/);
-    expect(Object.keys(lock[0]!).sort()).toEqual(["identity", "sha", "version"]);
-    expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(true);
+
+    // Materialized under this install's namespace, with the binding consumed:
+    // the copy is bound by tool-affinity and records where it came from.
+    const file = join(connectorSkillsDir(wd), "com-google-gmail", "gmail-usage.md");
+    const text = readFileSync(file, "utf8");
+    expect(text).not.toMatch(/^\s*server:/m);
+    expect(text).toContain("com-google-gmail__*");
+    expect(text).toContain("plugin:gmail@nimblebrain:gmail-usage");
   });
 
-  it("is a no-op (returns []) when no overlay is curated (404)", async () => {
+  it("is a no-op (returns []) for a connector with no catalog plugin", async () => {
     const wd = workDir();
-    const m = manager({}); // every URL 404s
-    const lock = await m.syncBoundSkills("unknown", "unknown", WS_ID, wd);
+    const m = manager(gmailCatalog());
+    const lock = await m.syncBoundSkills("com.unknown/mcp", "unknown", WS_ID, wd);
     expect(lock).toEqual([]);
     expect(existsSync(join(connectorSkillsDir(wd), "unknown"))).toBe(false);
   });
 
+  it("is a no-op (returns []) for a plugin that binds no skill to its server", async () => {
+    const wd = workDir();
+    const m = manager(gmailCatalog());
+    expect(await m.syncBoundSkills("com.close/mcp", "close", WS_ID, wd)).toEqual([]);
+  });
+
   it("is non-fatal (returns []) when the fetch fails", async () => {
     const wd = workDir();
-    const m = new ConnectorLifecycleManager(new NoopEventSink());
+    const m = manager(gmailCatalog());
     m.setConnectorSkillFetch(
       fakeFetch(() => {
         throw new Error("network down");
       }),
     );
-    const lock = await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
+    const lock = await m.syncBoundSkills(GMAIL_SERVER, "gmail", WS_ID, wd);
     expect(lock).toEqual([]);
   });
 
   it("removeBoundSkills deletes the materialized overlays", async () => {
     const wd = workDir();
-    const m = manager({ [gmailUrl]: { status: 200, body: OVERLAY } });
-    await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
+    const m = manager(gmailCatalog());
+    await m.syncBoundSkills(GMAIL_SERVER, "gmail", WS_ID, wd);
     expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(true);
 
     m.removeBoundSkills("gmail", WS_ID, wd);
@@ -125,9 +152,9 @@ describe("ConnectorLifecycleManager.syncBoundSkills (P4)", () => {
     const wd = workDir();
     expect(wd).not.toBe(defaultWorkDir()); // the divergence the bug needed
 
-    const m = manager({ [gmailUrl]: { status: 200, body: OVERLAY } });
+    const m = manager(gmailCatalog());
     m.setWorkDir(wd);
-    await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
+    await m.syncBoundSkills(GMAIL_SERVER, "gmail", WS_ID, wd);
     expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(true);
 
     // Real uninstall path (no instance/config/registry source needed — step 4d
