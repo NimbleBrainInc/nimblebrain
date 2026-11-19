@@ -2,8 +2,9 @@ import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Streamdown } from "streamdown";
+import type { Plugin } from "../_generated/platform-schemas/plugins";
 import type { SkillDetail } from "../_generated/platform-schemas/skills";
-import { callTool } from "../api/client";
+import { callTool, listPlugins } from "../api/client";
 import {
   AudienceOption,
   type InstallAudience,
@@ -24,7 +25,7 @@ import {
   writeResult,
 } from "../lib/authored-skills";
 import { type AuthoredSkillScope, skillPath, skillsPath } from "../lib/plugins";
-import { skillMechanismLabel } from "../lib/skill-display";
+import { skillLoadsText } from "../lib/skill-display";
 import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
 import { parseToolResponse } from "../lib/tool-response";
 import { cn } from "../lib/utils";
@@ -122,6 +123,8 @@ function SkillDetailView({
   const editable = scope === "user" || (scope === "workspace" && canWriteWorkspace);
   const [skill, setSkill] = useState<AuthoredSkill | null | undefined>(undefined);
   const [detail, setDetail] = useState<SkillDetail | null>(null);
+  // Names the plugins a tool pattern reaches; until it answers, "a matching tool".
+  const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -143,6 +146,10 @@ function SkillDetailView({
     })().catch((err: unknown) => {
       if (!cancelled) setError(err instanceof Error ? err.message : String(err));
     });
+    listPlugins(wsId).then(
+      (next) => !cancelled && setPlugins(next.plugins),
+      () => {},
+    );
     return () => {
       cancelled = true;
     };
@@ -199,7 +206,9 @@ function SkillDetailView({
   if (skill === undefined) return <p className="text-sm text-muted-foreground">Loading…</p>;
   if (skill === null) return <NotHere />;
 
-  const mechanism = skillMechanismLabel(skill);
+  // The full answer, the default included; the raw patterns are in the
+  // loading details below.
+  const loads = skillLoadsText(skill, plugins, { includeDefault: true });
   return (
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-4">
@@ -213,10 +222,9 @@ function SkillDetailView({
           {skill.description && (
             <p className="mt-1 text-sm text-muted-foreground">{skill.description}</p>
           )}
-          {mechanism && (
+          {loads && (
             <p className="mt-0.5 text-xs text-muted-foreground" data-testid="skill-mechanism">
-              {mechanism.text}
-              {mechanism.mono && <span className="font-mono"> {mechanism.mono}</span>}
+              {loads}
             </p>
           )}
         </div>
@@ -229,21 +237,11 @@ function SkillDetailView({
       </header>
 
       {skill.scope === "user" && (
-        <section
-          className={cn(SECTION_ROW, "border-y border-border/60 py-4")}
-          data-testid="skill-here"
-        >
-          <PanelHeading
-            title="In this workspace"
-            hint="Your skills apply in every workspace unless you turn one off here."
-          />
-          <SkillHereSwitch
-            skill={skill}
-            workspaceId={wsId}
-            className="shrink-0"
-            onChange={(onHere) => setSkill((prev) => (prev ? { ...prev, onHere } : prev))}
-          />
-        </section>
+        <HereSection
+          skill={skill}
+          workspaceId={wsId}
+          onChange={(onHere) => setSkill((prev) => (prev ? { ...prev, onHere } : prev))}
+        />
       )}
 
       {error && <InlineError message={error} />}
@@ -270,6 +268,46 @@ function SkillDetailView({
         <ReadOnlySkill detail={detail} scope={scope} />
       )}
     </div>
+  );
+}
+
+/**
+ * Whether the viewer's own skill applies in this workspace. A disabled skill
+ * applies nowhere, so here is moot: it says Disabled where the switch would be.
+ */
+function HereSection({
+  skill,
+  workspaceId,
+  onChange,
+}: {
+  skill: AuthoredSkill;
+  workspaceId: string;
+  onChange: (onHere: boolean) => void;
+}) {
+  const disabled = skill.status !== "active";
+  return (
+    <section className={cn(SECTION_ROW, "border-y border-border/60 py-4")} data-testid="skill-here">
+      <PanelHeading
+        title="In this workspace"
+        hint={
+          disabled
+            ? "Turn the skill on first. Then it applies in every workspace unless you turn it off here."
+            : "Your skills apply in every workspace unless you turn one off here."
+        }
+      />
+      {disabled ? (
+        <span className="shrink-0 text-xs text-muted-foreground" data-testid="skill-state">
+          Disabled
+        </span>
+      ) : (
+        <SkillHereSwitch
+          skill={skill}
+          workspaceId={workspaceId}
+          className="shrink-0"
+          onChange={onChange}
+        />
+      )}
+    </section>
   );
 }
 

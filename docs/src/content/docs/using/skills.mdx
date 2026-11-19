@@ -268,8 +268,8 @@ Ask the agent which skills are loaded — it uses the built-in `skills__list` to
 **Skills**, in the sidebar after **Plugins**, lists what the agent is taught in a workspace. **Workspace | Personal** splits it by whose a skill is, each with its count, and a search beside it finds one by name or description.
 
 - **Workspace** lists the skills written for this workspace and the organization's (tagged **Org**, read-only there). They apply to everyone here.
-- **Personal** lists your own skills, which follow you into every workspace. Each carries **On here**: switch it off to stop that skill in this workspace only (see below). Workspace and org skills have no such switch.
-- Each row says when the skill loads. **Opening a skill** shows its page. You can edit and delete a workspace skill if you can change the workspace, and your own skills always. An org skill is changed in the organization's settings.
+- **Personal** lists your own skills, which follow you into every workspace. Each enabled one carries an **On here** switch: switch it off to stop that skill in this workspace only (see below), and the row reads **Off here**. A disabled skill reads **Disabled** and has no switch, since it applies nowhere until you turn it on. Workspace and org skills have no such switch.
+- A row says when the skill loads if that is more than the default (loading when the agent asks for it): **Always on**, **On trigger** with its phrases, or **When** a plugin **is used**, naming the plugin whose tools its tool patterns match. The patterns themselves are on the skill's page. **Opening a skill** shows its page. You can edit and delete a workspace skill if you can change the workspace, and your own skills always. An org skill is changed in the organization's settings.
 - **From your plugins**, a muted group beneath the list, names the skills that came with the selected list's plugins on here, with the plugin and when each loads. Each opens its plugin's page, where it is read.
 - **New skill** asks who it is for: **Just me** (one of your own skills) or **Everyone in** the workspace (a workspace skill, offered only to members who can change the workspace).
 
@@ -284,7 +284,7 @@ Your own skills (scope `user`) apply in every workspace you are in, unless you t
 - **A same-named skill takes over.** Your skill normally wins a name it shares with a workspace or org skill. While yours is off in a workspace, that workspace or org skill applies there instead.
 - **Deleting the skill forgets where it was off**, so a new skill with the same name starts on everywhere.
 
-On the Skills page this is the **On here** switch on your skill's row under **Personal** and on its page. It flips at once; if the change is refused, it flips back and a notice says why.
+On the Skills page this is the **On here** switch on your skill's row under **Personal** and on its page, offered while the skill is enabled. It flips at once; if the change is refused, it flips back and a notice says why.
 
 Only your own skills turn on and off this way; a workspace or org skill is changed by whoever owns it. The client sets it with `skills__set_here` (`id` from `skills__list`, `on: true | false`), called in the workspace it applies to. The agent cannot call it; to stop a skill for one conversation, it mutes the skill with `skills__deactivate`. `skills__list` with `scope: "user"` reports `onHere` for each of your skills in the workspace it is called in.
 

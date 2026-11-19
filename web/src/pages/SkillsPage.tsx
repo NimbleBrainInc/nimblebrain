@@ -25,10 +25,9 @@ import {
   type Segment,
 } from "../lib/plugin-lists";
 import { newSkillPath, pluginPath, skillPath } from "../lib/plugins";
-import { type SkillMechanismLabel, skillMechanismLabel } from "../lib/skill-display";
+import { type SkillMechanismInput, skillLoadsText } from "../lib/skill-display";
 import { cn } from "../lib/utils";
 import { toWsId } from "../lib/workspace-slug";
-import { connectorSkillGroups } from "./settings/ConnectorSkillsSection";
 import { InlineError } from "./settings/components";
 
 /**
@@ -37,7 +36,7 @@ import { InlineError } from "./settings/components";
  * **Workspace** lists the skills that apply to everyone here: the workspace's
  * and the org's (an org skill is tagged, and changed in org settings).
  * **Personal** lists the viewer's own, which apply in every workspace unless
- * turned off in one, so each carries On here. Beneath either, a muted group
+ * turned off in one, so each enabled one carries an On here switch. Beneath either, a muted group
  * lists the skills that came with the segment's plugins acting here; each opens
  * its plugin's page, where it is read. New skill writes one, for the viewer
  * alone or everyone here.
@@ -76,7 +75,7 @@ export function SkillsPage() {
 }
 
 /** How a plugin's skill loads, keyed by server and name. */
-type LoadsByKey = ReadonlyMap<string, SkillMechanismLabel>;
+type LoadsByKey = ReadonlyMap<string, SkillMechanismInput>;
 const loadsKey = (server: string, name: string) => `${server}\u0000${name}`;
 
 function SkillsList({ wsId, slug }: { wsId: string; slug: string }) {
@@ -113,9 +112,15 @@ function SkillsList({ wsId, slug }: { wsId: string; slug: string }) {
     listConnectorSkills(wsId).then(
       (data) => {
         if (cancelled) return;
-        const next = new Map<string, SkillMechanismLabel>();
-        for (const group of connectorSkillGroups(data)) {
-          for (const row of group.skills) next.set(loadsKey(row.server, row.name), row.loads);
+        const next = new Map<string, SkillMechanismInput>();
+        for (const o of data.overlays) {
+          next.set(loadsKey(o.server, o.name), { loading: { mechanism: "tool_affinity" } });
+        }
+        for (const p of data.published) {
+          next.set(loadsKey(p.server, p.name), {
+            loading: { mechanism: p.mechanism },
+            ...(p.triggers ? { triggers: p.triggers } : {}),
+          });
         }
         setLoads(next);
       },
@@ -168,9 +173,10 @@ function SkillsList({ wsId, slug }: { wsId: string; slug: string }) {
             <SkillRow
               key={`${skill.scope}:${skill.id}`}
               skill={skill}
+              loads={skillLoadsText(skill, plugins ?? [])}
               to={skillPath(slug, skill.scope, skill.name)}
               control={
-                segment === "personal" ? (
+                segment === "personal" && skill.status === "active" ? (
                   <SkillHereSwitch
                     skill={skill}
                     workspaceId={wsId}
@@ -209,10 +215,10 @@ function SkillsList({ wsId, slug }: { wsId: string; slug: string }) {
                 key={`${row.plugin.id}:${row.skill.serverName}:${row.skill.name}`}
                 row={row}
                 to={pluginPath(slug, row.plugin)}
-                loads={
-                  loads.get(loadsKey(row.skill.serverName, row.skill.name)) ??
-                  (row.skill.kind === "overlay" ? { text: "On first tool call" } : undefined)
-                }
+                loads={pluginSkillLoads(
+                  row,
+                  loads.get(loadsKey(row.skill.serverName, row.skill.name)),
+                )}
               />
             ))}
           </div>
@@ -226,23 +232,43 @@ const ROW =
   "relative flex min-h-11 items-center gap-3 border-b border-border/60 py-1.5 last:border-b-0";
 
 /**
- * One skill someone wrote: its name, an Org tag on the org's, when it loads,
- * On here on the viewer's own, and its ⋯ menu. A skill that is off, or off
- * here, reads muted. The whole row opens the skill's page.
+ * When a plugin's skill loads. Its tool patterns can reach only its own
+ * server's tools (the runtime prefixes them with the server's name, whatever
+ * the plugin's owner), so a tool-bound one loads when its plugin is used. An
+ * overlay is always tool-bound, listed or not.
+ */
+function pluginSkillLoads(
+  row: PluginSkillRow,
+  input: SkillMechanismInput | undefined,
+): string | null {
+  const toolBound = input
+    ? input.loading?.mechanism === "tool_affinity"
+    : row.skill.kind === "overlay";
+  if (toolBound) return `When ${row.plugin.displayName} is used`;
+  return input ? skillLoadsText(input, []) : null;
+}
+
+/**
+ * One skill someone wrote: its name, an Org tag on the org's, when it loads
+ * (unless it loads only when the agent asks, the default), the On here switch
+ * on the viewer's own, and its ⋯ menu. A disabled skill reads muted and says
+ * only Disabled, with no switch: it applies nowhere, so here is moot. One off
+ * here reads muted and says Off here. The whole row opens the skill's page.
  */
 function SkillRow({
   skill,
+  loads,
   to,
   control,
 }: {
   skill: AuthoredSkill;
+  loads: string | null;
   to: string;
   control: React.ReactNode;
 }) {
-  const mechanism = skillMechanismLabel(skill);
-  const off = skill.status !== "active";
+  const disabled = skill.status !== "active";
   // Turned off in this workspace by its owner (On here), though on elsewhere.
-  const offHere = skill.onHere === false;
+  const offHere = !disabled && skill.onHere === false;
   return (
     <div
       className={ROW}
@@ -256,7 +282,7 @@ function SkillRow({
             to={to}
             className={cn(
               "min-w-0 truncate text-sm",
-              (off || offHere) && "text-muted-foreground",
+              (disabled || offHere) && "text-muted-foreground",
               ROW_LINK,
             )}
           >
@@ -268,10 +294,21 @@ function SkillRow({
             </Badge>
           )}
         </span>
-        {mechanism && <LoadsLine loads={mechanism} testId="skill-facts" />}
+        {loads && (
+          <span
+            className="min-w-0 truncate text-xs text-muted-foreground"
+            data-testid="skill-facts"
+          >
+            {loads}
+          </span>
+        )}
       </div>
-      {off && <span className="relative shrink-0 text-xs text-muted-foreground">Off</span>}
-      {control && <div className="relative shrink-0">{control}</div>}
+      {(disabled || offHere) && (
+        <span className="relative shrink-0 text-xs text-muted-foreground" data-testid="skill-state">
+          {disabled ? "Disabled" : "Off here"}
+        </span>
+      )}
+      {!disabled && control && <div className="relative shrink-0">{control}</div>}
       <RowMenu
         name={skill.name}
         items={[{ kind: "link", label: "Open", to }]}
@@ -289,7 +326,7 @@ function PluginSkillRowView({
 }: {
   row: PluginSkillRow;
   to: string;
-  loads: SkillMechanismLabel | undefined;
+  loads: string | null;
 }) {
   const { skill, plugin } = row;
   return (
@@ -305,13 +342,7 @@ function PluginSkillRowView({
         </Link>
         <span className="min-w-0 truncate text-xs text-muted-foreground">
           {plugin.displayName}
-          {loads && (
-            <>
-              {" · "}
-              {loads.text}
-              {loads.mono && <span className="font-mono"> {loads.mono}</span>}
-            </>
-          )}
+          {loads && ` · ${loads}`}
         </span>
       </div>
       <RowMenu
@@ -320,14 +351,5 @@ function PluginSkillRowView({
         testId="plugin-skill-menu"
       />
     </div>
-  );
-}
-
-function LoadsLine({ loads, testId }: { loads: SkillMechanismLabel; testId: string }) {
-  return (
-    <span className="min-w-0 truncate text-xs text-muted-foreground" data-testid={testId}>
-      {loads.text}
-      {loads.mono && <span className="font-mono"> {loads.mono}</span>}
-    </span>
   );
 }

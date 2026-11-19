@@ -11,7 +11,9 @@
  * arrives without one, and a traced prompt layer, which records only its path.
  */
 
+import type { Plugin } from "../_generated/platform-schemas/plugins";
 import type { SkillScope } from "../_generated/platform-schemas/skills";
+import { pluginsForToolPattern } from "./plugin-attribution";
 
 /**
  * A name from a skill id, for something that carries only the id.
@@ -89,6 +91,58 @@ export function skillMechanismLabel(skill: SkillMechanismInput): SkillMechanismL
     default:
       return null;
   }
+}
+
+/**
+ * When a skill loads, in the reader's words, for the Skills list and a skill's
+ * page: "Always on", `On trigger "deploy"`, or "When Google Calendar is used".
+ *
+ * A tool pattern is internal (`my_gmail__*`), so it is named by the plugin it
+ * reaches, through the same listing chat labels use: "When A or B is used" for
+ * several, and "a matching tool" for a pattern no plugin answers. The pattern
+ * itself shows only in the skill page's loading details (`skillLoadingSentence`).
+ *
+ * The default, loading when the agent asks for it, says nothing a list needs,
+ * so it is `null` unless `includeDefault` asks for it (a skill's own page).
+ */
+export function skillLoadsText(
+  skill: SkillMechanismInput,
+  plugins: readonly Plugin[],
+  { includeDefault = false }: { includeDefault?: boolean } = {},
+): string | null {
+  switch (skill.loading?.mechanism) {
+    case "always":
+      return "Always on";
+    case "trigger": {
+      const phrases = (skill.triggers ?? []).filter(Boolean);
+      return phrases.length > 0
+        ? `On trigger ${phrases.map((p) => `"${p}"`).join(", ")}`
+        : "On trigger";
+    }
+    case "tool_affinity":
+      return whenToolsUsed(skill.toolAffinity ?? [], plugins);
+    case "on_request":
+      return includeDefault ? "When the agent asks for it" : null;
+    default:
+      return null;
+  }
+}
+
+/** "When A is used", "When A or B is used", "When A, B or C is used". */
+function whenToolsUsed(patterns: readonly string[], plugins: readonly Plugin[]): string {
+  const names: string[] = [];
+  let unresolved = false;
+  for (const pattern of patterns.filter(Boolean)) {
+    const matched = pluginsForToolPattern(pattern, plugins);
+    if (matched.length === 0) unresolved = true;
+    for (const p of matched) if (!names.includes(p.displayName)) names.push(p.displayName);
+  }
+  if (names.length === 0) return "When a matching tool is used";
+  if (unresolved) names.push("a matching tool");
+  const last = names.pop();
+  return names.length === 0
+    ? `When ${last} is used`
+    : `When ${names.join(", ")} or ${last} is used`;
 }
 
 /**

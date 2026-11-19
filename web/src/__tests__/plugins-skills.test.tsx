@@ -342,7 +342,68 @@ describe("Skills page", () => {
     const facts = rowFor(mounted.container, "my-voice")?.querySelector(
       '[data-testid="skill-facts"]',
     )?.textContent;
-    expect(facts).toBe("On tool match docs__*");
+    // No plugin answers docs__*, and the pattern itself is never listed.
+    expect(facts).toBe("When a matching tool is used");
+  });
+
+  test("a tool pattern is named by the plugin it reaches, personal or the workspace's", async () => {
+    plugins = [
+      plugin({
+        id: "person:com-google-calendar-mcp",
+        displayName: "Google Calendar",
+        owner: { kind: "person" },
+      }),
+      plugin({ id: "workspace:gmail", displayName: "Gmail", owner: { kind: "workspace" } }),
+      plugin({ id: "workspace:slack", displayName: "Slack", owner: { kind: "workspace" } }),
+    ];
+    skills = [
+      summary({
+        name: "calendar",
+        scope: "user",
+        loadingStrategy: "dynamic",
+        toolAffinity: ["my_com-google-calendar-mcp__*"],
+        loading: { mechanism: "tool_affinity" },
+      }),
+      summary({
+        name: "mail-and-chat",
+        scope: "user",
+        loadingStrategy: "dynamic",
+        toolAffinity: ["gmail__send", "slack__*"],
+        loading: { mechanism: "tool_affinity" },
+      }),
+    ];
+    mounted = await mountPersonal();
+    const facts = (name: string) =>
+      rowFor(mounted!.container, name)?.querySelector('[data-testid="skill-facts"]')?.textContent;
+    expect(facts("calendar")).toBe("When Google Calendar is used");
+    expect(facts("mail-and-chat")).toBe("When Gmail or Slack is used");
+    expect(mounted.container.textContent).not.toContain("__");
+  });
+
+  test("a skill loaded only when the agent asks says nothing about loading; always and triggers do", async () => {
+    skills = [
+      summary({
+        name: "asked",
+        scope: "workspace",
+        loadingStrategy: "dynamic",
+        loading: { mechanism: "on_request" },
+      }),
+      summary({
+        name: "deployer",
+        scope: "workspace",
+        loadingStrategy: "dynamic",
+        triggers: ["deploy"],
+        loading: { mechanism: "trigger" },
+      }),
+      WORKSPACE_SKILL,
+    ];
+    mounted = await mount(`/w/${SLUG}/skills`);
+    const facts = (name: string) =>
+      rowFor(mounted!.container, name)?.querySelector('[data-testid="skill-facts"]')?.textContent;
+    expect(facts("asked")).toBeUndefined();
+    expect(mounted.container.textContent).not.toContain("When the agent asks for it");
+    expect(facts("deployer")).toBe('On trigger "deploy"');
+    expect(facts("house-style")).toBe("Always on");
   });
 
   test("rows link to each skill's page by scope and name", async () => {
@@ -422,7 +483,7 @@ describe("Skills page", () => {
       );
     expect(names()).toEqual(["notion-pages"]);
     const notion = group()!.querySelector('[data-skill-name="notion-pages"]')!;
-    expect(notion.textContent).toContain("Notion · On first tool call");
+    expect(notion.textContent).toContain("Notion · When Notion is used");
     expect(notion.querySelector("a")?.getAttribute("href")).toBe(
       `/w/${SLUG}/plugins/workspace%3Anotion`,
     );
@@ -430,7 +491,7 @@ describe("Skills page", () => {
     await click(segment(mounted.container, "personal"));
     // A plugin not on here brings nothing here.
     expect(names()).toEqual(["slack-threads"]);
-    expect(group()!.textContent).toContain("Slack · On tool match slack__*");
+    expect(group()!.textContent).toContain("Slack · When Slack is used");
     // The group is no skill people wrote, so it carries no On here.
     expect(group()!.querySelector('[data-testid="skill-on-here"]')).toBeNull();
   });
@@ -622,6 +683,8 @@ describe("On here", () => {
       '[data-testid="skill-on-here"]',
     ) ?? null;
   const switchIn = (el: HTMLElement | null) => el?.querySelector<HTMLElement>('[role="switch"]');
+  const state = (scope: HTMLElement, name: string) =>
+    rowFor(scope, name)?.querySelector('[data-testid="skill-state"]')?.textContent;
 
   test("only the viewer's own skills carry it, named for the skill", async () => {
     mounted = await mount(`/w/${SLUG}/skills`);
@@ -629,17 +692,31 @@ describe("On here", () => {
     expect(onHere(mounted.container, "policy")).toBeNull();
     await click(segment(mounted.container, "personal"));
     const mine = onHere(mounted.container, "my-voice");
-    expect(mine?.textContent).toBe("On here");
+    // No visible label: the switch's name says what it switches.
+    expect(mine?.textContent).toBe("");
     expect(switchIn(mine)?.getAttribute("aria-label")).toBe("On here: my-voice");
     expect(switchIn(mine)?.getAttribute("aria-checked")).toBe("true");
+    expect(rowFor(mounted.container, "my-voice")?.textContent).not.toContain("On here");
+    expect(state(mounted.container, "my-voice")).toBeUndefined();
   });
 
   test("a skill turned off here lists as Off here", async () => {
     skills = [{ ...USER_SKILL, onHere: false }];
     mounted = await mountPersonal();
     const mine = onHere(mounted.container, "my-voice");
-    expect(mine?.textContent).toBe("Off here");
+    expect(state(mounted.container, "my-voice")).toBe("Off here");
     expect(switchIn(mine)?.getAttribute("aria-checked")).toBe("false");
+    expect(rowFor(mounted.container, "my-voice")?.querySelector("a")?.className).toContain(
+      "text-muted-foreground",
+    );
+  });
+
+  test("a disabled skill says only Disabled, with no switch", async () => {
+    skills = [{ ...USER_SKILL, status: "disabled", onHere: false }];
+    mounted = await mountPersonal();
+    expect(state(mounted.container, "my-voice")).toBe("Disabled");
+    expect(onHere(mounted.container, "my-voice")).toBeNull();
+    expect(rowFor(mounted.container, "my-voice")?.textContent).not.toContain("Off here");
   });
 
   test("flipping it reads Off here at once, holds while the save runs, and saves in this workspace", async () => {
@@ -653,7 +730,7 @@ describe("On here", () => {
     mounted = await mountPersonal();
     await click(switchIn(onHere(mounted.container, "my-voice")));
     const mine = onHere(mounted.container, "my-voice");
-    expect(mine?.textContent).toBe("Off here");
+    expect(state(mounted.container, "my-voice")).toBe("Off here");
     expect(switchIn(mine)?.hasAttribute("data-disabled")).toBe(true);
     // A second flip while the first is in flight sends nothing.
     await click(switchIn(mine));
@@ -663,7 +740,7 @@ describe("On here", () => {
     await act(async () => release());
     await settle();
     const saved = onHere(mounted.container, "my-voice");
-    expect(saved?.textContent).toBe("Off here");
+    expect(state(mounted.container, "my-voice")).toBe("Off here");
     expect(switchIn(saved)?.hasAttribute("data-disabled")).toBe(false);
   });
 
@@ -674,7 +751,7 @@ describe("On here", () => {
     mounted = await mountPersonal();
     await click(switchIn(onHere(mounted.container, "my-voice")));
     const mine = onHere(mounted.container, "my-voice");
-    expect(mine?.textContent).toBe("On here");
+    expect(state(mounted.container, "my-voice")).toBeUndefined();
     expect(switchIn(mine)?.getAttribute("aria-checked")).toBe("true");
     expect(document.body.textContent).toContain("Couldn't turn my-voice off here");
     expect(document.body.textContent).toContain("Not yours to change");
@@ -688,7 +765,35 @@ describe("On here", () => {
     );
     await click(switchIn(onHere(here, "")));
     expect(setSkillOnHere).toHaveBeenCalledWith(WS_ID, USER_SKILL.id, false);
-    expect(onHere(here, "")?.textContent).toBe("Off here");
+    expect(switchIn(onHere(here, ""))?.getAttribute("aria-checked")).toBe("false");
+  });
+
+  test("a disabled skill's page says Disabled where the switch would be", async () => {
+    skills = [{ ...USER_SKILL, status: "disabled" }];
+    mounted = await mount(`/w/${SLUG}/skills/user/my-voice`);
+    const here = mounted.container.querySelector<HTMLElement>('[data-testid="skill-here"]')!;
+    expect(here.querySelector('[data-testid="skill-state"]')?.textContent).toBe("Disabled");
+    expect(here.textContent).toContain("Turn the skill on first.");
+    expect(onHere(here, "")).toBeNull();
+  });
+
+  test("a skill's page names the plugin a pattern reaches, and keeps the default sentence", async () => {
+    plugins = [plugin({ id: "workspace:docs", displayName: "Docs", owner: { kind: "workspace" } })];
+    mounted = await mount(`/w/${SLUG}/skills/user/my-voice`);
+    const line = () =>
+      mounted!.container.querySelector('[data-testid="skill-mechanism"]')?.textContent;
+    expect(line()).toBe("When Docs is used");
+    mounted.unmount();
+    skills = [
+      summary({
+        name: "asked",
+        scope: "user",
+        loadingStrategy: "dynamic",
+        loading: { mechanism: "on_request" },
+      }),
+    ];
+    mounted = await mount(`/w/${SLUG}/skills/user/asked`);
+    expect(line()).toBe("When the agent asks for it");
   });
 
   test("a workspace or org skill's page does not", async () => {
