@@ -1039,11 +1039,23 @@ export async function installConnector(
  */
 export async function installPersonalConnector(
   entry: CatalogListing,
-): Promise<{ ok: boolean; alreadyInstalled?: boolean; serverName: string; scope: "identity" }> {
+  grantWsId?: string,
+): Promise<{
+  ok: boolean;
+  alreadyInstalled?: boolean;
+  serverName: string;
+  scope: "identity";
+  /** The workspace the install granted the connector into, when `grantWsId` was given. */
+  grantedWsId?: string;
+}> {
   const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "install",
     scope: "identity",
     entry,
+    // Installing from inside a workspace grants it there in the same act
+    // (ADR-0069). The grant needs only the install, so it holds across the
+    // Connect round trip that follows.
+    ...(grantWsId ? { wsId: grantWsId } : {}),
   });
   return unwrapStructured(result, "install");
 }

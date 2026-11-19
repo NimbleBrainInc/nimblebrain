@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { type ChatAnswer, ChatAnswerContext } from "../context/ChatAnswerContext";
 import { useChatConfigContext, useChatContext } from "../context/ChatContext";
 import { ChatPluginsProvider } from "../context/ChatPluginsProvider";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
@@ -228,12 +229,23 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
     conversationKey,
   } = useChatContext();
   const { availableModels, newConversationModel, fileLimits } = useChatConfigContext();
-  const { activeWorkspace } = useWorkspaceContext();
+  const { activeWorkspace, workspaces } = useWorkspaceContext();
   // The workspace the conversation's tool calls ran in: its own once loaded,
   // else the one on screen, which is where an unsent chat's first turn runs.
   // Display only — the panel's focus decision is ChatProvider's.
   const chatWorkspaceId = (conversationId && conversationMeta?.workspaceId) || activeWorkspace?.id;
   const models = useMemo(() => toPickerModels(availableModels), [availableModels]);
+  const chatWorkspaceName = workspaces.find((w) => w.id === chatWorkspaceId)?.name;
+  // A card in the transcript (a plugin request) answers as the person's next message.
+  const chatAnswer = useMemo<ChatAnswer>(
+    () => ({
+      workspaceId: chatWorkspaceId,
+      workspaceName: chatWorkspaceName,
+      canAnswer: !isStreaming,
+      send: (text) => sendMessage(text),
+    }),
+    [chatWorkspaceId, chatWorkspaceName, isStreaming, sendMessage],
+  );
 
   const displayTitle = deriveDisplayTitle(title, messages);
   const displayDetail = resolveDisplayDetail(displayDetailProp);
@@ -335,15 +347,17 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
       )}
 
       <ChatPluginsProvider workspaceId={chatWorkspaceId}>
-        <MessageList
-          messages={messages}
-          isStreaming={isStreaming}
-          streamingState={streamingState}
-          preparingTool={preparingTool}
-          displayDetail={displayDetail}
-          compact={compact}
-          onRetry={onRetry}
-        />
+        <ChatAnswerContext value={chatAnswer}>
+          <MessageList
+            messages={messages}
+            isStreaming={isStreaming}
+            streamingState={streamingState}
+            preparingTool={preparingTool}
+            displayDetail={displayDetail}
+            compact={compact}
+            onRetry={onRetry}
+          />
+        </ChatAnswerContext>
       </ChatPluginsProvider>
 
       <div ref={inputWrapperRef} className={compact ? "px-4" : "max-w-4xl w-full mx-auto px-8"}>

@@ -222,13 +222,13 @@ describe("PluginsPage — Installed", () => {
     expect(row(mounted.container, "workspace:linear")?.textContent).toContain("Reconnect");
   });
 
-  test("rows link to where each plugin is configured", async () => {
+  test("rows link to each plugin's page, by its encoded id", async () => {
     plugins = [GITHUB, GMAIL];
     mounted = await mount();
     const href = (id: string) =>
       row(mounted!.container, id)?.querySelector("a")?.getAttribute("href");
-    expect(href("workspace:github")).toBe(`/w/${SLUG}/settings/connectors/github`);
-    expect(href("person:gmail")).toBe("/profile/connectors");
+    expect(href("workspace:github")).toBe(`/w/${SLUG}/plugins/workspace%3Agithub`);
+    expect(href("person:gmail")).toBe(`/w/${SLUG}/plugins/person%3Agmail`);
   });
 
   test("Use here grants only after the confirm, naming the account and workspace", async () => {

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// A connector's settings component on its settings page.
+// A connector's settings component on its plugin's page.
 //
 // Pins the contract of the `settings` placement slot:
 //
@@ -26,6 +26,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loadAppFrame } from "../../test/app-frame";
 import { realClient } from "../../test/setup";
+import type * as ApiClient from "../api/client";
 import type { InstalledConnector } from "../api/client";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 import type { PlacementEntry } from "../types";
@@ -67,10 +68,27 @@ const getResources = mock(async (_app: string, path: string) => ({
 // `allowedTools` is decided for the viewer's role, so the page re-reads the entry on a role change.
 const getInstalledConnector = mock(async (_serverName: string) => ({ installed: installed() }));
 
+// The plugin page finds the connector through the plugin listing.
+const listPlugins = mock<typeof ApiClient.listPlugins>(async (wsId) => ({
+  wsId,
+  plugins: [
+    {
+      id: `workspace:${SERVER}`,
+      displayName: "Acme CRM",
+      owner: { kind: "workspace" },
+      granted: true,
+      servers: [{ serverName: SERVER, status: "ready", account: null }],
+      skills: [],
+      apps: [],
+    },
+  ],
+}));
+
 mock.module("../api/client", () => ({
   ...realClient,
   getResources,
   getInstalledConnector,
+  listPlugins,
   listConnectorToolsWithPermissions: async () => ({
     scope: "workspace",
     serverName: SERVER,
@@ -90,7 +108,7 @@ const { ThemeProvider } = await import("../context/ThemeContext");
 const { ShellProvider } = await import("../context/ShellContext");
 const { WorkspaceProvider, useWorkspaceContext } = await import("../context/WorkspaceContext");
 const { SessionProvider } = await import("../context/SessionContext");
-const { ConnectorDetailPage } = await import("../pages/settings/ConnectorDetailPage");
+const { PluginDetailPage } = await import("../pages/PluginDetailPage");
 const { WorkspaceSettingsPage } = await import("../pages/settings/WorkspaceSettingsPage");
 const { SlotRenderer } = await import("../components/SlotRenderer");
 const { buildHostContext, buildHostExtensions } = await import("../bridge/host-extensions");
@@ -192,12 +210,13 @@ async function mountPage(
           <ShellProvider
             value={{ forSlot: forSlotOver(placements), mainRoutes: () => [], shellWorkspaceId }}
           >
-            <MemoryRouter initialEntries={[`/w/0071a5bbf40116e6/settings/connectors/${SERVER}`]}>
+            <MemoryRouter
+              initialEntries={[
+                `/w/0071a5bbf40116e6/plugins/${encodeURIComponent(`workspace:${SERVER}`)}`,
+              ]}
+            >
               <Routes>
-                <Route
-                  path="/w/:slug/settings/connectors/:serverName"
-                  element={<ConnectorDetailPage />}
-                />
+                <Route path="/w/:slug/plugins/:pluginRef" element={<PluginDetailPage />} />
               </Routes>
             </MemoryRouter>
           </ShellProvider>
@@ -259,7 +278,7 @@ function lastHostContextChange(app: AppSide): Record<string, unknown> | undefine
 
 // ── Tests ───────────────────────────────────────────────────────────
 
-describe("ConnectorDetailPage — the connector's settings section", () => {
+describe("PluginDetailPage — the connector's settings section", () => {
   test("renders the connector's settings placement under a plain Settings heading", async () => {
     const { container } = await mountPage(workspace("admin"), [placement({})]);
 
@@ -330,7 +349,7 @@ describe("ConnectorDetailPage — the connector's settings section", () => {
   });
 });
 
-describe("ConnectorDetailPage — the manage flag", () => {
+describe("PluginDetailPage — the manage flag", () => {
   test("is true for a workspace admin", async () => {
     const { container } = await mountPage(workspace("admin"), [placement({})]);
     const ctx = await handshake(appSide(container));

@@ -11,14 +11,29 @@ This is the counterpart to a workspace [Connector](/using/connectors), which is 
 
 ## Where personal connectors live
 
-Open **Profile → Connectors**. The page has two lists:
+In a workspace, open **Plugins**: your connectors are listed there as plugins marked **Yours**, and clicking one opens its page (see [A personal plugin's page](#a-personal-plugins-page)). **Profile → Connectors** lists them too, outside any workspace. It has two lists:
 
 - **Your connectors** — what you've already connected. Each row shows the account it's connected as and where it is on (for example, **On in 2 of 3 workspaces**). Click a row to open it and manage that connector.
 - **Add a connector** — the curated set of services offered for a personal connection you haven't added yet.
 
 Which services appear under **Add a connector** is set by the platform operator (a connector is flagged as personal in the catalog). Personal connectors authenticate by standard OAuth (**dcr**), through **Composio**, or with a pre-registered OAuth client (**static**) when the operator has [declared that client for the whole instance](/config/connectors-catalog/#an-oauth-client-for-the-whole-instance).
 
-## Connecting a service
+## Adding one from Plugins
+
+The quickest way to add a personal connector is from the workspace you want to use it in:
+
+<Steps>
+1. Open **Plugins** and choose the **Browse** tab.
+2. Click **Install** on the service. You're asked who it is for; **Just me** is selected.
+3. Click **Install**. The connector is added to your identity and turned on in this workspace in the same step, then you're sent to the vendor's sign-in.
+4. Sign in and approve access. You're returned to **Profile → Connectors**, where the service reads **Connected** and **On in** this workspace.
+</Steps>
+
+The grant is made before the sign-in, so it holds even if you don't finish signing in; the connector then reads **Not connected** on your profile, with **Connect**. Installing the same service from another workspace turns it on there too, and if it is already connected there is no second sign-in.
+
+**Just me** is offered only for a service that can sign in with your own account, and any member can choose it. The other choice, **Everyone in** the workspace, installs it as a [workspace connector](/using/connectors) and is shown only to the workspace's admins. A service that signs in only with one account for the workspace has no **Just me**; its card says **Uses one account for the workspace**. A service the workspace already has sits under **Installed** with **Install for me**, which adds your own beside the workspace's.
+
+## Connecting a service from your profile
 
 <Steps>
 1. Under **Add a connector**, find the service and click **Connect**.
@@ -31,7 +46,7 @@ When the service reports which account you signed in with, the row reads **Conne
 Connecting installs the connector on your identity and runs the sign-in in one step. Nothing runs on the platform host except the connection itself; your tokens are stored against your identity, outside any workspace.
 
 <Aside type="caution" title="Connecting is not the same as usable">
-A freshly connected personal connector is **not yet available to your agent anywhere** — not even in a workspace only you belong to. You have to **grant** it into a workspace first. See below.
+A personal connector connected from your profile is **not yet available to your agent anywhere** — not even in a workspace only you belong to. You have to **grant** it into a workspace first. See below. (One added from a workspace's **Plugins** page is granted there as it is added.)
 </Aside>
 
 ## Grants — the key idea
@@ -40,7 +55,7 @@ A personal connector is yours, so **you** decide which of your workspaces may us
 
 The rule has **no exception for a workspace only you belong to** — you grant the connector there too before your agent can use it. There is no "free at home".
 
-The quickest place to grant is the workspace itself. Its **Plugins** page lists your connectors granted there under **Yours**, and the rest under **Yours, not used here**, each with **Use here**. Use here asks you to confirm, naming the account and the workspace, then grants it. A granted one offers **Stop using here**, which revokes the grant. Any member can do this for their own connectors.
+The quickest place to grant is the workspace itself. Its **Plugins** page lists your connectors granted there under **Yours**, and the rest under **Yours, not used here**, each with **Use here**. Use here asks you to confirm, naming the account and the workspace, then grants it. A granted one offers **Stop using here**, which revokes the grant. Any member can do this for their own connectors. The plugin's own page offers the same, and lists every workspace it is used in.
 
 To manage every workspace at once, use your profile:
 
@@ -51,7 +66,16 @@ To manage every workspace at once, use your profile:
 
 Granting into a workspace makes that connector's tools appear to the agent there on its next turn. Revoking removes them just as immediately. Grants are per-workspace and independent — granting into one never affects another.
 
-You can also grant from **chat**: ask the agent to "grant Granola to this workspace," and it will (a grant only ever widens *your own* reach, so any member may grant their own connector — no admin role needed).
+You can also answer from **chat**. The agent knows which of your connectors are off in the workspace (it sees their names, not their tools), so when you ask for something only one of them can do, it asks you. The chat shows the same question as **Use here**, naming the account and the workspace, with **Use here** and **Not now**. Use here grants it; either answer goes to the agent as your next message, and once it is on, the agent can use it in the same conversation. The agent cannot grant on its own, and a scheduled task never asks: it has no one to ask, so turn the connector on before the task runs.
+
+## A personal plugin's page
+
+In a workspace, **Plugins** → your connector opens its page. The header shows the account it is signed in as and that it uses your account; when the sign-in is not ready, it offers **Connect**. Below it:
+
+- **In this workspace** — **Use here** (after the same confirm as on Plugins) or **Stop using here**.
+- **Used in** — every workspace it is granted to, each with **Stop using**, which revokes that grant.
+- **Tool permissions** — your own policy for its tools (see below).
+- **Disconnect** — signs out and removes it from your account, ending every grant.
 
 ## Using it in a workspace
 
@@ -59,9 +83,9 @@ Once a personal connector is **granted into the workspace you're chatting in**, 
 
 ## Tool permissions
 
-Open a connected personal connector's row and click **Show tools** under **Tool permissions**. A table lists the connector's tools, each set to **Allow** or **Disallow**, with **Allow all** and **Disallow all** for the whole set. A tool with no setting is allowed.
+On the connector's plugin page, or in its row under **Profile → Connectors**, click **Show tools** under **Tool permissions**. A table lists the connector's tools, each set to **Allow** or **Disallow**, with **Allow all** and **Disallow all** for the whole set. A tool with no setting is allowed.
 
-The policy is yours, like the connector: it applies in every workspace you grant the connector into, and no admin role is needed to change it. It is separate from a workspace connector of the same name, whose policy the workspace's admins set under Settings → Connectors. From chat, ask the agent to set it; the agent addresses your personal connector with `scope: "identity"`.
+The policy is yours, like the connector: it applies in every workspace you grant the connector into, and no admin role is needed to change it. It is separate from a workspace connector of the same name, whose policy the workspace's admins set on that plugin's page. From chat, ask the agent to set it; the agent addresses your personal connector with `scope: "identity"`.
 
 ## In a notification route
 
@@ -104,7 +128,7 @@ A personal connector's credentials are **identity-owned**: they live at `users/<
 | | Personal connector | Workspace [connector](/using/connectors) |
 |---|---|---|
 | **Owned by** | You (your identity) | The workspace |
-| **Managed under** | Profile → Connectors, or **Plugins** in a workspace | **Plugins**, or Settings → Connectors (per workspace) |
+| **Managed under** | Its page under **Plugins** in a workspace, or Profile → Connectors | Its page under **Plugins** (per workspace) |
 | **Who can use it** | Only you, and only in workspaces you grant it into | Every member of that workspace |
 | **Credentials** | `users/<userId>/credentials/` | `workspaces/<wsId>/credentials/` |
 | **To use in a workspace** | Grant it in | Already shared with all members |

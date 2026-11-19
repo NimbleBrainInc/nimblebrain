@@ -56,6 +56,14 @@ export interface CatalogListing {
    *     required" (non-admin)
    */
   oauthClientConfigured?: boolean;
+  /**
+   * Set by `list_directory`: whether one person can install this entry on their
+   * own account (`install` with `scope: "identity"`). The same rule
+   * `list_personal_catalog` filters by. False means the entry authorizes only
+   * with a credential the workspace or operator holds, so it installs for a
+   * workspace and not for a person.
+   */
+  personalInstallable?: boolean;
 }
 
 /**

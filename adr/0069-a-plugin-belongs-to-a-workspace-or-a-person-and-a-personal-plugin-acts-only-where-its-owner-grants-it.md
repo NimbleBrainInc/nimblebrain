@@ -1,6 +1,6 @@
 # 0069. A plugin belongs to a workspace or a person, and a personal plugin acts only where its owner grants it
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0070
 - Date: 2026-11-18
 - Serves: secure RBAC; manage skills; orchestrate remote MCP
 

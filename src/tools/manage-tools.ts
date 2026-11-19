@@ -29,17 +29,46 @@ function summarize({ promoted, released }: BatchResult): string {
   return lines.join("\n");
 }
 
+/**
+ * Asks the person to turn on one of their own plugins here (`request_plugin`,
+ * `src/tools/plugin-request.ts`). Absent where the tool is built with no runtime.
+ */
+export type RequestPluginFn = (serverName: string) => Promise<ToolResult>;
+
+/** `request_plugin`: sent alone, and only where a runtime can answer it. */
+function askForPlugin(
+  serverName: string,
+  add: readonly string[],
+  remove: readonly string[],
+  requestPlugin: RequestPluginFn | undefined,
+): Promise<ToolResult> | ToolResult {
+  if (add.length > 0 || remove.length > 0) {
+    return {
+      content: textContent(
+        "Send `request_plugin` alone: a plugin's tools are reachable only after the person turns it on.",
+      ),
+      isError: true,
+    };
+  }
+  if (!requestPlugin) {
+    return { content: textContent("Plugin requests are not available here."), isError: true };
+  }
+  return requestPlugin(serverName);
+}
+
 export function createManageToolsToolDefs(
   toolPromotionCtx?: ToolPromotionControls,
+  requestPlugin?: RequestPluginFn,
 ): InProcessTool[] {
   return [
     typedTool({
       name: "manage_tools",
       description:
-        "Patch your active tool list in one call. Pass `add` to promote discovered tools (after nb__search) so they become callable, and/or `remove` to release tools you no longer need. Both arrays are optional; supply at least one non-empty array. Per-item results are returned in structuredContent.\n\nA promoted tool's schema reaches you on your next message, so call it there, not in the message that promotes it: arguments written before you see the schema are guesses.\n\nBatch every tool the task needs into one `add` — but promote only tools you actually intend to call. A promoted tool's schema is re-sent on the turns that follow, so carrying a plausible-looking extra from the search results costs tokens and buys nothing. When search returns several candidates for one job, promote the one that fits rather than all of them.",
+        "Patch your active tool list in one call. Pass `add` to promote discovered tools (after nb__search) so they become callable, and/or `remove` to release tools you no longer need. Both arrays are optional; supply at least one non-empty array (or `request_plugin`, below). Per-item results are returned in structuredContent.\n\nTo use one of the person's own plugins that nb__search lists as not turned on here, pass `request_plugin` alone: it asks them, and turns nothing on.\n\nA promoted tool's schema reaches you on your next message, so call it there, not in the message that promotes it: arguments written before you see the schema are guesses.\n\nBatch every tool the task needs into one `add` — but promote only tools you actually intend to call. A promoted tool's schema is re-sent on the turns that follow, so carrying a plausible-looking extra from the search results costs tokens and buys nothing. When search returns several candidates for one job, promote the one that fits rather than all of them.",
       inputSchema: ManageToolsInput,
       handler: async (input): Promise<ToolResult> => {
-        const { add = [], remove = [] } = input;
+        const { add = [], remove = [], request_plugin: requested } = input;
+        if (requested !== undefined) return askForPlugin(requested, add, remove, requestPlugin);
         if (add.length === 0 && remove.length === 0) {
           return {
             content: textContent(

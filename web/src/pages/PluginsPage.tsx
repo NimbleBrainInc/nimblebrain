@@ -5,12 +5,13 @@ import type { Plugin, PluginsListOutput } from "../_generated/platform-schemas/p
 import { grantConnector, listPlugins, revokeConnector } from "../api/client";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { connectorStatusSummary } from "../components/connectors/ConnectorList";
+import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { ConfirmDialog } from "../components/ui/confirm-dialog";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useEvents } from "../hooks/useEvents";
 import { useCanWriteActiveWorkspace } from "../hooks/useScopedRole";
+import { accountLine, pluginPath } from "../lib/plugins";
 import { cn } from "../lib/utils";
 import { toWsId } from "../lib/workspace-slug";
 import { ConnectorDirectory } from "./settings/ConnectorBrowsePage";
@@ -21,11 +22,11 @@ import { EmptyState, InlineError } from "./settings/components";
  *
  * Installed lists the workspace's plugins and the viewer's own ones granted
  * here, then the viewer's plugins not used here, each with the one action that
- * changes that. Browse is the connector directory, unchanged, so installing
- * behaves as it does in settings. Each row shows a plugin by the facts the
- * listing carries (whose it is, whether it is granted, the account it signs in
- * as) and needs no rule of its own to tell a personal plugin from a workspace
- * one (ADR-0069).
+ * changes that. Browse is the connector directory, which asks whom an install
+ * is for: the viewer alone (granted here in the same act) or everyone in the
+ * workspace. Each row shows a plugin by the facts the listing carries (whose it
+ * is, whether it is granted, the account it signs in as) and needs no rule of
+ * its own to tell a personal plugin from a workspace one (ADR-0069).
  *
  * One column, because this renders in the main area beside the docked chat
  * (`web/DESIGN.md`).
@@ -60,7 +61,7 @@ export function PluginsPage() {
         {tab === "installed" ? (
           <InstalledPlugins key={wsId} wsId={wsId} slug={slug} onBrowse={() => showTab("browse")} />
         ) : (
-          <ConnectorDirectory />
+          <ConnectorDirectory offerPersonal />
         )}
       </div>
     </div>
@@ -110,23 +111,6 @@ export function groupPlugins(plugins: readonly Plugin[]): {
     yours: sorted.filter((p) => p.owner.kind === "person" && p.granted),
     yoursNotHere: sorted.filter((p) => p.owner.kind === "person" && !p.granted),
   };
-}
-
-/** The account the plugin signs in as: the first of its servers that records one. */
-export function pluginAccount(plugin: Plugin): string | undefined {
-  for (const server of plugin.servers) {
-    const account = server.account?.email ?? server.account?.name;
-    if (account) return account;
-  }
-  return undefined;
-}
-
-/** Whose account the plugin acts as, and which one when the sign-in recorded it. */
-export function accountLine(plugin: Plugin): string {
-  const whose =
-    plugin.owner.kind === "person" ? "Uses your account" : "Uses the workspace's account";
-  const account = pluginAccount(plugin);
-  return account ? `${whose} · ${account}` : whose;
 }
 
 /** What the plugin brings besides its tools: its skills and its apps. */
@@ -213,13 +197,7 @@ function InstalledPlugins({
   }
   if (!groups) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
-  const configurePath = (plugin: Plugin): string => {
-    if (plugin.owner.kind === "person") return "/profile/connectors";
-    const serverName = plugin.servers[0]?.serverName ?? "";
-    return `/w/${slug}/settings/connectors/${encodeURIComponent(serverName)}`;
-  };
   const nothingHere = groups.workspace.length === 0 && groups.yours.length === 0;
-  const confirmAccount = confirming ? pluginAccount(confirming) : undefined;
 
   return (
     <div className="space-y-8">
@@ -239,14 +217,16 @@ function InstalledPlugins({
       ) : (
         <>
           <PluginSection title="In this workspace" plugins={groups.workspace} testId="workspace">
-            {(plugin) => <PluginRow key={plugin.id} plugin={plugin} to={configurePath(plugin)} />}
+            {(plugin) => (
+              <PluginRow key={plugin.id} plugin={plugin} to={pluginPath(slug, plugin)} />
+            )}
           </PluginSection>
           <PluginSection title="Yours" plugins={groups.yours} testId="yours">
             {(plugin) => (
               <PluginRow
                 key={plugin.id}
                 plugin={plugin}
-                to={configurePath(plugin)}
+                to={pluginPath(slug, plugin)}
                 action={
                   <Button
                     type="button"
@@ -273,7 +253,7 @@ function InstalledPlugins({
           <PluginRow
             key={plugin.id}
             plugin={plugin}
-            to={configurePath(plugin)}
+            to={pluginPath(slug, plugin)}
             muted
             action={
               <Button
@@ -292,22 +272,11 @@ function InstalledPlugins({
         )}
       </PluginSection>
 
-      <ConfirmDialog
-        open={confirming !== null}
-        onOpenChange={(open) => {
-          if (!open) setConfirming(null);
-        }}
-        title={
-          confirming
-            ? `Use ${confirming.displayName}${confirmAccount ? ` (${confirmAccount})` : ""} in ${workspaceName}?`
-            : ""
-        }
-        description="Only you can use it here; other members can't. What your agent does with it is saved in this workspace, private to you unless you share it."
-        confirmLabel="Use here"
-        pendingLabel="Turning on…"
-        onConfirm={async () => {
-          if (confirming) await grantHere(confirming);
-        }}
+      <UsePluginHereDialog
+        plugin={confirming}
+        workspaceName={workspaceName}
+        onClose={() => setConfirming(null)}
+        onConfirm={grantHere}
       />
     </div>
   );

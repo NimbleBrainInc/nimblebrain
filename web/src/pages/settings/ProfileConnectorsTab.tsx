@@ -4,8 +4,6 @@ import {
   type CatalogListing,
   disconnectPersonalConnector,
   grantConnector,
-  initiateComposioIdentityConnect,
-  initiateIdentityConnect,
   installPersonalConnector,
   listPersonalCatalog,
   listPersonalConnectors,
@@ -13,7 +11,12 @@ import {
   revokeConnector,
 } from "../../api/client";
 import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
-import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
+import {
+  disconnectConsequence,
+  PanelHeading,
+  PersonalToolPermissionsSection,
+  personalConnectUrl,
+} from "../../components/connectors/personal-connector";
 import {
   type ReturnedConnector,
   useConnectedNotice,
@@ -109,10 +112,7 @@ export function ProfileConnectorsTab() {
   // the busy state itself.
   const redirectToConnect = useCallback(
     async (target: { auth: "dcr" | "composio"; serverName: string; connectorId?: string }) => {
-      const { authorizationUrl } =
-        target.auth === "composio" && target.connectorId
-          ? await initiateComposioIdentityConnect(target.connectorId)
-          : await initiateIdentityConnect(target.serverName);
+      const authorizationUrl = await personalConnectUrl(target);
       if (!authorizationUrl) {
         // Already connected (no interactive flow) — refresh state in place rather
         // than redirecting to a nonexistent auth page. This success path does NOT
@@ -370,7 +370,7 @@ function PersonalConnectorRow({
             busyKey={busyKey}
             onSetGrant={onSetGrant}
           />
-          <ToolPermissionsSection
+          <PersonalToolPermissionsSection
             serverName={connector.serverName}
             name={name}
             connected={connected}
@@ -425,24 +425,6 @@ export function workspaceReach(grantedIds: string[], workspaces: WorkspaceInfo[]
   return `On in ${n} of ${total} workspaces`;
 }
 
-function disconnectConsequence(grants: number): string {
-  const base = "Signs out and removes it from your account.";
-  if (grants === 0) return base;
-  return `${base} It turns off in the ${grants} workspace${grants === 1 ? "" : "s"} it is on in.`;
-}
-
-/** A section heading inside an opened row, styled like the tool table's own. */
-function PanelHeading({ title, hint }: { title: string; hint: string }) {
-  return (
-    <div>
-      <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-        {title}
-      </h2>
-      <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
-    </div>
-  );
-}
-
 function WorkspaceAccess({
   connector,
   name,
@@ -485,45 +467,6 @@ function WorkspaceAccess({
           })}
         </ul>
       )}
-    </section>
-  );
-}
-
-/**
- * The connector's tool policy — the viewer's own (`scope: "identity"`), so they
- * may always change it. Listing tools starts a cold connector, so the table
- * mounts only when asked for, and replaces this stand-in heading in place.
- */
-function ToolPermissionsSection({
-  serverName,
-  name,
-  connected,
-}: {
-  serverName: string;
-  name: string;
-  connected: boolean;
-}) {
-  const [showing, setShowing] = useState(false);
-  if (connected && showing) {
-    return <ToolPermissionsTable serverName={serverName} scope="identity" canManage />;
-  }
-  return (
-    <section className="flex items-start justify-between gap-3">
-      <PanelHeading
-        title="Tool permissions"
-        hint={
-          connected ? "Choose which tools the agent can call." : `Connect ${name} to see its tools.`
-        }
-      />
-      {connected ? (
-        <button
-          type="button"
-          onClick={() => setShowing(true)}
-          className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-        >
-          Show tools
-        </button>
-      ) : null}
     </section>
   );
 }
