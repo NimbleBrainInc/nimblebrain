@@ -28,6 +28,7 @@ import {
   setFlowReturnWorkspace,
 } from "../../../src/tools/oauth-flow-registry.ts";
 import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { assertConversationInWorkspaceOver } from "../../helpers/conversation-ownership.ts";
 import { readJson } from "../../helpers/http.ts";
 import { stub } from "../../helpers/stub.ts";
 import { makeWorkspace } from "../../helpers/test-workspace.ts";
@@ -60,6 +61,14 @@ const DEV_AUTH = {
 const INITIATE_PATH = `/v1/workspaces/${WS_ID}/mcp-auth/initiate`;
 const WS_OWNER = { kind: "workspace", wsId: WS_ID } as const;
 const USER_ID = "usr_test";
+/** Another workspace the test user belongs to. */
+const WS_OTHER = "ws_00000000000000ab";
+/** The test user's conversation in `WS_ID`. */
+const MY_CONV = "conv_00000000000000a1";
+/** Another member's conversation in `WS_ID`. */
+const THEIR_CONV = "conv_00000000000000b2";
+/** The test user's conversation in `WS_OTHER`. */
+const OTHER_WS_CONV = "conv_00000000000000c3";
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
@@ -125,11 +134,16 @@ function makeApp(
       getAllowInsecureRemotes: () => false,
       // The route's owner resolution, fixed to the test user.
       resolveRequestUserId: () => USER_ID,
+      assertConversationInWorkspace: assertConversationInWorkspaceOver([
+        { wsId: WS_ID, ownerId: USER_ID, conversationId: MY_CONV },
+        { wsId: WS_ID, ownerId: DEV_USER_ID, conversationId: THEIR_CONV },
+        { wsId: WS_OTHER, ownerId: USER_ID, conversationId: OTHER_WS_CONV },
+      ]),
     }),
     authOptions: DEV_AUTH,
     workspaceStore: stub<WorkspaceStore>({
       get: async (id: string) =>
-        id === WS_ID
+        id === WS_ID || id === WS_OTHER
           ? makeWorkspace({
               id,
               members: [
@@ -1033,6 +1047,79 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
     }
   });
 
+  test("a returnConversationId the caller owns in returnWorkspaceId is recorded on the flow", async () => {
+    await new IdentityConnectorStore({ workDir }).add(USER_ID, {
+      url: "https://granola.test/mcp",
+      serverName: "granola",
+      ui: null,
+    });
+    const state = "identity-state-return-chat";
+    lifecycle.identityAuthUrls.set(
+      `granola|${USER_ID}`,
+      `https://granola.test/authorize?state=${state}&client_id=cid`,
+    );
+    registerFlow(state, { kind: "user", userId: USER_ID }, "granola").catch(() => {});
+
+    const res = await app.request("http://localhost/v1/mcp-auth/initiate-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        serverName: "granola",
+        returnWorkspaceId: WS_ID,
+        returnConversationId: MY_CONV,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(peekFlow(state)).toMatchObject({ returnWsId: WS_ID, returnConversationId: MY_CONV });
+    // The conversation never rides in the authorization URL.
+    expect((await readJson<OAuthInitiateResponse>(res)).authorizationUrl).not.toContain(MY_CONV);
+  });
+
+  test("a returnConversationId that is not the caller's in returnWorkspaceId is refused like a workspace, with no flow started", async () => {
+    await new IdentityConnectorStore({ workDir }).add(USER_ID, {
+      url: "https://granola.test/mcp",
+      serverName: "granola",
+      ui: null,
+    });
+    let started = 0;
+    lifecycle.startIdentityAuth = async () => {
+      started++;
+      return { authorizationUrl: "https://granola.test/authorize?state=never" };
+    };
+
+    const cases: Array<{ name: string; body: Record<string, unknown> }> = [
+      {
+        name: "another member's",
+        body: { returnWorkspaceId: WS_ID, returnConversationId: THEIR_CONV },
+      },
+      {
+        name: "in another workspace",
+        body: { returnWorkspaceId: WS_ID, returnConversationId: OTHER_WS_CONV },
+      },
+      { name: "malformed", body: { returnWorkspaceId: WS_ID, returnConversationId: "../conv" } },
+      { name: "not a string", body: { returnWorkspaceId: WS_ID, returnConversationId: 7 } },
+      { name: "with no workspace", body: { returnConversationId: MY_CONV } },
+    ];
+    const workspaceRefusal = await app.request("http://localhost/v1/mcp-auth/initiate-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "granola", returnWorkspaceId: "ws_00000000000000ff" }),
+    });
+    const expected = await readJson<ApiErrorBody>(workspaceRefusal);
+    for (const { name, body } of cases) {
+      const res = await app.request("http://localhost/v1/mcp-auth/initiate-identity", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ serverName: "granola", ...body }),
+      });
+      expect(res.status, name).toBe(404);
+      expect(await readJson<ApiErrorBody>(res), name).toEqual(expected);
+      expect(res.headers.get("Set-Cookie"), name).toBeNull();
+    }
+    expect(started).toBe(0);
+  });
+
   test("connected without interactive auth → { authorizationUrl: null } and no cookie (#679)", async () => {
     await new IdentityConnectorStore({ workDir }).add(USER_ID, {
       url: "https://minted.test/mcp",
@@ -1116,6 +1203,25 @@ describe("GET /v1/mcp-auth/callback — owner-aware redirect", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("Location") ?? "").toEndWith(
       "/w/0076759dbbe19fcc/plugins?connected=granola&owner=person",
+    );
+    await expect(flowPromise).resolves.toEqual({ code: "code-1" });
+  });
+
+  test("a user-owned flow started from a conversation reopens it on the Plugins page", async () => {
+    const state = "user-owned-return-chat-state";
+    const flowPromise = registerFlow(state, { kind: "user", userId: USER_ID }, "granola");
+    flowPromise.catch(() => {});
+    setFlowReturnWorkspace(state, WS_ID, MY_CONV);
+
+    const res = await app.request(
+      `http://localhost/v1/mcp-auth/callback?code=code-1&state=${state}&chat=conv_ffffffffffffffff`,
+      { headers: { cookie: `nb_oauth_state=${sha256Hex(state)}` } },
+    );
+
+    expect(res.status).toBe(302);
+    // The conversation comes from the flow, never from the callback's query.
+    expect(res.headers.get("Location") ?? "").toEndWith(
+      `/w/0076759dbbe19fcc/plugins?connected=granola&owner=person&chat=${MY_CONV}`,
     );
     await expect(flowPromise).resolves.toEqual({ code: "code-1" });
   });

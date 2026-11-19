@@ -245,13 +245,14 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
   // A card in the transcript (a plugin request) answers as the person's next message.
   const chatAnswer = useMemo<ChatAnswer>(
     () => ({
+      conversationId: conversationId ?? undefined,
       workspaceId: chatWorkspaceId,
       workspaceName: chatWorkspaceName,
       canAnswer: !isStreaming,
       send: (text, pluginRequestAnswer) =>
         sendMessage(text, undefined, undefined, pluginRequestAnswer),
     }),
-    [chatWorkspaceId, chatWorkspaceName, isStreaming, sendMessage],
+    [conversationId, chatWorkspaceId, chatWorkspaceName, isStreaming, sendMessage],
   );
 
   const displayTitle = deriveDisplayTitle(title, messages);

@@ -61,3 +61,42 @@ export function answerMessage(displayName: string, answer: "use" | "not_now"): s
     ? `I turned on ${displayName} in this workspace. Go ahead.`
     : `Not now: don't use ${displayName} in this workspace.`;
 }
+
+/**
+ * Where a card's Use here records that it sent the person to sign in, so the
+ * answer goes once they are back with the plugin connected and not before they
+ * leave (they may abandon the sign-in). Per tab, since the redirect returns to
+ * the same tab, and written only by this tab's own click: a conversation opened
+ * later, or elsewhere, never sends an answer on its own.
+ */
+const SIGN_IN_PENDING_KEY = "nb.pluginRequest.signInPending";
+
+function pendingKey(conversationId: string, serverName: string): string {
+  return JSON.stringify([conversationId, serverName]);
+}
+
+/** Record that this tab left to sign in for `serverName`'s card in `conversationId`. */
+export function markSignInPending(conversationId: string, serverName: string): void {
+  try {
+    sessionStorage.setItem(SIGN_IN_PENDING_KEY, pendingKey(conversationId, serverName));
+  } catch {
+    // No storage: nothing answers on return, and the person tells the agent themselves.
+  }
+}
+
+/** Whether this tab left to sign in for that card and has not answered it since. */
+export function isSignInPending(conversationId: string, serverName: string): boolean {
+  try {
+    return sessionStorage.getItem(SIGN_IN_PENDING_KEY) === pendingKey(conversationId, serverName);
+  } catch {
+    return false;
+  }
+}
+
+export function clearSignInPending(): void {
+  try {
+    sessionStorage.removeItem(SIGN_IN_PENDING_KEY);
+  } catch {
+    // Nothing stored.
+  }
+}

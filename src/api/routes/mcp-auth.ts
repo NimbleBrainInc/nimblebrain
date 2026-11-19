@@ -28,7 +28,7 @@ import { type AppContext, type AppEnv, apiError, json } from "../types.ts";
 import {
   connectorReturnUrl,
   type ReturnedConnection,
-  resolveReturnWorkspace,
+  resolveReturnTarget,
 } from "./connectors-redirect.ts";
 import { reinitiateParagraph } from "./oauth-error-page.ts";
 
@@ -146,19 +146,16 @@ export function mcpAuthRoutes(ctx: AppContext) {
   // and its OAuth binds `{type:"user"}`. Same cookie-bound state + callback as
   // the workspace flow. The callback lands the user on the Plugins page of
   // `returnWorkspaceId` when the body names one (the sign-in started there),
-  // else on `/profile/connectors`.
+  // reopening the chat on `returnConversationId` when it names one too, else on
+  // `/profile/connectors`.
   app.post("/v1/mcp-auth/initiate-identity", requireAuth(ctx.authOptions), async (c) => {
     const parsed = await parseInitiateBody(c);
     if (parsed instanceof Response) return parsed;
     const { serverName } = parsed;
 
     const userId = ctx.runtime.resolveRequestUserId(c.var.identity);
-    const returnWsId = await resolveReturnWorkspace(
-      ctx.workspaceStore,
-      parsed.returnWorkspaceId,
-      userId,
-    );
-    if (returnWsId instanceof Response) return returnWsId;
+    const returnTarget = await resolveReturnTarget(ctx.workspaceStore, ctx.runtime, parsed, userId);
+    if (returnTarget instanceof Response) return returnTarget;
 
     // Not-installed is a client error (404), not a server failure — mirror the
     // workspace `/initiate`'s `getInstance`→404. `startIdentityAuthorization`
@@ -184,7 +181,9 @@ export function mcpAuthRoutes(ctx: AppContext) {
     const prepared = prepareAuthorization(started, serverName, `user:${userId}`);
     if (prepared instanceof Response) return prepared;
     const { authorizationUrl, state } = prepared;
-    if (returnWsId) setFlowReturnWorkspace(state, returnWsId);
+    if (returnTarget) {
+      setFlowReturnWorkspace(state, returnTarget.wsId, returnTarget.conversationId);
+    }
 
     return json<OAuthInitiateResponse>({ authorizationUrl }, 200, {
       "Set-Cookie": buildOAuthStateCookie(sha256Hex(state), 900, ctx.secureCookies),
@@ -251,13 +250,15 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
 /**
  * Parse an initiate body: `serverName` must be a non-empty string, else an error
- * Response. `returnWorkspaceId` is passed through unread; only the personal
- * initiate takes it (`resolveReturnWorkspace`).
+ * Response. `returnWorkspaceId` and `returnConversationId` are passed through
+ * unread; only the personal initiate takes them (`resolveReturnTarget`).
  */
 async function parseInitiateBody(
   c: Context<AppEnv>,
-): Promise<{ serverName: string; returnWorkspaceId: unknown } | Response> {
-  let body: { serverName?: unknown; returnWorkspaceId?: unknown };
+): Promise<
+  { serverName: string; returnWorkspaceId: unknown; returnConversationId: unknown } | Response
+> {
+  let body: { serverName?: unknown; returnWorkspaceId?: unknown; returnConversationId?: unknown };
   try {
     body = await c.req.json();
   } catch {
@@ -267,7 +268,11 @@ async function parseInitiateBody(
   if (!serverName) {
     return apiError(400, "bad_request", "serverName is required.");
   }
-  return { serverName, returnWorkspaceId: body.returnWorkspaceId };
+  return {
+    serverName,
+    returnWorkspaceId: body.returnWorkspaceId,
+    returnConversationId: body.returnConversationId,
+  };
 }
 
 /**
@@ -665,14 +670,20 @@ function verifyStateCookie(c: Context<AppEnv>, state: string): CallbackFailure |
  */
 function redirectHome(
   c: Context<AppEnv>,
-  flow: { owner: FlowOwner; serverName: string; returnWsId?: string } | null,
+  flow: {
+    owner: FlowOwner;
+    serverName: string;
+    returnWsId?: string;
+    returnConversationId?: string;
+  } | null,
   secureCookies: boolean,
 ): Response {
   // Clear the one-shot state cookie so the callback URL can't be replayed.
   c.header("Set-Cookie", buildOAuthStateCookie("", 0, secureCookies));
 
   // A workspace connector returns to its own workspace; a personal one to the
-  // workspace its sign-in was started from, else the profile. `flow` is
+  // workspace its sign-in was started from (reopening the conversation it was
+  // started in, if any), else the profile. `flow` is
   // non-null here (resolveWithCode succeeded just above, so the flow existed
   // when we peeked it).
   const owner = flow?.owner;
@@ -680,7 +691,8 @@ function redirectHome(
   const connected: ReturnedConnection | undefined = flow
     ? { serverName: flow.serverName, owner: owner?.kind === "workspace" ? "workspace" : "person" }
     : undefined;
-  return c.redirect(connectorReturnUrl(returnWsId, connected), 302);
+  const returnConversationId = owner?.kind === "workspace" ? undefined : flow?.returnConversationId;
+  return c.redirect(connectorReturnUrl(returnWsId, connected, returnConversationId), 302);
 }
 
 function sha256Hex(input: string): string {

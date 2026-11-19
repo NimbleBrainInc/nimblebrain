@@ -415,6 +415,53 @@ describe("PluginDetailPage — a person's plugin", () => {
     expect(initiateComposioIdentityConnect).not.toHaveBeenCalled();
   });
 
+  test("on here and connected reads In use here, with Stop using here beside it", async () => {
+    plugins = [granola(true)];
+    personal = [granolaConnector([WS_ID])];
+    mounted = await mount(pagePath("person:granola"));
+    const here = testId(mounted.container, "plugin-here")!;
+    expect(testId(here, "plugin-in-use")?.textContent).toBe("In use here");
+    expect(button(here, "Stop using here")).toBeDefined();
+    expect(button(here, "Use here")).toBeUndefined();
+  });
+
+  test("on here but not signed in says to connect, and offers no In use here", async () => {
+    plugins = [
+      {
+        ...granola(true),
+        servers: [{ serverName: "granola", status: "not_connected", account: null }],
+      },
+    ];
+    personal = [{ ...granolaConnector([WS_ID]), state: "not_authenticated", identity: undefined }];
+    mounted = await mount(pagePath("person:granola"));
+    const here = testId(mounted.container, "plugin-here")!;
+    expect(here.textContent).toContain("Connect to sign in to Granola");
+    expect(testId(here, "plugin-in-use")).toBeNull();
+    expect(button(mounted.container, "Connect")).toBeDefined();
+    expect(button(here, "Stop using here")).toBeDefined();
+  });
+
+  test("Use here on a plugin with no sign-in turns it on, then signs in back to Plugins", async () => {
+    plugins = [
+      {
+        ...granola(false),
+        servers: [{ serverName: "granola", status: "not_connected", account: null }],
+      },
+    ];
+    personal = [{ ...granolaConnector([]), state: "not_authenticated", identity: undefined }];
+    mounted = await mount(pagePath("person:granola"));
+
+    await click(button(testId(mounted.container, "plugin-here")!, "Use here"));
+    expect(document.body.textContent).toContain("You'll sign in to Granola next.");
+    await click(button(document.body.querySelector('[role="dialog"]')!, "Use here"));
+
+    expect(grantConnector).toHaveBeenCalledWith("granola", WS_ID);
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", WS_ID);
+    expect(grantConnector.mock.invocationCallOrder[0]).toBeLessThan(
+      initiateIdentityConnect.mock.invocationCallOrder[0]!,
+    );
+  });
+
   test("Disconnect asks first, and Cancel leaves it connected", async () => {
     plugins = [granola(true)];
     personal = [granolaConnector([WS_ID])];
