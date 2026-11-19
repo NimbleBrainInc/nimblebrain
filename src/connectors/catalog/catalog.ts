@@ -5,8 +5,9 @@
  * upstream MCP registry publishes — validates and safety-scrubs every
  * entry, projects the survivors into the two shapes callers need, and
  * serves the lookup tables the Configure page and the installed list
- * read. `NB_CURATED_CATALOG_DIR` points at that directory; the image
- * ships a minimal example so a fresh install is not empty.
+ * read. `NB_CURATED_CATALOG_DIR` points at that directory; unset, it is
+ * the bundled directory, which in the release image holds NimbleBrain's
+ * catalog of zero-setup connectors so a fresh install is not empty.
  *
  * **Populating the directory is not the runtime's job.** A GitOps
  * ConfigMap, an operator, or a job that mirrors some upstream index all
@@ -78,14 +79,14 @@ export const BUNDLED_CATALOG_PATH = join(import.meta.dir, "curated");
 
 /**
  * Deployment override for the catalog directory — a mounted ConfigMap
- * (e.g. `/config/connectors`) replacing the in-image example with the
- * real, externally-managed catalog. This is the whole configuration
+ * (e.g. `/config/connectors`) replacing the bundled catalog with an
+ * externally-managed one. This is the whole configuration
  * surface: where the files are. What writes them is outside the
  * runtime.
  */
 export const CATALOG_DIR_ENV = "NB_CURATED_CATALOG_DIR";
 
-/** The catalog directory: the deployment override when set, else the in-image example. */
+/** The catalog directory: the deployment override when set, else the bundled catalog. */
 export function catalogPath(): string {
   const override = process.env[CATALOG_DIR_ENV]?.trim();
   return override && override.length > 0 ? override : BUNDLED_CATALOG_PATH;

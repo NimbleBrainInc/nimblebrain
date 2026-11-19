@@ -23,7 +23,7 @@ The directory is re-read on every lookup, so editing a mounted ConfigMap takes e
 
 ## Adding a new OAuth connector
 
-Add the entry to your deployment's catalog directory — the one [`NB_CURATED_CATALOG_DIR`](/config/environment/#connectors-catalog) points at. (`src/connectors/catalog/curated/example.yaml` is the in-image example: DCR-only, handy for local dev, and replaced wholesale in any real deployment.) Either way the file is a list of upstream `ServerDetail` records; platform-specific fields live under the reverse-DNS extension key `_meta["ai.nimblebrain/connector"]`.
+Add the entry to your deployment's catalog directory — the one [`NB_CURATED_CATALOG_DIR`](/config/environment/#connectors-catalog) points at. (`src/connectors/catalog/curated/example.yaml` is the source checkout's example: DCR-only, for local dev and tests, and not shipped in the image.) Either way the file is a list of upstream `ServerDetail` records; platform-specific fields live under the reverse-DNS extension key `_meta["ai.nimblebrain/connector"]`.
 
 ### 1. Pick the auth flow
 
