@@ -41,6 +41,7 @@
     "dev:empty": "NB_API_PORT=27249 NB_WEB_PORT=27248 bun --no-env-file scripts/dev.ts --port 27249 --config .environments/empty/nimblebrain.json",
     "dev:minimal": "NB_API_PORT=27251 NB_WEB_PORT=27250 bun --no-env-file scripts/dev.ts --port 27251 --config .environments/minimal/nimblebrain.json",
     "dev:docs-demo": "NB_API_PORT=27253 NB_WEB_PORT=27252 bun --no-env-file scripts/dev.ts --port 27253 --config .environments/docs-demo/nimblebrain.json",
+    "dev:plugins-demo": "NB_API_PORT=27255 NB_WEB_PORT=27254 bun --no-env-file scripts/dev-plugins-demo.ts",
     "dev:worktree": "bun --no-env-file scripts/dev-worktree.ts",
     "dev:api": "bun run scripts/dev.ts --no-web --config .nimblebrain/nimblebrain.json",
     "dev:web": "cd web && bun run dev",

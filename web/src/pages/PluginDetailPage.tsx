@@ -48,7 +48,7 @@ import { InlineError } from "./settings/components";
  * - **A person's plugin** shows the account it signs in as, Connect or
  *   Disconnect, the owner's own tool permissions, whether it is used here, and
  *   every workspace it is used in, each revocable. Use here signs in too when
- *   it is not connected, and every sign-in returns to this page.
+ *   it is not connected, and every sign-in returns to this workspace's Plugins.
  *
  * The ref is the listing's `id`, URL-encoded (`pluginPath`); the page finds the
  * plugin by comparing ids and never reads one's parts. A plugin has one server

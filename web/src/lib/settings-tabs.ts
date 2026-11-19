@@ -22,8 +22,6 @@ export interface SettingsTab {
 export const WORKSPACE_SETTINGS_TABS: readonly SettingsTab[] = [
   { segment: "general", label: "General", minRole: "ws_member" },
   { segment: "members", label: "Members", minRole: "ws_member" },
-  { segment: "connectors", label: "Connectors", minRole: "ws_member" },
-  { segment: "skills", label: "Skills", minRole: "ws_member" },
   { segment: "mcp", label: "MCP", minRole: "ws_member" },
   // Admin-only in the NAV, and separately admin-only in the tool — a route
   // decides what a connector does unasked, under its author's identity.
@@ -53,8 +51,6 @@ export const ORG_ABOUT_TAB: SettingsTab = { segment: "about", label: "About", mi
 
 export const PROFILE_TABS: readonly SettingsTab[] = [
   { segment: "general", label: "General", minRole: "none" },
-  { segment: "connectors", label: "Connectors", minRole: "none" },
-  { segment: "skills", label: "Skills", minRole: "none" },
 ];
 
 /** An area's landing tab: the first in its list. */

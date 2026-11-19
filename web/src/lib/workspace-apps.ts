@@ -122,10 +122,11 @@ export function iconMapFromInstalled(
 }
 
 /**
- * The settings page of an installed connector in a workspace:
- * `/w/<slug>/settings/connectors/<serverName>`. Null when there is no
- * workspace to put it in, or for an identity app, which has no workspace
- * settings page.
+ * Where an installed connector is configured in a workspace:
+ * `/w/<slug>/settings/connectors/<serverName>`, which opens the page of the
+ * plugin that holds it (`ConnectorPageRedirect`), since a server name does not
+ * name its plugin. Null when there is no workspace to put it in, or for an
+ * identity app, which has no workspace settings page.
  */
 export function connectorSettingsPath(
   slug: string | null | undefined,

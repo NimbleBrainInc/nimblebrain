@@ -18,7 +18,7 @@ import { ConfirmDialog } from "../ui/confirm-dialog";
  *
  * There is no keep-them option, because there is nothing for one to preserve.
  * A connector declaring `secretHeaders` cannot be installed without supplying
- * every value first (`ConnectorBrowsePage.onInstall` routes it through the
+ * every value first (`ConnectorDirectory`'s `onInstall` routes it through the
  * collection dialog, which default-denies a blank field), so a reinstall
  * re-collects and overwrites whatever was held back. The opt-out would keep a
  * value the next install replaces — buying nothing, and leaving the orphan this

@@ -5,7 +5,7 @@
 //   1. A first visit to a workspace's Overview offers the tour; a browser that
 //      has seen it is not offered it again.
 //   2. Skip and Done remember the tour as seen and end it.
-//   3. Next opens the page the coming step belongs on (the catalog, Skills),
+//   3. Next opens the page the coming step belongs on (Plugins → Browse),
 //      and Done returns to Overview.
 //   4. Help's replay starts it from any page, and on a phone closes the
 //      sidebar drawer, which would otherwise cover the page the tour points at.
@@ -60,7 +60,7 @@ const probe = {
 function Probe() {
   const location = useLocation();
   const sidebar = useSidebar();
-  probe.path = location.pathname;
+  probe.path = location.pathname + location.search;
   probe.running = useTourRunning();
   probe.drawerOpen = sidebar.isDrawerOpen;
   probe.setDrawerOpen = sidebar.setDrawerOpen;
@@ -84,8 +84,15 @@ function Pages() {
           </>
         }
       />
-      <Route path="/w/:slug/settings/connectors/browse" element={<div data-tour="catalog" />} />
-      <Route path="/w/:slug/settings/skills" element={<div data-tour="skills" />} />
+      <Route
+        path="/w/:slug/plugins"
+        element={
+          <>
+            <div data-tour="catalog" />
+            <div data-tour="skills" />
+          </>
+        }
+      />
       <Route path="*" element={<div>elsewhere</div>} />
     </Routes>
   );
@@ -195,7 +202,7 @@ describe("ending the tour", () => {
     expect(captured).toContain("web.tour_skipped");
   });
 
-  test("Next walks the catalog and Skills pages, and Done returns to Overview", async () => {
+  test("Next walks Plugins → Browse for the catalog and skills, and Done returns to Overview", async () => {
     await mount(`${BASE}/`);
 
     const visited: Array<[string | null, string]> = [];
@@ -206,8 +213,8 @@ describe("ending the tour", () => {
     expect(visited).toEqual([
       ["Your workspace", `${BASE}/`],
       ["Install apps here", `${BASE}/`],
-      ["The app catalog", `${BASE}/settings/connectors/browse`],
-      ["Teach it with skills", `${BASE}/settings/skills`],
+      ["The app catalog", `${BASE}/plugins?tab=browse`],
+      ["Teach it with skills", `${BASE}/plugins?tab=browse`],
       ["Ask your first question", `${BASE}/`],
     ]);
 

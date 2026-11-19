@@ -1,11 +1,11 @@
 ---
 title: Connectors Catalog
-description: How to curate the connectors that appear on the Settings → Connectors page.
+description: How to curate the connectors that appear on the Plugins page's Browse tab.
 ---
 
 import { Aside, Code, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The Settings → Connectors **Browse** list is the **catalog**: one directory of [`ServerDetail`](https://github.com/modelcontextprotocol/registry) files — the shape the upstream MCP registry publishes — read, validated, and projected into the rows a workspace can install from.
+The **Plugins → Browse** list is the **catalog**: one directory of [`ServerDetail`](https://github.com/modelcontextprotocol/registry) files — the shape the upstream MCP registry publishes — read, validated, and projected into the rows a workspace can install from.
 
 Only an entry advertising a `remotes[]` endpoint is installable: the runtime connects to remote MCP servers and does not acquire, verify, or execute downloadable `packages[]`. An entry offering only packages is dropped from Browse with a logged reason.
 
@@ -335,7 +335,7 @@ The Set up modal in the UI shows the resolved redirect URI with a Copy button so
 bun run dev
 ```
 
-The new entry appears on Settings → Connectors → Browse. Walk through the install:
+The new entry appears on **Plugins → Browse**. Walk through the install:
 
 1. Click **Install** on the new connector.
 2. (For static-auth) Click **Set up** in the workspace admin modal, paste `client_id` + `client_secret`, save.
@@ -483,7 +483,7 @@ Both are keyed by the connector's reverse-DNS `name` (e.g. `io.asana/mcp`), not 
 Both are set through the UI:
 
 ```
-Settings → Connectors → <connector> → Set up
+Plugins → <connector> → Set up
 ```
 
 The modal writes the public `client_id` into `workspace.json → oauthClients[<id>].clientId` and stores the `client_secret` in the workspace credential store under `oauthClientSetup.clientSecretKey`. There is no flag-based headless command for an OAuth client secret — use the Set up modal (or the `manage_connectors` tool action it calls).

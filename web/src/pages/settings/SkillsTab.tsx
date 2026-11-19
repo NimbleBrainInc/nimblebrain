@@ -19,8 +19,7 @@ import { linkSafety, rehypePlugins } from "../../lib/streamdown-config";
 import { parseToolResponse } from "../../lib/tool-response";
 import { cn } from "../../lib/utils";
 import type { ToolCallResponse } from "../../types";
-import { ConnectorSkillsSection } from "./ConnectorSkillsSection";
-import { RequireActiveWorkspace, SettingsPageHeader } from "./components";
+import { SettingsPageHeader } from "./components";
 import {
   type CreateDraft,
   CreateSkillView,
@@ -30,45 +29,20 @@ import {
 } from "./SkillEditor";
 import type { SkillUpdateArgs } from "./skill-edit-patch";
 
-// ── Wrappers ─────────────────────────────────────────────────────────────
-
-/** Workspace settings tab — `/w/:slug/settings/skills`. */
-export function SkillsTab() {
-  return (
-    <RequireActiveWorkspace>
-      <ForActiveWorkspace />
-    </RequireActiveWorkspace>
-  );
-}
-
-/**
- * Keyed by the workspace, so a switch starts a fresh browser: the route keeps
- * this element mounted across `/w/:slug` changes, and one workspace's open
- * editor must never save into another.
- */
-function ForActiveWorkspace() {
-  const { activeWorkspace } = useWorkspaceContext();
-  return (
-    <SkillsBrowser
-      key={activeWorkspace?.id}
-      surface="workspace"
-      connectorSkills={
-        activeWorkspace && <ConnectorSkillsSection workspaceId={activeWorkspace.id} />
-      }
-    />
-  );
-}
-
 /**
  * Shared skills browser. Every surface is one *vantage* into the same skill
  * stack: the scope it can edit, plus the read-only tiers shown around it for
  * context. One list, one row grammar; the tiers present and the segment filter
  * derive from the data, so a single-scope surface simply shows no filter.
  *
+ *   - `lockedScope="org"` — edits org. (OrgSkillsTab, the one routed vantage.)
  *   - `surface="workspace"` — edits workspace; shows the full stack (your
  *     personal skills, org policy, the system foundation) as read-only tiers.
- *   - `lockedScope="org"` — edits org. (OrgSkillsTab.)
- *   - `lockedScope="user"` — edits personal. (ProfileSkillsTab.)
+ *   - `lockedScope="user"` — edits personal.
+ *
+ * Workspace and personal skills are managed on Plugins (`SkillPage`), so no
+ * route mounts the last two; their suite still exercises the shared editor
+ * through them until this browser narrows to the org vantage.
  *
  * The discriminated union prevents a caller from passing neither — the
  * "show every scope" fallback isn't reachable from any route.

@@ -57,10 +57,13 @@ export function startRemoteMcpServer(makeServer: () => Server): RemoteMcpFixture
       }
 
       // No session id → a fresh `initialize`. Mint a session + transport.
-      const transport = new WebStandardStreamableHTTPServerTransport({
-        sessionIdGenerator: () => `sess-${++counter}`,
-        onsessioninitialized: (id) => transports.set(id, transport),
-      });
+      const transport: WebStandardStreamableHTTPServerTransport =
+        new WebStandardStreamableHTTPServerTransport({
+          sessionIdGenerator: () => `sess-${++counter}`,
+          onsessioninitialized: (id) => {
+            transports.set(id, transport);
+          },
+        });
       await makeServer().connect(transport);
       return transport.handleRequest(req);
     },

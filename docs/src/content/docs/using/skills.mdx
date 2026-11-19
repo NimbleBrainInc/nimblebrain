@@ -176,7 +176,7 @@ Overlays differ from authored skills in three ways:
 
 - **Surfaced once into the conversation, not the system prompt.** A connector overlay appears in the conversation history exactly once, before the first call to a matching tool runs (that call is held until the overlay has been read, as for any [`tool-affinity`](#how-a-skill-loads--loading-strategy) skill), and then rides the cached, append-only history for the rest of the conversation. It is relevant (only when the connector's tools are used) and cache-friendly (it never re-varies the cached system prefix turn to turn).
 - **Bound to the connector's tools.** An overlay is bound to every tool of the connector it is installed for (`<server-name>__*`), or, when its frontmatter declares `metadata.nimblebrain.tool-affinity`, only to the tools it names (or to none, for `[]`), read the same way as for a [skill published by the server](#skills-published-by-an-mcp-server). The block needs nothing else: the other runtime fields are stamped on install, and an overlay always loads `dynamic`.
-- **Stored separately.** Materialized overlays live in a `connector-skills/` store, distinct from authored `skills/`. They don't appear in the `skills__list` tool output; list them with the connector tool's `list_bound_skills` action instead, or see them under **From connectors** in a workspace's Settings → Skills.
+- **Stored separately.** Materialized overlays live in a `connector-skills/` store, distinct from authored `skills/`. They don't appear in the `skills__list` tool output; list them with the connector tool's `list_bound_skills` action instead, or see them under **Skills** on the connector's plugin page.
 
 Resolution is **always on and fail-soft**: it fetches at a pinned repo version, records the fetched content hash, and treats a missing overlay (or any fetch error) as a no-op — a connector install never fails because its optional guidance couldn't be fetched, and there's nothing to enable (an overlay exists only if we've curated one). Override the repo / version with `CONNECTOR_SKILLS_REPO` and `CONNECTOR_SKILLS_VERSION`. When a connector has a curated overlay, the platform skips synthesizing the server's own `skill://<name>/SKILL.md` guidance so the model sees one set of instructions, not two.
 
@@ -252,7 +252,7 @@ If a connector has a curated overlay, the platform skips synthesizing its publis
 
 ### Auditing what connectors contribute
 
-A workspace's **Settings → Skills** page has a read-only **From connectors** section listing, per connected server, every skill the runtime loads from it: its published skills and any curated overlay. Each row states how the skill loads (always on, on a tool match, on a trigger, or on the first tool call for an overlay). Opening a row shows the body as the model receives it, with its estimated token cost, priority, triggers, and `skill://` URI. The same data comes from the connector tool's `list_bound_skills` action, and one body from `read_bound_skill` (`serverName` + `skillName`).
+A workspace plugin's page has a read-only **Skills** section listing, per server, every skill the runtime loads from it: its published skills and any curated overlay. Each row states how the skill loads (always on, on a tool match, on a trigger, or on the first tool call for an overlay). Opening a row shows the body as the model receives it, with its estimated token cost, priority, triggers, and `skill://` URI. The same data comes from the connector tool's `list_bound_skills` action, and one body from `read_bound_skill` (`serverName` + `skillName`).
 
 ## Listing skills
 
@@ -268,7 +268,7 @@ Ask the agent which skills are loaded — it uses the built-in `skills__list` to
 
 ## Editing a skill
 
-A skill's page under Plugins, and the Skills pages in settings (your profile, a workspace, and the organization), create and edit skills without touching files.
+A skill's page under Plugins, and the organization's Skills page in settings, create and edit skills without touching files.
 
 - **Creating** a skill is one explicit action: fill in the name and body, set anything under **Advanced**, and click **Create**. A pasted whole `SKILL.md` works here: its frontmatter sets the fields it declares, and the block isn't stored as text.
 - **Editing** an existing skill has no Save button. Each field saves on its own: the loading strategy when you pick one, the priority when you leave it or press Enter, and the body, tool patterns, and trigger phrases when you leave them. A save shows a notice with **Undo**; one the server refuses stays on the field with the reason, **Retry**, and **Revert**.
