@@ -10,6 +10,7 @@ import type {
 } from "../_generated/connector-catalog/connectors/catalog/types";
 import type { ToolInput } from "../_generated/platform-schemas/catalog";
 import type { PluginsListOutput } from "../_generated/platform-schemas/plugins";
+import type { SkillsSetHereOutput } from "../_generated/platform-schemas/skills";
 import { addAuthBreadcrumb, captureLogout, setSentryWorkspace } from "../sentry";
 import type {
   ApiErrorBody,
@@ -854,6 +855,20 @@ export async function readConnectorSkill(
     { workspaceId },
   );
   return unwrapStructured(result, "read_bound_skill");
+}
+
+/**
+ * Turn one of the caller's own skills on or off in a workspace. `skillId` is
+ * the path `skills__list` reports for a `user`-scope skill; that listing's
+ * `onHere` is the current state.
+ */
+export async function setSkillOnHere(
+  workspaceId: string,
+  skillId: string,
+  on: boolean,
+): Promise<SkillsSetHereOutput> {
+  const result = await callTool("skills", "set_here", { id: skillId, on }, { workspaceId });
+  return unwrapStructured(result, "set_here");
 }
 
 /**

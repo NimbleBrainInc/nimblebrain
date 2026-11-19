@@ -126,6 +126,7 @@ import { requireRequestIdentity, resolveRequestOwnerId } from "../identity/owner
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { createIdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
+import { skillsOffIn } from "../identity/skills-off-store.ts";
 import { UserStore } from "../identity/user.ts";
 import {
   forgetLifecycleBinding,
@@ -602,6 +603,17 @@ export interface WorkspaceDeleteResult {
 interface ConnectorGates {
   adminTools?: ConnectorCatalogEntry["adminTools"];
   lifecycle?: LifecycleBinding;
+}
+
+/**
+ * A person's own skills (`users/<userId>/skills/`), less the ones they turned
+ * off in `wsId` (ADR-0072). `wsId` null keeps them all.
+ */
+function loadUserTierSkills(workDir: string, userId: string, wsId: string | null): Skill[] {
+  const skills = loadScopedSkills(join(workDir, "users", userId, "skills"), "user");
+  if (!wsId) return skills;
+  const off = skillsOffIn(workDir, userId, wsId);
+  return off.size === 0 ? skills : skills.filter((s) => !off.has(s.manifest.name));
 }
 
 export class Runtime {
@@ -5686,7 +5698,12 @@ export class Runtime {
    *   - platform (`{workDir}/skills/`) — fresh disk read, so writes via
    *     `skills__create` / `skills__update` surface immediately.
    *   - workspace (`{workDir}/workspaces/{wsId}/skills/`) — fresh; none when `wsId` is null.
-   *   - user (`{workDir}/users/{userId}/skills/`) — fresh.
+   *   - user (`{workDir}/users/{userId}/skills/`) — fresh, less the skills
+   *     the person turned off in `wsId` (ADR-0072). They are dropped BEFORE
+   *     the merge, so a same-named workspace or org skill wins that workspace
+   *     (ADR-0019), and every run path (chat, tasks, the catalog, the
+   *     trigger matcher, bound delivery) sees the same pool.
+   *     `keepOffHere` keeps them, for the listing that reports `onHere`.
    *
    * The cached `contextSkills` set is filtered to entries whose
    * `sourcePath` is OUTSIDE the live platform dir, so a removed file
@@ -5694,7 +5711,11 @@ export class Runtime {
    *
    * Each returned skill has `manifest.scope` populated.
    */
-  loadConversationSkills(wsId: string | null, userId: string | null): Skill[] {
+  loadConversationSkills(
+    wsId: string | null,
+    userId: string | null,
+    options: { keepOffHere?: boolean } = {},
+  ): Skill[] {
     const workDir = this.getWorkDir();
     const orgDirPrefix = `${join(workDir, "skills")}/`;
 
@@ -5723,11 +5744,9 @@ export class Runtime {
       ? loadScopedSkills(this.getWorkspaceContext(wsId).getDataPath("skills"), "workspace")
       : [];
 
-    const userPool: Skill[] = [];
-    if (userId) {
-      const userDir = join(workDir, "users", userId, "skills");
-      userPool.push(...loadScopedSkills(userDir, "user"));
-    }
+    const userPool = userId
+      ? loadUserTierSkills(workDir, userId, options.keepOffHere ? null : wsId)
+      : [];
 
     return mergeScopedSkills(orgPool, workspacePool, userPool);
   }

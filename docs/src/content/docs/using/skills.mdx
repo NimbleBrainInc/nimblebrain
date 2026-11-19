@@ -266,6 +266,17 @@ Ask the agent which skills are loaded — it uses the built-in `skills__list` to
 - **Opening a skill** shows its page. You can edit and delete a workspace skill if you can change the workspace, and your own skills always. An org skill is changed in the organization's settings.
 - **Browse → Write a skill** asks who it is for: **Just me** (one of your own skills) or **Everyone in** the workspace (a workspace skill, offered only to members who can change the workspace).
 
+## Your skills in each workspace
+
+Your own skills (scope `user`) apply in every workspace you are in, unless you turn one off in a workspace.
+
+- **Off is per workspace and yours alone.** Turning a skill off in one workspace changes nothing in your other workspaces, and nothing for anyone else. The setting is stored with your account, not in the workspace, and other members never see it.
+- **An off skill is gone from that workspace's runs**, chats and tasks alike: it is not composed into the prompt, not listed in the Skill Catalog, not delivered on a tool call, and its trigger phrases do not fire. It takes effect from the next turn.
+- **A same-named skill takes over.** Your skill normally wins a name it shares with a workspace or org skill. While yours is off in a workspace, that workspace or org skill applies there instead.
+- **Deleting the skill forgets where it was off**, so a new skill with the same name starts on everywhere.
+
+Only your own skills turn on and off this way; a workspace or org skill is changed by whoever owns it. The client sets it with `skills__set_here` (`id` from `skills__list`, `on: true | false`), called in the workspace it applies to. The agent cannot call it; to stop a skill for one conversation, it mutes the skill with `skills__deactivate`. `skills__list` with `scope: "user"` reports `onHere` for each of your skills in the workspace it is called in.
+
 ## Editing a skill
 
 A skill's page under Plugins, and the organization's Skills page in settings, create and edit skills without touching files.

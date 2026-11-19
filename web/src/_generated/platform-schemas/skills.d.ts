@@ -86,6 +86,17 @@ export declare const SkillsSetStatusInput: import("@sinclair/typebox").TObject<{
     status: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"active">, import("@sinclair/typebox").TLiteral<"disabled">]>;
 }>;
 export type SkillsSetStatusInput = Static<typeof SkillsSetStatusInput>;
+/**
+ * `skills__set_here`: turn one of the caller's own (`user`-scope) skills on or
+ * off in the workspace the call is made in (ADR-0072). Not a field on `update`:
+ * `update` edits the skill file, which is the same in every workspace, while
+ * this writes the person's own per-workspace record and needs a workspace.
+ */
+export declare const SkillsSetHereInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    on: import("@sinclair/typebox").TBoolean;
+}>;
+export type SkillsSetHereInput = Static<typeof SkillsSetHereInput>;
 export declare const SkillsActivateInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
 }>;
@@ -154,6 +165,12 @@ export declare const SkillSummary: import("@sinclair/typebox").TObject<{
     loading: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         mechanism: import("@sinclair/typebox").TUnsafe<"always" | "on_request" | "tool_affinity" | "trigger">;
     }>>;
+    /**
+     * On a `user`-scope skill listed for a workspace: whether it applies there.
+     * `false` when its owner turned it off in that workspace (ADR-0072). Absent
+     * for other scopes and when the request names no workspace.
+     */
+    onHere: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
 }>;
 export type SkillSummary = Static<typeof SkillSummary>;
 export declare const SkillsListOutput: import("@sinclair/typebox").TObject<{
@@ -179,6 +196,12 @@ export declare const SkillsListOutput: import("@sinclair/typebox").TObject<{
         loading: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             mechanism: import("@sinclair/typebox").TUnsafe<"always" | "on_request" | "tool_affinity" | "trigger">;
         }>>;
+        /**
+         * On a `user`-scope skill listed for a workspace: whether it applies there.
+         * `false` when its owner turned it off in that workspace (ADR-0072). Absent
+         * for other scopes and when the request names no workspace.
+         */
+        onHere: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     }>>;
 }>;
 export type SkillsListOutput = Static<typeof SkillsListOutput>;
@@ -341,6 +364,14 @@ export declare const SkillsDeleteOutput: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TString;
 }>;
 export type SkillsDeleteOutput = Static<typeof SkillsDeleteOutput>;
+/** `skills__set_here`: whether the caller's own skill applies in this workspace. */
+export declare const SkillsSetHereOutput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    name: import("@sinclair/typebox").TString;
+    workspaceId: import("@sinclair/typebox").TString;
+    onHere: import("@sinclair/typebox").TBoolean;
+}>;
+export type SkillsSetHereOutput = Static<typeof SkillsSetHereOutput>;
 /** `skills__activate` / `skills__deactivate`: a mute that holds for this conversation only. */
 export declare const SkillsActivationOutput: import("@sinclair/typebox").TObject<{
     name: import("@sinclair/typebox").TString;
