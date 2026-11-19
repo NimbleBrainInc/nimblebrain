@@ -12,7 +12,7 @@ This guide takes a deployment from the default look to your brand: what to prepa
 A `brand` block changes what a person reads and sees:
 
 - **Product name**: the browser tab title, the agent's identity line ("You are a helpful assistant powered by …"), the "Leaving …" dialog before an external link, OAuth success and error pages, and error messages that name the product.
-- **Logo, mark and favicon**: the sign-in page, the sidebar, and the browser tab.
+- **Logo, mark and favicon**: the screen shown on the way to sign-in, the sidebar, and the browser tab.
 - **Accent color and typefaces**: the shell, and every embedded app, through the theme tokens the shell injects.
 - **Default theme**: the color theme a person starts in until they choose one.
 - **OAuth consent screens**: the name, homepage and logo a connector vendor shows when someone connects an account.
@@ -20,7 +20,7 @@ A `brand` block changes what a person reads and sees:
 It does not change:
 
 - **Wire identifiers.** Tool namespaces (`nb__`), metadata keys (`ai.nimblebrain/*`), the `NB_` environment prefix and the `nimblebrain.json` filename identify the software to other software, not to a person.
-- **Your identity provider's hosted sign-in page.** The sign-in page links to your identity provider (WorkOS, or your OIDC provider) for the password or SSO step. Brand that page in the provider's own dashboard.
+- **Your identity provider's hosted sign-in page.** A visitor without a session goes straight to your identity provider (WorkOS, or your OIDC provider) to sign in. Brand that page in the provider's own dashboard.
 - **The rest of the palette, the code typeface, corner radius, type scale and shadows.** Backgrounds, text and status colors, the monospace face, corners, sizes and elevation stay as shipped, so every brand inherits a palette already checked for contrast and layouts keep their proportions under any typeface.
 
 ## Prepare your assets
@@ -131,7 +131,7 @@ The runtime merges your accent over the default palette at startup and checks th
 
    You should see one line, `window.__NB_BRAND__ = {…};`, holding your block as you wrote it. `{}` means no brand is configured, and a key missing from the answer is one the runtime does not accept: startup logs it as an unknown key.
 
-2. **The sign-in page, in both modes.** Open the deployment in a private window. The tab title, favicon, logo, colors and typefaces should all be yours. Press **Cmd+Shift+L** (Mac) or **Ctrl+Shift+L** to switch between light and dark mode and check the other logo and accent.
+2. **Sign-in and the shell, in both modes.** Open the deployment in a private window: it goes straight to your identity provider's sign-in page, which carries the branding set in the provider's dashboard. Sign in. The tab title, favicon, logo, colors and typefaces should all be yours. Press **Cmd+Shift+L** (Mac) or **Ctrl+Shift+L** to switch between light and dark mode and check the other logo and accent.
 
 3. **An embedded app.** Sign in and open an app such as Files. Its buttons and links should use your accent, and its text your `sans` typeface. If the shell shows your font but the app does not, recheck the font host's `access-control-allow-origin` header.
 

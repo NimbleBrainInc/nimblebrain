@@ -26,8 +26,12 @@ let requests: string[] = [];
 let root: ReturnType<typeof ReactDOMClient.createRoot> | null = null;
 let container: HTMLDivElement | null = null;
 
-/** No session: bootstrap is refused and the server is up, so Login settles on its sign-in button. */
+/**
+ * No session, and a sign-in redirect just came back without one: bootstrap is
+ * refused, and Login settles on its sign-in button instead of redirecting again.
+ */
 function signedOut() {
+  sessionStorage.setItem("nb-sign-in-redirected-at", String(Date.now()));
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     requests.push(`${url} ${typeof init?.body === "string" ? init.body : ""}`);
@@ -57,6 +61,7 @@ function isDark() {
 
 beforeEach(() => {
   requests = [];
+  sessionStorage.clear();
   localStorage.removeItem("nb-theme");
   document.documentElement.classList.remove("dark");
   applyBrand({});

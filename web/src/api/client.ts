@@ -1304,14 +1304,30 @@ export async function logout(): Promise<void> {
  * workspace on its own.
  */
 export async function tryBootstrap(): Promise<BootstrapResponse | null> {
+  const probe = await probeBootstrap();
+  return probe.kind === "signedIn" ? probe.data : null;
+}
+
+/**
+ * What one bootstrap call says about the session. `signedOut` is only the
+ * server refusing it (401, after the silent refresh); a network error or any
+ * other status is `unavailable`, since a server that is starting or failing has
+ * said nothing about whether anyone is signed in.
+ */
+export type BootstrapProbe =
+  | { kind: "signedIn"; data: BootstrapResponse }
+  | { kind: "signedOut" }
+  | { kind: "unavailable" };
+
+export async function probeBootstrap(): Promise<BootstrapProbe> {
   try {
     const res = await fetchWithRefresh(`${API_BASE}/v1/bootstrap`, {
       credentials: "include",
       headers: headers(),
     });
-    if (!res.ok) return null;
-    return (await res.json()) as BootstrapResponse;
+    if (res.ok) return { kind: "signedIn", data: (await res.json()) as BootstrapResponse };
+    return res.status === 401 ? { kind: "signedOut" } : { kind: "unavailable" };
   } catch {
-    return null;
+    return { kind: "unavailable" };
   }
 }
