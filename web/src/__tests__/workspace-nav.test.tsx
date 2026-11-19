@@ -791,7 +791,7 @@ describe("WorkspaceNav — APPS lists only apps", () => {
     expect(nav?.querySelector('[aria-hidden="true"].h-px')).toBeNull();
     expect(
       Array.from(nav!.getElementsByTagName("a")).map((a) => a.getAttribute("aria-label")),
-    ).toEqual(["Overview", "Conversations", "Tasks", "Files", "Plugins"]);
+    ).toEqual(["Overview", "Conversations", "Tasks", "Files", "Plugins", "Skills"]);
   });
 
   test("a member who cannot write the workspace sees the same apps", async () => {
