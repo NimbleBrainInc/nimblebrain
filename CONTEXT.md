@@ -267,7 +267,8 @@ grant names one personal plugin and one workspace, and covers the plugin's
 connectors and its skills; without it, neither reaches the workspace. No
 workspace is granted by default, the first one included; installing from inside
 a workspace grants it there. Only the owner grants, from a first-party client,
-and a model's call for a grant asks the person. A grant never composes the
+and a model can only ask: its request returns at once, the person answers in
+the client, and the model learns the answer as their next message (ADR-0070). A grant never composes the
 plugin into the workspace's registry, so other members gain nothing. It
 replaces ADR-0006's per-connector grant, which is what the runtime enforces
 today.
@@ -295,7 +296,8 @@ Foundational (secure RBAC):
 - [0042](adr/0042-a-workspace-id-is-generated-and-boot-refuses-any-other.md) — a workspace id is generated to one grammar; boot refuses a workspace directory with any other
 - [0043](adr/0043-a-tool-that-acts-on-the-caller-or-the-org-needs-no-workspace.md) — a kernel tool that acts on the caller or the org declares that it needs no workspace
 - [0044](adr/0044-the-url-is-the-only-thing-that-names-a-workspace.md) — the URL is the only thing that names a workspace; the server chooses none
-- [0069](adr/0069-a-plugin-belongs-to-a-workspace-or-a-person-and-a-personal-plugin-acts-only-where-its-owner-grants-it.md) — a plugin belongs to a workspace or a person; a personal plugin acts in a workspace only while its owner grants it there, and the grant covers its connectors and skills
+- [0069](adr/0069-a-plugin-belongs-to-a-workspace-or-a-person-and-a-personal-plugin-acts-only-where-its-owner-grants-it.md) — a plugin belongs to a workspace or a person; a personal plugin acts in a workspace only while its owner grants it there, and the grant covers its connectors and skills (amended by 0070)
+- [0070](adr/0070-a-models-request-to-use-a-personal-plugin-returns-at-once-and-the-answer-is-the-persons-next-message.md) — a model's request to use a personal plugin returns at once; the person answers in the client, and the model learns the answer as their next message
 
 Manage skills:
 

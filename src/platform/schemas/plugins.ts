@@ -93,3 +93,26 @@ export const PluginsListOutput = Type.Object({
   plugins: Type.Array(Plugin),
 });
 export type PluginsListOutput = Static<typeof PluginsListOutput>;
+
+/**
+ * A model's request to use one of the caller's own plugins in the workspace
+ * its run is in (`nb__manage_tools` `request_plugin`, ADR-0069 "Only the owner
+ * grants"). The request writes nothing: a first-party client shows it to the
+ * plugin's owner, and only their answer there writes the grant.
+ */
+export const PluginRequest = Type.Object({
+  /** The plugin's server: the name `grant_connector` takes. */
+  serverName: Type.String(),
+  displayName: Type.String(),
+  /** The account the plugin acts as, or null when its sign-in recorded none. */
+  account: Type.Union([PluginAccount, Type.Null()]),
+  /** The workspace the plugin would act in: the run's own. */
+  wsId: Type.String(),
+  workspaceName: Type.String(),
+});
+export type PluginRequest = Static<typeof PluginRequest>;
+
+export const PluginRequestOutput = Type.Object({
+  pluginRequest: PluginRequest,
+});
+export type PluginRequestOutput = Static<typeof PluginRequestOutput>;

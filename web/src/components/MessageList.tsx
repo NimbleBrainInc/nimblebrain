@@ -398,6 +398,7 @@ function AssistantMessage({
           streamingState={streamingState}
           preparingTool={preparingTool ?? null}
           displayDetail={displayDetail}
+          isLatestMessage={isLast}
         />
       ) : (
         // Legacy / pre-block-model conversations: render the serialized message

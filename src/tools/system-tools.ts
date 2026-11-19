@@ -12,11 +12,16 @@ import type { Runtime } from "../runtime/runtime.ts";
 import { hydrateSkill } from "../skills/connector-skills.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
-import { createManageConnectorsTool } from "./connector-tools.ts";
+import { createManageConnectorsTool, type ManageConnectorsContext } from "./connector-tools.ts";
 import { createCoreToolDefs } from "./core-source.ts";
 import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
 import { createManageToolsToolDefs } from "./manage-tools.ts";
 import { McpSource } from "./mcp-source.ts";
+import {
+  describeUngrantedPlugins,
+  discoverUngrantedPlugins,
+  requestPlugin,
+} from "./plugin-request.ts";
 import type { ToolRegistry } from "./registry.ts";
 import { READ_RESOURCE_SCHEMES_PROSE } from "./resource-schemes.ts";
 import { rankToolSearchResults } from "./search-ranking.ts";
@@ -72,7 +77,19 @@ export async function createSystemTools(
   } = opts;
   // Core tools (always available, not feature-gated)
   const coreToolDefs: InProcessTool[] = runtime ? createCoreToolDefs(runtime) : [];
-  const manageToolsToolDefs: InProcessTool[] = createManageToolsToolDefs(toolPromotionCtx);
+  // The caller and workspace of the call in flight: a plugin request and its
+  // discovery are always the caller's own, in the run's workspace.
+  const pluginCtx: ManageConnectorsContext | undefined = runtime
+    ? {
+        runtime,
+        getIdentity: () => getRequestContext()?.identity ?? null,
+        getWorkspaceId: () => getRequestContext()?.workspaceId ?? null,
+      }
+    : undefined;
+  const manageToolsToolDefs: InProcessTool[] = createManageToolsToolDefs(
+    toolPromotionCtx,
+    pluginCtx ? (serverName) => requestPlugin(pluginCtx, serverName) : undefined,
+  );
 
   const systemToolDefs: InProcessTool[] = [
     {
@@ -107,7 +124,7 @@ export async function createSystemTools(
           return searchCatalog(runtime, query);
         }
         // scope === "tools" (default)
-        return searchTools(runtime, getRegistry, toolEligibilityCtx, query);
+        return searchTools(runtime, getRegistry, toolEligibilityCtx, query, pluginCtx);
       },
     },
     createReadResourceTool(getRegistry),
@@ -846,6 +863,32 @@ async function searchCatalog(runtime: Runtime | undefined, query: string): Promi
  * active tool set.
  */
 async function searchTools(
+  runtime: Runtime | undefined,
+  getRegistry: () => ToolRegistry,
+  toolEligibilityCtx: ToolEligibilityContext | undefined,
+  query: string,
+  pluginCtx?: ManageConnectorsContext,
+): Promise<ToolResult> {
+  const found = await rankInstalledTools(runtime, getRegistry, toolEligibilityCtx, query);
+  // The caller's own plugins that are off here: named, never their tools, so
+  // the model can ask for one (`src/tools/plugin-request.ts`).
+  const offHere = pluginCtx ? await discoverUngrantedPlugins(pluginCtx, query) : [];
+  if (offHere.length === 0) return found;
+  // An empty tool search that names a plugin has found something, so it is
+  // not marked non-advancing.
+  const toolsText = found.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+  return {
+    content: textContent(`${toolsText}\n\n${describeUngrantedPlugins(offHere)}`),
+    structuredContent: {
+      ...(found.structuredContent ?? {}),
+      pluginsOffHere: offHere.map((p) => ({ name: p.serverName, displayName: p.displayName })),
+    },
+    isError: false,
+  };
+}
+
+/** The installed tools matching `query`, as `search` scope=tools reports them. */
+async function rankInstalledTools(
   runtime: Runtime | undefined,
   getRegistry: () => ToolRegistry,
   toolEligibilityCtx: ToolEligibilityContext | undefined,

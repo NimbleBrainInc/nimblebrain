@@ -55,7 +55,7 @@ import { MINTED_PROVIDER } from "../oauth/minted-credential-provider.ts";
 import { log } from "../observability/log.ts";
 import { type ConnectorAdmission, filterAdmittedTools } from "../permissions/admin-tools.ts";
 import type { PermissionOwner, ToolPolicy } from "../permissions/permission-store.ts";
-import type { PluginsListOutput } from "../platform/schemas/plugins.ts";
+import type { PluginAccount, PluginsListOutput } from "../platform/schemas/plugins.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
@@ -69,7 +69,7 @@ import { CREDENTIAL_PROVIDER } from "./credential-transport-credential.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { hasMcpOAuthTokens, McpOAuthRecords } from "./mcp-oauth-records.ts";
 import { McpSource, REMOTE_TOOL_LIST_MAX_AGE_MS } from "./mcp-source.ts";
-import { projectPlugins } from "./plugin-listing.ts";
+import { accountOf, projectPlugins } from "./plugin-listing.ts";
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 import type { Tool, ToolSource } from "./types.ts";
 import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
@@ -3896,6 +3896,56 @@ async function handleListPersonalConnectors(
     structuredContent: { connectors },
     isError: false,
   };
+}
+
+/** One of the caller's personal plugins that is not granted in a workspace. */
+export interface UngrantedPersonalPlugin {
+  serverName: string;
+  displayName: string;
+  description: string | null;
+  account: PluginAccount | null;
+}
+
+/**
+ * The caller's own personal plugins not granted in `wsId` (ADR-0069): what a
+ * model in the caller's conversation there may ask the caller to turn on. Read
+ * from the caller's identity plane only, so another member's plugins are never
+ * in it. `accountFor` names the one plugin whose signed-in account to read,
+ * since that read can ask a live connection; the others carry none.
+ */
+export async function listUngrantedPersonalPlugins(
+  ctx: ManageConnectorsContext,
+  callerId: string,
+  wsId: string,
+  opts: { accountFor?: string } = {},
+): Promise<UngrantedPersonalPlugin[]> {
+  const [grants, refs, catalog] = await Promise.all([
+    ctx.runtime.getPermissionStore().listConnectorGrants(callerId),
+    new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).list(callerId),
+    ctx.runtime.getConnectorCatalog().catalogEntries(),
+  ]);
+  const byServerName = new Map(catalog.map((e) => [slugifyServerName(e.id), e]));
+  const owner = { type: "user", userId: callerId } as const;
+  const offHere = refs.flatMap((ref) => {
+    const serverName = serverNameFromRef(ref);
+    if (serverName === null || (grants[serverName] ?? []).includes(wsId)) return [];
+    return [{ ref, serverName }];
+  });
+  return Promise.all(
+    offHere.map(async ({ ref, serverName }): Promise<UngrantedPersonalPlugin> => {
+      const cat = byServerName.get(serverName);
+      const identity =
+        opts.accountFor === serverName
+          ? await readConnectorIdentity(ctx, owner, ref, serverName, catalog)
+          : null;
+      return {
+        serverName,
+        displayName: cat?.name ?? serverName,
+        description: cat?.description ?? null,
+        account: accountOf(identity ?? undefined),
+      };
+    }),
+  );
 }
 
 /** One entry of `list_personal_connectors`. */

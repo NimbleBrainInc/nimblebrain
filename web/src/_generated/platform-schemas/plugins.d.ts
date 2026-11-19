@@ -152,3 +152,39 @@ export declare const PluginsListOutput: import("@sinclair/typebox").TObject<{
     }>>;
 }>;
 export type PluginsListOutput = Static<typeof PluginsListOutput>;
+/**
+ * A model's request to use one of the caller's own plugins in the workspace
+ * its run is in (`nb__manage_tools` `request_plugin`, ADR-0069 "Only the owner
+ * grants"). The request writes nothing: a first-party client shows it to the
+ * plugin's owner, and only their answer there writes the grant.
+ */
+export declare const PluginRequest: import("@sinclair/typebox").TObject<{
+    /** The plugin's server: the name `grant_connector` takes. */
+    serverName: import("@sinclair/typebox").TString;
+    displayName: import("@sinclair/typebox").TString;
+    /** The account the plugin acts as, or null when its sign-in recorded none. */
+    account: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
+        email: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    }>, import("@sinclair/typebox").TNull]>;
+    /** The workspace the plugin would act in: the run's own. */
+    wsId: import("@sinclair/typebox").TString;
+    workspaceName: import("@sinclair/typebox").TString;
+}>;
+export type PluginRequest = Static<typeof PluginRequest>;
+export declare const PluginRequestOutput: import("@sinclair/typebox").TObject<{
+    pluginRequest: import("@sinclair/typebox").TObject<{
+        /** The plugin's server: the name `grant_connector` takes. */
+        serverName: import("@sinclair/typebox").TString;
+        displayName: import("@sinclair/typebox").TString;
+        /** The account the plugin acts as, or null when its sign-in recorded none. */
+        account: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
+            email: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        }>, import("@sinclair/typebox").TNull]>;
+        /** The workspace the plugin would act in: the run's own. */
+        wsId: import("@sinclair/typebox").TString;
+        workspaceName: import("@sinclair/typebox").TString;
+    }>;
+}>;
+export type PluginRequestOutput = Static<typeof PluginRequestOutput>;
