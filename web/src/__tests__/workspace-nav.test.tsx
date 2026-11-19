@@ -6,8 +6,7 @@
 //      views (Conversations / Tasks / Files) routed to `/w/<slug>/<view>`,
 //      and its apps routed to `/w/<slug>/app/<route>`. No other
 //      workspace appears in it.
-//   2. The app quick-list caps at MAX_INLINE_APPS with a View-all overflow to
-//      the workspace overview.
+//   2. The app list shows every app, with no cap or overflow link.
 //   3. The switcher's trigger names the focused workspace. Opened, it lists
 //      every workspace alphabetically with the focused one selected, and the
 //      filter box narrows the list.
@@ -55,7 +54,6 @@ const { ShellProvider } = await import("../context/ShellContext");
 const { WorkspaceAppIconsContext } = await import("../context/WorkspaceAppIconsContext");
 const { WorkspaceNav } = await import("../components/shell/WorkspaceNav");
 const { WorkspaceSwitcher } = await import("../components/shell/WorkspaceSwitcher");
-const { MAX_INLINE_APPS } = await import("../lib/workspace-apps");
 
 import type { InstalledConnector } from "../api/client";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
@@ -339,26 +337,22 @@ describe("WorkspaceNav — the focused workspace only", () => {
 });
 
 // ---------------------------------------------------------------------------
-// (2) App quick-list cap + overflow
+// (2) App list: every app
 // ---------------------------------------------------------------------------
 
 describe("WorkspaceNav — app quick-list", () => {
-  test("caps apps at MAX_INLINE_APPS with a View-all overflow to the overview", async () => {
+  test("lists every app, however many, with no overflow link", async () => {
     mounted = await mount({
       workspaces: [HELIX],
       activeId: "ws_003eba8844413cd9",
       initialPath: "/w/003eba8844413cd9/",
-      placements: Array.from({ length: MAX_INLINE_APPS + 1 }, (_, i) =>
+      placements: Array.from({ length: 12 }, (_, i) =>
         appPlacement(`app-${i}`, { priority: (i + 1) * 10 }),
       ),
     });
 
-    expect(byTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(MAX_INLINE_APPS);
-
-    const viewAll = byTestId(mounted.container, "sidebar-workspace-view-all");
-    expect(viewAll).toHaveLength(1);
-    expect(viewAll[0]?.textContent).toContain(`View all ${MAX_INLINE_APPS + 1} apps`);
-    expect(viewAll[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/");
+    expect(byTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(12);
+    expect(byTestId(mounted.container, "sidebar-workspace-view-all")).toHaveLength(0);
   });
 
   test("the open app is the only one marked aria-current=page", async () => {
@@ -526,9 +520,8 @@ describe("WorkspaceNav — app quick-list", () => {
       ],
     });
 
-    // Five placements, three apps: all three fit under the cap of four.
+    // Five placements, three apps.
     expect(byTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(3);
-    expect(byTestId(mounted.container, "sidebar-workspace-view-all")).toHaveLength(0);
   });
 
   test("collapsed, an app with several views is one icon, marked when a view is open", async () => {
@@ -613,18 +606,6 @@ describe("WorkspaceNav — app quick-list", () => {
     expect(app?.tagName).toBe("A");
     expect(app?.getAttribute("href")).toBe("/w/003eba8844413cd9/app/todos");
   });
-
-  test("no overflow link when apps fit within the cap", async () => {
-    mounted = await mount({
-      workspaces: [HELIX],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-      placements: [appPlacement("collateral"), appPlacement("salesforce")],
-    });
-
-    expect(byTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(2);
-    expect(byTestId(mounted.container, "sidebar-workspace-view-all")).toHaveLength(0);
-  });
 });
 
 describe("WorkspaceNav — pinned apps", () => {
@@ -662,23 +643,6 @@ describe("WorkspaceNav — pinned apps", () => {
 
     await pin("outbound");
     expect(routes()).toEqual(["tasks", "crm", "outbound"]);
-  });
-
-  test("a pinned app past the inline cap is shown", async () => {
-    localStorage.setItem("nb:pinned-apps:ws_003eba8844413cd9", JSON.stringify(["last"]));
-    mounted = await mount({
-      workspaces: [HELIX],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-      placements: [
-        ...Array.from({ length: MAX_INLINE_APPS }, (_, i) =>
-          appPlacement(`app-${i}`, { priority: (i + 1) * 10 }),
-        ),
-        appPlacement("last", { priority: 999 }),
-      ],
-    });
-    expect(routes()[0]).toBe("last");
-    expect(routes()).toHaveLength(MAX_INLINE_APPS);
   });
 
   test("pins belong to one workspace", async () => {

@@ -6,9 +6,9 @@
 // another workspace's is to switch to it (WorkspaceSwitcher, above this).
 //
 // Order: Overview, the identity views (Conversations / Tasks / Files),
-// Plugins (what the agent can do here), Skills (what it is taught), then APPS (People, Tasks, … — the viewer's pinned apps first, capped with a
-// View-all overflow). Each routes
-// into `/w/<slug>/…`. An app that places several views is one entry; while it
+// Plugins (what the agent can do here), Skills (what it is taught), then APPS (People, Tasks, … — the viewer's pinned apps first, then the
+// rest; every app, since the sidebar is the only place that lists them). Each
+// routes into `/w/<slug>/…`. An app that places several views is one entry; while it
 // is open its views list beneath it. The inbox is not here: it is the top
 // bar's bell (InboxToggle).
 //
@@ -26,7 +26,7 @@
 // ---------------------------------------------------------------------------
 
 import { Menu } from "@base-ui/react/menu";
-import { ArrowRight, Check, GraduationCap, LayoutGrid, Pin, Puzzle } from "lucide-react";
+import { Check, GraduationCap, LayoutGrid, Pin, Puzzle } from "lucide-react";
 import { useMemo } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useShellContext } from "../../context/ShellContext";
@@ -39,7 +39,6 @@ import { usePinnedApps } from "../../lib/pinned-apps";
 import { cn } from "../../lib/utils";
 import {
   appsByConnector,
-  MAX_INLINE_APPS,
   orderApps,
   type WorkspaceApp,
   workspaceApps,
@@ -82,7 +81,7 @@ function WorkspaceViews({
   // The workspace's own apps (People, Tasks, …). Gate on the shell's
   // placements actually reflecting THIS workspace — the shell lags a switch,
   // so without the gate a switch would briefly paint the previous workspace's
-  // apps (mirrors the overview grid's readiness check).
+  // apps.
   const ready = shell != null && shell.shellWorkspaceId === workspace.id;
   const { pinned, toggle: togglePin } = usePinnedApps(workspace.id);
   const apps = useMemo(
@@ -92,8 +91,6 @@ function WorkspaceViews({
         : [],
     [ready, shell, pinned],
   );
-  const shownApps = collapsed ? apps : apps.slice(0, MAX_INLINE_APPS);
-  const hasAppOverflow = apps.length > shownApps.length;
 
   // A connector's display name (its catalog title), from the same installed list.
   const nameFor = (serverName: string) =>
@@ -136,7 +133,7 @@ function WorkspaceViews({
             Apps
           </div>
         ))}
-      {shownApps.map((app) => (
+      {apps.map((app) => (
         <AppEntry
           key={app.serverName}
           app={app}
@@ -148,16 +145,6 @@ function WorkspaceViews({
           onTogglePin={() => togglePin(app.serverName)}
         />
       ))}
-      {hasAppOverflow && (
-        <Link
-          to={`/w/${slug}/`}
-          data-testid="sidebar-workspace-view-all"
-          className="flex items-center gap-2.5 rounded-sm px-2 py-1 text-xs transition-colors hover:bg-sidebar-foreground/5"
-        >
-          <ArrowRight className="size-3 shrink-0" />
-          <span className="truncate">View all {apps.length} apps</span>
-        </Link>
-      )}
     </div>
   );
 }
@@ -386,7 +373,7 @@ function AppViewsMenu({
 // `open` is set by an app whose views list beneath it: the row then reads as
 // open rather than current, because the current page is one of its views.
 // Expanded, the pin toggle is a sibling of the link, laid over its right edge
-// (an interactive control cannot nest in a link), as on the home grid's tiles.
+// (an interactive control cannot nest in a link).
 // The rail has no room for it; pinned apps still lead there.
 function AppLink({
   to,
