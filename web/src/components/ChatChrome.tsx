@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
+import type { PluginRequestAnswer } from "../_generated/platform-schemas/plugins";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
@@ -233,8 +234,8 @@ export function ChatChrome() {
     // backend resolves it and injects its visible state. `null` on
     // non-app routes → no appContext, same as before. useChat enriches
     // appContext with the app's latest visible state from the bridge.
-    (text: string, files?: File[], model?: string) =>
-      chat.sendMessage(text, focusedApp ?? undefined, files, model),
+    (text: string, files?: File[], model?: string, pluginRequestAnswer?: PluginRequestAnswer) =>
+      chat.sendMessage(text, focusedApp ?? undefined, files, model, pluginRequestAnswer),
     [chat, focusedApp],
   );
 

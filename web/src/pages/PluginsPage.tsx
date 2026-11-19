@@ -1,6 +1,6 @@
 import { Check, User } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Plugin, PluginsListOutput } from "../_generated/platform-schemas/plugins";
 import { grantConnector, listPlugins, revokeConnector } from "../api/client";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
@@ -10,13 +10,14 @@ import {
   type ReturnedConnector,
   useConnectedNotice,
 } from "../components/connectors/useConnectedNotice";
+import { SkillsGroup } from "../components/plugins/SkillsGroup";
 import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useEvents } from "../hooks/useEvents";
 import { useCanWriteActiveWorkspace } from "../hooks/useScopedRole";
-import { accountLine, pluginPath } from "../lib/plugins";
+import { accountLine, newSkillPath, pluginPath } from "../lib/plugins";
 import { cn } from "../lib/utils";
 import { toWsId } from "../lib/workspace-slug";
 import { ConnectorDirectory } from "./settings/ConnectorBrowsePage";
@@ -27,7 +28,8 @@ import { EmptyState, InlineError } from "./settings/components";
  *
  * Installed lists the workspace's plugins and the viewer's own ones granted
  * here, then the viewer's plugins not used here, each with the one action that
- * changes that. Browse is the connector directory, which asks whom an install
+ * changes that, then the skills people wrote (`SkillsGroup`). Browse offers
+ * writing a skill above the connector directory, which asks whom an install
  * is for: the viewer alone (granted here in the same act) or everyone in the
  * workspace. Each row shows a plugin by the facts the listing carries (whose it
  * is, whether it is granted, the account it signs in as) and needs no rule of
@@ -66,7 +68,7 @@ export function PluginsPage() {
         {tab === "installed" ? (
           <InstalledPlugins key={wsId} wsId={wsId} slug={slug} onBrowse={() => showTab("browse")} />
         ) : (
-          <ConnectorDirectory offerPersonal />
+          <Browse slug={slug} />
         )}
       </div>
     </div>
@@ -74,6 +76,39 @@ export function PluginsPage() {
 }
 
 type PluginsTab = "installed" | "browse";
+
+/**
+ * Browse: writing a skill, then the plugin directory. A skill written here is
+ * not a plugin (ADR-0068), so it is its own entry above the directory rather
+ * than a card in it. Room is left below it for a skills registry to browse.
+ */
+function Browse({ slug }: { slug: string }) {
+  const navigate = useNavigate();
+  return (
+    <div className="space-y-6">
+      <div
+        className="flex items-center justify-between gap-4 rounded-md border border-border px-4 py-3"
+        data-testid="write-skill"
+      >
+        <div className="min-w-0">
+          <p className="text-sm font-medium">Skills</p>
+          <p className="text-xs text-muted-foreground">
+            Teach the agent how you work, in your own words, for just you or everyone here.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => navigate(newSkillPath(slug))}
+        >
+          Write a skill
+        </Button>
+      </div>
+      <ConnectorDirectory offerPersonal />
+    </div>
+  );
+}
 
 function TabButton({
   selected,
@@ -292,6 +327,8 @@ function InstalledPlugins({
           />
         )}
       </PluginSection>
+
+      <SkillsGroup wsId={wsId} slug={slug} />
 
       <UsePluginHereDialog
         plugin={confirming}

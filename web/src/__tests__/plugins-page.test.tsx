@@ -43,9 +43,16 @@ const listDirectory = mock(async () => ({
   errors: [],
 }));
 const getInstalledConnectors = mock(async () => ({ installed: [] }));
+// The Installed tab's Skills group lists skills; this suite is about plugins.
+const callTool = mock<typeof ApiClient.callTool>(async () => ({
+  content: [],
+  structuredContent: { skills: [] },
+  isError: false,
+}));
 
 mock.module("../api/client", () => ({
   ...realClient,
+  callTool,
   listPlugins,
   grantConnector,
   revokeConnector,

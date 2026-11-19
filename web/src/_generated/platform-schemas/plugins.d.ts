@@ -188,3 +188,15 @@ export declare const PluginRequestOutput: import("@sinclair/typebox").TObject<{
     }>;
 }>;
 export type PluginRequestOutput = Static<typeof PluginRequestOutput>;
+/**
+ * The person's answer to a plugin request, set by the client on the message
+ * that tells the agent the answer (ADR-0070). The message's text is what the
+ * agent reads; this lets a client show the message as the answer it is rather
+ * than as something the person typed. It grants nothing.
+ */
+export declare const PluginRequestAnswer: import("@sinclair/typebox").TObject<{
+    /** The plugin's server, as the request named it. */
+    serverName: import("@sinclair/typebox").TString;
+    answer: import("@sinclair/typebox").TUnsafe<"not_now" | "use">;
+}>;
+export type PluginRequestAnswer = Static<typeof PluginRequestAnswer>;

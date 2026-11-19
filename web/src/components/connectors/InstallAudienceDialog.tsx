@@ -80,24 +80,27 @@ export function InstallAudienceDialog({
   );
 }
 
-function AudienceOption({
+/** One answer to "Who is it for?", as a bordered radio with its consequence under it. */
+export function AudienceOption({
   value,
   selected,
   onSelect,
   label,
   hint,
+  name = "install-audience",
 }: {
   value: InstallAudience;
   selected: boolean;
   onSelect: (value: InstallAudience) => void;
   label: string;
   hint: string;
+  name?: string;
 }) {
   return (
     <label className="flex items-start gap-2 rounded-sm border border-border/60 p-3 has-[:checked]:border-foreground/40">
       <input
         type="radio"
-        name="install-audience"
+        name={name}
         value={value}
         checked={selected}
         onChange={() => onSelect(value)}

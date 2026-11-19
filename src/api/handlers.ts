@@ -1554,6 +1554,9 @@ async function parseChatBody(
     ...(parsed.appContext !== undefined ? { appContext: parsed.appContext } : {}),
     ...(parsed.metadata !== undefined ? { metadata: parsed.metadata } : {}),
     ...(parsed.allowedTools !== undefined ? { allowedTools: parsed.allowedTools } : {}),
+    ...(parsed.pluginRequestAnswer !== undefined
+      ? { pluginRequestAnswer: parsed.pluginRequestAnswer }
+      : {}),
     workspaceId,
     ...(identity ? { identity } : {}),
   };

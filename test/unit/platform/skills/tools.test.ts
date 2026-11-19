@@ -30,7 +30,7 @@ import type {
 import type { IdentityProvider, UserIdentity } from "../../../../src/identity/provider.ts";
 import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
-import { parseSkillFile } from "../../../../src/skills/loader.ts";
+import { mergeScopedSkills, parseSkillFile } from "../../../../src/skills/loader.ts";
 import type { Skill } from "../../../../src/skills/types.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
@@ -67,6 +67,8 @@ class FakeRuntime {
   contextSkills: Skill[] = [];
   matchableSkills: Skill[] = [];
   conversationOverlay: Skill[] = [];
+  /** When set, the overlay by the tiers asked for, as the real runtime merges them. */
+  overlayFor: ((wsId: string | null, userId: string | null) => Skill[]) | null = null;
 
   constructor(private workDir: string) {
     // Back the fake with a real locator over the workspaces root and a real
@@ -129,8 +131,8 @@ class FakeRuntime {
   getMatchableSkills(): Skill[] {
     return this.matchableSkills;
   }
-  loadConversationSkills(): Skill[] {
-    return this.conversationOverlay;
+  loadConversationSkills(wsId: string | null, userId: string | null): Skill[] {
+    return this.overlayFor ? this.overlayFor(wsId, userId) : this.conversationOverlay;
   }
 
   store(): EventSourcedConversationStore {
@@ -309,6 +311,41 @@ describe("skills__list", () => {
       ?.skills as Array<{ name: string; scope: string }>;
     expect(skills.every((s) => s.scope === "workspace")).toBe(true);
     expect(skills.map((s) => s.name)).toContain("ws-only");
+  });
+
+  test("scope filter lists a tier whole, keeping a skill a higher tier shadows", async () => {
+    const tier = (scope: "org" | "workspace" | "user") => {
+      const dir = join(workDir, scope, "skills");
+      mkdirSync(dir, { recursive: true });
+      const skill = writeSkill(
+        join(dir, "house-style.md"),
+        { name: "house-style", description: scope, version: "1.0.0", type: "skill", priority: 50 },
+        `${scope} body`,
+      );
+      skill.manifest.scope = scope;
+      return skill;
+    };
+    const org = tier("org");
+    const ws = tier("workspace");
+    const user = tier("user");
+    runtime.overlayFor = (wsId, userId) =>
+      mergeScopedSkills([org], wsId ? [ws] : [], userId ? [user] : []);
+    runtime.wsId = "ws_00079598e311c160";
+
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const list = async (args: Record<string, unknown>) => {
+      const result = await client.callTool({ name: "list", arguments: { layer: 3, ...args } });
+      return ((result as { structuredContent?: { skills?: unknown[] } }).structuredContent
+        ?.skills ?? []) as Array<{ name: string; scope: string }>;
+    };
+
+    expect((await list({})).map((s) => s.scope)).toEqual(["user"]);
+    for (const scope of ["org", "workspace", "user"] as const) {
+      expect(await list({ scope })).toEqual([
+        expect.objectContaining({ name: "house-style", scope }),
+      ]);
+    }
   });
 
   test("tool_affinity filter only returns skills whose applies_to_tools matches", async () => {

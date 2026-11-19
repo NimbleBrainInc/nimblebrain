@@ -168,11 +168,23 @@ describe("discovery", () => {
     ]);
   });
 
-  test("the description tells the model how to ask", () => {
+  test("the description tells the model to call request_plugin with the exact name", () => {
     const text = describeUngrantedPlugins([
       { serverName: "granola", displayName: "Granola", description: null, account: null },
     ]);
-    expect(text).toContain('nb__manage_tools `{"request_plugin": "<name>"}`');
+    expect(text).toContain('call nb__manage_tools with `{"request_plugin": "granola"}` yourself');
+    expect(text).toContain("do not send them to the Plugins page");
+    expect(text).not.toContain("<name>");
+  });
+
+  test("with several plugins, it names each one to choose from", () => {
+    const text = describeUngrantedPlugins([
+      { serverName: "granola", displayName: "Granola", description: null, account: null },
+      { serverName: "notion", displayName: "Notion", description: null, account: null },
+    ]);
+    expect(text).toContain(
+      'call nb__manage_tools yourself with its exact name: `{"request_plugin": "granola"}` or `{"request_plugin": "notion"}`',
+    );
   });
 });
 
@@ -190,6 +202,10 @@ describe("request_plugin", () => {
       wsId: WS,
       workspaceName: "Helix",
     });
+    // The card is the question: the model is told not to ask again.
+    const text = extractText(result.content);
+    expect(text).toContain("**Use here** and **Not now**");
+    expect(text).toContain("do not ask them yourself");
     expect(await permissions.getConnectorGrants(ALICE.id, "granola")).toEqual([]);
   });
 
@@ -254,7 +270,7 @@ describe("request_plugin", () => {
 
 /** What an `add` or a direct call returns for a plugin of the caller's that is off here. */
 const ASK_GRANOLA =
-  'Granola is your plugin but isn\'t turned on in this workspace. To use it, ask the person with nb__manage_tools `{"request_plugin": "granola"}`';
+  'Granola is your plugin but isn\'t turned on in this workspace. To use it, call nb__manage_tools with `{"request_plugin": "granola"}` yourself. That shows the person a one-click **Use here**. It is already theirs, so do not send them to the Plugins page.';
 
 describe("a name of the caller's plugin that is off here", () => {
   test("names the plugin and how to ask for it", async () => {

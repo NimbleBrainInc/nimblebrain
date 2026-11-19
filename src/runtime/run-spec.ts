@@ -16,7 +16,7 @@
  */
 
 import type { EventSourcedConversationStore } from "../conversation/event-sourced-store.ts";
-import type { Conversation } from "../conversation/types.ts";
+import type { Conversation, PluginRequestAnswer } from "../conversation/types.ts";
 import type {
   ConnectorSkillCandidate,
   EventSink,
@@ -104,6 +104,8 @@ export interface RunInput {
   userId?: string;
   /** File references persisted alongside the message. */
   fileRefs?: FileReference[];
+  /** The plugin request this message answers, persisted alongside it. Chat only. */
+  pluginRequestAnswer?: PluginRequestAnswer;
   /**
    * Text matched against skill triggers. Present for a chat (the user's raw
    * message); absent for an unattended run, which matches no trigger — its

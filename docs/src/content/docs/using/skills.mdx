@@ -149,7 +149,7 @@ metadata:
 
 ## Guidance for one connector
 
-Guidance a workspace wants the agent to follow when it uses one connector (house rules for a CRM's stages, a brand voice for a document tool) is a **workspace skill bound to the connector's tools**. Create it in **This Workspace → Skills**, or with `skills__create`, and give it a `tool-affinity` matching those tools:
+Guidance a workspace wants the agent to follow when it uses one connector (house rules for a CRM's stages, a brand voice for a document tool) is a **workspace skill bound to the connector's tools**. Create it from **Plugins → Browse → Write a skill** (choose **Everyone in** the workspace), or with `skills__create`, and give it a `tool-affinity` matching those tools:
 
 ```yaml
 ---
@@ -258,9 +258,17 @@ A workspace's **Settings → Skills** page has a read-only **From connectors** s
 
 Ask the agent which skills are loaded — it uses the built-in `skills__list` tool to report each skill's name, loading strategy, priority, and source file. To see one skill's full definition, ask the agent for its details.
 
-## Editing a skill in settings
+## Skills on the Plugins page
 
-The Skills pages in settings (your profile, a workspace, and the organization) create and edit skills without touching files.
+**Plugins** is where you find and add what the agent can do in a workspace, skills included.
+
+- **Installed** lists, under **Skills**, the skills written for this workspace (**Workspace**), your own (**Yours**, which follow you into every workspace), and the organization's (**Org**, read-only there). Each row says how the skill loads. A skill that comes with a plugin is listed on that plugin's page instead.
+- **Opening a skill** shows its page. You can edit and delete a workspace skill if you can change the workspace, and your own skills always. An org skill is changed in the organization's settings.
+- **Browse → Write a skill** asks who it is for: **Just me** (one of your own skills) or **Everyone in** the workspace (a workspace skill, offered only to members who can change the workspace).
+
+## Editing a skill
+
+A skill's page under Plugins, and the Skills pages in settings (your profile, a workspace, and the organization), create and edit skills without touching files.
 
 - **Creating** a skill is one explicit action: fill in the name and body, set anything under **Advanced**, and click **Create**. A pasted whole `SKILL.md` works here: its frontmatter sets the fields it declares, and the block isn't stored as text.
 - **Editing** an existing skill has no Save button. Each field saves on its own: the loading strategy when you pick one, the priority when you leave it or press Enter, and the body, tool patterns, and trigger phrases when you leave them. A save shows a notice with **Undo**; one the server refuses stays on the field with the reason, **Retry**, and **Revert**.

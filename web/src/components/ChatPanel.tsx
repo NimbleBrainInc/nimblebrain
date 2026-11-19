@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { PluginRequestAnswer } from "../_generated/platform-schemas/plugins";
 import { type ChatAnswer, ChatAnswerContext } from "../context/ChatAnswerContext";
 import { useChatConfigContext, useChatContext } from "../context/ChatContext";
 import { ChatPluginsProvider } from "../context/ChatPluginsProvider";
@@ -27,7 +28,12 @@ export interface ChatPanelProps {
   messages: ChatMessage[];
   isStreaming: boolean;
   error: string | null;
-  sendMessage: (text: string, files?: File[], model?: string) => Promise<void>;
+  sendMessage: (
+    text: string,
+    files?: File[],
+    model?: string,
+    pluginRequestAnswer?: PluginRequestAnswer,
+  ) => Promise<void>;
   newConversation: () => void;
   compact?: boolean;
   onClose?: () => void;
@@ -242,7 +248,8 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
       workspaceId: chatWorkspaceId,
       workspaceName: chatWorkspaceName,
       canAnswer: !isStreaming,
-      send: (text) => sendMessage(text),
+      send: (text, pluginRequestAnswer) =>
+        sendMessage(text, undefined, undefined, pluginRequestAnswer),
     }),
     [chatWorkspaceId, chatWorkspaceName, isStreaming, sendMessage],
   );

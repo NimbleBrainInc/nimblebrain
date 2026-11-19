@@ -206,6 +206,12 @@ export interface SubscribedEvent {
 export interface UserMessageEvent {
   content: string;
   userId?: string;
+  /**
+   * Set when the message answers a plugin request card: the shape of
+   * `PluginRequestAnswer` (`src/platform/schemas/plugins.ts`), restated
+   * because these wire types import nothing outside this folder.
+   */
+  pluginRequestAnswer?: { serverName: string; answer: "use" | "not_now" };
   /** Set on a frame a peer tab broadcast; absent from a turn's own replay. */
   displayName?: string;
   timestamp: string;

@@ -70,6 +70,7 @@ import { NotificationsPage } from "./pages/NotificationsPage";
 import { ConnectorPageRedirect, PluginDetailPage } from "./pages/PluginDetailPage";
 import { PluginsPage } from "./pages/PluginsPage";
 import { ProfilePage } from "./pages/ProfilePage";
+import { NewSkillPage, SkillPage } from "./pages/SkillPage";
 import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { OrgAboutTab } from "./pages/settings/OrgAboutTab";
@@ -443,6 +444,9 @@ function AuthenticatedAppContent({
               <Route path="plugins" element={<PluginsPage />} />
               {/* One plugin: how it is configured, whose account it uses, where it is used. */}
               <Route path="plugins/:pluginRef" element={<PluginDetailPage />} />
+              {/* A skill someone wrote, and a new one, beside the plugins. */}
+              <Route path="plugins/skills/new" element={<NewSkillPage />} />
+              <Route path="plugins/skills/:scope/:name" element={<SkillPage />} />
               {/* Workspace settings — General/Members/Connectors/Skills/MCP/Notifications/Webhooks. */}
               <Route path="settings" element={<WorkspaceSettingsPage />}>
                 <Route
