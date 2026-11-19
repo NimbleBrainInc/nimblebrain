@@ -18,7 +18,11 @@ import type { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.ts";
 import type { ManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import type { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import type { ConnectorInstance, PlacementEntry } from "../../src/connectors/runtime/types.ts";
+import type {
+  ConnectorInstance,
+  ConnectorUiMeta,
+  PlacementEntry,
+} from "../../src/connectors/runtime/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import type { UserStore } from "../../src/identity/user.ts";
@@ -169,6 +173,43 @@ describe("projectPlugins", () => {
     expect(out.plugins[1]?.apps).toEqual([]);
   });
 
+  test("a granted personal plugin lists the views its server places, with no route", () => {
+    const report = {
+      slot: "sidebar.apps",
+      resourceUri: "ui://bassethound/report",
+      label: "Report",
+    };
+    const out = projectPlugins(
+      facts({
+        personal: [
+          {
+            serverName: "bassethound",
+            displayName: "Bassethound",
+            status: "ready",
+            grantedWorkspaces: [WS],
+            placements: [report, { slot: "sidebar.bottom", resourceUri: "ui://bassethound/tray" }],
+          },
+          {
+            serverName: "granola",
+            displayName: "Granola",
+            status: "ready",
+            grantedWorkspaces: [OTHER_WS],
+            placements: [{ slot: "sidebar.apps", resourceUri: "ui://granola/notes" }],
+          },
+        ],
+        // A workspace placement of the same server is the workspace's, not the person's.
+        placements: [placement({ serverName: "bassethound" })],
+      }),
+    );
+    expectValid(out);
+    const [bassethound, granola] = out.plugins;
+    expect(bassethound?.apps).toEqual([
+      { label: "Report", serverName: "bassethound", resourceUri: "ui://bassethound/report" },
+    ]);
+    // Not granted here: its views cannot render here, so none are listed.
+    expect(granola?.apps).toEqual([]);
+  });
+
   test("a plugin carries its bound skills and the views its server places among the apps", () => {
     const out = projectPlugins(
       facts({
@@ -258,6 +299,8 @@ async function buildHarness(opts: {
   overlays?: ConnectorOverlayInfo[];
   published?: PublishedSkillInfo[];
   placements?: Array<{ serverName: string; label: string; route: string }>;
+  /** The host UI a personal connector's install stored, by server name. */
+  personalUi?: Record<string, ConnectorUiMeta>;
 }): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-plugin-listing-"));
   installTestCredentialStore(workDir);
@@ -272,7 +315,7 @@ async function buildHarness(opts: {
     await identityStore.add(ALICE, {
       url: `https://mcp.example.com/${serverName}`,
       serverName,
-      ui: null,
+      ui: opts.personalUi?.[serverName] ?? null,
     });
   }
   for (const [serverName, wsId] of Object.entries(opts.grants ?? {})) {
@@ -432,6 +475,26 @@ describe("manage_connectors list_plugins", () => {
     // Nothing from the token records reaches the listing.
     expect(JSON.stringify(out)).not.toContain("Bearer");
     expect(JSON.stringify(out)).not.toContain("vendor-subject");
+  });
+
+  test("a granted personal plugin's apps are the views its install places", async () => {
+    const ui: ConnectorUiMeta = {
+      placements: [
+        { slot: "sidebar.apps", resourceUri: "ui://bassethound/report", label: "Report" },
+      ],
+    };
+    h = await buildHarness({
+      workspaceConnectors: [],
+      personalConnectors: ["bassethound", "granola"],
+      grants: { bassethound: WS, granola: OTHER_WS },
+      personalUi: { bassethound: ui, granola: ui },
+    });
+    const out = listing(await h.tool.handler({ action: "list_plugins" }));
+    const byId = new Map(out.plugins.map((p) => [p.id, p]));
+    expect(byId.get("person:bassethound")?.apps).toEqual([
+      { label: "Report", serverName: "bassethound", resourceUri: "ui://bassethound/report" },
+    ]);
+    expect(byId.get("person:granola")?.apps).toEqual([]);
   });
 
   test("is refused without a workspace", async () => {

@@ -36,6 +36,7 @@ import {
   isInstanceOAuthClientRef,
   type OAuthClientConfig,
   oauthClientSecretRef,
+  type PlacementDeclaration,
   type RemoteTransportConfig,
 } from "../connectors/runtime/types.ts";
 import { uninstallWorkspaceConnector } from "../connectors/runtime/uninstall.ts";
@@ -732,7 +733,7 @@ async function handleListPlugins(
   if (!callerId) return errResult("Authentication required.");
   const [workspace, personal, published] = await Promise.all([
     listInstalledEntries(ctx, wsId, callerId, { withIdentity: true }),
-    listPersonalConnectorEntries(ctx, callerId),
+    listPersonalConnectorEntries(ctx, callerId, { withPlacements: true }),
     ctx.runtime.listPublishedSkills(wsId),
   ]);
   const output: PluginsListOutput = projectPlugins({
@@ -3944,12 +3945,21 @@ interface PersonalConnectorEntry {
   state: "running" | "not_authenticated";
   identity?: ConnectedAccountIdentity;
   grantedWorkspaces: string[];
+  /** The views its server places; only with `withPlacements` (`list_plugins`). */
+  placements?: PlacementDeclaration[];
 }
 
-/** The caller's personal connectors, as `list_personal_connectors` reports them. */
+/**
+ * The caller's personal connectors, as `list_personal_connectors` reports them.
+ * `withPlacements` adds each one's placements, by the rule boot applies to a
+ * workspace connector (`withCatalogUi`): the catalog entry it is bound to
+ * decides, a mismatched one places nothing, and an uncatalogued one keeps what
+ * its install stored.
+ */
 async function listPersonalConnectorEntries(
   ctx: ManageConnectorsContext,
   callerId: string,
+  opts: { withPlacements?: boolean } = {},
 ): Promise<PersonalConnectorEntry[]> {
   const store = ctx.runtime.getPermissionStore();
 
@@ -4028,9 +4038,21 @@ async function listPersonalConnectorEntries(
             : ("not_authenticated" as const),
         ...(identity ? { identity } : {}),
         grantedWorkspaces: grantsByConnector[serverName] ?? [],
+        ...(opts.withPlacements && { placements: personalPlacements(ref, catalog) }),
       };
     }),
   );
+}
+
+/** A personal connector's placements: its bound catalog entry's, else its own stored ones. */
+function personalPlacements(
+  ref: ConnectorRef,
+  catalog: readonly ConnectorCatalogEntry[],
+): PlacementDeclaration[] {
+  const binding = bindCatalogEntry(ref, catalog);
+  if (binding.kind === "mismatch") return [];
+  const ui = binding.kind === "bound" ? binding.entry.ui : ref.ui;
+  return sanitizePlacements(ui?.placements);
 }
 
 /**

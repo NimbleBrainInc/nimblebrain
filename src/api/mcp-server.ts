@@ -62,6 +62,7 @@ import type { TokenGrant, UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import {
   ConnectorGrantDenied,
+  resolveGrantedPersonalConnector,
   routeToolCall,
   UnknownIdentitySource,
   UnknownNamespacedToolName,
@@ -77,7 +78,7 @@ import {
   SKILLS_EXTENSION_ID,
   type SkillEntry,
 } from "../skills/skills-extension.ts";
-import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
+import { IDENTITY_SOURCES, isPersonalConnectorName } from "../tools/identity-sources.ts";
 import type { IdentityTaskSource } from "../tools/identity-task-source.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -1560,11 +1561,9 @@ function cursorParams(cursor: unknown): { cursor: string } | undefined {
 
 /**
  * Run one resource request — a read or a listing — against the one source a
- * scoped request names: a kernel identity source by that name (under the
- * caller's identity context), otherwise that name in the request's workspace.
- * Reads and listings share this resolver so the source a listing shows is
- * exactly the source a read reaches. Returns the source's result as it
- * answered, pagination included.
+ * scoped request names (`scopedSource`). Reads and listings share this resolver
+ * so the source a listing shows is exactly the source a read reaches. Returns
+ * the source's result as it answered, pagination included.
  *
  * `absent` when there is no such source, it is not MCP-backed, or the request
  * fails (a server that serves no resources answers `Method not found`). A
@@ -1579,32 +1578,55 @@ async function fromOneSource<T>(
   run: (client: NonNullable<ReturnType<McpSource["getClient"]>>) => Promise<T>,
 ): Promise<T> {
   if (!runtime || !requestCtx.identity?.id) return absent;
-  const wsId = requestCtx.workspaceId;
+  try {
+    const scoped = await scopedSource(
+      runtime,
+      requestCtx.identity,
+      requestCtx.workspaceId,
+      sourceName,
+    );
+    const client = mcpClientOf(scoped?.source);
+    if (!scoped || !client) return absent;
+    return scoped.reqCtx
+      ? await runWithRequestContext(scoped.reqCtx, () => run(client))
+      : await run(client);
+  } catch {
+    return absent;
+  }
+}
 
+/**
+ * The one source a scoped request names, by the door its name takes: a kernel
+ * identity source (run under the caller's identity context); a `my_` name, the
+ * caller's own personal connector granted to this workspace, reached over its
+ * own connection (`resolveGrantedPersonalConnector`, the tool router's lookup
+ * and grant check); otherwise that name in the request's workspace. A `my_`
+ * name never resolves in the workspace registry, and a bare name never reaches
+ * a personal connector.
+ */
+async function scopedSource(
+  runtime: Runtime,
+  identity: UserIdentity,
+  wsId: string,
+  sourceName: string,
+): Promise<{ source: ToolSource | undefined; reqCtx?: RequestContext } | undefined> {
   if (IDENTITY_SOURCES.has(sourceName)) {
-    const client = mcpClientOf(runtime.getIdentitySource(sourceName));
-    if (!client) return absent;
-    const identityReqCtx: RequestContext = { identity: requestCtx.identity, workspaceId: wsId };
-    try {
-      return await runWithRequestContext(identityReqCtx, () => run(client));
-    } catch {
-      return absent;
-    }
+    return {
+      source: runtime.getIdentitySource(sourceName),
+      reqCtx: { identity, workspaceId: wsId },
+    };
   }
-
-  let wsRegistry: ToolRegistry;
-  try {
-    wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
-  } catch {
-    return absent;
+  if (isPersonalConnectorName(sourceName)) {
+    const source = await resolveGrantedPersonalConnector({
+      identityId: identity.id,
+      sourceName,
+      workspaceId: wsId,
+      runtime,
+    });
+    return { source };
   }
-  const client = mcpClientOf(wsRegistry.getSources().find((src) => src.name === sourceName));
-  if (!client) return absent;
-  try {
-    return await run(client);
-  } catch {
-    return absent;
-  }
+  const wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
+  return { source: wsRegistry.getSources().find((src) => src.name === sourceName) };
 }
 
 /**
