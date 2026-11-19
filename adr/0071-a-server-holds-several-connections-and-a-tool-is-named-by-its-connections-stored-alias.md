@@ -41,6 +41,14 @@ conversation keeps the tools it loaded by name (ADR-0066); and a recorded
 conversation event is never rewritten (ADR-0034). A name that changes under
 any of them loses a tool.
 
+MCP leaves this to the host. A tool name is unique only within its server, and a
+client that combines servers is told to disambiguate by prefixing a server
+identifier of its own choosing; `serverInfo.name` is not unique. The protocol has
+no namespace, group or owner field for tools (proposals for namespaces and tool
+groups were closed or rejected), and no field that tells a model which account a
+tool acts as. Model providers are narrower than MCP: tool names are
+`[A-Za-z0-9_-]` with no dots, at most 64 characters on the strictest of them.
+
 ## Decision
 
 **A server holds any number of connections per owner. A connection has a stable
@@ -65,9 +73,12 @@ an alias to its connection by lookup, never by reading the name's shape.**
 
 ### An alias is assigned once, from mechanics, never from identity
 
-An alias is lowercase letters, digits and single underscores, starts with a
-letter, and is short enough that `<alias>__<tool>` fits the tool-name limit of
-every model provider the runtime calls.
+An alias is lowercase letters, digits, hyphens and single underscores, starts
+with a letter, and never contains `__`, the separator. The whole tool name
+`<alias>__<tool>` is at most 64 characters of `[A-Za-z0-9_-]`, the strictest
+model provider's rule. A label that would make any of its connection's tool names
+longer is shortened, and the shortened alias ends with a short hash of the full
+label, so two long labels that share a prefix stay distinct.
 
 1. **The first connection of a server takes the server's short name** (`gmail`).
 2. **A later connection takes a label the person gives** at "Add another
@@ -105,7 +116,9 @@ caller's personal connections.
 `my_` here is an allocation rule, not a scope marker. Dispatch never strips or
 reads it; it reaches the connection the alias is stored on. It keeps the
 workspace's names and the person's names in disjoint sets because neither side
-can see the other's when it picks. The alias belongs to the connection, not to a
+can see the other's when it picks, and a set split by a reserved form needs no
+coordination and reveals nothing; MCP offers no namespace that would do it
+outside the name. The alias belongs to the connection, not to a
 grant, so a person's account carries one name in every workspace where it acts.
 
 What the model sees in a session where both are reachable:
@@ -252,5 +265,16 @@ rename it, which reassigns its label and alias under the same rules.
 - **Unprefixed personal aliases, renamed when a workspace install collides.** A
   workspace admin's install renames a member's tools in that member's running
   conversations and tasks.
+- **One tool set per server, with an `account` argument the host adds to each
+  tool's input schema (an account picker).** The tool count does not grow with
+  accounts, which matters to a host that caps tools per request. But the host
+  rewrites schemas the server owns, a model can omit or guess the argument, a
+  grant per account cannot be enforced by which tools a session holds, and a
+  task's `allowedTools` cannot name one account. Deferred tool loading
+  (ADR-0066) answers the tool-count cost instead.
+- **Carry the owner or account in tool annotations or `_meta` instead of the
+  name.** No annotation exists for it, a vendor `_meta` key is legal but no model
+  reads it, and annotations from a server are untrusted. The description is what
+  the model reads.
 - **Store `allowedTools` as connection ids.** It ends the rewrite on rename, but
   an entry is a glob a person writes and reads, and a list of ids is neither.
