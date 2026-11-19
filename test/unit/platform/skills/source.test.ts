@@ -136,6 +136,7 @@ describe("skills source — tools list", () => {
       "loading_log",
       "read",
       "restore",
+      "set_here",
       "set_status",
       "update",
     ]);
@@ -228,6 +229,7 @@ describe("skills source — unattended-run wall", () => {
     "deactivate",
     "restore",
     "set_status",
+    "set_here",
   ];
   const READS = ["list", "read", "history", "loading_log"];
 
