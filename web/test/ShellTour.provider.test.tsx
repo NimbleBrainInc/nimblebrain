@@ -77,7 +77,6 @@ function Pages() {
         element={
           <>
             <div data-tour="nav">nav</div>
-            <div data-tour="apps">apps</div>
             <div data-tour="ask">
               <input aria-label="Ask" />
             </div>
@@ -199,13 +198,12 @@ describe("ending the tour", () => {
     await mount(`${BASE}/`);
 
     const visited: Array<[string | null, string]> = [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 4; i++) {
       await press("tour-next");
       visited.push([cardTitle(), probe.path]);
     }
     expect(visited).toEqual([
       ["Your workspace", `${BASE}/`],
-      ["Your apps", `${BASE}/`],
       ["Browse plugins", `${BASE}/plugins/browse`],
       ["Teach it with skills", `${BASE}/skills`],
       ["Ask your first question", `${BASE}/`],
@@ -242,9 +240,9 @@ describe("replaying from Help", () => {
     await settle();
     expect(probe.drawerOpen).toBe(false);
 
-    // The first stop on a phone is Apps, on the Overview already open.
+    // A phone skips the sidebar's stop, so the first is Browse plugins.
     await press("tour-next");
-    expect(cardTitle()).toBe("Your apps");
+    expect(cardTitle()).toBe("Browse plugins");
     expect(probe.drawerOpen).toBe(false);
   });
 });

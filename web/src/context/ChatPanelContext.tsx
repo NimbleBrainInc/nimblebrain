@@ -9,6 +9,11 @@ export interface ChatPanelContextValue {
   panelWidth: number;
   /** Open the panel. If conversationId provided, open that conversation (see `openConversation`). */
   openPanel: (conversationId?: string) => void;
+  /**
+   * Open the panel over the whole main area, as a conversation started from
+   * the overview does. If conversationId provided, open that conversation.
+   */
+  openFullscreen: (conversationId?: string) => void;
   /** Close the panel. */
   closePanel: () => void;
   /** Toggle between closed and sidebar. */
@@ -87,6 +92,16 @@ export function ChatPanelProvider({ children }: ChatPanelProviderProps) {
     [setPanelState],
   );
 
+  const openFullscreen = useCallback(
+    (conversationId?: string) => {
+      setPanelState("fullscreen");
+      if (conversationId) {
+        void openConversationRef.current(conversationId);
+      }
+    },
+    [setPanelState],
+  );
+
   const closePanel = useCallback(() => {
     setPanelState("closed");
   }, [setPanelState]);
@@ -104,6 +119,7 @@ export function ChatPanelProvider({ children }: ChatPanelProviderProps) {
       panelState,
       panelWidth,
       openPanel,
+      openFullscreen,
       closePanel,
       togglePanel,
       toggleFullscreen,
@@ -116,6 +132,7 @@ export function ChatPanelProvider({ children }: ChatPanelProviderProps) {
       panelState,
       panelWidth,
       openPanel,
+      openFullscreen,
       closePanel,
       togglePanel,
       toggleFullscreen,
