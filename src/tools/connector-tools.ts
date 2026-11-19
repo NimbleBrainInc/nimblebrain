@@ -2009,6 +2009,16 @@ async function handleInstallRemoteOAuth(
   // at catalog load (`refuseServerNameCollisions`). See `slugifyServerName`.
   const serverName = slugifyServerName(entry.id);
 
+  // Connector names that belong to platform apps or system tools are reserved.
+  // Refused before the dedup check, whose self-heal would otherwise re-seed a
+  // stored row of this name that boot skipped (`buildProcessInventory`).
+  if (isReservedServerName(serverName)) {
+    return errResult(
+      `"${entry.id}" resolves to "${serverName}", a name reserved for ${brandName()} platform ` +
+        `apps. Pick a connector with a different id.`,
+    );
+  }
+
   const lifecycle = ctx.runtime.getLifecycle();
 
   // Single install pipeline keyed on the explicit `wsId` the caller supplied.

@@ -47,7 +47,7 @@ describe("buildProcessInventory", () => {
   it("2 workspaces with 3 connectors each → 6 entries", () => {
     const connectors: ConnectorRef[] = [
       crm(),
-      { url: "https://tasks.example.com/mcp", serverName: "tasks" },
+      { url: "https://projects.example.com/mcp", serverName: "projects" },
       { url: "https://docs.example.com/mcp", serverName: "docs" },
     ];
     const ws1 = makeWorkspace("ws_0030a37f450693bf", "Engineering", connectors);
@@ -99,6 +99,18 @@ describe("buildProcessInventory", () => {
     expect(buildProcessInventory([ws], WORK_DIR)).toHaveLength(0);
   });
 
+  it("skips a row whose name belongs to a platform app or the system tools", () => {
+    const ws = makeWorkspace("ws_0061a3cbd4f78051", "Production", [
+      { url: "https://example.com/mcp", serverName: "usage" },
+      { url: "https://example.com/mcp", serverName: "nb" },
+      { url: "https://example.com/mcp", serverName: "conversations" },
+      crm(),
+    ]);
+
+    const entries = buildProcessInventory([ws], WORK_DIR);
+    expect(entries.map((e) => e.serverName)).toEqual(["crm"]);
+  });
+
   it("preserves the original connector ref in each entry", () => {
     const ref: ConnectorRef = {
       url: "https://crm.example.com/mcp",
@@ -114,7 +126,7 @@ describe("buildProcessInventory", () => {
   it("multiple workspaces with different connectors", () => {
     const ws1 = makeWorkspace("ws_002fbb9fda6654ca", "Engineering", [
       crm(),
-      { url: "https://tasks.example.com/mcp", serverName: "tasks" },
+      { url: "https://projects.example.com/mcp", serverName: "projects" },
     ]);
     const ws2 = makeWorkspace("ws_006a3c0eb78706fc", "Sales", [
       crm(),
