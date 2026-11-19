@@ -1,5 +1,10 @@
 import { useState } from "react";
-import { initiateComposioIdentityConnect, initiateIdentityConnect } from "../../api/client";
+import type { Plugin } from "../../_generated/platform-schemas/plugins";
+import {
+  initiateComposioIdentityConnect,
+  initiateIdentityConnect,
+  type PersonalConnector,
+} from "../../api/client";
 import { ToolPermissionsTable } from "./ToolPermissionsTable";
 
 /**
@@ -12,18 +17,52 @@ import { ToolPermissionsTable } from "./ToolPermissionsTable";
  * The authorization URL to send the browser to for a personal connector's
  * Connect, or null when it connected without an interactive flow. The route
  * depends on the auth: composio keys on the catalog connector id, DCR on the
- * serverName.
+ * serverName. `returnTo` is the shell path the sign-in comes back to; without
+ * it, Profile → Connectors.
  */
-export async function personalConnectUrl(target: {
-  auth: "dcr" | "composio";
-  serverName: string;
-  connectorId?: string;
-}): Promise<string | null> {
+export async function personalConnectUrl(
+  target: {
+    auth: "dcr" | "composio";
+    serverName: string;
+    connectorId?: string;
+  },
+  returnTo?: string,
+): Promise<string | null> {
   const { authorizationUrl } =
     target.auth === "composio" && target.connectorId
-      ? await initiateComposioIdentityConnect(target.connectorId)
-      : await initiateIdentityConnect(target.serverName);
+      ? await initiateComposioIdentityConnect(target.connectorId, returnTo)
+      : await initiateIdentityConnect(target.serverName, returnTo);
   return authorizationUrl ?? null;
+}
+
+/**
+ * Start the sign-in for each of a person's plugin's servers that is not
+ * connected, returning to `returnTo` (a path in this shell) when it finishes.
+ *
+ * The route follows each connector's record (`connectors`, from
+ * `listPersonalConnectors`): the caller has it loaded before calling, so the
+ * route is never guessed. The first server that needs the browser sends it
+ * there (`go`) and answers `redirected`; when every one connected without an
+ * interactive flow, it answers `connected`. A plugin's servers are signed in
+ * one at a time, since the browser can follow one sign-in.
+ */
+export async function startPluginSignIn(
+  plugin: Plugin,
+  connectors: readonly PersonalConnector[],
+  returnTo: string,
+  go: (url: string) => void = (url) => window.location.assign(url),
+): Promise<"redirected" | "connected"> {
+  for (const server of plugin.servers) {
+    if (server.status === "ready") continue;
+    const connector = connectors.find((c) => c.serverName === server.serverName);
+    if (!connector) throw new Error(`${plugin.displayName} is not one of your connectors.`);
+    const url = await personalConnectUrl(connector, returnTo);
+    if (url) {
+      go(url);
+      return "redirected";
+    }
+  }
+  return "connected";
 }
 
 /** What Disconnect does, for its confirm: it also ends every grant. */

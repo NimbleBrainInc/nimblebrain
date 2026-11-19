@@ -36,6 +36,8 @@ import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
 interface PendingConnectFlow {
   owner: ConnectorOwner;
   connectorId: string;
+  /** The shell page a personal sign-in returns to, already validated same-origin. */
+  returnPath?: string;
   timeout: ReturnType<typeof setTimeout>;
 }
 
@@ -49,13 +51,18 @@ const flows = new Map<string, PendingConnectFlow>();
  */
 export const DEFAULT_CONNECT_FLOW_TTL_MS = 15 * 60 * 1000;
 
-/** Record a pending connect flow keyed by `nonce`. Overwrites (and reclaims) any prior record for the same nonce. */
+/**
+ * Record a pending connect flow keyed by `nonce`. Overwrites (and reclaims) any
+ * prior record for the same nonce. `returnPath` is the page the callback returns
+ * the browser to; the initiate checks it is on the web origin before it lands here.
+ */
 export function registerConnectFlow(
   nonce: string,
   owner: ConnectorOwner,
   connectorId: string,
-  ttlMs: number = DEFAULT_CONNECT_FLOW_TTL_MS,
+  opts: { ttlMs?: number; returnPath?: string } = {},
 ): void {
+  const ttlMs = opts.ttlMs ?? DEFAULT_CONNECT_FLOW_TTL_MS;
   // A fresh 256-bit nonce never collides in practice; clearing a pre-existing
   // record's timer is pure hygiene so a double-register can't leak a timer.
   const prev = flows.get(nonce);
@@ -70,22 +77,31 @@ export function registerConnectFlow(
   // alive; a no-op in the long-running HTTP server.
   timeout.unref?.();
 
-  flows.set(nonce, { owner, connectorId, timeout });
+  flows.set(nonce, {
+    owner,
+    connectorId,
+    timeout,
+    ...(opts.returnPath ? { returnPath: opts.returnPath } : {}),
+  });
 }
 
 /**
- * Consume the pending flow for `nonce`: return its trusted `owner` +
- * `connectorId` and remove the record (one-shot). Returns null when no record
+ * Consume the pending flow for `nonce`: return its trusted `owner`,
+ * `connectorId` and return page, and remove the record (one-shot). Returns null when no record
  * exists — the callback treats that as an unknown/expired flow and rejects.
  */
 export function consumeConnectFlow(
   nonce: string,
-): { owner: ConnectorOwner; connectorId: string } | null {
+): { owner: ConnectorOwner; connectorId: string; returnPath?: string } | null {
   const flow = flows.get(nonce);
   if (!flow) return null;
   flows.delete(nonce);
   clearTimeout(flow.timeout);
-  return { owner: flow.owner, connectorId: flow.connectorId };
+  return {
+    owner: flow.owner,
+    connectorId: flow.connectorId,
+    ...(flow.returnPath ? { returnPath: flow.returnPath } : {}),
+  };
 }
 
 /** For tests: drop all pending flows. */

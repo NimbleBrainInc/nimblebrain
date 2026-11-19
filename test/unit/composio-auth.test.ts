@@ -88,6 +88,7 @@ import type { EventSink } from "../../src/engine/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { FIRST_PARTY_GRANT, type IdentityProvider } from "../../src/identity/provider.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { webOrigin } from "../../src/oauth/public-origin.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import type { ToolSource } from "../../src/tools/types.ts";
 import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
@@ -1162,6 +1163,98 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
       });
       expect(res.status).toBe(404);
       expect((await readJson<ApiErrorBody>(res)).error).toBe("connector_not_found");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  // A personal sign-in returns to the page that started it (Plugins, a plugin's
+  // page, a conversation). The initiate checks the path is on the web origin and
+  // keeps it in the server-side flow record; the callback reads it from there,
+  // never from the query.
+  async function initiateWithReturn(returnTo: unknown): Promise<{
+    app: Hono<AppEnv>;
+    nonce: string;
+    dir: string;
+  }> {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
+    let linkArgs: unknown[] = [];
+    sdkCalls.linkImpl = async (...args: unknown[]) => {
+      linkArgs = args;
+      return { redirectUrl: "https://connect.composio.dev/link/lk_identity", id: "ca_identity" };
+    };
+    const dir = mkdtempSync(join(tmpdir(), "nb-identity-return-"));
+    const { app } = await makeIdentityApp(composioEntry("com.google/gmail"), dir);
+    const res = await app.request("http://nb.test/v1/composio-auth/initiate-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connectorId: "com.google/gmail", returnTo }),
+    });
+    expect(res.status).toBe(200);
+    const cbUrl = new URL((linkArgs[2] as { callbackUrl: string }).callbackUrl);
+    // The return page never rides in the vendor's callback URL.
+    expect(cbUrl.search).not.toContain("plugins");
+    return { app, nonce: cbUrl.searchParams.get("n") ?? "", dir };
+  }
+
+  async function callbackLocation(app: Hono<AppEnv>, nonce: string): Promise<string> {
+    const res = await app.request(
+      `http://nb.test/v1/composio-auth/callback?n=${nonce}&connected_account_id=ca_user&status=ACTIVE`,
+      { headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` } },
+    );
+    expect(res.status).toBe(302);
+    return res.headers.get("Location") ?? "";
+  }
+
+  test("the callback returns to the same-origin page the initiate named", async () => {
+    const { app, nonce, dir } = await initiateWithReturn(
+      "/w/0065ab540586462e/plugins?tab=installed",
+    );
+    try {
+      expect(await callbackLocation(app, nonce)).toBe(
+        `${webOrigin()}/w/0065ab540586462e/plugins?tab=installed`,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  for (const returnTo of [
+    "https://evil.test/w/x",
+    "//evil.test/w/x",
+    "/\\evil.test/w/x",
+    "javascript:alert(1)",
+    "w/relative",
+    "/w/x\nSet-Cookie: a=b",
+    42,
+  ]) {
+    test(`a return target that is not a same-origin path is refused: ${JSON.stringify(returnTo)}`, async () => {
+      const { app, nonce, dir } = await initiateWithReturn(returnTo);
+      try {
+        expect(await callbackLocation(app, nonce)).toBe(
+          `${webOrigin()}/profile/connectors?connected=com-google-gmail`,
+        );
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test("an adopted account sends the browser to the page the initiate named", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
+    sdkCalls.listImpl = async () => ({ items: [{ id: "ca_user_active", status: "ACTIVE" }] });
+    const dir = mkdtempSync(join(tmpdir(), "nb-adopt-return-"));
+    try {
+      const { app } = await makeIdentityApp(composioEntry("com.google/gmail"), dir);
+      const res = await app.request("http://nb.test/v1/composio-auth/initiate-identity", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connectorId: "com.google/gmail", returnTo: "/w/abc?chat=conv_1" }),
+      });
+      const body = await readJson<ComposioInitiateResponse>(res);
+      expect(body.alreadyConnected).toBe(true);
+      expect(body.authorizationUrl).toBe(`${webOrigin()}/w/abc?chat=conv_1`);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

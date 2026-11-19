@@ -46,6 +46,8 @@ interface PendingFlow {
   serverName: string;
   timeout: ReturnType<typeof setTimeout>;
   scopeFallback?: ScopeFallback;
+  /** The shell page a personal sign-in returns to, already validated same-origin. */
+  returnPath?: string;
 }
 
 /**
@@ -190,13 +192,34 @@ export function peekFlowOwner(state: string): FlowOwner | null {
 }
 
 /**
- * Read the owner and server name of a pending flow, without resolving it. The
- * callback peeks both before `resolveWithCode` deletes the flow: the owner picks
- * the page to return to, and the server name tells that page what connected.
+ * Read the owner, server name and return page of a pending flow, without
+ * resolving it. The callback peeks them before `resolveWithCode` deletes the
+ * flow: the owner and return page pick the page to land on, and the server name
+ * tells that page what connected.
  */
-export function peekFlow(state: string): { owner: FlowOwner; serverName: string } | null {
+export function peekFlow(
+  state: string,
+): { owner: FlowOwner; serverName: string; returnPath?: string } | null {
   const flow = flows.get(state);
-  return flow ? { owner: flow.owner, serverName: flow.serverName } : null;
+  if (!flow) return null;
+  return {
+    owner: flow.owner,
+    serverName: flow.serverName,
+    ...(flow.returnPath ? { returnPath: flow.returnPath } : {}),
+  };
+}
+
+/**
+ * Record the shell page a pending flow's callback returns the browser to. The
+ * authenticated initiate sets it once the flow is registered, from a path it has
+ * already checked is on the web origin, so the callback never reads it from the
+ * query. Returns false when no flow is pending under `state`.
+ */
+export function setFlowReturnPath(state: string, returnPath: string): boolean {
+  const flow = flows.get(state);
+  if (!flow) return false;
+  flow.returnPath = returnPath;
+  return true;
 }
 
 /**

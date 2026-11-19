@@ -15,6 +15,7 @@ import type { ConnectorInstance } from "../../../src/connectors/runtime/types.ts
 import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
 import { FIRST_PARTY_GRANT, type IdentityProvider } from "../../../src/identity/provider.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { webOrigin } from "../../../src/oauth/public-origin.ts";
 import { log } from "../../../src/observability/log.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import {
@@ -1064,6 +1065,90 @@ describe("GET /v1/mcp-auth/callback — owner-aware redirect", () => {
     // Never a workspace-scoped page for a personal connector.
     expect(location).not.toContain("/w/");
     await expect(flowPromise).resolves.toEqual({ code: "code-1" });
+  });
+});
+
+describe("a personal sign-in returns to the page that started it", () => {
+  let workDir: string;
+  let app: Hono<AppEnv>;
+  let lifecycle: StubLifecycle;
+
+  beforeEach(async () => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-mcp-auth-return-"));
+    lifecycle = makeStubLifecycle();
+    app = makeApp(lifecycle, false, workDir);
+    await new IdentityConnectorStore({ workDir }).add(USER_ID, {
+      url: "https://granola.test/mcp",
+      serverName: "granola",
+      ui: null,
+    });
+  });
+
+  afterEach(() => {
+    _clearAll();
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  /** Initiate with `returnTo`, then answer the callback; returns where it sends the browser. */
+  async function signInReturningTo(returnTo: unknown): Promise<string> {
+    const state = `return-state-${randomBytes(4).toString("hex")}`;
+    // The real lifecycle registers the user-owned flow as it builds the URL.
+    registerFlow(state, { kind: "user", userId: USER_ID }, "granola").catch(() => {});
+    lifecycle.identityAuthUrls.set(
+      `granola|${USER_ID}`,
+      `https://granola.test/authorize?state=${state}&client_id=cid`,
+    );
+    const initiated = await app.request("http://localhost/v1/mcp-auth/initiate-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "granola", returnTo }),
+    });
+    expect(initiated.status).toBe(200);
+    // The return page never rides in the authorization URL.
+    const { authorizationUrl } = await readJson<OAuthInitiateResponse>(initiated);
+    expect(authorizationUrl).not.toContain("plugins");
+
+    const res = await app.request(
+      `http://localhost/v1/mcp-auth/callback?code=code-1&state=${state}`,
+      { headers: { cookie: `nb_oauth_state=${sha256Hex(state)}` } },
+    );
+    expect(res.status).toBe(302);
+    return res.headers.get("Location") ?? "";
+  }
+
+  test("the callback returns to the same-origin page the initiate named", async () => {
+    expect(await signInReturningTo("/w/0076759dbbe19fcc/plugins/person%3Agranola")).toBe(
+      `${webOrigin()}/w/0076759dbbe19fcc/plugins/person%3Agranola`,
+    );
+    expect(await signInReturningTo("/w/0076759dbbe19fcc?chat=conv_1")).toBe(
+      `${webOrigin()}/w/0076759dbbe19fcc?chat=conv_1`,
+    );
+  });
+
+  for (const returnTo of [
+    "https://evil.test/w/x",
+    "//evil.test/w/x",
+    "/\\evil.test/w/x",
+    "javascript:alert(1)",
+    "w/relative",
+    "/w/x\r\nLocation: https://evil.test",
+    { path: "/w/x" },
+  ]) {
+    test(`a return target that is not a same-origin path is refused: ${JSON.stringify(returnTo)}`, async () => {
+      expect(await signInReturningTo(returnTo)).toBe(
+        `${webOrigin()}/profile/connectors?connected=granola`,
+      );
+    });
+  }
+
+  test("a workspace flow ignores a return page", async () => {
+    const state = "workspace-return-state";
+    registerFlow(state, WS_OWNER, "crm").catch(() => {});
+    const res = await app.request(
+      `http://localhost/v1/mcp-auth/callback?code=code-1&state=${state}`,
+      { headers: { cookie: `nb_oauth_state=${sha256Hex(state)}` } },
+    );
+    expect(res.headers.get("Location") ?? "").toContain("/settings/connectors?connected=crm");
   });
 });
 

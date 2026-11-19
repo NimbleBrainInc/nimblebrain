@@ -576,16 +576,20 @@ export async function initiateMcpOAuth(
 /**
  * Begin the interactive OAuth flow to connect a PERSONAL connector on the
  * caller's identity. Returns the authorization URL to send the browser to; the
- * callback lands back on `/profile/connectors`. The identity-plane sibling of
- * `initiateMcpOAuth` (no workspace / principal).
+ * callback lands back on `returnTo` (a path in this shell, which the server
+ * checks is same-origin), else on `/profile/connectors`. The identity-plane
+ * sibling of `initiateMcpOAuth` (no workspace / principal).
  */
-export async function initiateIdentityConnect(serverName: string): Promise<OAuthInitiateResponse> {
+export async function initiateIdentityConnect(
+  serverName: string,
+  returnTo?: string,
+): Promise<OAuthInitiateResponse> {
   // `authorizationUrl` is null when the connector connected without an interactive
   // flow (already authenticated) — caller must not redirect.
   return request<OAuthInitiateResponse>("/v1/mcp-auth/initiate-identity", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverName }),
+    body: JSON.stringify(returnTo ? { serverName, returnTo } : { serverName }),
   });
 }
 
@@ -593,16 +597,18 @@ export async function initiateIdentityConnect(serverName: string): Promise<OAuth
  * Begin the Composio Connect flow for a PERSONAL connector on the caller's
  * identity. The composio sibling of {@link initiateIdentityConnect}: keyed on the
  * catalog connector id (Composio auth is per-toolkit), no workspace. The callback
- * lands back on `/profile/connectors`. `alreadyConnected` is returned when an
- * existing active Composio account was adopted without a second OAuth round-trip.
+ * lands back on `returnTo` when given, else on `/profile/connectors`.
+ * `alreadyConnected` is returned when an existing active Composio account was
+ * adopted without a second OAuth round-trip; the URL is then that same page.
  */
 export async function initiateComposioIdentityConnect(
   connectorId: string,
+  returnTo?: string,
 ): Promise<ComposioInitiateResponse> {
   return request<ComposioInitiateResponse>("/v1/composio-auth/initiate-identity", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ connectorId }),
+    body: JSON.stringify(returnTo ? { connectorId, returnTo } : { connectorId }),
   });
 }
 

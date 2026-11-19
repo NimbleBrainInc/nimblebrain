@@ -1,10 +1,17 @@
 import { User } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Plugin, PluginsListOutput } from "../_generated/platform-schemas/plugins";
-import { grantConnector, listPlugins, revokeConnector } from "../api/client";
+import {
+  grantConnector,
+  listPersonalConnectors,
+  listPlugins,
+  type PersonalConnector,
+  revokeConnector,
+} from "../api/client";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { connectorStatusSummary } from "../components/connectors/ConnectorList";
+import { startPluginSignIn } from "../components/connectors/personal-connector";
 import { SkillsGroup } from "../components/plugins/SkillsGroup";
 import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
 import { Badge } from "../components/ui/badge";
@@ -12,7 +19,14 @@ import { Button } from "../components/ui/button";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useEvents } from "../hooks/useEvents";
 import { useCanWriteActiveWorkspace } from "../hooks/useScopedRole";
-import { accountLine, newSkillPath, pluginPath } from "../lib/plugins";
+import {
+  accountLine,
+  newSkillPath,
+  pluginConnected,
+  pluginNextStep,
+  pluginPath,
+  shellPath,
+} from "../lib/plugins";
 import { cn } from "../lib/utils";
 import { toWsId } from "../lib/workspace-slug";
 import { ConnectorDirectory } from "./settings/ConnectorBrowsePage";
@@ -22,8 +36,11 @@ import { EmptyState, InlineError } from "./settings/components";
  * Plugins — what the agent can do in this workspace, in one place.
  *
  * Installed lists the workspace's plugins and the viewer's own ones granted
- * here, then the viewer's plugins not used here, each with the one action that
- * changes that, then the skills people wrote (`SkillsGroup`). Browse offers
+ * here, then the viewer's plugins not used here, then the skills people wrote
+ * (`SkillsGroup`). Each of the viewer's own plugins offers its next step
+ * (`pluginNextStep`): Use here, which signs in too when it is not connected;
+ * Connect, for one on here but not signed in; or nothing, once it is in use.
+ * A sign-in returns to this page. Browse offers
  * writing a skill above the connector directory, which asks whom an install
  * is for: the viewer alone (granted here in the same act) or everyone in the
  * workspace. Each row shows a plugin by the facts the listing carries (whose it
@@ -167,6 +184,7 @@ function InstalledPlugins({
   onBrowse: () => void;
 }) {
   const { workspaces } = useWorkspaceContext();
+  const location = useLocation();
   // Installing writes the workspace; granting your own plugin does not, so
   // only the install affordance is gated.
   const canInstall = useCanWriteActiveWorkspace();
@@ -176,6 +194,9 @@ function InstalledPlugins({
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<Plugin | null>(null);
+  // The viewer's connector records, which say which route each sign-in takes.
+  // An action that signs in waits for them rather than guess the route.
+  const [connectors, setConnectors] = useState<PersonalConnector[] | null>(null);
 
   const refresh = useCallback(
     async (signal?: { cancelled: boolean }) => {
@@ -200,6 +221,20 @@ function InstalledPlugins({
     };
   }, [refresh]);
 
+  useEffect(() => {
+    let cancelled = false;
+    listPersonalConnectors()
+      .then(({ connectors: mine }) => {
+        if (!cancelled) setConnectors(mine);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setActionError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // A sign-in finishing elsewhere changes a row's status and account.
   useEvents({ onConnectionStateChanged: () => void refresh() });
 
@@ -208,10 +243,31 @@ function InstalledPlugins({
     [listing, wsId],
   );
 
+  // Turn it on here, then sign in when it has no account behind it. The grant
+  // needs only the install, so it stands across the sign-in's round trip. The
+  // redirect leaves the page, so the dialog stays as it is until it does.
   const grantHere = async (plugin: Plugin) => {
     for (const server of plugin.servers) await grantConnector(server.serverName, wsId);
+    if (!pluginConnected(plugin)) {
+      const signedIn = await startPluginSignIn(plugin, connectors ?? [], shellPath(location));
+      if (signedIn === "redirected") return;
+    }
     await refresh();
     setConfirming(null);
+  };
+
+  const connectHere = async (plugin: Plugin) => {
+    setActionError(null);
+    setBusyId(plugin.id);
+    try {
+      const signedIn = await startPluginSignIn(plugin, connectors ?? [], shellPath(location));
+      // The redirect leaves the page, so the row stays busy until it does.
+      if (signedIn === "redirected") return;
+      await refresh();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
+    setBusyId(null);
   };
 
   const revokeHere = async (plugin: Plugin) => {
@@ -263,15 +319,35 @@ function InstalledPlugins({
                 plugin={plugin}
                 to={pluginPath(slug, plugin)}
                 action={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={busyId === plugin.id}
-                    onClick={() => void revokeHere(plugin)}
-                  >
-                    {busyId === plugin.id ? "Stopping…" : "Stop using here"}
-                  </Button>
+                  <div className="flex items-center gap-1.5">
+                    {pluginNextStep(plugin) === "connect" ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={busyId === plugin.id || connectors === null}
+                        onClick={() => void connectHere(plugin)}
+                        data-testid="plugin-connect"
+                      >
+                        {busyId === plugin.id ? "Connecting…" : "Connect"}
+                      </Button>
+                    ) : (
+                      <span
+                        className="px-2 text-xs text-muted-foreground"
+                        data-testid="plugin-in-use"
+                      >
+                        In use here
+                      </span>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={busyId === plugin.id}
+                      onClick={() => void revokeHere(plugin)}
+                    >
+                      Stop using here
+                    </Button>
+                  </div>
                 }
               />
             )}
@@ -293,12 +369,15 @@ function InstalledPlugins({
             action={
               <Button
                 type="button"
-                variant="outline"
                 size="sm"
+                // Use here signs in when it is not connected, which needs the
+                // connector's record to pick the route.
+                disabled={!pluginConnected(plugin) && connectors === null}
                 onClick={() => {
                   setActionError(null);
                   setConfirming(plugin);
                 }}
+                data-testid="plugin-use-here"
               >
                 Use here
               </Button>

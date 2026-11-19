@@ -18,13 +18,18 @@ import {
   peekFlow,
   refuseFlow,
   resolveWithCode,
+  setFlowReturnPath,
   takeScopeFallback,
 } from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspace.ts";
 import type { OAuthInitiateResponse } from "../schemas/responses.ts";
 import { type AppContext, type AppEnv, apiError, json } from "../types.ts";
-import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
+import {
+  personalReturnUrl,
+  sameOriginReturnPath,
+  workspaceConnectorsUrl,
+} from "./connectors-redirect.ts";
 import { reinitiateParagraph } from "./oauth-error-page.ts";
 
 /**
@@ -138,11 +143,13 @@ export function mcpAuthRoutes(ctx: AppContext) {
   // the caller's own identity (the "Connect" click from the profile). No
   // workspace — the connector is resolved from the caller's `connectors.json`
   // and its OAuth binds `{type:"user"}`. Same cookie-bound state + callback as
-  // the workspace flow; the callback lands the user on `/profile/connectors`
+  // the workspace flow; the callback lands the user on the page that started
+  // the sign-in (`returnTo`, a same-origin path), else on `/profile/connectors`
   // (the flow's owner is `{kind:"user"}`).
   app.post("/v1/mcp-auth/initiate-identity", requireAuth(ctx.authOptions), async (c) => {
-    const serverName = await parseServerName(c);
-    if (serverName instanceof Response) return serverName;
+    const parsed = await parseInitiateBody(c);
+    if (parsed instanceof Response) return parsed;
+    const { serverName, returnTo } = parsed;
 
     const userId = ctx.runtime.resolveRequestUserId(c.var.identity);
 
@@ -170,6 +177,10 @@ export function mcpAuthRoutes(ctx: AppContext) {
     const prepared = prepareAuthorization(started, serverName, `user:${userId}`);
     if (prepared instanceof Response) return prepared;
     const { authorizationUrl, state } = prepared;
+    // The flow is registered by the time its URL exists; the callback reads the
+    // page to return to from it, never from the query.
+    const returnPath = sameOriginReturnPath(returnTo);
+    if (returnPath) setFlowReturnPath(state, returnPath);
 
     return json<OAuthInitiateResponse>({ authorizationUrl }, 200, {
       "Set-Cookie": buildOAuthStateCookie(sha256Hex(state), 900, ctx.secureCookies),
@@ -236,7 +247,19 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
 /** Parse the initiate body and validate `serverName` is a non-empty string, else an error Response. */
 async function parseServerName(c: Context<AppEnv>): Promise<string | Response> {
-  let body: { serverName?: unknown };
+  const parsed = await parseInitiateBody(c);
+  return parsed instanceof Response ? parsed : parsed.serverName;
+}
+
+/**
+ * Parse an initiate body: `serverName` (required) and `returnTo`, the raw page
+ * the caller asks to return to, which {@link sameOriginReturnPath} checks
+ * before anything reads it.
+ */
+async function parseInitiateBody(
+  c: Context<AppEnv>,
+): Promise<{ serverName: string; returnTo: unknown } | Response> {
+  let body: { serverName?: unknown; returnTo?: unknown };
   try {
     body = await c.req.json();
   } catch {
@@ -246,7 +269,7 @@ async function parseServerName(c: Context<AppEnv>): Promise<string | Response> {
   if (!serverName) {
     return apiError(400, "bad_request", "serverName is required.");
   }
-  return serverName;
+  return { serverName, returnTo: body.returnTo };
 }
 
 /**
@@ -643,7 +666,7 @@ function verifyStateCookie(c: Context<AppEnv>, state: string): CallbackFailure |
  */
 function redirectHome(
   c: Context<AppEnv>,
-  flow: { owner: FlowOwner; serverName: string } | null,
+  flow: { owner: FlowOwner; serverName: string; returnPath?: string } | null,
   secureCookies: boolean,
 ): Response {
   // Clear the one-shot state cookie so the callback URL can't be replayed.
@@ -651,13 +674,14 @@ function redirectHome(
 
   // The user left this tab for the provider, so bring them home: a workspace
   // connector lands on that workspace's Connectors page, a personal
-  // (identity-owned) connector on the profile page. `flow` is non-null here
+  // (identity-owned) connector on the page that started its sign-in, else on
+  // the profile page. `flow` is non-null here
   // (resolveWithCode succeeded just above, so the flow existed when we peeked
   // it); the fallback is defensive.
   const owner = flow?.owner;
   const returnUrl =
     owner?.kind === "user"
-      ? profileConnectorsUrl(flow?.serverName)
+      ? personalReturnUrl(flow?.returnPath, flow?.serverName)
       : workspaceConnectorsUrl(owner?.wsId ?? "", flow?.serverName);
   return c.redirect(returnUrl, 302);
 }

@@ -45,3 +45,34 @@ export function skillPath(slug: string, scope: AuthoredSkillScope, name: string)
 export function newSkillPath(slug: string): string {
   return `/w/${slug}/plugins/skills/new`;
 }
+
+/** Whether every server of the plugin is signed in and running. */
+export function pluginConnected(plugin: Plugin): boolean {
+  return plugin.servers.every((s) => s.status === "ready");
+}
+
+/**
+ * The one thing a person's plugin asks of its owner in a workspace, which its
+ * primary action does:
+ *
+ * - `use_here`: not on here. Use here turns it on, then signs in when it is not
+ *   connected (`pluginConnected`), so it never lands on with no account behind it.
+ * - `connect`: on here, not signed in. Connect signs in.
+ * - `in_use`: on here and signed in. Nothing to do; Stop using here stays secondary.
+ */
+export type PluginNextStep = "use_here" | "connect" | "in_use";
+
+export function pluginNextStep(plugin: Plugin): PluginNextStep {
+  if (!plugin.granted) return "use_here";
+  return pluginConnected(plugin) ? "in_use" : "connect";
+}
+
+/**
+ * A shell location as the same-origin path a sign-in returns to. Pages pass
+ * the router's `useLocation()`; outside a route, `window.location`.
+ */
+export function shellPath(
+  location: { pathname: string; search: string } = window.location,
+): string {
+  return `${location.pathname}${location.search}`;
+}

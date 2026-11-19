@@ -8,6 +8,8 @@ import type { PluginRequestAnswer } from "../_generated/platform-schemas/plugins
  * renders read-only.
  */
 export interface ChatAnswer {
+  /** The conversation the card is in, which a sign-in it starts returns to. */
+  conversationId: string | undefined;
   workspaceId: string | undefined;
   workspaceName: string | undefined;
   /** False while a turn is running: an answer waits for the agent to stop. */

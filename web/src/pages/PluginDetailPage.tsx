@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { Plugin, PluginServer } from "../_generated/platform-schemas/plugins";
 import {
   disconnectPersonalConnector,
@@ -20,6 +20,7 @@ import {
   PanelHeading,
   PersonalToolPermissionsSection,
   personalConnectUrl,
+  startPluginSignIn,
 } from "../components/connectors/personal-connector";
 import { ToolPermissionsTable } from "../components/connectors/ToolPermissionsTable";
 import { UninstallConnectorDialog } from "../components/connectors/UninstallConnectorDialog";
@@ -30,7 +31,7 @@ import { ConfirmDialog } from "../components/ui/confirm-dialog";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useEvents } from "../hooks/useEvents";
 import { useCanWriteActiveWorkspace } from "../hooks/useScopedRole";
-import { ownerLine, pluginAccount, pluginPath } from "../lib/plugins";
+import { ownerLine, pluginAccount, pluginConnected, pluginPath, shellPath } from "../lib/plugins";
 import { cn } from "../lib/utils";
 import { toSlug, toWsId } from "../lib/workspace-slug";
 import { ConnectorSkillsSection } from "./settings/ConnectorSkillsSection";
@@ -46,7 +47,8 @@ import { InlineError } from "./settings/components";
  *   it (`canManage`, the server's write rule).
  * - **A person's plugin** shows the account it signs in as, Connect or
  *   Disconnect, the owner's own tool permissions, whether it is used here, and
- *   every workspace it is used in, each revocable.
+ *   every workspace it is used in, each revocable. Use here signs in too when
+ *   it is not connected, and every sign-in returns to this page.
  *
  * The ref is the listing's `id`, URL-encoded (`pluginPath`); the page finds the
  * plugin by comparing ids and never reads one's parts. A plugin has one server
@@ -318,6 +320,7 @@ function PersonalPlugin({
   onChanged: () => void;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { workspaces } = useWorkspaceContext();
   const [connectors, setConnectors] = useState<PersonalConnector[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -351,6 +354,7 @@ function PersonalPlugin({
   ];
   const workspaceName = workspaces.find((w) => w.id === wsId)?.name ?? "this workspace";
   const name = plugin.displayName;
+  const connected = pluginConnected(plugin);
 
   const setGrant = async (targetWsId: string, grant: boolean) => {
     for (const server of serverNames) {
@@ -381,11 +385,14 @@ function PersonalPlugin({
     setError(null);
     setBusy(`connect:${connector.serverName}`);
     try {
-      const url = await personalConnectUrl({
-        auth: connector.auth,
-        serverName: connector.serverName,
-        connectorId: connector.connectorId,
-      });
+      const url = await personalConnectUrl(
+        {
+          auth: connector.auth,
+          serverName: connector.serverName,
+          connectorId: connector.connectorId,
+        },
+        shellPath(location),
+      );
       // The redirect leaves the page, so the button stays busy until it does.
       if (url) {
         window.location.assign(url);
@@ -436,7 +443,6 @@ function PersonalPlugin({
                 </div>
                 <Button
                   type="button"
-                  variant="outline"
                   size="sm"
                   className="shrink-0"
                   disabled={!connector || busy === `connect:${server.serverName}`}
@@ -456,28 +462,37 @@ function PersonalPlugin({
           <PanelHeading
             title="In this workspace"
             hint={
-              plugin.granted
-                ? "On here. Only you can use it; other members can't."
-                : `Your agent can't use ${name} in ${workspaceName} until you turn it on.`
+              !plugin.granted
+                ? `Your agent can't use ${name} in ${workspaceName} until you turn it on.`
+                : connected
+                  ? "On here. Only you can use it; other members can't."
+                  : `On here. Connect to sign in to ${name} so your agent can use it.`
             }
           />
           {plugin.granted ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="shrink-0"
-              disabled={busy === wsId}
-              onClick={() => void revoke(wsId)}
-            >
-              {busy === wsId ? "Stopping…" : "Stop using here"}
-            </Button>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {connected && (
+                <span className="px-2 text-xs text-muted-foreground" data-testid="plugin-in-use">
+                  In use here
+                </span>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={busy === wsId}
+                onClick={() => void revoke(wsId)}
+              >
+                {busy === wsId ? "Stopping…" : "Stop using here"}
+              </Button>
+            </div>
           ) : (
             <Button
               type="button"
-              variant="outline"
               size="sm"
               className="shrink-0"
+              // Signing in follows the connector's record, so wait for it.
+              disabled={!connected && connectors === null}
               onClick={() => {
                 setError(null);
                 setConfirmingUse(true);
@@ -557,6 +572,14 @@ function PersonalPlugin({
         onClose={() => setConfirmingUse(false)}
         onConfirm={async () => {
           await setGrant(wsId, true);
+          // On here with no account behind it: sign in next. The redirect leaves
+          // the page, so the dialog stays as it is until it does.
+          if (
+            !connected &&
+            (await startPluginSignIn(plugin, mine, shellPath(location))) === "redirected"
+          ) {
+            return;
+          }
           setConfirmingUse(false);
         }}
       />

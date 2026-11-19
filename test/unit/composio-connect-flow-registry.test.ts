@@ -47,7 +47,7 @@ describe("composio connect-flow-registry", () => {
   });
 
   it("reclaims a flow once its TTL fires — a slow return leg is then rejected", async () => {
-    registerConnectFlow("nonce-ttl", WS, "com.google/gmail", 5);
+    registerConnectFlow("nonce-ttl", WS, "com.google/gmail", { ttlMs: 5 });
     await new Promise((r) => setTimeout(r, 20));
     expect(consumeConnectFlow("nonce-ttl")).toBeNull();
   });
