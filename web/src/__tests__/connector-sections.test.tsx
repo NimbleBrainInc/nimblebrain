@@ -490,7 +490,7 @@ describe("OAuthClientSection", () => {
 
 // ConnectorConfigSection was deleted in the header-action redesign.
 // Connector credentials are now triggered from a top-right Configure
-// affordances on ConnectorDetailPage
+// affordances on the plugin page
 // directly. The modal owns its own Clear-configuration affordance,
 // so the inline section had no remaining job.
 

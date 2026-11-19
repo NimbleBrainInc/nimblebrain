@@ -67,10 +67,10 @@ import { ContextInspectorPage } from "./pages/ContextInspectorPage";
 import { GlobalHomePage } from "./pages/GlobalHomePage";
 import { NotFoundPage, WorkspaceNotFoundPage } from "./pages/NotFoundPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
+import { ConnectorPageRedirect, PluginDetailPage } from "./pages/PluginDetailPage";
 import { PluginsPage } from "./pages/PluginsPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
-import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { OrgAboutTab } from "./pages/settings/OrgAboutTab";
 import { OrgArchivesTab } from "./pages/settings/OrgArchivesTab";
@@ -441,6 +441,8 @@ function AuthenticatedAppContent({
               {/* What the agent can do here: the workspace's plugins, the
                   viewer's own, and the directory to add more. */}
               <Route path="plugins" element={<PluginsPage />} />
+              {/* One plugin: how it is configured, whose account it uses, where it is used. */}
+              <Route path="plugins/:pluginRef" element={<PluginDetailPage />} />
               {/* Workspace settings — General/Members/Connectors/Skills/MCP/Notifications/Webhooks. */}
               <Route path="settings" element={<WorkspaceSettingsPage />}>
                 <Route
@@ -451,7 +453,8 @@ function AuthenticatedAppContent({
                 <Route path="members" element={<WorkspaceMembersTab />} />
                 <Route path="connectors" element={<WorkspaceConnectorsTab />} />
                 <Route path="connectors/browse" element={<ConnectorBrowsePage />} />
-                <Route path="connectors/:serverName" element={<ConnectorDetailPage />} />
+                {/* A connector is configured on its plugin's page; this keeps old links working. */}
+                <Route path="connectors/:serverName" element={<ConnectorPageRedirect />} />
                 <Route path="skills" element={<SkillsTab />} />
                 <Route path="mcp" element={<WorkspaceMcpTab />} />
                 <Route path="notifications" element={<WorkspaceNotificationsTab />} />

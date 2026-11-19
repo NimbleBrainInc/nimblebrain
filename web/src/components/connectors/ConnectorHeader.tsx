@@ -52,12 +52,15 @@ export function ConnectorHeader({
   canManage,
   onChanged,
   onUninstall,
+  meta,
 }: {
   installed: InstalledConnector;
   canManage: boolean;
   onChanged: () => void;
   /** Opens the page's uninstall confirmation. Offered to a workspace admin only. */
   onUninstall: () => void;
+  /** What the page adds about the connector under its description (whose account it uses, its apps). */
+  meta?: ReactNode;
 }) {
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -173,6 +176,7 @@ export function ConnectorHeader({
       <IdentityRow
         installed={installed}
         name={name}
+        meta={meta}
         menu={
           <ConnectorMenu
             installed={installed}
@@ -237,10 +241,12 @@ export function ConnectorHeader({
 function IdentityRow({
   installed,
   name,
+  meta,
   menu,
 }: {
   installed: InstalledConnector;
   name: string;
+  meta?: ReactNode;
   menu: ReactNode;
 }) {
   return (
@@ -262,6 +268,7 @@ function IdentityRow({
         {installed.catalog?.description && (
           <p className="text-sm text-muted-foreground mt-1">{installed.catalog.description}</p>
         )}
+        {meta}
       </div>
       <div className="shrink-0">{menu}</div>
     </div>
