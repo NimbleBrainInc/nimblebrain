@@ -27,7 +27,9 @@ The gateway counts each run on one replica and holds it to its whole grant.
 
 - **A caller is pinned to one replica.** The gateway's service sends every
   connection from one client address to the same replica. A run executes in one
-  pod, so one replica serves and counts its calls.
+  pod, so one replica serves and counts its calls. The pin holds only for
+  callers that reach the gateway through its service's own load balancing; a
+  proxy that picks replicas itself ignores it.
 - **The limit is the grant, not a share of it.** The gateway holds the run to the
   largest of its limits at or below the grant; the replica count plays no part.
   A grant below its smallest limit, or a claim that is not a whole number, still
@@ -43,8 +45,10 @@ together, and the grant is an admission threshold.
   below it, whichever replica serves it.
 - A run can now pass its grant by more than its last call when its count is
   split: a replica that restarts or leaves mid-run takes its count with it, and
-  the run starts a new count on another; calls made for the run from a second
-  pod are counted apart. Both are bounded by one grant per split. ADR-0063's
+  the run starts a new count on another; the pin lapses once its client makes
+  no call for the service's affinity timeout, so a run idle that long can
+  resume on another replica; calls made for the run from a second pod are
+  counted apart. Each is bounded by one grant per split. ADR-0063's
   "below its terms, never above them" becomes "at its terms, above them only
   when its count is split".
 - Load spreads across the gateway's replicas by caller, not by call, so a

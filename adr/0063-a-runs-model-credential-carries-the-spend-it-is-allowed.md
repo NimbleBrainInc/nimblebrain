@@ -100,6 +100,8 @@ Measured before this was proposed for acceptance:
   grant both fell through to a one-token limit, which admits a single call; a
   credential with no grant fell through to the existing per-run ceiling. Runs
   holding the same grant kept separate counts.
+  - *Amended by ADR-0067:* conditions now compare the grant against each limit,
+    not each limit times the replica count.
 - **It checks before a call and charges after.** A call is admitted while the
   run's count is below its grant and charged the input and output tokens the
   provider reported, so a run whose calls are serial overshoots its grant by at
