@@ -18,13 +18,14 @@ import {
   peekFlow,
   refuseFlow,
   resolveWithCode,
+  setFlowReturnWorkspace,
   takeScopeFallback,
 } from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspace.ts";
 import type { OAuthInitiateResponse } from "../schemas/responses.ts";
 import { type AppContext, type AppEnv, apiError, json } from "../types.ts";
-import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
+import { connectorReturnUrl, resolveReturnWorkspace } from "./connectors-redirect.ts";
 import { reinitiateParagraph } from "./oauth-error-page.ts";
 
 /**
@@ -90,8 +91,9 @@ export function mcpAuthRoutes(ctx: AppContext) {
     requireAuth(ctx.authOptions),
     requireWorkspace(ctx),
     async (c) => {
-      const serverName = await parseServerName(c);
-      if (serverName instanceof Response) return serverName;
+      const parsed = await parseInitiateBody(c);
+      if (parsed instanceof Response) return parsed;
+      const { serverName } = parsed;
 
       const wsId = c.var.workspaceId;
       const lifecycle = ctx.runtime.getLifecycle();
@@ -138,13 +140,21 @@ export function mcpAuthRoutes(ctx: AppContext) {
   // the caller's own identity (the "Connect" click from the profile). No
   // workspace — the connector is resolved from the caller's `connectors.json`
   // and its OAuth binds `{type:"user"}`. Same cookie-bound state + callback as
-  // the workspace flow; the callback lands the user on `/profile/connectors`
-  // (the flow's owner is `{kind:"user"}`).
+  // the workspace flow. The callback lands the user on the Plugins page of
+  // `returnWorkspaceId` when the body names one (the sign-in started there),
+  // else on `/profile/connectors`.
   app.post("/v1/mcp-auth/initiate-identity", requireAuth(ctx.authOptions), async (c) => {
-    const serverName = await parseServerName(c);
-    if (serverName instanceof Response) return serverName;
+    const parsed = await parseInitiateBody(c);
+    if (parsed instanceof Response) return parsed;
+    const { serverName } = parsed;
 
     const userId = ctx.runtime.resolveRequestUserId(c.var.identity);
+    const returnWsId = await resolveReturnWorkspace(
+      ctx.workspaceStore,
+      parsed.returnWorkspaceId,
+      userId,
+    );
+    if (returnWsId instanceof Response) return returnWsId;
 
     // Not-installed is a client error (404), not a server failure — mirror the
     // workspace `/initiate`'s `getInstance`→404. `startIdentityAuthorization`
@@ -170,6 +180,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
     const prepared = prepareAuthorization(started, serverName, `user:${userId}`);
     if (prepared instanceof Response) return prepared;
     const { authorizationUrl, state } = prepared;
+    if (returnWsId) setFlowReturnWorkspace(state, returnWsId);
 
     return json<OAuthInitiateResponse>({ authorizationUrl }, 200, {
       "Set-Cookie": buildOAuthStateCookie(sha256Hex(state), 900, ctx.secureCookies),
@@ -234,9 +245,15 @@ export function mcpAuthRoutes(ctx: AppContext) {
 // validation order and every status code / error string are the same
 // as an inline implementation — these only move code, not behavior.
 
-/** Parse the initiate body and validate `serverName` is a non-empty string, else an error Response. */
-async function parseServerName(c: Context<AppEnv>): Promise<string | Response> {
-  let body: { serverName?: unknown };
+/**
+ * Parse an initiate body: `serverName` must be a non-empty string, else an error
+ * Response. `returnWorkspaceId` is passed through unread; only the personal
+ * initiate takes it (`resolveReturnWorkspace`).
+ */
+async function parseInitiateBody(
+  c: Context<AppEnv>,
+): Promise<{ serverName: string; returnWorkspaceId: unknown } | Response> {
+  let body: { serverName?: unknown; returnWorkspaceId?: unknown };
   try {
     body = await c.req.json();
   } catch {
@@ -246,7 +263,7 @@ async function parseServerName(c: Context<AppEnv>): Promise<string | Response> {
   if (!serverName) {
     return apiError(400, "bad_request", "serverName is required.");
   }
-  return serverName;
+  return { serverName, returnWorkspaceId: body.returnWorkspaceId };
 }
 
 /**
@@ -637,29 +654,26 @@ function verifyStateCookie(c: Context<AppEnv>, state: string): CallbackFailure |
 }
 
 /**
- * Clear the one-shot state cookie and send the browser back to the connectors
- * page it left, naming the connector that connected. The page confirms it; the
- * callback draws nothing, so the confirmation is in the app's own theme.
+ * Clear the one-shot state cookie and send the browser back to the Plugins page
+ * the sign-in started from, naming the connector that connected. The page
+ * confirms it; the callback draws nothing, so the confirmation is in the app's
+ * own theme.
  */
 function redirectHome(
   c: Context<AppEnv>,
-  flow: { owner: FlowOwner; serverName: string } | null,
+  flow: { owner: FlowOwner; serverName: string; returnWsId?: string } | null,
   secureCookies: boolean,
 ): Response {
   // Clear the one-shot state cookie so the callback URL can't be replayed.
   c.header("Set-Cookie", buildOAuthStateCookie("", 0, secureCookies));
 
-  // The user left this tab for the provider, so bring them home: a workspace
-  // connector lands on that workspace's Connectors page, a personal
-  // (identity-owned) connector on the profile page. `flow` is non-null here
-  // (resolveWithCode succeeded just above, so the flow existed when we peeked
-  // it); the fallback is defensive.
+  // A workspace connector returns to its own workspace; a personal one to the
+  // workspace its sign-in was started from, else the profile. `flow` is
+  // non-null here (resolveWithCode succeeded just above, so the flow existed
+  // when we peeked it).
   const owner = flow?.owner;
-  const returnUrl =
-    owner?.kind === "user"
-      ? profileConnectorsUrl(flow?.serverName)
-      : workspaceConnectorsUrl(owner?.wsId ?? "", flow?.serverName);
-  return c.redirect(returnUrl, 302);
+  const returnWsId = owner?.kind === "workspace" ? owner.wsId : flow?.returnWsId;
+  return c.redirect(connectorReturnUrl(returnWsId, flow?.serverName), 302);
 }
 
 function sha256Hex(input: string): string {

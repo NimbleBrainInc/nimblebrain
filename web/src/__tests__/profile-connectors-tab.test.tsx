@@ -469,7 +469,8 @@ describe("ProfileConnectorsTab", () => {
     );
     await click(connect);
     await flush();
-    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola");
+    // The profile names no workspace, so the sign-in returns to the profile.
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", undefined);
     expect(initiateComposioIdentityConnect).not.toHaveBeenCalled();
     expect(locationAssign).toHaveBeenCalledWith("https://vendor.test/auth");
   });
@@ -492,7 +493,7 @@ describe("ProfileConnectorsTab", () => {
     );
     await click(connect);
     await flush();
-    expect(initiateComposioIdentityConnect).toHaveBeenCalledWith("com.google/gmail");
+    expect(initiateComposioIdentityConnect).toHaveBeenCalledWith("com.google/gmail", undefined);
     expect(initiateIdentityConnect).not.toHaveBeenCalled();
     expect(locationAssign).toHaveBeenCalledWith("https://composio.test/connect");
   });
@@ -527,7 +528,8 @@ describe("ProfileConnectorsTab", () => {
     ];
     await click(connect);
     await flush();
-    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola");
+    // The profile names no workspace, so the sign-in returns to the profile.
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", undefined);
     // Did NOT redirect to a nonexistent auth page…
     expect(locationAssign).not.toHaveBeenCalled();
     // …the row is NOT stuck "Connecting…" — the busy state was cleared…

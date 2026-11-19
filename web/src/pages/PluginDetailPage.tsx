@@ -381,11 +381,14 @@ function PersonalPlugin({
     setError(null);
     setBusy(`connect:${connector.serverName}`);
     try {
-      const url = await personalConnectUrl({
-        auth: connector.auth,
-        serverName: connector.serverName,
-        connectorId: connector.connectorId,
-      });
+      const url = await personalConnectUrl(
+        {
+          auth: connector.auth,
+          serverName: connector.serverName,
+          connectorId: connector.connectorId,
+        },
+        wsId,
+      );
       // The redirect leaves the page, so the button stays busy until it does.
       if (url) {
         window.location.assign(url);

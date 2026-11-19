@@ -1,11 +1,9 @@
-import { Check } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { getInstalledConnectors, type InstalledConnector } from "../../api/client";
 import { useEvents } from "../../hooks/useEvents";
 import { EmptyState } from "../../pages/settings/components";
 import { ConnectorIcon } from "./ConnectorIcon";
-import { type ReturnedConnector, useConnectedNotice } from "./useConnectedNotice";
 
 /**
  * Lists installed connectors for the active workspace. The list is
@@ -53,16 +51,6 @@ export function ConnectorList({ configureBasePath }: { configureBasePath: string
       refresh({ silent: true });
     },
   });
-
-  // Confirm the connector an OAuth sign-in just connected (`?connected=`).
-  const rereadSilently = useCallback(() => {
-    void refresh({ silent: true });
-  }, [refresh]);
-  const returned = useMemo(
-    () => (loading ? null : installed.map(toReturnedConnector)),
-    [installed, loading],
-  );
-  const justConnected = useConnectedNotice(returned, rereadSilently);
 
   const filtered = useMemo(() => {
     // Sort alphabetically by display name first, then filter — keeps
@@ -114,7 +102,6 @@ export function ConnectorList({ configureBasePath }: { configureBasePath: string
             key={ins.serverName}
             installed={ins}
             configureBasePath={configureBasePath}
-            justConnected={ins.serverName === justConnected}
           />
         ))}
         {filtered.length === 0 && query && (
@@ -134,40 +121,23 @@ export function ConnectorList({ configureBasePath }: { configureBasePath: string
 function ConnectorRow({
   installed,
   configureBasePath,
-  justConnected,
 }: {
   installed: InstalledConnector;
   configureBasePath: string;
-  /** This page's OAuth sign-in just connected it: the row says so while the page is open. */
-  justConnected: boolean;
 }) {
   const name = installed.displayName;
   const iconUrl = installed.iconUrl;
   const summary = connectorStatusSummary(installed.status, installed.missingOAuthClient);
-  const fresh = justConnected && installed.status === "ready";
-  const rowRef = useRef<HTMLAnchorElement>(null);
-
-  // A long list may hold the new connector below the fold.
-  useEffect(() => {
-    if (fresh) rowRef.current?.scrollIntoView?.({ block: "nearest" });
-  }, [fresh]);
 
   return (
     <Link
-      ref={rowRef}
       to={`${configureBasePath}/${installed.serverName}`}
-      className={`flex items-center gap-3 px-2 py-2.5 -mx-2 rounded hover:bg-muted/50 transition-colors border-b border-border${fresh ? " bg-success/5" : ""}`}
+      className="flex items-center gap-3 px-2 py-2.5 -mx-2 rounded hover:bg-muted/50 transition-colors border-b border-border"
     >
       <ConnectorIcon name={name} iconUrl={iconUrl} className="h-7 w-7 rounded text-xs" />
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium truncate">{name}</div>
       </div>
-      {fresh && (
-        <span className="flex items-center gap-1.5 text-xs font-medium text-success">
-          <Check className="h-3.5 w-3.5" aria-hidden />
-          <span>Connected just now</span>
-        </span>
-      )}
       {summary && (
         <span className={`flex items-center gap-1.5 text-xs ${summary.tone}`}>
           {summary.dot && <span className={`h-1.5 w-1.5 rounded-full ${summary.dotColor}`} />}
@@ -235,10 +205,4 @@ export function connectorStatusSummary(
     case "failed":
       return { label: "Failed", tone: "text-destructive", dot: true, dotColor: "bg-rose-500" };
   }
-}
-
-/** A ready connector is connected; a failed one is dead; anything else is still settling. */
-function toReturnedConnector(c: InstalledConnector): ReturnedConnector {
-  const state = c.status === "ready" ? "connected" : c.status === "failed" ? "failed" : "pending";
-  return { serverName: c.serverName, displayName: c.displayName, state };
 }

@@ -36,6 +36,8 @@ import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
 interface PendingConnectFlow {
   owner: ConnectorOwner;
   connectorId: string;
+  /** The workspace a personal connect was started from, to return to. */
+  returnWsId?: string;
   timeout: ReturnType<typeof setTimeout>;
 }
 
@@ -55,6 +57,7 @@ export function registerConnectFlow(
   owner: ConnectorOwner,
   connectorId: string,
   ttlMs: number = DEFAULT_CONNECT_FLOW_TTL_MS,
+  returnWsId?: string,
 ): void {
   // A fresh 256-bit nonce never collides in practice; clearing a pre-existing
   // record's timer is pure hygiene so a double-register can't leak a timer.
@@ -70,22 +73,23 @@ export function registerConnectFlow(
   // alive; a no-op in the long-running HTTP server.
   timeout.unref?.();
 
-  flows.set(nonce, { owner, connectorId, timeout });
+  flows.set(nonce, { owner, connectorId, timeout, ...(returnWsId ? { returnWsId } : {}) });
 }
 
 /**
- * Consume the pending flow for `nonce`: return its trusted `owner` +
- * `connectorId` and remove the record (one-shot). Returns null when no record
+ * Consume the pending flow for `nonce`: return its trusted `owner`,
+ * `connectorId` and return workspace, and remove the record (one-shot). Returns null when no record
  * exists — the callback treats that as an unknown/expired flow and rejects.
  */
 export function consumeConnectFlow(
   nonce: string,
-): { owner: ConnectorOwner; connectorId: string } | null {
+): { owner: ConnectorOwner; connectorId: string; returnWsId?: string } | null {
   const flow = flows.get(nonce);
   if (!flow) return null;
   flows.delete(nonce);
   clearTimeout(flow.timeout);
-  return { owner: flow.owner, connectorId: flow.connectorId };
+  const { owner, connectorId, returnWsId } = flow;
+  return returnWsId ? { owner, connectorId, returnWsId } : { owner, connectorId };
 }
 
 /** For tests: drop all pending flows. */

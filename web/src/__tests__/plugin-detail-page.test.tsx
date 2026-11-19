@@ -396,7 +396,8 @@ describe("PluginDetailPage — a person's plugin", () => {
     });
     await settle();
     await click(button(mounted.container, "Connect"));
-    expect(initiateComposioIdentityConnect).toHaveBeenCalledWith("ai.granola/granola");
+    // Named with the workspace it is pressed in, so the sign-in returns to its Plugins page.
+    expect(initiateComposioIdentityConnect).toHaveBeenCalledWith("ai.granola/granola", WS_ID);
     expect(initiateIdentityConnect).not.toHaveBeenCalled();
   });
 
@@ -410,7 +411,7 @@ describe("PluginDetailPage — a person's plugin", () => {
     personal = [{ ...granolaConnector([]), state: "not_authenticated", identity: undefined }];
     mounted = await mount(pagePath("person:granola"));
     await click(button(mounted.container, "Connect"));
-    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola");
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", WS_ID);
     expect(initiateComposioIdentityConnect).not.toHaveBeenCalled();
   });
 
