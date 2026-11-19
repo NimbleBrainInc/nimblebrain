@@ -75,6 +75,11 @@ const SSE_ROUTES: { [K in WorkspaceStreamEngineEvent]?: SseRoute<K> } = {
   // event drops at the boundary below.
   "connector.installed": { scope: "workspace", wsIdField: "wsId" },
   "connector.uninstalled": { scope: "workspace", wsIdField: "wsId" },
+  // A personal connector's grant into a workspace. The grant is the person's
+  // own business, so the event is routed by `userId` alone and reaches that
+  // identity's tabs; `wsId` is data, not the audience. Routing it by workspace
+  // would tell every member which personal connectors this person uses there.
+  "connector.grant_changed": { scope: "owner", userIdField: "userId" },
   // Per-principal connection state — workspace-scoped. Drives the
   // pending-auth banner; without forwarding here, the banner never auto-clears
   // after a user completes interactive OAuth.

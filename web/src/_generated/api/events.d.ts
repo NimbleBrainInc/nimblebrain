@@ -58,6 +58,13 @@ export interface ConnectorUninstalledEvent {
     connectorName: string;
     wsId: string;
 }
+/** A person's personal connector was turned on or off in a workspace. Sent to that person only. */
+export interface ConnectorGrantChangedEvent {
+    userId: string;
+    serverName: string;
+    wsId: string;
+    granted: boolean;
+}
 /** A remote connector's connection changed state for one principal. */
 export interface ConnectionStateChangedEvent {
     wsId: string;
@@ -135,6 +142,7 @@ export interface WorkspaceStreamEvents {
     heartbeat: HeartbeatEvent;
     "connector.installed": ConnectorInstalledEvent;
     "connector.uninstalled": ConnectorUninstalledEvent;
+    "connector.grant_changed": ConnectorGrantChangedEvent;
     "connection.state_changed": ConnectionStateChangedEvent;
     "server.notification": ServerNotificationEvent;
     "conversation.title": ConversationTitleEvent;

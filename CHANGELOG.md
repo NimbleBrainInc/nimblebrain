@@ -307,6 +307,7 @@
 
 ### Fixed
 
+- **Turning a personal plugin on or off shows everywhere at once.** The chat's plugin list, a plugin request card, and the Plugins pages in every open tab refresh on the new `connector.grant_changed` event, sent to that person only.
 - **A connector's sign-in completes on an `npx nimblebrain` install.** The release Compose file sets `NB_PUBLIC_ORIGIN` to the published web port, so OAuth callbacks no longer point at the runtime's unpublished port 27247.
 - **A batch no longer re-runs the same items without end when its budget, split among its runs, cannot pay for one.** It halves how many run at once and tries again, and pauses once an item cannot finish alone. ([docs](https://docs.nimblebrain.ai/using/tasks/#batches))
 - **The web UI answers seconds after `docker compose up`, not after 30.** ([docs](https://docs.nimblebrain.ai/deploy/docker/#health-check), [#1987](https://github.com/NimbleBrainInc/nimblebrain/pull/1987))

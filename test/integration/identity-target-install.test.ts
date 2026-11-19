@@ -123,6 +123,7 @@ async function buildHarness(): Promise<Harness> {
   const toolPolicies: Record<string, unknown> = {};
   const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
+    getEventSink: () => new NoopEventSink(),
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
     getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
@@ -138,12 +139,17 @@ async function buildHarness(): Promise<Harness> {
         // Idempotent, as the real store is.
         grantConnector: async (_userId: string, serverName: string, wsId: string) => {
           const existing = grants[serverName] ?? [];
-          if (!existing.includes(wsId)) grants[serverName] = [...existing, wsId];
+          if (existing.includes(wsId)) return false;
+          grants[serverName] = [...existing, wsId];
+          return true;
         },
         revokeConnector: async (_userId: string, serverName: string, wsId: string) => {
-          const remaining = (grants[serverName] ?? []).filter((id) => id !== wsId);
+          const existing = grants[serverName] ?? [];
+          if (!existing.includes(wsId)) return false;
+          const remaining = existing.filter((id) => id !== wsId);
           if (remaining.length === 0) delete grants[serverName];
           else grants[serverName] = remaining;
+          return true;
         },
       }),
     getAllowInsecureRemotes: () => false,

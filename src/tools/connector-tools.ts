@@ -1523,7 +1523,7 @@ async function handleInstallIdentityAndGrant(
   const serverName = installed.structuredContent?.serverName;
   if (installed.isError || typeof serverName !== "string") return installed;
 
-  await ctx.runtime.getPermissionStore().grantConnector(identity.id, serverName, target.id);
+  await setPersonalGrant(ctx, identity.id, serverName, target.id, true);
   return {
     content: textContent(`${serverName} is on in ${target.name}. Connect it to authenticate.`),
     structuredContent: { ...installed.structuredContent, grantedWsId: target.id },
@@ -4086,12 +4086,38 @@ async function handleGrantConnector(
   const target = await personalGrantTarget(ctx, callerId, targetWsId);
   if ("isError" in target) return target;
 
-  await ctx.runtime.getPermissionStore().grantConnector(callerId, serverName, targetWsId);
+  await setPersonalGrant(ctx, callerId, serverName, targetWsId, true);
   return {
     content: textContent(`Granted "${serverName}" to ${target.name}.`),
     structuredContent: { ok: true, serverName, wsId: targetWsId },
     isError: false,
   };
+}
+
+/**
+ * Turn a person's personal connector on (`granted`) or off in a workspace, and
+ * tell that person's open tabs when the stored grants changed, so every surface
+ * that shows the grant (the chat's plugin list, a plugin request card, the
+ * sidebar's personal apps) refetches. A write that changed nothing (a re-grant,
+ * a revoke of a grant that never existed) publishes nothing: no client state
+ * can be stale from it. The event reaches the person alone (`SSE_ROUTES`).
+ */
+async function setPersonalGrant(
+  ctx: ManageConnectorsContext,
+  userId: string,
+  serverName: string,
+  wsId: string,
+  granted: boolean,
+): Promise<void> {
+  const store = ctx.runtime.getPermissionStore();
+  const changed = granted
+    ? await store.grantConnector(userId, serverName, wsId)
+    : await store.revokeConnector(userId, serverName, wsId);
+  if (!changed) return;
+  ctx.runtime.getEventSink().emit({
+    type: "connector.grant_changed",
+    data: { userId, serverName, wsId, granted },
+  });
 }
 
 /**
@@ -4123,7 +4149,7 @@ async function handleRevokeConnector(
   if (!serverName) return errResult("serverName is required.");
   if (!targetWsId) return errResult("wsId (the workspace to revoke access from) is required.");
 
-  await ctx.runtime.getPermissionStore().revokeConnector(callerId, serverName, targetWsId);
+  await setPersonalGrant(ctx, callerId, serverName, targetWsId, false);
   return {
     content: textContent(`Revoked "${serverName}" from workspace.`),
     structuredContent: { ok: true, serverName, wsId: targetWsId },
@@ -4161,7 +4187,7 @@ async function handleDisconnectIdentity(
     .getPermissionStore()
     .getConnectorGrants(callerId, serverName);
   for (const wsId of grantedWorkspaces) {
-    await ctx.runtime.getPermissionStore().revokeConnector(callerId, serverName, wsId);
+    await setPersonalGrant(ctx, callerId, serverName, wsId, false);
   }
 
   // Drop the connector's per-tool allow/deny policies too — personal-connector
