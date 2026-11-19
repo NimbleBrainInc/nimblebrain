@@ -26,14 +26,33 @@ export function defaultWorkDir(): string {
   return resolve(process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain"));
 }
 
-/** Prefixes reserved for system tools — connectors must not use these as source names. */
-const RESERVED_TOOL_PREFIXES = new Set(["nb"]);
+/**
+ * Source names the runtime registers in every workspace registry: the `nb`
+ * system source and each platform app that is not an identity source. Connector
+ * names that belong to platform apps are reserved. A workspace connector of the
+ * same name would collide with the shared source in that workspace's registry,
+ * and its tools would be listed under the platform app.
+ *
+ * The runtime checks at boot that every source it creates is reserved
+ * (`assertRuntimeSourceNamesReserved`), so a new platform app missing here
+ * fails the first start rather than leaving its name open.
+ */
+const RUNTIME_SOURCE_NAMES: ReadonlySet<string> = new Set([
+  "nb",
+  "compose",
+  "hooks",
+  "notifications",
+  "skills",
+  "usage",
+]);
 
 /**
- * True if `serverName` collides with a reserved system-tool prefix. A source
- * named `nb` emits its tools as `nb__…`, which the surfacing layer classifies
- * as first-party system/kernel tools — so the name is refused. Exposed as a
- * predicate for callers that reject gracefully (returning a tool result);
+ * True if `serverName` is a name a connector may not take. A source named `nb`
+ * emits its tools as `nb__…`, which the surfacing layer classifies as
+ * first-party system/kernel tools; a source named after a platform app
+ * (`usage`, `skills`, …) collides with that app in the workspace registry. So
+ * every name in `RUNTIME_SOURCE_NAMES` is refused. Exposed as a predicate for
+ * callers that reject gracefully (returning a tool result);
  * `validateServerName` is the throwing form over the same set.
  *
  * The kernel identity sources (`conversations` / `files` / `tasks`) are
@@ -57,7 +76,7 @@ const RESERVED_TOOL_PREFIXES = new Set(["nb"]);
  */
 export function isReservedServerName(serverName: string): boolean {
   return (
-    RESERVED_TOOL_PREFIXES.has(serverName) ||
+    RUNTIME_SOURCE_NAMES.has(serverName) ||
     isIdentitySource(serverName) ||
     isPersonalConnectorName(serverName)
   );
@@ -75,12 +94,28 @@ export function validateServerName(serverName: string): void {
     // Reached at INSTALL and at every BOOT (`startup.ts` validates each connector
     // start), so an already-installed source with one of these names stops
     // starting after upgrade. That is the honest outcome — `routeToolCall`
-    // consults the identity door first, so such a source is unreachable anyway
+    // consults the identity door first, and a platform app already holds its
+    // name in every workspace registry, so such a source is unreachable anyway
     // — but the operator sees only this line, so it has to say what to do.
     throw new Error(
-      `Source name '${serverName}' is reserved for platform tools (nb, conversations, files, tasks). ` +
-        `Its tools would be shadowed by the identity door and unreachable. Reinstall the connector under a different ` +
-        `source name, or set an explicit \`serverName\` on its ref.`,
+      `Source name '${serverName}' is reserved: it belongs to a platform app or system tools. ` +
+        `A connector under this name would collide with that app and be unreachable. Reinstall the connector ` +
+        `under a different source name, or set an explicit \`serverName\` on its ref.`,
+    );
+  }
+}
+
+/**
+ * Throw unless every source the runtime registers itself carries a reserved
+ * name. Called at boot over the system source and the platform apps, so the
+ * reserved set cannot fall behind the sources it protects.
+ */
+export function assertRuntimeSourceNamesReserved(sourceNames: readonly string[]): void {
+  const open = sourceNames.filter((name) => !isReservedServerName(name));
+  if (open.length > 0) {
+    throw new Error(
+      `Runtime source name(s) not reserved for connectors: ${open.join(", ")}. ` +
+        "Add each to RUNTIME_SOURCE_NAMES in src/connectors/runtime/paths.ts.",
     );
   }
 }

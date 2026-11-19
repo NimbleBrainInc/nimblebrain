@@ -307,6 +307,7 @@
 
 ### Fixed
 
+- **Connector names that belong to platform apps are reserved, and a workspace's uninstall never stops a shared app.** Install refuses names such as `usage` or `skills`, boot skips a stored entry that has one with a warning, and removing a connector in one workspace leaves the platform apps every workspace shares running. ([docs](https://docs.nimblebrain.ai/config/connectors/#the-entry-shape))
 - **A connector's sign-in completes on an `npx nimblebrain` install.** The release Compose file sets `NB_PUBLIC_ORIGIN` to the published web port, so OAuth callbacks no longer point at the runtime's unpublished port 27247.
 - **A batch no longer re-runs the same items without end when its budget, split among its runs, cannot pay for one.** It halves how many run at once and tries again, and pauses once an item cannot finish alone. ([docs](https://docs.nimblebrain.ai/using/tasks/#batches))
 - **The web UI answers seconds after `docker compose up`, not after 30.** ([docs](https://docs.nimblebrain.ai/deploy/docker/#health-check), [#1987](https://github.com/NimbleBrainInc/nimblebrain/pull/1987))
