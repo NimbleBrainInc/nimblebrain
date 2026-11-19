@@ -149,7 +149,7 @@ metadata:
 
 ## Guidance for one connector
 
-Guidance a workspace wants the agent to follow when it uses one connector (house rules for a CRM's stages, a brand voice for a document tool) is a **workspace skill bound to the connector's tools**. Create it from **Plugins → Browse → Write a skill** (choose **Everyone in** the workspace), or with `skills__create`, and give it a `tool-affinity` matching those tools:
+Guidance a workspace wants the agent to follow when it uses one connector (house rules for a CRM's stages, a brand voice for a document tool) is a **workspace skill bound to the connector's tools**. Create it from **Skills → New skill** (choose **Everyone in** the workspace), or with `skills__create`, and give it a `tool-affinity` matching those tools:
 
 ```yaml
 ---
@@ -263,14 +263,17 @@ A workspace plugin's page has a read-only **Skills** section listing, per server
 
 Ask the agent which skills are loaded — it uses the built-in `skills__list` tool to report each skill's name, loading strategy, priority, and source file. To see one skill's full definition, ask the agent for its details.
 
-## Skills on the Plugins page
+## The Skills page
 
-**Plugins** is where you find and add what the agent can do in a workspace, skills included.
+**Skills**, in the sidebar after **Plugins**, lists what the agent is taught in a workspace. **Workspace | Personal** splits it by whose a skill is, each with its count, and a search beside it finds one by name or description.
 
-- **Installed** lists the skills written for this workspace and the organization's (tagged **Org**, read-only there) under **Shared in** the workspace, and your own (which follow you into every workspace) under **Just you**. Each row says when the skill loads. Search and the **Skills** filter find one in a long list. A skill that comes with a plugin is listed on that plugin's page instead.
-- **On here** sits on each of your own skills' rows and on its page: switch it off to stop that skill in this workspace only (see below). Workspace and org skills have no such switch.
-- **Opening a skill** shows its page. You can edit and delete a workspace skill if you can change the workspace, and your own skills always. An org skill is changed in the organization's settings.
-- **Browse → Write a skill** asks who it is for: **Just me** (one of your own skills) or **Everyone in** the workspace (a workspace skill, offered only to members who can change the workspace).
+- **Workspace** lists the skills written for this workspace and the organization's (tagged **Org**, read-only there). They apply to everyone here.
+- **Personal** lists your own skills, which follow you into every workspace. Each enabled one carries an **On here** switch: switch it off to stop that skill in this workspace only (see below), and the row reads **Off here**. A disabled skill reads **Disabled** and has no switch, since it applies nowhere until you turn it on. Workspace and org skills have no such switch.
+- A row says when the skill loads if that is more than the default (loading when the agent asks for it): **Always on**, **On trigger** with its phrases, or **When** a plugin **is used**, naming the plugin whose tools its tool patterns match. The patterns themselves are on the skill's page. **Opening a skill** shows its page. You can edit and delete a workspace skill if you can change the workspace, and your own skills always. An org skill is changed in the organization's settings.
+- **From your plugins**, a muted group beneath the list, names the skills that came with the selected list's plugins on here, with the plugin and when each loads. Each opens its plugin's page, where it is read.
+- **New skill** asks who it is for: **Just me** (one of your own skills) or **Everyone in** the workspace (a workspace skill, offered only to members who can change the workspace).
+
+An old link to a skill's page under Plugins opens the same page under Skills.
 
 ## Your skills in each workspace
 
@@ -281,13 +284,13 @@ Your own skills (scope `user`) apply in every workspace you are in, unless you t
 - **A same-named skill takes over.** Your skill normally wins a name it shares with a workspace or org skill. While yours is off in a workspace, that workspace or org skill applies there instead.
 - **Deleting the skill forgets where it was off**, so a new skill with the same name starts on everywhere.
 
-On the Plugins page this is the **On here** switch on your skill's row and on its page. It flips at once; if the change is refused, it flips back and a notice says why.
+On the Skills page this is the **On here** switch on your skill's row under **Personal** and on its page, offered while the skill is enabled. It flips at once; if the change is refused, it flips back and a notice says why.
 
 Only your own skills turn on and off this way; a workspace or org skill is changed by whoever owns it. The client sets it with `skills__set_here` (`id` from `skills__list`, `on: true | false`), called in the workspace it applies to. The agent cannot call it; to stop a skill for one conversation, it mutes the skill with `skills__deactivate`. `skills__list` with `scope: "user"` reports `onHere` for each of your skills in the workspace it is called in.
 
 ## Editing a skill
 
-A skill's page under Plugins, and the organization's Skills page in settings, create and edit skills without touching files.
+A skill's page under Skills, and the organization's Skills page in settings, create and edit skills without touching files.
 
 - **Creating** a skill is one explicit action: fill in the name and body, set anything under **Advanced**, and click **Create**. A pasted whole `SKILL.md` works here: its frontmatter sets the fields it declares, and the block isn't stored as text.
 - **Editing** an existing skill has no Save button. Each field saves on its own: the loading strategy when you pick one, the priority when you leave it or press Enter, and the body, tool patterns, and trigger phrases when you leave them. A save shows a notice with **Undo**; one the server refuses stays on the field with the reason, **Retry**, and **Revert**.

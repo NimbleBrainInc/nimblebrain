@@ -9,11 +9,11 @@ describe("shell tour steps", () => {
     expect(steps.at(-1)?.anchor).toBe("ask");
   });
 
-  test("stay short: five stops after the welcome, the catalog and skills both on Plugins → Browse", () => {
+  test("stay short: five stops after the welcome, the catalog on Browse plugins and skills on Skills", () => {
     const steps = stepsFor(false);
     expect(steps.length).toBe(6);
     expect(steps.find((s) => s.anchor === "catalog")?.page).toBe("browse");
-    expect(steps.find((s) => s.anchor === "skills")?.page).toBe("browse");
+    expect(steps.find((s) => s.anchor === "skills")?.page).toBe("skills");
   });
 
   test("return to Overview before the last step", () => {

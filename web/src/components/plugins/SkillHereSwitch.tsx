@@ -14,6 +14,9 @@ import { Switch } from "../ui/switch";
  * The switch flips at once and saves in the background; a refused save puts it
  * back and says why in a notice, since the switch alone cannot. It takes no
  * second flip while a save is in flight.
+ *
+ * It carries no visible text: the row or section around it says "Off here"
+ * when it is off, and its accessible name says what it switches.
  */
 export function SkillHereSwitch({
   skill,
@@ -24,7 +27,10 @@ export function SkillHereSwitch({
   skill: AuthoredSkill;
   /** The workspace the switch applies to: the page's, not whichever is active when it saves. */
   workspaceId: string;
-  /** The saved state, so the listing that rendered this row can hold it. */
+  /**
+   * The state it shows, so the row around it can say so too: called at the
+   * flip, then with the saved state, or the restored one if the save fails.
+   */
   onChange?: (on: boolean) => void;
   className?: string;
 }) {
@@ -43,6 +49,7 @@ export function SkillHereSwitch({
   const flip = async (next: boolean) => {
     if (pending) return;
     setOn(next);
+    onChange?.(next);
     setPending(true);
     try {
       const saved = await setSkillOnHere(workspaceId, skill.id, next);
@@ -50,6 +57,7 @@ export function SkillHereSwitch({
       onChange?.(saved.onHere);
     } catch (err) {
       setOn(!next);
+      onChange?.(!next);
       notify({
         level: "error",
         title: `Couldn't turn ${skill.name} ${next ? "on" : "off"} here`,
@@ -60,19 +68,13 @@ export function SkillHereSwitch({
     }
   };
 
-  const label = on ? "On here" : "Off here";
   return (
-    <span
-      className={cn("flex items-center gap-2 text-xs text-muted-foreground", className)}
-      data-testid="skill-on-here"
-      data-on={on}
-    >
-      <span aria-hidden>{label}</span>
+    <span className={cn("flex items-center", className)} data-testid="skill-on-here" data-on={on}>
       <Switch
         checked={on}
         onCheckedChange={(next) => void flip(next)}
         disabled={pending}
-        aria-label={`${label}: ${skill.name}`}
+        aria-label={`On here: ${skill.name}`}
       />
     </span>
   );

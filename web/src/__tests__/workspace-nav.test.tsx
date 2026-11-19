@@ -317,7 +317,8 @@ describe("WorkspaceNav — the focused workspace only", () => {
       "/w/003eba8844413cd9/tasks",
       "/w/003eba8844413cd9/files",
       "/w/003eba8844413cd9/plugins",
-      "/w/003eba8844413cd9/plugins?tab=browse",
+      "/w/003eba8844413cd9/skills",
+      "/w/003eba8844413cd9/plugins/browse",
       "/w/003eba8844413cd9/app/people",
       "/w/003eba8844413cd9/app/todos",
     ]);
@@ -731,7 +732,7 @@ describe("WorkspaceNav — pinned apps", () => {
 });
 
 describe("WorkspaceNav — add a connector", () => {
-  test("the APPS header carries a + to Plugins' Browse tab", async () => {
+  test("the APPS header carries a + to Browse plugins", async () => {
     mounted = await mount({
       workspaces: [HELIX],
       activeId: "ws_003eba8844413cd9",
@@ -741,7 +742,7 @@ describe("WorkspaceNav — add a connector", () => {
 
     const add = byTestId(mounted.container, "sidebar-add-connector");
     expect(add).toHaveLength(1);
-    expect(add[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/plugins?tab=browse");
+    expect(add[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/plugins/browse");
     expect(add[0]?.getAttribute("aria-label")).toBe("Add apps and tools");
     expect(add[0]?.parentElement?.textContent).toBe("Apps");
   });
@@ -767,7 +768,7 @@ describe("WorkspaceNav — add a connector", () => {
 
     const empty = byTestId(mounted.container, "sidebar-workspace-apps-empty");
     expect(empty).toHaveLength(1);
-    expect(empty[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/plugins?tab=browse");
+    expect(empty[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/plugins/browse");
     expect(empty[0]?.textContent).toBe("Add an app");
   });
 
@@ -1109,11 +1110,12 @@ describe("WorkspaceNav — collapsed", () => {
       "Tasks",
       "Files",
       "Plugins",
+      "Skills",
       "people",
       "Add apps and tools",
     ]);
     // Icon-only: no visible labels in the rail.
-    for (const label of ["Overview", "Conversations", "Plugins", "Apps"]) {
+    for (const label of ["Overview", "Conversations", "Plugins", "Skills", "Apps"]) {
       expect(nav?.textContent).not.toContain(label);
     }
   });
