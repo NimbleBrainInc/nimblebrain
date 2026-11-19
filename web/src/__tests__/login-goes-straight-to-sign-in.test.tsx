@@ -51,11 +51,18 @@ async function mount() {
   document.body.appendChild(container);
   root = ReactDOMClient.createRoot(container);
   await act(async () => {
+    // StrictMode, as the app's entry point renders it: effects run, clean up,
+    // and run again, so state an effect consumes on its first run is gone on
+    // its second.
     root?.render(
-      React.createElement(Login, {
-        onLogin: (data) => received.push(data),
-        navigate: (path) => navigated.push(path),
-      }),
+      React.createElement(
+        React.StrictMode,
+        null,
+        React.createElement(Login, {
+          onLogin: (data) => received.push(data),
+          navigate: (path) => navigated.push(path),
+        }),
+      ),
     );
   });
   return { navigated, received, text: () => container?.textContent ?? "" };

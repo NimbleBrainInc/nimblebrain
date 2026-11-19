@@ -70,7 +70,14 @@ type Phase = "connecting" | "redirecting" | "signIn";
  * answers, then hands over.
  */
 export function Login({ onLogin, navigate }: LoginProps) {
-  const [error, setError] = useState<string | null>(null);
+  // A failed sign-in comes back here with an error; show it and stop, or a
+  // broken sign-in would loop through the provider forever. Read once, at the
+  // first render: the effect clears it from the URL, and an effect replay
+  // (StrictMode, a new `onLogin`) must still see it.
+  const [failed] = useState(
+    () => new URLSearchParams(window.location.search).get("error") === "auth_failed",
+  );
+  const error = failed ? "Authentication failed. Please try again." : null;
   const [phase, setPhase] = useState<Phase>("connecting");
   const [signingIn, setSigningIn] = useState(false);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -79,14 +86,7 @@ export function Login({ onLogin, navigate }: LoginProps) {
   useEffect(() => {
     let cancelled = false;
 
-    // A failed sign-in comes back here with an error; show it and stop, or a
-    // broken sign-in would loop through the provider forever.
-    const params = new URLSearchParams(window.location.search);
-    const failed = params.get("error") === "auth_failed";
-    if (failed) {
-      setError("Authentication failed. Please try again.");
-      window.history.replaceState({}, "", window.location.pathname);
-    }
+    if (failed) window.history.replaceState({}, "", window.location.pathname);
 
     async function probe(): Promise<boolean> {
       const result = await probeBootstrap();
@@ -129,7 +129,7 @@ export function Login({ onLogin, navigate }: LoginProps) {
       cancelled = true;
       if (retryRef.current) clearTimeout(retryRef.current);
     };
-  }, [onLogin]);
+  }, [onLogin, failed]);
 
   function handleSignIn() {
     setSigningIn(true);
