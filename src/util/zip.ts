@@ -88,7 +88,10 @@ function readEntryBody(data: Uint8Array, view: DataView, entry: CentralEntry): U
 
   let body: Uint8Array;
   if (entry.method === STORED) body = raw;
-  else if (entry.method === DEFLATED) body = inflateRawSync(raw, { maxOutputLength: size });
+  // zlib refuses a maxOutputLength of 0, so an empty entry gets 1; the size check
+  // below still holds it to what it declares.
+  else if (entry.method === DEFLATED)
+    body = inflateRawSync(raw, { maxOutputLength: Math.max(size, 1) });
   else throw new Error(`zip: ${name} uses compression method ${entry.method}`);
   if (body.byteLength !== size) throw new Error(`zip: ${name} is not the size it declares`);
   return body;

@@ -18,9 +18,10 @@
  *     archive at the sha256 that index lists. No tag, branch or bare URL.
  *   - Fail-closed: a missing index, any non-2xx, a network error, an unreadable
  *     archive, or a digest mismatch throws. Nothing partial is returned.
- *   - Content-addressed cache: the index is cached by its sha256 and each plugin
- *     by its archive's, so one catalog read serves every workspace and a pin bump
- *     refetches only the plugins whose bytes changed.
+ *   - Content-addressed cache: the index and each plugin archive are cached as
+ *     the bytes fetched, under their sha256, and verified again on every read,
+ *     so one catalog read serves every workspace and a pin bump refetches only
+ *     the plugins whose bytes changed.
  *
  * A server no plugin names, or whose plugin carries no skill bound to it, has
  * no curated skill: the answer is `[]`, read from verified bytes, so it is a
@@ -136,13 +137,17 @@ async function loadPlugin(
   entry: IndexEntry,
   opts: ResolveServerSkillsOptions,
 ): Promise<PluginRecord> {
-  const path = join(opts.cacheDir, "plugins", `${entry.sha256}.json`);
-  if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8")) as PluginRecord;
-  const bytes = await fetchBytes(entry.url, opts);
-  assertDigest(`plugin ${entry.name}`, bytes, entry.sha256);
-  const record = readPlugin(entry.name, bytes);
-  writeCache(path, new TextEncoder().encode(JSON.stringify(record)));
-  return record;
+  const path = join(opts.cacheDir, "plugins", `${entry.sha256}.zip`);
+  let bytes: Uint8Array;
+  if (existsSync(path)) {
+    bytes = readFileSync(path);
+    assertDigest(`plugin ${entry.name}`, bytes, entry.sha256);
+  } else {
+    bytes = await fetchBytes(entry.url, opts);
+    assertDigest(`plugin ${entry.name}`, bytes, entry.sha256);
+    writeCache(path, bytes);
+  }
+  return readPlugin(entry.name, bytes);
 }
 
 /** Read a verified plugin archive: its servers, and each skill that names one. */

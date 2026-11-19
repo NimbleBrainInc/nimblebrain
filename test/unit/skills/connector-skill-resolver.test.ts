@@ -14,6 +14,7 @@ import {
   type FixtureCatalog,
   sha256,
   TEST_CATALOG_URL,
+  zip,
 } from "../../helpers/plugin-catalog.ts";
 
 const dirs: string[] = [];
@@ -127,6 +128,21 @@ describe("resolveServerSkills", () => {
     const o = opts(c);
     await resolveServerSkills("com.google/gmail", o);
     writeFileSync(join(o.cacheDir, "index", `${c.pin}.json`), '{"name":"x","plugins":[]}');
+    await expect(resolveServerSkills("com.google/gmail", o)).rejects.toThrow(/integrity mismatch/);
+  });
+
+  test("a tampered cached plugin archive is refused, not served", async () => {
+    const c = catalog();
+    const o = opts(c);
+    await resolveServerSkills("com.google/gmail", o);
+    const digest = c.digests.gmail!;
+    const tampered = zip({
+      "plugin.json": JSON.stringify({
+        extensions: { "ai.nimblebrain": { servers: { gmail: "com.google/gmail" } } },
+      }),
+      "skills/gmail/SKILL.md": boundSkill("gmail", "gmail", "Altered guidance."),
+    });
+    writeFileSync(join(o.cacheDir, "plugins", `${digest}.zip`), tampered);
     await expect(resolveServerSkills("com.google/gmail", o)).rejects.toThrow(/integrity mismatch/);
   });
 

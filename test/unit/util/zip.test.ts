@@ -11,6 +11,11 @@ describe("readZip", () => {
     expect(text(files.get("skills/a/SKILL.md"))).toBe("# A\n");
   });
 
+  it("reads an empty deflated file", () => {
+    const files = readZip(zip({ "plugin.json": "{}", ".gitkeep": "" }));
+    expect(files.get(".gitkeep")?.byteLength).toBe(0);
+  });
+
   it("refuses a path that leaves the archive root", () => {
     expect(() => readZip(zip({ "../evil.md": "x" }))).toThrow(/not a relative path/);
     expect(() => readZip(zip({ "/abs.md": "x" }))).toThrow(/not a relative path/);
