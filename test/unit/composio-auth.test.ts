@@ -438,7 +438,7 @@ describe("GET /v1/composio-auth/callback", () => {
       // so the page can confirm it. No page is rendered.
       expect(res.status).toBe(302);
       expect(res.headers.get("Location") ?? "").toEndWith(
-        "/w/0076759dbbe19fcc/plugins?connected=com-google-gmail",
+        "/w/0076759dbbe19fcc/plugins?connected=com-google-gmail&owner=workspace",
       );
 
       const stored = await readComposioConnection(dir, { type: "workspace", wsId }, cid);
@@ -1241,7 +1241,7 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
 
       expect(res.status).toBe(302);
       const location = res.headers.get("Location") ?? "";
-      expect(location).toEndWith("/profile/connectors?connected=com-google-gmail");
+      expect(location).toEndWith("/profile/connectors?connected=com-google-gmail&owner=person");
       // Never a workspace page for an identity connection started on the profile.
       expect(location).not.toContain("/w/");
 
@@ -1289,7 +1289,7 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
 
       expect(res.status).toBe(302);
       expect(res.headers.get("Location") ?? "").toEndWith(
-        "/w/0076759dbbe19fcc/plugins?connected=com-google-gmail",
+        "/w/0076759dbbe19fcc/plugins?connected=com-google-gmail&owner=person",
       );
     } finally {
       cleanup();

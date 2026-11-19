@@ -227,11 +227,30 @@ describe("PluginsPage — Installed", () => {
 
   test("marks the plugin an OAuth sign-in just connected, and only that one", async () => {
     plugins = [GITHUB, GMAIL];
-    mounted = await mount({ path: `/w/${SLUG}/plugins?connected=gmail` });
+    mounted = await mount({ path: `/w/${SLUG}/plugins?connected=gmail&owner=person` });
     expect(row(mounted.container, "person:gmail")?.textContent).toContain("Connected just now");
     expect(row(mounted.container, "workspace:github")?.textContent).not.toContain(
       "Connected just now",
     );
+  });
+
+  test("a workspace and a person sharing a server name: marks only the owner that connected", async () => {
+    const workspaceGmail = plugin({
+      id: "workspace:gmail",
+      displayName: "Gmail",
+      owner: { kind: "workspace" },
+    });
+    plugins = [workspaceGmail, GMAIL];
+    mounted = await mount({ path: `/w/${SLUG}/plugins?connected=gmail&owner=person` });
+    expect(row(mounted.container, "person:gmail")?.textContent).toContain("Connected just now");
+    expect(row(mounted.container, "workspace:gmail")?.textContent).not.toContain(
+      "Connected just now",
+    );
+    mounted.unmount();
+
+    mounted = await mount({ path: `/w/${SLUG}/plugins?connected=gmail&owner=workspace` });
+    expect(row(mounted.container, "workspace:gmail")?.textContent).toContain("Connected just now");
+    expect(row(mounted.container, "person:gmail")?.textContent).not.toContain("Connected just now");
   });
 
   test("marks nothing until the connected server is ready", async () => {
@@ -243,7 +262,7 @@ describe("PluginsPage — Installed", () => {
         servers: [{ serverName: "linear", status: "connecting", account: null }],
       }),
     ];
-    mounted = await mount({ path: `/w/${SLUG}/plugins?connected=linear` });
+    mounted = await mount({ path: `/w/${SLUG}/plugins?connected=linear&owner=workspace` });
     expect(row(mounted.container, "workspace:linear")?.textContent).not.toContain(
       "Connected just now",
     );

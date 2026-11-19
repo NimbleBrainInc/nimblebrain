@@ -25,7 +25,11 @@ import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspace.ts";
 import type { OAuthInitiateResponse } from "../schemas/responses.ts";
 import { type AppContext, type AppEnv, apiError, json } from "../types.ts";
-import { connectorReturnUrl, resolveReturnWorkspace } from "./connectors-redirect.ts";
+import {
+  connectorReturnUrl,
+  type ReturnedConnection,
+  resolveReturnWorkspace,
+} from "./connectors-redirect.ts";
 import { reinitiateParagraph } from "./oauth-error-page.ts";
 
 /**
@@ -655,9 +659,9 @@ function verifyStateCookie(c: Context<AppEnv>, state: string): CallbackFailure |
 
 /**
  * Clear the one-shot state cookie and send the browser back to the Plugins page
- * the sign-in started from, naming the connector that connected. The page
- * confirms it; the callback draws nothing, so the confirmation is in the app's
- * own theme.
+ * the sign-in started from, naming the connector that connected and whose it
+ * is. The page confirms it; the callback draws nothing, so the confirmation is
+ * in the app's own theme.
  */
 function redirectHome(
   c: Context<AppEnv>,
@@ -673,7 +677,10 @@ function redirectHome(
   // when we peeked it).
   const owner = flow?.owner;
   const returnWsId = owner?.kind === "workspace" ? owner.wsId : flow?.returnWsId;
-  return c.redirect(connectorReturnUrl(returnWsId, flow?.serverName), 302);
+  const connected: ReturnedConnection | undefined = flow
+    ? { serverName: flow.serverName, owner: owner?.kind === "workspace" ? "workspace" : "person" }
+    : undefined;
+  return c.redirect(connectorReturnUrl(returnWsId, connected), 302);
 }
 
 function sha256Hex(input: string): string {

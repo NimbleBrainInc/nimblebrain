@@ -103,7 +103,11 @@ function connectorsReturnUrl(
   returnWsId: string | undefined,
   connected?: string,
 ): string {
-  return connectorReturnUrl(owner.type === "workspace" ? owner.wsId : returnWsId, connected);
+  const isWorkspace = owner.type === "workspace";
+  return connectorReturnUrl(
+    isWorkspace ? owner.wsId : returnWsId,
+    connected ? { serverName: connected, owner: isWorkspace ? "workspace" : "person" } : undefined,
+  );
 }
 
 export function composioAuthRoutes(ctx: AppContext) {

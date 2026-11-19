@@ -6,6 +6,7 @@ import { grantConnector, listPlugins, revokeConnector } from "../api/client";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { connectorStatusSummary } from "../components/connectors/ConnectorList";
 import {
+  type ConnectedTarget,
   type ReturnedConnector,
   useConnectedNotice,
 } from "../components/connectors/useConnectedNotice";
@@ -336,8 +337,8 @@ function PluginRow({
 }: {
   plugin: Plugin;
   to: string;
-  /** The server an OAuth sign-in on this page just connected, if any. */
-  justConnected: string | null;
+  /** The connector an OAuth sign-in on this page just connected, if any. */
+  justConnected: ConnectedTarget | null;
   action?: React.ReactNode;
   muted?: boolean;
 }) {
@@ -345,7 +346,11 @@ function PluginRow({
   const notReady = plugin.servers.find((s) => s.status !== "ready");
   const status = notReady ? connectorStatusSummary(notReady.status) : null;
   // Marked while the page is open, and only once every server is ready.
-  const fresh = !notReady && plugin.servers.some((s) => s.serverName === justConnected);
+  const fresh =
+    !notReady &&
+    justConnected !== null &&
+    justConnected.owner === plugin.owner.kind &&
+    plugin.servers.some((s) => s.serverName === justConnected.serverName);
   const rowRef = useRef<HTMLDivElement>(null);
 
   // A long list may hold the plugin below the fold.
@@ -404,13 +409,14 @@ function PluginRow({
 
 /**
  * A plugin's servers as the sign-in confirmation reads them, each named by its
- * plugin: a ready server is connected, a failed one is dead, anything else is
- * still settling.
+ * plugin and carrying its owner: a ready server is connected, a failed one is
+ * dead, anything else is still settling.
  */
 function toReturnedConnectors(plugin: Plugin): ReturnedConnector[] {
   return plugin.servers.map((server) => ({
     serverName: server.serverName,
     displayName: plugin.displayName,
+    owner: plugin.owner.kind,
     state:
       server.status === "ready" ? "connected" : server.status === "failed" ? "failed" : "pending",
   }));

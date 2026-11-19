@@ -18,7 +18,10 @@ import { isAddressedWorkspaceMember } from "../workspace-address.ts";
  * origin, so the redirect can never point off this deployment or carry a
  * `javascript:` / `data:` scheme.
  */
-export function connectorReturnUrl(returnWsId: string | undefined, connected?: string): string {
+export function connectorReturnUrl(
+  returnWsId: string | undefined,
+  connected?: ReturnedConnection,
+): string {
   const url = returnWsId
     ? workspaceUrl(returnWsId, "/plugins")
     : `${webOrigin()}/profile/connectors`;
@@ -26,13 +29,27 @@ export function connectorReturnUrl(returnWsId: string | undefined, connected?: s
 }
 
 /**
- * Name the connector a callback just connected, as `?connected=<server name>`.
- * The page reads it and, once that connector settles, says whether it connected,
- * so the callback renders no page of its own. A name the page does not list
- * announces nothing.
+ * The connector a callback just connected: its server name, and whose it is.
+ * A workspace and a person can each install a connector under the same server
+ * name, and both show on a workspace's Plugins page, so the name alone does not
+ * say which one the sign-in connected.
  */
-function withConnected(url: string, connected: string | undefined): string {
-  return connected ? `${url}?connected=${encodeURIComponent(connected)}` : url;
+export interface ReturnedConnection {
+  serverName: string;
+  owner: "workspace" | "person";
+}
+
+/**
+ * Name the connector a callback just connected, as
+ * `?connected=<server name>&owner=<workspace|person>`. The page reads it and,
+ * once that connector settles, says whether it connected, so the callback
+ * renders no page of its own. A connector the page does not list announces
+ * nothing.
+ */
+function withConnected(url: string, connected: ReturnedConnection | undefined): string {
+  if (!connected) return url;
+  const query = new URLSearchParams({ connected: connected.serverName, owner: connected.owner });
+  return `${url}?${query}`;
 }
 
 /**

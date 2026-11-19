@@ -39,13 +39,18 @@ describe("connectorReturnUrl", () => {
     expect(connectorReturnUrl(undefined)).toBe("https://app.example.com/profile/connectors");
   });
 
-  it("names the connected server, encoded, so the page can confirm it", () => {
+  it("names the connected server, encoded, and whose it is, so the page can confirm it", () => {
     process.env.NB_WEB_URL = "https://app.example.com";
-    expect(connectorReturnUrl("ws_000f7ed6658f9d30", "com-acme/notes")).toBe(
-      "https://app.example.com/w/000f7ed6658f9d30/plugins?connected=com-acme%2Fnotes",
+    expect(
+      connectorReturnUrl("ws_000f7ed6658f9d30", {
+        serverName: "com-acme/notes",
+        owner: "workspace",
+      }),
+    ).toBe(
+      "https://app.example.com/w/000f7ed6658f9d30/plugins?connected=com-acme%2Fnotes&owner=workspace",
     );
-    expect(connectorReturnUrl(undefined, "granola")).toBe(
-      "https://app.example.com/profile/connectors?connected=granola",
+    expect(connectorReturnUrl(undefined, { serverName: "granola", owner: "person" })).toBe(
+      "https://app.example.com/profile/connectors?connected=granola&owner=person",
     );
   });
 

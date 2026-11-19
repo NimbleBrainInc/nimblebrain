@@ -334,7 +334,7 @@ describe("GET /v1/mcp-auth/callback", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     const location = res.headers.get("Location") ?? "";
-    expect(location).toEndWith("/w/0076759dbbe19fcc/plugins?connected=granola");
+    expect(location).toEndWith("/w/0076759dbbe19fcc/plugins?connected=granola&owner=workspace");
     expect(await res.text()).toBe("");
 
     // Cookie cleared: Max-Age=0
@@ -1115,7 +1115,7 @@ describe("GET /v1/mcp-auth/callback — owner-aware redirect", () => {
 
     expect(res.status).toBe(302);
     expect(res.headers.get("Location") ?? "").toEndWith(
-      "/w/0076759dbbe19fcc/plugins?connected=granola",
+      "/w/0076759dbbe19fcc/plugins?connected=granola&owner=person",
     );
     await expect(flowPromise).resolves.toEqual({ code: "code-1" });
   });
@@ -1132,7 +1132,7 @@ describe("GET /v1/mcp-auth/callback — owner-aware redirect", () => {
 
     expect(res.status).toBe(302);
     const location = res.headers.get("Location") ?? "";
-    expect(location).toEndWith("/profile/connectors?connected=granola");
+    expect(location).toEndWith("/profile/connectors?connected=granola&owner=person");
     // Never a workspace-scoped page for a personal connector.
     expect(location).not.toContain("/w/");
     await expect(flowPromise).resolves.toEqual({ code: "code-1" });

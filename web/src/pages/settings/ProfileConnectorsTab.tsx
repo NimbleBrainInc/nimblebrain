@@ -227,7 +227,7 @@ export function ProfileConnectorsTab() {
                     onConnect={() => onConnectExisting(c)}
                     onDisconnect={() => onDisconnect(c.serverName)}
                     onSetGrant={onSetGrant}
-                    justConnected={c.serverName === justConnected}
+                    justConnected={c.serverName === justConnected?.serverName}
                   />
                 ))}
               </div>
