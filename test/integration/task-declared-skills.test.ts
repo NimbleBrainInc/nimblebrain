@@ -131,7 +131,8 @@ let unreadableServer: RemoteMcpFixture;
 async function createWorkspaceSkill(manifest: Record<string, unknown>, body: string) {
   const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
   const created = await runWithRequestContext(
-    { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID },
+    // The Skills settings page's REST door, where an always-on skill is written.
+    { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, shellCall: true },
     () =>
       registry.execute({
         id: `create-${String(manifest.name)}`,

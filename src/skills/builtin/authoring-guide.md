@@ -90,7 +90,10 @@ Every skill declares exactly one strategy (under `metadata.nimblebrain`):
 
 - **`always`** — always in context (the always-on channel). For voice,
   identity, and durable cross-cutting rules. It pays the context tax on
-  every turn, so keep it short — a few hundred words at most.
+  every turn, so keep it short — a few hundred words at most. The user
+  sets it in Skills settings: `skills__create`, `skills__update`, and
+  `skills__restore` refuse a write from you that would leave a skill
+  `always`, so draft the text and ask the user to add it there.
 - **`dynamic`** — loaded on demand (the conditional channel). For
   capability / domain skills (a compliance review, a research workflow). A
   dynamic skill enters context through one of three activation signals:
