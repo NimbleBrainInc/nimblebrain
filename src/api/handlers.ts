@@ -1014,7 +1014,8 @@ export async function handleIdentityToolCall(
   const t0 = performance.now();
   let result: Awaited<ReturnType<ToolSource["execute"]>>;
   try {
-    result = await runWithRequestContext({ identity: identity ?? null }, () =>
+    // This door is the first-party web shell's, as the workspace door is.
+    result = await runWithRequestContext({ identity: identity ?? null, shellCall: true }, () =>
       source.execute(splitInnerToolName(toolName).bareToolName, validated.coercedArgs),
     );
   } catch (err) {

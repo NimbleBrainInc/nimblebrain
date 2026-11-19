@@ -126,11 +126,18 @@ export interface RequestContext {
   unattended?: boolean;
   /**
    * True when the call came from the first-party web shell: its REST
-   * `tools/call`, or an app view's `/mcp` call under a first-party credential
-   * (`isAppCall`). Set by those two doors only, never from caller input, and
-   * read as attribution (a person's verdict on a task run records `via: "ui"`),
-   * never as authority: under a provider that marks every credential
-   * first-party (`oidc`, `dev`) an external client can claim to be a view.
+   * `tools/call` (with or without a workspace), or an app view's `/mcp` call
+   * under a first-party credential (`isAppCall`). Set by those doors only,
+   * never from caller input. A run's context never carries it: neither
+   * `buildRunContext` nor the per-call restamp copies it, so a call the agent
+   * makes is never a shell call.
+   *
+   * Read as attribution (a person's verdict on a task run records `via: "ui"`)
+   * and as the same line app-only visibility draws: a write that leaves a skill
+   * always-on is refused without it (`src/platform/skills/source.ts`). It
+   * keeps a call from the agent, not from the person's own credential: under a
+   * provider that marks every credential first-party (`oidc`, `dev`) an
+   * external client can claim to be a view, so never read it as more.
    */
   shellCall?: boolean;
 }

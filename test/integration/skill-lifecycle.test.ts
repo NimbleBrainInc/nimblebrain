@@ -45,7 +45,8 @@ async function callTool(
 ): Promise<{ content: string; isError: boolean }> {
   const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
   const result = await runWithRequestContext(
-    { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID },
+    // The Skills settings page's REST door, where an always-on skill is written.
+    { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, shellCall: true },
     () =>
       registry.execute({
         id: `test-${Date.now()}`,

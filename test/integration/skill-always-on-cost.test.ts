@@ -32,7 +32,8 @@ let runtime: Runtime;
 async function callTool(name: string, input: Record<string, unknown>) {
   const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
   const res = await runWithRequestContext(
-    { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID },
+    // The Skills settings page's REST door, where an always-on skill is written.
+    { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, shellCall: true },
     () => registry.execute({ id: `t-${Math.random()}`, name, input }),
   );
   return { content: extractText(res.content), isError: res.isError ?? false };

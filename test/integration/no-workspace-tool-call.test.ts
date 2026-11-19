@@ -9,6 +9,7 @@
  *      an action that needs a workspace.
  *   4. The skills listing reads org and user skills with no workspace tier, so
  *      a workspace skill of the same name never hides an org skill there.
+ *   5. It is the shell's door, so it writes an always-on skill.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -207,5 +208,26 @@ describe("skills listing with no workspace", () => {
       body: "Body.",
     });
     expect((await readJson<ToolCallResponse>(res)).isError).toBe(true);
+  });
+
+  it("writes an always-on org or user skill, as the org and profile settings do", async () => {
+    for (const scope of ["org", "user"] as const) {
+      const name = `${scope}-standing-rule`;
+      const created = await noWorkspace("skills", "create", {
+        scope,
+        manifest: { name, description: "Standing rule", loadingStrategy: "always" },
+        body: "Cite a source.",
+      });
+      const body = await readJson<ToolCallResponse>(created);
+      expect({ scope, isError: body.isError }).toEqual({ scope, isError: false });
+      const id = (body.structuredContent as { id: string }).id;
+
+      const updated = await noWorkspace("skills", "update", {
+        id,
+        body: "Never invent a number.",
+        body_mode: "append",
+      });
+      expect((await readJson<ToolCallResponse>(updated)).isError).toBe(false);
+    }
   });
 });
