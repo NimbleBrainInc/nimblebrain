@@ -173,6 +173,11 @@ NimbleBrain-specific fields under `_meta["ai.nimblebrain/connector"]`:
 | `tags` | no | Strings used for filter / search in the Browse page. |
 | `interactive` | no | Sets the "Interactive" badge. |
 | `docsUrl` | no | Connector-specific docs link surfaced on the Configure page. Must be http(s). |
+| `personal` | ignored | Accepted so an older catalog still loads, and has no effect. Whether a person can install a connector follows from its `auth` (see below). |
+
+#### Who can install a connector
+
+Any entry installs into a workspace. An entry is also offered for [personal install](/using/personal-connectors/) when its auth can hold a credential that belongs to one person: `dcr`; a brokered provider that runs an interactive sign-in (`composio`); or `static` with an [OAuth client for the whole instance](#an-oauth-client-for-the-whole-instance). `provider`, `smithery`, and `static` with only a workspace's own client sign in with a credential the operator or the workspace holds, so they install into a workspace only. The catalog has no field to restrict a connector to workspace install.
 
 ### auth: provider for a gateway endpoint
 
@@ -505,7 +510,7 @@ When the vendor relationship belongs to the deployment rather than to each works
 The key is the catalog id of an `auth: static` entry. `clientSecret` takes a literal or an [instance-scope reference](/config/secrets/#instance-scope); left out, it is read from `<CATALOG_ID>_CLIENT_SECRET`, the id upper-cased with each run of other characters turned into `_` (`COM_EXAMPLE_MCP_CLIENT_SECRET` here). With an instance OAuth client declared:
 
 - The entry installs in every workspace with no **Set up** step, and **Set up** is refused for it. A workspace's own record for that id is ignored.
-- It can be a [personal connector](/using/personal-connectors/), so each person signs in with their own account. Flag the entry `personal: true` to offer it there.
+- It is offered as a [personal connector](/using/personal-connectors/) too, so each person can sign in with their own account.
 - The installed connector names the client and copies neither its id nor its secret, so changing either is a config change and a restart. Connectors already installed with a workspace's own Set up keep using it.
 - The client is used only for the URL the catalog publishes for its id. A connector at any other URL fails to connect rather than send the secret elsewhere.
 

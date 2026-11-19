@@ -293,14 +293,6 @@ export interface NimbleBrainConnectorMeta {
     /** Optional connector-specific docs URL surfaced on the Configure page. */
     docsUrl?: string;
     /**
-     * Offer this connector for PERSONAL (identity-plane) connection — the curated
-     * set surfaced on the profile's Connectors page. Only DCR connectors are
-     * actually installable on the identity plane today, so a non-DCR entry flagged
-     * `personal` is still filtered out server-side (`list_personal_catalog`); the
-     * flag is the operator's opt-in, the auth check is the hard gate.
-     */
-    personal?: boolean;
-    /**
      * How to ask the connected service which account it is signed in as, for a
      * service whose sign-in names none: `{ tool, arguments?, field }`. Read
      * through `parseAccountLookup` (`account-lookup.ts`), which has the shape

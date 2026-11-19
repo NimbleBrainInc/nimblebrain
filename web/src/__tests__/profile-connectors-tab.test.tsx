@@ -173,7 +173,6 @@ function catalogEntry(overrides: Partial<CatalogListing> = {}): CatalogListing {
     id: "ai.granola/mcp",
     name: "Granola",
     description: "Meeting notes and transcripts",
-    personal: true,
     install: {
       kind: "remote-oauth",
       url: "https://mcp.granola.ai/mcp",
