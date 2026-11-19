@@ -40,6 +40,11 @@ import { Tooltip } from "../ui/tooltip";
  * section carry no owner mark, since the section says whose they are; a row
  * shown outside its section (Needs you, a search result) carries one on its
  * icon.
+ *
+ * A plugin in Needs you is also in its section. Its action is offered once:
+ * where its Needs-you row is on screen, the section's row says what is wrong
+ * instead (`attentionReason`); anywhere its Needs-you row is not (a search, the
+ * strip's rows past its first few), its own row keeps the action.
  */
 export interface InstalledViewProps {
   model: InstalledModel;
@@ -59,9 +64,8 @@ export interface InstalledViewProps {
   /** Whether a sign-in on this page just connected this plugin. */
   justConnected: (plugin: Plugin) => boolean;
   /**
-   * A control at the end of a skill's row, before its menu. The seam for
-   * turning one of the viewer's own skills off in this workspace; nothing
-   * passes one yet.
+   * A control at the end of a skill's row, before its menu: the page passes
+   * On here for the viewer's own skills.
    */
   skillControl?: (skill: AuthoredSkill) => React.ReactNode;
   /** Shown when nothing is installed at all. */
@@ -70,7 +74,13 @@ export interface InstalledViewProps {
 
 export function InstalledView(props: InstalledViewProps) {
   const { model, filters, onFiltersChange, workspaceName } = props;
+  const [needsYouAll, setNeedsYouAll] = useState(false);
   if (model.empty) return <>{props.emptyState}</>;
+
+  // The plugins whose Needs-you row, with its action, is on screen now.
+  const inStrip = new Set(
+    (needsYouAll ? model.needsYou : model.needsYou.slice(0, SUBLIST_PREVIEW)).map((p) => p.id),
+  );
 
   return (
     <div className="space-y-5">
@@ -85,7 +95,14 @@ export function InstalledView(props: InstalledViewProps) {
         <SearchResults {...props} results={model.results} />
       ) : (
         <>
-          {model.needsYou.length > 0 && <NeedsYou {...props} plugins={model.needsYou} />}
+          {model.needsYou.length > 0 && (
+            <NeedsYou
+              {...props}
+              plugins={model.needsYou}
+              all={needsYouAll}
+              onToggleAll={() => setNeedsYouAll(!needsYouAll)}
+            />
+          )}
           {model.sections.length === 0 ? (
             <NoMatches />
           ) : (
@@ -95,6 +112,7 @@ export function InstalledView(props: InstalledViewProps) {
                 {...props}
                 section={section}
                 workspaceName={workspaceName}
+                inStrip={inStrip}
               />
             ))
           )}
@@ -209,8 +227,10 @@ function NoMatches() {
 // ---------------------------------------------------------------------------
 
 /** A long Needs-you list shows its first few, then all on request, like a section's. */
-function NeedsYou(props: InstalledViewProps & { plugins: Plugin[] }) {
-  const [all, setAll] = useState(false);
+function NeedsYou(
+  props: InstalledViewProps & { plugins: Plugin[]; all: boolean; onToggleAll: () => void },
+) {
+  const { all } = props;
   const shown = all ? props.plugins : props.plugins.slice(0, SUBLIST_PREVIEW);
   return (
     <section
@@ -243,7 +263,7 @@ function NeedsYou(props: InstalledViewProps & { plugins: Plugin[] }) {
           all={all}
           total={props.plugins.length}
           noun=""
-          onToggle={() => setAll(!all)}
+          onToggle={props.onToggleAll}
         />
       )}
     </section>
@@ -335,7 +355,7 @@ function sectionCopy(id: SectionId, workspaceName: string): { title: string; exp
       return {
         title: "Just you",
         explain:
-          "Only your agent uses these. Your plugins act where you turn them on; your skills follow you to every workspace.",
+          "Only your agent uses these. Your plugins act where you turn them on; your skills apply in every workspace unless you turn one off here.",
       };
     case "not-here":
       return {
@@ -345,7 +365,9 @@ function sectionCopy(id: SectionId, workspaceName: string): { title: string; exp
   }
 }
 
-function InstalledSection(props: InstalledViewProps & { section: SectionModel }) {
+function InstalledSection(
+  props: InstalledViewProps & { section: SectionModel; inStrip: ReadonlySet<string> },
+) {
   const { section, workspaceName } = props;
   const overrides = usePref(COLLAPSED_PREF);
   // This visit's choice, held here too: a storage that refuses the write must
@@ -397,7 +419,14 @@ function InstalledSection(props: InstalledViewProps & { section: SectionModel })
           <p className="mt-1.5 mb-1 pl-5.5 text-xs text-muted-foreground">{explain}</p>
           {section.plugins.length > 0 && (
             <SubList kind="plugins" items={section.plugins} sectionId={section.id}>
-              {(plugin) => <PluginRow key={plugin.id} {...props} plugin={plugin} />}
+              {(plugin) => (
+                <PluginRow
+                  key={plugin.id}
+                  {...props}
+                  plugin={plugin}
+                  actionInStrip={props.inStrip.has(plugin.id)}
+                />
+              )}
             </SubList>
           )}
           {section.skills.length > 0 && (
@@ -468,6 +497,7 @@ function PluginRow({
   justConnected,
   ownerMark,
   meta,
+  actionInStrip = false,
   inset = true,
 }: InstalledViewProps & {
   plugin: Plugin;
@@ -475,6 +505,8 @@ function PluginRow({
   ownerMark?: ItemOwner;
   /** The line beside the name; the account by default. */
   meta?: string;
+  /** Its Needs-you row is on screen with the action, so this row says what is wrong instead. */
+  actionInStrip?: boolean;
   inset?: boolean;
 }) {
   const fresh = justConnected(plugin);
@@ -483,9 +515,19 @@ function PluginRow({
   useEffect(() => {
     if (fresh) rowRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [fresh]);
-  const action = rowAction(plugin);
   const muted = plugin.owner.kind === "person" && !plugin.granted;
   const line = meta ?? accountLine(plugin);
+  // Said once: a reason the account line already gives ("Not signed in") is not repeated.
+  const reason = actionInStrip ? attentionReason(plugin) : undefined;
+  const action = actionInStrip ? (
+    reason && reason !== line ? (
+      <span className="px-2 text-xs text-warning" data-testid="plugin-attention">
+        {reason}
+      </span>
+    ) : null
+  ) : (
+    rowAction(plugin)
+  );
 
   return (
     <div
@@ -549,6 +591,8 @@ function SkillRow({
 }: InstalledViewProps & { skill: AuthoredSkill; ownerMark?: ItemOwner; inset?: boolean }) {
   const mechanism = skillMechanismLabel(skill);
   const off = skill.status !== "active";
+  // Turned off in this workspace by its owner (On here), though on elsewhere.
+  const offHere = skill.onHere === false;
   const to = skillTo(skill);
   const control = skillControl?.(skill);
   return (
@@ -567,7 +611,10 @@ function SkillRow({
         </span>
       )}
       <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
-        <Link to={to} className={cn("shrink-0 text-sm", off && "text-muted-foreground", ROW_LINK)}>
+        <Link
+          to={to}
+          className={cn("shrink-0 text-sm", (off || offHere) && "text-muted-foreground", ROW_LINK)}
+        >
           {skill.name}
         </Link>
         {skill.scope === "org" && (
