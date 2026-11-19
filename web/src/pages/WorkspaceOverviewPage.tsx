@@ -21,11 +21,13 @@
 // from container queries on the main area (web/DESIGN.md), never the viewport.
 //
 // App data source: `forSlot("sidebar")` → `workspaceApps()`, the same set the
-// sidebar quick-list reads, so the grid and the count agree. Icons are the
-// apps' brand icons via `useWorkspaceAppIcons`, with a letter-avatar fallback.
+// sidebar's APPS reads, so the two list the same apps. Like the sidebar, it
+// lists only apps (plugins with a page to open); every plugin, with or without
+// one, is on Plugins, which the empty card links to. Icons are the apps' brand
+// icons via `useWorkspaceAppIcons`, with a letter-avatar fallback.
 // ---------------------------------------------------------------------------
 
-import { ArrowUp, MessageSquare, Plus, Settings, UserPlus } from "lucide-react";
+import { ArrowUp, MessageSquare, Plus, Puzzle, Settings, UserPlus } from "lucide-react";
 import { type FormEvent, useCallback, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { BriefingView } from "../components/briefing/BriefingView";
@@ -190,14 +192,16 @@ export function WorkspaceOverviewPage() {
               className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
               data-testid="workspace-overview-empty"
             >
-              <p>No apps installed in this workspace yet.</p>
+              <p>No apps in this workspace yet.</p>
+              <p className="mt-1">Apps are plugins with a page to open.</p>
               {canAddApps && (
                 <Link
                   to={`${slugPath}/plugins/browse`}
+                  data-testid="workspace-overview-browse"
                   className="mt-3 inline-flex h-8 items-center gap-2 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/80 transition-colors"
                 >
-                  <Plus className="size-4" aria-hidden />
-                  Add an app
+                  <Puzzle className="size-4" aria-hidden />
+                  Browse plugins
                 </Link>
               )}
             </div>
