@@ -15,6 +15,8 @@ import { realClient } from "../../test/setup";
 import type { Plugin } from "../_generated/platform-schemas/plugins";
 import type * as ApiClient from "../api/client";
 import type { InstalledConnector, PersonalConnector } from "../api/client";
+import { __internal__ as eventsClient } from "../api/events-client";
+import type { ConnectEventsOptions, EventConnection } from "../api/sse";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -629,6 +631,49 @@ describe("PluginDetailPage — a person's plugin", () => {
       "Sign-out failed",
     );
     expect(location).toBe(pagePath("person:granola"));
+  });
+});
+
+describe("PluginDetailPage — a grant changed elsewhere", () => {
+  // The events stream is driven through the real events-client singleton's
+  // `setConnectorForTest` seam, as chat-plugins-provider.test.tsx does.
+  let events: ConnectEventsOptions | null = null;
+  beforeEach(() => {
+    events = null;
+    eventsClient.resetForTest();
+    eventsClient.setConnectorForTest((options) => {
+      events = options;
+      return { close() {} } satisfies EventConnection;
+    });
+  });
+  afterEach(() => {
+    eventsClient.resetForTest();
+    eventsClient.setConnectorForTest(null);
+  });
+
+  test("re-reads the plugin and its connector record, so here and Workspaces both update", async () => {
+    plugins = [granola(false)];
+    personal = [granolaConnector([])];
+    mounted = await mount(pagePath("person:granola"));
+    expect(workspaceRows(mounted.container).map((r) => r.state)).toEqual(["Off", "Off", "Off"]);
+    const listings = listPlugins.mock.calls.length;
+    const records = listPersonalConnectors.mock.calls.length;
+
+    plugins = [granola(true)];
+    personal = [granolaConnector([WS_ID, OTHER_WS_ID])];
+    await act(async () => {
+      events?.onEvent("connector.grant_changed", {
+        userId: "usr_pat",
+        serverName: "granola",
+        wsId: OTHER_WS_ID,
+        granted: true,
+      });
+    });
+    await settle();
+
+    expect(listPlugins.mock.calls.length).toBe(listings + 1);
+    expect(listPersonalConnectors.mock.calls.length).toBe(records + 1);
+    expect(workspaceRows(mounted.container).map((r) => r.state)).toEqual(["On", "On", "Off"]);
   });
 });
 

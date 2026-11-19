@@ -8,6 +8,7 @@ import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { EngineEvent } from "../../src/engine/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import type { PermissionStore } from "../../src/permissions/permission-store.ts";
@@ -96,7 +97,14 @@ interface Harness {
   ownWsId: string;
   grants: Record<string, string[]>;
   toolPolicies: Record<string, unknown>;
+  /** Every event the tool emitted on the runtime's sink, in order. */
+  events: EngineEvent[];
   tool: ReturnType<typeof createManageConnectorsTool>;
+}
+
+/** The `connector.grant_changed` payloads emitted so far. */
+function grantChanges(h: Harness): unknown[] {
+  return h.events.filter((e) => e.type === "connector.grant_changed").map((e) => e.data);
 }
 
 async function buildHarness(): Promise<Harness> {
@@ -121,9 +129,10 @@ async function buildHarness(): Promise<Harness> {
   // Per-tool allow/deny policies, keyed serverName — the user-scope
   // `connectors[serverName]` block a disconnect must also clear.
   const toolPolicies: Record<string, unknown> = {};
+  const events: EngineEvent[] = [];
   const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
-    getEventSink: () => new NoopEventSink(),
+    getEventSink: () => ({ emit: (event: EngineEvent) => events.push(event) }),
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
     getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
@@ -168,6 +177,7 @@ async function buildHarness(): Promise<Harness> {
     ownWsId,
     grants,
     toolPolicies,
+    events,
     tool: createManageConnectorsTool(ctx),
   };
 }
@@ -409,6 +419,9 @@ describe("manage_connectors.install scope:identity with wsId — install and gra
     expect(sc.scope).toBe("identity");
     expect(sc.grantedWsId).toBe(h.sharedWsId);
     expect(h.grants["ai-granola-mcp"]).toEqual([h.sharedWsId]);
+    expect(grantChanges(h)).toEqual([
+      { userId: USER.id, serverName: "ai-granola-mcp", wsId: h.sharedWsId, granted: true },
+    ]);
   });
 
   test("without wsId, nothing is granted (the profile's install)", async () => {
@@ -420,6 +433,7 @@ describe("manage_connectors.install scope:identity with wsId — install and gra
     expect(result.isError).toBe(false);
     expect((result.structuredContent as { grantedWsId?: string }).grantedWsId).toBeUndefined();
     expect(h.grants["ai-granola-mcp"]).toBeUndefined();
+    expect(grantChanges(h)).toEqual([]);
   });
 
   test("the grant precedes the connection and stands after the OAuth return, once", async () => {
@@ -619,6 +633,7 @@ describe("manage_connectors.disconnect scope:identity — full remove", () => {
   test("removes the install record, revokes all grants, drops tool policies, and deletes identity credentials", async () => {
     await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
     await h.tool.handler({ action: "grant_connector", serverName: SERVER, wsId: h.sharedWsId });
+    await h.tool.handler({ action: "grant_connector", serverName: SERVER, wsId: h.ownWsId });
 
     // A per-tool allow policy the user set on this personal connector — it must not
     // survive the disconnect (else it silently rebinds on a reconnect).
@@ -633,7 +648,8 @@ describe("manage_connectors.disconnect scope:identity — full remove", () => {
 
     const store = new IdentityConnectorStore({ workDir: h.workDir });
     expect(await store.list(USER.id)).toHaveLength(1);
-    expect(h.grants[SERVER]).toEqual([h.sharedWsId]);
+    expect(h.grants[SERVER]).toEqual([h.sharedWsId, h.ownWsId]);
+    h.events.length = 0;
 
     const result = await h.tool.handler({
       action: "disconnect",
@@ -648,12 +664,16 @@ describe("manage_connectors.disconnect scope:identity — full remove", () => {
     };
     expect(sc.ok).toBe(true);
     expect(sc.scope).toBe("identity");
-    expect(sc.revokedWorkspaces).toBe(1);
+    expect(sc.revokedWorkspaces).toBe(2);
 
     // Install record gone → offered again by the catalog.
     expect(await store.list(USER.id)).toHaveLength(0);
-    // Every grant revoked.
+    // Every grant revoked, and the owner's tabs told once per workspace.
     expect(h.grants[SERVER]).toBeUndefined();
+    expect(grantChanges(h)).toEqual([
+      { userId: USER.id, serverName: SERVER, wsId: h.sharedWsId, granted: false },
+      { userId: USER.id, serverName: SERVER, wsId: h.ownWsId, granted: false },
+    ]);
     // Per-tool policies dropped (no silent rebind on reconnect).
     expect(h.toolPolicies[SERVER]).toBeUndefined();
     // Identity credentials deleted.
@@ -679,6 +699,7 @@ describe("manage_connectors.disconnect scope:identity — full remove", () => {
     });
     expect(result.isError).toBe(false);
     expect((result.structuredContent as { revokedWorkspaces?: number }).revokedWorkspaces).toBe(0);
+    expect(grantChanges(h)).toEqual([]);
     expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
   });
 });
