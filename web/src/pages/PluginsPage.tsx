@@ -1,7 +1,7 @@
 import { Menu } from "@base-ui/react/menu";
-import { Check, MoreHorizontal, User } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { ChevronDown } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Plugin, PluginsListOutput } from "../_generated/platform-schemas/plugins";
 import {
   disconnectPersonalConnector,
@@ -11,33 +11,30 @@ import {
   type PersonalConnector,
   revokeConnector,
 } from "../api/client";
-import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { connectorStatusSummary } from "../components/connectors/ConnectorList";
 import {
   disconnectConsequence,
   startPluginSignIn,
 } from "../components/connectors/personal-connector";
 import {
-  type ConnectedTarget,
   type ReturnedConnector,
   useConnectedNotice,
 } from "../components/connectors/useConnectedNotice";
-import { SkillsGroup } from "../components/plugins/SkillsGroup";
+import { InstalledView, type RowMenuItem } from "../components/plugins/InstalledView";
 import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
-import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { ConfirmDialog } from "../components/ui/confirm-dialog";
-import { Tooltip } from "../components/ui/tooltip";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useEvents } from "../hooks/useEvents";
 import { useCanWriteActiveWorkspace } from "../hooks/useScopedRole";
+import { type AuthoredSkill, listAuthoredSkills } from "../lib/authored-skills";
 import {
-  accountLine,
-  newSkillPath,
-  pluginConnected,
-  pluginNextStep,
-  pluginPath,
-} from "../lib/plugins";
+  type AttentionStep,
+  buildInstalledModel,
+  type InstalledFilters,
+  pluginAttention,
+} from "../lib/installed-view";
+import { newSkillPath, pluginConnected, pluginPath, skillPath } from "../lib/plugins";
 import { cn } from "../lib/utils";
 import { toWsId } from "../lib/workspace-slug";
 import { ConnectorDirectory } from "./settings/ConnectorBrowsePage";
@@ -46,24 +43,18 @@ import { EmptyState, InlineError } from "./settings/components";
 /**
  * Plugins — what the agent can do in this workspace, in one place.
  *
- * Installed lists, in one group, everything the agent can use here: the
- * workspace's plugins and the viewer's own ones granted here. Then the
- * viewer's plugins not used here, then the skills people wrote
- * (`SkillsGroup`). A row names the plugin and the account it uses, flags only
- * what needs the viewer, and opens the plugin's page, where its state and
- * every action live. A healthy row offers nothing. One that needs a sign-in
- * offers Connect (a person's signs in from the row; a workspace's opens its
- * page, where its admin connects it), and one of the viewer's plugins not used
- * here offers Use here, which signs in too when it is not connected
- * (`pluginNextStep`). A sign-in returns to this page. The rest (Open, Stop
- * using here, Disconnect) sit in the row's ⋯ menu. Whose a plugin is reads
- * from its badge, not from a group.
+ * Installed arranges, for a listing of any length (`InstalledView`), what the
+ * agent can use here by who it acts for: **Shared** (the workspace's plugins,
+ * its skills, and the org's), **Just you** (the viewer's plugins granted here
+ * and their own skills), and **Yours, not on here**. Plugins whose next step is
+ * an action are also gathered at the top under **Needs you**. A row names the
+ * plugin and the account it uses, offers only what needs the viewer, and opens
+ * the plugin's page; the rest is in its ⋯ menu. Whose a plugin is reads from
+ * the facts the listing carries (ADR-0069).
  *
  * Browse offers writing a skill above the connector directory, which asks
  * whom an install is for: the viewer alone (granted here in the same act) or
- * everyone in the workspace. A row needs no rule of its own to tell a
- * personal plugin from a workspace one; it reads the facts the listing carries
- * (ADR-0069).
+ * everyone in the workspace.
  *
  * One column, because this renders in the main area beside the docked chat
  * (`web/DESIGN.md`).
@@ -71,6 +62,9 @@ import { EmptyState, InlineError } from "./settings/components";
 export function PluginsPage() {
   const { slug = "" } = useParams<{ slug: string }>();
   const wsId = toWsId(slug);
+  const navigate = useNavigate();
+  const { workspaces } = useWorkspaceContext();
+  const workspaceName = workspaces.find((w) => w.id === wsId)?.name ?? "this workspace";
   const [params, setParams] = useSearchParams();
   const tab: PluginsTab = params.get("tab") === "browse" ? "browse" : "installed";
   const showTab = (next: PluginsTab) =>
@@ -79,11 +73,24 @@ export function PluginsPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto px-(--page-gutter) py-6 space-y-6">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Plugins</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            What your agent can do in this workspace.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold tracking-tight">Plugins</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              What your agent can do in {workspaceName}.
+            </p>
+          </div>
+          {tab === "installed" && (
+            <div className="flex shrink-0 gap-2" data-testid="plugins-header-actions">
+              <Button type="button" variant="outline" size="sm" onClick={() => showTab("browse")}>
+                Browse directory
+              </Button>
+              <AddMenu
+                onPlugin={() => showTab("browse")}
+                onSkill={() => navigate(newSkillPath(slug))}
+              />
+            </div>
+          )}
         </div>
 
         <div role="tablist" aria-label="Plugins" className="flex gap-4 border-b border-border">
@@ -96,7 +103,13 @@ export function PluginsPage() {
         </div>
 
         {tab === "installed" ? (
-          <InstalledPlugins key={wsId} wsId={wsId} slug={slug} onBrowse={() => showTab("browse")} />
+          <InstalledPlugins
+            key={wsId}
+            wsId={wsId}
+            slug={slug}
+            workspaceName={workspaceName}
+            onBrowse={() => showTab("browse")}
+          />
         ) : (
           <Browse slug={slug} />
         )}
@@ -106,6 +119,38 @@ export function PluginsPage() {
 }
 
 type PluginsTab = "installed" | "browse";
+
+/** Add ▾: a plugin from the directory, or a skill written here. */
+function AddMenu({ onPlugin, onSkill }: { onPlugin: () => void; onSkill: () => void }) {
+  const itemClass =
+    "flex w-full cursor-default items-center px-3 py-1.5 text-sm outline-none data-[highlighted]:bg-foreground/5";
+  return (
+    <Menu.Root>
+      <Menu.Trigger
+        render={<Button type="button" size="sm" data-testid="plugins-add" />}
+        className="gap-1"
+      >
+        Add
+        <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner align="end" sideOffset={4} className="z-50">
+          <Menu.Popup
+            data-testid="plugins-add-popup"
+            className="min-w-48 rounded-sm border bg-popover py-1 text-popover-foreground shadow-md outline-none"
+          >
+            <Menu.Item className={itemClass} onClick={onPlugin}>
+              Plugin from the directory
+            </Menu.Item>
+            <Menu.Item className={itemClass} onClick={onSkill}>
+              Write a skill
+            </Menu.Item>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
 
 /**
  * Browse: writing a skill, then the plugin directory. A skill written here is
@@ -168,58 +213,30 @@ function TabButton({
   );
 }
 
-/**
- * The listing in two groups: what the agent can use here (the workspace's
- * plugins and the viewer's own granted ones), then the viewer's plugins not
- * used here. Within each, the ones that need the viewer come first, then by name.
- */
-export function groupPlugins(plugins: readonly Plugin[]): {
-  here: Plugin[];
-  yoursNotHere: Plugin[];
-} {
-  const order = (a: Plugin, b: Plugin) =>
-    Number(pluginConnected(a)) - Number(pluginConnected(b)) ||
-    a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" });
-  const sorted = [...plugins].sort(order);
-  return {
-    here: sorted.filter((p) => p.owner.kind === "workspace" || p.granted),
-    yoursNotHere: sorted.filter((p) => p.owner.kind === "person" && !p.granted),
-  };
-}
-
-/** What the plugin brings besides its tools: its skills and its apps. */
-export function contentsLine(plugin: Plugin): string | undefined {
-  const parts: string[] = [];
-  const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
-  if (plugin.skills.length > 0) parts.push(count(plugin.skills.length, "skill"));
-  if (plugin.apps.length > 0) parts.push(count(plugin.apps.length, "app"));
-  return parts.length > 0 ? parts.join(" · ") : undefined;
-}
-
-/** A server status that a sign-in clears. */
-function needsSignIn(plugin: Plugin): boolean {
-  return plugin.servers.some((s) => s.status === "not_connected" || s.status === "needs_auth");
-}
+const NO_FILTERS: InstalledFilters = { query: "", kind: "all", owner: "everyone" };
 
 function InstalledPlugins({
   wsId,
   slug,
+  workspaceName,
   onBrowse,
 }: {
   wsId: string;
   slug: string;
+  workspaceName: string;
   onBrowse: () => void;
 }) {
-  const { workspaces } = useWorkspaceContext();
   const navigate = useNavigate();
   // Installing and signing in a workspace plugin write the workspace; granting
   // your own plugin does not, so only those affordances are gated.
   const canManage = useCanWriteActiveWorkspace();
-  const workspaceName = workspaces.find((w) => w.id === wsId)?.name ?? "this workspace";
   const [listing, setListing] = useState<PluginsListOutput | null>(null);
+  const [skills, setSkills] = useState<AuthoredSkill[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [filters, setFilters] = useState<InstalledFilters>(NO_FILTERS);
   const [confirming, setConfirming] = useState<Plugin | null>(null);
   const [stopping, setStopping] = useState<Plugin | null>(null);
   const [disconnecting, setDisconnecting] = useState<Plugin | null>(null);
@@ -246,10 +263,20 @@ function InstalledPlugins({
   useEffect(() => {
     const signal = { cancelled: false };
     void refresh(signal);
+    listAuthoredSkills(wsId).then(
+      (next) => {
+        if (!signal.cancelled) setSkills(next);
+      },
+      (err: unknown) => {
+        if (signal.cancelled) return;
+        setSkillsError(err instanceof Error ? err.message : String(err));
+        setSkills([]);
+      },
+    );
     return () => {
       signal.cancelled = true;
     };
-  }, [refresh]);
+  }, [refresh, wsId]);
 
   const loadConnectors = useCallback(async (signal?: { cancelled: boolean }) => {
     try {
@@ -271,18 +298,17 @@ function InstalledPlugins({
   // A sign-in finishing elsewhere changes a row's status and account.
   useEvents({ onConnectionStateChanged: () => void refresh() });
 
+  const plugins = listing && listing.wsId === wsId ? listing.plugins : null;
+
   // Confirm the connector an OAuth sign-in just connected (`?connected=`): a
   // notice, and its plugin's row marked while the page is open.
   const rereadSilently = useCallback(() => void refresh(), [refresh]);
-  const returned = useMemo(
-    () => (listing && listing.wsId === wsId ? listing.plugins.flatMap(toReturnedConnectors) : null),
-    [listing, wsId],
-  );
+  const returned = useMemo(() => plugins?.flatMap(toReturnedConnectors) ?? null, [plugins]);
   const justConnected = useConnectedNotice(returned, rereadSilently);
 
-  const groups = useMemo(
-    () => (listing && listing.wsId === wsId ? groupPlugins(listing.plugins) : null),
-    [listing, wsId],
+  const model = useMemo(
+    () => (plugins && skills ? buildInstalledModel(plugins, skills, filters, { canManage }) : null),
+    [plugins, skills, filters, canManage],
   );
 
   // Turn it on here, then sign in when it has no account behind it. The grant
@@ -302,8 +328,8 @@ function InstalledPlugins({
     setActionError(null);
     setBusyId(plugin.id);
     try {
-      const signedIn = await startPluginSignIn(plugin, connectors ?? [], { workspaceId: wsId });
       // The redirect leaves the page, so the row stays busy until it does.
+      const signedIn = await startPluginSignIn(plugin, connectors ?? [], { workspaceId: wsId });
       if (signedIn === "redirected") return;
       await refresh();
     } catch (err) {
@@ -334,46 +360,19 @@ function InstalledPlugins({
     return new Set(ids).size;
   };
 
-  if (loadError && !groups) {
+  if (loadError && !plugins) {
     return <InlineError message={`Unable to load plugins: ${loadError}. Reload to retry.`} />;
   }
-  if (!groups) return <p className="text-sm text-muted-foreground">Loading…</p>;
-
-  const rowFor = (plugin: Plugin) => {
-    const to = pluginPath(slug, plugin);
-    const personal = plugin.owner.kind === "person";
-    const menu: RowMenuItem[] = [{ kind: "open", to }];
-    if (personal && plugin.granted) {
-      menu.push({ kind: "stop", onSelect: () => setStopping(plugin) });
-    }
-    if (personal && pluginConnected(plugin)) {
-      menu.push({ kind: "disconnect", onSelect: () => setDisconnecting(plugin) });
-    }
-    return (
-      <PluginRow
-        key={plugin.id}
-        plugin={plugin}
-        to={to}
-        muted={personal && !plugin.granted}
-        justConnected={justConnected}
-        action={rowAction(plugin, to)}
-        menu={menu}
-      />
-    );
-  };
+  if (!model) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
   // Only what needs the viewer: nothing for a healthy plugin.
-  const rowAction = (plugin: Plugin, to: string): React.ReactNode =>
-    plugin.owner.kind === "workspace"
-      ? workspaceAction(plugin, canManage, () => navigate(to))
-      : personalAction(plugin);
-
-  const personalAction = (plugin: Plugin): React.ReactNode => {
-    if (!plugin.granted) {
+  const rowAction = (plugin: Plugin): React.ReactNode => {
+    if (plugin.owner.kind === "person" && !plugin.granted) {
       return (
         <Button
           type="button"
           size="sm"
+          variant="outline"
           // Use here signs in when it is not connected, which needs the
           // connector's record to pick the route.
           disabled={!pluginConnected(plugin) && connectors === null}
@@ -387,51 +386,86 @@ function InstalledPlugins({
         </Button>
       );
     }
-    if (pluginNextStep(plugin) !== "connect") return null;
+    const step = pluginAttention(plugin, { canManage });
+    if (!step) return statusWords(plugin);
+    // A workspace plugin signs in on its page, where its admin connects it, and
+    // a failed or unset-up one is fixed there; only a person's own sign-in
+    // starts from the row.
+    const fromRow = step !== "open" && plugin.owner.kind === "person";
     const busy = busyId === plugin.id;
     return (
-      <Button
-        type="button"
-        size="sm"
-        disabled={busy || connectors === null}
-        onClick={() => void connectHere(plugin)}
-        data-testid="plugin-connect"
-      >
-        {busy ? "Connecting…" : "Connect"}
-      </Button>
+      <AttentionButton
+        step={step}
+        busy={busy}
+        disabled={fromRow && (busy || connectors === null)}
+        onClick={() => (fromRow ? void connectHere(plugin) : navigate(pluginPath(slug, plugin)))}
+      />
     );
   };
 
+  const rowMenu = (plugin: Plugin): RowMenuItem[] => {
+    const items: RowMenuItem[] = [{ kind: "link", label: "Open", to: pluginPath(slug, plugin) }];
+    if (plugin.owner.kind !== "person") return items;
+    if (plugin.granted) {
+      items.push({ kind: "action", label: "Stop using here", onSelect: () => setStopping(plugin) });
+    }
+    if (pluginConnected(plugin)) {
+      items.push({
+        kind: "action",
+        label: "Disconnect",
+        destructive: true,
+        onSelect: () => setDisconnecting(plugin),
+      });
+    }
+    return items;
+  };
+
+  const total = (plugins?.length ?? 0) + (skills?.length ?? 0);
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       {actionError && <InlineError message={actionError} />}
+      {skillsError && <InlineError message={`Unable to load skills: ${skillsError}`} />}
 
-      {groups.here.length === 0 ? (
-        <EmptyState
-          message="No plugins act in this workspace yet."
-          action={
-            canManage ? (
-              <Button type="button" variant="outline" size="sm" onClick={onBrowse}>
-                Browse plugins
-              </Button>
-            ) : undefined
-          }
-        />
-      ) : (
-        <PluginSection title="In this workspace" plugins={groups.here} testId="here">
-          {rowFor}
-        </PluginSection>
-      )}
-
-      <PluginSection
-        title="Yours, not used here"
-        plugins={groups.yoursNotHere}
-        testId="yours-not-here"
-      >
-        {rowFor}
-      </PluginSection>
-
-      <SkillsGroup wsId={wsId} slug={slug} />
+      <InstalledView
+        model={model}
+        filters={filters}
+        onFiltersChange={setFilters}
+        workspaceName={workspaceName}
+        total={total}
+        pluginTo={(plugin) => pluginPath(slug, plugin)}
+        skillTo={(skill) => skillPath(slug, skill.scope, skill.name)}
+        rowAction={rowAction}
+        rowMenu={rowMenu}
+        justConnected={(plugin) =>
+          justConnected !== null &&
+          pluginConnected(plugin) &&
+          justConnected.owner === plugin.owner.kind &&
+          plugin.servers.some((s) => s.serverName === justConnected.serverName)
+        }
+        emptyState={
+          <EmptyState
+            message="Nothing is installed here yet. Add a plugin to give your agent tools, or write a skill to teach it how you work."
+            action={
+              <div className="flex gap-2">
+                {canManage && (
+                  <Button type="button" variant="outline" size="sm" onClick={onBrowse}>
+                    Browse plugins
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(newSkillPath(slug))}
+                >
+                  Write a skill
+                </Button>
+              </div>
+            }
+          />
+        }
+      />
 
       <UsePluginHereDialog
         plugin={confirming}
@@ -463,22 +497,11 @@ function InstalledPlugins({
 }
 
 /**
- * What a workspace plugin's row asks of the viewer. A sign-in happens on its
- * page, where its admin connects it, so Connect opens the page; a member, or a
- * state a sign-in does not clear, reads the status words instead.
+ * A plugin that is not ready but asks the viewer nothing (settling, or a
+ * workspace sign-in only its admin does) reads the connector list's status
+ * words; a ready one shows nothing.
  */
-function workspaceAction(
-  plugin: Plugin,
-  canManage: boolean,
-  onConnect: () => void,
-): React.ReactNode {
-  if (canManage && needsSignIn(plugin)) {
-    return (
-      <Button type="button" size="sm" onClick={onConnect} data-testid="plugin-connect">
-        Connect
-      </Button>
-    );
-  }
+function statusWords(plugin: Plugin): React.ReactNode {
   const notReady = plugin.servers.find((s) => s.status !== "ready");
   const status = notReady ? connectorStatusSummary(notReady.status) : null;
   if (!status) return null;
@@ -493,176 +516,31 @@ function workspaceAction(
   );
 }
 
-function PluginSection({
-  title,
-  plugins,
-  testId,
-  children,
+/** The button for what a plugin's row asks of the viewer (`pluginAttention`). */
+function AttentionButton({
+  step,
+  busy,
+  disabled,
+  onClick,
 }: {
-  title: string;
-  plugins: Plugin[];
-  testId: string;
-  children: (plugin: Plugin) => React.ReactNode;
+  step: AttentionStep;
+  busy: boolean;
+  disabled: boolean;
+  onClick: () => void;
 }) {
-  if (plugins.length === 0) return null;
+  const label = step === "connect" ? "Connect" : step === "reconnect" ? "Reconnect" : "Open";
   return (
-    <section className="space-y-2" data-testid={`plugins-${testId}`}>
-      <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
-      <div className="border-t border-border">{plugins.map(children)}</div>
-    </section>
-  );
-}
-
-/** A secondary action in a row's ⋯ menu. */
-type RowMenuItem =
-  | { kind: "open"; to: string }
-  | { kind: "stop"; onSelect: () => void }
-  | { kind: "disconnect"; onSelect: () => void };
-
-/**
- * One plugin: what it is, the account it uses, and only what needs the viewer.
- * The whole row opens the plugin's page: the name's link stretches over the
- * row, and the action and the ⋯ menu sit above it, beside the link rather than
- * inside it, because a control cannot nest inside a link.
- */
-function PluginRow({
-  plugin,
-  to,
-  justConnected,
-  action,
-  menu,
-  muted = false,
-}: {
-  plugin: Plugin;
-  to: string;
-  /** The connector an OAuth sign-in on this page just connected, if any. */
-  justConnected: ConnectedTarget | null;
-  action?: React.ReactNode;
-  menu: RowMenuItem[];
-  muted?: boolean;
-}) {
-  const subtitle = [accountLine(plugin), contentsLine(plugin)].filter(Boolean).join(" · ");
-  // Marked while the page is open, and only once every server is ready: a
-  // healthy row otherwise shows nothing, so the mark is the only thing it says.
-  const fresh =
-    justConnected !== null &&
-    pluginConnected(plugin) &&
-    justConnected.owner === plugin.owner.kind &&
-    plugin.servers.some((s) => s.serverName === justConnected.serverName);
-  const rowRef = useRef<HTMLDivElement>(null);
-
-  // A long list may hold the plugin below the fold.
-  useEffect(() => {
-    if (fresh) rowRef.current?.scrollIntoView?.({ block: "nearest" });
-  }, [fresh]);
-
-  return (
-    <div
-      ref={rowRef}
-      className="relative flex items-center gap-3 border-b border-border py-2.5"
-      data-testid="plugin-row"
-      data-plugin-id={plugin.id}
+    <Button
+      type="button"
+      size="sm"
+      variant={step === "connect" ? "default" : "secondary"}
+      disabled={disabled}
+      onClick={onClick}
+      data-testid={`plugin-${step}`}
     >
-      <ConnectorIcon
-        name={plugin.displayName}
-        iconUrl={plugin.iconUrl}
-        className={cn("h-7 w-7 rounded text-xs", muted && "opacity-60")}
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <Link
-            to={to}
-            data-row-link
-            className="truncate text-sm font-medium outline-none after:absolute after:inset-y-0 after:-inset-x-2 after:rounded-sm after:transition-colors hover:after:bg-foreground/5 focus-visible:after:ring-2 focus-visible:after:ring-ring"
-          >
-            {plugin.displayName}
-          </Link>
-          {plugin.owner.kind === "person" && (
-            <Badge variant="outline" data-testid="plugin-person-badge">
-              <User aria-hidden="true" />
-              Yours
-            </Badge>
-          )}
-        </div>
-        {subtitle && (
-          <p className="truncate text-xs text-muted-foreground" data-testid="plugin-account">
-            {subtitle}
-          </p>
-        )}
-      </div>
-      {fresh && (
-        <span
-          className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-success"
-          data-testid="plugin-connected-now"
-        >
-          <Check className="h-3.5 w-3.5" aria-hidden />
-          <span>Connected just now</span>
-        </span>
-      )}
-      {action && (
-        <div className="relative shrink-0" data-testid="plugin-action">
-          {action}
-        </div>
-      )}
-      <RowMenu name={plugin.displayName} items={menu} />
-    </div>
+      {busy ? "Connecting…" : label}
+    </Button>
   );
-}
-
-function RowMenu({ name, items }: { name: string; items: RowMenuItem[] }) {
-  const itemClass =
-    "flex w-full cursor-default items-center px-3 py-1.5 text-sm outline-none data-[highlighted]:bg-foreground/5 data-[disabled]:opacity-50";
-  const label = `${name} actions`;
-  return (
-    <Menu.Root>
-      <Tooltip label="More actions" side="left">
-        <Menu.Trigger
-          aria-label={label}
-          data-testid="plugin-menu"
-          className="relative shrink-0 rounded-sm p-1.5 text-muted-foreground hover:bg-foreground/5 hover:text-foreground data-[popup-open]:bg-foreground/10"
-        >
-          <MoreHorizontal className="h-4 w-4" aria-hidden />
-        </Menu.Trigger>
-      </Tooltip>
-      <Menu.Portal>
-        <Menu.Positioner align="end" sideOffset={4} className="z-50">
-          <Menu.Popup
-            data-testid="plugin-menu-popup"
-            className="min-w-44 rounded-sm border bg-popover py-1 text-popover-foreground shadow-md outline-none"
-          >
-            {items.map((item) => rowMenuItem(item, itemClass))}
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
-  );
-}
-
-function rowMenuItem(item: RowMenuItem, itemClass: string): React.ReactNode {
-  switch (item.kind) {
-    case "open":
-      return (
-        <Menu.LinkItem key="open" closeOnClick render={<Link to={item.to} />} className={itemClass}>
-          Open
-        </Menu.LinkItem>
-      );
-    case "stop":
-      return (
-        <Menu.Item key="stop" className={itemClass} onClick={item.onSelect}>
-          Stop using here
-        </Menu.Item>
-      );
-    case "disconnect":
-      return (
-        <Menu.Item
-          key="disconnect"
-          className={cn(itemClass, "text-destructive")}
-          onClick={item.onSelect}
-        >
-          Disconnect
-        </Menu.Item>
-      );
-  }
 }
 
 /**
