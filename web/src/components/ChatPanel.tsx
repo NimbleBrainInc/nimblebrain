@@ -9,6 +9,8 @@ import {
   useState,
 } from "react";
 import { useChatConfigContext, useChatContext } from "../context/ChatContext";
+import { ChatPluginsProvider } from "../context/ChatPluginsProvider";
+import { useWorkspaceContext } from "../context/WorkspaceContext";
 import type { ChatMessage } from "../hooks/chat-store";
 import { ariaKeyShortcuts, SHORTCUTS } from "../lib/shortcuts";
 import type { DisplayDetail } from "../lib/tool-display";
@@ -226,6 +228,11 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
     conversationKey,
   } = useChatContext();
   const { availableModels, newConversationModel, fileLimits } = useChatConfigContext();
+  const { activeWorkspace } = useWorkspaceContext();
+  // The workspace the conversation's tool calls ran in: its own once loaded,
+  // else the one on screen, which is where an unsent chat's first turn runs.
+  // Display only — the panel's focus decision is ChatProvider's.
+  const chatWorkspaceId = (conversationId && conversationMeta?.workspaceId) || activeWorkspace?.id;
   const models = useMemo(() => toPickerModels(availableModels), [availableModels]);
 
   const displayTitle = deriveDisplayTitle(title, messages);
@@ -327,15 +334,17 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
         </div>
       )}
 
-      <MessageList
-        messages={messages}
-        isStreaming={isStreaming}
-        streamingState={streamingState}
-        preparingTool={preparingTool}
-        displayDetail={displayDetail}
-        compact={compact}
-        onRetry={onRetry}
-      />
+      <ChatPluginsProvider workspaceId={chatWorkspaceId}>
+        <MessageList
+          messages={messages}
+          isStreaming={isStreaming}
+          streamingState={streamingState}
+          preparingTool={preparingTool}
+          displayDetail={displayDetail}
+          compact={compact}
+          onRetry={onRetry}
+        />
+      </ChatPluginsProvider>
 
       <div ref={inputWrapperRef} className={compact ? "px-4" : "max-w-4xl w-full mx-auto px-8"}>
         <MessageInput
