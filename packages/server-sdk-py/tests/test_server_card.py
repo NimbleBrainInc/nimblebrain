@@ -150,7 +150,8 @@ async def test_the_handshake_reports_the_cards_title(mode: Mode) -> None:
         assert (await http.get(FIXTURE["card_path"])).json() == CARD
 
 
-async def test_a_title_the_server_reports_itself_is_kept() -> None:
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+async def test_a_title_the_server_reports_itself_is_kept(mode: Mode) -> None:
     class OwnTitle(Middleware):
         async def on_initialize(
             self,
@@ -162,9 +163,20 @@ async def test_a_title_the_server_reports_itself_is_kept() -> None:
             info = result.server_info.model_copy(update={"title": "Own"})
             return result.model_copy(update={"server_info": info})
 
+        async def on_discover(
+            self,
+            context: MiddlewareContext[mt.DiscoverRequest],
+            call_next: CallNext[mt.DiscoverRequest, mt.DiscoverResult | dict[str, Any]],
+        ) -> mt.DiscoverResult | dict[str, Any]:
+            result = await call_next(context)
+            assert isinstance(result, mt.DiscoverResult)
+            meta = result.meta or {}
+            stamp = {**meta.get(mt.SERVER_INFO_META_KEY, {}), "title": "Own"}
+            return result.model_copy(update={"meta": {**meta, mt.SERVER_INFO_META_KEY: stamp}})
+
     mcp = _probe()
     mcp.add_middleware(OwnTitle())
-    async with Client(mcp, mode="legacy") as client:
+    async with Client(mcp, mode=mode) as client:
         assert client.server_info is not None
         assert client.server_info.title == "Own"
 
