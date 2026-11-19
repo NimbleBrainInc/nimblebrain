@@ -29,11 +29,12 @@ a person's plugin, such a skill sits with the person's other skills, and the
 personal plugin's guidance would reach workspaces where its connector was never
 granted.
 
-The grant is written by `nb__manage_connectors`. In a conversation the model
-can call that tool; only unattended runs are refused it
-(`src/tools/unattended-policy.ts`). Granting widens where a person's
-credential acts, so a model that could grant could widen it without the person
-deciding.
+The grant is written by `nb__manage_connectors`, an app-only tool
+(`ui.visibility: ["app"]`): every door refuses a model's call to it, so a
+model can neither grant nor ask for a grant. Granting widens where a person's
+credential acts, so the model must never write one; what a conversation lacks
+is a way for the model to ask the person when it needs a plugin they have not
+turned on.
 
 ## Decision
 
