@@ -94,8 +94,12 @@ const { NoticeProvider } = await import("../components/notices");
 
 // The tab reads `?connected=` and raises notices, so it renders inside a router
 // and a notice provider, as it does in the shell.
-const inShell = (el: React.ReactElement) =>
-  React.createElement(MemoryRouter, null, React.createElement(NoticeProvider, null, el));
+const inShell = (el: React.ReactElement, url = "/profile/connectors") =>
+  React.createElement(
+    MemoryRouter,
+    { initialEntries: [url] },
+    React.createElement(NoticeProvider, null, el),
+  );
 
 interface Mounted {
   container: HTMLDivElement;
@@ -104,12 +108,12 @@ interface Mounted {
 
 let mounted: Mounted | null = null;
 
-async function mount(): Promise<Mounted> {
+async function mount(url?: string): Promise<Mounted> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
-    root.render(inShell(React.createElement(ProfileConnectorsTab)));
+    root.render(inShell(React.createElement(ProfileConnectorsTab), url));
   });
   await act(async () => {
     await Promise.resolve();
@@ -207,6 +211,33 @@ describe("ProfileConnectorsTab", () => {
     nextConnectors = [];
     mounted = await mount();
     expect(mounted.container.textContent ?? "").toContain("haven't connected any connectors");
+  });
+
+  test("marks the connector an OAuth sign-in just connected, and only that one", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        auth: "dcr",
+        identity: { email: "pat@example.com" },
+        grantedWorkspaces: [],
+      },
+      {
+        serverName: "gmail",
+        displayName: "Gmail",
+        description: null,
+        state: "running",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
+    mounted = await mount("/profile/connectors?connected=granola");
+    const text = mounted.container.textContent ?? "";
+
+    expect(text).toContain("Connected just now as pat@example.com");
+    expect(text.match(/Connected just now/g)).toHaveLength(1);
   });
 
   test("lists each connector with its state and where it is on", async () => {
