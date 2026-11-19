@@ -79,6 +79,13 @@ with a letter, and never contains `__`, the separator. The whole tool name
 model provider's rule. A label that would make any of its connection's tool names
 longer is shortened, and the shortened alias ends with a short hash of the full
 label, so two long labels that share a prefix stay distinct.
+A server's own tool name can be too long for any alias, now or when the
+server adds a tool later. Such a tool is exposed under its name shortened the
+same way, ending with a short hash of the full tool name; the hash makes the
+exposed name a function of the server's name alone, so it never changes while
+the server keeps the tool, and dispatch maps it back to the full name. The
+description carries the full name. The alias is never reassigned to make a tool
+fit.
 
 1. **The first connection of a server takes the server's short name** (`gmail`).
 2. **A later connection takes a label the person gives** at "Add another
