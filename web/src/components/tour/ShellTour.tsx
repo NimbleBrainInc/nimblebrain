@@ -4,7 +4,7 @@
 // The first time a person lands on a workspace's Overview, a centred card asks
 // whether they want a quick look around; "Skip" ends it there. The tour then
 // walks the real screens rather than describing them: the sidebar, the
-// Overview's Apps section, the app catalog on Browse plugins, New skill on
+// Overview's Apps section, the plugin catalog on Browse plugins, New skill on
 // Skills, and back to the Ask box, where it leaves the cursor so it ends on something to do.
 // Help → "Take the tour" replays it from any workspace page.
 //
@@ -110,27 +110,27 @@ const STEPS: TourStep[] = [
     anchor: null,
     page: "overview",
     title: "Welcome to NimbleBrain",
-    body: "Your agent works inside this workspace, with the apps installed here. Want a one-minute look around?",
+    body: "Your agent works inside this workspace, with the plugins and skills added here. Want a one-minute look around?",
     next: "Show me around",
   },
   {
     anchor: "nav",
     page: "overview",
     title: "Your workspace",
-    body: "Overview, Conversations, Files and Tasks live here. The apps installed in this workspace appear below them.",
+    body: "Overview, Conversations, Files and Tasks live here. Plugins and Skills hold what your agent can do, and the apps you can open are listed below them.",
   },
   {
     anchor: "apps",
     page: "overview",
-    title: "Install apps here",
-    body: "Apps and connectors give your agent its tools: your CRM, docs, tickets and more. They come from the catalog.",
-    next: "Show me the catalog",
+    title: "Your apps",
+    body: "Apps are plugins with a page to open. Open one here or from the sidebar. To give your agent more to work with, browse plugins.",
+    next: "Browse plugins",
   },
   {
     anchor: "catalog",
     page: "browse",
-    title: "The app catalog",
-    body: "Search for a tool, then press Install on its card. Some connect right away; others ask you to sign in to the service first. If you can't install, a workspace admin can.",
+    title: "Browse plugins",
+    body: "Plugins give your agent its tools: your CRM, docs, tickets and more. Search for one, then press Install on its card. Some connect right away; others ask you to sign in to the service first. If you can't install, a workspace admin can.",
     next: "Next: skills",
   },
   {
