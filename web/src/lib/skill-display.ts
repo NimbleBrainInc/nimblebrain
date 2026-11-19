@@ -129,20 +129,90 @@ export function skillLoadsText(
 }
 
 /** "When A is used", "When A or B is used", "When A, B or C is used". */
+export function whenUsedText(names: readonly string[]): string {
+  return `When ${orList(names)} is used`;
+}
+
 function whenToolsUsed(patterns: readonly string[], plugins: readonly Plugin[]): string {
+  return whenUsedText(toolPatternNames(patterns, plugins));
+}
+
+/** "A", "A or B", "A, B or C". */
+function orList(names: readonly string[]): string {
+  const rest = [...names];
+  const last = rest.pop() ?? "";
+  return rest.length === 0 ? last : `${rest.join(", ")} or ${last}`;
+}
+
+/**
+ * The reader's names for what a skill's tool patterns reach, without repeats.
+ * A pattern is named by the plugin it reaches (`pluginsForToolPattern`); on a
+ * plugin's own page (`own`), a pattern over that plugin's servers is named by
+ * the tool it names, or as the plugin's tools when it names them all. A
+ * pattern nothing answers reads "a matching tool".
+ */
+function toolPatternNames(
+  patterns: readonly string[],
+  plugins: readonly Plugin[],
+  own: readonly string[] = [],
+): string[] {
   const names: string[] = [];
+  const add = (name: string) => {
+    if (!names.includes(name)) names.push(name);
+  };
   let unresolved = false;
   for (const pattern of patterns.filter(Boolean)) {
+    const ownName = ownToolName(pattern, own);
+    if (ownName) {
+      add(ownName);
+      continue;
+    }
     const matched = pluginsForToolPattern(pattern, plugins);
     if (matched.length === 0) unresolved = true;
-    for (const p of matched) if (!names.includes(p.displayName)) names.push(p.displayName);
+    for (const p of matched) add(p.displayName);
   }
-  if (names.length === 0) return "When a matching tool is used";
-  if (unresolved) names.push("a matching tool");
-  const last = names.pop();
-  return names.length === 0
-    ? `When ${last} is used`
-    : `When ${names.join(", ")} or ${last} is used`;
+  if (unresolved || names.length === 0) add("a matching tool");
+  return names;
+}
+
+const OWN_TOOLS = "this plugin's tools";
+
+/**
+ * How a pattern over one of `own` servers reads on that plugin's page: the
+ * tool part (`web_search`) when it names one, or the plugin's tools when it is
+ * only a wildcard. Undefined for a pattern over any other source.
+ */
+function ownToolName(pattern: string, own: readonly string[]): string | undefined {
+  const sep = pattern.indexOf("__");
+  if (sep < 0 || !own.includes(pattern.slice(0, sep))) return undefined;
+  const tool = pattern.slice(sep + 2);
+  return !tool || /^\*+$/.test(tool) ? OWN_TOOLS : tool;
+}
+
+/**
+ * When a plugin's skill loads, on the plugin's own page, whose `servers` are
+ * this plugin's. A skill's tool patterns are prefixed with its own server's
+ * name, so a tool-bound skill names the tools it waits for by their
+ * short names ("When web_search or web_fetch is used"), or "When this
+ * plugin's tools are used" when it waits for all of them. An overlay is
+ * delivered on the first call to a tool it is bound to. Any other mechanism
+ * reads as it does in the Skills list (`skillLoadsText`).
+ */
+export function pluginSkillLoadsText(
+  skill: SkillMechanismInput & { overlay?: boolean },
+  servers: readonly string[],
+): string | null {
+  if (skill.overlay || skill.loading?.mechanism === "tool_affinity") {
+    const names = toolPatternNames(skill.toolAffinity ?? [], [], servers);
+    const list = orList(names);
+    if (skill.overlay) {
+      return `On the first call to ${names.length === 1 && names[0] === OWN_TOOLS ? `one of ${OWN_TOOLS}` : list}`;
+    }
+    return names.length === 1 && names[0] === OWN_TOOLS
+      ? `When ${OWN_TOOLS} are used`
+      : `When ${list} is used`;
+  }
+  return skillLoadsText(skill, [], { includeDefault: true });
 }
 
 /**

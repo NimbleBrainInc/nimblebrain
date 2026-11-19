@@ -34,7 +34,13 @@ import { ConfirmDialog } from "../components/ui/confirm-dialog";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useEvents } from "../hooks/useEvents";
 import { useCanWriteActiveWorkspace } from "../hooks/useScopedRole";
-import { ownerLine, pluginAccount, pluginConnected, pluginPath } from "../lib/plugins";
+import {
+  ownerLine,
+  pluginAccount,
+  pluginConnected,
+  pluginPath,
+  workspacePluginForServer,
+} from "../lib/plugins";
 import { cn } from "../lib/utils";
 import { toSlug, toWsId } from "../lib/workspace-slug";
 import { ConnectorSkillsSection } from "./settings/ConnectorSkillsSection";
@@ -812,9 +818,7 @@ export function ConnectorPageRedirect() {
     listPlugins(toWsId(slug))
       .then(({ plugins }) => {
         if (cancelled) return;
-        const plugin = plugins.find(
-          (p) => p.owner.kind === "workspace" && p.servers.some((s) => s.serverName === serverName),
-        );
+        const plugin = workspacePluginForServer(plugins, serverName);
         setTarget(plugin ? pluginPath(slug, plugin) : fallback);
       })
       .catch(() => {

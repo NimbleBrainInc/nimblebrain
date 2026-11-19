@@ -14,6 +14,10 @@ import { Tooltip } from "../ui/tooltip";
  * Under 40rem (the gutter's own breakpoint) the header's action becomes an
  * icon button, the control and search stack full width, and every control is
  * at least 44px tall.
+ *
+ * The Workspace | Personal control is as tall as the search beside it, its
+ * selected pill inset by the same 2px on every side. On a wide column each
+ * segment is as wide as its label; on a narrow one the two share the width.
  */
 
 /** A page's title and its one primary action. */
@@ -63,7 +67,7 @@ export function SegmentBar({
     >
       <fieldset
         aria-label="Whose"
-        className="grid shrink-0 grid-cols-2 rounded-sm bg-foreground/5 p-0.5 @min-[40rem]/main:inline-grid"
+        className="flex shrink-0 gap-0.5 rounded-sm bg-foreground/5 p-0.5"
         data-testid="segment"
       >
         {SEGMENTS.map(({ id, label }) => (
@@ -74,7 +78,7 @@ export function SegmentBar({
             onClick={() => onSegment(id)}
             data-segment={id}
             className={cn(
-              "flex min-h-11 items-center justify-center rounded-xs px-3 text-sm transition-colors @min-[40rem]/main:min-h-7 @min-[40rem]/main:text-xs",
+              "flex h-11 flex-1 items-center justify-center rounded-xs px-3 text-sm transition-colors @min-[40rem]/main:h-7 @min-[40rem]/main:flex-none @min-[40rem]/main:text-xs",
               segment === id
                 ? "bg-background font-medium text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",

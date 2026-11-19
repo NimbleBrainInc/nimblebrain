@@ -1,6 +1,7 @@
 import { Check, Loader2 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import type { Plugin } from "../../_generated/platform-schemas/plugins";
 import {
   type CatalogListing,
   getInstalledConnectors,
@@ -13,6 +14,7 @@ import {
   installPersonalConnector,
   listDirectory,
   listPersonalConnectors,
+  listPlugins,
   type RemoteOAuthInstall,
 } from "../../api/client";
 import { ComposioApiKeyModal } from "../../components/connectors/ComposioApiKeyModal";
@@ -30,6 +32,7 @@ import { Button } from "../../components/ui/button";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import { installCompletesWithoutSignIn } from "../../lib/connector-auth-flow.ts";
+import { pluginPath, workspacePluginForServer } from "../../lib/plugins";
 import { type SecretHeaderField, secretHeaderFields } from "../../lib/secret-headers";
 import { toWsId } from "../../lib/workspace-slug";
 
@@ -48,6 +51,19 @@ export const INSTALL_MIN_SPINNER_MS = 400;
  * in focus (`ProfilePluginsRedirect`), where they are managed.
  */
 export const PERSONAL_CONNECTORS_PATH = "/profile/connectors";
+
+/**
+ * The workspace's plugins, or none when there is no workspace or the read
+ * fails: without the listing an installed entry still links, by its server name.
+ */
+async function workspacePlugins(wsId: string | undefined): Promise<Plugin[]> {
+  if (!wsId) return [];
+  try {
+    return (await listPlugins(wsId)).plugins;
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Connector directory — what's available to install. Entries not yet in
@@ -77,6 +93,8 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
   const [entries, setEntries] = useState<CatalogListing[]>([]);
   const [errors, setErrors] = useState<Array<{ file: string; message: string }>>([]);
   const [installed, setInstalled] = useState<InstalledConnector[]>([]);
+  // The workspace's plugins, so an installed entry links to its plugin's page.
+  const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -120,30 +138,42 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
 
   // Connectors are addressed by the URL slug — install targets whichever
   // workspace the user is currently viewing. A connector's address under it
-  // opens the page of the plugin that holds it (`ConnectorPageRedirect`).
+  // opens the page of the plugin that holds it (`ConnectorPageRedirect`); it
+  // serves an install made on this visit, which the listing read on load
+  // predates.
   const configureBasePath = `/w/${slug}/settings/connectors`;
+  // An installed entry opens its plugin's page, found in the listing.
+  const installedPath = (serverName: string): string => {
+    const plugin = workspacePluginForServer(plugins, serverName);
+    return plugin && slug ? pluginPath(slug, plugin) : `${configureBasePath}/${serverName}`;
+  };
 
   // One fetcher for the page. Stable identity across renders via
   // useCallback so we can wire it both to the mount effect (with
   // cancellation) and the post-modal-save refresh from the same source.
-  const fetchDirectory = useCallback(async (signal?: { cancelled: boolean }) => {
-    try {
-      setLoading(true);
-      const [dirRes, insRes] = await Promise.all([
-        listDirectory(),
-        getInstalledConnectors({ scope: "workspace" }),
-      ]);
-      if (signal?.cancelled) return;
-      setEntries(dirRes.entries);
-      setErrors(dirRes.errors);
-      setInstalled(insRes.installed);
-    } catch (err) {
-      if (signal?.cancelled) return;
-      setLoadError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (!signal?.cancelled) setLoading(false);
-    }
-  }, []);
+  const fetchDirectory = useCallback(
+    async (signal?: { cancelled: boolean }) => {
+      try {
+        setLoading(true);
+        const [dirRes, insRes, pluginsRes] = await Promise.all([
+          listDirectory(),
+          getInstalledConnectors({ scope: "workspace" }),
+          workspacePlugins(wsId),
+        ]);
+        if (signal?.cancelled) return;
+        setEntries(dirRes.entries);
+        setErrors(dirRes.errors);
+        setInstalled(insRes.installed);
+        setPlugins(pluginsRes);
+      } catch (err) {
+        if (signal?.cancelled) return;
+        setLoadError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!signal?.cancelled) setLoading(false);
+      }
+    },
+    [wsId],
+  );
 
   useEffect(() => {
     const signal = { cancelled: false };
@@ -411,7 +441,7 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
             );
           }}
           configurePathFor={(entry) => justInstalled.get(entry.id)}
-          installedPathFor={(serverName) => `${configureBasePath}/${serverName}`}
+          installedPathFor={installedPath}
         />
       )}
 
