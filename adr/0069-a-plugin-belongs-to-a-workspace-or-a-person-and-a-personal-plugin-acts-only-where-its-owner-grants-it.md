@@ -8,7 +8,8 @@
 
 ADR-0068 makes a plugin the unit of install: a bundle of servers and skills,
 resolved from a catalog, reconciled from a declared list, and recorded in a
-lock. It describes installed state as what a workspace has.
+lock. It leaves to this ADR whether a plugin belongs to a workspace or a person,
+and what a grant gives it.
 
 Plugins have a second owner. A person connects their own Gmail or their own
 calendar: the credential is theirs, stored at `user` credential scope outside
@@ -53,10 +54,9 @@ list the plugin is declared in; nothing on the plugin, the catalog, or the
 artifact claims it.
 
 **A server installed for a workspace and for a person is two connections**,
-each authorized with its owner's credential. ADR-0068's sharing of one
-connection between plugins applies only between plugins with the same owner.
-A personal connector's tools keep the reserved `my_` marker (ADR-0005), so the
-two never share a name.
+each authorized with its owner's credential; plugins share a connection only
+under one owner (ADR-0068). A personal connector's tools keep the reserved
+`my_` marker (ADR-0005), so the two never share a name.
 
 **A plugin is installable for a person only when each of its servers can hold
 a credential that is the person's own.** A server that authorizes only with a
