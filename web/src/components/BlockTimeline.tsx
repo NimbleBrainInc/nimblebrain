@@ -46,6 +46,7 @@ import { isDocumentArtifact } from "../lib/artifact-kind";
 import { formatDuration, stripServerPrefix } from "../lib/format";
 import { isPersonalConnectorAppName } from "../lib/namespaced-tool";
 import { pluginForCall, sharedPlugin } from "../lib/plugin-attribution";
+import { requestedPluginName } from "../lib/plugin-request";
 import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
 import {
   aggregateGroup,
@@ -60,6 +61,7 @@ import { ArtifactView } from "./ArtifactView";
 import { Disclosure, DisclosureChevron } from "./Disclosure";
 import { InlineAppView } from "./InlineAppView";
 import { PluginLabel } from "./PluginLabel";
+import { PluginRequestCard } from "./PluginRequestCard";
 import { ResourceLinkView } from "./ResourceLinkView";
 
 /** True for the host-resolved `artifact://` scheme (capability output read from
@@ -185,6 +187,8 @@ interface BlockTimelineProps {
   streamingState: StreamingState;
   preparingTool: PreparingTool | null;
   displayDetail: DisplayDetail;
+  /** True for the newest message in the conversation: only its cards take an answer. */
+  isLatestMessage?: boolean;
 }
 
 export function BlockTimeline({
@@ -193,6 +197,7 @@ export function BlockTimeline({
   streamingState,
   preparingTool,
   displayDetail,
+  isLatestMessage = false,
 }: BlockTimelineProps) {
   const items = useMemo(() => foldBlocks(blocks), [blocks]);
 
@@ -224,7 +229,7 @@ export function BlockTimeline({
               isReasoningTailStreaming={isTailDelta && lastRow(item.rows)?.kind === "reasoning"}
               displayDetail={displayDetail}
             />
-            <ToolWidgets calls={collectToolCalls(item.rows)} />
+            <ToolWidgets calls={collectToolCalls(item.rows)} isLatestMessage={isLatestMessage} />
           </div>
         );
       })}
@@ -746,7 +751,18 @@ function CopyButton({ content }: { content: string }) {
 // Tool widgets (inline app views + resource-link cards)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
+function ToolWidgets({
+  calls,
+  isLatestMessage,
+}: {
+  calls: ReadonlyArray<ToolCallDisplay>;
+  isLatestMessage: boolean;
+}) {
+  // A request for one of the person's own plugins, answered in a card.
+  const pluginRequests = calls.flatMap((tc) => {
+    const serverName = requestedPluginName(tc);
+    return serverName ? [{ id: tc.id, serverName }] : [];
+  });
   // A personal connector mounts no iframe. Its `ui://` read would resolve
   // through the WORKSPACE registry (`GET /v1/workspaces/:wsId/apps/:name/resources/*` tries the
   // kernel identity sources, then that registry — a connector is in neither), so
@@ -773,9 +789,13 @@ function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
       tc.resourceLinks &&
       tc.resourceLinks.length > 0,
   );
-  if (widgets.length === 0 && resourceLinkCalls.length === 0) return null;
+  if (widgets.length === 0 && resourceLinkCalls.length === 0 && pluginRequests.length === 0)
+    return null;
   return (
     <>
+      {pluginRequests.map((r) => (
+        <PluginRequestCard key={r.id} serverName={r.serverName} isLatestMessage={isLatestMessage} />
+      ))}
       {widgets.map((tc) => (
         // Pass the full ui:// URI through — InlineAppView strips the scheme
         // and forwards everything after as the resource path. Never drop the

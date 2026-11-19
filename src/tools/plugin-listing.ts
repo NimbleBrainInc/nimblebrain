@@ -95,7 +95,7 @@ function serverOf(c: ConnectorFacts): Plugin["servers"][number] {
 }
 
 /** The display fields of a recorded identity, and nothing else it may carry. */
-function accountOf(identity: ConnectedAccountIdentity | undefined): PluginAccount | null {
+export function accountOf(identity: ConnectedAccountIdentity | undefined): PluginAccount | null {
   if (!identity) return null;
   const account: PluginAccount = {};
   if (typeof identity.email === "string" && identity.email) account.email = identity.email;
