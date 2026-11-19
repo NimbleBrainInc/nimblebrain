@@ -10,6 +10,7 @@ import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import { extractText, textContent } from "../../src/engine/content-helpers.ts";
 import { NON_ADVANCING_META_KEY } from "../../src/engine/types.ts";
 import { MAX_TOOL_RESULT_CHARS } from "../../src/limits.ts";
+import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { isToolEligibleForPromotion } from "../../src/runtime/tool-eligibility.ts";
 import type { Skill } from "../../src/skills/types.ts";
@@ -132,7 +133,11 @@ describe("System Tools", () => {
     };
     // toolPromotionCtx is the 17th positional arg (15 reserved slots after getRegistry).
     const systemTools = await createSystemTools(() => registry, { toolPromotionCtx });
-    const result = await systemTools.execute("search", { scope: "tools", query: "greet" });
+    // Inside a native run, whose engine installs its promotion controls.
+    const result = await runWithRequestContext(
+      { identity: null, toolPromotion: toolPromotionCtx },
+      () => systemTools.execute("search", { scope: "tools", query: "greet" }),
+    );
 
     expect(result.isError).toBe(false);
     // Search returns matches as data and never mutates the active set —
@@ -145,6 +150,20 @@ describe("System Tools", () => {
       name: "test__greet",
     });
     expect(getStructured<{ promoted?: string[] }>(result)?.promoted).toBeUndefined();
+  });
+
+  it("search tells a caller with no promotion controls to call matches directly", async () => {
+    const registry = await makeRegistry();
+    const systemTools = await createSystemTools(() => registry);
+    // An external runtime's run: the projection offers every tool, and no
+    // engine installs promotion controls on the request context.
+    const result = await runWithRequestContext({ identity: null, workspaceId: "ws_a" }, () =>
+      systemTools.execute("search", { scope: "tools", query: "greet" }),
+    );
+    const text = extractText(result.content);
+    expect(text).toContain("test__greet");
+    expect(text).toContain("Call a match directly");
+    expect(text).not.toContain("nb__manage_tools");
   });
 
   it("search with scope=tools preserves single-word prefix substring matches", async () => {
