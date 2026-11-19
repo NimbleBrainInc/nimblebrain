@@ -9,6 +9,19 @@ export function pluginPath(slug: string, plugin: Pick<Plugin, "id">): string {
   return `/w/${slug}/plugins/${encodeURIComponent(plugin.id)}`;
 }
 
+/**
+ * The workspace plugin that holds a workspace connector, by its server name: a
+ * server name does not name its plugin, so it is found in the listing.
+ */
+export function workspacePluginForServer(
+  plugins: readonly Plugin[],
+  serverName: string,
+): Plugin | undefined {
+  return plugins.find(
+    (p) => p.owner.kind === "workspace" && p.servers.some((s) => s.serverName === serverName),
+  );
+}
+
 /** The account the plugin signs in as: the first of its servers that records one. */
 export function pluginAccount(plugin: Plugin): string | undefined {
   for (const server of plugin.servers) {
@@ -25,15 +38,13 @@ export function ownerLine(plugin: Plugin): string {
 
 /**
  * The account a plugin's row names. A person's plugin names the account it
- * signed in as, or says it is not signed in; a workspace plugin says it uses
- * the workspace's account, and which one when the sign-in recorded it. Whose
- * plugin it is reads from the row's badge, so the line does not repeat it.
+ * signed in as, or says it is not signed in; a workspace plugin names its
+ * account only when the sign-in recorded one. Whose plugin it is reads from the
+ * segment the row is listed under, so the line never repeats it.
  */
 export function accountLine(plugin: Plugin): string | undefined {
   const account = pluginAccount(plugin);
-  if (plugin.owner.kind === "workspace") {
-    return account ? `Workspace account · ${account}` : "Workspace account";
-  }
+  if (plugin.owner.kind === "workspace") return account;
   if (account) return account;
   return pluginConnected(plugin) ? undefined : "Not signed in";
 }

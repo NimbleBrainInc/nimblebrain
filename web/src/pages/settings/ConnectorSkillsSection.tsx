@@ -7,7 +7,7 @@ import {
   type PublishedConnectorSkill,
   readConnectorSkill,
 } from "../../api/client";
-import { formatTokenCount, skillMechanismLabel } from "../../lib/skill-display";
+import { formatTokenCount, pluginSkillLoadsText } from "../../lib/skill-display";
 import { linkSafety, rehypePlugins } from "../../lib/streamdown-config";
 import { cn } from "../../lib/utils";
 import { EmptyState, InlineError, Section } from "./components";
@@ -22,8 +22,8 @@ export interface ConnectorSkillRowData {
   name: string;
   description?: string;
   kind: "overlay" | "published";
-  /** How it reaches the model, in the settings list's resting grammar. */
-  loads: { text: string; mono?: string };
+  /** When it reaches the model, in the reader's words (`pluginSkillLoadsText`). */
+  loads: string;
   /** Facts shown under the body: priority, triggers, URI, provenance. */
   details: string[];
 }
@@ -32,12 +32,16 @@ export interface ConnectorSkillRowData {
  * The rows for one workspace's connector skills, grouped by server in name
  * order. An overlay is delivered once into the conversation on the first call
  * to a tool it is bound to; a published skill loads as the runtime's own
- * mechanism verdict says.
+ * mechanism verdict says. `servers` are the plugin's whose page this is, so
+ * its tools are named by their short names.
  */
-export function connectorSkillGroups(data: {
-  overlays: ConnectorOverlaySkill[];
-  published: PublishedConnectorSkill[];
-}): Array<{ server: string; skills: ConnectorSkillRowData[] }> {
+export function connectorSkillGroups(
+  data: {
+    overlays: ConnectorOverlaySkill[];
+    published: PublishedConnectorSkill[];
+  },
+  servers: readonly string[],
+): Array<{ server: string; skills: ConnectorSkillRowData[] }> {
   const rows: ConnectorSkillRowData[] = [
     ...data.overlays.map(
       (o): ConnectorSkillRowData => ({
@@ -45,7 +49,7 @@ export function connectorSkillGroups(data: {
         name: o.name,
         ...(o.description ? { description: o.description } : {}),
         kind: "overlay",
-        loads: { text: "On first tool call", mono: o.toolAffinity.join(", ") },
+        loads: pluginSkillLoadsText({ overlay: true, toolAffinity: o.toolAffinity }, servers) ?? "",
         details: ["curated overlay", ...(o.source ? [o.source] : [])],
       }),
     ),
@@ -55,11 +59,15 @@ export function connectorSkillGroups(data: {
         name: p.name,
         description: p.description,
         kind: "published",
-        loads: skillMechanismLabel({
-          loading: { mechanism: p.mechanism },
-          toolAffinity: p.toolAffinity,
-          triggers: p.triggers,
-        }) ?? { text: p.loadingStrategy },
+        loads:
+          pluginSkillLoadsText(
+            {
+              loading: { mechanism: p.mechanism },
+              toolAffinity: p.toolAffinity,
+              triggers: p.triggers,
+            },
+            servers,
+          ) ?? p.loadingStrategy,
         details: [
           `priority ${p.priority}`,
           ...(p.triggers?.length ? [`triggers ${p.triggers.map((t) => `"${t}"`).join(", ")}`] : []),
@@ -113,7 +121,7 @@ export function ConnectorSkillsSection({
       .then((data) => {
         if (cancelled) return;
         const only = serverKey.split("\u0000");
-        setGroups(connectorSkillGroups(data).filter((g) => only.includes(g.server)));
+        setGroups(connectorSkillGroups(data, only).filter((g) => only.includes(g.server)));
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -227,16 +235,11 @@ function ConnectorSkillRow({
             {row.description && <span className="text-muted-foreground"> · {row.description}</span>}
           </span>
           <span
-            title={row.loads.mono ? `${row.loads.text} ${row.loads.mono}` : row.loads.text}
+            title={row.loads}
             className="mt-0.5 block truncate text-xs text-muted-foreground"
+            data-testid="connector-skill-loads"
           >
-            {row.loads.text}
-            {row.loads.mono && (
-              <>
-                {" "}
-                <span className="font-mono">{row.loads.mono}</span>
-              </>
-            )}
+            {row.loads}
           </span>
         </span>
       </button>

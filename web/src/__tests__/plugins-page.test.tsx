@@ -373,12 +373,27 @@ describe("PluginsPage — Workspace | Personal", () => {
 
 describe("PluginsPage — rows", () => {
   test("the account line names the account when the sign-in recorded one", async () => {
-    plugins = [GITHUB, GMAIL, GRANOLA];
+    plugins = [
+      GITHUB,
+      plugin({
+        id: "workspace:linear",
+        displayName: "Linear",
+        owner: { kind: "workspace" },
+        servers: [{ serverName: "linear", status: "ready", account: { email: "ops@acme.test" } }],
+      }),
+      GMAIL,
+      GRANOLA,
+    ];
     mounted = await mount();
     const account = (id: string) =>
       row(mounted!.container, id)?.querySelector('[data-testid="plugin-account"]')?.textContent;
-    // No account recorded: the line says whose, and invents no account.
-    expect(account("workspace:github")).toBe("Workspace account");
+    // The segment already says whose: a workspace row names only a recorded
+    // account, and with none it has no line at all.
+    expect(account("workspace:github")).toBeUndefined();
+    expect(account("workspace:linear")).toBe("ops@acme.test");
+    expect(row(mounted.container, "workspace:github")?.textContent).not.toContain(
+      "Workspace account",
+    );
     await personalSegment(mounted.container);
     expect(account("person:gmail")).toBe("pat@acme.test");
     expect(account("person:granola")).toBe("Pat");
@@ -476,9 +491,13 @@ describe("PluginsPage — rows", () => {
     const bar = mounted.container.querySelector('[data-testid="segment-bar"]')!;
     expect(bar.className).toContain("flex-col");
     expect(bar.className).toContain("@min-[40rem]/main:flex-row");
-    expect(mounted.container.querySelector('[data-testid="segment"]')?.className).toContain(
-      "grid-cols-2",
-    );
+    // The segments share the narrow width at 44px, and size to their labels
+    // once the column is wide.
+    for (const b of mounted.container.querySelectorAll('[data-testid="segment"] button')) {
+      expect(b.className).toContain("flex-1");
+      expect(b.className).toContain("h-11");
+      expect(b.className).toContain("@min-[40rem]/main:flex-none");
+    }
   });
 });
 

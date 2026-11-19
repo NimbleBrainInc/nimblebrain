@@ -483,7 +483,10 @@ describe("Skills page", () => {
       );
     expect(names()).toEqual(["notion-pages"]);
     const notion = group()!.querySelector('[data-skill-name="notion-pages"]')!;
-    expect(notion.textContent).toContain("Notion · When Notion is used");
+    const line = (row: Element) =>
+      row.querySelector('[data-testid="plugin-skill-line"]')?.textContent;
+    // The plugin is named once: the line that says when it loads names it.
+    expect(line(notion)).toBe("When Notion is used");
     expect(notion.querySelector("a")?.getAttribute("href")).toBe(
       `/w/${SLUG}/plugins/workspace%3Anotion`,
     );
@@ -491,7 +494,9 @@ describe("Skills page", () => {
     await click(segment(mounted.container, "personal"));
     // A plugin not on here brings nothing here.
     expect(names()).toEqual(["slack-threads"]);
-    expect(group()!.textContent).toContain("Slack · When Slack is used");
+    expect(line(group()!.querySelector('[data-skill-name="slack-threads"]')!)).toBe(
+      "When Slack is used",
+    );
     // The group is no skill people wrote, so it carries no On here.
     expect(group()!.querySelector('[data-testid="skill-on-here"]')).toBeNull();
   });

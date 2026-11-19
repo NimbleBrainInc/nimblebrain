@@ -25,7 +25,7 @@ import {
   type Segment,
 } from "../lib/plugin-lists";
 import { newSkillPath, pluginPath, skillPath } from "../lib/plugins";
-import { type SkillMechanismInput, skillLoadsText } from "../lib/skill-display";
+import { type SkillMechanismInput, skillLoadsText, whenUsedText } from "../lib/skill-display";
 import { cn } from "../lib/utils";
 import { toWsId } from "../lib/workspace-slug";
 import { InlineError } from "./settings/components";
@@ -215,7 +215,7 @@ function SkillsList({ wsId, slug }: { wsId: string; slug: string }) {
                 key={`${row.plugin.id}:${row.skill.serverName}:${row.skill.name}`}
                 row={row}
                 to={pluginPath(slug, row.plugin)}
-                loads={pluginSkillLoads(
+                line={pluginSkillLine(
                   row,
                   loads.get(loadsKey(row.skill.serverName, row.skill.name)),
                 )}
@@ -232,20 +232,20 @@ const ROW =
   "relative flex min-h-11 items-center gap-3 border-b border-border/60 py-1.5 last:border-b-0";
 
 /**
- * When a plugin's skill loads. Its tool patterns can reach only its own
- * server's tools (the runtime prefixes them with the server's name, whatever
- * the plugin's owner), so a tool-bound one loads when its plugin is used. An
- * overlay is always tool-bound, listed or not.
+ * A plugin's skill's line: its plugin, named once, and when it loads. Its tool
+ * patterns can reach only its own server's tools (the runtime prefixes them
+ * with the server's name, whatever the plugin's owner), so a tool-bound one
+ * loads when its plugin is used, which names the plugin already. An overlay is
+ * always tool-bound, listed or not.
  */
-function pluginSkillLoads(
-  row: PluginSkillRow,
-  input: SkillMechanismInput | undefined,
-): string | null {
+function pluginSkillLine(row: PluginSkillRow, input: SkillMechanismInput | undefined): string {
+  const name = row.plugin.displayName;
   const toolBound = input
     ? input.loading?.mechanism === "tool_affinity"
     : row.skill.kind === "overlay";
-  if (toolBound) return `When ${row.plugin.displayName} is used`;
-  return input ? skillLoadsText(input, []) : null;
+  if (toolBound) return whenUsedText([name]);
+  const loads = input ? skillLoadsText(input, []) : null;
+  return loads ? `${name} · ${loads}` : name;
 }
 
 /**
@@ -319,15 +319,7 @@ function SkillRow({
 }
 
 /** A skill that came with a plugin: its name, its plugin, and when it loads; it opens the plugin. */
-function PluginSkillRowView({
-  row,
-  to,
-  loads,
-}: {
-  row: PluginSkillRow;
-  to: string;
-  loads: string | null;
-}) {
+function PluginSkillRowView({ row, to, line }: { row: PluginSkillRow; to: string; line: string }) {
   const { skill, plugin } = row;
   return (
     <div
@@ -340,9 +332,11 @@ function PluginSkillRowView({
         <Link to={to} className={cn("min-w-0 truncate text-sm text-muted-foreground", ROW_LINK)}>
           {skill.name}
         </Link>
-        <span className="min-w-0 truncate text-xs text-muted-foreground">
-          {plugin.displayName}
-          {loads && ` · ${loads}`}
+        <span
+          className="min-w-0 truncate text-xs text-muted-foreground"
+          data-testid="plugin-skill-line"
+        >
+          {line}
         </span>
       </div>
       <RowMenu

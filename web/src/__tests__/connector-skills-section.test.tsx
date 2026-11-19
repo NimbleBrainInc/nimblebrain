@@ -115,16 +115,40 @@ beforeEach(() => {
 });
 
 describe("connectorSkillGroups", () => {
+  const SERVERS = ["acme-docs", "acme-mail"];
+
   test("groups by server in name order and states how each skill loads", () => {
-    const groups = connectorSkillGroups({ overlays: [OVERLAY], published: [DYNAMIC, ALWAYS] });
+    const groups = connectorSkillGroups(
+      { overlays: [OVERLAY], published: [DYNAMIC, ALWAYS] },
+      SERVERS,
+    );
     expect(groups.map((g) => g.server)).toEqual(["acme-docs", "acme-mail"]);
     const [docs, mail] = groups;
     expect(docs!.skills.map((s) => s.name)).toEqual(["house-style", "publishing"]);
-    expect(docs!.skills[0]!.loads.text).toBe("Always on · every conversation");
-    expect(docs!.skills[1]!.loads).toEqual({ text: "On tool match", mono: "acme-docs__publish" });
+    expect(docs!.skills[0]!.loads).toBe("Always on");
+    // The plugin's own tool, by its short name: never the wire name.
+    expect(docs!.skills[1]!.loads).toBe("When publish is used");
     expect(docs!.skills[1]!.details).toContain('triggers "publish this"');
-    expect(mail!.skills[0]!.loads).toEqual({ text: "On first tool call", mono: "acme-mail__*" });
+    // Bound to every tool the plugin has.
+    expect(mail!.skills[0]!.loads).toBe("On the first call to one of this plugin's tools");
     expect(mail!.skills[0]!.details).toEqual(["curated overlay", "connector:acme-mail@v0.1.0"]);
+  });
+
+  test("names only the tools a skill waits for, and the plugin's tools when it waits for all", () => {
+    const some: PublishedConnectorSkill = {
+      ...DYNAMIC,
+      toolAffinity: ["acme-docs__publish", "acme-docs__draft"],
+    };
+    const all: PublishedConnectorSkill = {
+      ...DYNAMIC,
+      name: "all",
+      toolAffinity: ["acme-docs__*"],
+    };
+    const [docs] = connectorSkillGroups({ overlays: [], published: [some, all] }, SERVERS);
+    const loads = Object.fromEntries(docs!.skills.map((s) => [s.name, s.loads]));
+    expect(loads.publishing).toBe("When publish or draft is used");
+    expect(loads.all).toBe("When this plugin's tools are used");
+    for (const text of Object.values(loads)) expect(text).not.toContain("__");
   });
 });
 
