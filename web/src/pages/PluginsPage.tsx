@@ -356,10 +356,7 @@ function PluginRow({
   return (
     <div
       ref={rowRef}
-      className={cn(
-        "flex items-center gap-3 border-b border-border py-2.5",
-        fresh && "bg-success/5",
-      )}
+      className="flex items-center gap-3 border-b border-border py-2.5"
       data-testid="plugin-row"
       data-plugin-id={plugin.id}
     >
