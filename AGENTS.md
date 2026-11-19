@@ -18,7 +18,7 @@ This file holds what applies to every change. A rule tied to specific code lives
 bun install                # Install dependencies
 bun run dev                # API (:27247) + Web (:27246) with watch/HMR
 bun run dev:worktree       # Run from any worktree against an isolated workdir on alt ports — see "Worktree dev" below
-bun run dev:plugins-demo   # Seeded workdir (:27255 / :27254) with every plugin and skill state — see "Plugins demo" below
+bun run dev:plugins-demo   # Seeded workdir (:27255 / :27254, override via NB_API_PORT / NB_WEB_PORT) with every plugin and skill state — see "Plugins demo" below
 bun run dev:api            # API only with auto-restart
 bun run verify             # Full CI parity — runs every subscript below
 bun run verify:static      # format:check + lint + check + the check:* scripts
@@ -66,7 +66,7 @@ Reset with `rm -rf .nimblebrain-worktree && bun run dev:worktree`. Share state a
 
 ### Plugins demo
 
-`bun run dev:plugins-demo` (`scripts/dev-plugins-demo.ts`) starts mock MCP servers, seeds `.environments/plugins-demo/`, and runs `scripts/dev.ts` against it with the demo catalog (`.environments/plugins-demo/catalog/`), so the Plugins page, plugin and skill pages, and chat labels can be judged at scale with no sign-in. The fixtures are `scripts/lib/plugins-demo/fixtures.ts`; `test/integration/plugins-demo-seed.test.ts` boots the seed and checks every state.
+`bun run dev:plugins-demo` (`scripts/dev-plugins-demo.ts`) starts mock MCP servers, seeds `.environments/plugins-demo/`, and runs `scripts/dev.ts` against it with the demo catalog (`.environments/plugins-demo/catalog/`) on API / Web ports 27255 / 27254 (override via `NB_API_PORT` / `NB_WEB_PORT`; the origins follow them), so the Plugins page, plugin and skill pages, and chat labels can be judged at scale with no sign-in. The fixtures are `scripts/lib/plugins-demo/fixtures.ts`; `test/integration/plugins-demo-seed.test.ts` boots the seed and checks every state.
 
 - **The seed is dev tooling, not a migration.** It runs before every launch, writes only the demo workdir, and goes through the runtime's stores (`WorkspaceStore`, `IdentityConnectorStore`, `PermissionStore`, `McpOAuthRecords` over the configured `CredentialStore`, the skill writer, the conversation store), so the runtime derives each plugin's state at boot. It is idempotent: found by name, replaced by server name, written when absent.
 - **A state is produced the way the runtime records it.** Connected: a mock server added by URL. Failed: a URL that refuses, answers 503, or 404s. Needs sign-in: a catalog row with no tokens. Sign-in expired: the `auth_lost` flag with no tokens. Needs setup: a static-auth row whose client secret is absent. A connected personal plugin holds placeholder tokens, so calling it in chat fails at its `.example` host.
