@@ -1,9 +1,7 @@
 import { Navigate, useLocation, useParams } from "react-router-dom";
 import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceContext";
-import { useDefaultWorkspace } from "../lib/default-workspace";
-import { usePinnedWorkspaces } from "../lib/pinned-workspaces";
+import { landingWorkspace, readLastWorkspace } from "../lib/last-workspace";
 import { browsePluginsPath, newSkillPath, pluginsPath, skillsPath } from "../lib/plugins";
-import { orderWorkspacesForSidebar } from "../lib/workspace-order";
 import { toSlug } from "../lib/workspace-slug";
 
 /**
@@ -68,33 +66,27 @@ export function OldSkillAddressRedirect() {
 
 /**
  * The workspace an old profile address opens, since the profile names none:
- * the one in focus, else the viewer's default workspace, else the first in
- * sidebar order. None when the viewer has no workspace.
+ * the one in focus, else where `/` would open. None when the viewer has no
+ * workspace.
  */
 export function profileRedirectWorkspace(
   workspaces: readonly WorkspaceInfo[],
   activeId: string | null,
-  defaultId: string | null,
-  pinned: ReadonlySet<string>,
+  lastId: string | null,
 ): WorkspaceInfo | undefined {
   return (
-    workspaces.find((w) => w.id === activeId) ??
-    workspaces.find((w) => w.id === defaultId) ??
-    orderWorkspacesForSidebar(workspaces, pinned)[0]
+    workspaces.find((w) => w.id === activeId) ?? landingWorkspace(workspaces, lastId) ?? undefined
   );
 }
 
 /** An old profile address, to a workspace's Plugins (or Skills), or home without one. */
 export function ProfilePluginsRedirect({ page = "plugins" }: { page?: "plugins" | "skills" }) {
   const { workspaces, activeWorkspace } = useWorkspaceContext();
-  const { defaultId } = useDefaultWorkspace();
-  const { pinned } = usePinnedWorkspaces();
   const { search } = useLocation();
   const target = profileRedirectWorkspace(
     workspaces,
     activeWorkspace?.id ?? null,
-    defaultId,
-    pinned,
+    readLastWorkspace(),
   );
   return <Navigate to={target ? pluginsTarget(toSlug(target.id), search, page) : "/"} replace />;
 }

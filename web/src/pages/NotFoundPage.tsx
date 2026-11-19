@@ -36,7 +36,7 @@ export function NotFoundPage({ settled }: { settled: boolean }) {
         to="/"
         className="px-4 py-2 bg-secondary text-secondary-foreground rounded-sm hover:bg-accent transition-colors"
       >
-        Go home
+        Go to overview
       </Link>
     </div>
   );

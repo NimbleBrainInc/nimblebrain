@@ -68,22 +68,4 @@ describe("orderWorkspacesForSidebar", () => {
     orderWorkspacesForSidebar(input);
     expect(input.map((w) => w.id)).toEqual(snapshot);
   });
-
-  test("pinned workspaces lead, each group alphabetical", () => {
-    const out = orderWorkspacesForSidebar(
-      [
-        ws({ id: "ws_003eba8844413cd9", name: "Helix" }),
-        ws({ id: "ws_000f7ed6658f9d30", name: "Acme" }),
-        ws({ id: "ws_008cdfc2b7fba196", name: "Zeta" }),
-        ws({ id: "ws_001e036c5def1252", name: "Basecamp" }),
-      ],
-      new Set(["ws_008cdfc2b7fba196", "ws_001e036c5def1252", "ws_003bdf4cf2ed3a6e"]),
-    );
-    expect(out.map((w) => w.id)).toEqual([
-      "ws_001e036c5def1252",
-      "ws_008cdfc2b7fba196",
-      "ws_000f7ed6658f9d30",
-      "ws_003eba8844413cd9",
-    ]);
-  });
 });
