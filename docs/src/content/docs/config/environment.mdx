@@ -71,7 +71,7 @@ The platform builds every outward-facing URL (OAuth callbacks, post-login landin
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `NB_CURATED_CATALOG_DIR` | No | in-image example | The connector catalog — a directory of `ServerDetail` YAML/JSON files (the intended use, hence the name), or a single such file. Every `*.yaml`/`*.yml`/`*.json` in it is read in sorted filename order and re-read on each lookup, so editing a mounted ConfigMap takes effect without a restart. Replaces `src/connectors/catalog/curated/` wholesale. This is where `auth: static` and brokered (`composio`, `smithery`) entries belong; the in-image example is DCR-only. See [Connectors Catalog](/config/connectors-catalog/). |
+| `NB_CURATED_CATALOG_DIR` | No | in-image catalog | The connector catalog — a directory of `ServerDetail` YAML/JSON files (the intended use, hence the name), or a single such file. Every `*.yaml`/`*.yml`/`*.json` in it is read in sorted filename order and re-read on each lookup, so editing a mounted ConfigMap takes effect without a restart. Replaces `src/connectors/catalog/curated/` wholesale. This is where `auth: static` and brokered (`composio`, `smithery`) entries belong; the in-image catalog is NimbleBrain's catalog of DCR connectors, taken when the image was built. See [Connectors Catalog](/config/connectors-catalog/). |
 
 ### Secrets
 

@@ -68,10 +68,11 @@ export interface CatalogError {
 }
 
 /**
- * The minimal curated catalog shipped in the image — a directory of
- * `ServerDetail` YAML files. Deliberately tiny: a couple of DCR entries
- * so a fresh / OSS / dev install has a non-empty Browse without
- * inheriting anyone's production curation.
+ * The catalog directory used when `NB_CURATED_CATALOG_DIR` is unset — a
+ * directory of `ServerDetail` YAML files, every entry installable with nothing
+ * to configure. In the release image it holds NimbleBrain's catalog of such
+ * connectors, taken at image build (the Dockerfile's `ADD`); in a source
+ * checkout it holds a small example for dev and tests.
  */
 export const BUNDLED_CATALOG_PATH = join(import.meta.dir, "curated");
 

@@ -128,6 +128,7 @@
 
 ### Changed
 
+- **A fresh install's Browse lists NimbleBrain's catalog of zero-setup connectors.** The image takes them from the catalog at build, in place of the two-entry example. `NB_CURATED_CATALOG_DIR` still replaces it. [Docs](https://docs.nimblebrain.ai/config/connectors-catalog/).
 - **A connector is offered for personal install whenever its auth can hold a person's own credential** (`dcr`, a broker with an interactive sign-in, or `static` with an instance OAuth client), not only when its catalog entry sets `personal: true`. The `personal` key is accepted and ignored; restricting a connector to workspace install is operator policy, not a catalog field ([docs](https://docs.nimblebrain.ai/config/connectors-catalog/#who-can-install-a-connector)).
 - **A connector's OAuth sign-in returns straight to the Connectors page**, which confirms it with a notice once the connector is ready (or says it failed). The callback redirects with `?connected=<server name>` and renders no page of its own.
 - **`POST /v1/workspaces/:wsId/tools/call` and `POST /v1/tools/call` refuse an untrusted browser `Origin` with `403`**, as `/mcp/<wsId>` does, so a DNS-rebound page cannot call tools; a request with no `Origin` and the web shell's own origin pass. A self-hosted UI reached by a hostname other than its public origin needs that hostname in `ALLOWED_ORIGINS`, or its tool calls are refused ([security](https://docs.nimblebrain.ai/deploy/security/)).

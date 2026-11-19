@@ -35,7 +35,7 @@ The kinds and what each asks of a *user* are documented once, in [Connectors →
 - **`provider`** names a credential provider that supplies the transport credential server-side, with no user or OAuth client. Two things use it: the platform's own connectors, whose credential the runtime mints against the fleet authorizer, and a **gateway** you hold one account key for — see [gateway endpoints](#auth-provider-for-a-gateway-endpoint) below.
 
 <Aside type="caution">
-  The in-image catalog (`src/connectors/catalog/curated/`) ships **DCR entries only** — it exists so a fresh install has a non-empty Browse with nothing to configure. Everything else, including `auth: static` and brokered entries, belongs in the directory `NB_CURATED_CATALOG_DIR` points at.
+  The in-image catalog ships **DCR entries only**: NimbleBrain's catalog of connectors that install with nothing to configure, taken when the image was built, so a fresh install has a full Browse with no setup. Everything else, including `auth: static` and brokered entries, belongs in the directory `NB_CURATED_CATALOG_DIR` points at.
 </Aside>
 
 <Aside type="caution" title="A brokered entry must be in your catalog">
