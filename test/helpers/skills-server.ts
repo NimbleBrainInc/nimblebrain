@@ -23,6 +23,7 @@ const SkillsGetParamsSchema = z.object({ uri: z.string() }).loose();
 
 /** A `skills/list` result: entries, and a cursor when more pages follow. */
 export interface SkillsListResult {
+  [key: string]: unknown;
   skills: unknown[];
   nextCursor?: string;
 }
