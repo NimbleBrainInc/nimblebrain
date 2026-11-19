@@ -56,6 +56,8 @@ together, and the grant is an admission threshold.
 - Keep dividing by the replica count: holds every run that reaches one replica
   to a fraction of its terms, which is most runs.
 - Keep the count in a store the replicas share: exact whichever replica serves a
-  call, but adds a service the gateway depends on, for a count that pinning makes
-  one replica's.
+  call, but adds a service in the path of every model call. That is an open
+  decision, not one this record makes: the proposal in #2015 takes a shared count,
+  with grants in money, and would supersede this record if accepted. Until then,
+  pinning gives one replica the whole count without the new dependency.
 - Run one gateway replica: exact, but gives up serving through a pod restart.
