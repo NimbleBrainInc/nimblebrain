@@ -9,6 +9,7 @@ import { createNimbleBrainAgentDriver } from "../../../src/execution/acp/drivers
 import { createHttpConnection } from "../../../src/execution/acp/http-connection.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../../../src/model/gateway-refusal.ts";
 import { publicOrigin } from "../../../src/oauth/public-origin.ts";
 import { RunDeadlineExceededError } from "../../../src/runtime/errors.ts";
 import { createRunKey, parseRunKeyRing, type RunKey } from "../../../src/runtime/run-key.ts";
@@ -615,9 +616,9 @@ describe("the door, when the gateway stops a run at its grant", () => {
     expect(result.spendAccountId).toBe("acct:batch");
   });
 
-  test("tells a grant the run's own cap set as the cap", async () => {
+  test("tells a grant the run's own cap set as the cap, refused by the gateway", async () => {
     const { result } = await runTask(runtime, { maxRunInputTokens: 5_000 });
     expect(result.stopReason).toBe("max_input_tokens");
-    expect(result.spendAccountId).toBeUndefined();
+    expect(result.spendAccountId).toBe(MODEL_GATEWAY_BUDGET_ACCOUNT);
   });
 });

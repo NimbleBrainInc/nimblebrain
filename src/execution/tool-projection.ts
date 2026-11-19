@@ -12,7 +12,9 @@
  * The projection is also where the run's tool record comes from. It emits
  * `tool.start` / `tool.done` itself, from the call it dispatched and the result
  * the tool returned, so the conversation log holds what ran, not an agent's
- * description of it.
+ * description of it. Its `ToolCallRecord`s carry the engine's fields
+ * (`errorReason`, `held`), since the tasks executor judges a run from them
+ * whichever runtime ran it.
  *
  * Skills bound to tools are delivered here as the engine delivers them, by the
  * same module (`src/engine/skill-delivery.ts`): the first call to a bound tool
@@ -41,6 +43,7 @@ import {
   buildToolDoneData,
   coerceAndValidateToolInput,
   enforceMaxToolResultSize,
+  errorReasonField,
 } from "../engine/tool-call.ts";
 import {
   type ConnectorSkillCandidate,
@@ -352,6 +355,10 @@ async function dispatch(
     output: outputText,
     ok: !result.isError,
     ms,
+    // The fields the engine's record carries for the tasks executor: why the
+    // call failed, and that it was held rather than run.
+    ...(result.isError ? errorReasonField(result) : {}),
+    ...(held ? { held: true as const } : {}),
     ...(resourceUri ? { resourceUri } : {}),
     ...(resourceLinks.length > 0 ? { resourceLinks } : {}),
   });

@@ -70,6 +70,11 @@ step "status"
 out=$(nb status)
 expect "$out" '.ok == true and .health == "ok" and .model_key == "missing"' "status reports health and no key"
 
+step "open"
+# A runner has no display, so nothing opens; the answer still carries the URL.
+out=$(nb open)
+expect "$out" '.ok == true and (.url | test("^http://127.0.0.1:")) and (.opened | type) == "boolean"' "open answers the URL"
+
 step "mcp: list, and add and remove where the release can reach this machine"
 expect "$(nb mcp list)" '.ok == true and (.servers | type) == "array"' "mcp list answers the workspace's servers"
 if [ "$(nb status | jq -r .host_loopback)" = "true" ]; then
@@ -91,6 +96,7 @@ for round in 1 2 3; do
   step "down, then up ($round of 3)"
   expect "$(nb down)" '.health == "down"' "down stops it"
   expect "$(nb status)" '.health == "down"' "status sees it down"
+  expect "$(nb open)" '.error == "NOT_RUNNING"' "open does not start it"
   expect "$(nb up)" '.health == "ok"' "up brings it back"
 done
 

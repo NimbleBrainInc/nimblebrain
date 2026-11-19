@@ -7,6 +7,8 @@ import {
   type ToolSchema,
 } from "../../../src/engine/types.ts";
 import { openToolProjection } from "../../../src/execution/tool-projection.ts";
+import { createDirectExecutor } from "../../../src/platform/tasks/executor.ts";
+import type { Task } from "../../../src/platform/tasks/types.ts";
 import { channelMcpServer, connectMcpToolRouter } from "../../helpers/acp/mcp-tool-router.ts";
 
 const router = new StaticToolRouter(
@@ -189,6 +191,118 @@ describe("tool projection", () => {
       expect(result.content[0]).toEqual(image);
       expect(result.content.slice(1).map((c) => c.type)).toEqual(["text"]);
       expect(JSON.stringify(result.content[1])).toContain("Crop tightly.");
+    } finally {
+      await client.close();
+      await projection.close();
+    }
+  });
+
+  test("records why a call failed and that it was held, so a task run judged from them reads as the engine's", async () => {
+    // A fetch tool bound to guidance, used for several pages, as an external
+    // agent's research run uses it: held, re-issued, then one argument value
+    // rejected and corrected on the next call.
+    const fetchRouter = new StaticToolRouter(
+      [
+        {
+          name: "fetch",
+          description: "Fetch pages",
+          inputSchema: {
+            type: "object",
+            properties: {
+              url: { type: "string" },
+              mode: { type: "string", enum: ["always", "fallback"] },
+            },
+          },
+          annotations: { readOnlyHint: true },
+        },
+      ],
+      (call) =>
+        call.input.url === "https://example.net"
+          ? {
+              content: [
+                { type: "text", text: "A third-party service is temporarily unavailable." },
+              ],
+              isError: true,
+              structuredContent: {
+                error: { code: "upstream_unavailable", retryable: true, message: "unavailable" },
+              },
+            }
+          : { content: [{ type: "text", text: "page" }], isError: false },
+    );
+    const projection = await openToolProjection({
+      runId: "r",
+      router: fetchRouter,
+      events: { emit() {} },
+      skills: {
+        candidates: [
+          {
+            name: "fetch-rules",
+            body: "Fetch what you cite.",
+            scope: "connector",
+            toolAffinity: ["fetch"],
+          },
+        ],
+        delivered: [],
+      },
+    });
+    const client = await connectMcpToolRouter([
+      channelMcpServer("nimblebrain", projection.channel()),
+    ]);
+    try {
+      await client.execute({ id: "1", name: "fetch", input: { url: "https://example.com" } });
+      await client.execute({ id: "2", name: "fetch", input: { url: "https://example.com" } });
+      await client.execute({
+        id: "3",
+        name: "fetch",
+        input: { url: "https://example.org", mode: '"always"' },
+      });
+      await client.execute({
+        id: "4",
+        name: "fetch",
+        input: { url: "https://example.org", mode: "always" },
+      });
+      await client.execute({ id: "5", name: "fetch", input: { url: "https://example.net" } });
+
+      const calls = projection.calls();
+      expect(calls.map((c) => [c.ok, c.errorReason, c.held])).toEqual([
+        [false, "skill_guidance_pending", true],
+        [true, undefined, undefined],
+        [false, "bad_input", undefined],
+        [true, undefined, undefined],
+        [false, "upstream_unavailable", undefined],
+      ]);
+
+      // The tasks executor reads these records as it reads the engine's: the
+      // hold and the corrected argument are not failures; the upstream one is.
+      const task: Task = {
+        id: "research",
+        name: "Research",
+        prompt: "Research",
+        schedule: { type: "cron", expression: "0 9 * * *" },
+        enabled: true,
+        source: "user",
+        createdAt: "2025-06-01T00:00:00.000Z",
+        updatedAt: "2025-06-01T00:00:00.000Z",
+        runCount: 0,
+        consecutiveErrors: 0,
+        cumulativeInputTokens: 0,
+        cumulativeOutputTokens: 0,
+      };
+      const executor = createDirectExecutor(
+        async () => ({
+          output: "Done.",
+          runId: "run_test000000",
+          toolCalls: calls,
+          stopReason: "complete",
+          usage: { inputTokens: 10, outputTokens: 5, iterations: 1 },
+        }),
+        () => ({}),
+      );
+      const { run } = await executor(task);
+      expect(run.status).toBe("degraded");
+      expect(run.error).toMatch(/fetch ×1/);
+      expect(run.unrecoveredToolFailures).toEqual(["fetch"]);
+      expect(run.toolCalls).toBe(4);
     } finally {
       await client.close();
       await projection.close();

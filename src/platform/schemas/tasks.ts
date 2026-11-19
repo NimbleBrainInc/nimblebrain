@@ -1117,7 +1117,10 @@ export const TaskRunRecord = Type.Object({
   trigger: Type.Optional(StringEnum(RUN_TRIGGERS)),
   resultPreview: Type.Optional(Type.String()),
   stopReason: Type.Optional(StopReason),
-  /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
+  /**
+   * The spend account that stopped the run, when `stopReason` is `spend_limit`;
+   * with `max_input_tokens`, the model gateway's id when the gateway held the cap.
+   */
   spendAccountId: Type.Optional(Type.String()),
   /** The JSON input the run was given. */
   input: Type.Optional(Type.Unknown()),

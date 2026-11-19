@@ -31,6 +31,7 @@ import {
   setupLocalModel,
   takesLocalModel,
 } from "./local-model.ts";
+import { openBrowser } from "./open.ts";
 import { compareVersions, runtimeTag } from "./release.ts";
 import { CliError, type Ok } from "./result.ts";
 import { type InstallState, readInstall, type StatusResult, status } from "./status.ts";
@@ -103,7 +104,7 @@ export async function init(ctx: Ctx): Promise<Ok> {
   const begun = Date.now();
   rec.record("cli.init_started", { agent: flags.agent ?? null, interactive: deps.interactive });
   try {
-    return await install(ctx, consent, rec, begun);
+    return await openWhenDone(ctx, await install(ctx, consent, rec, begun));
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
     // Declining the start with no answer given changed nothing, so it leaves no report either.
@@ -111,6 +112,19 @@ export async function init(ctx: Ctx): Promise<Ok> {
       await settleFailure(rec, home, consent, err);
     throw err.with({ telemetry: field(consent, invocation(deps, home), lockedHere(deps)) });
   }
+}
+
+/**
+ * A fresh install that came up opens the web UI for a person at the terminal,
+ * unless `--no-open`. Never under `--json` or with no terminal: an agent drives
+ * those, and it opens the UI with `open` when the person asks. A rerun opens
+ * nothing; `open` is the command for that.
+ */
+async function openWhenDone(ctx: Ctx, result: Ok): Promise<Ok> {
+  const { deps, flags } = ctx;
+  if (!deps.interactive || flags.json || flags.noOpen) return result;
+  if (result.health !== "ok" || typeof result.url !== "string") return result;
+  return { ...result, opened: await openBrowser(deps, result.url) };
 }
 
 /** Records why `init` stopped (a missing key is not a failure) and settles the run. */
