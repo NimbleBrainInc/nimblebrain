@@ -3129,7 +3129,7 @@ describe("AgentEngine", () => {
     expect(receivedPrompt).toBe("Base prompt.\nExtra instruction.");
   });
 
-  it("executes 3 independent tools concurrently (wall clock < 3x single)", async () => {
+  it("executes 3 independent read-only tools concurrently (wall clock < 3x single)", async () => {
     const DELAY = 50;
     let callCount = 0;
     const model = createMockModel(() => {
@@ -3168,7 +3168,14 @@ describe("AgentEngine", () => {
     });
 
     const tools = {
-      schemas: [{ name: "test__slow", description: "Slow tool", inputSchema: {} }],
+      schemas: [
+        {
+          name: "test__slow",
+          description: "Slow tool",
+          inputSchema: {},
+          annotations: { readOnlyHint: true },
+        },
+      ],
       handler: async (call: ToolCall): Promise<ToolResult> => {
         await new Promise((r) => setTimeout(r, DELAY));
         return { content: textContent(`done-${call.input.n}`), isError: false };

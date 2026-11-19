@@ -8,6 +8,7 @@ import { MCP_APP_MIME_TYPE } from "../../tools/apps-extension.ts";
 import {
   defineInProcessApp,
   type InProcessTool,
+  READ_ONLY,
   type ToolErrorResult,
   type ToolSuccessResult,
   typedTool,
@@ -229,6 +230,7 @@ export async function createConversationsSource(
   const tools: InProcessTool[] = [
     typedTool({
       name: "list",
+      annotations: READ_ONLY,
       description:
         "List conversations in the current workspace, with pagination, sorting, and filtering. Returns conversation metadata (title, timestamps, token counts, preview, and whether a reply is still generating as `active`). Scoped to the workspace you are in — there is no cross-workspace listing, and no workspace argument to pass.",
       inputSchema: ConversationsListInput,
@@ -252,6 +254,7 @@ export async function createConversationsSource(
     }),
     typedTool({
       name: "get",
+      annotations: READ_ONLY,
       description:
         'Load a conversation by ID — omit `id` for the conversation you are in. Returns metadata plus, by default, the most recent ~20 messages (with the message payload capped to ~30 KB; the full pretty-printed response stays under ~50 KB). Use expand:"metadata" for just the metadata or expand:"full" when you actually need the entire transcript — long conversations can run hundreds of thousands of tokens and full reads are recorded in tool history.',
       inputSchema: ConversationsGetInput,
@@ -264,6 +267,7 @@ export async function createConversationsSource(
     }),
     typedTool({
       name: "search",
+      annotations: READ_ONLY,
       description:
         "Full-text search across message content in the current workspace's conversations. Returns matching conversations with context snippets around each match. Scoped to the workspace you are in — it does not reach other workspaces.",
       inputSchema: ConversationsSearchInput,
@@ -315,6 +319,7 @@ export async function createConversationsSource(
     }),
     typedTool({
       name: "stats",
+      annotations: READ_ONLY,
       description:
         "Token usage analytics for the current workspace. Returns total tokens, breakdown by model and skill, and top tools used.",
       inputSchema: ConversationsStatsInput,
@@ -327,6 +332,7 @@ export async function createConversationsSource(
     }),
     typedTool({
       name: "export",
+      annotations: READ_ONLY,
       description:
         "Export a conversation as markdown or JSON — omit `id` for the conversation you are in. Markdown renders messages as a readable document; JSON returns raw JSONL content as a JSON array.",
       inputSchema: ConversationsExportInput,

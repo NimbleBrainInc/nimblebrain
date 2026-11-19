@@ -25,6 +25,7 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import {
   defineInProcessApp,
   type InProcessTool,
+  READ_ONLY,
   type ToolErrorResult,
   type ToolSuccessResult,
   type TypedToolResult,
@@ -340,6 +341,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
   const tools: InProcessTool[] = [
     typedTool({
       name: "list",
+      annotations: READ_ONLY,
       description: LIST_DESCRIPTION,
       inputSchema: NotificationsListInput,
       outputSchema: NotificationsListOutput,

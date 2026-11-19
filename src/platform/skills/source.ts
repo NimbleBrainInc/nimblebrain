@@ -81,6 +81,7 @@ import {
 import {
   defineInProcessApp,
   type InProcessTool,
+  READ_ONLY,
   type ToolErrorResult,
   type TypedToolResult,
   typedTool,
@@ -305,6 +306,7 @@ export function createSkillsSource(
   const tools: InProcessTool[] = [
     typedTool({
       name: "list",
+      annotations: READ_ONLY,
       description: SKILLS_LIST_DESCRIPTION,
       meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsListInput,
@@ -324,6 +326,7 @@ export function createSkillsSource(
     }),
     typedTool({
       name: "read",
+      annotations: READ_ONLY,
       description: SKILLS_READ_DESCRIPTION,
       meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsReadInput,
@@ -338,6 +341,7 @@ export function createSkillsSource(
     }),
     typedTool({
       name: "loading_log",
+      annotations: READ_ONLY,
       description: SKILLS_LOADING_LOG_DESCRIPTION,
       inputSchema: SkillsLoadingLogInput,
       outputSchema: SkillsLoadingLogOutput,
@@ -384,6 +388,7 @@ export function createSkillsSource(
     }),
     typedTool({
       name: "history",
+      annotations: READ_ONLY,
       description: SKILLS_HISTORY_DESCRIPTION,
       inputSchema: SkillsHistoryInput,
       outputSchema: SkillsHistoryOutput,
