@@ -38,6 +38,8 @@ interface PendingConnectFlow {
   connectorId: string;
   /** The workspace a personal connect was started from, to return to. */
   returnWsId?: string;
+  /** The caller's conversation in `returnWsId` to reopen on return, checked by the initiate. */
+  returnConversationId?: string;
   timeout: ReturnType<typeof setTimeout>;
 }
 
@@ -58,6 +60,7 @@ export function registerConnectFlow(
   connectorId: string,
   ttlMs: number = DEFAULT_CONNECT_FLOW_TTL_MS,
   returnWsId?: string,
+  returnConversationId?: string,
 ): void {
   // A fresh 256-bit nonce never collides in practice; clearing a pre-existing
   // record's timer is pure hygiene so a double-register can't leak a timer.
@@ -73,23 +76,37 @@ export function registerConnectFlow(
   // alive; a no-op in the long-running HTTP server.
   timeout.unref?.();
 
-  flows.set(nonce, { owner, connectorId, timeout, ...(returnWsId ? { returnWsId } : {}) });
+  flows.set(nonce, {
+    owner,
+    connectorId,
+    timeout,
+    ...(returnWsId ? { returnWsId } : {}),
+    ...(returnWsId && returnConversationId ? { returnConversationId } : {}),
+  });
 }
 
 /**
  * Consume the pending flow for `nonce`: return its trusted `owner`,
- * `connectorId` and return workspace, and remove the record (one-shot). Returns null when no record
+ * `connectorId`, return workspace and conversation, and remove the record (one-shot). Returns null when no record
  * exists — the callback treats that as an unknown/expired flow and rejects.
  */
-export function consumeConnectFlow(
-  nonce: string,
-): { owner: ConnectorOwner; connectorId: string; returnWsId?: string } | null {
+export function consumeConnectFlow(nonce: string): {
+  owner: ConnectorOwner;
+  connectorId: string;
+  returnWsId?: string;
+  returnConversationId?: string;
+} | null {
   const flow = flows.get(nonce);
   if (!flow) return null;
   flows.delete(nonce);
   clearTimeout(flow.timeout);
-  const { owner, connectorId, returnWsId } = flow;
-  return returnWsId ? { owner, connectorId, returnWsId } : { owner, connectorId };
+  const { owner, connectorId, returnWsId, returnConversationId } = flow;
+  return {
+    owner,
+    connectorId,
+    ...(returnWsId ? { returnWsId } : {}),
+    ...(returnConversationId ? { returnConversationId } : {}),
+  };
 }
 
 /** For tests: drop all pending flows. */

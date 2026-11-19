@@ -8,11 +8,12 @@
 // on the latest message once the turn has stopped.
 // ---------------------------------------------------------------------------
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 import type { Plugin } from "../_generated/platform-schemas/plugins";
 import type * as ApiClient from "../api/client";
+import type { PersonalConnector } from "../api/client";
 import type { ChatAnswer } from "../context/ChatAnswerContext";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -21,8 +22,28 @@ defineHappyDomErrorClasses();
 
 const WS_ID = "ws_003eba8844413cd9";
 
+const CONVERSATION_ID = "conv_0042";
+
 const grantConnector = mock<typeof ApiClient.grantConnector>(async () => {});
-mock.module("../api/client", () => ({ ...realClient, grantConnector }));
+let personal: PersonalConnector[] = [];
+const listPersonalConnectors = mock<typeof ApiClient.listPersonalConnectors>(async () => ({
+  connectors: personal,
+}));
+/** Where the vendor's sign-in page is; null means it connected without leaving. */
+let authorizationUrl: string | null = "https://granola.test/authorize?state=s";
+const initiateIdentityConnect = mock<typeof ApiClient.initiateIdentityConnect>(async () => ({
+  authorizationUrl,
+}));
+const initiateComposioIdentityConnect = mock<typeof ApiClient.initiateComposioIdentityConnect>(
+  async () => ({ authorizationUrl: authorizationUrl ?? "" }),
+);
+mock.module("../api/client", () => ({
+  ...realClient,
+  grantConnector,
+  listPersonalConnectors,
+  initiateIdentityConnect,
+  initiateComposioIdentityConnect,
+}));
 
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
@@ -32,7 +53,9 @@ const { PluginRequestCard } = await import("../components/PluginRequestCard");
 const { MessageList } = await import("../components/MessageList");
 const { MemoryRouter } = await import("react-router-dom");
 type ChatMessage = import("../hooks/chat-store").ChatMessage;
-const { requestedPluginName } = await import("../lib/plugin-request");
+const { requestedPluginName, markSignInPending, isSignInPending } = await import(
+  "../lib/plugin-request"
+);
 
 const GRANOLA: Plugin = {
   id: "person:granola",
@@ -59,9 +82,23 @@ const send = mock<ChatAnswer["send"]>(async () => {});
 let container: HTMLDivElement;
 let root: ReturnType<typeof ReactDOMClient.createRoot>;
 
+let assign: ReturnType<typeof spyOn<Location, "assign">>;
+
 beforeEach(() => {
-  grantConnector.mockClear();
-  send.mockClear();
+  for (const m of [
+    grantConnector,
+    send,
+    listPersonalConnectors,
+    initiateIdentityConnect,
+    initiateComposioIdentityConnect,
+  ]) {
+    m.mockClear();
+  }
+  personal = [];
+  authorizationUrl = "https://granola.test/authorize?state=s";
+  sessionStorage.clear();
+  // The sign-in leaves the page; the test reads where it was sent instead.
+  assign = spyOn(window.location, "assign").mockImplementation(() => {});
   container = document.createElement("div");
   document.body.appendChild(container);
   root = ReactDOMClient.createRoot(container);
@@ -70,6 +107,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  assign.mockRestore();
 });
 
 function render(opts: {
@@ -79,6 +117,7 @@ function render(opts: {
   canAnswer?: boolean;
 }) {
   const answer: ChatAnswer = {
+    conversationId: CONVERSATION_ID,
     workspaceId: WS_ID,
     workspaceName: "Helix",
     canAnswer: opts.canAnswer ?? true,
@@ -160,6 +199,159 @@ describe("PluginRequestCard", () => {
     expect(button("plugin-request-use")).toBeNull();
     render({ serverName: "granola", canAnswer: false });
     expect(button("plugin-request-use")).toBeNull();
+  });
+});
+
+// Use here on a plugin with no account behind it turns it on and signs in,
+// naming the chat's workspace and this conversation, so the callback returns to
+// the workspace's Plugins page with `?chat=<conversation>` and the chat panel
+// reopens it; the answer goes once the person is back with it connected, never
+// before they leave.
+describe("PluginRequestCard — a plugin that is not signed in", () => {
+  const NOT_SIGNED_IN: Plugin = {
+    ...GRANOLA,
+    servers: [{ serverName: "granola", status: "not_connected", account: null }],
+  };
+  const CONNECTOR: PersonalConnector = {
+    serverName: "granola",
+    displayName: "Granola",
+    description: null,
+    state: "not_authenticated",
+    auth: "dcr",
+    grantedWorkspaces: [],
+  };
+
+  test("says the sign-in comes next", () => {
+    render({ serverName: "granola", plugins: [NOT_SIGNED_IN] });
+    expect(container.textContent).toContain("You'll sign in to Granola next.");
+  });
+
+  test("Use here grants, then signs in back to this conversation, and does not answer yet", async () => {
+    personal = [CONNECTOR];
+    render({ serverName: "granola", plugins: [NOT_SIGNED_IN] });
+    await act(async () => button("plugin-request-use")?.click());
+
+    expect(grantConnector).toHaveBeenCalledWith("granola", WS_ID);
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", WS_ID, CONVERSATION_ID);
+    expect(grantConnector.mock.invocationCallOrder[0]).toBeLessThan(
+      initiateIdentityConnect.mock.invocationCallOrder[0]!,
+    );
+    expect(assign).toHaveBeenCalledWith("https://granola.test/authorize?state=s");
+    expect(send).not.toHaveBeenCalled();
+    expect(isSignInPending(CONVERSATION_ID, "granola")).toBe(true);
+  });
+
+  test("a Composio plugin keys its sign-in on the catalog id", async () => {
+    personal = [{ ...CONNECTOR, auth: "composio", connectorId: "ai.granola/granola" }];
+    render({ serverName: "granola", plugins: [NOT_SIGNED_IN] });
+    await act(async () => button("plugin-request-use")?.click());
+    expect(initiateComposioIdentityConnect).toHaveBeenCalledWith(
+      "ai.granola/granola",
+      WS_ID,
+      CONVERSATION_ID,
+    );
+    expect(initiateIdentityConnect).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test("Use here, then the page the callback returns to (`?chat=`) with it connected: one answer", async () => {
+    personal = [CONNECTOR];
+    render({ serverName: "granola", plugins: [NOT_SIGNED_IN] });
+    await act(async () => button("plugin-request-use")?.click());
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
+
+    // The callback loads `/w/<slug>/plugins?…&chat=<conversation>` in this tab:
+    // a fresh page whose chat panel reopens the conversation and its card.
+    act(() => root.unmount());
+    root = ReactDOMClient.createRoot(container);
+    render({ serverName: "granola", plugins: [{ ...GRANOLA, granted: true }] });
+    await act(async () => {});
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith("I turned on Granola in this workspace. Go ahead.", {
+      serverName: "granola",
+      answer: "use",
+    });
+
+    // The listing refreshing again, or the page reloading, sends nothing more.
+    act(() => root.unmount());
+    root = ReactDOMClient.createRoot(container);
+    render({ serverName: "granola", plugins: [{ ...GRANOLA, granted: true }] });
+    await act(async () => {});
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  test("back from the sign-in with it connected, the card answers once", async () => {
+    markSignInPending(CONVERSATION_ID, "granola");
+    render({ serverName: "granola", plugins: [{ ...GRANOLA, granted: true }] });
+    await act(async () => {});
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith("I turned on Granola in this workspace. Go ahead.", {
+      serverName: "granola",
+      answer: "use",
+    });
+    expect(isSignInPending(CONVERSATION_ID, "granola")).toBe(false);
+
+    // A later render (a listing refresh) sends nothing more.
+    render({ serverName: "granola", plugins: [{ ...GRANOLA, granted: true }] });
+    await act(async () => {});
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  test("back but not yet connected, the card waits and offers Connect", async () => {
+    markSignInPending(CONVERSATION_ID, "granola");
+    render({ serverName: "granola", plugins: [{ ...NOT_SIGNED_IN, granted: true }] });
+    await act(async () => {});
+    expect(send).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("On here. Sign in to Granola to finish.");
+    expect(button("plugin-request-connect")).not.toBeNull();
+
+    // The connection finishing (an SSE refresh of the listing) sends the answer.
+    render({ serverName: "granola", plugins: [{ ...GRANOLA, granted: true }] });
+    await act(async () => {});
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  test("a card this tab never sent to sign in does not answer on its own", async () => {
+    render({ serverName: "granola", plugins: [{ ...GRANOLA, granted: true }] });
+    await act(async () => {});
+    expect(send).not.toHaveBeenCalled();
+    // Another conversation's sign-in is not this card's.
+    markSignInPending("conv_other", "granola");
+    render({ serverName: "granola", plugins: [{ ...GRANOLA, granted: true }] });
+    await act(async () => {});
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test("Connect on a plugin on here signs in and answers on return", async () => {
+    personal = [CONNECTOR];
+    render({ serverName: "granola", plugins: [{ ...NOT_SIGNED_IN, granted: true }] });
+    await act(async () => button("plugin-request-connect")?.click());
+    expect(grantConnector).not.toHaveBeenCalled();
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", WS_ID, CONVERSATION_ID);
+    expect(send).not.toHaveBeenCalled();
+    expect(isSignInPending(CONVERSATION_ID, "granola")).toBe(true);
+  });
+
+  test("a sign-in that connects without leaving answers at once", async () => {
+    personal = [CONNECTOR];
+    authorizationUrl = null;
+    render({ serverName: "granola", plugins: [NOT_SIGNED_IN] });
+    await act(async () => button("plugin-request-use")?.click());
+    expect(assign).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(isSignInPending(CONVERSATION_ID, "granola")).toBe(false);
+  });
+
+  test("Not now is unchanged: no grant, no sign-in", async () => {
+    render({ serverName: "granola", plugins: [NOT_SIGNED_IN] });
+    await act(async () => button("plugin-request-not-now")?.click());
+    expect(grantConnector).not.toHaveBeenCalled();
+    expect(initiateIdentityConnect).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith("Not now: don't use Granola in this workspace.", {
+      serverName: "granola",
+      answer: "not_now",
+    });
   });
 });
 

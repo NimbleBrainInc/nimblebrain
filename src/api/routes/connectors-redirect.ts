@@ -1,4 +1,5 @@
 import { webOrigin } from "../../oauth/public-origin.ts";
+import { ConversationNotFoundError } from "../../runtime/errors.ts";
 import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import { workspaceUrl } from "../../workspace/workspace-url.ts";
 import { apiError } from "../types.ts";
@@ -21,11 +22,12 @@ import { isAddressedWorkspaceMember } from "../workspace-address.ts";
 export function connectorReturnUrl(
   returnWsId: string | undefined,
   connected?: ReturnedConnection,
+  returnConversationId?: string,
 ): string {
   const url = returnWsId
     ? workspaceUrl(returnWsId, "/plugins")
     : `${webOrigin()}/profile/connectors`;
-  return withConnected(url, connected);
+  return withConnected(url, connected, returnWsId ? returnConversationId : undefined);
 }
 
 /**
@@ -44,12 +46,22 @@ export interface ReturnedConnection {
  * `?connected=<server name>&owner=<workspace|person>`. The page reads it and,
  * once that connector settles, says whether it connected, so the callback
  * renders no page of its own. A connector the page does not list announces
- * nothing.
+ * nothing. `chat=<conversation id>` reopens the chat panel on the conversation
+ * the sign-in was started from.
  */
-function withConnected(url: string, connected: ReturnedConnection | undefined): string {
-  if (!connected) return url;
-  const query = new URLSearchParams({ connected: connected.serverName, owner: connected.owner });
-  return `${url}?${query}`;
+function withConnected(
+  url: string,
+  connected: ReturnedConnection | undefined,
+  conversationId: string | undefined,
+): string {
+  const query = new URLSearchParams();
+  if (connected) {
+    query.set("connected", connected.serverName);
+    query.set("owner", connected.owner);
+  }
+  if (conversationId) query.set("chat", conversationId);
+  const qs = query.toString();
+  return qs ? `${url}?${qs}` : url;
 }
 
 /**
@@ -59,7 +71,7 @@ function withConnected(url: string, connected: ReturnedConnection | undefined): 
  * same 404 a workspace route gives, so the callback can only ever return to a
  * workspace this person reaches.
  */
-export async function resolveReturnWorkspace(
+async function resolveReturnWorkspace(
   workspaceStore: WorkspaceStore,
   value: unknown,
   userId: string,
@@ -72,4 +84,47 @@ export async function resolveReturnWorkspace(
     return apiError(404, "workspace_not_found", "Workspace not found.");
   }
   return value;
+}
+
+/** Where a personal sign-in returns: a workspace's Plugins page, and the conversation to reopen there. */
+export interface ReturnTarget {
+  wsId: string;
+  conversationId?: string;
+}
+
+/** The one check {@link resolveReturnTarget} asks of the runtime: is this the caller's conversation in that workspace. */
+interface ConversationOwnershipCheck {
+  assertConversationInWorkspace(conversationId: string, wsId: string, ownerId: string): void;
+}
+
+/**
+ * Read a personal initiate's optional `returnWorkspaceId` and
+ * `returnConversationId`. The conversation must be one the caller owns in that
+ * workspace (`assertConversationInWorkspace`, the chat door's own check); a
+ * conversation with no workspace, another person's, one in another workspace,
+ * or a malformed id is refused with the same 404 as a workspace the caller
+ * does not reach, so the answer says nothing about which part was wrong.
+ */
+export async function resolveReturnTarget(
+  workspaceStore: WorkspaceStore,
+  runtime: ConversationOwnershipCheck,
+  body: { returnWorkspaceId: unknown; returnConversationId: unknown },
+  userId: string,
+): Promise<ReturnTarget | undefined | Response> {
+  const wsId = await resolveReturnWorkspace(workspaceStore, body.returnWorkspaceId, userId);
+  if (wsId instanceof Response) return wsId;
+  const convId = body.returnConversationId;
+  if (convId === undefined || convId === null) return wsId ? { wsId } : undefined;
+  if (!wsId || typeof convId !== "string") return returnTargetNotFound();
+  try {
+    runtime.assertConversationInWorkspace(convId, wsId, userId);
+  } catch (err) {
+    if (err instanceof ConversationNotFoundError) return returnTargetNotFound();
+    throw err;
+  }
+  return { wsId, conversationId: convId };
+}
+
+function returnTargetNotFound(): Response {
+  return apiError(404, "workspace_not_found", "Workspace not found.");
 }

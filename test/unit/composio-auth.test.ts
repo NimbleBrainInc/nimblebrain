@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import type { ApiErrorBody, ComposioInitiateResponse } from "../../src/api/schemas/responses.ts";
+import { assertConversationInWorkspaceOver } from "../helpers/conversation-ownership.ts";
 import { readJson } from "../helpers/http.ts";
 
 // ── @composio/core mock ─────────────────────────────────────────────
@@ -151,6 +152,12 @@ const STUB_MEMBER_WS = "ws_0076759dbbe19fcc";
 const STUB_FOREIGN_WS = "ws_0036bc4006dd6831";
 /** The dev user `requireWorkspace` admits when no identity provider is configured. */
 const DEV_USER_ID = "usr_default";
+/** `usr_test`'s conversation in `STUB_MEMBER_WS`. */
+const MY_CONV = "conv_00000000000000a1";
+/** Another member's conversation in `STUB_MEMBER_WS`. */
+const THEIR_CONV = "conv_00000000000000b2";
+/** `usr_test`'s conversation stored in another workspace. */
+const OTHER_WS_CONV = "conv_00000000000000c3";
 
 function stubCtx(
   workDir: string,
@@ -223,6 +230,11 @@ function stubCtx(
     getIdentityProvider() {
       return null;
     },
+    assertConversationInWorkspace: assertConversationInWorkspaceOver([
+      { wsId: STUB_MEMBER_WS, ownerId: "usr_test", conversationId: MY_CONV },
+      { wsId: STUB_MEMBER_WS, ownerId: DEV_USER_ID, conversationId: THEIR_CONV },
+      { wsId: "ws_0065ab540586462e", ownerId: "usr_test", conversationId: OTHER_WS_CONV },
+    ]),
   });
 
   return {
@@ -1142,6 +1154,111 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     }
   });
 
+  test("a returnConversationId the caller owns in returnWorkspaceId is recorded on the connect flow", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
+    let linkArgs: unknown[] = [];
+    sdkCalls.linkImpl = async (...args: unknown[]) => {
+      linkArgs = args;
+      return { redirectUrl: "https://connect.composio.dev/link/lk_identity", id: "ca_identity" };
+    };
+
+    const { app } = await makeIdentityApp(composioEntry("com.google/gmail"));
+    const res = await app.request("http://nb.test/v1/composio-auth/initiate-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        connectorId: "com.google/gmail",
+        returnWorkspaceId: STUB_MEMBER_WS,
+        returnConversationId: MY_CONV,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const cbUrl = new URL((linkArgs[2] as { callbackUrl: string }).callbackUrl);
+    // The conversation never rides in the vendor's callback URL.
+    expect(cbUrl.search).not.toContain(MY_CONV);
+    expect(consumeConnectFlow(cbUrl.searchParams.get("n") ?? "")).toMatchObject({
+      returnWsId: STUB_MEMBER_WS,
+      returnConversationId: MY_CONV,
+    });
+  });
+
+  test("a returnConversationId that is not the caller's in returnWorkspaceId is refused like a workspace, before Composio is called", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
+    let vendorCalls = 0;
+    sdkCalls.listImpl = async () => {
+      vendorCalls++;
+      return { items: [] };
+    };
+    sdkCalls.linkImpl = async () => {
+      vendorCalls++;
+      throw new Error("a refused initiate must not reach Composio");
+    };
+
+    const { app } = await makeIdentityApp(composioEntry("com.google/gmail"));
+    const initiate = (body: Record<string, unknown>) =>
+      app.request("http://nb.test/v1/composio-auth/initiate-identity", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connectorId: "com.google/gmail", ...body }),
+      });
+    const expected = await readJson<ApiErrorBody>(
+      await initiate({ returnWorkspaceId: STUB_FOREIGN_WS }),
+    );
+    const cases: Array<{ name: string; body: Record<string, unknown> }> = [
+      {
+        name: "another member's",
+        body: { returnWorkspaceId: STUB_MEMBER_WS, returnConversationId: THEIR_CONV },
+      },
+      {
+        name: "in another workspace",
+        body: { returnWorkspaceId: STUB_MEMBER_WS, returnConversationId: OTHER_WS_CONV },
+      },
+      {
+        name: "malformed",
+        body: { returnWorkspaceId: STUB_MEMBER_WS, returnConversationId: "conv_../x" },
+      },
+      {
+        name: "not a string",
+        body: { returnWorkspaceId: STUB_MEMBER_WS, returnConversationId: 7 },
+      },
+      { name: "with no workspace", body: { returnConversationId: MY_CONV } },
+    ];
+    for (const { name, body } of cases) {
+      const res = await initiate(body);
+      expect(res.status, name).toBe(404);
+      expect(await readJson<ApiErrorBody>(res), name).toEqual(expected);
+      expect(res.headers.get("set-cookie"), name).toBeNull();
+    }
+    expect(vendorCalls).toBe(0);
+  });
+
+  test("an adopted account started from a conversation returns to it", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
+    sdkCalls.listImpl = async () => ({ items: [{ id: "ca_user_active", status: "ACTIVE" }] });
+    const dir = mkdtempSync(join(tmpdir(), "nb-adopt-return-chat-"));
+    try {
+      const { app } = await makeIdentityApp(composioEntry("com.google/gmail"), dir);
+      const res = await app.request("http://nb.test/v1/composio-auth/initiate-identity", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          connectorId: "com.google/gmail",
+          returnWorkspaceId: STUB_MEMBER_WS,
+          returnConversationId: MY_CONV,
+        }),
+      });
+      const body = await readJson<ComposioInitiateResponse>(res);
+      expect(body.alreadyConnected).toBe(true);
+      expect(body.authorizationUrl ?? "").toEndWith(`/w/0076759dbbe19fcc/plugins?chat=${MY_CONV}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("(b) adopt-existing: writes connection.json under the user root, no workspace state transition", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
@@ -1290,6 +1407,35 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
       expect(res.status).toBe(302);
       expect(res.headers.get("Location") ?? "").toEndWith(
         "/w/0076759dbbe19fcc/plugins?connected=com-google-gmail&owner=person",
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a personal connect started from a conversation reopens it on the Plugins page", async () => {
+    const { dir, cleanup } = freshDir();
+    try {
+      const ctx = stubCtx(dir, composioEntry("com.google/gmail"));
+      const app = composioAuthRoutes(ctx);
+      const nonce = "beadbeadbeadbeadbeadbeadbeadbead";
+      registerConnectFlow(
+        nonce,
+        { type: "user", userId: "usr_test" },
+        "com.google/gmail",
+        undefined,
+        STUB_MEMBER_WS,
+        MY_CONV,
+      );
+      const res = await app.request(
+        `http://nb.test/v1/composio-auth/callback?n=${nonce}&connected_account_id=ca_u&status=ACTIVE&chat=conv_ffffffffffffffff`,
+        { headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` } },
+      );
+
+      expect(res.status).toBe(302);
+      // The conversation comes from the flow record, never from the callback's query.
+      expect(res.headers.get("Location") ?? "").toEndWith(
+        `/w/0076759dbbe19fcc/plugins?connected=com-google-gmail&owner=person&chat=${MY_CONV}`,
       );
     } finally {
       cleanup();
