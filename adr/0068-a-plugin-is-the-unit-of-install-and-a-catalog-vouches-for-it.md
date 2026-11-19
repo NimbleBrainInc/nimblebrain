@@ -115,12 +115,22 @@ A catalog serves:
   itself.
 - each plugin's archive, built from its server and its skills, with the same
   bytes for the same content.
-- a `marketplace.json` that lists its plugins by name with their pinned sources,
-  in Claude Code's marketplace format and at a URL, so a host other than
-  NimbleBrain can add the catalog as a marketplace.
-- a generated `ai-catalog.json`, which links each plugin's archive with its
-  digest under the plugin's URN. It is an output for outside discovery and
-  never an input to install.
+- an index for each kind of reader, in Claude Code's marketplace format and at a
+  URL, each listing plugins by name with their pinned sources. A listing
+  promises the reader that the plugin installs and signs in, so each index lists
+  only what its reader can run:
+  - `marketplace.json`, for any host, lists a plugin when every server it names
+    is reached by URL and authorizes itself by dynamic client registration.
+  - `nimblebrain/marketplace.json`, for the NimbleBrain runtime, lists every
+    plugin, including a brokered connector's and one whose server needs an
+    operator's own OAuth app.
+
+  Which index lists a plugin follows from its servers' auth in the catalog,
+  so no one keeps a list of portable plugins.
+- a generated `ai-catalog.json`, which links every plugin's archive with its
+  digest under the plugin's URN, and marks the ones only NimbleBrain can run in
+  its `extensions`. It is an output for outside discovery and never an input to
+  install.
 
 NimbleBrain runs its own catalog. Authors publish servers
 to the MCP Registry and plugins to their own sources; a catalog includes them by
@@ -146,7 +156,8 @@ and what that grants, is ADR-0069's.
 
 Installing a plugin:
 
-1. resolves its name in the policy's catalogs to a pinned source;
+1. resolves its name in the policy's catalogs, through each catalog's
+   NimbleBrain index, to a pinned source;
 2. fetches the source and verifies it against its pinned commit or digest;
 3. validates the manifest;
 4. for each server, resolves the named `ServerDetail` and connects as a catalog
@@ -234,11 +245,13 @@ renamed *skill index*. ADR-0015 is unchanged in substance.
   does not get the NimbleBrain catalog's skill for it. On a deployed instance
   every connector comes through a plugin, so this reaches only local
   development and a second plugin for the same server.
-- A plugin for a brokered connector installs only on NimbleBrain.
+- A plugin for a brokered connector, or for a server that needs an operator's
+  own OAuth app, installs only on NimbleBrain, and only the NimbleBrain index
+  lists it. A host that adds the catalog sees fewer plugins than NimbleBrain
+  does, and each one it sees works there.
 - A plugin from any Agent Plugins host installs on NimbleBrain unless it names
   a `stdio` server. A plugin from our catalog installs on those hosts, with its
-  `ai.nimblebrain` fields ignored there, unless it is for a brokered
-  connector.
+  `ai.nimblebrain` fields ignored there, when `marketplace.json` lists it.
 - The runtime reads two manifest formats while Claude Code's differs from
   Agent Plugins. Agent Plugins is a 1.0 spec from 2026-08, so field changes will
   reach the parser.
@@ -262,8 +275,9 @@ renamed *skill index*. ADR-0015 is unchanged in substance.
 
 Each step stands alone:
 
-1. the catalog serving `/v0.1/servers` and `marketplace.json`, the runtime
-   reconciling a declared list from it;
+1. the catalog serving `/v0.1/servers`, `marketplace.json` and
+   `nimblebrain/marketplace.json`, the runtime reconciling a declared list
+   from `nimblebrain/marketplace.json`;
 2. plugin install, removal and listing in the runtime, with the CLI and web UI
    as clients;
 3. policy: catalogs and allow and deny lists per instance;
