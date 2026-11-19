@@ -1,10 +1,11 @@
-# Minimal curated catalog shipped in the image.
+# Example catalog for a source checkout (dev and tests).
 #
-# This is the in-image fallback, used when NB_CURATED_CATALOG_DIR is
-# unset — just enough for a fresh / OSS / dev install to have a
-# non-empty Browse list and a working reference for the `ServerDetail`
-# wire shape (the upstream MCP registry schema, ajv-validated against
-# `schemas/server.schema.json`).
+# Used when NB_CURATED_CATALOG_DIR is unset and the runtime runs from source:
+# enough for a non-empty Browse and a working reference for the
+# `ServerDetail` wire shape (the upstream MCP registry schema, ajv-validated
+# against `schemas/server.schema.json`). The release image does not ship
+# this file; it takes NimbleBrain's catalog of zero-setup connectors at build
+# (see the Dockerfile).
 #
 # It deliberately ships ONLY plain DCR entries — every entry here must
 # install with zero OAuth client setup. Production curation — the full

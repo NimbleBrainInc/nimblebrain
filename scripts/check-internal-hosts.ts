@@ -41,6 +41,7 @@ export const FICTIONAL_AUTHKIT_SUBDOMAINS: ReadonlySet<string> = new Set(["myapp
 
 /** Exact subdomains of the company domain that are public sites. */
 export const PUBLIC_COMPANY_SUBDOMAINS: ReadonlySet<string> = new Set([
+  "catalog",
   "docs",
   "schemas",
   "static",
