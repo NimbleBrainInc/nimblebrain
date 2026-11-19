@@ -11,7 +11,7 @@ import { Aside } from '@astrojs/starlight/components';
 npx nimblebrain
 ```
 
-It checks your machine, starts NimbleBrain in Docker at `http://127.0.0.1:27246`, asks whether NimbleBrain's agents run on a hosted model (your API key) or a local one (see [On a local model](#on-a-local-model)), and connects the coding agent you choose to a workspace over MCP. Run it again any time: on a machine that already has NimbleBrain it reports what is there and changes nothing.
+It checks your machine, starts NimbleBrain in Docker at `http://127.0.0.1:27246`, asks whether NimbleBrain's agents run on a hosted model (your API key) or a local one (see [On a local model](#on-a-local-model)), connects the coding agent you choose to a workspace over MCP, and opens NimbleBrain in your browser (`--no-open` skips that; it never opens one for a coding agent's run). Run it again any time: on a machine that already has NimbleBrain it reports what is there and changes nothing.
 
 You need Docker with Compose v2, about 2 GB of memory for Docker, and Node.js 20 or later. It runs on `x86_64` and `arm64`, Apple Silicon included.
 
@@ -36,6 +36,7 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `init` (the default) | Checks the machine, starts NimbleBrain, connects the agent named by `--agent`, and installs the `nimblebrain` skill for it. |
 | `doctor` | Checks Docker, Compose v2, CPU architecture, memory and the port. Installs nothing. |
 | `status` | Version, health, URL, each workspace's MCP URL, the connected agent, whether a model key is set, and whether this release can reach a server on your machine (`host_loopback`). |
+| `open` | Opens NimbleBrain's web UI (the `url` in `status`) in your default browser. Answers `{"ok": true, "url": "...", "opened": true}`; where no browser can be started (no display, an SSH session, or the opener failed), `opened` is `false` and the URL is there to open by hand. A coding agent runs it when you ask it to open NimbleBrain. It never starts NimbleBrain: when it is stopped, it answers `NOT_RUNNING`. |
 | `key` | Takes the model key at a hidden prompt and restarts NimbleBrain so it takes effect. A person runs this. |
 | `local-model [model]` | Runs NimbleBrain's agents on a model served by Ollama instead of a hosted key: prepares the model (default `gemma4:e4b`) and restarts NimbleBrain. See [On a local model](#on-a-local-model). |
 | `up` / `down` | Starts or stops NimbleBrain. Your data survives `down`. |
@@ -60,6 +61,7 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `--local-model <model>` | For `init`: run on this Ollama model instead of a hosted key, without asking. |
 | `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). A home whose folder has another name is a separate install. See [A second install](#a-second-install). |
 | `--runtime <tag>` | For `init` and `update`: the NimbleBrain release to install, such as `v0.74.0`. Default: the newest release. |
+| `--no-open` | For `init`: do not open the web UI in your browser when it finishes. `init` opens it only for a person at a terminal, after a new install comes up, and never with `--json` or no terminal. |
 | `--telemetry <on\|off>` | For `init`: your answer to sending anonymous usage data. Without it, `init` asks you, or, with no one at the terminal, leaves it undecided and sends nothing. |
 | `--name <serverName>` | For `mcp add`: the name to add the server under. Default: the name in its Server Card, else the URL's host and port. |
 | `--workspace <id>` | For `mcp`: the workspace to act in. Default: the first workspace `status` lists, the one `init` connected your agent to. |
@@ -135,7 +137,7 @@ Every command answers `{"ok": true, ...}` or `{"ok": false, "error": "<CODE>", "
 | `RUNTIME_UNSUPPORTED` | The release `--runtime` names is older than this CLI supports, or its Compose file cannot be driven. |
 | `LOCAL_MODEL_UNREACHABLE`, `LOCAL_MODEL_MISSING`, `LOCAL_MODEL_NO_TOOLS`, `LOCAL_CONTEXT_SMALL` | Ollama does not answer (it is not installed, starting it was declined, or it did not answer after a start; `fix` names the step for this machine), the model is not on it (or its download was declined or failed), the model cannot call tools, or its context window is below the 32k NimbleBrain needs. |
 | `INTERRUPTED` | The CLI was stopped (a signal, Ctrl-C) before it finished; `exit_code` says how. Check `status`, then run the command again. |
-| `NOT_RUNNING` | The command needs NimbleBrain running (`telemetry on`/`off`, every `mcp` command); run `npx nimblebrain up`. |
+| `NOT_RUNNING` | The command needs NimbleBrain running (`open`, `telemetry on`/`off`, every `mcp` command); run `npx nimblebrain up`. |
 | `UPDATE_REQUIRED` | `mcp add` on a release that cannot reach your machine; run `npx nimblebrain update`. |
 | `WORKSPACE_NOT_FOUND`, `SERVER_NOT_FOUND` | No such workspace (the answer lists the ones there are in `workspaces`), or no server by that name in it. |
 | `URL_INVALID`, `URL_NOT_LOOPBACK` | The URL is not an `http`/`https` URL NimbleBrain accepts, or is not on this machine. |

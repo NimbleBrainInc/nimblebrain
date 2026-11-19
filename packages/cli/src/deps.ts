@@ -13,6 +13,13 @@ import { delimiter, dirname, join, resolve } from "node:path";
 export interface Deps {
   /** Run a program. `missing` is true when it is not installed at all. */
   exec(cmd: string, args: string[], opts?: ExecOptions): Promise<ExecResult>;
+  /**
+   * Start a program that may outlive this run (a browser opener), its output
+   * ignored. True when it exited 0, or is still running after `LAUNCH_WAIT_MS`
+   * (an opener that runs the browser itself); false when it is missing or
+   * failed. Never throws.
+   */
+  launch(cmd: string, args: string[]): Promise<boolean>;
   /** Whether a program is on `PATH`, found without running it. */
   which(cmd: string): Promise<boolean>;
   /** Whether nothing on this machine listens on `127.0.0.1:<port>`. */
@@ -60,6 +67,9 @@ export interface ExecResult {
   missing: boolean;
 }
 
+/** How long `launch` waits for a program to report failure before taking it as started. */
+export const LAUNCH_WAIT_MS = 2_000;
+
 export function realDeps(): Deps {
   return {
     exec(cmd, args, opts = {}) {
@@ -83,6 +93,31 @@ export function realDeps(): Deps {
           if (err.code === "ENOENT") missing = true;
         });
         child.on("close", (code) => resolve({ code, stdout, stderr, missing }));
+      });
+    },
+    launch(cmd, args) {
+      return new Promise((resolve) => {
+        let child: ReturnType<typeof spawn>;
+        try {
+          // Detached, so the program is not in this run's process group and a
+          // Ctrl-C here, or this process ending, leaves the browser alone.
+          child = spawn(cmd, args, { stdio: "ignore", detached: true });
+        } catch {
+          resolve(false);
+          return;
+        }
+        const timer = setTimeout(() => {
+          child.unref();
+          resolve(true);
+        }, LAUNCH_WAIT_MS);
+        child.once("error", () => {
+          clearTimeout(timer);
+          resolve(false);
+        });
+        child.once("exit", (code) => {
+          clearTimeout(timer);
+          resolve(code === 0);
+        });
       });
     },
     async which(cmd) {

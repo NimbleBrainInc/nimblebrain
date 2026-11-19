@@ -79,7 +79,7 @@ export interface StatusResult {
 export async function status(deps: Deps, home: string): Promise<StatusResult> {
   const install = await readInstall(deps, home);
   if (!install) throw new CliError("NOT_INSTALLED", `No NimbleBrain install in ${home}.`);
-  const url = `http://127.0.0.1:${install.port}`;
+  const url = installUrl(install);
 
   const up = await isUp(deps, url);
 
@@ -107,6 +107,11 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
     local_model: localModelOf(envText) ?? null,
     telemetry: await currentTelemetry(deps, home, url),
   };
+}
+
+/** Where an install's web UI and API answer: the port it published, on loopback only. */
+export function installUrl(install: Pick<InstallState, "port">): string {
+  return `http://127.0.0.1:${install.port}`;
 }
 
 /** Whether the instance at `url` answers health. */

@@ -54,6 +54,8 @@ export interface Machine {
   files: Map<string, { text: string; mode: number }>;
   /** Every program run, as one line: `<cwd>$ cmd args…`. */
   calls: string[];
+  /** Every program `launch` started (a browser opener), as one line: `cmd args…`. */
+  launched: string[];
   /** The environment each `docker compose` call got. */
   composeEnvs: NodeJS.ProcessEnv[];
   said: string[];
@@ -94,6 +96,8 @@ export interface MachineOptions {
   ) => { status: number; body: unknown } | undefined;
   /** Ollama on `127.0.0.1:11434`; absent, nothing answers there. */
   ollama?: FakeOllama;
+  /** What `launch` answers: whether the browser opener started; default true. */
+  launch?: boolean;
   /** Default `linux`. */
   platform?: NodeJS.Platform;
   /** Programs on `PATH` (`which`); default none. */
@@ -112,6 +116,7 @@ export function machine(opts: MachineOptions = {}): Machine {
   const state = {
     files: new Map(Object.entries(opts.files ?? {}).map(([p, text]) => [p, { text, mode: 0o644 }])),
     calls: [] as string[],
+    launched: [] as string[],
     composeEnvs: [] as NodeJS.ProcessEnv[],
     said: [] as string[],
     asked: [] as string[],
@@ -168,6 +173,10 @@ export function machine(opts: MachineOptions = {}): Machine {
           m.files.set(`/home/dana/${dir}/skills/${added[1]}/SKILL.md`, { text: "", mode: 0o644 });
       }
       return res;
+    },
+    async launch(cmd, args) {
+      m.launched.push([cmd, ...args].join(" "));
+      return opts.launch ?? true;
     },
     which: async (cmd) => (opts.programs ?? []).includes(cmd),
     portFree: async () => opts.portFree ?? true,
@@ -249,7 +258,13 @@ export function machine(opts: MachineOptions = {}): Machine {
     // No telemetry destination and no update check unless a test gives
     // them, so a test about something else is never asked the telemetry
     // question and never looks for a newer release.
-    env: { NIMBLEBRAIN_TELEMETRY_KEY: "", NIMBLEBRAIN_NO_UPDATE_CHECK: "1", ...opts.env },
+    // A desktop session, so a browser can open unless a test takes the display away.
+    env: {
+      NIMBLEBRAIN_TELEMETRY_KEY: "",
+      NIMBLEBRAIN_NO_UPDATE_CHECK: "1",
+      DISPLAY: ":0",
+      ...opts.env,
+    },
     platform: opts.platform ?? "linux",
     home: "/home/dana",
     cwd: "/home/dana/src",

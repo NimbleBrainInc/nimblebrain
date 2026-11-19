@@ -173,7 +173,9 @@ describe("init", () => {
     expect(stdout).toContain(
       "skill: not installed; add it with npx skills add nimblebraininc/skills --skill nimblebrain --agent claude-code -g",
     );
-    expect(stdout).toContain("Next: open http://127.0.0.1:27246, or ask Claude Code");
+    expect(stdout).toContain(
+      "Next: use NimbleBrain in your browser at http://127.0.0.1:27246, or ask Claude Code",
+    );
     expect(stdout).toContain("telemetry: off (no_destination)");
     expect(stdout).not.toContain("undefined");
     expect(stdout).not.toContain("{");
