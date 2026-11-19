@@ -1,34 +1,36 @@
 // ---------------------------------------------------------------------------
 // WorkspaceOverviewPage — workspace landing at `/w/<slug>/`
 //
-// Answers "what do I do here?" with two things:
-//   1. Ask: a composer. A question sent here opens the chat over the whole main
+// A launcher: one centered column holding the composer and, under it, one list
+// of next steps.
+//   1. Ask: the chat's own composer (`MessageInput`), sending into the panel's
+//      conversation. A question sent here opens the chat over the whole main
 //      area, since a conversation started from the overview is the work, not a
 //      side panel beside it.
-//   2. Next steps: a few cards, ranked by `overviewActions`: what needs a member
+//   2. Next steps: rows ranked by `overviewActions`: what needs a member
 //      (alerts), then the workspace's next setup step, then the last
-//      conversation. A brand-new workspace gets setup cards; a busy one gets its
-//      alerts.
+//      conversation.
 // Apps, conversations, and settings are one click away in the sidebar and the
 // workspace menu, so the page does not repeat them.
 //
-// Gutter: the content's edges sit on the top bar's (`pl-4 pr-3` in TopBar), so
-// the title lines up under the bar's title. Nothing is centered, since
-// centering moves content off those lines as the main area widens. Widths come
-// from container queries on the main area (web/DESIGN.md), never the viewport.
+// The column is the full-screen chat's (`max-w-4xl` with `px-8`, as in
+// ChatPanel), centered, so a send reads as the page turning into the
+// conversation rather than a jump to another box. It sits lower when the main
+// area is wide and fills it when the docked chat narrows it; widths come from
+// container queries on the main area (web/DESIGN.md), never the viewport.
 // ---------------------------------------------------------------------------
 
-import { ArrowUp } from "lucide-react";
-import { type FormEvent, useCallback, useState } from "react";
+import { useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ActionCards } from "../components/overview/ActionCards";
+import { MessageInput } from "../components/MessageInput";
+import { ActionRows } from "../components/overview/ActionRows";
 import { type OverviewAction, overviewActions } from "../components/overview/actions";
-import { Tooltip } from "../components/ui/tooltip";
-import { useChatContext } from "../context/ChatContext";
+import { useChatConfigContext, useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useSession } from "../context/SessionContext";
 import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { useComposerModel } from "../hooks/useComposerModel";
 import { useRecentConversations } from "../hooks/useRecentConversations";
 import { useRunsNeedingReview } from "../hooks/useRunsNeedingReview";
 import { canManageWorkspaceMembers, canWriteWorkspace } from "../hooks/useScopedRole";
@@ -64,9 +66,9 @@ export function WorkspaceOverviewPage() {
 
   /** Send a question and open the chat over the main area. */
   const ask = useCallback(
-    (text: string) => {
+    (text: string, files?: File[], model?: string) => {
       openFullscreen();
-      void chat.sendMessage(text);
+      void chat.sendMessage(text, undefined, files, model);
     },
     [openFullscreen, chat],
   );
@@ -92,7 +94,7 @@ export function WorkspaceOverviewPage() {
     );
   }
 
-  // The cards render once every source has answered for this workspace, so
+  // The rows render once every source has answered for this workspace, so
   // they appear once, in their final order, instead of reshuffling as each
   // read lands.
   const settled = connectorsReady && !briefingLoading && recent !== null && reviewCount !== null;
@@ -116,15 +118,15 @@ export function WorkspaceOverviewPage() {
 
   return (
     <div className="@container h-full overflow-y-auto" data-testid="workspace-overview-page">
-      <div className="px-(--page-gutter) pt-8 pb-10">
-        <h1 className="mb-6 truncate text-3xl font-heading font-medium text-foreground">
-          {workspace.name}
+      <div className="mx-auto w-full max-w-4xl px-8 pt-10 pb-12 @3xl:pt-[14vh]">
+        <h1 className="mb-2 ml-1 truncate text-sm text-muted-foreground">
+          Working in <span className="font-semibold text-foreground">{workspace.name}</span>
         </h1>
 
-        <AskComposer workspaceName={workspace.name} onAsk={ask} />
+        <OverviewComposer workspaceName={workspace.name} onAsk={ask} />
 
         {actions && (
-          <ActionCards
+          <ActionRows
             workspaceId={workspace.id}
             actions={actions}
             error={briefingError}
@@ -138,53 +140,36 @@ export function WorkspaceOverviewPage() {
 }
 
 /**
- * Ask the workspace's agent. Its own component so typing and streaming
- * re-renders stay out of the page.
+ * The chat's composer, on the overview. It edits and sends the panel's
+ * conversation, as the docked panel's composer does, and states the same model.
+ * Its own component so typing and streaming re-renders stay out of the page.
  */
-function AskComposer({
+function OverviewComposer({
   workspaceName,
   onAsk,
 }: {
   workspaceName: string;
-  onAsk: (text: string) => void;
+  onAsk: (text: string, files?: File[], model?: string) => void;
 }) {
   const chat = useChatContext();
-  const [text, setText] = useState("");
-  const ready = text.trim().length > 0 && !chat.isStreaming;
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!ready) return;
-    onAsk(text.trim());
-    setText("");
-  };
-
+  const { fileLimits } = useChatConfigContext();
+  const { models, boundModel, defaultModel, pendingModel, setPendingModel } = useComposerModel();
   return (
-    <form
-      onSubmit={submit}
-      data-testid="workspace-overview-ask"
-      data-tour="ask"
-      className="mb-10 flex items-center gap-2 rounded-xl border border-border bg-card py-2 pl-5 pr-2 focus-within:border-foreground/20 transition-colors"
-    >
-      <input
-        type="text"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        aria-label={`Ask anything in ${workspaceName}`}
-        placeholder={`Ask anything in ${workspaceName}…`}
-        data-testid="workspace-overview-ask-input"
-        className="min-w-0 flex-1 bg-transparent py-2 text-base text-foreground outline-none placeholder:text-muted-foreground"
+    <div data-testid="workspace-overview-ask" data-tour="ask">
+      <MessageInput
+        conversationKey={chat.conversationKey}
+        onSend={onAsk}
+        busy={chat.isStreaming}
+        models={models}
+        boundModel={boundModel}
+        defaultModel={defaultModel}
+        pendingModel={pendingModel}
+        onPendingModelChange={setPendingModel}
+        fileLimits={fileLimits}
+        placeholder="Ask anything, or pick something below…"
+        label={`Ask anything in ${workspaceName}`}
+        hints={false}
       />
-      <Tooltip label="Send">
-        <button
-          type="submit"
-          aria-label="Send"
-          disabled={!ready}
-          className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/80 disabled:bg-foreground/10 disabled:text-muted-foreground transition-colors"
-        >
-          <ArrowUp className="size-4" aria-hidden />
-        </button>
-      </Tooltip>
-    </form>
+    </div>
   );
 }
