@@ -81,6 +81,8 @@ In a workspace, **Plugins** → your connector opens its page. The header shows 
 
 Once a personal connector is **granted into the workspace you're chatting in**, its tools are available to the agent there, namespaced to that workspace. Ask the agent to use the service ("summarize my last three Granola meetings") and it will call the connector's tools. In a workspace where you haven't granted it, those tools simply aren't present.
 
+When a tool returns an app view (a `ui://` resource), the view renders in the chat as a workspace connector's does. It reaches only your own connection: its calls run with your account, and it cannot call the workspace's connector of the same service, nor can that connector's view call yours. A granted personal plugin's page and its row on **Plugins** list the sidebar views its service declares; they open from the chat, not the sidebar.
+
 ## Tool permissions
 
 On the connector's plugin page, or in its row under **Profile → Connectors**, click **Show tools** under **Tool permissions**. A table lists the connector's tools, each set to **Allow** or **Disallow**, with **Allow all** and **Disallow all** for the whole set. A tool with no setting is allowed.

@@ -1,5 +1,5 @@
 import type { ConnectedAccountIdentity } from "../connectors/providers/managed-provider.ts";
-import type { PlacementEntry } from "../connectors/runtime/types.ts";
+import type { PlacementDeclaration, PlacementEntry } from "../connectors/runtime/types.ts";
 import type {
   Plugin,
   PluginAccount,
@@ -35,6 +35,12 @@ export interface ConnectorFacts {
 /** A personal connector, with the workspaces its owner granted it to. */
 export interface PersonalConnectorFacts extends ConnectorFacts {
   grantedWorkspaces: readonly string[];
+  /**
+   * The views its server places (the catalog's host block for it, else the
+   * one its install stored), sanitized. Not registered in any workspace's
+   * placements: a personal connector is never composed into a workspace.
+   */
+  placements?: readonly PlacementDeclaration[];
 }
 
 /** A skill bound to a workspace connector, as `list_bound_skills` reports it. */
@@ -69,19 +75,22 @@ export function projectPlugins(facts: PluginListingFacts): PluginsListOutput {
   );
   // A personal connector's skills and views are not composed into the
   // workspace: overlays, published skills and placements are keyed by the
-  // workspace's own connectors, whose server name a personal one may share.
-  const personalPlugins = facts.personal.map(
-    (c): Plugin => ({
+  // workspace's own connectors, whose server name a personal one may share. Its
+  // apps come from its own placements, and only where it is granted, since a
+  // view of a plugin that does not act here cannot render here.
+  const personalPlugins = facts.personal.map((c): Plugin => {
+    const granted = c.grantedWorkspaces.includes(facts.wsId);
+    return {
       id: `person:${c.serverName}`,
       displayName: c.displayName,
       ...(c.iconUrl ? { iconUrl: c.iconUrl } : {}),
       owner: { kind: "person" },
-      granted: c.grantedWorkspaces.includes(facts.wsId),
+      granted,
       servers: [serverOf(c)],
       skills: [],
-      apps: [],
-    }),
-  );
+      apps: granted ? personalAppsOf(c) : [],
+    };
+  });
   return { wsId: facts.wsId, plugins: [...workspacePlugins, ...personalPlugins] };
 }
 
@@ -130,13 +139,7 @@ function skillsOf(serverName: string, facts: PluginListingFacts): PluginSkill[] 
  */
 function appsOf(c: ConnectorFacts, facts: PluginListingFacts): PluginApp[] {
   return facts.placements
-    .filter(
-      (p) =>
-        p.serverName === c.serverName &&
-        p.wsId === facts.wsId &&
-        p.slot.startsWith("sidebar.") &&
-        !p.slot.startsWith("sidebar.bottom"),
-    )
+    .filter((p) => p.serverName === c.serverName && p.wsId === facts.wsId && isAppSlot(p.slot))
     .sort((a, b) => a.priority - b.priority)
     .map(
       (p): PluginApp => ({
@@ -144,6 +147,30 @@ function appsOf(c: ConnectorFacts, facts: PluginListingFacts): PluginApp[] {
         serverName: p.serverName,
         resourceUri: p.resourceUri,
         ...(p.route ? { route: p.route } : {}),
+      }),
+    );
+}
+
+/** Whether a placement's slot lists it as an app: `sidebar.<group>`, not core nav or the tray. */
+function isAppSlot(slot: string): boolean {
+  return slot.startsWith("sidebar.") && !slot.startsWith("sidebar.bottom");
+}
+
+/**
+ * The views a granted personal connector's server places, by the same slot rule
+ * as a workspace connector's. No `route`: a route opens through the workspace's
+ * placement registry, which never holds a personal connector's views, so the
+ * view is named here and opens where a tool result places it.
+ */
+function personalAppsOf(c: PersonalConnectorFacts): PluginApp[] {
+  return (c.placements ?? [])
+    .filter((p) => isAppSlot(p.slot))
+    .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100))
+    .map(
+      (p): PluginApp => ({
+        label: p.label || c.displayName,
+        serverName: c.serverName,
+        resourceUri: p.resourceUri,
       }),
     );
 }

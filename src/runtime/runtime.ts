@@ -6160,6 +6160,21 @@ export class Runtime {
   }
 
   /**
+   * Read a `ui://` resource from a personal connector the caller already
+   * resolved through the identity door (`resolveGrantedPersonalConnector`). The
+   * read goes over that connection, with its owner's credentials; `serverName`
+   * is the connector's own (de-marked) name, for the `ui://<server>/<path>`
+   * fallback.
+   */
+  async readPersonalAppResource(
+    source: ToolSource,
+    serverName: string,
+    resourcePath: string,
+  ): Promise<ResourceData | null> {
+    return this.readResourceFromSource(source, serverName, resourcePath);
+  }
+
+  /**
    * Shared `ui://` read against an already-resolved MCP source — the
    * workspace and identity hosts differ only in how they resolve the source.
    * Tries the exact `ui://<path>` first, then the source-namespaced
