@@ -33,6 +33,8 @@
 import { AlertCircle, Check, Copy, Loader2 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Streamdown } from "streamdown";
+import type { Plugin } from "../_generated/platform-schemas/plugins";
+import { useChatPlugins } from "../context/ChatPluginsContext";
 import type {
   ContentBlock,
   PreparingTool,
@@ -43,6 +45,7 @@ import { useMinDisplayTime, type VisualStatus } from "../hooks/useMinDisplayTime
 import { isDocumentArtifact } from "../lib/artifact-kind";
 import { formatDuration, stripServerPrefix } from "../lib/format";
 import { isPersonalConnectorAppName } from "../lib/namespaced-tool";
+import { pluginForCall, sharedPlugin } from "../lib/plugin-attribution";
 import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
 import {
   aggregateGroup,
@@ -56,6 +59,7 @@ import { ArtifactChip } from "./ArtifactChip";
 import { ArtifactView } from "./ArtifactView";
 import { Disclosure, DisclosureChevron } from "./Disclosure";
 import { InlineAppView } from "./InlineAppView";
+import { PluginLabel } from "./PluginLabel";
 import { ResourceLinkView } from "./ResourceLinkView";
 
 /** True for the host-resolved `artifact://` scheme (capability output read from
@@ -355,6 +359,11 @@ function ActivityChip({ rows, isReasoningTailStreaming, displayDetail }: Activit
   );
   const descriptions = useMemo(() => smoothedCalls.map(describeCall), [smoothedCalls]);
   const group = useMemo(() => aggregateGroup(descriptions), [descriptions]);
+  const plugins = useChatPlugins();
+  const plugin = useMemo(
+    () => (allCalls.length > 0 ? sharedPlugin(allCalls, plugins) : undefined),
+    [allCalls, plugins],
+  );
 
   if (displayDetail === "quiet") return null;
 
@@ -374,17 +383,18 @@ function ActivityChip({ rows, isReasoningTailStreaming, displayDetail }: Activit
       glyph={<HeadIcon tone={tone} />}
       body={
         isSingleRow ? (
-          <SingleRowBody row={smoothedRows[0]} />
+          <SingleRowBody row={smoothedRows[0]} shownPluginId={plugin?.id} />
         ) : (
           smoothedRows.map((row, idx) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: a segment's rows come from append-only blocks, so rows are only added at the end
-            <ActivityRowView key={`row:${idx}`} row={row} />
+            <ActivityRowView key={`row:${idx}`} row={row} chipPluginId={plugin?.id} />
           ))
         )
       }
     >
       <span className="turn-pill__label">{head.label}</span>
       {head.subject && <span className="turn-pill__row-subject">· {head.subject}</span>}
+      {plugin && <PluginLabel plugin={plugin} />}
       {head.countSuffix > 1 && <span className="turn-pill__row-count">×{head.countSuffix}</span>}
       {tone !== "running" && head.totalMs != null && (
         <span className="turn-pill__ms">· {formatDuration(head.totalMs)}</span>
@@ -481,7 +491,8 @@ function formatGroupLabel(
 /** Render one segment-body row when there's only ONE row — skip the
  *  nested row chrome and render the content directly. Click-to-expand is
  *  already provided by the chip head. */
-function SingleRowBody({ row }: { row: ActivityRow }) {
+function SingleRowBody({ row, shownPluginId }: { row: ActivityRow; shownPluginId?: string }) {
+  const plugins = useChatPlugins();
   if (row.kind === "reasoning") {
     return (
       <div className="turn-pill__reasoning-wrap">
@@ -495,7 +506,13 @@ function SingleRowBody({ row }: { row: ActivityRow }) {
       {row.calls.length === 1 ? (
         <ToolCallDetail item={describeCall(row.calls[0])} />
       ) : (
-        row.calls.map((c) => <ToolCallRow key={c.id} item={describeCall(c)} />)
+        row.calls.map((c) => (
+          <ToolCallRow
+            key={c.id}
+            item={describeCall(c)}
+            plugin={callPluginLabel(c, plugins, shownPluginId)}
+          />
+        ))
       )}
     </div>
   );
@@ -504,9 +521,9 @@ function SingleRowBody({ row }: { row: ActivityRow }) {
 /** Render one row in a multi-row segment body — each row is its own
  *  expandable mini-section so the user can drill into reasoning text or
  *  per-call detail without losing the surrounding context. */
-function ActivityRowView({ row }: { row: ActivityRow }) {
+function ActivityRowView({ row, chipPluginId }: { row: ActivityRow; chipPluginId?: string }) {
   if (row.kind === "reasoning") return <ReasoningRow text={row.text} />;
-  return <ToolRow calls={row.calls} />;
+  return <ToolRow calls={row.calls} chipPluginId={chipPluginId} />;
 }
 
 function ReasoningRow({ text }: { text: string }) {
@@ -530,7 +547,14 @@ function ReasoningRow({ text }: { text: string }) {
   );
 }
 
-function ToolRow({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
+/** `chipPluginId`: the plugin the chip head already names, which a row does not repeat. */
+function ToolRow({
+  calls,
+  chipPluginId,
+}: {
+  calls: ReadonlyArray<ToolCallDisplay>;
+  chipPluginId?: string;
+}) {
   const [open, setOpen] = useState(false);
   const toggle = useCallback(() => setOpen((v) => !v), []);
   const descriptions = useMemo(() => calls.map(describeCall), [calls]);
@@ -538,12 +562,15 @@ function ToolRow({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
   const { label, showCountSuffix } = formatGroupLabel(group, {
     running: group.tone === "running",
   });
+  const plugins = useChatPlugins();
+  const plugin = useMemo(() => sharedPlugin(calls, plugins), [calls, plugins]);
   return (
     <div className="turn-pill__row" data-tone={group.tone} data-open={open}>
       <button type="button" onClick={toggle} className="turn-pill__row-head" aria-expanded={open}>
         <RowIcon tone={group.tone} />
         <span className="turn-pill__row-name">{label}</span>
         {group.subject && <span className="turn-pill__row-subject">· {group.subject}</span>}
+        {plugin && plugin.id !== chipPluginId && <PluginLabel plugin={plugin} />}
         {showCountSuffix && <span className="turn-pill__row-count">×{group.count}</span>}
         {group.tone !== "running" && group.totalMs != null && (
           <span className="turn-pill__row-ms">· {formatDuration(group.totalMs)}</span>
@@ -555,7 +582,13 @@ function ToolRow({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
           {descriptions.length === 1 ? (
             <ToolCallDetail item={descriptions[0]} />
           ) : (
-            descriptions.map((d) => <ToolCallRow key={d.id} item={d} />)
+            descriptions.map((d, i) => (
+              <ToolCallRow
+                key={d.id}
+                item={d}
+                plugin={callPluginLabel(calls[i], plugins, plugin?.id ?? chipPluginId)}
+              />
+            ))
           )}
         </div>
       )}
@@ -563,7 +596,20 @@ function ToolRow({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
   );
 }
 
-function ToolCallRow({ item }: { item: ToolDescription }) {
+/**
+ * The plugin to label one call with inside a group of mixed calls: its own,
+ * unless a head above it already names that plugin.
+ */
+function callPluginLabel(
+  call: ToolCallDisplay | undefined,
+  plugins: readonly Plugin[],
+  shownPluginId: string | undefined,
+): Plugin | undefined {
+  const plugin = call ? pluginForCall(call, plugins) : undefined;
+  return plugin && plugin.id !== shownPluginId ? plugin : undefined;
+}
+
+function ToolCallRow({ item, plugin }: { item: ToolDescription; plugin?: Plugin }) {
   const [open, setOpen] = useState(false);
   const toggle = useCallback(() => setOpen((v) => !v), []);
   const hasDetail = item.input.length > 0 || item.resultText != null || item.errorText != null;
@@ -582,6 +628,7 @@ function ToolCallRow({ item }: { item: ToolDescription }) {
             still needs to identify itself; just a dot + duration tells the
             reader nothing about what ran. */}
         <span className="turn-pill__call-summary">{item.summary ?? item.name}</span>
+        {plugin && <PluginLabel plugin={plugin} />}
         {item.tone !== "running" && item.durationMs != null && (
           <span className="turn-pill__call-ms">{formatDuration(item.durationMs)}</span>
         )}

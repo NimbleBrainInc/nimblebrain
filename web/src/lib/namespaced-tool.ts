@@ -22,6 +22,17 @@ export function isPersonalConnectorAppName(name: string): boolean {
 }
 
 /**
+ * A personal connector's own `serverName`, from its marked wire source
+ * (`my_gmail` → `gmail`). Mirrors `personalConnectorServerName` in
+ * `src/tools/identity-sources.ts`. Only for matching against a listing that
+ * names the connector by its server name; never re-resolve the result against
+ * an app surface (see `appNameFromToolName`).
+ */
+export function personalConnectorServerName(source: string): string {
+  return source.slice(PERSONAL_CONNECTOR_PREFIX.length);
+}
+
+/**
  * Extract the **source/app name** from a wire tool name: everything before
  * `__`. Returns `undefined` when there's no `__` (not an app-owned call).
  *

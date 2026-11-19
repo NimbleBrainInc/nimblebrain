@@ -19,6 +19,8 @@ During a response, you see streaming states:
 
 Tool calls appear inline as expandable cards. Each shows the tool name, which app it belongs to, and whether it succeeded or failed. Expand a card to see what the tool returned.
 
+A call made through a plugin is labeled with that plugin's icon and name. A call through one of your own personal connectors carries a small person badge (**Yours**), so you can tell it acted on your account rather than the workspace's. Built-in platform tools carry no label. A skill that came with a plugin is labeled with it the same way, both in the skills line and on the call that loaded it.
+
 External MCP clients (Claude Desktop, Cursor, and others) can also drive the agent over the `/mcp` endpoint. See [Connect via MCP](/connect/mcp-endpoint/) and [External Clients](/connect/external-clients/).
 
 ## Chat panel modes
@@ -81,7 +83,7 @@ Skills are prompt guidance the agent composes into its instructions for a turn (
 - **Following `<skill>` · matched `<tool>`** when one skill loaded, or
 - **Following N skills · ~N tokens** when several did.
 
-The line is text-only and muted at rest, the same treatment as the activity chips. Click it to expand a drawer that lists each skill with where it came from, why it loaded, and how many tokens it added to the prompt. A skill you or your org wrote shows its tier (org, workspace, or user); a skill published by a connector shows the connector's name, since connector guidance is usually named for its job (`usage`, `workflows`) and the publisher is what tells two of them apart.
+The line is text-only and muted at rest, the same treatment as the activity chips. Click it to expand a drawer that lists each skill with where it came from, why it loaded, and how many tokens it added to the prompt. A skill you or your org wrote shows its tier (org, workspace, or user); a skill published by a connector shows the plugin it came with, since connector guidance is usually named for its job (`usage`, `workflows`) and the publisher is what tells two of them apart.
 
 The "why" covers every way a skill loads:
 

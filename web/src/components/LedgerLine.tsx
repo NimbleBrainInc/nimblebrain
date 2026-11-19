@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useChatPlugins } from "../context/ChatPluginsContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import type { SkillsLoadedContext } from "../hooks/chat-store";
+import { pluginForSkill } from "../lib/plugin-attribution";
 import {
   conciseReason,
   formatTokenCount,
@@ -10,6 +12,7 @@ import {
 } from "../lib/skill-display";
 import { toSlug } from "../lib/workspace-slug";
 import { Disclosure } from "./Disclosure";
+import { PluginLabel } from "./PluginLabel";
 
 /**
  * The skills projection of the Context Ledger — one quiet line at the top of an
@@ -27,6 +30,7 @@ import { Disclosure } from "./Disclosure";
 export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined }) {
   const [expanded, setExpanded] = useState(false);
   const { activeWorkspace } = useWorkspaceContext();
+  const plugins = useChatPlugins();
 
   if (!skills || skills.skills.length === 0) return null;
 
@@ -36,6 +40,11 @@ export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined
   const skillsPath = activeWorkspace ? `/w/${toSlug(activeWorkspace.id)}/settings/skills` : "/";
 
   const verb = count === 1 ? `Using ${entries[0]!.name}` : `Using ${count} skills`;
+  // Only a row that names its publishing server is matched: a row without one
+  // is an authored skill, and its bare name could equal a plugin's skill name.
+  const pluginOf = (s: (typeof entries)[number]) =>
+    s.connector ? pluginForSkill(s, plugins) : undefined;
+  const headPlugin = count === 1 ? pluginOf(entries[0]!) : undefined;
   // One skill → its (stripped) reason; many → the aggregate token cost.
   const meta =
     count === 1
@@ -53,18 +62,26 @@ export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined
           <div className="ledger-line__trust">
             Behavior guidance composed into the agent's instructions for this turn.
           </div>
-          {entries.map((s) => (
-            <div key={s.id} className="ledger-line__row">
-              <span className="ledger-line__row-name">{s.name}</span>
-              <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope] ?? ""}`}>
-                {skillProvenanceLabel(s)}
-              </span>
-              <span className="ledger-line__row-detail ledger-line__mono" title={s.reason}>
-                {s.reason}
-              </span>
-              <span className="ledger-line__row-tok">{formatTokenCount(s.tokens)} tok</span>
-            </div>
-          ))}
+          {entries.map((s) => {
+            const plugin = pluginOf(s);
+            return (
+              <div key={s.id} className="ledger-line__row">
+                <span className="ledger-line__row-name">{s.name}</span>
+                {/* A skill that comes with a plugin is named by it; any other by its tier. */}
+                {plugin ? (
+                  <PluginLabel plugin={plugin} />
+                ) : (
+                  <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope] ?? ""}`}>
+                    {skillProvenanceLabel(s)}
+                  </span>
+                )}
+                <span className="ledger-line__row-detail ledger-line__mono" title={s.reason}>
+                  {s.reason}
+                </span>
+                <span className="ledger-line__row-tok">{formatTokenCount(s.tokens)} tok</span>
+              </div>
+            );
+          })}
           <div className="ledger-line__foot">
             <Link to={skillsPath}>Manage skills ↗</Link>
           </div>
@@ -72,6 +89,7 @@ export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined
       }
     >
       <span className="ledger-line__verb">{verb}</span>
+      {headPlugin && <PluginLabel plugin={headPlugin} />}
       {meta && <span className="ledger-line__meta">· {meta}</span>}
     </Disclosure>
   );

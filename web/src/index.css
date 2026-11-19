@@ -517,6 +517,30 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The plugin a call or skill came from (`PluginLabel`). Ambient, like the
+   subject beside it: muted text with a small icon, never a chip. It yields
+   width before the verb does. */
+.plugin-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex-shrink: 1;
+  color: var(--muted-foreground);
+  font-size: var(--font-text-2xs-size);
+  font-weight: 500;
+}
+.plugin-label__name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plugin-label__yours {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
 .turn-pill__row-count {
   color: var(--muted-foreground);
   opacity: 0.6;
