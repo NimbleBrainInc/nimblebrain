@@ -33,7 +33,7 @@ import {
 } from "./local-model.ts";
 import { openBrowser } from "./open.ts";
 import { compareVersions, runtimeTag } from "./release.ts";
-import { CliError, type Ok } from "./result.ts";
+import { CliError } from "./result.ts";
 import { type InstallState, readInstall, type StatusResult, status } from "./status.ts";
 import {
   type Consent,
@@ -94,7 +94,7 @@ export function confirmOllamaStart(ctx: Pick<Ctx, "deps" | "flags">, unasked: bo
  * person is at the terminal; otherwise a missing key ends `init` with
  * `MODEL_KEY_MISSING` after everything else is up, carrying the full status.
  */
-export async function init(ctx: Ctx): Promise<Ok> {
+export async function init(ctx: Ctx) {
   const { deps, flags, home } = ctx;
   if (await readInstall(deps, home)) return { ...(await status(deps, home)), already: true };
 
@@ -120,10 +120,13 @@ export async function init(ctx: Ctx): Promise<Ok> {
  * those, and it opens the UI with `open` when the person asks. A rerun opens
  * nothing; `open` is the command for that.
  */
-async function openWhenDone(ctx: Ctx, result: Ok): Promise<Ok> {
+async function openWhenDone<T extends { health: string; url: string }>(
+  ctx: Ctx,
+  result: T,
+): Promise<T & { opened?: boolean }> {
   const { deps, flags } = ctx;
   if (!deps.interactive || flags.json || flags.noOpen) return result;
-  if (result.health !== "ok" || typeof result.url !== "string") return result;
+  if (result.health !== "ok") return result;
   return { ...result, opened: await openBrowser(deps, result.url) };
 }
 
@@ -155,7 +158,7 @@ async function chooseConsent(ctx: Ctx): Promise<Consent> {
   return consent;
 }
 
-async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number): Promise<Ok> {
+async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number) {
   const { deps, flags, home } = ctx;
   await doctor(deps, flags.port);
   const project = await guardOurs(deps, home);
@@ -253,7 +256,7 @@ async function connectChosenAgent(ctx: Ctx, state: InstallState): Promise<string
  * either way, and an Ollama still down ends `up` with `LOCAL_MODEL_UNREACHABLE`
  * carrying the status, since every agent's message would fail.
  */
-export async function up(ctx: Ctx): Promise<Ok> {
+export async function up(ctx: Ctx) {
   const { deps, home } = ctx;
   const install = await requireInstall(ctx);
   const local = localModelOf((await deps.readText(paths(home).env)) ?? "");
@@ -279,14 +282,14 @@ export async function up(ctx: Ctx): Promise<Ok> {
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
-export async function down(ctx: Ctx): Promise<Ok> {
+export async function down(ctx: Ctx) {
   await requireInstall(ctx);
   const res = await compose(ctx.deps, ctx.home, ["down"]);
   if (res.code !== 0) throw startError(res);
-  return { ok: true, health: "down" };
+  return { ok: true as const, health: "down" };
 }
 
-export async function logs(ctx: Ctx): Promise<Ok> {
+export async function logs(ctx: Ctx) {
   await requireInstall(ctx);
   const res = await compose(ctx.deps, ctx.home, [
     "logs",
@@ -296,7 +299,7 @@ export async function logs(ctx: Ctx): Promise<Ok> {
     "platform",
   ]);
   if (res.code !== 0) throw startError(res);
-  return { ok: true, lines: res.stdout.split("\n").filter((l) => l.trim()) };
+  return { ok: true as const, lines: res.stdout.split("\n").filter((l) => l.trim()) };
 }
 
 /**
@@ -307,7 +310,7 @@ export async function logs(ctx: Ctx): Promise<Ok> {
  * install backwards, since a release's data may not read on an older one. The
  * skill is refreshed on a current runtime too; its refresh never fails `update`.
  */
-export async function update(ctx: Ctx): Promise<Ok> {
+export async function update(ctx: Ctx) {
   const { deps, home } = ctx;
   const install = await requireInstall(ctx);
   const tag = await runtimeTag(deps, ctx.flags.runtime);
@@ -348,7 +351,7 @@ async function refreshAgentSkill(
  * Removes the containers, images, the data volume and the files `init` wrote.
  * The install folder goes too when nothing else is left in it. Asks first.
  */
-export async function uninstall(ctx: Ctx): Promise<Ok> {
+export async function uninstall(ctx: Ctx) {
   const { deps, flags, home } = ctx;
   const install = await requireInstall(ctx);
   if (!flags.yes) {
@@ -368,7 +371,7 @@ export async function uninstall(ctx: Ctx): Promise<Ok> {
   if (install.agent === "codex") await deps.exec("codex", ["mcp", "remove", SERVER_NAME]);
   for (const file of [...Object.values(paths(home)), reportPath(home)]) await deps.remove(file);
   await deps.remove(home);
-  return { ok: true, removed: true };
+  return { ok: true as const, removed: true };
 }
 
 /**
@@ -377,12 +380,12 @@ export async function uninstall(ctx: Ctx): Promise<Ok> {
  * thing; changing it needs the runtime up. A report waiting from earlier runs
  * is sent on `on` and deleted on `off`.
  */
-export async function telemetry(ctx: Ctx): Promise<Ok> {
+export async function telemetry(ctx: Ctx) {
   const { deps, home } = ctx;
   const install = await requireInstall(ctx);
   const url = `http://127.0.0.1:${install.port}`;
   if (ctx.arg !== "on" && ctx.arg !== "off") {
-    return { ok: true, telemetry: (await status(deps, home)).telemetry };
+    return { ok: true as const, telemetry: (await status(deps, home)).telemetry };
   }
   const here = lockedHere(deps);
   if (here) {
@@ -409,11 +412,11 @@ export async function telemetry(ctx: Ctx): Promise<Ok> {
   );
   const rec = recorder(deps, ctx.version, await reportId(deps, home));
   await rec.settle(home, ctx.arg);
-  return { ok: true, telemetry: field(ctx.arg, invocation(deps, home)) };
+  return { ok: true as const, telemetry: field(ctx.arg, invocation(deps, home)) };
 }
 
 /** Takes the model key at a hidden prompt. A person runs this; an agent never handles the key. */
-export async function key(ctx: Ctx): Promise<Ok> {
+export async function key(ctx: Ctx) {
   if (!ctx.deps.interactive) {
     throw new CliError("NEEDS_TERMINAL", "`key` asks for a model key at a hidden prompt.");
   }
@@ -421,7 +424,7 @@ export async function key(ctx: Ctx): Promise<Ok> {
   return enterKey(ctx, true);
 }
 
-async function enterKey(ctx: Ctx, restart: boolean): Promise<Ok> {
+async function enterKey(ctx: Ctx, restart: boolean) {
   const { deps, flags, home } = ctx;
   const offered = providers((await deps.readText(paths(home).compose)) ?? "");
   const names = Object.keys(offered);
@@ -448,21 +451,21 @@ async function enterKey(ctx: Ctx, restart: boolean): Promise<Ok> {
     const install = await readInstall(deps, home);
     await start(deps, home, install?.port ?? flags.port);
   }
-  return { ok: true, provider, model_key: "set" };
+  return { ok: true as const, provider, model_key: "set" };
 }
 
 /**
  * Prepares a local model on this machine's Ollama and points the install's
  * `.env` at it, then starts the runtime again so its container reads it.
  */
-export async function localModel(ctx: Ctx): Promise<Ok> {
+export async function localModel(ctx: Ctx) {
   const install = await requireInstall(ctx);
   const composeText = (await ctx.deps.readText(paths(ctx.home).compose)) ?? "";
   const model = ctx.arg ?? ctx.flags.localModel ?? DEFAULT_LOCAL_MODEL;
   const { name, started } = await useLocalModel(ctx, composeText, model);
   // `up` recreates the runtime container, which is what makes it read `.env` again.
   await carryingStarted(started, () => start(ctx.deps, ctx.home, install.port));
-  return { ok: true, local_model: name, ollama_started: started };
+  return { ok: true as const, local_model: name, ollama_started: started };
 }
 
 /** Runs what follows an Ollama start; an error from it still says what started Ollama. */

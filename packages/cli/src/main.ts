@@ -174,6 +174,8 @@ function isStatusShaped(result: Ok | Failure): result is (Ok | Failure) & { vers
  * model, the model calls tools, and its window is the one the runtime budgets
  * against. A failure carries every check run so far.
  */
+export type DoctorAnswer = Awaited<ReturnType<typeof doctorInstall>>;
+
 async function doctorInstall(
   deps: Deps,
   home: string,

@@ -123,7 +123,8 @@ export const FLAG_SPECS = {
   provider: {
     type: "string",
     takes: "name",
-    description: "The model provider for key (default anthropic)",
+    description:
+      "The model provider for key (default anthropic); the installed release decides which it takes, and key lists them",
     commands: ["key"],
   },
   "local-model": {
@@ -165,7 +166,8 @@ export const FLAG_SPECS = {
   help: {
     type: "boolean",
     short: "h",
-    description: "The commands and flags; with --json, these and every error code as JSON",
+    description:
+      "The commands and flags; with --json, these, each command's answer and every error code as JSON",
   },
   version: { type: "boolean", short: "v", description: "This CLI's version" },
 } as const satisfies Record<string, FlagSpec>;

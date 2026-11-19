@@ -1,6 +1,6 @@
 import type { Deps } from "./deps.ts";
 import type { Ctx } from "./lifecycle.ts";
-import { CliError, type Ok } from "./result.ts";
+import { CliError } from "./result.ts";
 import { installUrl, isUp, readInstall } from "./status.ts";
 
 /**
@@ -37,12 +37,12 @@ export async function openBrowser(deps: Deps, url: string): Promise<boolean> {
  * succeeds, with `opened: false` and the URL to hand on. A stopped runtime is
  * `NOT_RUNNING`, never started here: starting is `up`'s job.
  */
-export async function open(ctx: Ctx): Promise<Ok> {
+export async function open(ctx: Ctx) {
   const { deps, home } = ctx;
   const install = await readInstall(deps, home);
   if (!install) throw new CliError("NOT_INSTALLED", `No NimbleBrain install in ${home}.`);
   const url = installUrl(install);
   if (!(await isUp(deps, url)))
     throw new CliError("NOT_RUNNING", "NimbleBrain is not running.", { url });
-  return { ok: true, url, opened: await openBrowser(deps, url) };
+  return { ok: true as const, url, opened: await openBrowser(deps, url) };
 }

@@ -36,7 +36,7 @@ later.
 `--json` makes every command answer one JSON object, `{"ok": true, ...}` or
 `{"ok": false, "error": "<CODE>", "fix": "..."}`, for scripts and coding agents.
 `--yes` takes every default. `--agent claude-code|cursor|codex|none` names the agent to
-connect. `npx nimblebrain help --json` lists every command, flag and error code.
+connect. `npx nimblebrain help --json` lists every command with the fields it answers, every flag and every error code.
 
 When a newer CLI or NimbleBrain release exists, the CLI says so on stderr after its
 answer (once a day at most; it never updates anything itself).
