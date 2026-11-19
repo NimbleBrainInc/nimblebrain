@@ -83,8 +83,9 @@ const installPersonalConnector = mock<typeof ApiClient.installPersonalConnector>
   },
 );
 const initiateIdentityConnect = mock<typeof ApiClient.initiateIdentityConnect>(
-  async (serverName) => {
-    calls.push(`initiateIdentityConnect:${serverName}`);
+  async (serverName, returnWorkspaceId) => {
+    // The workspace the sign-in returns to rides with the call.
+    calls.push(`initiateIdentityConnect:${serverName}@${returnWorkspaceId}`);
     return { authorizationUrl };
   },
 );
@@ -246,7 +247,7 @@ describe("Plugins → Browse: whom an install is for", () => {
     // grant, and a person who abandons the sign-in still has it on here.
     expect(calls).toEqual([
       `installPersonalConnector:com.acme/notes:${WS_ID}`,
-      "initiateIdentityConnect:com-acme-notes",
+      `initiateIdentityConnect:com-acme-notes@${WS_ID}`,
       "assign:https://auth.notes.test/authorize",
     ]);
   });
@@ -294,7 +295,7 @@ describe("Plugins → Browse: whom an install is for", () => {
     await click(confirmButton());
     expect(calls).toEqual([
       `installPersonalConnector:com.acme/notes:${WS_ID}`,
-      "initiateIdentityConnect:com-acme-notes",
+      `initiateIdentityConnect:com-acme-notes@${WS_ID}`,
       "assign:https://auth.notes.test/authorize",
     ]);
   });

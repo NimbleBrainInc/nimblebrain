@@ -4,7 +4,6 @@ import { getInstalledConnectors, type InstalledConnector } from "../../api/clien
 import { useEvents } from "../../hooks/useEvents";
 import { EmptyState } from "../../pages/settings/components";
 import { ConnectorIcon } from "./ConnectorIcon";
-import { type ReturnedConnector, useConnectedNotice } from "./useConnectedNotice";
 
 /**
  * Lists installed connectors for the active workspace. The list is
@@ -52,16 +51,6 @@ export function ConnectorList({ configureBasePath }: { configureBasePath: string
       refresh({ silent: true });
     },
   });
-
-  // Confirm the connector an OAuth sign-in just connected (`?connected=`).
-  const rereadSilently = useCallback(() => {
-    void refresh({ silent: true });
-  }, [refresh]);
-  const returned = useMemo(
-    () => (loading ? null : installed.map(toReturnedConnector)),
-    [installed, loading],
-  );
-  useConnectedNotice(returned, rereadSilently);
 
   const filtered = useMemo(() => {
     // Sort alphabetically by display name first, then filter — keeps
@@ -216,10 +205,4 @@ export function connectorStatusSummary(
     case "failed":
       return { label: "Failed", tone: "text-destructive", dot: true, dotColor: "bg-rose-500" };
   }
-}
-
-/** A ready connector is connected; a failed one is dead; anything else is still settling. */
-function toReturnedConnector(c: InstalledConnector): ReturnedConnector {
-  const state = c.status === "ready" ? "connected" : c.status === "failed" ? "failed" : "pending";
-  return { serverName: c.serverName, displayName: c.displayName, state };
 }

@@ -22,8 +22,10 @@ import {
   type AuthorizationResponse,
   DEFAULT_FLOW_TTL_MS,
   OAuthFlowRefusedError,
+  peekFlow,
   register as registerFlow,
   resolveWithCode,
+  setFlowReturnWorkspace,
 } from "../../../src/tools/oauth-flow-registry.ts";
 import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { readJson } from "../../helpers/http.ts";
@@ -128,7 +130,13 @@ function makeApp(
     workspaceStore: stub<WorkspaceStore>({
       get: async (id: string) =>
         id === WS_ID
-          ? makeWorkspace({ id, members: [{ userId: DEV_USER_ID, role: "admin" }] })
+          ? makeWorkspace({
+              id,
+              members: [
+                { userId: DEV_USER_ID, role: "admin" },
+                { userId: USER_ID, role: "member" },
+              ],
+            })
           : null,
     }),
     secureCookies,
@@ -326,7 +334,7 @@ describe("GET /v1/mcp-auth/callback", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     const location = res.headers.get("Location") ?? "";
-    expect(location).toEndWith("/w/0076759dbbe19fcc/settings/connectors?connected=granola");
+    expect(location).toEndWith("/w/0076759dbbe19fcc/plugins?connected=granola&owner=workspace");
     expect(await res.text()).toBe("");
 
     // Cookie cleared: Max-Age=0
@@ -979,6 +987,52 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
     expect(setCookie!).toContain("Path=/v1/mcp-auth/callback");
   });
 
+  test("a returnWorkspaceId the caller belongs to is recorded on the flow", async () => {
+    await new IdentityConnectorStore({ workDir }).add(USER_ID, {
+      url: "https://granola.test/mcp",
+      serverName: "granola",
+      ui: null,
+    });
+    const state = "identity-state-return";
+    lifecycle.identityAuthUrls.set(
+      `granola|${USER_ID}`,
+      `https://granola.test/authorize?state=${state}&client_id=cid`,
+    );
+    // The real lifecycle registers the flow as it starts it; the stub does not.
+    registerFlow(state, { kind: "user", userId: USER_ID }, "granola").catch(() => {});
+
+    const res = await app.request("http://localhost/v1/mcp-auth/initiate-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "granola", returnWorkspaceId: WS_ID }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(peekFlow(state)?.returnWsId).toBe(WS_ID);
+  });
+
+  test("a returnWorkspaceId the caller does not belong to is refused, and no flow starts", async () => {
+    await new IdentityConnectorStore({ workDir }).add(USER_ID, {
+      url: "https://granola.test/mcp",
+      serverName: "granola",
+      ui: null,
+    });
+    lifecycle.identityAuthUrls.set(
+      `granola|${USER_ID}`,
+      "https://granola.test/authorize?state=never&client_id=cid",
+    );
+
+    for (const returnWorkspaceId of ["ws_00000000000000ff", "not-a-workspace", 7]) {
+      const res = await app.request("http://localhost/v1/mcp-auth/initiate-identity", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ serverName: "granola", returnWorkspaceId }),
+      });
+      expect(res.status).toBe(404);
+      expect(res.headers.get("Set-Cookie")).toBeNull();
+    }
+  });
+
   test("connected without interactive auth → { authorizationUrl: null } and no cookie (#679)", async () => {
     await new IdentityConnectorStore({ workDir }).add(USER_ID, {
       url: "https://minted.test/mcp",
@@ -1048,6 +1102,24 @@ describe("GET /v1/mcp-auth/callback — owner-aware redirect", () => {
     _clearAll();
   });
 
+  test("a user-owned flow started from a workspace returns to that workspace's Plugins page", async () => {
+    const state = "user-owned-return-state";
+    const flowPromise = registerFlow(state, { kind: "user", userId: USER_ID }, "granola");
+    flowPromise.catch(() => {});
+    setFlowReturnWorkspace(state, WS_ID);
+
+    const res = await app.request(
+      `http://localhost/v1/mcp-auth/callback?code=code-1&state=${state}`,
+      { headers: { cookie: `nb_oauth_state=${sha256Hex(state)}` } },
+    );
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location") ?? "").toEndWith(
+      "/w/0076759dbbe19fcc/plugins?connected=granola&owner=person",
+    );
+    await expect(flowPromise).resolves.toEqual({ code: "code-1" });
+  });
+
   test("a user-owned flow lands the user on /profile/connectors (not a workspace page)", async () => {
     const state = "user-owned-state";
     const flowPromise = registerFlow(state, { kind: "user", userId: USER_ID }, "granola");
@@ -1060,7 +1132,7 @@ describe("GET /v1/mcp-auth/callback — owner-aware redirect", () => {
 
     expect(res.status).toBe(302);
     const location = res.headers.get("Location") ?? "";
-    expect(location).toEndWith("/profile/connectors?connected=granola");
+    expect(location).toEndWith("/profile/connectors?connected=granola&owner=person");
     // Never a workspace-scoped page for a personal connector.
     expect(location).not.toContain("/w/");
     await expect(flowPromise).resolves.toEqual({ code: "code-1" });

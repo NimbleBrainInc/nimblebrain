@@ -67,6 +67,7 @@ import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.t
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   _clearAllConnectFlows,
+  consumeConnectFlow,
   registerConnectFlow,
 } from "../../src/connectors/providers/composio/connect-flow-registry.ts";
 import {
@@ -230,7 +231,13 @@ function stubCtx(
       workspaceStore: stub<WorkspaceStore>({
         get: async (id: string) =>
           id === STUB_MEMBER_WS
-            ? makeWorkspace({ id, members: [{ userId: DEV_USER_ID, role: "admin" }] })
+            ? makeWorkspace({
+                id,
+                members: [
+                  { userId: DEV_USER_ID, role: "admin" },
+                  { userId: "usr_test", role: "member" },
+                ],
+              })
             : id === STUB_FOREIGN_WS
               ? makeWorkspace({ id, members: [{ userId: "usr_someone_else", role: "admin" }] })
               : null,
@@ -431,7 +438,7 @@ describe("GET /v1/composio-auth/callback", () => {
       // so the page can confirm it. No page is rendered.
       expect(res.status).toBe(302);
       expect(res.headers.get("Location") ?? "").toEndWith(
-        "/w/0076759dbbe19fcc/settings/connectors?connected=com-google-gmail",
+        "/w/0076759dbbe19fcc/plugins?connected=com-google-gmail&owner=workspace",
       );
 
       const stored = await readComposioConnection(dir, { type: "workspace", wsId }, cid);
@@ -1094,6 +1101,47 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     expect(cookieHash).toBe(sha256Hex(nonce));
   });
 
+  test("a returnWorkspaceId the caller belongs to is recorded on the connect flow", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
+    let linkArgs: unknown[] = [];
+    sdkCalls.linkImpl = async (...args: unknown[]) => {
+      linkArgs = args;
+      return { redirectUrl: "https://connect.composio.dev/link/lk_identity", id: "ca_identity" };
+    };
+
+    const { app } = await makeIdentityApp(composioEntry("com.google/gmail"));
+    const res = await app.request("http://nb.test/v1/composio-auth/initiate-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connectorId: "com.google/gmail", returnWorkspaceId: STUB_MEMBER_WS }),
+    });
+
+    expect(res.status).toBe(200);
+    const nonce =
+      new URL((linkArgs[2] as { callbackUrl: string }).callbackUrl).searchParams.get("n") ?? "";
+    expect(consumeConnectFlow(nonce)?.returnWsId).toBe(STUB_MEMBER_WS);
+  });
+
+  test("a returnWorkspaceId the caller does not belong to is refused before Composio is called", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
+    sdkCalls.linkImpl = async () => {
+      throw new Error("a refused initiate must not reach Composio");
+    };
+
+    const { app } = await makeIdentityApp(composioEntry("com.google/gmail"));
+    for (const returnWorkspaceId of [STUB_FOREIGN_WS, "ws_00000000000000ff", "nope"]) {
+      const res = await app.request("http://nb.test/v1/composio-auth/initiate-identity", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connectorId: "com.google/gmail", returnWorkspaceId }),
+      });
+      expect(res.status).toBe(404);
+      expect(res.headers.get("set-cookie")).toBeNull();
+    }
+  });
+
   test("(b) adopt-existing: writes connection.json under the user root, no workspace state transition", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
@@ -1193,9 +1241,9 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
 
       expect(res.status).toBe(302);
       const location = res.headers.get("Location") ?? "";
-      expect(location).toEndWith("/profile/connectors?connected=com-google-gmail");
-      // Never a workspace connectors URL for an identity connection.
-      expect(location).not.toContain("/settings/connectors");
+      expect(location).toEndWith("/profile/connectors?connected=com-google-gmail&owner=person");
+      // Never a workspace page for an identity connection started on the profile.
+      expect(location).not.toContain("/w/");
 
       const owner = { type: "user", userId } as const;
       const stored = await readComposioConnection(dir, owner, cid);
@@ -1216,6 +1264,33 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
       // One-shot cookie cleared on success.
       const setCookie = res.headers.get("set-cookie") ?? "";
       expect(setCookie.includes("Max-Age=0")).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a personal connect started from a workspace returns to that workspace's Plugins page", async () => {
+    const { dir, cleanup } = freshDir();
+    try {
+      const ctx = stubCtx(dir, composioEntry("com.google/gmail"));
+      const app = composioAuthRoutes(ctx);
+      const nonce = "feedfacefeedfacefeedfacefeedface";
+      registerConnectFlow(
+        nonce,
+        { type: "user", userId: "usr_test" },
+        "com.google/gmail",
+        undefined,
+        STUB_MEMBER_WS,
+      );
+      const res = await app.request(
+        `http://nb.test/v1/composio-auth/callback?n=${nonce}&connected_account_id=ca_u&status=ACTIVE`,
+        { headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` } },
+      );
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location") ?? "").toEndWith(
+        "/w/0076759dbbe19fcc/plugins?connected=com-google-gmail&owner=person",
+      );
     } finally {
       cleanup();
     }
