@@ -331,23 +331,27 @@ describe("Sections", () => {
   });
 
   test("a storage that refuses reads and writes leaves the page working", async () => {
-    const proto = Object.getPrototypeOf(localStorage) as Storage;
-    const { getItem, setItem } = proto;
-    proto.getItem = () => {
+    const real = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    const denied = () => {
       throw new Error("denied");
     };
-    proto.setItem = () => {
-      throw new Error("denied");
-    };
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: { getItem: denied, setItem: denied, removeItem: denied, clear: denied },
+    });
     try {
-      plugins = [plugin("workspace:github")];
+      plugins = [plugin("workspace:github"), plugin("person:granola", { granted: false })];
       mounted = await mount();
       expect(pluginIds(section("shared"))).toEqual(["workspace:github"]);
       await click(section("shared")!.querySelector("h2 button"));
       expect(section("shared")?.getAttribute("data-collapsed")).toBe("true");
+      // The default-collapsed section opens though the choice cannot be kept.
+      const notHere = section("not-here")!;
+      await click(notHere.querySelector("h2 button"));
+      expect(notHere.getAttribute("data-collapsed")).toBe("false");
+      expect(pluginIds(notHere)).toEqual(["person:granola"]);
     } finally {
-      proto.getItem = getItem;
-      proto.setItem = setItem;
+      if (real) Object.defineProperty(globalThis, "localStorage", real);
     }
   });
 });

@@ -348,8 +348,12 @@ function sectionCopy(id: SectionId, workspaceName: string): { title: string; exp
 function InstalledSection(props: InstalledViewProps & { section: SectionModel }) {
   const { section, workspaceName } = props;
   const overrides = usePref(COLLAPSED_PREF);
-  const collapsed = overrides[section.id] ?? DEFAULT_COLLAPSED[section.id];
+  // This visit's choice, held here too: a storage that refuses the write must
+  // not leave the header unable to open or close its section.
+  const [chosen, setChosen] = useState<boolean | undefined>(undefined);
+  const collapsed = chosen ?? overrides[section.id] ?? DEFAULT_COLLAPSED[section.id];
   const toggle = () => {
+    setChosen(!collapsed);
     const next = { ...overrides, [section.id]: !collapsed };
     // Back to the default is no override at all.
     if (next[section.id] === DEFAULT_COLLAPSED[section.id]) delete next[section.id];
