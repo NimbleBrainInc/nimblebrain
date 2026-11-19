@@ -1,0 +1,603 @@
+# The Plugins page demo catalog (`bun run dev:plugins-demo`).
+#
+# The launcher points NB_CURATED_CATALOG_DIR here. Every entry is a remote
+# server at a fictional `.example` host, so nothing in the demo reaches a
+# vendor: an entry the seed installs without tokens stays "needs sign-in",
+# and clicking Connect fails at discovery instead of opening a real sign-in.
+# The seed (scripts/lib/plugins-demo/) installs some of these into the demo
+# workspaces and as personal plugins; the rest only show under Browse.
+
+servers:
+  - name: com.notion/mcp
+    title: Notion
+    description: Read and write workspace pages
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/notion.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://notion.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [docs, knowledge]
+
+  - name: app.linear/mcp
+    title: Linear
+    description: Issues, projects, and product roadmaps
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/linear.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://linear.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [issues, project-mgmt]
+
+  - name: com.slack/mcp
+    title: Slack
+    description: Channels, threads, and direct messages
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/slack.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://slack.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [chat]
+
+  - name: com.github/mcp
+    title: GitHub
+    description: Repositories, issues, and pull requests
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/github.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://github.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [code]
+
+  - name: com.atlassian.jira/mcp
+    title: Jira
+    description: Track issues and sprints
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/jira.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://jira.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [issues, project-mgmt]
+
+  - name: com.asana/mcp
+    title: Asana
+    description: Tasks, projects, and portfolios
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/asana.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://asana.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [project-mgmt]
+
+  - name: com.hubspot/mcp
+    title: HubSpot
+    description: Contacts, companies, and deals
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/hubspot.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://hubspot.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [crm, sales]
+
+  - name: com.zendesk/mcp
+    title: Zendesk
+    description: Support tickets and help center articles
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/zendesk.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://zendesk.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [support]
+
+  - name: com.intercom/mcp
+    title: Intercom
+    description: Customer conversations and contacts
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/intercom.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://intercom.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [support]
+
+  - name: com.airtable/mcp
+    title: Airtable
+    description: Bases, tables, and records
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/airtable.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://airtable.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [data]
+
+  - name: com.google.drive/mcp
+    title: Google Drive
+    description: Search and read files in Drive
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/google-drive.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://drive.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [files]
+
+  - name: com.calendly/mcp
+    title: Calendly
+    description: Scheduling links and booked meetings
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/calendly.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://calendly.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [calendar]
+
+  - name: com.dropbox/mcp
+    title: Dropbox
+    description: Files and shared folders
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/dropbox.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://dropbox.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [files]
+
+  - name: us.zoom/mcp
+    title: Zoom
+    description: Meetings, recordings, and transcripts
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/zoom.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://zoom.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [meetings]
+
+  - name: com.shopify/mcp
+    title: Shopify
+    description: Orders, products, and customers
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/shopify.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://shopify.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [commerce]
+
+  - name: com.salesforce/mcp
+    title: Salesforce
+    description: Accounts, opportunities, and cases
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/salesforce.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://salesforce.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: static
+        tags: [crm, sales]
+        oauthClientSetup:
+          portalUrl: https://developer.salesforce.example/apps
+          hint: Create an OAuth app in the Salesforce developer portal and paste its client ID and secret.
+          clientSecretKey: salesforce.oauth-client-secret
+
+  - name: com.google.gmail/mcp
+    title: Gmail
+    description: Search, read, and draft email
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/gmail.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://gmail.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: static
+        tags: [email]
+        oauthClientSetup:
+          portalUrl: https://console.cloud.google.example/apis/credentials
+          hint: Create an OAuth app in the Gmail developer portal and paste its client ID and secret.
+          clientSecretKey: gmail.oauth-client-secret
+
+  - name: com.microsoft.outlook/mcp
+    title: Outlook
+    description: Mail and calendar in Microsoft 365
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/outlook.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://outlook.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: static
+        tags: [email, calendar]
+        oauthClientSetup:
+          portalUrl: https://portal.azure.example/app-registrations
+          hint: Create an OAuth app in the Outlook developer portal and paste its client ID and secret.
+          clientSecretKey: outlook.oauth-client-secret
+
+  - name: com.intuit.quickbooks/mcp
+    title: QuickBooks
+    description: Invoices, bills, and customers
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/quickbooks.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://quickbooks.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: static
+        tags: [finance]
+        oauthClientSetup:
+          portalUrl: https://developer.intuit.example/app
+          hint: Create an OAuth app in the QuickBooks developer portal and paste its client ID and secret.
+          clientSecretKey: quickbooks.oauth-client-secret
+
+  - name: com.stripe/mcp
+    title: Stripe
+    description: Payments, customers, and subscriptions
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/stripe.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://stripe.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: static
+        tags: [finance]
+        oauthClientSetup:
+          portalUrl: https://dashboard.stripe.example/apps
+          hint: Create an OAuth app in the Stripe developer portal and paste its client ID and secret.
+          clientSecretKey: stripe.oauth-client-secret
+
+  - name: com.google.calendar/mcp
+    title: Google Calendar
+    description: Events and availability
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/google-calendar.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://calendar.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [calendar]
+
+  - name: com.todoist/mcp
+    title: Todoist
+    description: Personal tasks and projects
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/todoist.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://todoist.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [tasks]
+
+  - name: com.canva/mcp
+    title: Canva
+    description: Designs and brand templates
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/canva.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://canva.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [design]
+
+  - name: com.monday/mcp
+    title: monday.com
+    description: Boards, items, and updates
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/monday.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://monday.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [project-mgmt]
+
+  - name: com.clickup/mcp
+    title: ClickUp
+    description: Tasks, docs, and goals
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/clickup.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://clickup.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [project-mgmt]
+
+  - name: com.miro/mcp
+    title: Miro
+    description: Boards and sticky notes
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://miro.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [design]
+
+  - name: io.sentry/mcp
+    title: Sentry
+    description: Errors, issues, and releases
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/sentry.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://sentry.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [code]
+
+  - name: com.figma/mcp
+    title: Figma
+    description: Design files and comments
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://figma.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [design]
+
+  - name: com.box/mcp
+    title: Box
+    description: Content and shared folders
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://box.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [files]
+
+  - name: com.trello/mcp
+    title: Trello
+    description: Boards, lists, and cards
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://trello.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [project-mgmt]
+
+  - name: com.docusign/mcp
+    title: Docusign
+    description: Envelopes and signing status
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://docusign.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [contracts]
+
+  - name: io.gong/mcp
+    title: Gong
+    description: Call recordings and deal insights
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://gong.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [sales]
+
+  - name: com.xero/mcp
+    title: Xero
+    description: Invoices and bank reconciliation
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://xero.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [finance]
+
+  - name: com.pagerduty/mcp
+    title: PagerDuty
+    description: Incidents and on-call schedules
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://pagerduty.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [ops]
+
+  - name: com.datadoghq/mcp
+    title: Datadog
+    description: Metrics, monitors, and logs
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://datadog.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [ops]
+
+  - name: com.atlassian.confluence/mcp
+    title: Confluence
+    description: Spaces and pages
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://confluence.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [docs]
+
+  - name: com.cloudflare/mcp
+    title: Cloudflare
+    description: Workers, DNS, and analytics
+    version: "1.0.0"
+    remotes:
+      - type: sse
+        url: https://cloudflare.mcp.example/sse
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [ops]
+
+  - name: ai.granola/mcp
+    title: Granola
+    description: Meeting notes and transcripts
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://granola.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [meetings]
+
+  - name: com.supabase/mcp
+    title: Supabase
+    description: Postgres projects and tables
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://supabase.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [data]
+
+  - name: com.vercel/mcp
+    title: Vercel
+    description: Deployments and projects
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://vercel.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [code]
+
+  - name: com.zoho.crm/mcp
+    title: Zoho CRM
+    description: Leads, deals, and accounts
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://zoho.mcp.example/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: static
+        tags: [crm]
+        oauthClientSetup:
+          portalUrl: https://api-console.zoho.example
+          hint: Create an OAuth app in the Zoho CRM developer portal and paste its client ID and secret.
+          clientSecretKey: zoho.oauth-client-secret
