@@ -14,11 +14,14 @@ from pathlib import Path
 from typing import Any
 
 import httpx2
+import mcp.types as mt
 import pytest
 from fastmcp import Client, FastMCP
+from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from mcp.types import Icon
 
 import nimblebrain_server_sdk as sdk
+from nimblebrain_server_sdk.testing import Mode
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "server_card.json").read_text())
 CARD = FIXTURE["card"]
@@ -119,7 +122,7 @@ async def test_the_sse_transport_serves_no_card() -> None:
 
 
 async def test_nothing_of_the_card_is_served_over_mcp() -> None:
-    """Over stdio a server has only the MCP session: the card adds nothing to it."""
+    """Over stdio a server has only the MCP session: the card adds no tool, resource or prompt."""
     bare = FastMCP(CARD["name"], version=CARD["version"])
     carded = _probe()
     seen = []
@@ -134,6 +137,57 @@ async def test_nothing_of_the_card_is_served_over_mcp() -> None:
                 )
             )
     assert seen[0] == seen[1]
+
+
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+async def test_the_handshake_reports_the_cards_title(mode: Mode) -> None:
+    mcp = _probe()
+    async with Client(mcp, mode=mode) as client:
+        info = client.server_info
+    assert info is not None
+    assert (info.name, info.title) == (CARD["name"], CARD["title"])
+    async with _http(mcp.http_app()) as http:
+        assert (await http.get(FIXTURE["card_path"])).json() == CARD
+
+
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+async def test_a_title_the_server_reports_itself_is_kept(mode: Mode) -> None:
+    class OwnTitle(Middleware):
+        async def on_initialize(
+            self,
+            context: MiddlewareContext[mt.InitializeRequest],
+            call_next: CallNext[mt.InitializeRequest, mt.InitializeResult | None],
+        ) -> mt.InitializeResult | None:
+            result = await call_next(context)
+            assert result is not None
+            info = result.server_info.model_copy(update={"title": "Own"})
+            return result.model_copy(update={"server_info": info})
+
+        async def on_discover(
+            self,
+            context: MiddlewareContext[mt.DiscoverRequest],
+            call_next: CallNext[mt.DiscoverRequest, mt.DiscoverResult | dict[str, Any]],
+        ) -> mt.DiscoverResult | dict[str, Any]:
+            result = await call_next(context)
+            assert isinstance(result, mt.DiscoverResult)
+            meta = result.meta or {}
+            stamp = {**meta.get(mt.SERVER_INFO_META_KEY, {}), "title": "Own"}
+            return result.model_copy(update={"meta": {**meta, mt.SERVER_INFO_META_KEY: stamp}})
+
+    mcp = _probe()
+    mcp.add_middleware(OwnTitle())
+    async with Client(mcp, mode=mode) as client:
+        assert client.server_info is not None
+        assert client.server_info.title == "Own"
+
+
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+async def test_without_a_title_the_handshake_has_none(mode: Mode) -> None:
+    mcp = FastMCP("com.example/plain", version="1.0.0")
+    sdk.add_server_card(mcp, description="Plain.")
+    async with Client(mcp, mode=mode) as client:
+        assert client.server_info is not None
+        assert client.server_info.title is None
 
 
 def test_without_placements_there_is_no_meta_and_no_title_unless_given() -> None:

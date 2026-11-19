@@ -20,11 +20,15 @@ When you add a server to a local NimbleBrain by its URL, NimbleBrain reads its c
 | `name` | The server's name, `FastMCP("com.example/notes")`. The card requires reverse-DNS form with one slash. |
 | `version` | `FastMCP(version=...)`. Unset, FastMCP reports its own version, so set it. |
 | `description` | `add_server_card(description=...)`, 1 to 100 characters, for a person choosing the server. Not the `instructions`, which are for the model. |
-| `title` | `add_server_card(title=...)`, 1 to 100 characters. Omitted when not given. |
+| `title` | `add_server_card(title=...)`, 1 to 100 characters. Omitted when not given. It is also the handshake's `serverInfo.title`. |
 | `websiteUrl`, `icons` | `FastMCP(website_url=..., icons=...)`. NimbleBrain shows the first icon that is `https:`, a `data:image/...` URI, or `http:` on a loopback host. |
 | `_meta["ai.nimblebrain/host"]` | `add_server_card(placements=[...])`, as `{"host_version": "1.0", "placements": [...]}`. Each placement has the keys of a [catalog entry's placement](/host/manifest/#placementdeclaration). Omitted when there are none. |
 
 `name`, `version`, `websiteUrl` and `icons` are the values the server's `serverInfo` reports, so the card cannot contradict the live connection. FastMCP has no place for a title or a description, so you declare them, once, in `add_server_card`.
+
+## The title in the handshake
+
+`add_server_card` also reports the `title` as the server's `serverInfo.title`: in the `initialize` result on 2025-11-25, and in the `serverInfo` stamp of the `server/discover` result on 2026-07-28. A client that reads only the live connection then shows the title, not the reverse-DNS name. If the server already reports a title there through its own middleware, that title is kept. The `serverInfo` stamp on other 2026-07-28 results carries no title, since a FastMCP middleware cannot reach it.
 
 ## The rules
 
