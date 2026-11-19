@@ -85,6 +85,13 @@ describe("theme before sign-in", () => {
     expect(isDark()).toBe(true);
   });
 
+  test("signedOut_asksForTheSessionOnce", async () => {
+    signedOut();
+    await mountApp();
+    expect(container?.textContent).toContain("Sign In");
+    expect(requests.filter((r) => r.includes("/v1/bootstrap"))).toHaveLength(1);
+  });
+
   test("signInPage_brandDefaultDark_isDark", async () => {
     applyBrand({ defaultTheme: "dark" });
     signedOut();

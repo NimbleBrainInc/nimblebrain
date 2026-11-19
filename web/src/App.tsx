@@ -4,11 +4,11 @@ import {
   callTool,
   callToolWithoutWorkspace,
   logout,
+  probeBootstrap,
   setAuthToken,
   setOnAuthError,
   setOnWorkspaceError,
   setPlatformVersion,
-  tryBootstrap,
 } from "./api/client";
 import { closeEventsClient } from "./api/events-client";
 import { AppFrameSkeleton } from "./components/AppFrameSkeleton";
@@ -687,10 +687,20 @@ function OpenBridge({
   return null;
 }
 
+/**
+ * How long the first sign-in check may take before the app frame is drawn. A
+ * check that answers sooner (most do) goes straight to the app or to sign-in.
+ */
+const SKELETON_DELAY_MS = 300;
+
 export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
+  // What the first check said when it found no session, handed to the login
+  // screen so it acts on that answer instead of asking again. Cleared on sign-in,
+  // so the login screen a sign-out shows probes for itself.
+  const [firstAnswer, setFirstAnswer] = useState<"signedOut" | "unavailable" | null>(null);
 
   // Tab-lifetime cleanup. `pagehide` fires on tab close, navigation away,
   // and bfcache enter — earlier and more reliable than `beforeunload`,
@@ -741,6 +751,7 @@ export function App() {
       // lands whenever bootstrap resolves, which can be after the guard's.
 
       setPlatformVersion(data.version, data.buildSha);
+      setFirstAnswer(null);
       setBootstrap(data);
       setAuthenticated(true);
     },
@@ -752,9 +763,10 @@ export function App() {
   // the URL (`/w/:slug`), and login lands on `/` (the workspace-agnostic home).
   useEffect(() => {
     let cancelled = false;
-    tryBootstrap().then((data) => {
+    probeBootstrap().then((result) => {
       if (cancelled) return;
-      if (data) initFromBootstrap(data);
+      if (result.kind === "signedIn") initFromBootstrap(result.data);
+      else setFirstAnswer(result.kind);
       setChecking(false);
     });
     return () => {
@@ -764,8 +776,9 @@ export function App() {
 
   const signedIn = authenticated && bootstrap !== null;
   let screen: React.ReactNode;
-  if (checking) screen = <AppFrameSkeleton />;
-  else if (!signedIn) screen = <Login onLogin={initFromBootstrap} />;
+  if (checking) screen = <AppFrameSkeleton delayMs={SKELETON_DELAY_MS} />;
+  else if (!signedIn)
+    screen = <Login onLogin={initFromBootstrap} firstAnswer={firstAnswer ?? undefined} />;
   else
     screen = (
       <BrowserRouter>

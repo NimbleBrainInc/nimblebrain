@@ -2,7 +2,7 @@ import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { probeBootstrap } from "../api/client";
+import { type BootstrapProbe, probeBootstrap } from "../api/client";
 import type { BootstrapResponse } from "../types";
 import { Logo } from "./Logo";
 
@@ -55,6 +55,12 @@ export interface LoginProps {
   onLogin: (data: BootstrapResponse) => void;
   /** Leaves the app for sign-in. Defaults to a full-page navigation; tests pass their own. */
   navigate?: (path: string) => void;
+  /**
+   * The parent's own bootstrap answer, when it already asked and found no
+   * session. The screen acts on it instead of asking again. Absent (after a
+   * sign-out, say), the screen asks.
+   */
+  firstAnswer?: "signedOut" | "unavailable";
 }
 
 type Phase = "connecting" | "redirecting" | "signIn";
@@ -69,7 +75,7 @@ type Phase = "connecting" | "redirecting" | "signIn";
  * it never redirects: the screen waits on "Connecting..." until the server
  * answers, then hands over.
  */
-export function Login({ onLogin, navigate }: LoginProps) {
+export function Login({ onLogin, navigate, firstAnswer }: LoginProps) {
   // A failed sign-in comes back here with an error; show it and stop, or a
   // broken sign-in would loop through the provider forever. Read once, at the
   // first render: the effect clears it from the URL, and an effect replay
@@ -82,14 +88,38 @@ export function Login({ onLogin, navigate }: LoginProps) {
   const [signingIn, setSigningIn] = useState(false);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navigateRef = useRef(navigate ?? ((path: string) => window.location.assign(path)));
+  // Held from the first render, like `failed`, so an effect replay acts on it too.
+  const [seed] = useState(firstAnswer);
 
   useEffect(() => {
     let cancelled = false;
 
     if (failed) window.history.replaceState({}, "", window.location.pathname);
 
+    // The parent's answer stands in for the first probe. It is still awaited, so
+    // a run the effect's cleanup has cancelled (a StrictMode replay) acts on
+    // nothing, exactly as it would with a probe in flight.
+    let given: BootstrapProbe | undefined = seed ? { kind: seed } : undefined;
+
+    function ask(): Promise<BootstrapProbe> {
+      const answer = given;
+      given = undefined;
+      return answer ? Promise.resolve(answer) : probeBootstrap();
+    }
+
+    function leaveForSignIn() {
+      const now = Date.now();
+      if (failed || redirectedRecently(now)) {
+        setPhase("signIn");
+        return;
+      }
+      noteRedirect(now);
+      setPhase("redirecting");
+      navigateRef.current(SIGN_IN_PATH);
+    }
+
     async function probe(): Promise<boolean> {
-      const result = await probeBootstrap();
+      const result = await ask();
       if (cancelled) return true;
       if (result.kind === "signedIn") {
         clearRedirect();
@@ -97,14 +127,7 @@ export function Login({ onLogin, navigate }: LoginProps) {
         return true;
       }
       if (result.kind === "signedOut") {
-        const now = Date.now();
-        if (failed || redirectedRecently(now)) {
-          setPhase("signIn");
-        } else {
-          noteRedirect(now);
-          setPhase("redirecting");
-          navigateRef.current(SIGN_IN_PATH);
-        }
+        leaveForSignIn();
         return true;
       }
       // Unavailable: the server is starting or failing, which says nothing
@@ -129,7 +152,7 @@ export function Login({ onLogin, navigate }: LoginProps) {
       cancelled = true;
       if (retryRef.current) clearTimeout(retryRef.current);
     };
-  }, [onLogin, failed]);
+  }, [onLogin, failed, seed]);
 
   function handleSignIn() {
     setSigningIn(true);
