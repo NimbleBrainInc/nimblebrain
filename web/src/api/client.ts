@@ -9,6 +9,7 @@ import type {
   RemoteOAuthInstall,
 } from "../_generated/connector-catalog/connectors/catalog/types";
 import type { ToolInput } from "../_generated/platform-schemas/catalog";
+import type { PluginsListOutput } from "../_generated/platform-schemas/plugins";
 import { addAuthBreadcrumb, captureLogout, setSentryWorkspace } from "../sentry";
 import type {
   ApiErrorBody,
@@ -827,6 +828,21 @@ export async function readConnectorSkill(
     { workspaceId },
   );
   return unwrapStructured(result, "read_bound_skill");
+}
+
+/**
+ * The plugins in a workspace: its own, and the caller's personal ones with
+ * whether each is granted there. Each plugin says whose it is, and each of its
+ * servers the account it is signed in as.
+ */
+export async function listPlugins(workspaceId: string): Promise<PluginsListOutput> {
+  const result = await callTool(
+    "nb",
+    "manage_connectors",
+    { action: "list_plugins" },
+    { workspaceId },
+  );
+  return unwrapStructured(result, "list_plugins");
 }
 
 /** A personal connector (a remote MCP connection owned by the caller's identity) + where it's granted. */

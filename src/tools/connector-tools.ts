@@ -55,6 +55,7 @@ import { MINTED_PROVIDER } from "../oauth/minted-credential-provider.ts";
 import { log } from "../observability/log.ts";
 import { type ConnectorAdmission, filterAdmittedTools } from "../permissions/admin-tools.ts";
 import type { PermissionOwner, ToolPolicy } from "../permissions/permission-store.ts";
+import type { PluginsListOutput } from "../platform/schemas/plugins.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
@@ -68,6 +69,7 @@ import { CREDENTIAL_PROVIDER } from "./credential-transport-credential.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { hasMcpOAuthTokens, McpOAuthRecords } from "./mcp-oauth-records.ts";
 import { McpSource, REMOTE_TOOL_LIST_MAX_AGE_MS } from "./mcp-source.ts";
+import { projectPlugins } from "./plugin-listing.ts";
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 import type { Tool, ToolSource } from "./types.ts";
 import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
@@ -276,6 +278,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "get_redirect_uri",
             "list_bound_skills",
             "read_bound_skill",
+            "list_plugins",
             "list_personal_connectors",
             "list_personal_catalog",
             "grant_connector",
@@ -427,6 +430,8 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           return handleListBoundSkills(ctx, args.wsId);
         case "read_bound_skill":
           return handleReadBoundSkill(ctx, args.wsId, args.serverName, args.skillName);
+        case "list_plugins":
+          return handleListPlugins(ctx, args.wsId, args.callerId);
         case "list_personal_connectors":
           return handleListPersonalConnectors(ctx, args.callerId);
         case "list_personal_catalog":
@@ -684,6 +689,46 @@ async function handleListBoundSkills(
 }
 
 /**
+ * `list_plugins` — what this workspace has, as plugins (ADR-0068): the
+ * workspace's own, and the caller's personal ones with whether each is granted
+ * here (ADR-0069). Each server says the account it is signed in as. Read through
+ * the same paths as `list_installed`, `list_personal_connectors` and
+ * `list_bound_skills`; `projectPlugins` shapes the result.
+ */
+async function handleListPlugins(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  callerId: string | null,
+): Promise<ToolResult> {
+  if (!wsId) {
+    return errResult("No workspace in scope — call from a workspace.");
+  }
+  if (!callerId) return errResult("Authentication required.");
+  const [workspace, personal, published] = await Promise.all([
+    listInstalledEntries(ctx, wsId, callerId, { withIdentity: true }),
+    listPersonalConnectorEntries(ctx, callerId),
+    ctx.runtime.listPublishedSkills(wsId),
+  ]);
+  const output: PluginsListOutput = projectPlugins({
+    wsId,
+    workspace,
+    personal: personal.map((c) => ({ ...c, ...deriveConnectorStatus({ state: c.state }) })),
+    overlays: ctx.runtime.listConnectorOverlays(wsId),
+    published,
+    placements: ctx.runtime.getPlacementRegistry().forWorkspace(wsId),
+  });
+  const lines = output.plugins.map(
+    (p) =>
+      `- ${p.displayName} (${p.owner.kind}${p.owner.kind === "person" && !p.granted ? ", not granted here" : ""}; ${p.servers.map((s) => s.status).join(", ")})`,
+  );
+  return {
+    content: textContent(lines.length ? lines.join("\n") : "No plugins in this workspace."),
+    structuredContent: output,
+    isError: false,
+  };
+}
+
+/**
  * `read_bound_skill` — one connector skill's body as the model receives it,
  * by the server and name `list_bound_skills` reports.
  */
@@ -832,6 +877,8 @@ interface InstalledEntryDeps {
   /** When set, `buildInstalledEntry` skips every instance except this one
    *  before any per-instance IO. */
   onlyServerName?: string;
+  /** Read each running connector's signed-in account (see `buildInstalledEntry`). */
+  withIdentity?: boolean;
 }
 
 /** The ref's URL and its catalog entry (see `catalogEntryForRef`). */
@@ -1158,9 +1205,10 @@ async function buildInstalledEntry(
 
   await applyConnectionProbes(entry, deps, instance, url, cat);
 
-  // Identity only on the single-connector read that renders it: the full list
-  // backs every shell load, and each identity read writes an audit line.
-  if (deps.onlyServerName && instance.state === "running" && instance.ref) {
+  // Identity only on the reads that show it (the single-connector read and the
+  // plugin listing): the installed list backs every shell load, and each
+  // identity read writes an audit line.
+  if ((deps.onlyServerName || deps.withIdentity) && instance.state === "running" && instance.ref) {
     const identity = await readConnectorIdentity(
       deps.ctx,
       { type: "workspace", wsId: deps.wsId },
@@ -1196,6 +1244,24 @@ async function handleListInstalled(
    */
   onlyServerName?: string,
 ): Promise<ToolResult> {
+  const installed =
+    (scope === "all" || scope === "workspace") && wsId
+      ? await listInstalledEntries(ctx, wsId, callerId, onlyServerName ? { onlyServerName } : {})
+      : [];
+  return {
+    content: textContent(`Installed: ${installed.length} entries.`),
+    structuredContent: { installed },
+    isError: false,
+  };
+}
+
+/** The connectors installed in `wsId`, as `list_installed` reports them. */
+async function listInstalledEntries(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  callerId: string | null,
+  opts: { onlyServerName?: string; withIdentity?: boolean },
+): Promise<InstalledEntry[]> {
   const lifecycle = ctx.runtime.getLifecycle();
   const credStore = ctx.runtime.getCredentialStore();
   // One directory instance per request — its memoized `servers()`
@@ -1238,30 +1304,23 @@ async function handleListInstalled(
   // by Disconnect, or a boot-start that failed), and this page is where the user
   // clicks Connect / Reconnect to get it back. Filtering it out would hide the
   // only affordance that recovers it.
-  if ((scope === "all" || scope === "workspace") && wsId) {
-    const deps: InstalledEntryDeps = {
-      ctx,
-      wsId,
-      ws: await ctx.runtime.getWorkspaceStore().get(wsId),
-      registry: ctx.runtime.getRegistryForWorkspace(wsId),
-      credStore,
-      catalogByUrl,
-      catalogById,
-      resolveUserLabel,
-      admission: await ctx.runtime.connectorAdmission(wsId, callerId ? { id: callerId } : null),
-      ...(onlyServerName ? { onlyServerName } : {}),
-    };
-    for (const instance of lifecycle.getInstances()) {
-      const entry = await buildInstalledEntry(deps, instance);
-      if (entry) installed.push(entry);
-    }
-  }
-
-  return {
-    content: textContent(`Installed: ${installed.length} entries.`),
-    structuredContent: { installed },
-    isError: false,
+  const deps: InstalledEntryDeps = {
+    ctx,
+    wsId,
+    ws: await ctx.runtime.getWorkspaceStore().get(wsId),
+    registry: ctx.runtime.getRegistryForWorkspace(wsId),
+    credStore,
+    catalogByUrl,
+    catalogById,
+    resolveUserLabel,
+    admission: await ctx.runtime.connectorAdmission(wsId, callerId ? { id: callerId } : null),
+    ...opts,
   };
+  for (const instance of lifecycle.getInstances()) {
+    const entry = await buildInstalledEntry(deps, instance);
+    if (entry) installed.push(entry);
+  }
+  return installed;
 }
 
 /**
@@ -3763,6 +3822,32 @@ async function handleListPersonalConnectors(
   callerId: string | null,
 ): Promise<ToolResult> {
   if (!callerId) return errResult("Authentication required.");
+  const connectors = await listPersonalConnectorEntries(ctx, callerId);
+  return {
+    content: textContent(`${connectors.length} personal connector(s).`),
+    structuredContent: { connectors },
+    isError: false,
+  };
+}
+
+/** One entry of `list_personal_connectors`. */
+interface PersonalConnectorEntry {
+  serverName: string;
+  displayName: string;
+  description: string | null;
+  iconUrl?: string;
+  auth: string;
+  connectorId?: string;
+  state: "running" | "not_authenticated";
+  identity?: ConnectedAccountIdentity;
+  grantedWorkspaces: string[];
+}
+
+/** The caller's personal connectors, as `list_personal_connectors` reports them. */
+async function listPersonalConnectorEntries(
+  ctx: ManageConnectorsContext,
+  callerId: string,
+): Promise<PersonalConnectorEntry[]> {
   const store = ctx.runtime.getPermissionStore();
 
   // The caller's whole grant map, read once (not per connector).
@@ -3794,8 +3879,8 @@ async function handleListPersonalConnectors(
     );
     return [];
   });
-  const connectors = await Promise.all(
-    named.map(async ({ ref, serverName }) => {
+  return Promise.all(
+    named.map(async ({ ref, serverName }): Promise<PersonalConnectorEntry> => {
       const cat = byServerName.get(serverName);
       // Auth kind + (for a brokered connector) the catalog connector id are read
       // from the stored ref, not the catalog — they're what the Connect route keys
@@ -3843,11 +3928,6 @@ async function handleListPersonalConnectors(
       };
     }),
   );
-  return {
-    content: textContent(`${connectors.length} personal connector(s).`),
-    structuredContent: { connectors },
-    isError: false,
-  };
 }
 
 /**
