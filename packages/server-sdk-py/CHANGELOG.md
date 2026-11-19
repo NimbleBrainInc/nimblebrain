@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `add_server_card(title=...)` also reports the title as the server's `serverInfo.title`: in the `initialize` result, and in the `serverInfo` stamp of the 2026-07-28 `server/discover` result. A client that reads only the handshake shows the title instead of the reverse-DNS name. A title the server already reports there through its own middleware is kept.
+
 ## [0.8.0]
 
 ### Added

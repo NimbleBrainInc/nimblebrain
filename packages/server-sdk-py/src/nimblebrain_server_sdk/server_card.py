@@ -20,7 +20,8 @@ The card is built from what the server already declares, so it cannot drift from
 
 ``name``, ``version``, ``websiteUrl`` and ``icons`` are the server's own, the values its
 ``serverInfo`` reports. FastMCP has no place for a title or description, so those and the
-placements are declared here, once.
+placements are declared here, once. The title also becomes the handshake's ``serverInfo.title``,
+so a client that reads only the live connection shows it rather than the reverse-DNS name.
 
 The card carries no ``remotes``: a server cannot know reliably the URL its clients reach it at
 (it binds ``0.0.0.0``, sits behind a proxy, or is reached through a container's host alias), and
@@ -37,7 +38,9 @@ from collections.abc import Sequence
 from typing import Any, Literal, NotRequired, Required, TypedDict
 from weakref import WeakKeyDictionary
 
+import mcp.types as mt
 from fastmcp import FastMCP
+from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -116,6 +119,10 @@ def add_server_card(
     declared here, since FastMCP has no place for them. ``placements`` become the card's
     ``_meta["ai.nimblebrain/host"]`` block; with none, the card has no ``_meta``.
 
+    ``title`` is also the server's ``serverInfo.title``: in the ``initialize`` result, and in
+    the ``serverInfo`` stamp of the ``server/discover`` result on 2026-07-28. A title the server
+    already reports there (set by its own middleware) is kept.
+
     The route answers ``GET`` on the streamable-HTTP transport only, with no authentication,
     so a host can read the card before it connects. It sends the CORS and caching headers the
     Server Card discovery rules ask for and honours ``If-None-Match``. Over stdio, or on the
@@ -156,8 +163,48 @@ def add_server_card(
     # Two routes, because a path parameter cannot be empty: one for an MCP path at the root.
     mcp.custom_route("/{mcp_path:path}" + _CARD_SUFFIX, methods=["GET"])(serve_card)
     mcp.custom_route(_CARD_SUFFIX, methods=["GET"])(serve_card)
+    if title is not None:
+        mcp.add_middleware(_HandshakeTitle(title))
     _REGISTERED[mcp] = card
     return json.loads(body)
+
+
+class _HandshakeTitle(Middleware):
+    """Report the card's title as ``serverInfo.title``, where a client that reads only the
+    handshake looks for a display name. A title already there is the server's own and is kept.
+
+    Every 2026-07-28 result carries a ``serverInfo`` stamp in ``_meta``; a client reads its
+    identity from the ``server/discover`` one, the only one a FastMCP middleware can reach.
+    """
+
+    def __init__(self, title: str) -> None:
+        self._title = title
+
+    async def on_initialize(
+        self,
+        context: MiddlewareContext[mt.InitializeRequest],
+        call_next: CallNext[mt.InitializeRequest, mt.InitializeResult | None],
+    ) -> mt.InitializeResult | None:
+        result = await call_next(context)
+        if result is None or result.server_info.title is not None:
+            return result
+        info = result.server_info.model_copy(update={"title": self._title})
+        return result.model_copy(update={"server_info": info})
+
+    async def on_discover(
+        self,
+        context: MiddlewareContext[mt.DiscoverRequest],
+        call_next: CallNext[mt.DiscoverRequest, mt.DiscoverResult | dict[str, Any]],
+    ) -> mt.DiscoverResult | dict[str, Any]:
+        result = await call_next(context)
+        if not isinstance(result, mt.DiscoverResult):
+            return result
+        meta = result.meta or {}
+        stamp = meta.get(mt.SERVER_INFO_META_KEY)
+        if not isinstance(stamp, dict) or stamp.get("title") is not None:
+            return result
+        stamped = {**meta, mt.SERVER_INFO_META_KEY: {**stamp, "title": self._title}}
+        return result.model_copy(update={"meta": stamped})
 
 
 def _etags(header: str | None) -> set[str]:
