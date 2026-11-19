@@ -205,8 +205,8 @@ describe("ending the tour", () => {
     }
     expect(visited).toEqual([
       ["Your workspace", `${BASE}/`],
-      ["Install apps here", `${BASE}/`],
-      ["The app catalog", `${BASE}/plugins/browse`],
+      ["Your apps", `${BASE}/`],
+      ["Browse plugins", `${BASE}/plugins/browse`],
       ["Teach it with skills", `${BASE}/skills`],
       ["Ask your first question", `${BASE}/`],
     ]);
@@ -244,7 +244,7 @@ describe("replaying from Help", () => {
 
     // The first stop on a phone is Apps, on the Overview already open.
     await press("tour-next");
-    expect(cardTitle()).toBe("Install apps here");
+    expect(cardTitle()).toBe("Your apps");
     expect(probe.drawerOpen).toBe(false);
   });
 });
