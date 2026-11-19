@@ -15,7 +15,7 @@ import { assertFleetIdentityProvisioned } from "../../oauth/tenant-key-mint.ts";
 import { log } from "../../observability/log.ts";
 import {
   type FlowOwner,
-  peekFlowOwner,
+  peekFlow,
   refuseFlow,
   resolveWithCode,
   takeScopeFallback,
@@ -25,7 +25,7 @@ import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspac
 import type { OAuthInitiateResponse } from "../schemas/responses.ts";
 import { type AppContext, type AppEnv, apiError, json } from "../types.ts";
 import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
-import { reinitiateParagraph, successPage } from "./oauth-success-page.ts";
+import { reinitiateParagraph } from "./oauth-error-page.ts";
 
 /**
  * OAuth integration routes for outbound flows where NimbleBrain is the
@@ -209,7 +209,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
     // entry), so we can land the user back on the right page — a workspace
     // connector's settings page vs the user's profile. Synchronous +
     // single-process, so the peek can't race the resolve below.
-    const flowOwner = peekFlowOwner(state);
+    const flow = peekFlow(state);
     if (!resolveWithCode(state, code, iss)) {
       logCallbackOutcome("unknown_flow", { flow: flowId(state) });
       return c.html(
@@ -219,8 +219,8 @@ export function mcpAuthRoutes(ctx: AppContext) {
       );
     }
 
-    logCallbackOutcome("resolved", { flow: flowId(state), owner: flowOwner?.kind });
-    return renderSuccessPage(c, flowOwner, ctx.secureCookies);
+    logCallbackOutcome("resolved", { flow: flowId(state), owner: flow?.owner.kind });
+    return redirectHome(c, flow, ctx.secureCookies);
   });
 
   return app;
@@ -636,35 +636,30 @@ function verifyStateCookie(c: Context<AppEnv>, state: string): CallbackFailure |
   return null;
 }
 
-/** Clear the one-shot state cookie, set the success-page CSP, and return the redirect-home confirmation HTML. */
-function renderSuccessPage(
+/**
+ * Clear the one-shot state cookie and send the browser back to the connectors
+ * page it left, naming the connector that connected. The page confirms it; the
+ * callback draws nothing, so the confirmation is in the app's own theme.
+ */
+function redirectHome(
   c: Context<AppEnv>,
-  flowOwner: FlowOwner | null,
+  flow: { owner: FlowOwner; serverName: string } | null,
   secureCookies: boolean,
 ): Response {
-  // Clear the one-shot state cookie so a refresh of this page can't
-  // be used as a replay vector.
+  // Clear the one-shot state cookie so the callback URL can't be replayed.
   c.header("Set-Cookie", buildOAuthStateCookie("", 0, secureCookies));
 
-  // Auto-redirect back into NimbleBrain. The user came from here and was
-  // navigated away to the OAuth provider in their existing tab — telling them
-  // to "close this tab" is wrong because they'd lose NimbleBrain entirely. We
-  // bring them home: a workspace connector lands on that workspace's Connectors
-  // page; a personal (identity-owned) connector lands on the profile page.
-  // `flowOwner` is non-null here (resolveWithCode succeeded just above ⟹ the
-  // flow existed when we peeked it); the `?? workspace` fallback is defensive.
+  // The user left this tab for the provider, so bring them home: a workspace
+  // connector lands on that workspace's Connectors page, a personal
+  // (identity-owned) connector on the profile page. `flow` is non-null here
+  // (resolveWithCode succeeded just above, so the flow existed when we peeked
+  // it); the fallback is defensive.
+  const owner = flow?.owner;
   const returnUrl =
-    flowOwner?.kind === "user"
-      ? profileConnectorsUrl()
-      : workspaceConnectorsUrl(flowOwner?.wsId ?? "");
-  // Override the platform-default CSP (`default-src 'none'`) for this
-  // response only. Without this the page's inline <style> is blocked and
-  // it renders unstyled in any deployment that doesn't override
-  // NB_CSP — i.e. all of them. The hash pins us to exactly the bytes
-  // we serve.
-  const page = successPage("Authorization complete", returnUrl);
-  c.header("Content-Security-Policy", page.csp);
-  return c.html(page.html);
+    owner?.kind === "user"
+      ? profileConnectorsUrl(flow?.serverName)
+      : workspaceConnectorsUrl(owner?.wsId ?? "", flow?.serverName);
+  return c.redirect(returnUrl, 302);
 }
 
 function sha256Hex(input: string): string {

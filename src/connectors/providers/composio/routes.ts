@@ -6,7 +6,7 @@ import {
   profileConnectorsUrl,
   workspaceConnectorsUrl,
 } from "../../../api/routes/connectors-redirect.ts";
-import { reinitiateParagraph, successPage } from "../../../api/routes/oauth-success-page.ts";
+import { reinitiateParagraph } from "../../../api/routes/oauth-error-page.ts";
 import type { ComposioInitiateResponse } from "../../../api/schemas/responses.ts";
 import { type AppContext, type AppEnv, apiError, json } from "../../../api/types.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../../connectors/runtime/connection.ts";
@@ -94,8 +94,10 @@ function isValidConnectorId(cid: string): boolean {
 }
 
 /** Where the browser returns after a successful connect — the owner's connectors surface. */
-function connectorsReturnUrl(owner: ConnectorOwner): string {
-  return owner.type === "workspace" ? workspaceConnectorsUrl(owner.wsId) : profileConnectorsUrl();
+function connectorsReturnUrl(owner: ConnectorOwner, connected?: string): string {
+  return owner.type === "workspace"
+    ? workspaceConnectorsUrl(owner.wsId, connected)
+    : profileConnectorsUrl(connected);
 }
 
 export function composioAuthRoutes(ctx: AppContext) {
@@ -220,14 +222,12 @@ export function composioAuthRoutes(ctx: AppContext) {
 
     await recoverCallbackSource(ctx, cid, owner);
 
-    // One-shot cookie — clear on success so a refresh of this page
-    // can't be used as a replay vector.
+    // One-shot cookie — clear on success so the callback URL can't be
+    // replayed.
     c.header("Set-Cookie", buildComposioStateCookie("", 0, ctx.secureCookies));
 
-    const returnUrl = connectorsReturnUrl(owner);
-    const page = successPage("Connection complete", returnUrl);
-    c.header("Content-Security-Policy", page.csp);
-    return c.html(page.html);
+    // Back to the connectors page, naming what connected; the page confirms it.
+    return c.redirect(connectorsReturnUrl(owner, slugifyServerName(cid)), 302);
   });
 
   // ── GET /v1/composio-auth/proxy ───────────────────────────────────

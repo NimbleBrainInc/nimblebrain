@@ -89,6 +89,13 @@ const { ProfileConnectorsTab, workspaceReach } = await import(
   "../pages/settings/ProfileConnectorsTab"
 );
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
+const { MemoryRouter } = await import("react-router-dom");
+const { NoticeProvider } = await import("../components/notices");
+
+// The tab reads `?connected=` and raises notices, so it renders inside a router
+// and a notice provider, as it does in the shell.
+const inShell = (el: React.ReactElement) =>
+  React.createElement(MemoryRouter, null, React.createElement(NoticeProvider, null, el));
 
 interface Mounted {
   container: HTMLDivElement;
@@ -102,7 +109,7 @@ async function mount(): Promise<Mounted> {
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
-    root.render(React.createElement(ProfileConnectorsTab));
+    root.render(inShell(React.createElement(ProfileConnectorsTab)));
   });
   await act(async () => {
     await Promise.resolve();
@@ -125,10 +132,12 @@ async function mountWithWorkspaces(workspaces: WorkspaceInfo[]): Promise<Mounted
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(WorkspaceProvider, {
-        initialWorkspaces: workspaces,
-        children: React.createElement(ProfileConnectorsTab),
-      }),
+      inShell(
+        React.createElement(WorkspaceProvider, {
+          initialWorkspaces: workspaces,
+          children: React.createElement(ProfileConnectorsTab),
+        }),
+      ),
     );
   });
   await act(async () => {
