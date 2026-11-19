@@ -3,7 +3,8 @@
 //
 // The OAuth callback renders nothing: it redirects to the connectors page it
 // started from with `?connected=<server name>`. The page confirms the
-// connection with a notice, in the app's own theme.
+// connection with a notice, in the app's own theme, and marks the connector's
+// row "Connected just now" for as long as the page stays open.
 //
 // The callback hands over the authorization code and redirects at once; the
 // token exchange finishes after the page loads. So the notice waits for the
@@ -51,13 +52,17 @@ export function returnOutcome(
  * Confirm the connector named by `?connected=` once it settles. `connectors` is
  * null while the page's list is loading. `refresh` re-reads the list; it must
  * be stable across renders.
+ *
+ * Returns the server name of the connector this sign-in connected, once it has,
+ * so the page can mark its row; null until then, and for a failed sign-in.
  */
 export function useConnectedNotice(
   connectors: readonly ReturnedConnector[] | null,
   refresh: () => void,
-): void {
+): string | null {
   const [params, setParams] = useSearchParams();
   const [pending, setPending] = useState<string | null>(null);
+  const [justConnected, setJustConnected] = useState<string | null>(null);
   const notify = useNotice();
 
   // Take the name out of the URL, so a reload or Back never confirms twice.
@@ -81,6 +86,7 @@ export function useConnectedNotice(
     if (outcome.kind === "wait") return;
     setPending(null);
     if (outcome.kind === "connected") {
+      setJustConnected(pending);
       notify({ level: "success", title: `Connected to ${outcome.name}` });
     } else if (outcome.kind === "failed") {
       notify({ level: "error", title: `Couldn't connect to ${outcome.name}` });
@@ -103,4 +109,6 @@ export function useConnectedNotice(
     }, POLL_MS);
     return () => clearInterval(timer);
   }, [pending, refresh]);
+
+  return justConnected;
 }

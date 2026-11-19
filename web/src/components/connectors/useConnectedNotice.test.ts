@@ -59,9 +59,10 @@ function mount(url: string, connectors: readonly ReturnedConnector[] | null) {
   const location = { current: "" };
   const hook = renderHook(
     ({ connectors }: Props) => {
-      useConnectedNotice(connectors, refresh);
+      const justConnected = useConnectedNotice(connectors, refresh);
       const loc = useLocation();
       location.current = `${loc.pathname}${loc.search}`;
+      return justConnected;
     },
     {
       initialProps: { connectors },
@@ -95,9 +96,19 @@ describe("useConnectedNotice", () => {
     expect(notices).toEqual([{ level: "success", title: "Connected to Granola" }]);
   });
 
-  test("reports a connector that failed", () => {
-    mount("/connectors?connected=granola", [granola("failed")]);
+  test("reports a connector that failed, and marks no row", () => {
+    const { result } = mount("/connectors?connected=granola", [granola("failed")]);
     expect(notices).toEqual([{ level: "error", title: "Couldn't connect to Granola" }]);
+    expect(result.current).toBeNull();
+  });
+
+  test("names the connector to mark once it connects, and keeps it after re-reads", () => {
+    const { result, rerender } = mount("/connectors?connected=granola", [granola("pending")]);
+    expect(result.current).toBeNull();
+    rerender({ connectors: [granola("connected")] });
+    expect(result.current).toBe("granola");
+    rerender({ connectors: [granola("connected")] });
+    expect(result.current).toBe("granola");
   });
 
   test("a name the page does not list announces nothing and stops polling", () => {
