@@ -34,7 +34,7 @@ export async function assertToolAllowed(
   if (!isDisallowed(policy)) return null;
   return {
     content: textContent(
-      `Tool "${serverName}__${toolName}" is disabled by policy. Adjust in Settings → Connectors → ${serverName} → Configure.`,
+      `Tool "${serverName}__${toolName}" is disabled by policy. Adjust it on the plugin's page under Plugins.`,
     ),
     isError: true,
     structuredContent: {

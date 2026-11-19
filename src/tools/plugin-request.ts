@@ -2,11 +2,13 @@ import { structuredContent, textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { PluginRequestOutput } from "../platform/schemas/plugins.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
+import { splitInnerToolName } from "../util/tool-name.ts";
 import {
   listUngrantedPersonalPlugins,
   type ManageConnectorsContext,
   type UngrantedPersonalPlugin,
 } from "./connector-tools.ts";
+import { isPersonalConnectorName, personalConnectorServerName } from "./identity-sources.ts";
 
 /**
  * How a model learns of, and asks for, the caller's own plugins that are not
@@ -20,6 +22,10 @@ import {
  *   renders that as a card whose "Use here" calls the first-party
  *   `grant_connector`, the same write the Plugins page makes. The person's
  *   answer reaches the model as their next message.
+ * - **Missing.** A model that names a tool of such a plugin anyway (one it saw
+ *   before the plugin was turned off) gets {@link ungrantedPluginGuidance} in
+ *   place of the generic not-found answer, from `nb__manage_tools` `add` and
+ *   from a direct call, so it reaches `request_plugin` without a search.
  *
  * Only the caller's own identity plane is read, so another member's plugins are
  * never named, and a run with no person in it (a task) never asks.
@@ -86,6 +92,36 @@ export function describeUngrantedPlugins(plugins: readonly UngrantedPersonalPlug
     'To use one, ask the person with nb__manage_tools `{"request_plugin": "<name>"}`, then end your turn: their answer arrives as their next message.',
   );
   return lines.join("\n");
+}
+
+/**
+ * What to tell a model that named a tool of one of the caller's own plugins
+ * that is off in this workspace, or null for any other name: another member's
+ * plugin, one granted here, or no plugin at all keeps its generic answer. Only
+ * a `my_` name is looked up, and only in the caller's own identity plane.
+ * `scope` defaults to the caller and workspace of the call in flight.
+ */
+export async function ungrantedPluginGuidance(
+  ctx: ManageConnectorsContext,
+  toolName: string,
+  scope: { callerId: string; wsId: string } | null = callerAndWorkspace(ctx),
+): Promise<string | null> {
+  const { sourcePrefix } = splitInnerToolName(toolName);
+  if (!scope || !isPersonalConnectorName(sourcePrefix)) return null;
+  const serverName = personalConnectorServerName(sourcePrefix);
+  let plugin: UngrantedPersonalPlugin | undefined;
+  try {
+    const plugins = await listUngrantedPersonalPlugins(ctx, scope.callerId, scope.wsId);
+    plugin = plugins.find((p) => p.serverName === serverName);
+  } catch {
+    return null;
+  }
+  if (!plugin) return null;
+  const off = `${plugin.displayName} is your plugin but isn't turned on in this workspace.`;
+  if (getRequestContext()?.unattended) {
+    return `${off} A task cannot ask for it: a person must turn it on from Plugins.`;
+  }
+  return `${off} To use it, ask the person with nb__manage_tools \`{"request_plugin": "${plugin.serverName}"}\`, then end your turn: their answer arrives as their next message.`;
 }
 
 function refuse(message: string): ToolResult {

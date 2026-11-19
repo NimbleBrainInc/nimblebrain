@@ -16,10 +16,13 @@ import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.t
 import type { ManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import type { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
+import type { ToolPromotionControls } from "../../src/engine/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import type { OrchestratorRuntime } from "../../src/orchestrator/route.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
 import type { PluginRequestOutput } from "../../src/platform/schemas/plugins.ts";
+import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { type RequestContext, runWithRequestContext } from "../../src/runtime/request-context.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import type { ManageConnectorsContext } from "../../src/tools/connector-tools.ts";
@@ -28,9 +31,11 @@ import {
   describeUngrantedPlugins,
   discoverUngrantedPlugins,
   requestPlugin,
+  ungrantedPluginGuidance,
 } from "../../src/tools/plugin-request.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { createSystemTools } from "../../src/tools/system-tools.ts";
+import type { ToolSource } from "../../src/tools/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import {
   installTestCredentialStore,
@@ -244,5 +249,129 @@ describe("request_plugin", () => {
       "granola",
     );
     expect(await permissions.getConnectorGrants(ALICE.id, "granola")).toEqual([]);
+  });
+});
+
+/** What an `add` or a direct call returns for a plugin of the caller's that is off here. */
+const ASK_GRANOLA =
+  'Granola is your plugin but isn\'t turned on in this workspace. To use it, ask the person with nb__manage_tools `{"request_plugin": "granola"}`';
+
+describe("a name of the caller's plugin that is off here", () => {
+  test("names the plugin and how to ask for it", async () => {
+    const text = await runWithRequestContext(chatContext(ALICE), () =>
+      ungrantedPluginGuidance(requestScopedCtx(), "my_granola__list_notes"),
+    );
+    expect(text).toStartWith(ASK_GRANOLA);
+  });
+
+  test("in an unattended run, says a person must turn it on from Plugins", async () => {
+    const text = await runWithRequestContext(chatContext(ALICE, { unattended: true }), () =>
+      ungrantedPluginGuidance(requestScopedCtx(), "my_granola__list_notes"),
+    );
+    expect(text).toContain("Granola is your plugin but isn't turned on in this workspace.");
+    expect(text).toContain("a person must turn it on from Plugins");
+    expect(text).not.toContain("request_plugin");
+  });
+
+  test("anything else keeps the generic answer: another member's, granted, workspace, unknown", async () => {
+    for (const name of [
+      "my_notion__search",
+      "my_gmail__send",
+      "granola__list_notes",
+      "my_nope__x",
+    ]) {
+      const text = await runWithRequestContext(chatContext(ALICE), () =>
+        ungrantedPluginGuidance(requestScopedCtx(), name),
+      );
+      expect(text).toBeNull();
+    }
+  });
+
+  test("nb__manage_tools add: the not-found item says how to ask; other failures stay generic", async () => {
+    const notFound = (toolName: string) => ({
+      ok: false,
+      toolName,
+      changed: false,
+      reason: "not_found",
+      message: `${toolName} was not found in the current tool registry.`,
+    });
+    const controls: ToolPromotionControls = {
+      addTool: async (toolName) => notFound(toolName),
+      removeTool: (toolName) => notFound(toolName),
+    };
+    const systemTools = await createSystemTools(() => new ToolRegistry(), {
+      runtime,
+      toolPromotionCtx: controls,
+    });
+    const result = await runWithRequestContext(chatContext(ALICE), () =>
+      systemTools.execute("manage_tools", {
+        add: ["my_granola__list_notes", "my_notion__search", "crm__search"],
+      }),
+    );
+    const text = extractText(result.content);
+    expect(text).toContain(`add my_granola__list_notes: ${ASK_GRANOLA}`);
+    expect(text).toContain("add my_notion__search: my_notion__search was not found");
+    expect(text).toContain("add crm__search: crm__search was not found");
+    expect(text).not.toContain("Notion");
+  });
+
+  describe("a direct call through the router", () => {
+    const granolaSource = stub<ToolSource>({ name: "granola" });
+    function router(): IdentityToolRouter {
+      const orchestrator = stub<OrchestratorRuntime>({
+        getIdentitySource: () => undefined,
+        getIdentityConnectorSource: async (userId: string, name: string) =>
+          userId === ALICE.id && name === "granola" ? granolaSource : undefined,
+        getPermissionStore: () => permissions,
+        // As `Runtime.ungrantedPluginGuidance` answers it.
+        ungrantedPluginGuidance: (userId: string, wsId: string, toolName: string) =>
+          ungrantedPluginGuidance(requestScopedCtx(), toolName, { callerId: userId, wsId }),
+      });
+      return new IdentityToolRouter({
+        identityId: ALICE.id,
+        workspaceId: WS,
+        runtime: orchestrator,
+        caller: "chat",
+      });
+    }
+
+    test("grant denied: says how to ask, and keeps the reason", async () => {
+      const result = await runWithRequestContext(chatContext(ALICE), () =>
+        router().execute({ id: "c1", name: "my_granola__list_notes", input: {} }),
+      );
+      expect(result.isError).toBe(true);
+      expect(extractText(result.content)).toStartWith(ASK_GRANOLA);
+      expect(result.structuredContent?.reason).toBe("connector_grant_denied");
+    });
+
+    test("grant denied in an unattended run: a person must turn it on", async () => {
+      const result = await runWithRequestContext(chatContext(ALICE, { unattended: true }), () =>
+        router().execute({ id: "c1", name: "my_granola__list_notes", input: {} }),
+      );
+      expect(extractText(result.content)).toContain("a person must turn it on from Plugins");
+    });
+
+    test("another member's plugin keeps the generic not-found answer", async () => {
+      const result = await runWithRequestContext(chatContext(ALICE), () =>
+        router().execute({ id: "c1", name: "my_notion__search", input: {} }),
+      );
+      const text = extractText(result.content);
+      expect(result.structuredContent?.reason).toBe("unknown_identity_source");
+      expect(text).toContain("no identity source");
+      expect(text).not.toContain("Notion");
+      expect(text).not.toContain("request_plugin");
+    });
+  });
+
+  test("nb__status connectors lists the caller's plugins off here, never another member's", async () => {
+    const systemTools = await createSystemTools(() => new ToolRegistry(), { runtime });
+    const result = await runWithRequestContext(chatContext(ALICE), () =>
+      systemTools.execute("status", { scope: "connectors" }),
+    );
+    const text = extractText(result.content);
+    expect(text).toContain("Yours, not turned on in this workspace");
+    expect(text).toContain("**granola** (Granola)");
+    expect(text).not.toContain("notion");
+    expect(text).not.toContain("**gmail**");
   });
 });

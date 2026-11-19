@@ -163,7 +163,7 @@ function assertValidKey(key: string): void {
 /**
  * Where the person reading this error goes to set the missing key.
  *
- * A workspace secret has a UI: the connector's page under Settings → Connectors
+ * A workspace secret has a UI: the plugin's page under Plugins
  * collects it and writes it through the same door. Naming that instead of a tool
  * call matters more than the wording suggests — the tool call is reachable only
  * by typing the value into a conversation, which puts a plaintext credential in
@@ -177,7 +177,7 @@ function assertValidKey(key: string): void {
 function remedyFor(scope: CredentialScope): string {
   switch (scope.kind) {
     case "workspace":
-      return "Set it on the connector's page under Settings → Connectors";
+      return "Set it on the plugin's page under Plugins";
     case "instance":
       return "Set it in the deployment's credential store";
     case "user":

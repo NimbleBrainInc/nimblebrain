@@ -229,6 +229,16 @@ export interface OrchestratorRuntime {
    */
   getIdentityConnectorSource?(userId: string, name: string): Promise<ToolSource | undefined>;
 
+  /**
+   * What to tell the model when `toolName` (a `my_` name that did not route)
+   * names one of `userId`'s own plugins turned off in `wsId`, or null for any
+   * other name, which keeps its generic refusal. Read from the caller's own
+   * identity plane, so another member's plugin is never named. Injected here
+   * because the plugin listing lives in `src/tools/`, which this layer and the
+   * routers above it do not import. Optional: test stubs may omit it.
+   */
+  ungrantedPluginGuidance?(userId: string, wsId: string, toolName: string): Promise<string | null>;
+
   /** Fresh `IdentityContext` for the authenticated identity. No workspace. */
   getIdentityContext(identityId: string): IdentityContext;
 

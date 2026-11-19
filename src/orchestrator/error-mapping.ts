@@ -17,6 +17,12 @@
  *   - `UnknownIdentitySource`     → `unknown_identity_source`  + `{ toolName }`
  *   - `ConnectorGrantDenied`      → `connector_grant_denied`   + `{ connector, wsId }`
  *
+ * `pluginGuidance` is the caller's own answer for a personal-connector name that
+ * names one of their plugins turned off in this workspace (the router asks the
+ * runtime for it). It replaces the text of `UnknownIdentitySource` and
+ * `ConnectorGrantDenied` and leaves `data.reason` alone, so a classifier reading
+ * the reason sees the same refusal.
+ *
  * Non-orchestrator errors re-throw — those are real engine failures and
  * should hit the engine's `run.error` path. We deliberately do NOT
  * `?? "unknown"` here: an unrecognized class is a programmer error worth
@@ -32,7 +38,11 @@ import {
   WorkspaceAccessDenied,
 } from "./route.ts";
 
-export function mapOrchestratorErrorToToolResult(err: unknown, namespacedName: string): ToolResult {
+export function mapOrchestratorErrorToToolResult(
+  err: unknown,
+  namespacedName: string,
+  pluginGuidance?: string | null,
+): ToolResult {
   if (err instanceof UnknownNamespacedToolName) {
     // The retired-form error already carries its own remedy — "re-list tools and
     // call <bare name>". Emit it alone rather than nesting it inside the generic
@@ -94,7 +104,9 @@ export function mapOrchestratorErrorToToolResult(err: unknown, namespacedName: s
       content: [
         {
           type: "text",
-          text: `[orchestrator] no identity source "${err.sourceName}" for "${err.toolName}".`,
+          text:
+            pluginGuidance ??
+            `[orchestrator] no identity source "${err.sourceName}" for "${err.toolName}".`,
         },
       ],
       isError: true,
@@ -110,7 +122,9 @@ export function mapOrchestratorErrorToToolResult(err: unknown, namespacedName: s
       content: [
         {
           type: "text",
-          text: `[orchestrator] "${err.connector}" is your personal connector and isn't granted to this workspace. Grant it in Settings → Connectors, then retry.`,
+          text:
+            pluginGuidance ??
+            `[orchestrator] "${err.connector}" is your plugin but isn't turned on in this workspace. It can be turned on from Plugins.`,
         },
       ],
       isError: true,
