@@ -193,7 +193,7 @@ export function WorkspaceOverviewPage() {
               <p>No apps installed in this workspace yet.</p>
               {canAddApps && (
                 <Link
-                  to={`${slugPath}/settings/connectors/browse`}
+                  to={`${slugPath}/plugins?tab=browse`}
                   className="mt-3 inline-flex h-8 items-center gap-2 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/80 transition-colors"
                 >
                   <Plus className="size-4" aria-hidden />
@@ -219,7 +219,7 @@ export function WorkspaceOverviewPage() {
               ))}
               {canAddApps && (
                 <Link
-                  to={`${slugPath}/settings/connectors/browse`}
+                  to={`${slugPath}/plugins?tab=browse`}
                   data-testid="workspace-overview-add-app"
                   className="flex items-center gap-2 p-4 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
                 >

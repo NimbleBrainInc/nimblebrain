@@ -316,7 +316,8 @@ describe("WorkspaceNav — the focused workspace only", () => {
       "/w/003eba8844413cd9/conversations",
       "/w/003eba8844413cd9/tasks",
       "/w/003eba8844413cd9/files",
-      "/w/003eba8844413cd9/settings/connectors/browse",
+      "/w/003eba8844413cd9/plugins",
+      "/w/003eba8844413cd9/plugins?tab=browse",
       "/w/003eba8844413cd9/app/people",
       "/w/003eba8844413cd9/app/todos",
     ]);
@@ -730,7 +731,7 @@ describe("WorkspaceNav — pinned apps", () => {
 });
 
 describe("WorkspaceNav — add a connector", () => {
-  test("the APPS header carries a + to the connector catalog", async () => {
+  test("the APPS header carries a + to Plugins' Browse tab", async () => {
     mounted = await mount({
       workspaces: [HELIX],
       activeId: "ws_003eba8844413cd9",
@@ -740,7 +741,7 @@ describe("WorkspaceNav — add a connector", () => {
 
     const add = byTestId(mounted.container, "sidebar-add-connector");
     expect(add).toHaveLength(1);
-    expect(add[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/settings/connectors/browse");
+    expect(add[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/plugins?tab=browse");
     expect(add[0]?.getAttribute("aria-label")).toBe("Add apps and tools");
     expect(add[0]?.parentElement?.textContent).toBe("Apps");
   });
@@ -766,7 +767,7 @@ describe("WorkspaceNav — add a connector", () => {
 
     const empty = byTestId(mounted.container, "sidebar-workspace-apps-empty");
     expect(empty).toHaveLength(1);
-    expect(empty[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/settings/connectors/browse");
+    expect(empty[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/plugins?tab=browse");
     expect(empty[0]?.textContent).toBe("Add an app");
   });
 
@@ -823,7 +824,6 @@ describe("WorkspaceNav — add a connector", () => {
     });
 
     expect(byTestId(mounted.container, "sidebar-workspace-tools")).toHaveLength(0);
-    expect(anchorHrefs(mounted.container)).not.toContain("/w/003eba8844413cd9/settings/connectors");
   });
 });
 
@@ -843,12 +843,12 @@ describe("WorkspaceNav — connectors without a view", () => {
 
     const row = byTestId(mounted.container, "sidebar-workspace-tools");
     expect(row).toHaveLength(1);
-    expect(row[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/settings/connectors");
+    expect(row[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/plugins");
     expect(row[0]?.textContent).toContain("2 more connected");
     expect(row[0]?.getAttribute("title")).toBe("Gmail, Granola");
-    // After the apps.
+    // After the apps (the Plugins item above them shares the href).
     const hrefs = anchorHrefs(mounted.container);
-    expect(hrefs.indexOf("/w/003eba8844413cd9/settings/connectors")).toBeGreaterThan(
+    expect(hrefs.lastIndexOf("/w/003eba8844413cd9/plugins")).toBeGreaterThan(
       hrefs.indexOf("/w/003eba8844413cd9/app/people"),
     );
   });
@@ -1108,11 +1108,12 @@ describe("WorkspaceNav — collapsed", () => {
       "Conversations",
       "Tasks",
       "Files",
+      "Plugins",
       "people",
       "Add apps and tools",
     ]);
     // Icon-only: no visible labels in the rail.
-    for (const label of ["Overview", "Conversations", "Apps"]) {
+    for (const label of ["Overview", "Conversations", "Plugins", "Apps"]) {
       expect(nav?.textContent).not.toContain(label);
     }
   });

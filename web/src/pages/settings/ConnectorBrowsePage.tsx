@@ -34,19 +34,48 @@ type InstallResult = Awaited<ReturnType<typeof installConnector>>;
 export const INSTALL_MIN_SPINNER_MS = 400;
 
 /**
+ * The Browse connectors page under workspace settings: a way back to the
+ * installed list, a header, and the directory.
+ */
+export function ConnectorBrowsePage() {
+  const { slug } = useParams<{ slug: string }>();
+  const backPath = `/w/${slug}/settings/connectors`;
+  return (
+    <div className="space-y-6">
+      <div>
+        <Link to={backPath} className="text-xs text-muted-foreground hover:underline">
+          ← Installed connectors
+        </Link>
+      </div>
+
+      <div>
+        <h1 className="text-xl font-semibold tracking-tight">Browse connectors</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Tools and services to add to this workspace.
+        </p>
+      </div>
+
+      <ConnectorDirectory />
+    </div>
+  );
+}
+
+/**
  * Connector directory — what's available to install. Entries not yet in
  * this workspace fill the grid; installed ones sit in their own section
  * below, muted, with a link to their Configure page, so the directory
  * answers "do we have this already?" without a trip to the Connectors
  * list. Registry attribution is dropped from each card to reduce visual
  * noise. Cards render in a two-column grid because the catalog is long
- * enough that a single column wastes horizontal space.
+ * enough that a single column wastes horizontal space. The grid steps on
+ * its own container, since it renders both in settings and on the Plugins
+ * page.
  *
  * An install that needs no sign-in finishes here: the card turns to
  * "Installed" in place. It moves to the Installed section on the next
  * visit, not mid-visit, so nothing jumps out from under the cursor.
  */
-export function ConnectorBrowsePage() {
+export function ConnectorDirectory() {
   const [entries, setEntries] = useState<CatalogListing[]>([]);
   const [errors, setErrors] = useState<Array<{ file: string; message: string }>>([]);
   const [installed, setInstalled] = useState<InstalledConnector[]>([]);
@@ -83,9 +112,8 @@ export function ConnectorBrowsePage() {
   const { slug } = useParams<{ slug: string }>();
 
   // Connectors are addressed by the URL slug — install targets whichever
-  // workspace (personal or shared) the user is currently viewing.
-  const backPath = `/w/${slug}/settings/connectors`;
-  const configureBasePath = backPath;
+  // workspace the user is currently viewing.
+  const configureBasePath = `/w/${slug}/settings/connectors`;
 
   // One fetcher for the page. Stable identity across renders via
   // useCallback so we can wire it both to the mount effect (with
@@ -265,20 +293,7 @@ export function ConnectorBrowsePage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <Link to={backPath} className="text-xs text-muted-foreground hover:underline">
-          ← Installed connectors
-        </Link>
-      </div>
-
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Browse connectors</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Tools and services to add to this workspace.
-        </p>
-      </div>
-
+    <div className="@container/directory space-y-6">
       <input
         type="search"
         value={query}
@@ -404,7 +419,7 @@ function DirectoryResults({
   return (
     <>
       {available.length > 0 ? (
-        <div className="grid grid-cols-1 @md/settings:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 @md/directory:grid-cols-2 gap-3">
           {available.map((entry) => renderCard(entry, configurePathFor(entry)))}
         </div>
       ) : (
@@ -417,7 +432,7 @@ function DirectoryResults({
       {installedEntries.length > 0 && (
         <section className="space-y-3 pt-2">
           <h2 className="text-sm font-medium text-muted-foreground">Installed</h2>
-          <div className="grid grid-cols-1 @md/settings:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 @md/directory:grid-cols-2 gap-3">
             {installedEntries.map(({ entry, serverName }) =>
               renderCard(entry, installedPathFor(serverName)),
             )}
