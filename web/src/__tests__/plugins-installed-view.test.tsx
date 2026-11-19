@@ -236,6 +236,20 @@ describe("Needs you", () => {
     expect(marks).toEqual(["you", "shared", "shared"]);
   });
 
+  test("a long strip shows its first five, then all of them", async () => {
+    plugins = Array.from({ length: 7 }, (_, i) =>
+      plugin(`workspace:n${i}`, {
+        servers: [{ serverName: `n${i}`, status: "failed", account: null }],
+      }),
+    );
+    mounted = await mount();
+    const strip = q(mounted.container, "installed-needs-you")!;
+    expect(strip.textContent).toContain("Needs you · 7");
+    expect(pluginIds(strip)).toHaveLength(5);
+    await click(q(strip, "installed-show-all"));
+    expect(pluginIds(strip)).toHaveLength(7);
+  });
+
   test("is absent when nothing needs the viewer", async () => {
     plugins = [plugin("workspace:github"), plugin("person:granola", { granted: false })];
     mounted = await mount();

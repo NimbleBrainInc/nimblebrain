@@ -208,7 +208,10 @@ function NoMatches() {
 // Needs you, search results
 // ---------------------------------------------------------------------------
 
+/** A long Needs-you list shows its first few, then all on request, like a section's. */
 function NeedsYou(props: InstalledViewProps & { plugins: Plugin[] }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? props.plugins : props.plugins.slice(0, SUBLIST_PREVIEW);
   return (
     <section
       className="rounded-md border border-warning/20 bg-warning/5 px-3 py-1"
@@ -219,7 +222,7 @@ function NeedsYou(props: InstalledViewProps & { plugins: Plugin[] }) {
         Needs you · {props.plugins.length}
       </h2>
       <div className="divide-y divide-warning/20">
-        {props.plugins.map((plugin) => (
+        {shown.map((plugin) => (
           <PluginRow
             key={plugin.id}
             {...props}
@@ -235,7 +238,45 @@ function NeedsYou(props: InstalledViewProps & { plugins: Plugin[] }) {
           />
         ))}
       </div>
+      {props.plugins.length > SUBLIST_PREVIEW && (
+        <ShowAllButton
+          all={all}
+          total={props.plugins.length}
+          noun=""
+          onToggle={() => setAll(!all)}
+        />
+      )}
     </section>
+  );
+}
+
+function ShowAllButton({
+  all,
+  total,
+  noun,
+  onToggle,
+  className,
+}: {
+  all: boolean;
+  total: number;
+  /** What is shown, after the count ("plugins"); none for a list of one kind already named. */
+  noun: string;
+  onToggle: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={all}
+      data-testid="installed-show-all"
+      className={cn(
+        "my-1 rounded-sm px-1 py-1 text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+        className,
+      )}
+    >
+      {all ? "Show fewer" : `Show all ${total}${noun ? ` ${noun}` : ""}`}
+    </button>
   );
 }
 
@@ -389,15 +430,13 @@ function SubList<T>({
       </h3>
       <div>{shown.map(children)}</div>
       {hidden > 0 && (
-        <button
-          type="button"
-          onClick={() => setAll(!all)}
-          aria-expanded={all}
-          data-testid="installed-show-all"
-          className="mt-1 ml-5.5 rounded-sm px-1 py-1 text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring outline-none"
-        >
-          {all ? "Show fewer" : `Show all ${items.length} ${kind}`}
-        </button>
+        <ShowAllButton
+          all={all}
+          total={items.length}
+          noun={kind}
+          onToggle={() => setAll(!all)}
+          className="ml-5.5"
+        />
       )}
     </div>
   );
