@@ -119,6 +119,7 @@ function Browse({ slug }: { slug: string }) {
       <div
         className="flex items-center justify-between gap-4 rounded-md border border-border px-4 py-3"
         data-testid="write-skill"
+        data-tour="skills"
       >
         <div className="min-w-0">
           <p className="text-sm font-medium">Skills</p>

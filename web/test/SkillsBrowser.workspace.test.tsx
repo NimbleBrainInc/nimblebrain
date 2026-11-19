@@ -186,9 +186,9 @@ const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter } = await import("react-router-dom");
-const { SkillsBrowser, SkillsTab } = await import("../src/pages/settings/SkillsTab");
+const { SkillsBrowser } = await import("../src/pages/settings/SkillsTab");
 const { SessionProvider } = await import("../src/context/SessionContext");
-const { WorkspaceProvider, useWorkspaceContext } = await import("../src/context/WorkspaceContext");
+const { WorkspaceProvider } = await import("../src/context/WorkspaceContext");
 const { NoticeProvider, NoticeViewport } = await import("../src/components/notices");
 
 /** Wrap an element in a session so `useScopedRole` resolves a real org role. */
@@ -980,9 +980,9 @@ describe("SkillsBrowser with surface='workspace' — the workspace-admin write g
 
 // ── The manifest the editor can author, and what it says about it ─────────
 //
-// One component serves all three tiers (`OrgSkillsTab` / `ProfileSkillsTab` are
-// wrappers over this same `SkillsBrowser`), so these behaviors are exercised
-// once here and hold for every vantage.
+// One component serves all three tiers (`OrgSkillsTab` is a wrapper over this
+// same `SkillsBrowser`), so these behaviors are exercised once here and hold
+// for every vantage.
 
 describe("SkillsBrowser authoring — the loading verdict and a pasted SKILL.md", () => {
   test("a dynamic skill with no trigger and no tool pattern says it loads when the agent asks", async () => {
@@ -1316,68 +1316,6 @@ describe("SkillsBrowser — editing an existing skill", () => {
       (c) => (c.args.manifest as { triggers?: unknown } | undefined)?.triggers !== undefined,
     );
     expect(sentTriggers).toBe(false);
-  });
-
-  test("switching workspaces closes the open editor; its pending edit saves to its own workspace", async () => {
-    const workspaces = ["ws_0076759dbbe19fcc", "ws_00a1b2c3d4e5f607"].map((id, i) => ({
-      id,
-      name: `Workspace ${i}`,
-      memberCount: 1,
-      connectorCount: 0,
-      userRole: "admin" as const,
-    }));
-    let switchTo: (id: string) => void = () => {};
-    function Switcher() {
-      const { workspaces: all, setActiveWorkspace } = useWorkspaceContext();
-      switchTo = (id) => setActiveWorkspace(all.find((w) => w.id === id)!);
-      return null;
-    }
-    mounted = await mount(
-      React.createElement(SessionProvider, {
-        session: {
-          authenticated: true,
-          user: { id: "u1", email: "a@b.co", displayName: "A", orgRole: "member" },
-        },
-        children: React.createElement(WorkspaceProvider, {
-          initialWorkspaces: workspaces,
-          initialActiveId: workspaces[0]!.id,
-          children: React.createElement(
-            React.Fragment,
-            null,
-            React.createElement(Switcher),
-            React.createElement(SkillsTab),
-          ),
-        }),
-      }),
-    );
-    await act(async () => {
-      clickByText(mounted!.container, "Workspace-tier rule.");
-    });
-    for (let i = 0; i < 2; i++) {
-      await act(async () => {
-        await Promise.resolve();
-      });
-    }
-    await act(async () => {
-      clickByText(mounted!.container, "Edit");
-    });
-    for (let i = 0; i < 2; i++) {
-      await act(async () => {
-        await Promise.resolve();
-      });
-    }
-    // Typed and never left: the switch is what ends the edit.
-    await typeInto(mounted.container.querySelector("#rule-body"), "Typed in the first workspace.");
-
-    await act(async () => switchTo(workspaces[1]!.id));
-    for (let i = 0; i < 4; i++) {
-      await act(async () => {
-        await Promise.resolve();
-      });
-    }
-    expect(mounted.container.querySelector("#rule-body")).toBeNull();
-    expect(mounted.container.textContent).toContain("+ Add a skill");
-    expect(updateCalls().map((c) => c.opts)).toEqual([{ workspaceId: workspaces[0]!.id }]);
   });
 
   test("a workspace save names the workspace it was opened in", async () => {

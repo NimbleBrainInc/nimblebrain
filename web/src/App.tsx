@@ -69,21 +69,17 @@ import { NotFoundPage, WorkspaceNotFoundPage } from "./pages/NotFoundPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
 import { ConnectorPageRedirect, PluginDetailPage } from "./pages/PluginDetailPage";
 import { PluginsPage } from "./pages/PluginsPage";
+import { ProfilePluginsRedirect, WorkspacePluginsRedirect } from "./pages/PluginsRedirects";
 import { ProfilePage } from "./pages/ProfilePage";
 import { NewSkillPage, SkillPage } from "./pages/SkillPage";
-import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { OrgAboutTab } from "./pages/settings/OrgAboutTab";
 import { OrgArchivesTab } from "./pages/settings/OrgArchivesTab";
 import { OrgSettingsPage } from "./pages/settings/OrgSettingsPage";
 import { OrgSkillsTab } from "./pages/settings/OrgSkillsTab";
 import { OrgUsageTab } from "./pages/settings/OrgUsageTab";
-import { ProfileConnectorsTab } from "./pages/settings/ProfileConnectorsTab";
-import { ProfileSkillsTab } from "./pages/settings/ProfileSkillsTab";
 import { ProfileTab } from "./pages/settings/ProfileTab";
-import { SkillsTab } from "./pages/settings/SkillsTab";
 import { UsersTab } from "./pages/settings/UsersTab";
-import { WorkspaceConnectorsTab } from "./pages/settings/WorkspaceConnectorsTab";
 import { WorkspaceDetailPage } from "./pages/settings/WorkspaceDetailPage";
 import { WorkspaceGeneralTab } from "./pages/settings/WorkspaceGeneralTab";
 import { WorkspaceMcpTab } from "./pages/settings/WorkspaceMcpTab";
@@ -447,7 +443,7 @@ function AuthenticatedAppContent({
               {/* A skill someone wrote, and a new one, beside the plugins. */}
               <Route path="plugins/skills/new" element={<NewSkillPage />} />
               <Route path="plugins/skills/:scope/:name" element={<SkillPage />} />
-              {/* Workspace settings — General/Members/Connectors/Skills/MCP/Notifications/Webhooks. */}
+              {/* Workspace settings — General/Members/MCP/Notifications/Webhooks. */}
               <Route path="settings" element={<WorkspaceSettingsPage />}>
                 <Route
                   index
@@ -455,11 +451,17 @@ function AuthenticatedAppContent({
                 />
                 <Route path="general" element={<WorkspaceGeneralTab />} />
                 <Route path="members" element={<WorkspaceMembersTab />} />
-                <Route path="connectors" element={<WorkspaceConnectorsTab />} />
-                <Route path="connectors/browse" element={<ConnectorBrowsePage />} />
-                {/* A connector is configured on its plugin's page; this keeps old links working. */}
+                {/* Connectors and skills are managed on Plugins; these keep old
+                    links, bookmarks and sign-in callbacks working. The
+                    connector address also resolves a server name to its
+                    plugin's page (`connectorSettingsPath`). */}
+                <Route path="connectors" element={<WorkspacePluginsRedirect />} />
+                <Route
+                  path="connectors/browse"
+                  element={<WorkspacePluginsRedirect tab="browse" />}
+                />
                 <Route path="connectors/:serverName" element={<ConnectorPageRedirect />} />
-                <Route path="skills" element={<SkillsTab />} />
+                <Route path="skills" element={<WorkspacePluginsRedirect />} />
                 <Route path="mcp" element={<WorkspaceMcpTab />} />
                 <Route path="notifications" element={<WorkspaceNotificationsTab />} />
                 <Route path="webhooks" element={<WorkspaceWebhooksTab />} />
@@ -481,17 +483,18 @@ function AuthenticatedAppContent({
             </Route>
 
             {/* Profile — top-level, identity-bound. Tabbed surface
-                following the /org/* pattern. Future identity-level
-                config (custom instructions, model prefs) slots in
-                alongside the Skills tab. */}
+                following the /org/* pattern. A person's own plugins and
+                skills are on each workspace's Plugins page; the old
+                addresses go there, and a sign-in callback that returns to
+                one keeps its query. */}
             <Route path="/profile" element={<ProfilePage />}>
               <Route
                 index
                 element={<Navigate to={`/profile/${landingTab(PROFILE_TABS)}`} replace />}
               />
               <Route path="general" element={<ProfileTab />} />
-              <Route path="connectors" element={<ProfileConnectorsTab />} />
-              <Route path="skills" element={<ProfileSkillsTab />} />
+              <Route path="connectors" element={<ProfilePluginsRedirect />} />
+              <Route path="skills" element={<ProfilePluginsRedirect />} />
             </Route>
 
             {/* Organization settings — dedicated top-level home, org-admin

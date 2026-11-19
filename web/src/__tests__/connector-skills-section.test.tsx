@@ -74,7 +74,12 @@ async function mount(): Promise<HTMLDivElement> {
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
-    root.render(React.createElement(ConnectorSkillsSection, { workspaceId: "ws_a" }));
+    root.render(
+      React.createElement(ConnectorSkillsSection, {
+        workspaceId: "ws_a",
+        servers: ["acme-docs", "acme-mail"],
+      }),
+    );
   });
   await act(async () => {
     await Promise.resolve();
@@ -124,10 +129,10 @@ describe("connectorSkillGroups", () => {
 });
 
 describe("ConnectorSkillsSection", () => {
-  test("says so when no connected server publishes skills", async () => {
+  test("says so when the plugin brings no skills", async () => {
     const container = await mount();
     expect(listConnectorSkills).toHaveBeenCalledWith("ws_a");
-    expect(container.textContent).toContain("No connected server publishes skills");
+    expect(container.textContent).toContain("This plugin brings no skills.");
   });
 
   test("lists each server's skills without reading a body until a row opens", async () => {

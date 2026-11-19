@@ -36,8 +36,8 @@ export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined
 
   const entries = skills.skills;
   const count = entries.length;
-  // Skills are workspace-scoped; "Manage" targets the focused workspace.
-  const skillsPath = activeWorkspace ? `/w/${toSlug(activeWorkspace.id)}/settings/skills` : "/";
+  // Skills are managed on the focused workspace's Plugins page.
+  const skillsPath = activeWorkspace ? `/w/${toSlug(activeWorkspace.id)}/plugins` : "/";
 
   const verb = count === 1 ? `Using ${entries[0]!.name}` : `Using ${count} skills`;
   // Only a row that names its publishing server is matched: a row without one

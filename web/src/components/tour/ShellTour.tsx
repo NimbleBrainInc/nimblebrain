@@ -4,7 +4,8 @@
 // The first time a person lands on a workspace's Overview, a centred card asks
 // whether they want a quick look around; "Skip" ends it there. The tour then
 // walks the real screens rather than describing them: the sidebar, the
-// Overview's Apps section, the app catalog itself, Settings → Skills, and back
+// Overview's Apps section, the app catalog on Plugins → Browse, writing a skill
+// beside it, and back
 // to the Ask box, where it leaves the cursor so it ends on something to do.
 // Help → "Take the tour" replays it from any workspace page.
 //
@@ -85,12 +86,12 @@ export function useTourRunning(): boolean {
 export type TourAnchor = "nav" | "apps" | "catalog" | "skills" | "ask";
 
 /** The workspace page a step belongs on, under `/w/<slug>/`. */
-export type TourPage = "overview" | "catalog" | "skills";
+export type TourPage = "overview" | "browse";
 
+/** Each page's address under the workspace, with its query: Browse is a tab of Plugins. */
 const PAGE_PATH: Record<TourPage, string> = {
   overview: "",
-  catalog: "settings/connectors/browse",
-  skills: "settings/skills",
+  browse: "plugins?tab=browse",
 };
 
 const anchor = (name: TourAnchor) => `[data-tour="${name}"]`;
@@ -127,16 +128,16 @@ const STEPS: TourStep[] = [
   },
   {
     anchor: "catalog",
-    page: "catalog",
+    page: "browse",
     title: "The app catalog",
     body: "Search for a tool, then press Install on its card. Some connect right away; others ask you to sign in to the service first. If you can't install, a workspace admin can.",
     next: "Next: skills",
   },
   {
     anchor: "skills",
-    page: "skills",
+    page: "browse",
     title: "Teach it with skills",
-    body: "Skills tell your agent how your team works: a process, a tone, a checklist. Press + Add a skill to write one. Connectors and members live in these settings too.",
+    body: "Skills tell your agent how your team works: a process, a tone, a checklist. Press Write a skill to write one.",
     next: "Back to Overview",
   },
   {
@@ -341,7 +342,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
       const step = run.steps[move.to];
       if (!step) return;
       const path = pathFor(run.slug, step.page);
-      if (!samePath(window.location.pathname, path)) navigate(path);
+      if (!samePath(window.location.pathname + window.location.search, path)) navigate(path);
       setStepIndex(move.to);
     },
     [run, navigate, end],
