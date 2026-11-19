@@ -143,6 +143,21 @@ function identityInstallableAuth(
 }
 
 /**
+ * Whether a catalog entry is offered for installing for one person: flagged
+ * `personal` by the operator, a remote MCP connection, and an auth the identity
+ * install accepts ({@link identityInstallableAuth}). `list_personal_catalog`
+ * filters by it and `list_directory` reports it per entry, so neither offers a
+ * personal install that `handleInstallIdentity` then refuses.
+ */
+function offeredForPersonalInstall(ctx: ManageConnectorsContext, entry: CatalogListing): boolean {
+  return (
+    entry.personal === true &&
+    entry.install.kind === "remote-oauth" &&
+    identityInstallableAuth(ctx, entry.install.auth, entry.id)
+  );
+}
+
+/**
  * The operator-facing message for a brokered connector whose provider this
  * deployment has not configured. Names the config path generically because it
  * IS generic: every provider's block is `connectors.providers.<id>`.
@@ -302,7 +317,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         wsId: {
           type: "string",
           description:
-            "Target workspace. For `install`: defaults to the workspace this call is made in (the one its URL names), so omit it to install there; supply it only to install elsewhere. For `grant_connector` / `revoke_connector`: the workspace to grant/revoke the caller's personal connector to (any workspace the caller belongs to) — REQUIRED and explicit (never defaulted).",
+            'Target workspace. For `install`: defaults to the workspace this call is made in (the one its URL names), so omit it to install there; supply it only to install elsewhere. With `scope: "identity"`, an explicit `wsId` also grants the new personal connector into that workspace (any the caller belongs to); omitted, nothing is granted. For `grant_connector` / `revoke_connector`: the workspace to grant/revoke the caller\'s personal connector to (any workspace the caller belongs to) — REQUIRED and explicit (never defaulted).',
         },
         clientId: {
           type: "string",
@@ -386,7 +401,14 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             args.scope,
           );
         case "install":
-          return handleInstall(ctx, args.identity, args.entry, args.installWsId, args.scope);
+          return handleInstall(
+            ctx,
+            args.identity,
+            args.entry,
+            args.installWsId,
+            args.scope,
+            args.grantTargetWsId,
+          );
         case "connect_api_key":
           return handleConnectApiKey(ctx, args.wsId, args.identity, args.catalogId, args.fields);
         case "disconnect":
@@ -649,11 +671,17 @@ async function handleListDirectory(
     ...(wsId ? { wsId } : {}),
     ...(isOAuthClientConfigured ? { isOAuthClientConfigured } : {}),
   });
+  // Each entry says whether one person can install it on their own account, so
+  // Browse offers "Just me" only where the identity install accepts it.
+  const entries = result.entries.map((e) => ({
+    ...e,
+    personalInstallable: offeredForPersonalInstall(ctx, e),
+  }));
   return {
     content: textContent(
-      `Directory: ${result.entries.length} entries (${result.errors.length} registry errors).`,
+      `Directory: ${entries.length} entries (${result.errors.length} registry errors).`,
     ),
-    structuredContent: { entries: result.entries, errors: result.errors },
+    structuredContent: { entries, errors: result.errors },
     isError: false,
   };
 }
@@ -1383,16 +1411,21 @@ async function handleInstall(
   rawEntry: unknown,
   wsIdArg: string | undefined,
   scope: string | undefined,
+  grantWsId: string | null,
 ): Promise<ToolResult> {
   const entry = parseCatalogListing(rawEntry);
   if (!entry) return errResult("entry with install action is required.");
   if (!identity) return errResult("Authentication required.");
 
   // Identity-target install: `scope: "identity"` installs a PERSONAL connector on
-  // the caller's own identity (the Profile → Connectors action) — no workspace,
-  // credentials bound to the user. Branch before the workspace requirement below.
+  // the caller's own identity — no workspace, credentials bound to the user. An
+  // explicit `wsId` also grants it there (ADR-0069: installing from inside a
+  // workspace grants it there in the same act). Branch before the workspace
+  // requirement below.
   if (scope === "identity") {
-    return handleInstallIdentity(ctx, identity, entry);
+    return grantWsId
+      ? handleInstallIdentityAndGrant(ctx, identity, entry, grantWsId)
+      : handleInstallIdentity(ctx, identity, entry);
   }
 
   // `wsId` is REQUIRED for every install, but it resolves to the request's
@@ -1464,6 +1497,39 @@ function workspaceInstallAdmission(
     return errResult(`Connector "${entry.id}" not visible in this workspace.`);
   }
   return null;
+}
+
+/**
+ * `install` with `scope: "identity"` and a `wsId` — install the personal
+ * connector and grant it into that workspace, the one the person installed it
+ * from (ADR-0069: installing from inside a workspace grants it there in the
+ * same act). The grant needs only the install record, not a connection, so it
+ * is written before the Connect round trip and holds whether the browser comes
+ * back or not. A re-install grants too (the grant is idempotent), which is how
+ * a person who already has the connector turns it on in another workspace.
+ *
+ * A workspace the caller doesn't belong to is refused before anything is
+ * written, so a refused grant never leaves an install behind.
+ */
+async function handleInstallIdentityAndGrant(
+  ctx: ManageConnectorsContext,
+  identity: UserIdentity,
+  entry: CatalogListing,
+  grantWsId: string,
+): Promise<ToolResult> {
+  const target = await personalGrantTarget(ctx, identity.id, grantWsId);
+  if ("isError" in target) return target;
+
+  const installed = await handleInstallIdentity(ctx, identity, entry);
+  const serverName = installed.structuredContent?.serverName;
+  if (installed.isError || typeof serverName !== "string") return installed;
+
+  await ctx.runtime.getPermissionStore().grantConnector(identity.id, serverName, target.id);
+  return {
+    content: textContent(`${serverName} is on in ${target.name}. Connect it to authenticate.`),
+    structuredContent: { ...installed.structuredContent, grantedWsId: target.id },
+    isError: false,
+  };
 }
 
 /**
@@ -3787,11 +3853,8 @@ async function handleListPersonalCatalog(
 
   const catalog = entries.filter(
     (e) =>
-      e.personal === true &&
-      e.install.kind === "remote-oauth" &&
       // Lockstep with handleInstallIdentity's gate — offered ⊆ acceptable.
-      identityInstallableAuth(ctx, e.install.auth, e.id) &&
-      !installedServerNames.has(slugifyServerName(e.id)),
+      offeredForPersonalInstall(ctx, e) && !installedServerNames.has(slugifyServerName(e.id)),
   );
 
   return {
@@ -3963,11 +4026,8 @@ async function handleGrantConnector(
       `"${serverName}" is not one of your personal connectors — connect it in your profile first.`,
     );
   }
-  const memberships = await ctx.runtime.getWorkspaceStore().getWorkspacesForUser(callerId);
-  const target = memberships.find((w) => w.id === targetWsId);
-  if (!target) {
-    return errResult(`You are not a member of workspace "${targetWsId}".`);
-  }
+  const target = await personalGrantTarget(ctx, callerId, targetWsId);
+  if ("isError" in target) return target;
 
   await ctx.runtime.getPermissionStore().grantConnector(callerId, serverName, targetWsId);
   return {
@@ -3975,6 +4035,21 @@ async function handleGrantConnector(
     structuredContent: { ok: true, serverName, wsId: targetWsId },
     isError: false,
   };
+}
+
+/**
+ * The workspace a caller may grant their personal connector into — any one they
+ * belong to — or the refusal naming it.
+ */
+async function personalGrantTarget(
+  ctx: ManageConnectorsContext,
+  callerId: string,
+  wsId: string,
+): Promise<{ id: string; name: string } | ToolResult> {
+  const memberships = await ctx.runtime.getWorkspaceStore().getWorkspacesForUser(callerId);
+  const target = memberships.find((w) => w.id === wsId);
+  if (!target) return errResult(`You are not a member of workspace "${wsId}".`);
+  return { id: target.id, name: target.name };
 }
 
 /**

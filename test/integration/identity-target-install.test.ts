@@ -16,6 +16,7 @@ import {
   createManageConnectorsTool,
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
+import { requireCredentialStore } from "../../src/tools/credential-store.ts";
 import { McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
@@ -134,8 +135,10 @@ async function buildHarness(): Promise<Harness> {
         },
         listConnectorGrants: async (_userId: string) => grants,
         getConnectorGrants: async (_userId: string, serverName: string) => grants[serverName] ?? [],
+        // Idempotent, as the real store is.
         grantConnector: async (_userId: string, serverName: string, wsId: string) => {
-          grants[serverName] = [...(grants[serverName] ?? []), wsId];
+          const existing = grants[serverName] ?? [];
+          if (!existing.includes(wsId)) grants[serverName] = [...existing, wsId];
         },
         revokeConnector: async (_userId: string, serverName: string, wsId: string) => {
           const remaining = (grants[serverName] ?? []).filter((id) => id !== wsId);
@@ -144,6 +147,7 @@ async function buildHarness(): Promise<Harness> {
         },
       }),
     getAllowInsecureRemotes: () => false,
+    getCredentialStore: () => requireCredentialStore(),
     getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
   });
 
@@ -374,6 +378,135 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
       });
       expect(identity.isError).toBe(false);
     });
+  });
+});
+
+describe("manage_connectors.install scope:identity with wsId — install and grant in one act", () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = await buildHarness();
+  });
+  afterEach(() => {
+    resetTestCredentialStore();
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("grants the new personal connector into the named workspace", async () => {
+    const result = await h.tool.handler({
+      action: "install",
+      entry: dcrEntry(),
+      scope: "identity",
+      wsId: h.sharedWsId,
+    });
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as { scope?: string; grantedWsId?: string };
+    expect(sc.scope).toBe("identity");
+    expect(sc.grantedWsId).toBe(h.sharedWsId);
+    expect(h.grants["ai-granola-mcp"]).toEqual([h.sharedWsId]);
+  });
+
+  test("without wsId, nothing is granted (the profile's install)", async () => {
+    const result = await h.tool.handler({
+      action: "install",
+      entry: dcrEntry(),
+      scope: "identity",
+    });
+    expect(result.isError).toBe(false);
+    expect((result.structuredContent as { grantedWsId?: string }).grantedWsId).toBeUndefined();
+    expect(h.grants["ai-granola-mcp"]).toBeUndefined();
+  });
+
+  test("the grant precedes the connection and stands after the OAuth return, once", async () => {
+    await h.tool.handler({
+      action: "install",
+      entry: dcrEntry(),
+      scope: "identity",
+      wsId: h.sharedWsId,
+    });
+    // Before the sign-in: installed, not connected, already on here.
+    const before = (await h.tool.handler({ action: "list_personal_connectors" }))
+      .structuredContent as { connectors: Array<{ state: string; grantedWorkspaces: string[] }> };
+    expect(before.connectors[0]?.state).toBe("not_authenticated");
+    expect(before.connectors[0]?.grantedWorkspaces).toEqual([h.sharedWsId]);
+
+    // The OAuth callback stores the tokens.
+    await new McpOAuthRecords({
+      owner: { type: "user", userId: USER.id },
+      serverName: "ai-granola-mcp",
+    }).write("tokens", { access_token: "x" });
+
+    // Installing again from the same workspace (a retry, or the person coming
+    // back to Browse) grants nothing twice.
+    const again = await h.tool.handler({
+      action: "install",
+      entry: dcrEntry(),
+      scope: "identity",
+      wsId: h.sharedWsId,
+    });
+    expect((again.structuredContent as { alreadyInstalled?: boolean }).alreadyInstalled).toBe(true);
+
+    const after = (await h.tool.handler({ action: "list_personal_connectors" }))
+      .structuredContent as { connectors: Array<{ state: string; grantedWorkspaces: string[] }> };
+    expect(after.connectors[0]?.state).toBe("running");
+    expect(after.connectors[0]?.grantedWorkspaces).toEqual([h.sharedWsId]);
+  });
+
+  test("re-installing from another workspace turns it on there too", async () => {
+    await h.tool.handler({
+      action: "install",
+      entry: dcrEntry(),
+      scope: "identity",
+      wsId: h.sharedWsId,
+    });
+    await h.tool.handler({
+      action: "install",
+      entry: dcrEntry(),
+      scope: "identity",
+      wsId: h.ownWsId,
+    });
+    expect(h.grants["ai-granola-mcp"]).toEqual([h.sharedWsId, h.ownWsId]);
+  });
+
+  test("refuses a workspace the caller doesn't belong to, and installs nothing", async () => {
+    const result = await h.tool.handler({
+      action: "install",
+      entry: dcrEntry(),
+      scope: "identity",
+      wsId: "ws_00ffffffffffffff",
+    });
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toMatch(/not a member/i);
+    expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
+    expect(h.grants).toEqual({});
+  });
+});
+
+describe("manage_connectors.list_directory — personalInstallable per entry", () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = await buildHarness();
+  });
+  afterEach(() => {
+    resetTestCredentialStore();
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("matches what the personal catalog offers", async () => {
+    const directory = (await h.tool.handler({ action: "list_directory" })).structuredContent as {
+      entries: Array<{ id: string; personalInstallable?: boolean }>;
+    };
+    const personal = (await h.tool.handler({ action: "list_personal_catalog" }))
+      .structuredContent as { catalog: Array<{ id: string }> };
+    const offered = new Set(personal.catalog.map((e) => e.id));
+    for (const e of directory.entries) {
+      expect(e.personalInstallable).toBe(offered.has(e.id));
+    }
+    const byId = new Map(directory.entries.map((e) => [e.id, e.personalInstallable]));
+    // Granola: dcr + personal. Notion: not flagged personal. Dropbox: static
+    // with no instance OAuth client, so one account for the workspace.
+    expect(byId.get("ai.granola/mcp")).toBe(true);
+    expect(byId.get("com.notion/mcp")).toBe(false);
+    expect(byId.get("com.dropbox/mcp")).toBe(false);
   });
 });
 

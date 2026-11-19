@@ -5,23 +5,33 @@ import {
   type CatalogListing,
   getInstalledConnectors,
   type InstalledConnector,
+  initiateComposioIdentityConnect,
   initiateComposioOAuth,
+  initiateIdentityConnect,
   initiateMcpOAuth,
   installConnector,
+  installPersonalConnector,
   listDirectory,
+  listPersonalConnectors,
   type RemoteOAuthInstall,
 } from "../../api/client";
 import { ComposioApiKeyModal } from "../../components/connectors/ComposioApiKeyModal";
 import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
+import {
+  type InstallAudience,
+  InstallAudienceDialog,
+} from "../../components/connectors/InstallAudienceDialog";
 import {
   OAuthClientSetupModal,
   type OAuthClientSetupTarget,
 } from "../../components/connectors/OAuthClientSetupModal";
 import { SecretHeadersModal } from "../../components/connectors/SecretHeadersModal";
 import { Button } from "../../components/ui/button";
+import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import { installCompletesWithoutSignIn } from "../../lib/connector-auth-flow.ts";
 import { type SecretHeaderField, secretHeaderFields } from "../../lib/secret-headers";
+import { toWsId } from "../../lib/workspace-slug";
 
 type InstallResult = Awaited<ReturnType<typeof installConnector>>;
 
@@ -32,6 +42,9 @@ type InstallResult = Awaited<ReturnType<typeof installConnector>>;
  * Paths that leave the page (a vendor sign-in) never wait on it.
  */
 export const INSTALL_MIN_SPINNER_MS = 400;
+
+/** Where a person's own connectors are managed: sign-in, workspaces, tools. */
+export const PERSONAL_CONNECTORS_PATH = "/profile/connectors";
 
 /**
  * The Browse connectors page under workspace settings: a way back to the
@@ -74,19 +87,31 @@ export function ConnectorBrowsePage() {
  * An install that needs no sign-in finishes here: the card turns to
  * "Installed" in place. It moves to the Installed section on the next
  * visit, not mid-visit, so nothing jumps out from under the cursor.
+ *
+ * With `offerPersonal`, an entry that can hold a per-person credential
+ * (`personalInstallable`) asks whom the install is for: "Just me" (the
+ * default) installs it on the viewer's own account and grants it into this
+ * workspace in the same call (ADR-0069), then runs the personal sign-in;
+ * "Everyone in <workspace>" is the workspace install below, offered only to a
+ * member who may write the workspace. An entry that cannot is a workspace
+ * install, and its card says why.
  */
-export function ConnectorDirectory() {
+export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: boolean } = {}) {
   const [entries, setEntries] = useState<CatalogListing[]>([]);
   const [errors, setErrors] = useState<Array<{ file: string; message: string }>>([]);
   const [installed, setInstalled] = useState<InstalledConnector[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  // Entries installed during this visit, catalog id → serverName. Kept apart
+  // Entries installed during this visit, catalog id → the page that manages
+  // the install (the workspace's Configure page, or the viewer's own
+  // connectors for a personal one). Kept apart
   // from `installed` so a directory refetch (after OAuth client setup) cannot move
   // a card the user just installed into the Installed section.
   const [justInstalled, setJustInstalled] = useState<ReadonlyMap<string, string>>(new Map());
   const [query, setQuery] = useState("");
+  // The entry whose install is asking whom it is for.
+  const [audienceEntry, setAudienceEntry] = useState<CatalogListing | null>(null);
   const [setupModalEntry, setSetupModalEntry] = useState<OAuthClientSetupTarget | null>(null);
   // API-key Composio connector: after install we collect the key fields in a
   // modal (no OAuth redirect), then call connect_api_key. Holds the entry +
@@ -110,6 +135,9 @@ export function ConnectorDirectory() {
   const canManage = useCanWriteActiveWorkspace();
   const navigate = useNavigate();
   const { slug } = useParams<{ slug: string }>();
+  const wsId = slug ? toWsId(slug) : undefined;
+  const { workspaces } = useWorkspaceContext();
+  const workspaceName = workspaces.find((w) => w.id === wsId)?.name ?? "this workspace";
 
   // Connectors are addressed by the URL slug — install targets whichever
   // workspace the user is currently viewing.
@@ -183,8 +211,8 @@ export function ConnectorDirectory() {
     return { available, installedEntries };
   }, [entries, query, installedServerName, justInstalled]);
 
-  const markInstalled = (entry: CatalogListing, serverName: string) => {
-    setJustInstalled((prev) => new Map(prev).set(entry.id, serverName));
+  const markInstalled = (entry: CatalogListing, managePath: string) => {
+    setJustInstalled((prev) => new Map(prev).set(entry.id, managePath));
     setBusyId(null);
   };
 
@@ -263,7 +291,7 @@ export function ConnectorDirectory() {
       if (entry.install.kind === "remote-oauth") {
         if (await routeRemoteOAuthInstall(entry, entry.install, result)) {
           await minSpinner;
-          markInstalled(entry, result.serverName);
+          markInstalled(entry, `${configureBasePath}/${result.serverName}`);
         }
         return;
       }
@@ -290,6 +318,61 @@ export function ConnectorDirectory() {
       return;
     }
     await runInstall(entry);
+  };
+
+  // Install on the viewer's own account, granted into this workspace by the
+  // same call, then sign in. The grant needs only the install, so it is
+  // already in place when the sign-in's callback lands, and stands if the
+  // person never finishes it (the connector then reads Not connected on their
+  // profile, with Connect). A connector already connected needs no sign-in: a
+  // Connect on a live connection is refused as busy. Throws, so the dialog
+  // shows the failure beside the choice that caused it.
+  const runPersonalInstall = async (entry: CatalogListing) => {
+    if (!wsId) throw new Error("No workspace to turn it on in.");
+    const result = await installPersonalConnector(entry, wsId);
+    if (result.alreadyInstalled) {
+      const { connectors } = await listPersonalConnectors();
+      const mine = connectors.find((c) => c.serverName === result.serverName);
+      if (mine?.state === "running") {
+        setAudienceEntry(null);
+        markInstalled(entry, PERSONAL_CONNECTORS_PATH);
+        return;
+      }
+    }
+    // The Connect route follows the auth, as on the profile: a brokered
+    // connector keys on its catalog id, everything else on its server name.
+    const { authorizationUrl } =
+      entry.install.kind === "remote-oauth" && entry.install.auth === "composio"
+        ? await initiateComposioIdentityConnect(entry.id)
+        : await initiateIdentityConnect(result.serverName);
+    if (authorizationUrl) {
+      window.location.assign(authorizationUrl);
+      return;
+    }
+    setAudienceEntry(null);
+    markInstalled(entry, PERSONAL_CONNECTORS_PATH);
+  };
+
+  // The card's Install: ask whom it is for where a personal install is
+  // possible, otherwise install into the workspace as before.
+  const onInstallClick = (entry: CatalogListing) => {
+    if (offerPersonal && entry.personalInstallable) {
+      setLoadError(null);
+      setAudienceEntry(entry);
+      return;
+    }
+    void onInstall(entry);
+  };
+
+  const onAudienceChosen = async (audience: InstallAudience) => {
+    const entry = audienceEntry;
+    if (!entry) return;
+    if (audience === "personal") {
+      await runPersonalInstall(entry);
+      return;
+    }
+    setAudienceEntry(null);
+    await onInstall(entry);
   };
 
   return (
@@ -328,15 +411,13 @@ export function ConnectorDirectory() {
               entry={entry}
               busy={busyId === entry.id}
               canManage={canManage}
+              personal={offerPersonal ? Boolean(entry.personalInstallable) : undefined}
               configurePath={configurePath}
-              onInstall={() => onInstall(entry)}
+              onInstall={() => onInstallClick(entry)}
               onSetUp={() => setSetupModalEntry(oauthClientSetupTarget(entry))}
             />
           )}
-          configurePathFor={(entry) => {
-            const serverName = justInstalled.get(entry.id);
-            return serverName && `${configureBasePath}/${serverName}`;
-          }}
+          configurePathFor={(entry) => justInstalled.get(entry.id)}
           installedPathFor={(serverName) => `${configureBasePath}/${serverName}`}
         />
       )}
@@ -355,6 +436,19 @@ export function ConnectorDirectory() {
             setSetupModalEntry(null);
             fetchDirectory();
           }}
+        />
+      )}
+
+      {audienceEntry && (
+        <InstallAudienceDialog
+          open={true}
+          connectorName={audienceEntry.name}
+          workspaceName={workspaceName}
+          canWriteWorkspace={canManage}
+          onOpenChange={(open) => {
+            if (!open) setAudienceEntry(null);
+          }}
+          onInstall={onAudienceChosen}
         />
       )}
 
@@ -380,7 +474,7 @@ export function ConnectorDirectory() {
           open={true}
           onClose={() => setApiKeyModal(null)}
           onConnected={() => {
-            markInstalled(apiKeyModal.entry, apiKeyModal.serverName);
+            markInstalled(apiKeyModal.entry, `${configureBasePath}/${apiKeyModal.serverName}`);
             setApiKeyModal(null);
           }}
         />
@@ -487,6 +581,7 @@ function DirectoryCard({
   entry,
   busy,
   canManage,
+  personal,
   configurePath,
   onInstall,
   onSetUp,
@@ -494,6 +589,8 @@ function DirectoryCard({
   entry: CatalogListing;
   busy: boolean;
   canManage: boolean;
+  /** Whether the directory offers a personal install of this entry; undefined when it never does. */
+  personal?: boolean;
   /** Set when the entry is installed in this workspace: its Configure page. */
   configurePath?: string;
   onInstall: () => void;
@@ -518,16 +615,24 @@ function DirectoryCard({
         </div>
       </div>
       <div className="mt-auto flex items-end justify-between gap-2">
-        {secretCount > 0 ? (
-          <span className="text-2xs text-muted-foreground border border-border/60 rounded-sm px-1.5 py-0.5">
-            {secretCount === 1 ? "Needs a credential" : `Needs ${secretCount} credentials`}
-          </span>
-        ) : (
-          <span />
-        )}
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {secretCount > 0 ? (
+            <span className="text-2xs text-muted-foreground border border-border/60 rounded-sm px-1.5 py-0.5">
+              {secretCount === 1 ? "Needs a credential" : `Needs ${secretCount} credentials`}
+            </span>
+          ) : null}
+          {personal === false && !configurePath ? (
+            // Why there is no "Just me": the server signs in with one account
+            // the workspace or operator holds, never a person's own.
+            <span className="text-2xs text-muted-foreground">
+              Uses one account for the workspace
+            </span>
+          ) : null}
+        </div>
         <CardAction
           busy={busy}
           canManage={canManage}
+          personalOffered={personal === true}
           configurePath={configurePath}
           isStaticAuth={isStaticAuth}
           oauthClientReady={oauthClientReady}
@@ -547,6 +652,7 @@ function DirectoryCard({
 export function CardAction({
   busy,
   canManage,
+  personalOffered = false,
   configurePath,
   isStaticAuth,
   oauthClientReady,
@@ -555,6 +661,11 @@ export function CardAction({
 }: {
   busy: boolean;
   canManage: boolean;
+  /**
+   * The install can be for the viewer alone, which needs no workspace write, so
+   * a member who may not write the workspace still gets Install.
+   */
+  personalOffered?: boolean;
   /** Set when the entry is installed in this workspace: its Configure page. */
   configurePath?: string;
   isStaticAuth: boolean;
@@ -599,8 +710,11 @@ export function CardAction({
   // write — `workspaceInstallAdmission` refuses a non-admin with "Workspace
   // admin role required to install connectors." An enabled button would move
   // that refusal to after the click. One gated return covers every install
-  // path, so a new one can't miss the gate by being added elsewhere.
-  return canManage ? (
+  // path, so a new one can't miss the gate by being added elsewhere. A personal
+  // install is the one install that writes nothing of the workspace's but the
+  // viewer's own grant, so it opens the gate; the choice that follows offers
+  // "Everyone here" only under the same `canManage`.
+  return canManage || personalOffered ? (
     <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
       {busy ? (
         <>

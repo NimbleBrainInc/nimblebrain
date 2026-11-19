@@ -21,11 +21,11 @@ import { EmptyState, InlineError } from "./settings/components";
  *
  * Installed lists the workspace's plugins and the viewer's own ones granted
  * here, then the viewer's plugins not used here, each with the one action that
- * changes that. Browse is the connector directory, unchanged, so installing
- * behaves as it does in settings. Each row shows a plugin by the facts the
- * listing carries (whose it is, whether it is granted, the account it signs in
- * as) and needs no rule of its own to tell a personal plugin from a workspace
- * one (ADR-0069).
+ * changes that. Browse is the connector directory, which asks whom an install
+ * is for: the viewer alone (granted here in the same act) or everyone in the
+ * workspace. Each row shows a plugin by the facts the listing carries (whose it
+ * is, whether it is granted, the account it signs in as) and needs no rule of
+ * its own to tell a personal plugin from a workspace one (ADR-0069).
  *
  * One column, because this renders in the main area beside the docked chat
  * (`web/DESIGN.md`).
@@ -60,7 +60,7 @@ export function PluginsPage() {
         {tab === "installed" ? (
           <InstalledPlugins key={wsId} wsId={wsId} slug={slug} onBrowse={() => showTab("browse")} />
         ) : (
-          <ConnectorDirectory />
+          <ConnectorDirectory offerPersonal />
         )}
       </div>
     </div>
