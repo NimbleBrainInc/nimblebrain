@@ -51,9 +51,24 @@ const listPersonalConnectors = mock<typeof ApiClient.listPersonalConnectors>(asy
 const grantConnector = mock<typeof ApiClient.grantConnector>(async () => {});
 const revokeConnector = mock<typeof ApiClient.revokeConnector>(async () => {});
 const listConnectorSkills = mock<typeof ApiClient.listConnectorSkills>(async () => ({
-  overlays: [{ server: "github", name: "usage", toolAffinity: ["github__search"] }],
+  overlays: [
+    { server: "github", name: "usage", toolAffinity: ["github__search"] },
+    // Another plugin's skill, which this plugin's page leaves out.
+    { server: "linear", name: "triage", toolAffinity: ["linear__search"] },
+  ],
   published: [],
 }));
+// Connected without an interactive flow, so Connect stays on the page and the
+// test reads which route it took.
+const initiateIdentityConnect = mock<typeof ApiClient.initiateIdentityConnect>(
+  async () => ({}) as Awaited<ReturnType<typeof ApiClient.initiateIdentityConnect>>,
+);
+const initiateComposioIdentityConnect = mock<typeof ApiClient.initiateComposioIdentityConnect>(
+  async () => ({}) as Awaited<ReturnType<typeof ApiClient.initiateComposioIdentityConnect>>,
+);
+const disconnectPersonalConnector = mock<typeof ApiClient.disconnectPersonalConnector>(
+  async () => ({}) as Awaited<ReturnType<typeof ApiClient.disconnectPersonalConnector>>,
+);
 
 mock.module("../api/client", () => ({
   ...realClient,
@@ -63,6 +78,9 @@ mock.module("../api/client", () => ({
   grantConnector,
   revokeConnector,
   listConnectorSkills,
+  initiateIdentityConnect,
+  initiateComposioIdentityConnect,
+  disconnectPersonalConnector,
   listConnectorToolsWithPermissions: async () => ({
     scope: "workspace",
     serverName: "github",
@@ -134,9 +152,21 @@ beforeEach(() => {
   plugins = [];
   personal = [];
   location = "";
-  for (const m of [listPlugins, listPersonalConnectors, grantConnector, revokeConnector]) {
+  for (const m of [
+    listPlugins,
+    listPersonalConnectors,
+    grantConnector,
+    revokeConnector,
+    initiateIdentityConnect,
+    initiateComposioIdentityConnect,
+    disconnectPersonalConnector,
+  ]) {
     m.mockClear();
   }
+  listPersonalConnectors.mockImplementation(async () => ({ connectors: personal }));
+  disconnectPersonalConnector.mockImplementation(
+    async () => ({}) as Awaited<ReturnType<typeof ApiClient.disconnectPersonalConnector>>,
+  );
 });
 
 async function settle(): Promise<void> {
@@ -232,6 +262,7 @@ describe("PluginDetailPage — a workspace plugin", () => {
     // The plugin's own skills, read for this workspace.
     expect(listConnectorSkills).toHaveBeenCalledWith(WS_ID);
     expect(text).toContain("usage");
+    expect(text).not.toContain("triage");
     expect(text).toContain("Tool permissions");
   });
 
@@ -326,6 +357,100 @@ describe("PluginDetailPage — a person's plugin", () => {
     mounted = await mount(pagePath("person:granola"));
     expect(testId(mounted.container, "plugin-status")?.textContent).toBe("Not connected");
     expect(button(mounted.container, "Connect")).toBeDefined();
+  });
+
+  test("Connect waits for the connector record, then takes its route", async () => {
+    plugins = [
+      {
+        ...granola(false),
+        servers: [{ serverName: "granola", status: "not_connected", account: null }],
+      },
+    ];
+    let resolve: (v: { connectors: PersonalConnector[] }) => void = () => {};
+    listPersonalConnectors.mockImplementation(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
+    mounted = await mount(pagePath("person:granola"));
+
+    const connect = button(mounted.container, "Connect");
+    expect(connect?.disabled).toBe(true);
+    await click(connect);
+    expect(initiateIdentityConnect).not.toHaveBeenCalled();
+    expect(initiateComposioIdentityConnect).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolve({
+        connectors: [
+          {
+            ...granolaConnector([]),
+            state: "not_authenticated",
+            identity: undefined,
+            auth: "composio",
+            connectorId: "ai.granola/granola",
+          },
+        ],
+      });
+    });
+    await settle();
+    await click(button(mounted.container, "Connect"));
+    expect(initiateComposioIdentityConnect).toHaveBeenCalledWith("ai.granola/granola");
+    expect(initiateIdentityConnect).not.toHaveBeenCalled();
+  });
+
+  test("Connect on a DCR connector keys on the server name", async () => {
+    plugins = [
+      {
+        ...granola(false),
+        servers: [{ serverName: "granola", status: "not_connected", account: null }],
+      },
+    ];
+    personal = [{ ...granolaConnector([]), state: "not_authenticated", identity: undefined }];
+    mounted = await mount(pagePath("person:granola"));
+    await click(button(mounted.container, "Connect"));
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola");
+    expect(initiateComposioIdentityConnect).not.toHaveBeenCalled();
+  });
+
+  test("Disconnect asks first, and Cancel leaves it connected", async () => {
+    plugins = [granola(true)];
+    personal = [granolaConnector([WS_ID])];
+    mounted = await mount(pagePath("person:granola"));
+    await click(button(mounted.container, "Disconnect"));
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("Disconnect Granola?");
+    expect(dialog.textContent).toContain("It turns off in the 1 workspace it is on in.");
+
+    await click(button(dialog, "Cancel"));
+    expect(disconnectPersonalConnector).not.toHaveBeenCalled();
+    expect(location).toBe(pagePath("person:granola"));
+  });
+
+  test("Disconnect removes it and returns to Plugins", async () => {
+    plugins = [granola(true)];
+    personal = [granolaConnector([WS_ID])];
+    mounted = await mount(pagePath("person:granola"));
+    await click(button(mounted.container, "Disconnect"));
+    await click(button(document.body.querySelector('[role="dialog"]')!, "Disconnect"));
+    expect(disconnectPersonalConnector).toHaveBeenCalledWith("granola");
+    expect(location).toBe(`/w/${SLUG}/plugins`);
+  });
+
+  test("a failed Disconnect stays on the page and says why", async () => {
+    plugins = [granola(true)];
+    personal = [granolaConnector([WS_ID])];
+    disconnectPersonalConnector.mockImplementation(async () => {
+      throw new Error("Sign-out failed");
+    });
+    mounted = await mount(pagePath("person:granola"));
+    await click(button(mounted.container, "Disconnect"));
+    await click(button(document.body.querySelector('[role="dialog"]')!, "Disconnect"));
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain(
+      "Sign-out failed",
+    );
+    expect(location).toBe(pagePath("person:granola"));
   });
 });
 

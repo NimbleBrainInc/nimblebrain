@@ -372,15 +372,19 @@ function PersonalPlugin({
     }
   };
 
-  const connect = async (server: PluginServer) => {
-    const connector = mine.find((c) => c.serverName === server.serverName);
+  // The connector record says which route Connect takes (Composio keys on its
+  // connector id, DCR on the server name), so Connect waits for it.
+  const connectorFor = (server: PluginServer) =>
+    mine.find((c) => c.serverName === server.serverName);
+
+  const connect = async (connector: PersonalConnector) => {
     setError(null);
-    setBusy(`connect:${server.serverName}`);
+    setBusy(`connect:${connector.serverName}`);
     try {
       const url = await personalConnectUrl({
-        auth: connector?.auth ?? "dcr",
-        serverName: server.serverName,
-        connectorId: connector?.connectorId,
+        auth: connector.auth,
+        serverName: connector.serverName,
+        connectorId: connector.connectorId,
       });
       // The redirect leaves the page, so the button stays busy until it does.
       if (url) {
@@ -415,29 +419,34 @@ function PersonalPlugin({
         </div>
         {plugin.servers
           .filter((s) => s.status !== "ready")
-          .map((server) => (
-            <div
-              key={server.serverName}
-              className="flex items-start justify-between gap-4 rounded-sm border border-border/60 bg-muted/20 px-4 py-3"
-            >
-              <div className="min-w-0">
-                <div className="text-sm font-medium">{statusLabel(server.status)}</div>
-                {server.statusReason && (
-                  <div className="mt-0.5 text-xs text-muted-foreground">{server.statusReason}</div>
-                )}
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                disabled={busy === `connect:${server.serverName}`}
-                onClick={() => void connect(server)}
+          .map((server) => {
+            const connector = connectorFor(server);
+            return (
+              <div
+                key={server.serverName}
+                className="flex items-start justify-between gap-4 rounded-sm border border-border/60 bg-muted/20 px-4 py-3"
               >
-                {busy === `connect:${server.serverName}` ? "Connecting…" : "Connect"}
-              </Button>
-            </div>
-          ))}
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">{statusLabel(server.status)}</div>
+                  {server.statusReason && (
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {server.statusReason}
+                    </div>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  disabled={!connector || busy === `connect:${server.serverName}`}
+                  onClick={() => connector && void connect(connector)}
+                >
+                  {busy === `connect:${server.serverName}` ? "Connecting…" : "Connect"}
+                </Button>
+              </div>
+            );
+          })}
       </section>
 
       {error && <InlineError message={error} />}
