@@ -95,10 +95,28 @@ export const PluginsListOutput = Type.Object({
 export type PluginsListOutput = Static<typeof PluginsListOutput>;
 
 /**
+ * `nb__request_plugin`: a model asks the caller to turn on one of their own
+ * plugins in the workspace its run is in (ADR-0070). Its own tool, not a field
+ * of `nb__manage_tools`: promotion is the native engine's state, which an
+ * external agent runtime does not have, while a request touches none of it.
+ */
+export const RequestPluginInput = Type.Object(
+  {
+    plugin: Type.String({
+      minLength: 1,
+      description:
+        "The exact name of one of the person's own plugins that nb__search lists as not turned on in this workspace.",
+    }),
+  },
+  { required: ["plugin"], additionalProperties: false },
+);
+export type RequestPluginInput = Static<typeof RequestPluginInput>;
+
+/**
  * A model's request to use one of the caller's own plugins in the workspace
- * its run is in (`nb__manage_tools` `request_plugin`, ADR-0069 "Only the owner
- * grants"). The request writes nothing: a first-party client shows it to the
- * plugin's owner, and only their answer there writes the grant.
+ * its run is in (`nb__request_plugin`, ADR-0069 "Only the owner grants"). The
+ * request writes nothing: a first-party client shows it to the plugin's owner,
+ * and only their answer there writes the grant.
  */
 export const PluginRequest = Type.Object({
   /** The plugin's server: the name `grant_connector` takes. */

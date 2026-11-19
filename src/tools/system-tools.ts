@@ -18,9 +18,9 @@ import { defineInProcessApp, type InProcessTool, READ_ONLY } from "./in-process-
 import { createManageToolsToolDefs } from "./manage-tools.ts";
 import { McpSource } from "./mcp-source.ts";
 import {
+  createRequestPluginToolDef,
   describeUngrantedPlugins,
   discoverUngrantedPlugins,
-  requestPlugin,
   ungrantedPluginGuidance,
 } from "./plugin-request.ts";
 import type { ToolRegistry } from "./registry.ts";
@@ -89,7 +89,6 @@ export async function createSystemTools(
     : undefined;
   const manageToolsToolDefs: InProcessTool[] = createManageToolsToolDefs(
     toolPromotionCtx,
-    pluginCtx ? (serverName) => requestPlugin(pluginCtx, serverName) : undefined,
     pluginCtx ? (toolName) => ungrantedPluginGuidance(pluginCtx, toolName) : undefined,
   );
 
@@ -140,6 +139,12 @@ export async function createSystemTools(
   // act on it has to as well. See `createUseSkillToolDef`.
   if (runtime) {
     systemToolDefs.push(createUseSkillToolDef(runtime));
+  }
+
+  // Asking the person for one of their own plugins (ADR-0070). Its own tool so
+  // that a runtime holding back `nb__manage_tools` still serves it.
+  if (pluginCtx) {
+    systemToolDefs.push(createRequestPluginToolDef(pluginCtx));
   }
 
   if (manageUsersCtx) {
