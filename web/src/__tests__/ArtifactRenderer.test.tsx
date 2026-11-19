@@ -77,7 +77,7 @@ describe("ArtifactRenderer — untrusted-render contract", () => {
   });
 
   test("markdown prefixes raw-HTML id/name so they cannot clobber DOM globals", () => {
-    const hostile = `<img src="https://example.com/a.png" name="cookie">\n\n<div id="__SENTRY__">x</div>`;
+    const hostile = `<img src="/v1/files/fl_a.png" name="cookie">\n\n<div id="__SENTRY__">x</div>`;
     const { host, unmount } = mount(
       React.createElement(ArtifactRenderer, { mimeType: "text/markdown", text: hostile }),
     );
