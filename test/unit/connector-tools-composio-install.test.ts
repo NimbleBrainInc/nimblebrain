@@ -466,13 +466,11 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(ws?.connectors ?? []).toHaveLength(0);
   });
 
-  // The overlay identity is interpolated into the curated repo's fetch path, so
-  // whatever chooses it chooses which repository is read. It must come from the
-  // operator's catalog, never from the caller's action — `parseCatalogListing`
-  // strips no unknown install fields, and a `dcr` action is returned verbatim,
-  // so a `composio` block on a non-composio entry is caller input all the way
-  // through.
-  test("(e-5) a forged composio block on a dcr install cannot steer the overlay identity", async () => {
+  // Curated skills bind by the server's registry name, looked up in the pinned
+  // catalog. A `composio` block on a non-composio entry is caller input all the
+  // way through (`parseCatalogListing` strips no unknown install fields), and it
+  // must not choose what is read.
+  test("(e-5) a forged composio block on a dcr install does not steer the skill lookup", async () => {
     const identities: string[] = [];
     const lifecycle = h.runtime.getLifecycle();
     const realSync = lifecycle.syncBoundSkills.bind(lifecycle);
@@ -496,9 +494,8 @@ describe("manage_connectors.install (composio-auth)", () => {
 
       await buildTool(h).handler({ action: "install", entry: forged, wsId: h.wsId });
 
-      // Derived from the canonical reverse-DNS id, as every DCR connector is.
-      expect(identities).toEqual(["evil"]);
-      expect(identities[0]).not.toContain("..");
+      // The entry's registry name, as for every connector; the toolkit plays no part.
+      expect(identities).toEqual(["com.evil/mcp"]);
     } finally {
       lifecycle.syncBoundSkills = realSync;
     }

@@ -45,7 +45,7 @@ export interface MaterializedConnectorSkill {
  *
  * The overlay's own frontmatter supplies `name` + `description` + body, and
  * optionally `metadata.nimblebrain.tool-affinity` as bare tool names or globs;
- * the block needs no `loading-strategy` ({@link withOverlayLoadingStrategy}).
+ * the block needs no `loading-strategy` ({@link normalizeOverlayBlock}).
  * The runtime fields are (re)stamped here so a materialized overlay always
  * loads as a connector candidate:
  *   - `loading-strategy: dynamic`, `status: active`
@@ -62,7 +62,7 @@ export function materializeConnectorSkill(args: {
   serverName: string;
   /** The raw fetched SKILL.md (frontmatter + body). */
   overlayBody: string;
-  /** Provenance source ref, e.g. `connector:gmail@v0.2.0`. */
+  /** Provenance source ref, e.g. `plugin:gmail@nimblebrain:gmail`. */
   source: string;
   /** ISO timestamp, injected for deterministic tests. */
   now: string;
@@ -70,7 +70,7 @@ export function materializeConnectorSkill(args: {
   const serverDir = join(args.connectorSkillsDir, args.serverName);
   const { data, content } = matter(args.overlayBody);
   const parsed = parseSkillParts(
-    withOverlayLoadingStrategy(data),
+    normalizeOverlayBlock(data),
     content,
     join(serverDir, "overlay.md"),
     { cap: false },
@@ -106,25 +106,29 @@ export function materializeConnectorSkill(args: {
 }
 
 /**
- * Fill `loading-strategy` into an overlay's `metadata.nimblebrain` block when
- * the block omits it.
+ * Normalize an overlay's `metadata.nimblebrain` block for the skill schema: fill
+ * `loading-strategy` when the block omits it, and drop `server`.
  *
- * The schema requires the field of any skill that declares the block, because
- * for an authored skill it is the author's statement of how the skill loads.
- * An overlay's author has no such statement to make: materialize stamps
+ * The schema requires `loading-strategy` of any skill that declares the block,
+ * because for an authored skill it is the author's statement of how the skill
+ * loads. An overlay's author has no such statement to make: materialize stamps
  * `dynamic` whatever the overlay says, and the block exists only to carry
- * `tool-affinity`. Requiring the field there would reject a block that declares
- * only what an overlay author governs, and a rejected overlay is no overlay.
+ * `tool-affinity` and the binding. `server` is that binding (ADR-0068: a skill
+ * names the plugin server it guides); install has already consumed it to choose
+ * this connector, and the materialized copy is bound by its tool-affinity, so it
+ * is not part of the manifest. Requiring or refusing either field would reject
+ * an overlay over what its author governs, and a rejected overlay is no overlay.
  * Returns a copy; the parsed frontmatter is not mutated.
  */
-function withOverlayLoadingStrategy(data: Record<string, unknown>): Record<string, unknown> {
+function normalizeOverlayBlock(data: Record<string, unknown>): Record<string, unknown> {
   const metadata = data.metadata;
   if (!isRecord(metadata)) return data;
   const nb = metadata.nimblebrain;
-  if (!isRecord(nb) || "loading-strategy" in nb) return data;
+  if (!isRecord(nb)) return data;
+  const { server: _binding, ...rest } = nb;
   return {
     ...data,
-    metadata: { ...metadata, nimblebrain: { "loading-strategy": "dynamic", ...nb } },
+    metadata: { ...metadata, nimblebrain: { "loading-strategy": "dynamic", ...rest } },
   };
 }
 
@@ -191,7 +195,7 @@ export interface ConnectorOverlayInfo {
   name: string;
   /** Overlay description from frontmatter, when present. */
   description?: string;
-  /** Provenance source ref, e.g. `connector:gmail@v0.2.0`. */
+  /** Provenance source ref, e.g. `plugin:gmail@nimblebrain:gmail`. */
   source?: string;
   /** The tool patterns the overlay is bound to, under the server's namespace. */
   toolAffinity: string[];

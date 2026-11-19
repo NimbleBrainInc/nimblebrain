@@ -780,7 +780,7 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
         .getDataPath(CONNECTOR_SKILLS_SUBDIR),
       serverName: OVERLAY_SERVER,
       overlayBody: `${affinitySkill("pages-usage", ["create_page"])}\n\nConfirm the parent page.`,
-      source: "connector:pages@v0.1.0",
+      source: "plugin:pages@nimblebrain:pages-usage",
       now: "2026-01-01T00:00:00.000Z",
     });
     await affinityRuntime.getLifecycle().seedInstance(
@@ -789,7 +789,16 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
       {
         url: servers[1]!.url,
         serverName: OVERLAY_SERVER,
-        skillsLock: [{ identity: "pages", version: "v0.1.0", sha: "a1" }],
+        skillsLock: [
+          {
+            plugin: "pages@nimblebrain",
+            server: "com.test/pages",
+            skill: "pages-usage",
+            version: "c".repeat(64),
+            digest: "d".repeat(64),
+            sha: "a1",
+          },
+        ],
       },
       undefined,
       TEST_WORKSPACE_ID,

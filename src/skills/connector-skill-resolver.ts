@@ -1,134 +1,249 @@
 /**
- * Connector-skill overlay resolver.
+ * Resolve a connector's curated skills from a pinned plugin catalog (ADR-0068).
  *
- * Connector "overlays" are short usage-guidance skills that NimbleBrain curates
- * for connectors we don't control (Composio + other third-party MCP servers).
- * They live in a public, curated repo keyed by connector identity:
+ * The curated guidance for a connector NimbleBrain does not author ships as a
+ * skill in that connector's plugin. The catalog publishes:
  *
- *     <repo>/<identity>/SKILL.md      e.g.  connector-skills/gmail/SKILL.md
+ *     <catalog>/nimblebrain/marketplace/<pin>.json   the NimbleBrain index, kept for good
+ *     <archive url from the index>                   each plugin's zip, with its sha256
  *
- * This module fetches an overlay by identity from the repo at a PINNED version,
- * records its sha256 (provenance / tamper-evidence), and content-addresses the
- * result on disk so one connector installed across N workspaces fetches once.
+ * A plugin names its servers in `plugin.json` under
+ * `extensions["ai.nimblebrain"].servers` (key → registry name), and a skill binds
+ * to one of them by naming its key under `metadata.nimblebrain.server`. A skill
+ * that names no server is not a connector's guidance and is not returned here.
+ * Nothing derives a binding from a connector's name.
  *
- * Fail-closed: a missing overlay (404) is a no-op (`null`); any other non-2xx,
- * a network error, or a declared-integrity mismatch THROWS. The caller treats a
- * resolve failure as non-fatal to the connector (the overlay is optional) but
- * must never silently materialize tampered or partial content.
+ * ADR-0013's mechanics hold:
+ *   - Pinned: the index is read at the sha256 the runtime is pinned to, and every
+ *     archive at the sha256 that index lists. No tag, branch or bare URL.
+ *   - Fail-closed: a missing index, any non-2xx, a network error, an unreadable
+ *     archive, or a digest mismatch throws. Nothing partial is returned.
+ *   - Content-addressed cache: the index and each plugin archive are cached as
+ *     the bytes fetched, under their sha256, and verified again on every read,
+ *     so one catalog read serves every workspace and a pin bump refetches only
+ *     the plugins whose bytes changed.
  *
- * Pure-ish + injectable: `fetchImpl` and `cacheDir` are parameters so the unit
- * tests run against a fixture with no network and a temp cache.
+ * A server no plugin names, or whose plugin carries no skill bound to it, has
+ * no curated skill: the answer is `[]`, read from verified bytes, so it is a
+ * definite answer rather than a guess from a 404.
  */
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import {
-  CONNECTOR_SKILLS_REPO_DEFAULT,
-  CONNECTOR_SKILLS_VERSION_DEFAULT,
-} from "../config/connector-skills.ts";
+import { join } from "node:path";
+import matter from "gray-matter";
+import { readZip } from "../util/zip.ts";
 
-export interface ResolvedOverlay {
-  /** The SKILL.md body, verbatim. */
+/** One curated skill bound to a server, as read from its plugin. */
+export interface PluginSkill {
+  /** Plugin name in its catalog (`gmail`). */
+  plugin: string;
+  /** The catalog's name from its index (`nimblebrain`). */
+  catalog: string;
+  /** sha256 of the plugin's archive. */
+  digest: string;
+  /** Skill name (its folder in the plugin). */
+  skill: string;
+  /** The SKILL.md, verbatim. */
   body: string;
-  /** sha256 of the body (hex) — recorded for provenance / tamper-evidence. */
+  /** sha256 of the SKILL.md. */
   sha: string;
 }
 
-export interface ResolveOverlayOptions {
-  /** Directory for the content-addressed cache (e.g. `{workDir}/cache/connector-skills`). */
+export interface ResolveServerSkillsOptions {
+  /** Content-addressed cache directory (`{workDir}/cache/plugin-catalog`). */
   cacheDir: string;
-  /** owner/repo of the curated overlay repo. Defaults to {@link CONNECTOR_SKILLS_REPO_DEFAULT}. */
-  repo?: string;
-  /** Pinned git tag/sha. Defaults to {@link CONNECTOR_SKILLS_VERSION_DEFAULT}. */
-  version?: string;
-  /** Injectable fetch — defaults to global `fetch`. Tests pass a fixture. */
+  /** Catalog base URL, no trailing slash. */
+  catalogUrl: string;
+  /** sha256 of the catalog's NimbleBrain index. */
+  pin: string;
+  /** Injectable fetch; tests pass a fixture. */
   fetchImpl?: typeof fetch;
-  /** Request timeout (ms). Default 15000. */
+  /** Per-request timeout (ms). Default 15000. */
   timeoutMs?: number;
-  /**
-   * If set, the resolved body's sha256 must equal this or resolution fails
-   * closed. Used when a caller already pinned an integrity hash (e.g. a
-   * recorded `skillsLock` entry on re-resolve).
-   */
-  expectedSha?: string;
 }
 
-function sha256Hex(s: string): string {
-  return createHash("sha256").update(s, "utf8").digest("hex");
+/** Where the catalog keeps the NimbleBrain index with this sha256. */
+export function pinnedIndexUrl(catalogUrl: string, pin: string): string {
+  return `${catalogUrl}/nimblebrain/marketplace/${pin}.json`;
 }
 
-/** raw.githubusercontent.com URL for `<identity>/SKILL.md` at the pinned version. */
-export function overlayUrl(repo: string, version: string, identity: string): string {
-  return `https://raw.githubusercontent.com/${repo}/${version}/${identity}/SKILL.md`;
+interface IndexEntry {
+  name: string;
+  url: string;
+  sha256: string;
+}
+
+interface CatalogIndex {
+  name: string;
+  plugins: IndexEntry[];
+}
+
+/** What the runtime keeps of one plugin: its servers and its server-bound skills. */
+interface PluginRecord {
+  servers: Record<string, string>;
+  skills: Array<{ name: string; server: string; body: string }>;
 }
 
 /**
- * Resolve a curated connector-skill overlay by connector identity
- * (e.g. `"gmail"`) from the public overlay repo at a pinned version.
- *
- * @returns the `{ body, sha }`, or `null` when no overlay is curated for this
- *   connector (HTTP 404). Throws on any other failure (fail-closed).
+ * Every curated skill in the pinned catalog bound to the server with registry
+ * name `server` (`com.google/gmail`), in index order. `[]` when no plugin binds
+ * a skill to it. Throws on any fetch or integrity failure.
  */
-export async function resolveOverlay(
-  identity: string,
-  opts: ResolveOverlayOptions,
-): Promise<ResolvedOverlay | null> {
-  const repo = opts.repo ?? CONNECTOR_SKILLS_REPO_DEFAULT;
-  const version = opts.version ?? CONNECTOR_SKILLS_VERSION_DEFAULT;
-  const fetchImpl = opts.fetchImpl ?? fetch;
-  const timeoutMs = opts.timeoutMs ?? 15_000;
-
-  // Cache key spans (identity, repo, version) so a version bump or repo change
-  // re-resolves rather than serving stale content. The body's own sha is
-  // recorded inside the cache entry for provenance. NOTE: this assumes pinned
-  // versions are immutable — moving a tag (e.g. re-pointing `v0.1.0`) under a
-  // fixed key serves the cached body until the cache dir is cleared. Bump the
-  // version to roll forward; don't re-point a tag.
-  const cacheKey = sha256Hex(`${identity}@${repo}@${version}`);
-  const cachePath = join(opts.cacheDir, `${cacheKey}.json`);
-
-  if (existsSync(cachePath)) {
-    const cached = JSON.parse(readFileSync(cachePath, "utf8")) as { miss: true } | ResolvedOverlay;
-    const result = "miss" in cached ? null : cached;
-    assertIntegrity(identity, result, opts.expectedSha);
-    return result;
-  }
-
-  const url = overlayUrl(repo, version, identity);
-  const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
-
-  // 404 — no overlay curated for this connector. Cache the miss so repeated
-  // installs across workspaces don't re-hit the network, then no-op.
-  if (res.status === 404) {
-    writeCache(cachePath, { miss: true });
-    return null;
-  }
-  // Any other non-2xx is fail-closed: do NOT cache, do NOT materialize.
-  if (!res.ok) {
-    throw new Error(`connector-skill fetch failed for "${identity}": HTTP ${res.status} (${url})`);
-  }
-
-  const body = await res.text();
-  const resolved: ResolvedOverlay = { body, sha: sha256Hex(body) };
-  assertIntegrity(identity, resolved, opts.expectedSha);
-  writeCache(cachePath, resolved);
-  return resolved;
-}
-
-function assertIntegrity(
-  identity: string,
-  result: ResolvedOverlay | null,
-  expectedSha: string | undefined,
-): void {
-  if (result && expectedSha && result.sha !== expectedSha) {
-    throw new Error(
-      `connector-skill integrity mismatch for "${identity}": got ${result.sha}, expected ${expectedSha}`,
+export async function resolveServerSkills(
+  server: string,
+  opts: ResolveServerSkillsOptions,
+): Promise<PluginSkill[]> {
+  const index = await loadIndex(opts);
+  const records = await Promise.all(index.plugins.map((entry) => loadPlugin(entry, opts)));
+  const out: PluginSkill[] = [];
+  index.plugins.forEach((entry, i) => {
+    const record = records[i]!;
+    const keys = new Set(
+      Object.entries(record.servers)
+        .filter(([, name]) => name === server)
+        .map(([key]) => key),
     );
+    for (const skill of record.skills) {
+      if (!keys.has(skill.server)) continue;
+      out.push({
+        plugin: entry.name,
+        catalog: index.name,
+        digest: entry.sha256,
+        skill: skill.name,
+        body: skill.body,
+        sha: sha256Hex(Buffer.from(skill.body, "utf8")),
+      });
+    }
+  });
+  return out;
+}
+
+async function loadIndex(opts: ResolveServerSkillsOptions): Promise<CatalogIndex> {
+  const path = join(opts.cacheDir, "index", `${opts.pin}.json`);
+  let bytes: Uint8Array;
+  if (existsSync(path)) {
+    bytes = readFileSync(path);
+    assertDigest("catalog index", bytes, opts.pin);
+  } else {
+    bytes = await fetchBytes(pinnedIndexUrl(opts.catalogUrl, opts.pin), opts);
+    assertDigest("catalog index", bytes, opts.pin);
+    writeCache(path, bytes);
+  }
+  return parseIndex(JSON.parse(new TextDecoder().decode(bytes)));
+}
+
+async function loadPlugin(
+  entry: IndexEntry,
+  opts: ResolveServerSkillsOptions,
+): Promise<PluginRecord> {
+  const path = join(opts.cacheDir, "plugins", `${entry.sha256}.zip`);
+  let bytes: Uint8Array;
+  if (existsSync(path)) {
+    bytes = readFileSync(path);
+    assertDigest(`plugin ${entry.name}`, bytes, entry.sha256);
+  } else {
+    bytes = await fetchBytes(entry.url, opts);
+    assertDigest(`plugin ${entry.name}`, bytes, entry.sha256);
+    writeCache(path, bytes);
+  }
+  return readPlugin(entry.name, bytes);
+}
+
+/** Read a verified plugin archive: its servers, and each skill that names one. */
+function readPlugin(name: string, archive: Uint8Array): PluginRecord {
+  const files = readZip(archive);
+  const manifestBytes = files.get("plugin.json") ?? files.get(".claude-plugin/plugin.json");
+  if (!manifestBytes) throw new Error(`plugin ${name}: archive has no plugin.json`);
+  const manifest: unknown = JSON.parse(new TextDecoder().decode(manifestBytes));
+  const servers = stringRecord(
+    field(field(field(manifest, "extensions"), "ai.nimblebrain"), "servers"),
+  );
+
+  const skills: PluginRecord["skills"] = [];
+  for (const [path, bytes] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
+    const match = /^skills\/([^/]+)\/SKILL\.md$/.exec(path);
+    if (!match) continue;
+    const body = new TextDecoder().decode(bytes);
+    const bound = field(field(field(frontmatter(body), "metadata"), "nimblebrain"), "server");
+    if (typeof bound === "string" && bound in servers) {
+      skills.push({ name: match[1]!, server: bound, body });
+    }
+  }
+  return { servers, skills };
+}
+
+/** A skill's frontmatter, or nothing when it does not parse (the skill is then unbound). */
+function frontmatter(body: string): unknown {
+  try {
+    return matter(body).data;
+  } catch {
+    return undefined;
   }
 }
 
-function writeCache(cachePath: string, value: { miss: true } | ResolvedOverlay): void {
-  mkdirSync(dirname(cachePath), { recursive: true });
-  writeFileSync(cachePath, JSON.stringify(value), "utf8");
+function parseIndex(raw: unknown): CatalogIndex {
+  const name = field(raw, "name");
+  const plugins = field(raw, "plugins");
+  if (typeof name !== "string" || !Array.isArray(plugins)) {
+    throw new Error("catalog index has no name or plugins");
+  }
+  const entries: IndexEntry[] = [];
+  for (const plugin of plugins) {
+    const source = field(plugin, "source");
+    const pluginName = field(plugin, "name");
+    const url = field(source, "url");
+    const sha256 = field(source, "sha256");
+    // Only an archive pinned by its digest can be verified; a git source is not
+    // read here.
+    if (field(source, "source") !== "archive") continue;
+    if (
+      typeof pluginName !== "string" ||
+      typeof url !== "string" ||
+      typeof sha256 !== "string" ||
+      !/^[0-9a-f]{64}$/.test(sha256)
+    ) {
+      throw new Error(`catalog index lists a malformed plugin: ${JSON.stringify(plugin)}`);
+    }
+    entries.push({ name: pluginName, url, sha256 });
+  }
+  return { name, plugins: entries };
+}
+
+async function fetchBytes(url: string, opts: ResolveServerSkillsOptions): Promise<Uint8Array> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const res = await fetchImpl(url, { signal: AbortSignal.timeout(opts.timeoutMs ?? 15_000) });
+  if (!res.ok) throw new Error(`plugin catalog fetch failed: HTTP ${res.status} (${url})`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+function assertDigest(what: string, bytes: Uint8Array, expected: string): void {
+  const actual = sha256Hex(bytes);
+  if (actual !== expected) {
+    throw new Error(`${what} integrity mismatch: got ${actual}, expected ${expected}`);
+  }
+}
+
+function sha256Hex(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function writeCache(path: string, bytes: Uint8Array): void {
+  mkdirSync(join(path, ".."), { recursive: true });
+  writeFileSync(path, bytes);
+}
+
+function field(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)[key]
+    : undefined;
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return out;
+  for (const [key, name] of Object.entries(value)) {
+    if (typeof name === "string") out[key] = name;
+  }
+  return out;
 }

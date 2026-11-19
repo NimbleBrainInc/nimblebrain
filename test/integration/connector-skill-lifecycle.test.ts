@@ -8,14 +8,14 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
-import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
+import { buildCatalog, TEST_CATALOG_URL } from "../helpers/plugin-catalog.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /**
- * Connector-skill binding lifecycle (P4), through the real Runtime — hermetic
- * (resolver fetch injected, no network):
+ * Connector-skill binding lifecycle, through the real Runtime — hermetic (a
+ * fixture plugin catalog served by an injected fetch, no network):
  *   install (syncBoundSkills) → materialized + loaded as a candidate +
  *   surfaced by list_bound_skills + ABSENT from skills__list →
  *   uninstall (removeBoundSkills) → gone.
@@ -28,6 +28,8 @@ import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-works
 const testDir = join(tmpdir(), `nimblebrain-connector-skill-lifecycle-${Date.now()}`);
 afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
+  delete process.env.NB_PLUGIN_CATALOG_URL;
+  delete process.env.NB_PLUGIN_CATALOG_SHA256;
 });
 
 const OVERLAY = `---
@@ -37,6 +39,7 @@ metadata:
   nimblebrain:
     loading-strategy: dynamic
     priority: 40
+    server: gmail
 ---
 
 Confirm the recipient before calling gmail__send.
@@ -46,15 +49,22 @@ function fixtureModel(): LanguageModelV4 {
   return createMockModel(() => ({ content: [{ type: "text", text: "ok" }] }));
 }
 
+/**
+ * A catalog whose `gmail` plugin binds OVERLAY to `com.google/gmail`, and whose
+ * `mytool` plugin binds it to `com.test/mytool`; the runtime is pinned to it.
+ */
 function fixtureFetch(): typeof fetch {
-  // Serve the fixture overlay for any curated `<identity>/SKILL.md` lookup; 404
-  // otherwise. Hermetic — never touches the network.
-  return fakeFetch(async (url) => {
-    const u = typeof url === "string" ? url : url.toString();
-    return u.endsWith("/SKILL.md")
-      ? new Response(OVERLAY, { status: 200 })
-      : new Response("", { status: 404 });
-  });
+  const catalog = buildCatalog([
+    { name: "gmail", servers: { gmail: "com.google/gmail" }, skills: { "gmail-usage": OVERLAY } },
+    {
+      name: "mytool",
+      servers: { gmail: "com.test/mytool" },
+      skills: { "gmail-usage": OVERLAY },
+    },
+  ]);
+  process.env.NB_PLUGIN_CATALOG_URL = TEST_CATALOG_URL;
+  process.env.NB_PLUGIN_CATALOG_SHA256 = catalog.pin;
+  return catalog.fetch;
 }
 
 async function callTool(
@@ -88,15 +98,15 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     const lifecycle = runtime.getLifecycle();
     lifecycle.setConnectorSkillFetch(fixtureFetch());
 
-    // --- Install: bind the curated overlay for a Composio gmail connector. ---
+    // --- Install: bind the catalog skill for a Composio gmail connector. ---
     const lock = await lifecycle.syncBoundSkills(
-      "gmail",
+      "com.google/gmail",
       "gmail",
       TEST_WORKSPACE_ID,
       runtime.getWorkDir(),
     );
     expect(lock).toHaveLength(1);
-    expect(lock[0]!.identity).toBe("gmail");
+    expect(lock[0]!.plugin).toBe("gmail@nimblebrain");
 
     // Loaded into the engine candidate pool with the right tool-affinity.
     const candidates = runtime.loadConnectorSkillCandidates(TEST_WORKSPACE_ID);
@@ -109,7 +119,7 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     const overlays = runtime.listConnectorOverlays(TEST_WORKSPACE_ID);
     expect(overlays).toHaveLength(1);
     expect(overlays[0]!.server).toBe("gmail");
-    expect(overlays[0]!.source).toBe("connector:gmail@v0.5.0");
+    expect(overlays[0]!.source).toBe("plugin:gmail@nimblebrain:gmail-usage");
 
     // Absent from the authored-skill listing — a separate store, filtered out.
     const list = await callTool(runtime, "skills__list", {});
@@ -179,7 +189,7 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     runtime.getLifecycle().setConnectorSkillFetch(fixtureFetch());
     const lock = await runtime
       .getLifecycle()
-      .syncBoundSkills("mytool", "mytool", TEST_WORKSPACE_ID, runtime.getWorkDir());
+      .syncBoundSkills("com.test/mytool", "mytool", TEST_WORKSPACE_ID, runtime.getWorkDir());
     expect(lock).toHaveLength(1);
 
     const t1 = await runtime.chat({

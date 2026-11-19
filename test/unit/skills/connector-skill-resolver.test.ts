@@ -1,165 +1,175 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  CONNECTOR_SKILLS_REPO_DEFAULT,
-  CONNECTOR_SKILLS_VERSION_DEFAULT,
-} from "../../../src/config/connector-skills.ts";
-import { overlayUrl, resolveOverlay } from "../../../src/skills/connector-skill-resolver.ts";
+  pinnedIndexUrl,
+  type ResolveServerSkillsOptions,
+  resolveServerSkills,
+} from "../../../src/skills/connector-skill-resolver.ts";
 import { fakeFetch } from "../../helpers/fake-fetch.ts";
+import {
+  boundSkill,
+  buildCatalog,
+  type FixtureCatalog,
+  sha256,
+  TEST_CATALOG_URL,
+  zip,
+} from "../../helpers/plugin-catalog.ts";
 
-const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
-
-const cacheDirs: string[] = [];
+const dirs: string[] = [];
 function tmpCache(): string {
-  const d = mkdtempSync(join(tmpdir(), "cskill-"));
-  cacheDirs.push(d);
+  const d = mkdtempSync(join(tmpdir(), "plugin-skills-"));
+  dirs.push(d);
   return d;
 }
 afterEach(() => {
-  for (const d of cacheDirs.splice(0)) {
-    if (existsSync(d)) rmSync(d, { recursive: true, force: true });
-  }
+  for (const d of dirs.splice(0)) if (existsSync(d)) rmSync(d, { recursive: true, force: true });
 });
 
-/** A fetch stand-in driven by a `url -> {status, body}` map, with a call counter. */
-function routedFetch(
-  routes: Record<string, { status: number; body?: string }>,
-  counter?: { n: number },
-): typeof fetch {
-  return fakeFetch(async (url) => {
-    if (counter) counter.n++;
-    const u = typeof url === "string" ? url : url.toString();
-    const r = routes[u];
-    if (!r) return new Response("", { status: 404 });
-    return new Response(r.body ?? "", { status: r.status });
-  });
+const GMAIL = boundSkill("gmail", "gmail", "Confirm the recipient before sending.");
+
+function catalog(): FixtureCatalog {
+  return buildCatalog([
+    { name: "gmail", servers: { gmail: "com.google/gmail" }, skills: { gmail: GMAIL } },
+    {
+      name: "notion",
+      servers: { notion: "com.notion/mcp" },
+      skills: {
+        // Names no server: not a connector's guidance.
+        notes: "---\nname: notes\ndescription: General notes.\n---\n\nBody.\n",
+      },
+    },
+    { name: "close", servers: { close: "com.close/mcp" } },
+  ]);
 }
 
-describe("overlayUrl", () => {
-  test("builds the raw.githubusercontent URL for <identity>/SKILL.md", () => {
-    expect(overlayUrl("Owner/repo", "v1.2.0", "gmail")).toBe(
-      "https://raw.githubusercontent.com/Owner/repo/v1.2.0/gmail/SKILL.md",
+function opts(c: FixtureCatalog, cacheDir = tmpCache()): ResolveServerSkillsOptions {
+  return { cacheDir, catalogUrl: TEST_CATALOG_URL, pin: c.pin, fetchImpl: c.fetch };
+}
+
+describe("resolveServerSkills", () => {
+  test("reads the skill a plugin binds to the server, pinned and digested", async () => {
+    const c = catalog();
+    const skills = await resolveServerSkills("com.google/gmail", opts(c));
+    expect(skills).toEqual([
+      {
+        plugin: "gmail",
+        catalog: "nimblebrain",
+        digest: c.digests.gmail!,
+        skill: "gmail",
+        body: GMAIL,
+        sha: sha256(new TextEncoder().encode(GMAIL)),
+      },
+    ]);
+    expect(c.requests[0]).toBe(pinnedIndexUrl(TEST_CATALOG_URL, c.pin));
+  });
+
+  test("a server no plugin names, or whose plugin binds no skill, has none", async () => {
+    const c = catalog();
+    const o = opts(c);
+    expect(await resolveServerSkills("com.unknown/mcp", o)).toEqual([]);
+    expect(await resolveServerSkills("com.close/mcp", o)).toEqual([]);
+    expect(await resolveServerSkills("com.notion/mcp", o)).toEqual([]);
+  });
+
+  test("fails closed when the pinned index is missing", async () => {
+    const c = catalog();
+    const o = { ...opts(c), pin: "f".repeat(64) };
+    await expect(resolveServerSkills("com.google/gmail", o)).rejects.toThrow(/HTTP 404/);
+  });
+
+  test("fails closed when the index's bytes do not match the pin", async () => {
+    const c = catalog();
+    const url = pinnedIndexUrl(TEST_CATALOG_URL, c.pin);
+    c.objects.set(url, new TextEncoder().encode('{"name":"nimblebrain","plugins":[]}'));
+    await expect(resolveServerSkills("com.google/gmail", opts(c))).rejects.toThrow(
+      /catalog index integrity mismatch/,
     );
   });
-});
 
-describe("resolveOverlay", () => {
-  const repo = "Owner/repo";
-  const version = "v1.0.0";
-  const identity = "gmail";
-  const url = overlayUrl(repo, version, identity);
-
-  test("200 returns the body and its sha", async () => {
-    const body = "# Gmail\n\nUse the right tool.";
-    const res = await resolveOverlay(identity, {
-      cacheDir: tmpCache(),
-      repo,
-      version,
-      fetchImpl: routedFetch({ [url]: { status: 200, body } }),
-    });
-    expect(res).not.toBeNull();
-    expect(res?.body).toBe(body);
-    expect(res?.sha).toBe(sha(body));
+  test("fails closed when a plugin archive does not match its listed digest", async () => {
+    const c = catalog();
+    const url = [...c.objects.keys()].find((u) => u.includes(c.digests.gmail!))!;
+    c.objects.set(url, new Uint8Array([1, 2, 3]));
+    await expect(resolveServerSkills("com.google/gmail", opts(c))).rejects.toThrow(
+      /plugin gmail integrity mismatch/,
+    );
   });
 
-  test("404 returns null (no overlay curated)", async () => {
-    const res = await resolveOverlay(identity, {
-      cacheDir: tmpCache(),
-      repo,
-      version,
-      fetchImpl: routedFetch({ [url]: { status: 404 } }),
-    });
-    expect(res).toBeNull();
-  });
-
-  test("non-404 error throws (fail-closed)", async () => {
-    await expect(
-      resolveOverlay(identity, {
-        cacheDir: tmpCache(),
-        repo,
-        version,
-        fetchImpl: routedFetch({ [url]: { status: 500, body: "boom" } }),
+  test("fails closed on a network error", async () => {
+    const c = catalog();
+    const o = {
+      ...opts(c),
+      fetchImpl: fakeFetch(async () => {
+        throw new Error("network down");
       }),
-    ).rejects.toThrow(/HTTP 500/);
-  });
-
-  test("a 200 result is cached: a second resolve does not re-fetch", async () => {
-    const body = "cached body";
-    const counter = { n: 0 };
-    const cacheDir = tmpCache();
-    const opts = {
-      cacheDir,
-      repo,
-      version,
-      fetchImpl: routedFetch({ [url]: { status: 200, body } }, counter),
     };
-    const a = await resolveOverlay(identity, opts);
-    const b = await resolveOverlay(identity, opts);
-    expect(counter.n).toBe(1);
-    expect(b?.body).toBe(a?.body);
-    expect(b?.sha).toBe(a?.sha);
+    await expect(resolveServerSkills("com.google/gmail", o)).rejects.toThrow(/network down/);
   });
 
-  test("a 404 miss is cached: a second resolve does not re-fetch", async () => {
-    const counter = { n: 0 };
-    const cacheDir = tmpCache();
-    const opts = {
-      cacheDir,
-      repo,
-      version,
-      fetchImpl: routedFetch({ [url]: { status: 404 } }, counter),
-    };
-    expect(await resolveOverlay(identity, opts)).toBeNull();
-    expect(await resolveOverlay(identity, opts)).toBeNull();
-    expect(counter.n).toBe(1);
-  });
-
-  test("expectedSha mismatch throws (integrity, fail-closed)", async () => {
-    const body = "real body";
-    await expect(
-      resolveOverlay(identity, {
-        cacheDir: tmpCache(),
-        repo,
-        version,
-        fetchImpl: routedFetch({ [url]: { status: 200, body } }),
-        expectedSha: "deadbeef",
+  test("caches by content: a second resolve reads nothing from the network", async () => {
+    const c = catalog();
+    const o = opts(c);
+    await resolveServerSkills("com.google/gmail", o);
+    const fetched = c.requests.length;
+    expect(fetched).toBe(4); // the index and three archives
+    const again = await resolveServerSkills("com.google/gmail", {
+      ...o,
+      fetchImpl: fakeFetch(async () => {
+        throw new Error("offline");
       }),
-    ).rejects.toThrow(/integrity mismatch/);
-  });
-
-  test("expectedSha match passes", async () => {
-    const body = "verified body";
-    const res = await resolveOverlay(identity, {
-      cacheDir: tmpCache(),
-      repo,
-      version,
-      fetchImpl: routedFetch({ [url]: { status: 200, body } }),
-      expectedSha: sha(body),
     });
-    expect(res?.body).toBe(body);
+    expect(again).toHaveLength(1);
   });
 
-  test("a version bump re-resolves rather than serving the stale cache", async () => {
+  test("a tampered cached index is refused, not served", async () => {
+    const c = catalog();
+    const o = opts(c);
+    await resolveServerSkills("com.google/gmail", o);
+    writeFileSync(join(o.cacheDir, "index", `${c.pin}.json`), '{"name":"x","plugins":[]}');
+    await expect(resolveServerSkills("com.google/gmail", o)).rejects.toThrow(/integrity mismatch/);
+  });
+
+  test("a tampered cached plugin archive is refused, not served", async () => {
+    const c = catalog();
+    const o = opts(c);
+    await resolveServerSkills("com.google/gmail", o);
+    const digest = c.digests.gmail!;
+    const tampered = zip({
+      "plugin.json": JSON.stringify({
+        extensions: { "ai.nimblebrain": { servers: { gmail: "com.google/gmail" } } },
+      }),
+      "skills/gmail/SKILL.md": boundSkill("gmail", "gmail", "Altered guidance."),
+    });
+    writeFileSync(join(o.cacheDir, "plugins", `${digest}.zip`), tampered);
+    await expect(resolveServerSkills("com.google/gmail", o)).rejects.toThrow(/integrity mismatch/);
+  });
+
+  test("a new pin refetches only the plugins whose bytes changed", async () => {
     const cacheDir = tmpCache();
-    const v1Body = "old";
-    const v2Body = "new";
-    const v1Url = overlayUrl(repo, "v1.0.0", identity);
-    const v2Url = overlayUrl(repo, "v2.0.0", identity);
-    const fetchImpl = routedFetch({
-      [v1Url]: { status: 200, body: v1Body },
-      [v2Url]: { status: 200, body: v2Body },
-    });
-    const a = await resolveOverlay(identity, { cacheDir, repo, version: "v1.0.0", fetchImpl });
-    const b = await resolveOverlay(identity, { cacheDir, repo, version: "v2.0.0", fetchImpl });
-    expect(a?.body).toBe(v1Body);
-    expect(b?.body).toBe(v2Body);
-  });
+    const first = catalog();
+    await resolveServerSkills("com.google/gmail", opts(first, cacheDir));
 
-  test("exposes pinned default repo/version constants", () => {
-    expect(CONNECTOR_SKILLS_REPO_DEFAULT).toMatch(/\//);
-    expect(CONNECTOR_SKILLS_VERSION_DEFAULT).toMatch(/^v\d/);
+    const next = buildCatalog([
+      {
+        name: "gmail",
+        servers: { gmail: "com.google/gmail" },
+        skills: { gmail: boundSkill("gmail", "gmail", "Newer guidance.") },
+      },
+      {
+        name: "notion",
+        servers: { notion: "com.notion/mcp" },
+        skills: { notes: "---\nname: notes\ndescription: General notes.\n---\n\nBody.\n" },
+      },
+      { name: "close", servers: { close: "com.close/mcp" } },
+    ]);
+    expect(next.pin).not.toBe(first.pin);
+    const skills = await resolveServerSkills("com.google/gmail", opts(next, cacheDir));
+    expect(skills[0]!.body).toContain("Newer guidance.");
+    expect(next.requests).toEqual([
+      pinnedIndexUrl(TEST_CATALOG_URL, next.pin),
+      [...next.objects.keys()].find((u) => u.includes(next.digests.gmail!))!,
+    ]);
   });
 });
