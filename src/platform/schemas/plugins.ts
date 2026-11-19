@@ -116,3 +116,16 @@ export const PluginRequestOutput = Type.Object({
   pluginRequest: PluginRequest,
 });
 export type PluginRequestOutput = Static<typeof PluginRequestOutput>;
+
+/**
+ * The person's answer to a plugin request, set by the client on the message
+ * that tells the agent the answer (ADR-0070). The message's text is what the
+ * agent reads; this lets a client show the message as the answer it is rather
+ * than as something the person typed. It grants nothing.
+ */
+export const PluginRequestAnswer = Type.Object({
+  /** The plugin's server, as the request named it. */
+  serverName: Type.String(),
+  answer: StringEnum(["use", "not_now"] as const),
+});
+export type PluginRequestAnswer = Static<typeof PluginRequestAnswer>;

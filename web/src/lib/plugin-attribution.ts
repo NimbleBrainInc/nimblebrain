@@ -14,6 +14,7 @@ import {
   isPersonalConnectorAppName,
   personalConnectorServerName,
 } from "./namespaced-tool";
+import { personalPluginNamed, requestPluginArg } from "./plugin-request";
 
 /**
  * The plugin a wire tool name's source belongs to.
@@ -81,14 +82,17 @@ const SKILL_NAMING_INPUT: Readonly<Record<string, string>> = {
 };
 
 /**
- * The plugin a tool call is attributed to: the plugin the tool comes from, or,
- * for a call that loads or activates a skill (a kernel tool), the plugin that
- * skill comes with.
+ * The plugin a tool call is attributed to: the plugin the tool comes from; for
+ * a call that loads or activates a skill (a kernel tool), the plugin that skill
+ * comes with; for a plugin request, the caller's plugin it asks for.
  */
 export function pluginForCall(
   call: { name: string; input?: Record<string, unknown> },
   plugins: readonly Plugin[],
 ): Plugin | undefined {
+  // A plugin request (a kernel tool) is attributed to the plugin it asks for.
+  const requested = requestPluginArg(call);
+  if (requested) return personalPluginNamed(plugins, requested);
   const key = SKILL_NAMING_INPUT[call.name];
   if (key) {
     const name = call.input?.[key];

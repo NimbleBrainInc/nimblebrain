@@ -21,7 +21,7 @@ export const ManageToolsInput = Type.Object({
   request_plugin: Type.Optional(
     Type.String({
       description:
-        "Ask the person to turn on one of their own plugins in this workspace: the name nb__search lists under their plugins not turned on here. Send it alone, without `add` or `remove`. It turns nothing on: the person answers in the chat, and their answer arrives as their next message.",
+        "The exact name of one of the person's own plugins that nb__search lists as not turned on in this workspace. Call this whenever the task needs that plugin, instead of sending the person to the Plugins page: it shows them a one-click **Use here** in the chat. Send it alone, without `add` or `remove`. It turns nothing on, so end your turn after it: their answer arrives as their next message.",
     }),
   ),
 });

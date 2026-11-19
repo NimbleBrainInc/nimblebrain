@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { deriveUsageMetrics } from "../../src/conversation/event-reconstructor.ts";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
+import { readConversation } from "../../src/platform/conversations/jsonl-reader.ts";
 import { engineEvent, llmDonePayload, runStartPayload } from "../helpers/engine-events.ts";
 
 function makeDirs() {
@@ -179,5 +180,29 @@ describe("Event-sourced integration", () => {
     expect(metrics.totalOutputTokens).toBe(130); // 50 + 80
     expect(metrics.lastModel).toBe("anthropic:claude-sonnet-4-5-20250929");
     expect(metrics.totalCostUsd).toBeGreaterThan(0); // computed from catalog
+  });
+
+  it("a message answering a plugin request keeps its answer through the log to the display", async () => {
+    const dirs = makeDirs();
+    const store = new EventSourcedConversationStore({ ...dirs });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
+    const answer = { serverName: "app-linear-mcp", answer: "use" as const };
+    await store.append(conv, {
+      role: "user",
+      content: [{ type: "text", text: "I turned on Linear in this workspace. Go ahead." }],
+      timestamp: "2026-04-11T00:00:00Z",
+      metadata: { pluginRequestAnswer: answer },
+    });
+    await store.append(conv, {
+      role: "user",
+      content: [{ type: "text", text: "I turned on Linear in this workspace. Go ahead." }],
+      timestamp: "2026-04-11T00:01:00Z",
+    });
+
+    const display = await readConversation(join(dirs.dir, `${conv.id}.jsonl`));
+    const users = display?.messages.filter((m) => m.role === "user") ?? [];
+    expect(users.map((m) => m.pluginRequestAnswer)).toEqual([answer, undefined]);
+    const history = await store.history(conv);
+    expect(history[0]?.metadata?.pluginRequestAnswer).toEqual(answer);
   });
 });

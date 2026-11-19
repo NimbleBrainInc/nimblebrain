@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { PluginRequestAnswer } from "../_generated/platform-schemas/plugins";
 import { captureEvent } from "../telemetry";
 import type { AppContext } from "../types";
 import type {
@@ -33,6 +34,7 @@ export interface UseChatReturn {
     appContext?: AppContext,
     model?: string,
     files?: File[],
+    pluginRequestAnswer?: PluginRequestAnswer,
   ) => Promise<void>;
   newConversation: () => void;
   loadConversation: (id: string) => Promise<void>;
@@ -89,7 +91,13 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
   }, [activeKey]);
 
   const sendMessage = useCallback(
-    async (text: string, appContext?: AppContext, model?: string, files?: File[]) => {
+    async (
+      text: string,
+      appContext?: AppContext,
+      model?: string,
+      files?: File[],
+      pluginRequestAnswer?: PluginRequestAnswer,
+    ) => {
       // Enrich appContext with the latest app state from the bridge
       // (Synapse Feature 2). Kept here — the store stays bridge-agnostic.
       let enrichedContext = appContext;
@@ -101,7 +109,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
       const hadConversation = !!chatStore.getSnapshot(activeKey).conversationId;
       await chatStore.sendTurn(
         activeKey,
-        { text, appContext: enrichedContext, model, files, currentUserId },
+        { text, appContext: enrichedContext, model, files, currentUserId, pluginRequestAnswer },
         { onConversationId: (id) => setActiveKey(id) },
       );
       captureEvent("web.chat_sent", {

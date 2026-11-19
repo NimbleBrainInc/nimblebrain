@@ -322,6 +322,11 @@ export declare const DisplayMessage: import("@sinclair/typebox").TObject<{
         size: import("@sinclair/typebox").TNumber;
         extracted: import("@sinclair/typebox").TBoolean;
     }>>>;
+    /** On a user message: the plugin request card it answers, so a client shows it as that answer. */
+    pluginRequestAnswer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        serverName: import("@sinclair/typebox").TString;
+        answer: import("@sinclair/typebox").TUnsafe<"not_now" | "use">;
+    }>>;
     /**
      * Non-"complete" run terminations bubble up here: a `run.done` stopReason
      * verbatim ("max_iterations", "cancelled", …), "error" for a `run.error`,
@@ -474,6 +479,11 @@ export declare const ConversationsGetOutput: import("@sinclair/typebox").TObject
             size: import("@sinclair/typebox").TNumber;
             extracted: import("@sinclair/typebox").TBoolean;
         }>>>;
+        /** On a user message: the plugin request card it answers, so a client shows it as that answer. */
+        pluginRequestAnswer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+            serverName: import("@sinclair/typebox").TString;
+            answer: import("@sinclair/typebox").TUnsafe<"not_now" | "use">;
+        }>>;
         /**
          * Non-"complete" run terminations bubble up here: a `run.done` stopReason
          * verbatim ("max_iterations", "cancelled", …), "error" for a `run.error`,

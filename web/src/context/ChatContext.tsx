@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import type { PluginRequestAnswer } from "../_generated/platform-schemas/plugins";
 import { callToolWithoutWorkspace } from "../api/client";
 import { chatStore } from "../hooks/chat-store";
 import type { UseChatReturn } from "../hooks/useChat";
@@ -44,6 +45,7 @@ export interface ChatContextValue extends Omit<UseChatReturn, "sendMessage"> {
     appContext?: AppContext,
     files?: File[],
     model?: string,
+    pluginRequestAnswer?: PluginRequestAnswer,
   ) => Promise<void>;
   /**
    * Open a conversation the user chose (a deep link, a list, an app's open
@@ -313,8 +315,14 @@ export function ChatProvider({
   // model is stored in the browser; the choice goes to the server and comes
   // back as the pin.
   const wrappedSendMessage = useCallback(
-    (text: string, appContext?: AppContext, files?: File[], model?: string) => {
-      return chat.sendMessage(text, appContext, model, files);
+    (
+      text: string,
+      appContext?: AppContext,
+      files?: File[],
+      model?: string,
+      pluginRequestAnswer?: PluginRequestAnswer,
+    ) => {
+      return chat.sendMessage(text, appContext, model, files, pluginRequestAnswer);
     },
     [chat.sendMessage],
   );

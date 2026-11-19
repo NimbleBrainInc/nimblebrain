@@ -12,9 +12,10 @@
 
 import type { ToolCallDisplay, ToolResultForUI } from "../../hooks/chat-store.ts";
 import { stripServerPrefix } from "../format.ts";
+import { requestPluginArg } from "../plugin-request.ts";
 import { findRenderer } from "./registry.ts";
 import type { InputField, Tone, ToolDescription } from "./types.ts";
-import { inferVerb } from "./verbs.ts";
+import { inferVerb, REQUEST_PLUGIN_VERB } from "./verbs.ts";
 
 /** Max characters for an inline "short" value; longer values render as <pre>. */
 const SHORT_VALUE_MAX = 80;
@@ -60,9 +61,14 @@ export function describeCall(call: ToolCallDisplay): ToolDescription {
 function genericDescribe(call: ToolCallDisplay): ToolDescription {
   const name = stripServerPrefix(call.name);
   const tone = toneFromStatus(call);
-  const { verb, object } = inferVerb(name);
+  // A plugin request reads as what it is; the plugin label beside it names the
+  // plugin (`pluginForCall`), so the server name is not the subject.
+  const asksForPlugin = requestPluginArg(call) !== null;
+  const { verb, object } = asksForPlugin
+    ? { verb: REQUEST_PLUGIN_VERB, object: "" }
+    : inferVerb(name);
   const summary = summarizeInput(call.input);
-  const headSubject = extractHeadSubject(call.input);
+  const headSubject = asksForPlugin ? null : extractHeadSubject(call.input);
   const input = describeInput(call.input);
   const resultText = extractResultText(call.result);
   const resultJson = extractResultJson(call.result);

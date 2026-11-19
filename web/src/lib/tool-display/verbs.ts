@@ -79,6 +79,9 @@ const VERB_ROOTS: Readonly<Record<string, string>> = {
 /** Returned when no token matches. */
 const DEFAULT_VERB = "Ran";
 
+/** The verb of a call that asks the person to turn on one of their plugins. */
+export const REQUEST_PLUGIN_VERB = "Asked to use";
+
 /**
  * Present-progressive form keyed by past-tense verb. Used when tone is
  * "running". Every verb in VERB_ROOTS (and DEFAULT_VERB) must have an entry
@@ -107,6 +110,7 @@ export const PRESENT_TENSE: Readonly<Record<string, string>> = {
   Planned: "Planning",
   Deployed: "Deploying",
   Ran: "Running",
+  [REQUEST_PLUGIN_VERB]: "Asking to use",
 };
 
 /** "Couldn't X" phrasing for error tone. Keyed by past-tense verb. */
@@ -133,6 +137,7 @@ const ERROR_VERBS: Readonly<Record<string, string>> = {
   Planned: "Couldn't plan",
   Deployed: "Couldn't deploy",
   Ran: "Couldn't run",
+  [REQUEST_PLUGIN_VERB]: "Couldn't ask to use",
 };
 
 /**

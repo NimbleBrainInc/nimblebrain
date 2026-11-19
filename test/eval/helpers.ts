@@ -3,6 +3,7 @@
  *
  * Usage:
  *   ANTHROPIC_API_KEY=sk-ant-... bun test test/eval/
+ *   NB_EVAL_MODEL=anthropic:claude-sonnet-4-6 ANTHROPIC_API_KEY=sk-ant-... bun test test/eval/
  *
  * Evals are NOT included in `bun run test` or `bun run verify`.
  * They require a real API key and cost real money.
@@ -20,7 +21,8 @@ import { devProvider, devWorkspace } from "../helpers/dev-provider.ts";
 // Config
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
+/** The model every eval runs on; `NB_EVAL_MODEL` picks another. */
+const DEFAULT_MODEL = process.env.NB_EVAL_MODEL || "anthropic:claude-sonnet-4-5-20250929";
 const DEFAULT_MAX_ITERATIONS = 5;
 
 // ---------------------------------------------------------------------------
