@@ -15,12 +15,17 @@
  *   - Auth:    none (dev mode — no `instance.json`)
  *
  * Set `ANTHROPIC_API_KEY` (or other provider keys) in your shell to
- * unlock real LLM calls. As a convenience, this script also auto-loads
+ * unlock real LLM calls. As a convenience, `scripts/dev.ts` also loads
  * `<worktree>/.env` if present, otherwise the main repo's `.env`
  * (discovered via `git rev-parse --git-common-dir`). Shell-exported
- * values always win over the file. Without any keys set, everything
- * but model invocation still works — uploads, MCP resources, tool
- * calls, conversation log.
+ * values always win over the file. The origins (`NB_PUBLIC_ORIGIN`,
+ * `ALLOWED_ORIGINS`, `NB_WEB_URL`) never come from the file: they are
+ * derived from this run's ports unless exported in the shell, so a `.env`
+ * written for the default dev ports cannot send an OAuth callback to
+ * another server. Both scripts run
+ * under `bun --no-env-file` so that load is the only one. Without any keys
+ * set, everything but model invocation still works — uploads, MCP
+ * resources, tool calls, conversation log.
  *
  * Reset state:  `rm -rf .nimblebrain-worktree && bun run dev:worktree`
  * Share state across worktrees:  `NB_WORK_DIR=/abs/path bun run dev:worktree`
@@ -29,7 +34,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { loadDotenvIntoProcess } from "./lib/dev-env.ts";
+import { resolveDevOrigins } from "./lib/dev-env.ts";
 import { installIfMissing } from "./lib/dev-prepare.ts";
 import { buildDevWorktreeSeed, WORKDIR_NAME } from "./lib/dev-worktree-config.ts";
 
@@ -56,12 +61,10 @@ function seedConfigIfMissing(): void {
 
 seedConfigIfMissing();
 
-// Auto-load .env BEFORE the spawn so the child process inherits keys.
-// Discovery is worktree-local first, then the main repo (shared `.env`
-// via `git rev-parse --git-common-dir`). Shell exports always win, so
-// `direnv` / `mise` workflows aren't disrupted. Silent when no .env
-// found — the prior "set in your shell" contract still works.
-const envResult = loadDotenvIntoProcess(WORKTREE_ROOT);
+// What `scripts/dev.ts` will resolve: `.env` is loaded there, and under
+// `--no-env-file` nothing in this process came from a file, so every origin
+// set here is a shell export and the rest are derived from the ports.
+const origins = resolveDevOrigins(process.env, [], { api: API_PORT, web: WEB_PORT });
 
 // Root ONLY. `scripts/dev.ts` imports from `src/`, so it cannot install the
 // deps it needs to be loaded — that has to happen before it is spawned. Web
@@ -75,28 +78,27 @@ console.log(`[dev:worktree]   Workdir:  ${WORKDIR}`);
 console.log(`[dev:worktree]   API:      http://localhost:${API_PORT}`);
 console.log(`[dev:worktree]   Web:      http://localhost:${WEB_PORT}`);
 console.log("[dev:worktree]   Auth:     none (dev mode)");
-if (envResult.path) {
-  const note =
-    envResult.skipped.length > 0
-      ? ` (applied ${envResult.applied.length}, ${envResult.skipped.length} skipped — shell already set)`
-      : ` (applied ${envResult.applied.length})`;
-  console.log(`[dev:worktree]   Loaded .env from ${envResult.path}${note}`);
-}
+console.log(`[dev:worktree]   Origin:   ${origins.NB_PUBLIC_ORIGIN} (NB_PUBLIC_ORIGIN)`);
+console.log(`[dev:worktree]   CORS:     ${origins.ALLOWED_ORIGINS} (ALLOWED_ORIGINS)`);
 
 // Delegate to the shared dev orchestrator (serve API + Vite web). The runtime
 // binary is serve-only — it no longer has a `dev` subcommand — so worktree dev
 // goes through `scripts/dev.ts`, the same launcher `bun run dev` uses, with the
 // worktree's ports/workdir threaded via env below.
-const child = spawn("bun", ["run", "scripts/dev.ts", "--port", API_PORT, "--config", CONFIG_PATH], {
-  stdio: "inherit",
-  cwd: WORKTREE_ROOT,
-  env: {
-    ...process.env,
-    NB_API_PORT: API_PORT,
-    NB_WEB_PORT: WEB_PORT,
-    NB_WORK_DIR: WORKDIR,
+const child = spawn(
+  "bun",
+  ["--no-env-file", "scripts/dev.ts", "--port", API_PORT, "--config", CONFIG_PATH],
+  {
+    stdio: "inherit",
+    cwd: WORKTREE_ROOT,
+    env: {
+      ...process.env,
+      NB_API_PORT: API_PORT,
+      NB_WEB_PORT: WEB_PORT,
+      NB_WORK_DIR: WORKDIR,
+    },
   },
-});
+);
 
 child.on("error", (err) => {
   console.error(`[dev:worktree] Failed to spawn bun: ${err.message}`);

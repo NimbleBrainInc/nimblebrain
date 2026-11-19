@@ -16,6 +16,7 @@ import { loadConfig } from "../src/cli/config.ts";
 import { defaultWorkDir } from "../src/connectors/runtime/paths.ts";
 import { log } from "../src/observability/log.ts";
 import { setAppDevMode } from "../src/runtime/dev-registry.ts";
+import { type EnvFileLoadResult, loadDotenvIntoProcess, resolveDevOrigins } from "./lib/dev-env.ts";
 import { ensureDevInstanceConfig } from "./lib/dev-instance.ts";
 import { prepareCheckout } from "./lib/dev-prepare.ts";
 
@@ -26,6 +27,8 @@ interface DevOptions {
   debug: boolean;
   app?: string;
   appPort?: number;
+  /** The `.env` read at startup; its `applied` keys came from the file, not the shell. */
+  envFile: EnvFileLoadResult;
 }
 
 /**
@@ -105,23 +108,34 @@ function buildApiArgs(
   return apiArgs;
 }
 
-/** Build the dev-mode env, auto-filling NB_WEB_URL for the post-OAuth SPA bounce. */
-function buildDevEnv(noWeb: boolean): Record<string, string | undefined> {
-  // Auto-derive NB_WEB_URL so the API knows where to bounce the user
-  // back after an OAuth callback. Without this, the callback can only
-  // redirect to NB_API_URL (the API port), which doesn't serve the SPA
-  // in dev — the user lands on a workspace_error JSON page instead of
-  // the Connections tab.
-  //
-  // Mirrors web/vite.config.ts: NB_WEB_PORT env if set, else default 27246.
-  // Operator-supplied NB_WEB_URL wins (the auto-derivation only fills
-  // in the unset case).
-  const devEnv: Record<string, string | undefined> = { ...process.env };
-  if (!devEnv.NB_WEB_URL && !noWeb) {
-    const webPort = process.env.NB_WEB_PORT ?? "27246";
-    devEnv.NB_WEB_URL = `http://localhost:${webPort}`;
+/**
+ * Build the dev-mode env: the inherited env plus the origins this launch
+ * derives from its own ports (`resolveDevOrigins`). `NB_WEB_URL` is where the
+ * API bounces the browser after an OAuth callback; without it the bounce lands
+ * on the API port, which serves a JSON error page, not the SPA. The web port
+ * mirrors web/vite.config.ts: `NB_WEB_PORT` if set, else 27246.
+ */
+function buildDevEnv(
+  port: number,
+  noWeb: boolean,
+  envFileKeys: readonly string[],
+): Record<string, string | undefined> {
+  const webPort = noWeb ? null : process.env.NB_WEB_PORT || "27246";
+  return {
+    ...process.env,
+    ...resolveDevOrigins(process.env, envFileKeys, { api: port, web: webPort }),
+  };
+}
+
+/** Log the `.env` this launch read and the origins it runs with. */
+function logDevEnv(envFile: EnvFileLoadResult, devEnv: Record<string, string | undefined>): void {
+  if (envFile.path) {
+    const skipped = envFile.skipped.length > 0 ? `, ${envFile.skipped.length} already set` : "";
+    log.info(`[dev] Loaded ${envFile.path} (applied ${envFile.applied.length}${skipped})`);
   }
-  return devEnv;
+  for (const key of ["NB_PUBLIC_ORIGIN", "ALLOWED_ORIGINS", "NB_WEB_URL"]) {
+    if (devEnv[key]) log.info(`[dev]   ${key}=${devEnv[key]}`);
+  }
 }
 
 /** Track a child for shutdown and stream its stdout/stderr under a log prefix. */
@@ -251,7 +265,7 @@ function installShutdown(children: Subprocess[]): () => boolean {
 }
 
 async function runDev(options: DevOptions): Promise<void> {
-  const { port, noWeb, config, debug, app: appPath, appPort = 5173 } = options;
+  const { port, noWeb, config, debug, app: appPath, appPort = 5173, envFile } = options;
   const children: Subprocess[] = [];
 
   // A fresh clone has no web deps and no app UI dists, and the README quickstart
@@ -273,7 +287,8 @@ async function runDev(options: DevOptions): Promise<void> {
 
   // --- API server with bun --watch ---
   const apiArgs = buildApiArgs(cliEntry, port, config, debug);
-  const devEnv = buildDevEnv(noWeb);
+  const devEnv = buildDevEnv(port, noWeb, envFile.applied);
+  logDevEnv(envFile, devEnv);
 
   log.info("[dev] Starting API server with file watching...");
   const apiProc = spawn({
@@ -315,6 +330,12 @@ async function runDev(options: DevOptions): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Read `.env` here rather than leaving it to Bun, so the keys it supplied are
+  // known: an origin a `.env` set for other ports is replaced, a shell export is
+  // kept. The launchers on other ports run this under `bun --no-env-file` so the
+  // keys arrive through this call; under Bun's own load every key reads as the
+  // shell's. Worktree-local `.env` first, else the main repo's.
+  const envFile = loadDotenvIntoProcess(join(import.meta.dir, ".."));
   const rest = process.argv.slice(2);
   const { values } = parseArgs({
     args: rest,
@@ -336,6 +357,7 @@ async function main(): Promise<void> {
     debug: (values.debug as boolean | undefined) ?? false,
     app: values.app as string | undefined,
     appPort: values["app-port"] ? Number(values["app-port"]) : undefined,
+    envFile,
   });
 }
 

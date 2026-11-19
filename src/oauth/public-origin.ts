@@ -26,7 +26,8 @@
  *      `https://{NB_PLATFORM_HOST}`. This is the normal path — the chart
  *      forwards these as facts; the policy ("custom domain wins") lives here,
  *      not in Helm templating.
- *   3. `http://localhost:27247` — dev default (no auth gate, `dev:worktree`).
+ *   3. `http://localhost:27247` — the default when nothing is set. The dev
+ *      launchers set `NB_PUBLIC_ORIGIN` for their own ports (`scripts/dev.ts`).
  *
  * There is no `NB_API_URL` fallback: the chart always forwards
  * `NB_PLATFORM_HOST` (from `ingress.host`), so step 2 always resolves for any
