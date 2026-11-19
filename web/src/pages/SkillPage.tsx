@@ -8,7 +8,9 @@ import {
   AudienceOption,
   type InstallAudience,
 } from "../components/connectors/InstallAudienceDialog";
+import { PanelHeading } from "../components/connectors/personal-connector";
 import { useNotice } from "../components/notices";
+import { SkillHereSwitch } from "../components/plugins/SkillHereSwitch";
 import { SkillScopeBadge } from "../components/plugins/SkillScopeBadge";
 import { Button } from "../components/ui/button";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
@@ -223,6 +225,24 @@ function SkillDetailView({
           label={skill.name}
         />
       </header>
+
+      {skill.scope === "user" && (
+        <section
+          className="flex items-start justify-between gap-4 border-y border-border/60 py-4"
+          data-testid="skill-here"
+        >
+          <PanelHeading
+            title="In this workspace"
+            hint="Your skills apply in every workspace unless you turn one off here."
+          />
+          <SkillHereSwitch
+            skill={skill}
+            workspaceId={wsId}
+            className="shrink-0"
+            onChange={(onHere) => setSkill((prev) => (prev ? { ...prev, onHere } : prev))}
+          />
+        </section>
+      )}
 
       {error && <InlineError message={error} />}
 

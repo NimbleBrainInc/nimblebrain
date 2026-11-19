@@ -5,6 +5,8 @@
 // something does. Each section counts what it holds and shows a few rows of
 // each kind until asked for all. The toolbar narrows by kind and by owner, and
 // a search drops the sections for one list whose rows mark whose each is. A
+// plugin's action is offered once: under Needs you when its row is there, and
+// on its own row wherever the strip does not show it. A
 // section's collapse is remembered in the viewer's browser, and a storage that
 // refuses never breaks the page.
 // ---------------------------------------------------------------------------
@@ -414,5 +416,86 @@ describe("Toolbar", () => {
     mounted = await mount();
     await pickOwner("you");
     expect(q(mounted.container, "installed-no-matches")).not.toBeNull();
+  });
+});
+
+describe("One action per plugin", () => {
+  const needing = () => [
+    plugin("workspace:hubspot", {
+      servers: [{ serverName: "hubspot", status: "needs_auth", account: null }],
+    }),
+    plugin("workspace:jira", {
+      servers: [{ serverName: "jira", status: "failed", account: null }],
+    }),
+  ];
+  const rowIn = (scope: ParentNode, id: string) =>
+    scope.querySelector<HTMLElement>(`[data-plugin-id="${id}"]`)!;
+  const attention = (r: HTMLElement) =>
+    r.querySelector('[data-testid="plugin-attention"]')?.textContent;
+
+  test("a row under Needs you keeps the button; in its section it says what is wrong", async () => {
+    plugins = needing();
+    mounted = await mount();
+    const strip = q(mounted.container, "installed-needs-you")!;
+    expect(button(rowIn(strip, "workspace:hubspot"), "Reconnect")).toBeDefined();
+    expect(button(rowIn(strip, "workspace:jira"), "Open")).toBeDefined();
+
+    const shared = section("shared")!;
+    const hubspot = rowIn(shared, "workspace:hubspot");
+    const jira = rowIn(shared, "workspace:jira");
+    expect(button(hubspot, "Reconnect")).toBeUndefined();
+    expect(attention(hubspot)).toBe("Sign-in expired");
+    expect(button(jira, "Open")).toBeUndefined();
+    expect(attention(jira)).toBe("Failed to start");
+  });
+
+  test("a search, which hides Needs you, gives each row its button back", async () => {
+    plugins = needing();
+    mounted = await mount();
+    await search("hub");
+    const results = q(mounted.container, "installed-results")!;
+    expect(button(rowIn(results, "workspace:hubspot"), "Reconnect")).toBeDefined();
+    expect(attention(rowIn(results, "workspace:hubspot"))).toBeUndefined();
+  });
+
+  test("a row past the strip's first five keeps its button until Show all lists it there", async () => {
+    plugins = Array.from({ length: 7 }, (_, i) =>
+      plugin(`workspace:n${i}`, {
+        servers: [{ serverName: `n${i}`, status: "failed", account: null }],
+      }),
+    );
+    mounted = await mount();
+    const strip = q(mounted.container, "installed-needs-you")!;
+    // The section's first five are the strip's; open it all to reach the rest.
+    await click(q(section("shared")!, "installed-show-all"));
+    const hiddenFromStrip = pluginIds(section("shared")).filter(
+      (id) => !pluginIds(strip).includes(id),
+    );
+    expect(hiddenFromStrip).toHaveLength(2);
+    for (const id of hiddenFromStrip) {
+      expect(button(rowIn(section("shared")!, id), "Open")).toBeDefined();
+    }
+
+    await click(q(strip, "installed-show-all"));
+    for (const id of hiddenFromStrip) {
+      const r = rowIn(section("shared")!, id);
+      expect(button(r, "Open")).toBeUndefined();
+      expect(attention(r)).toBe("Failed to start");
+    }
+  });
+
+  test("the owner filter narrows Needs you and the sections together, so no row loses its action", async () => {
+    plugins = [
+      ...needing(),
+      plugin("person:gmail", {
+        servers: [{ serverName: "gmail", status: "needs_auth", account: null }],
+      }),
+    ];
+    mounted = await mount();
+    await pickOwner("you");
+    const strip = q(mounted.container, "installed-needs-you")!;
+    expect(pluginIds(strip)).toEqual(["person:gmail"]);
+    expect(button(rowIn(strip, "person:gmail"), "Reconnect")).toBeDefined();
+    expect(attention(rowIn(section("you")!, "person:gmail"))).toBe("Sign-in expired");
   });
 });
