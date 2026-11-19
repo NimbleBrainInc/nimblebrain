@@ -93,8 +93,10 @@ export function ConnectorBrowsePage() {
  * default) installs it on the viewer's own account and grants it into this
  * workspace in the same call (ADR-0069), then runs the personal sign-in;
  * "Everyone in <workspace>" is the workspace install below, offered only to a
- * member who may write the workspace. An entry that cannot is a workspace
- * install, and its card says why.
+ * member who may write the workspace and only while the workspace has no
+ * install of it. An entry the workspace already has still offers "Just me": a
+ * person's own install sits beside the workspace's. An entry that cannot hold
+ * a per-person credential is a workspace install, and its card says why.
  */
 export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: boolean } = {}) {
   const [entries, setEntries] = useState<CatalogListing[]>([]);
@@ -110,8 +112,10 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
   // a card the user just installed into the Installed section.
   const [justInstalled, setJustInstalled] = useState<ReadonlyMap<string, string>>(new Map());
   const [query, setQuery] = useState("");
-  // The entry whose install is asking whom it is for.
+  // The entry whose install is asking whom it is for, and whether the workspace
+  // already has its own install of it.
   const [audienceEntry, setAudienceEntry] = useState<CatalogListing | null>(null);
+  const [audienceWorkspaceInstalled, setAudienceWorkspaceInstalled] = useState(false);
   const [setupModalEntry, setSetupModalEntry] = useState<OAuthClientSetupTarget | null>(null);
   // API-key Composio connector: after install we collect the key fields in a
   // modal (no OAuth redirect), then call connect_api_key. Holds the entry +
@@ -355,9 +359,10 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
 
   // The card's Install: ask whom it is for where a personal install is
   // possible, otherwise install into the workspace as before.
-  const onInstallClick = (entry: CatalogListing) => {
+  const onInstallClick = (entry: CatalogListing, workspaceInstalled: boolean) => {
     if (offerPersonal && entry.personalInstallable) {
       setLoadError(null);
+      setAudienceWorkspaceInstalled(workspaceInstalled);
       setAudienceEntry(entry);
       return;
     }
@@ -405,18 +410,29 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
           query={query}
           available={available}
           installedEntries={installedEntries}
-          renderCard={(entry, configurePath) => (
-            <DirectoryCard
-              key={entry.id}
-              entry={entry}
-              busy={busyId === entry.id}
-              canManage={canManage}
-              personal={offerPersonal ? Boolean(entry.personalInstallable) : undefined}
-              configurePath={configurePath}
-              onInstall={() => onInstallClick(entry)}
-              onSetUp={() => setSetupModalEntry(oauthClientSetupTarget(entry))}
-            />
-          )}
+          renderCard={(entry, configurePath) => {
+            // Installed in this workspace, as opposed to installed just now for
+            // the viewer alone. The former still offers the viewer's own install.
+            const workspaceInstalled =
+              configurePath !== undefined && configurePath !== PERSONAL_CONNECTORS_PATH;
+            return (
+              <DirectoryCard
+                key={entry.id}
+                entry={entry}
+                busy={busyId === entry.id}
+                canManage={canManage}
+                personal={
+                  offerPersonal
+                    ? Boolean(entry.personalInstallable) &&
+                      configurePath !== PERSONAL_CONNECTORS_PATH
+                    : undefined
+                }
+                configurePath={configurePath}
+                onInstall={() => onInstallClick(entry, workspaceInstalled)}
+                onSetUp={() => setSetupModalEntry(oauthClientSetupTarget(entry))}
+              />
+            );
+          }}
           configurePathFor={(entry) => justInstalled.get(entry.id)}
           installedPathFor={(serverName) => `${configureBasePath}/${serverName}`}
         />
@@ -445,6 +461,7 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
           connectorName={audienceEntry.name}
           workspaceName={workspaceName}
           canWriteWorkspace={canManage}
+          installedForEveryone={audienceWorkspaceInstalled}
           onOpenChange={(open) => {
             if (!open) setAudienceEntry(null);
           }}
@@ -684,16 +701,24 @@ export function CardAction({
   //
   // Installed comes first, for every role: it is a fact about the workspace,
   // not an action, so a member sees it too and no setup state outranks it.
+  // Where a personal install is offered, the viewer can still add their own
+  // beside the workspace's, so the action stays.
   if (configurePath) {
     return (
       <div className="flex items-center gap-3">
         <Link to={configurePath} className="text-xs text-muted-foreground hover:underline">
           Configure
         </Link>
-        <Button type="button" variant="outline" size="sm" disabled>
-          <Check />
-          Installed
-        </Button>
+        {personalOffered ? (
+          <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
+            Install for me
+          </Button>
+        ) : (
+          <Button type="button" variant="outline" size="sm" disabled>
+            <Check />
+            Installed
+          </Button>
+        )}
       </div>
     );
   }

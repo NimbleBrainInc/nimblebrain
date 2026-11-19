@@ -9,27 +9,10 @@ import { ConfirmDialog } from "../ui/confirm-dialog";
 export type InstallAudience = "personal" | "workspace";
 
 /**
- * The choices an install offers, in order, first being the default. "Just me"
- * needs an entry that can hold a per-person credential; "Everyone here" needs a
- * member who may write the workspace. Pure, so the gate is testable on its own.
- */
-export function installAudiences({
-  personalInstallable,
-  canWriteWorkspace,
-}: {
-  personalInstallable: boolean;
-  canWriteWorkspace: boolean;
-}): InstallAudience[] {
-  const choices: InstallAudience[] = [];
-  if (personalInstallable) choices.push("personal");
-  if (canWriteWorkspace) choices.push("workspace");
-  return choices;
-}
-
-/**
  * Ask whom an install is for before running it. Opens on "Just me". "Everyone
- * in <workspace>" is listed only for a member who may write the workspace; a
- * member who may not is told who can. `onInstall` throws to keep the dialog
+ * in <workspace>" is listed only for a member who may write the workspace and
+ * only while the workspace has no install of its own; a member who may not is
+ * told who can. `onInstall` throws to keep the dialog
  * open with the error, and the caller closes it on success or navigates away.
  */
 export function InstallAudienceDialog({
@@ -37,6 +20,7 @@ export function InstallAudienceDialog({
   connectorName,
   workspaceName,
   canWriteWorkspace,
+  installedForEveryone = false,
   onOpenChange,
   onInstall,
 }: {
@@ -44,6 +28,8 @@ export function InstallAudienceDialog({
   connectorName: string;
   workspaceName: string;
   canWriteWorkspace: boolean;
+  /** The workspace already has its own install: only "Just me" is left to choose. */
+  installedForEveryone?: boolean;
   onOpenChange: (open: boolean) => void;
   onInstall: (audience: InstallAudience) => Promise<void>;
 }) {
@@ -72,7 +58,11 @@ export function InstallAudienceDialog({
           label="Just me"
           hint={`Signs in with your own account. Only you can use it, here and in any workspace you turn it on in.`}
         />
-        {canWriteWorkspace ? (
+        {installedForEveryone ? (
+          <p className="text-muted-foreground">
+            Everyone in {workspaceName} already uses it with one shared account.
+          </p>
+        ) : canWriteWorkspace ? (
           <AudienceOption
             value="workspace"
             selected={audience === "workspace"}

@@ -13,7 +13,6 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 import type * as ApiClient from "../api/client";
-import { installAudiences } from "../components/connectors/InstallAudienceDialog";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -53,8 +52,9 @@ const listDirectory = mock<typeof ApiClient.listDirectory>(async () => ({
   entries: [NOTES, SHARED],
   errors: [],
 }));
+let workspaceInstalled: ApiClient.InstalledConnector[] = [];
 const getInstalledConnectors = mock<typeof ApiClient.getInstalledConnectors>(async () => ({
-  installed: [],
+  installed: workspaceInstalled,
 }));
 const installConnector = mock<typeof ApiClient.installConnector>(async (entry) => {
   calls.push(`installConnector:${entry.id}`);
@@ -167,6 +167,7 @@ beforeEach(() => {
   authorizationUrl = "https://auth.notes.test/authorize";
   personalAlreadyInstalled = false;
   personalState = "not_authenticated";
+  workspaceInstalled = [];
 });
 
 async function mount(role: "admin" | "member"): Promise<Mounted> {
@@ -224,26 +225,6 @@ async function click(el: HTMLElement | null) {
   });
 }
 
-describe("installAudiences", () => {
-  test("Just me first (the default), then Everyone here for a workspace writer", () => {
-    expect(installAudiences({ personalInstallable: true, canWriteWorkspace: true })).toEqual([
-      "personal",
-      "workspace",
-    ]);
-  });
-  test("an entry without a per-person credential offers only Everyone here", () => {
-    expect(installAudiences({ personalInstallable: false, canWriteWorkspace: true })).toEqual([
-      "workspace",
-    ]);
-  });
-  test("a member who may not write the workspace gets only Just me, or nothing", () => {
-    expect(installAudiences({ personalInstallable: true, canWriteWorkspace: false })).toEqual([
-      "personal",
-    ]);
-    expect(installAudiences({ personalInstallable: false, canWriteWorkspace: false })).toEqual([]);
-  });
-});
-
 describe("Plugins → Browse: whom an install is for", () => {
   test("Install asks, opening on Just me, with Everyone in the workspace beside it", async () => {
     mounted = await mount("admin");
@@ -294,6 +275,27 @@ describe("Plugins → Browse: whom an install is for", () => {
       "installConnector:com.acme/notes",
       "initiateMcpOAuth:com-acme-notes",
       "assign:https://auth.notes.test/workspace",
+    ]);
+  });
+
+  test("an entry the workspace already has still offers the viewer's own install", async () => {
+    workspaceInstalled = [
+      { serverName: "com-acme-notes", catalogId: NOTES.id } as ApiClient.InstalledConnector,
+    ];
+    mounted = await mount("member");
+    const notes = card(mounted.container, "Notes");
+    expect(notes.querySelector("a")?.getAttribute("href")).toBe(
+      `/w/${SLUG}/settings/connectors/com-acme-notes`,
+    );
+    await click(button(notes, "Install for me"));
+    // Only Just me: the workspace's own install is already there.
+    expect(radios().map((r) => r.value)).toEqual(["personal"]);
+    expect(document.body.textContent).toContain("Everyone in Acme already uses it");
+    await click(confirmButton());
+    expect(calls).toEqual([
+      `installPersonalConnector:com.acme/notes:${WS_ID}`,
+      "initiateIdentityConnect:com-acme-notes",
+      "assign:https://auth.notes.test/authorize",
     ]);
   });
 
