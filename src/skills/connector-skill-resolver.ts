@@ -31,8 +31,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import matter from "gray-matter";
 import { readZip } from "../util/zip.ts";
+import { parseFrontmatter } from "./frontmatter.ts";
 
 /** One curated skill bound to a server, as read from its plugin. */
 export interface PluginSkill {
@@ -176,7 +176,7 @@ function readPlugin(name: string, archive: Uint8Array): PluginRecord {
 /** A skill's frontmatter, or nothing when it does not parse (the skill is then unbound). */
 function frontmatter(body: string): unknown {
   try {
-    return matter(body).data;
+    return parseFrontmatter(body).data;
   } catch {
     return undefined;
   }

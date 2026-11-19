@@ -196,7 +196,7 @@ export function WorkspaceOverviewPage() {
               <p className="mt-1">Apps are plugins with a page to open.</p>
               {canAddApps && (
                 <Link
-                  to={`${slugPath}/plugins?tab=browse`}
+                  to={`${slugPath}/plugins/browse`}
                   data-testid="workspace-overview-browse"
                   className="mt-3 inline-flex h-8 items-center gap-2 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/80 transition-colors"
                 >
@@ -223,7 +223,7 @@ export function WorkspaceOverviewPage() {
               ))}
               {canAddApps && (
                 <Link
-                  to={`${slugPath}/plugins?tab=browse`}
+                  to={`${slugPath}/plugins/browse`}
                   data-testid="workspace-overview-add-app"
                   className="flex items-center gap-2 p-4 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
                 >

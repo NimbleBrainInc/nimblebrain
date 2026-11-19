@@ -41,18 +41,33 @@ export function accountLine(plugin: Plugin): string | undefined {
 /** A skill's scope as it appears in its page's URL: the tiers a person authors in. */
 export type AuthoredSkillScope = "workspace" | "user" | "org";
 
-/**
- * A skill's page under Plugins, `/w/<slug>/plugins/skills/<scope>/<name>`. A
- * scope and a name address one authored skill: names are unique within a tier,
- * and the same name in two tiers is two skills.
- */
-export function skillPath(slug: string, scope: AuthoredSkillScope, name: string): string {
-  return `/w/${slug}/plugins/skills/${scope}/${encodeURIComponent(name)}`;
+/** The workspace's Plugins page, `/w/<slug>/plugins`. */
+export function pluginsPath(slug: string): string {
+  return `/w/${slug}/plugins`;
 }
 
-/** Where a new skill is written, `/w/<slug>/plugins/skills/new`. */
+/** The plugin directory, `/w/<slug>/plugins/browse`. */
+export function browsePluginsPath(slug: string): string {
+  return `/w/${slug}/plugins/browse`;
+}
+
+/** The workspace's Skills page, `/w/<slug>/skills`. */
+export function skillsPath(slug: string): string {
+  return `/w/${slug}/skills`;
+}
+
+/**
+ * A skill's page, `/w/<slug>/skills/<scope>/<name>`. A scope and a name address
+ * one authored skill: names are unique within a tier, and the same name in two
+ * tiers is two skills.
+ */
+export function skillPath(slug: string, scope: AuthoredSkillScope, name: string): string {
+  return `/w/${slug}/skills/${scope}/${encodeURIComponent(name)}`;
+}
+
+/** Where a new skill is written, `/w/<slug>/skills/new`. */
 export function newSkillPath(slug: string): string {
-  return `/w/${slug}/plugins/skills/new`;
+  return `/w/${slug}/skills/new`;
 }
 
 /** Whether every server of the plugin is signed in and running. */

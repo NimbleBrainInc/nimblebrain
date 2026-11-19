@@ -6,7 +6,7 @@
 // another workspace's is to switch to it (WorkspaceSwitcher, above this).
 //
 // Order: Overview, the identity views (Conversations / Tasks / Files),
-// Plugins (what the agent can do here), then APPS (People, Tasks, … — the viewer's pinned apps first, capped with a
+// Plugins (what the agent can do here), Skills (what it is taught), then APPS (People, Tasks, … — the viewer's pinned apps first, capped with a
 // View-all overflow). Each routes
 // into `/w/<slug>/…`. An app that places several views is one entry; while it
 // is open its views list beneath it. The inbox is not here: it is the top
@@ -26,7 +26,7 @@
 // ---------------------------------------------------------------------------
 
 import { Menu } from "@base-ui/react/menu";
-import { ArrowRight, Check, LayoutGrid, Pin, Puzzle } from "lucide-react";
+import { ArrowRight, Check, GraduationCap, LayoutGrid, Pin, Puzzle } from "lucide-react";
 import { useMemo } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useShellContext } from "../../context/ShellContext";
@@ -120,7 +120,13 @@ function WorkspaceViews({
           collapsed={collapsed}
         />
       ))}
-      <ViewLink to={`/w/${slug}/plugins`} icon={Puzzle} label="Plugins" end collapsed={collapsed} />
+      <ViewLink to={`/w/${slug}/plugins`} icon={Puzzle} label="Plugins" collapsed={collapsed} />
+      <ViewLink
+        to={`/w/${slug}/skills`}
+        icon={GraduationCap}
+        label="Skills"
+        collapsed={collapsed}
+      />
 
       {apps.length > 0 &&
         (collapsed ? (

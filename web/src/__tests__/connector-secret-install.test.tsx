@@ -98,10 +98,10 @@ const ADMIN_WORKSPACE = {
 function Page() {
   return (
     <WorkspaceProvider initialWorkspaces={[ADMIN_WORKSPACE]} initialActiveId="ws_000f7ed6658f9d30">
-      <MemoryRouter initialEntries={["/w/000f7ed6658f9d30/plugins?tab=browse"]}>
+      <MemoryRouter initialEntries={["/w/000f7ed6658f9d30/plugins/browse"]}>
         <LocationProbe />
         <Routes>
-          <Route path="/w/:slug/plugins" element={<ConnectorDirectory />} />
+          <Route path="/w/:slug/plugins/browse" element={<ConnectorDirectory />} />
           <Route path="*" element={null} />
         </Routes>
       </MemoryRouter>
@@ -215,7 +215,7 @@ describe("a Browse entry that declares secretHeaders", () => {
     expect(setWorkspaceSecret.mock.calls[0]).toEqual(["acme.db_url", "postgres://a.acme.test/db"]);
     // provider-auth completes without a sign-in, so the install finishes on
     // Browse — the credential is already in place when it starts.
-    expect(lastPath).toBe("/w/000f7ed6658f9d30/plugins");
+    expect(lastPath).toBe("/w/000f7ed6658f9d30/plugins/browse");
   });
 
   test("cancelling installs nothing and stores nothing", async () => {

@@ -95,10 +95,10 @@ const ADMIN_WORKSPACE = {
 function Page() {
   return (
     <WorkspaceProvider initialWorkspaces={[ADMIN_WORKSPACE]} initialActiveId={ADMIN_WORKSPACE.id}>
-      <MemoryRouter initialEntries={["/w/000f7ed6658f9d30/plugins?tab=browse"]}>
+      <MemoryRouter initialEntries={["/w/000f7ed6658f9d30/plugins/browse"]}>
         <LocationProbe />
         <Routes>
-          <Route path="/w/:slug/plugins" element={<ConnectorDirectory />} />
+          <Route path="/w/:slug/plugins/browse" element={<ConnectorDirectory />} />
           <Route path="*" element={null} />
         </Routes>
       </MemoryRouter>
@@ -207,7 +207,7 @@ describe("installing a provider connector", () => {
     const done = buttonIn(card(mounted.container, "Acme Tasks"));
     expect(done?.textContent).toContain("Installed");
     expect(done?.disabled).toBe(true);
-    expect(lastPath).toBe("/w/000f7ed6658f9d30/plugins");
+    expect(lastPath).toBe("/w/000f7ed6658f9d30/plugins/browse");
     // Stays in the grid for this visit rather than jumping to the section.
     expect(installedSection(mounted.container)).toBeNull();
   });

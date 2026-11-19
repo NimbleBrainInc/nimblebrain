@@ -1,0 +1,14 @@
+// gray-matter picks a parser from the language named after the opening fence,
+// and its built-in non-YAML engines evaluate the block as code. Every document
+// is parsed through `src/skills/frontmatter.ts`, which accepts YAML only
+// (CODE_STYLE.md, "Frontmatter is parsed through one door").
+or {
+  `import $_ from "gray-matter"`,
+  `require("gray-matter")`,
+  `import("gray-matter")`
+} as $import where {
+  register_diagnostic(
+    span=$import,
+    message="Import `parseFrontmatter` / `stringifyFrontmatter` from `src/skills/frontmatter.ts`, never `gray-matter` directly."
+  )
+}

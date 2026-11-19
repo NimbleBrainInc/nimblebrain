@@ -25,6 +25,8 @@ import {
 import { ToolPermissionsTable } from "../components/connectors/ToolPermissionsTable";
 import { UninstallConnectorDialog } from "../components/connectors/UninstallConnectorDialog";
 import { WorkspaceSecretsSection } from "../components/connectors/WorkspaceSecretsSection";
+import { SECTION_ACTION, SECTION_ROW } from "../components/plugins/list-parts";
+import { StopUsingDialog } from "../components/plugins/StopUsingDialog";
 import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
 import { Button } from "../components/ui/button";
 import { ConfirmDialog } from "../components/ui/confirm-dialog";
@@ -67,7 +69,7 @@ export function PluginDetailPage() {
             an inline element ignores. */}
         <Link
           to={`/w/${slug}/plugins`}
-          className="block w-fit text-xs text-muted-foreground hover:underline"
+          className="block w-fit py-1 text-xs text-muted-foreground hover:underline"
         >
           ← Plugins
         </Link>
@@ -327,6 +329,8 @@ function PersonalPlugin({
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmingUse, setConfirmingUse] = useState(false);
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+  // The workspace a Stop using is being confirmed for.
+  const [stopping, setStopping] = useState<{ id: string; name: string } | null>(null);
 
   const loadConnectors = useCallback(async () => {
     try {
@@ -363,13 +367,13 @@ function PersonalPlugin({
     onChanged();
   };
 
+  // Throws, so the confirm stays open with the error shown.
   const revoke = async (targetWsId: string) => {
     setError(null);
     setBusy(targetWsId);
     try {
       await setGrant(targetWsId, false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setStopping(null);
     } finally {
       setBusy(null);
     }
@@ -430,7 +434,10 @@ function PersonalPlugin({
             return (
               <div
                 key={server.serverName}
-                className="flex items-start justify-between gap-4 rounded-sm border border-border/60 bg-muted/20 px-4 py-3"
+                className={cn(
+                  SECTION_ROW,
+                  "rounded-sm border border-border/60 bg-muted/20 px-4 py-3",
+                )}
               >
                 <div className="min-w-0">
                   <div className="text-sm font-medium">{statusLabel(server.status)}</div>
@@ -443,7 +450,7 @@ function PersonalPlugin({
                 <Button
                   type="button"
                   size="sm"
-                  className="shrink-0"
+                  className={cn("shrink-0", SECTION_ACTION)}
                   disabled={!connector || busy === `connect:${server.serverName}`}
                   onClick={() => connector && void connect(connector)}
                 >
@@ -457,7 +464,7 @@ function PersonalPlugin({
       {error && <InlineError message={error} />}
 
       <div className="divide-y divide-border/60 [&>*]:py-6 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0">
-        <section className="flex items-start justify-between gap-4" data-testid="plugin-here">
+        <section className={SECTION_ROW} data-testid="plugin-here">
           <PanelHeading
             title="In this workspace"
             hint={
@@ -469,7 +476,7 @@ function PersonalPlugin({
             }
           />
           {plugin.granted ? (
-            <div className="flex shrink-0 items-center gap-1.5">
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
               {connected && (
                 <span className="px-2 text-xs text-muted-foreground" data-testid="plugin-in-use">
                   In use here
@@ -479,8 +486,9 @@ function PersonalPlugin({
                 type="button"
                 variant="outline"
                 size="sm"
+                className={SECTION_ACTION}
                 disabled={busy === wsId}
-                onClick={() => void revoke(wsId)}
+                onClick={() => setStopping({ id: wsId, name: workspaceName })}
               >
                 {busy === wsId ? "Stopping…" : "Stop using here"}
               </Button>
@@ -489,7 +497,7 @@ function PersonalPlugin({
             <Button
               type="button"
               size="sm"
-              className="shrink-0"
+              className={cn("shrink-0", SECTION_ACTION)}
               // Signing in follows the connector's record, so wait for it.
               disabled={!connected && connectors === null}
               onClick={() => {
@@ -530,7 +538,7 @@ function PersonalPlugin({
                     variant="ghost"
                     size="sm"
                     disabled={busy === ws.id}
-                    onClick={() => void revoke(ws.id)}
+                    onClick={() => setStopping(ws)}
                     aria-label={`Stop using ${name} in ${ws.name}`}
                   >
                     {busy === ws.id ? "Stopping…" : "Stop using"}
@@ -550,7 +558,7 @@ function PersonalPlugin({
           />
         ))}
 
-        <section className="flex items-center justify-between gap-4">
+        <section className={cn(SECTION_ROW, "@min-[40rem]/main:items-center")}>
           <p className="text-xs text-muted-foreground">
             Sign out of {name} and remove it from your account.
           </p>
@@ -558,6 +566,7 @@ function PersonalPlugin({
             type="button"
             variant="destructive"
             size="sm"
+            className={SECTION_ACTION}
             onClick={() => setConfirmingDisconnect(true)}
           >
             Disconnect
@@ -582,6 +591,13 @@ function PersonalPlugin({
           setConfirmingUse(false);
         }}
       />
+      <StopUsingIn
+        pluginName={name}
+        workspace={stopping}
+        hereId={wsId}
+        onClose={() => setStopping(null)}
+        onConfirm={revoke}
+      />
       <ConfirmDialog
         open={confirmingDisconnect}
         onOpenChange={setConfirmingDisconnect}
@@ -598,6 +614,34 @@ function PersonalPlugin({
         }}
       />
     </div>
+  );
+}
+
+/** The confirm for Stop using in one workspace: this one ("here") or another it is on in. */
+function StopUsingIn({
+  pluginName,
+  workspace,
+  hereId,
+  onClose,
+  onConfirm,
+}: {
+  pluginName: string;
+  /** The workspace being confirmed for; none while closed. */
+  workspace: { id: string; name: string } | null;
+  /** The workspace the page is in. */
+  hereId: string;
+  onClose: () => void;
+  onConfirm: (workspaceId: string) => Promise<void>;
+}) {
+  return (
+    <StopUsingDialog
+      open={workspace !== null}
+      onOpenChange={(open) => !open && onClose()}
+      pluginName={pluginName}
+      workspaceName={workspace?.name ?? ""}
+      here={workspace?.id === hereId}
+      onConfirm={() => (workspace ? onConfirm(workspace.id) : undefined)}
+    />
   );
 }
 

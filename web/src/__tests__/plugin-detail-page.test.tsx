@@ -317,12 +317,29 @@ describe("PluginDetailPage — a person's plugin", () => {
     expect(button(testId(mounted.container, "plugin-here")!, "Stop using here")).toBeDefined();
   });
 
-  test("Stop using here revokes it in this workspace", async () => {
+  test("Stop using here revokes it in this workspace after the same confirm as the row menu's", async () => {
     plugins = [granola(true)];
     personal = [granolaConnector([WS_ID])];
     mounted = await mount(pagePath("person:granola"));
     await click(button(testId(mounted.container, "plugin-here")!, "Stop using here"));
+    expect(revokeConnector).not.toHaveBeenCalled();
+    const confirm = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(confirm.textContent).toContain("Stop using Granola here?");
+    expect(confirm.textContent).toContain(
+      "Your agent can't use it in Helix until you turn it back on. It stays connected to your account.",
+    );
+    await click(button(confirm, "Stop using here"));
     expect(revokeConnector).toHaveBeenCalledWith("granola", WS_ID);
+  });
+
+  test("cancelling the Stop using confirm changes nothing", async () => {
+    plugins = [granola(true)];
+    personal = [granolaConnector([WS_ID])];
+    mounted = await mount(pagePath("person:granola"));
+    await click(button(testId(mounted.container, "plugin-here")!, "Stop using here"));
+    await click(button(document.body.querySelector('[role="dialog"]')!, "Cancel"));
+    expect(revokeConnector).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
   });
 
   test("Used in lists every workspace it is granted to, each revocable", async () => {
@@ -333,6 +350,10 @@ describe("PluginDetailPage — a person's plugin", () => {
     expect(rows.map((r) => r.querySelector("a")?.textContent)).toEqual(["Helix", "Orbit"]);
 
     await click(rows[1]?.querySelector('[aria-label="Stop using Granola in Orbit"]'));
+    expect(revokeConnector).not.toHaveBeenCalled();
+    const confirm = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(confirm.textContent).toContain("Stop using Granola in Orbit?");
+    await click(button(confirm, "Stop using"));
     expect(revokeConnector).toHaveBeenCalledWith("granola", OTHER_WS_ID);
     expect(revokeConnector).not.toHaveBeenCalledWith("granola", WS_ID);
   });

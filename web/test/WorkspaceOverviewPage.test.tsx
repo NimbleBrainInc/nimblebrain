@@ -265,7 +265,7 @@ describe("WorkspaceOverviewPage — app grid three states", () => {
     expect(empty?.textContent).not.toMatch(/\d+ plugins?/);
     const browse = findByTestId(mounted.container, "workspace-overview-browse");
     expect(browse?.textContent).toBe("Browse plugins");
-    expect(browse?.getAttribute("href")).toBe(`/w/${toSlug(WS.id)}/plugins?tab=browse`);
+    expect(browse?.getAttribute("href")).toBe(`/w/${toSlug(WS.id)}/plugins/browse`);
   });
 
   test("ready + empty, for a member who may not write → no Browse plugins", async () => {

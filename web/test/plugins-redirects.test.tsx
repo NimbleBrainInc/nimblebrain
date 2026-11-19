@@ -38,6 +38,7 @@ const {
   ProfilePluginsRedirect,
   profileRedirectWorkspace,
   WorkspacePluginsRedirect,
+  WorkspaceSkillsRedirect,
 } = await import("../src/pages/PluginsRedirects");
 
 import type { WorkspaceInfo } from "../src/context/WorkspaceContext";
@@ -90,9 +91,9 @@ async function visit(
               path="/w/:slug/settings/connectors/browse"
               element={<WorkspacePluginsRedirect tab="browse" />}
             />
-            <Route path="/w/:slug/settings/skills" element={<WorkspacePluginsRedirect />} />
+            <Route path="/w/:slug/settings/skills" element={<WorkspaceSkillsRedirect />} />
             <Route path="/profile/connectors" element={<ProfilePluginsRedirect />} />
-            <Route path="/profile/skills" element={<ProfilePluginsRedirect />} />
+            <Route path="/profile/skills" element={<ProfilePluginsRedirect page="skills" />} />
             <Route path="*" element={null} />
           </Routes>
         </WorkspaceProvider>
@@ -126,14 +127,12 @@ describe("old workspace addresses", () => {
     );
   });
 
-  test("settings/connectors/browse opens the Browse tab", async () => {
-    expect(await visit(`/w/${slug}/settings/connectors/browse`)).toBe(
-      `/w/${slug}/plugins?tab=browse`,
-    );
+  test("settings/connectors/browse opens Browse plugins", async () => {
+    expect(await visit(`/w/${slug}/settings/connectors/browse`)).toBe(`/w/${slug}/plugins/browse`);
   });
 
-  test("settings/skills opens Plugins, where the Skills group is", async () => {
-    expect(await visit(`/w/${slug}/settings/skills`)).toBe(`/w/${slug}/plugins`);
+  test("settings/skills opens Skills", async () => {
+    expect(await visit(`/w/${slug}/settings/skills`)).toBe(`/w/${slug}/skills`);
   });
 });
 
@@ -148,7 +147,7 @@ describe("old profile addresses", () => {
       await visit("/profile/connectors?connected=granola&owner=person", [ALPHA, BETA], BETA.id),
     ).toBe("/w/0076759dbbe19fcc/plugins?connected=granola&owner=person");
     expect(await visit("/profile/skills", [ALPHA, BETA], BETA.id)).toBe(
-      "/w/0076759dbbe19fcc/plugins",
+      "/w/0076759dbbe19fcc/skills",
     );
   });
 
@@ -171,11 +170,12 @@ describe("old profile addresses", () => {
 });
 
 describe("pluginsTarget", () => {
-  test("keeps the query and sets the tab", () => {
+  test("keeps the query, drops the old tab, and picks the page", () => {
     expect(pluginsTarget("abc", "")).toBe("/w/abc/plugins");
     expect(pluginsTarget("abc", "?connected=x", "browse")).toBe(
-      "/w/abc/plugins?connected=x&tab=browse",
+      "/w/abc/plugins/browse?connected=x",
     );
-    expect(pluginsTarget("abc", "?tab=installed", "browse")).toBe("/w/abc/plugins?tab=browse");
+    expect(pluginsTarget("abc", "?tab=installed", "browse")).toBe("/w/abc/plugins/browse");
+    expect(pluginsTarget("abc", "", "skills")).toBe("/w/abc/skills");
   });
 });

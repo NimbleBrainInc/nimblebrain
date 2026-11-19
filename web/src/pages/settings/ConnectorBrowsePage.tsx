@@ -362,7 +362,8 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
         type="search"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search the directory…"
+        placeholder="Search plugins"
+        aria-label="Search plugins"
         data-tour="catalog"
         className="w-full text-sm px-3 py-2 rounded border border-border bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
       />

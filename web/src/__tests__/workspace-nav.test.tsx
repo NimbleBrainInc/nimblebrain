@@ -313,6 +313,7 @@ describe("WorkspaceNav — the focused workspace only", () => {
       "/w/003eba8844413cd9/tasks",
       "/w/003eba8844413cd9/files",
       "/w/003eba8844413cd9/plugins",
+      "/w/003eba8844413cd9/skills",
       "/w/003eba8844413cd9/app/people",
       "/w/003eba8844413cd9/app/todos",
     ]);
@@ -770,6 +771,7 @@ describe("WorkspaceNav — APPS lists only apps", () => {
         "/w/003eba8844413cd9/tasks",
         "/w/003eba8844413cd9/files",
         "/w/003eba8844413cd9/plugins",
+        "/w/003eba8844413cd9/skills",
       ]);
       mounted.unmount();
       mounted = null;
@@ -1005,10 +1007,11 @@ describe("WorkspaceNav — collapsed", () => {
       "Tasks",
       "Files",
       "Plugins",
+      "Skills",
       "people",
     ]);
     // Icon-only: no visible labels in the rail.
-    for (const label of ["Overview", "Conversations", "Plugins", "Apps"]) {
+    for (const label of ["Overview", "Conversations", "Plugins", "Skills", "Apps"]) {
       expect(nav?.textContent).not.toContain(label);
     }
   });

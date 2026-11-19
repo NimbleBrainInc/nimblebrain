@@ -1,11 +1,11 @@
 ---
 title: Connectors Catalog
-description: How to curate the connectors that appear on the Plugins page's Browse tab.
+description: How to curate the connectors that appear on the Browse plugins page.
 ---
 
 import { Aside, Code, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The **Plugins → Browse** list is the **catalog**: one directory of [`ServerDetail`](https://github.com/modelcontextprotocol/registry) files — the shape the upstream MCP registry publishes — read, validated, and projected into the rows a workspace can install from.
+The **Plugins → Browse plugins** list is the **catalog**: one directory of [`ServerDetail`](https://github.com/modelcontextprotocol/registry) files — the shape the upstream MCP registry publishes — read, validated, and projected into the rows a workspace can install from.
 
 Only an entry advertising a `remotes[]` endpoint is installable: the runtime connects to remote MCP servers and does not acquire, verify, or execute downloadable `packages[]`. An entry offering only packages is dropped from Browse with a logged reason.
 
@@ -335,7 +335,7 @@ The Set up modal in the UI shows the resolved redirect URI with a Copy button so
 bun run dev
 ```
 
-The new entry appears on **Plugins → Browse**. Walk through the install:
+The new entry appears on **Plugins → Browse plugins**. Walk through the install:
 
 1. Click **Install** on the new connector.
 2. (For static-auth) Click **Set up** in the workspace admin modal, paste `client_id` + `client_secret`, save.

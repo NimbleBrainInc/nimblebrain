@@ -1,8 +1,8 @@
 import { type Dirent, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import matter from "gray-matter";
 import { log } from "../observability/log.ts";
+import { parseFrontmatter } from "./frontmatter.ts";
 import { mapFrontmatterToManifest, validateFrontmatter } from "./schemas/skill-manifest.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "./truncate.ts";
 import type { Skill, SkillScope } from "./types.ts";
@@ -216,7 +216,7 @@ export function parseSkillContent(
   sourcePath: string,
   opts?: { cap?: boolean },
 ): Skill | null {
-  const { data, content } = matter(raw);
+  const { data, content } = parseFrontmatter(raw);
   return parseSkillParts(data, content, sourcePath, opts);
 }
 
