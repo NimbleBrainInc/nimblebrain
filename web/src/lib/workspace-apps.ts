@@ -2,24 +2,12 @@ import type { PlacementEntry } from "../types";
 import { isIdentityApp } from "./identity-apps";
 
 /**
- * Max apps shown inline under the focused workspace in the sidebar
- * before the "View all N apps" overflow link takes over, counted in apps
- * (see `appsByConnector`), not in the views an app places. The cap applies
- * after `orderApps` lifts the viewer's pinned apps to the top, so a pinned app
- * is always shown.
- */
-export const MAX_INLINE_APPS = 10;
-
-/**
  * The app placements for the focused workspace, derived from the shell
  * placement registry. "Apps" are the grouped sidebar placements
  * (`sidebar.<group>`, e.g. `sidebar.apps`); bare `sidebar` items are
  * core nav (Conversations, Files, …) and `sidebar.bottom` is the utility
- * tray — neither is an app. This is the filter the workspace overview
- * page already used, lifted into one shared, tested helper so the
- * sidebar quick-list and the overview grid show the same set. The grid
- * shows one card per placement; the sidebar and the "View all N apps"
- * count group them into apps with `appsByConnector`.
+ * tray — neither is an app. The sidebar groups them into apps with
+ * `appsByConnector`.
  *
  * One entry per placement (not per app) — a route is a navigable
  * destination, so callers key by `resourceUri`. Sorted by priority
@@ -46,7 +34,7 @@ export interface WorkspaceApp {
  *
  * A connector that places several views (`sidebar.<group>` placements, each with
  * its own route) is still one app: the nav lists it once and shows its views
- * beneath it, and the cap and the "View all N apps" count are in apps. A
+ * beneath it. A
  * connector with one placement is an app with one view, which renders as it
  * always has. Apps keep the order of their first placement.
  */
@@ -106,7 +94,7 @@ export function orderApps(apps: WorkspaceApp[], pinned: readonly string[]): Work
 
 /**
  * Project the installed-connector list into the `serverName → brand icon URL`
- * map the sidebar quick-list and overview grid consume. Connectors without an
+ * map the sidebar's app list consumes. Connectors without an
  * `iconUrl` are omitted — callers fall back to a letter avatar. Pure (no React,
  * no fetch) so the map-building contract is testable without the provider's
  * fetch / SSE wiring; `WorkspaceAppIconsProvider` is the only caller.

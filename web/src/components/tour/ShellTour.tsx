@@ -82,7 +82,7 @@ export function useTourRunning(): boolean {
 }
 
 /** The anchor each step points at, as `[data-tour="<name>"]`. */
-export type TourAnchor = "nav" | "apps" | "catalog" | "skills" | "ask";
+export type TourAnchor = "nav" | "catalog" | "skills" | "ask";
 
 /** The workspace page a step belongs on, under `/w/<slug>/`. */
 export type TourPage = "overview" | "browse" | "skills";
@@ -118,12 +118,6 @@ const STEPS: TourStep[] = [
     page: "overview",
     title: "Your workspace",
     body: "Overview, Conversations, Files and Tasks live here. Plugins and Skills hold what your agent can do, and the apps you can open are listed below them.",
-  },
-  {
-    anchor: "apps",
-    page: "overview",
-    title: "Your apps",
-    body: "Apps are plugins with a page to open. Open one here or from the sidebar. To give your agent more to work with, browse plugins.",
     next: "Browse plugins",
   },
   {

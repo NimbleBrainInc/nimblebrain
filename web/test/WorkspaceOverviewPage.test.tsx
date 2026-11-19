@@ -1,52 +1,28 @@
 // ---------------------------------------------------------------------------
-// WorkspaceOverviewPage — app grid is a three-state surface
+// WorkspaceOverviewPage — a composer and a few ranked next steps.
 //
-// The bug this pins: the grid used to render "No apps installed" whenever
-// `forSlot` returned [] — which also happens while the shell hasn't caught up
-// to this workspace (deep-link / switch window). Loading was conflated with
-// empty, so a workspace that DOES have apps flashed a false-empty dashboard.
-//
-// Readiness is `shell.shellWorkspaceId === <this page's workspace id>`. The
-// three states:
-//   not-ready  → a stable spacer    (never the empty card; no pulsing skeleton)
-//   ready+empty → "No apps in this workspace yet", what an app is, and a way
-//                 to the plugin catalog
-//   ready+populated → the app grid
-//
-// The grid and the sidebar's APPS read one set (`workspaceApps`): with the
-// same placements, they list the same apps, and plugins without a view appear
-// in neither.
-//
-// Briefing is independent (its own async timeline) — callTool is stubbed to a
-// never-resolving promise so it sits in its skeleton and doesn't interfere.
-//
-// The page also offers actions, each to someone who can take it: an invite in a
-// workspace of one, "Add app" to a workspace admin, recent conversations, and a
-// composer that sends into the chat panel. Real chat providers wrap every mount,
-// as the shell's do.
+// The page reads four sources for this workspace: the briefing (`nb__briefing`),
+// the connectors list (from the app icons context), the last conversation
+// (`conversations__list`), and the runs waiting for review (`tasks__runs`). Its
+// cards render once all four have answered, so they appear once in their
+// final order. Choosing a card navigates, or opens the chat over the whole main
+// area; so does a question sent from the composer. Real chat providers wrap
+// every mount, as the shell's do.
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { WorkspaceInfo } from "../src/context/WorkspaceContext";
-import type { ChatRequest, PlacementEntry } from "../src/types";
+import type { ChatRequest } from "../src/types";
 import { realClient } from "./setup";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// Stub only `callTool` so the briefing fetch hangs in its skeleton (its own
-// async timeline — not what this file tests). Spread the preload's real-module
+// Stub only `callTool` and `startChatTurn`. Spread the preload's real-module
 // snapshot (see web/test/setup.ts) so every other export stays intact: a bare
-// `{ callTool }` mock leaks across files in the same test process and strips
-// functions the client/bridge suites depend on (getAuthToken,
-// getActiveWorkspaceId, …). The snapshot predates every mock.module, so it
-// can't itself be an incomplete stub the way `import * as` from the registry
-// could. WorkspaceContext skips its list call when given bootstrap data, so the
-// real setActiveWorkspaceId it calls is harmless — sibling suites reset client
-// state in their own beforeEach.
+// mock leaks across files in the same process and strips functions other
+// suites depend on.
 type CallTool = (server: string, tool: string) => Promise<unknown>;
 let callToolImpl: CallTool = () => new Promise(() => {});
-// The composer's send reaches `startChatTurn`; a test records it here. Unset, the
-// real function runs, so the mock changes nothing for other suites.
 type StartChatTurn = (req: ChatRequest) => Promise<unknown>;
 let startChatTurnImpl: StartChatTurn | null = null;
 mock.module("../src/api/client", () => ({
@@ -58,18 +34,17 @@ mock.module("../src/api/client", () => ({
 
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
-const { MemoryRouter, Route, Routes } = await import("react-router-dom");
+const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
 const { WorkspaceOverviewPage } = await import("../src/pages/WorkspaceOverviewPage");
 const { WorkspaceProvider } = await import("../src/context/WorkspaceContext");
-const { ShellProvider } = await import("../src/context/ShellContext");
 const { toSlug } = await import("../src/lib/workspace-slug");
 const { WorkspaceAppIconsContext } = await import("../src/context/WorkspaceAppIconsContext");
-const { WorkspaceNav } = await import("../src/components/shell/WorkspaceNav");
 const { ChatProvider } = await import("../src/context/ChatContext");
 const { ChatPanelProvider, useChatPanelContext } = await import("../src/context/ChatPanelContext");
 const { SessionProvider } = await import("../src/context/SessionContext");
-const { useLocation } = await import("react-router-dom");
+const { FIRST_QUESTION } = await import("../src/components/overview/actions");
 type InstalledConnector = import("../src/api/client").InstalledConnector;
+type BriefingItem = import("../src/_generated/platform-schemas/home").BriefingItem;
 
 interface Mounted {
   container: HTMLDivElement;
@@ -82,6 +57,7 @@ afterEach(() => {
   mounted = null;
   callToolImpl = () => new Promise(() => {});
   startChatTurnImpl = null;
+  localStorage.clear();
 });
 
 async function mount(element: React.ReactElement): Promise<Mounted> {
@@ -110,10 +86,17 @@ function findByTestId(container: HTMLElement, testid: string): HTMLElement | nul
   return null;
 }
 
-function findAllByTestId(container: HTMLElement, testid: string): HTMLElement[] {
-  return Array.from(container.getElementsByTagName("*")).filter(
-    (el) => el.getAttribute("data-testid") === testid,
-  ) as HTMLElement[];
+function cardIds(container: HTMLElement): string[] {
+  const list = findByTestId(container, "overview-actions");
+  return Array.from(list?.getElementsByTagName("li") ?? []).map(
+    (li) => li.getAttribute("data-testid") ?? "",
+  );
+}
+
+async function choose(container: HTMLElement, testid: string) {
+  await act(async () => {
+    findByTestId(container, testid)?.getElementsByTagName("button")[0]?.click();
+  });
 }
 
 const WS: WorkspaceInfo = {
@@ -123,71 +106,7 @@ const WS: WorkspaceInfo = {
   connectorCount: 0,
   userRole: "admin",
 };
-
-/** The shell's chat providers, around the routes as `App` places them. */
-function Chat({ children }: { children: React.ReactNode }) {
-  return (
-    <ChatProvider currentUserId="u1" initialConfig={{ configuredProviders: ["anthropic"] }}>
-      <ChatPanelProvider>{children}</ChatPanelProvider>
-    </ChatProvider>
-  );
-}
-
-function appPlacement(over: Partial<PlacementEntry>): PlacementEntry {
-  return {
-    serverName: "crm",
-    slot: "sidebar.apps",
-    resourceUri: "ui://crm/main",
-    priority: 10,
-    label: "CRM",
-    route: "crm",
-    ...over,
-  };
-}
-
-// `shellWorkspaceId` is the lever: equal to WS.id → ready; anything else → not.
-function harness(
-  shellWorkspaceId: string | undefined,
-  placements: PlacementEntry[],
-  ws: WorkspaceInfo = WS,
-  {
-    installed,
-    withNav = false,
-  }: {
-    /** The installed connectors, read as this workspace's; none given, no list yet. */
-    installed?: InstalledConnector[];
-    /** Render the sidebar's WorkspaceNav beside the page, on the same shell and list. */
-    withNav?: boolean;
-  } = {},
-) {
-  const shellValue = {
-    forSlot: (slot: string): PlacementEntry[] =>
-      placements.filter((p) => p.slot === slot || p.slot.startsWith(`${slot}.`)),
-    mainRoutes: (): PlacementEntry[] => [],
-    shellWorkspaceId,
-  };
-  return (
-    <WorkspaceAppIconsContext.Provider
-      value={{
-        iconFor: () => undefined,
-        connectors: installed ? { workspaceId: ws.id, installed } : undefined,
-      }}
-    >
-      <MemoryRouter initialEntries={[`/w/${toSlug(ws.id)}`]}>
-        <ShellProvider value={shellValue}>
-          <WorkspaceProvider initialWorkspaces={[ws]} initialActiveId={ws.id}>
-            <Chat>
-              {withNav && <WorkspaceNav />}
-              <Routes>
-                <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
-              </Routes>
-            </Chat>
-          </WorkspaceProvider>
-        </ShellProvider>
-      </MemoryRouter>
-    </WorkspaceAppIconsContext.Provider>
-  );
-}
+const SLUG = toSlug(WS.id);
 
 function installedConnector(
   serverName: string,
@@ -208,154 +127,121 @@ function installedConnector(
   };
 }
 
-describe("WorkspaceOverviewPage — app grid three states", () => {
-  test("not ready (shell lags this workspace) → a stable spacer, never the empty card", async () => {
-    // Shell still reflects a different workspace (the switch/deep-link window).
-    mounted = await mount(harness("ws_005820c54ca342ad", [appPlacement({})]));
+interface Sources {
+  items?: BriefingItem[];
+  conversations?: Array<{ id: string; title: string | null; preview: string; updatedAt: string }>;
+  reviewRuns?: number;
+}
 
-    // A held space, not a pulsing skeleton — the page stays mounted across a
-    // switch, so the apps section just holds its place until the shell resolves.
-    expect(findByTestId(mounted.container, "workspace-overview-apps-pending")).not.toBeNull();
-    // The false-empty regression: must NOT show "No apps installed" while loading.
-    expect(findByTestId(mounted.container, "workspace-overview-empty")).toBeNull();
+/** Answer each read the page makes. */
+function answer({ items = [], conversations = [], reviewRuns = 0 }: Sources = {}) {
+  callToolImpl = (server, tool) => {
+    if (server === "nb" && tool === "briefing") {
+      return Promise.resolve({
+        isError: false,
+        structuredContent: { items, generated_at: "" },
+      });
+    }
+    if (server === "conversations") {
+      return Promise.resolve({ isError: false, structuredContent: { conversations } });
+    }
+    if (server === "tasks" && tool === "runs") {
+      return Promise.resolve({
+        isError: false,
+        structuredContent: {
+          runs: Array.from({ length: reviewRuns }, (_, i) => ({ id: `r${i}` })),
+        },
+      });
+    }
+    return new Promise(() => {});
+  };
+}
+
+const probe = { panelState: "", path: "" };
+function Probe() {
+  probe.panelState = useChatPanelContext().panelState;
+  probe.path = useLocation().pathname + useLocation().search;
+  return null;
+}
+
+/** The page with the shell's providers. `installed` undefined means no connectors list yet. */
+function harness(
+  ws: WorkspaceInfo = WS,
+  installed: InstalledConnector[] | undefined = [],
+  connectorsWorkspaceId: string = ws.id,
+) {
+  return (
+    <WorkspaceAppIconsContext.Provider
+      value={{
+        iconFor: () => undefined,
+        connectors: installed ? { workspaceId: connectorsWorkspaceId, installed } : undefined,
+      }}
+    >
+      <MemoryRouter initialEntries={[`/w/${toSlug(ws.id)}`]}>
+        <WorkspaceProvider initialWorkspaces={[ws]} initialActiveId={ws.id}>
+          <ChatProvider currentUserId="u1" initialConfig={{ configuredProviders: ["anthropic"] }}>
+            <ChatPanelProvider>
+              <Probe />
+              <Routes>
+                <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
+                <Route path="*" element={null} />
+              </Routes>
+            </ChatPanelProvider>
+          </ChatProvider>
+        </WorkspaceProvider>
+      </MemoryRouter>
+    </WorkspaceAppIconsContext.Provider>
+  );
+}
+
+describe("WorkspaceOverviewPage — what it shows", () => {
+  test("the title and composer, and no settings button, app grid, or conversation list", async () => {
+    answer();
+    mounted = await mount(harness(WS, [installedConnector("crm")]));
+    expect(mounted.container.getElementsByTagName("h1")[0]?.textContent).toBe("Acme");
+    expect(findByTestId(mounted.container, "workspace-overview-ask")).not.toBeNull();
+    expect(findByTestId(mounted.container, "workspace-overview-settings")).toBeNull();
     expect(findByTestId(mounted.container, "workspace-overview-app-grid")).toBeNull();
+    expect(findByTestId(mounted.container, "workspace-overview-recent")).toBeNull();
   });
 
-  test("ready + empty → the empty card, no pending spacer", async () => {
-    mounted = await mount(harness(WS.id, []));
-
-    expect(findByTestId(mounted.container, "workspace-overview-empty")).not.toBeNull();
-    expect(findByTestId(mounted.container, "workspace-overview-apps-pending")).toBeNull();
-    expect(findByTestId(mounted.container, "workspace-overview-app-grid")).toBeNull();
+  test("no cards until the connectors list names this workspace", async () => {
+    answer();
+    mounted = await mount(harness(WS, [], "ws_005820c54ca342ad"));
+    expect(findByTestId(mounted.container, "overview-actions")).toBeNull();
   });
 
-  test("ready + populated → the grid with cards", async () => {
-    mounted = await mount(
-      harness(WS.id, [
-        appPlacement({ route: "crm", label: "CRM", resourceUri: "ui://crm/main" }),
-        // Its own connector: the header counts apps, and two placements of one
-        // connector are one app with two views.
-        appPlacement({
-          serverName: "todo",
-          route: "todo",
-          label: "Todo",
-          resourceUri: "ui://todo/main",
-        }),
-      ]),
-    );
-
-    expect(findByTestId(mounted.container, "workspace-overview-app-grid")).not.toBeNull();
-    expect(findAllByTestId(mounted.container, "workspace-overview-app-card")).toHaveLength(2);
-    expect(findByTestId(mounted.container, "workspace-overview-apps-pending")).toBeNull();
-    expect(findByTestId(mounted.container, "workspace-overview-empty")).toBeNull();
-  });
-
-  test("ready + empty → says what an app is, and a writer gets Browse plugins", async () => {
-    mounted = await mount(
-      harness(WS.id, [], WS, {
-        installed: [installedConnector("linear"), installedConnector("notion", "needs_auth")],
-      }),
-    );
-
-    const empty = findByTestId(mounted.container, "workspace-overview-empty");
-    expect(empty?.textContent).toContain("No apps in this workspace yet.");
-    expect(empty?.textContent).toContain("Apps are plugins with a page to open.");
-    expect(empty?.textContent).not.toContain("installed");
-    // Installed plugins without a view are not counted here: Plugins lists them.
-    expect(empty?.textContent).not.toMatch(/\d+ plugins?/);
-    const browse = findByTestId(mounted.container, "workspace-overview-browse");
-    expect(browse?.textContent).toBe("Browse plugins");
-    expect(browse?.getAttribute("href")).toBe(`/w/${toSlug(WS.id)}/plugins/browse`);
-  });
-
-  test("ready + empty, for a member who may not write → no Browse plugins", async () => {
-    const member: WorkspaceInfo = { ...WS, userRole: "member" };
-    mounted = await mount(harness(member.id, [], member));
-    expect(findByTestId(mounted.container, "workspace-overview-empty")?.textContent).toContain(
-      "Apps are plugins with a page to open.",
-    );
-    expect(findByTestId(mounted.container, "workspace-overview-browse")).toBeNull();
+  test("no cards until every read has answered", async () => {
+    callToolImpl = (server) =>
+      server === "nb"
+        ? Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } })
+        : new Promise(() => {});
+    mounted = await mount(harness());
+    expect(findByTestId(mounted.container, "overview-actions")).toBeNull();
   });
 });
 
-describe("WorkspaceOverviewPage — agrees with the sidebar", () => {
-  // Each row's name, without its letter avatar.
-  const appLabels = (container: HTMLElement, testid: string) =>
-    findAllByTestId(container, testid)
-      .map((el) => el.querySelector(".truncate")?.textContent ?? "")
-      .sort();
-
-  test("the same placements give the same apps in the grid and the sidebar's APPS", async () => {
-    mounted = await mount(
-      harness(
-        WS.id,
-        [
-          appPlacement({ serverName: "crm", route: "crm", label: "CRM", priority: 20 }),
-          appPlacement({
-            serverName: "todo",
-            route: "todo",
-            label: "Todo",
-            resourceUri: "ui://todo/main",
-            priority: 10,
-          }),
-          // Not apps: core nav and the utility tray.
-          appPlacement({ serverName: "files", slot: "sidebar", route: "files", label: "Files" }),
-          appPlacement({
-            serverName: "tray",
-            slot: "sidebar.bottom",
-            route: "tray",
-            label: "Tray",
-          }),
-        ],
-        WS,
-        { installed: [installedConnector("crm"), installedConnector("todo")], withNav: true },
-      ),
-    );
-
-    expect(appLabels(mounted.container, "workspace-overview-app-card")).toEqual(["CRM", "Todo"]);
-    expect(appLabels(mounted.container, "sidebar-workspace-app")).toEqual(["CRM", "Todo"]);
-  });
-
-  test("a plugin without a view is an app in neither, and the sidebar has no APPS", async () => {
-    mounted = await mount(
-      harness(WS.id, [appPlacement({ serverName: "files", slot: "sidebar", label: "Files" })], WS, {
-        installed: [installedConnector("linear")],
-        withNav: true,
-      }),
-    );
-
-    expect(findAllByTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(0);
-    expect(findAllByTestId(mounted.container, "workspace-overview-app-card")).toHaveLength(0);
-    expect(findByTestId(mounted.container, "workspace-overview-empty")).not.toBeNull();
-    const nav = findByTestId(mounted.container, "sidebar-workspace-nav");
-    expect(nav?.textContent).not.toContain("Apps");
-    expect(nav?.textContent).not.toContain("linear");
-  });
-});
-
-describe("WorkspaceOverviewPage — actions", () => {
+describe("WorkspaceOverviewPage — a new workspace", () => {
   const SOLO: WorkspaceInfo = { ...WS, memberCount: 1 };
 
-  test("a workspace admin alone in it is offered an invite, and Add app", async () => {
-    mounted = await mount(harness(SOLO.id, [appPlacement({})], SOLO));
-    const invite = findByTestId(mounted.container, "workspace-overview-invite");
-    expect(invite?.getAttribute("href")).toBe(`/w/${toSlug(SOLO.id)}/settings/members?add`);
-    expect(findByTestId(mounted.container, "workspace-overview-add-app")).not.toBeNull();
+  test("an admin alone in it gets the three setup steps", async () => {
+    answer();
+    mounted = await mount(harness(SOLO));
+    expect(cardIds(mounted.container)).toEqual([
+      "overview-action-setup-plugin",
+      "overview-action-setup-ask",
+      "overview-action-setup-invite",
+    ]);
   });
 
-  test("no invite once someone else is in it", async () => {
-    mounted = await mount(harness(WS.id, [appPlacement({})]));
-    expect(findByTestId(mounted.container, "workspace-overview-invite")).toBeNull();
-  });
-
-  test("a member who may not write sees neither invite nor Add app", async () => {
-    const member: WorkspaceInfo = { ...SOLO, userRole: "member" };
-    mounted = await mount(harness(member.id, [appPlacement({})], member));
-    expect(findByTestId(mounted.container, "workspace-overview-invite")).toBeNull();
-    expect(findByTestId(mounted.container, "workspace-overview-add-app")).toBeNull();
+  test("a member who may not write gets neither Connect a plugin nor Invite", async () => {
+    answer();
+    mounted = await mount(harness({ ...SOLO, userRole: "member" }));
+    expect(cardIds(mounted.container)).toEqual(["overview-action-setup-ask"]);
   });
 
   test("an org admin outside the membership role may still invite", async () => {
+    answer();
     const member: WorkspaceInfo = { ...SOLO, userRole: "member" };
     mounted = await mount(
       <SessionProvider
@@ -364,80 +250,93 @@ describe("WorkspaceOverviewPage — actions", () => {
           user: { id: "u1", email: "a@b.c", displayName: "A", orgRole: "admin" },
         }}
       >
-        {harness(member.id, [], member)}
+        {harness(member)}
       </SessionProvider>,
     );
-    expect(findByTestId(mounted.container, "workspace-overview-invite")).not.toBeNull();
+    expect(cardIds(mounted.container)).toContain("overview-action-setup-invite");
   });
 
-  test("recent conversations list and reopen in the panel", async () => {
-    callToolImpl = (server) =>
-      server === "conversations"
-        ? Promise.resolve({
-            isError: false,
-            structuredContent: {
-              conversations: [
-                {
-                  id: "conv_1",
-                  title: "Q3 pipeline",
-                  preview: "",
-                  updatedAt: new Date().toISOString(),
-                },
-                {
-                  id: "conv_2",
-                  title: null,
-                  preview: "draft the memo",
-                  updatedAt: new Date().toISOString(),
-                },
-              ],
-            },
-          })
-        : new Promise(() => {});
-    let panelState = "";
-    function Probe() {
-      panelState = useChatPanelContext().panelState;
-      return null;
-    }
-    mounted = await mount(
-      <MemoryRouter initialEntries={[`/w/${toSlug(WS.id)}`]}>
-        <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>
-          <Chat>
-            <Probe />
-            <Routes>
-              <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
-            </Routes>
-          </Chat>
-        </WorkspaceProvider>
-      </MemoryRouter>,
-    );
-    const rows = findAllByTestId(mounted.container, "workspace-overview-recent-row");
-    expect(rows.map((r) => r.textContent?.replace(/now$/, ""))).toEqual([
-      "Q3 pipeline",
-      "draft the memo",
-    ]);
-    await act(async () => {
-      rows[0]?.click();
+  test("Connect a plugin opens Browse plugins", async () => {
+    answer();
+    mounted = await mount(harness(SOLO));
+    await choose(mounted.container, "overview-action-setup-plugin");
+    expect(probe.path).toBe(`/w/${SLUG}/plugins/browse`);
+  });
+
+  test("Ask what it can do sends the question and opens the chat full-screen", async () => {
+    answer();
+    const sent: string[] = [];
+    startChatTurnImpl = (req) => {
+      sent.push(req.message);
+      return new Promise(() => {});
+    };
+    mounted = await mount(harness(SOLO));
+    await choose(mounted.container, "overview-action-setup-ask");
+    expect(sent).toEqual([FIRST_QUESTION]);
+    expect(probe.panelState).toBe("fullscreen");
+  });
+});
+
+describe("WorkspaceOverviewPage — a busy workspace", () => {
+  test("alerts lead, then the last conversation; setup steps already taken are gone", async () => {
+    answer({
+      items: [
+        {
+          app: "Outbound",
+          facet: "drafts",
+          label: "Drafts awaiting review",
+          count: 1,
+          level: "warning",
+          route: "@acme/outbound",
+          state: "ok",
+        },
+      ],
+      conversations: [{ id: "c1", title: "Q3 pipeline", preview: "", updatedAt: "" }],
+      reviewRuns: 2,
     });
-    expect(panelState).toBe("sidebar");
+    mounted = await mount(harness(WS, [installedConnector("gmail", "needs_auth")]));
+    expect(cardIds(mounted.container)).toEqual([
+      "overview-action-connector",
+      "overview-action-review",
+      "overview-action-facet",
+    ]);
+    expect(findByTestId(mounted.container, "overview-actions-more")?.textContent).toBe(
+      "Show 1 more",
+    );
   });
 
-  test("no recent section for a workspace with no conversations", async () => {
-    callToolImpl = (server) =>
-      server === "conversations"
-        ? Promise.resolve({ isError: false, structuredContent: { conversations: [] } })
-        : new Promise(() => {});
-    mounted = await mount(harness(WS.id, []));
-    expect(findByTestId(mounted.container, "workspace-overview-recent")).toBeNull();
+  test("a connector needing reconnection opens its connector page", async () => {
+    answer();
+    mounted = await mount(harness(WS, [installedConnector("gmail", "needs_auth")]));
+    await choose(mounted.container, "overview-action-connector");
+    expect(probe.path).toBe(`/w/${SLUG}/settings/connectors/gmail`);
   });
 
-  test("the composer is disabled until there is something to send", async () => {
-    mounted = await mount(harness(WS.id, []));
+  test("runs to review open Automations", async () => {
+    answer({ reviewRuns: 1 });
+    mounted = await mount(harness(WS, [installedConnector("crm")]));
+    await choose(mounted.container, "overview-action-review");
+    expect(probe.path).toBe(`/w/${SLUG}/tasks`);
+  });
+
+  test("the last conversation reopens in the chat, full-screen", async () => {
+    answer({ conversations: [{ id: "c1", title: "Q3 pipeline", preview: "", updatedAt: "" }] });
+    mounted = await mount(harness(WS, [installedConnector("crm")]));
+    expect(cardIds(mounted.container)).toEqual(["overview-action-resume"]);
+    await choose(mounted.container, "overview-action-resume");
+    expect(probe.panelState).toBe("fullscreen");
+  });
+});
+
+describe("WorkspaceOverviewPage — the composer", () => {
+  test("is disabled until there is something to send", async () => {
+    mounted = await mount(harness());
     const form = findByTestId(mounted.container, "workspace-overview-ask");
     const send = form?.getElementsByTagName("button")[0] as HTMLButtonElement | undefined;
     expect(send?.disabled).toBe(true);
   });
 
-  test("the composer sends the trimmed question, opens the panel, and clears", async () => {
+  test("sends the trimmed question, opens the chat full-screen, and clears", async () => {
     const sent: string[] = [];
     startChatTurnImpl = (req) => {
       sent.push(req.message);
@@ -445,24 +344,8 @@ describe("WorkspaceOverviewPage — actions", () => {
     };
     // The panel persists its state; start closed so opening is observable.
     localStorage.setItem("nb:chatPanelState", "closed");
-    let panelState = "";
-    function Probe() {
-      panelState = useChatPanelContext().panelState;
-      return null;
-    }
-    mounted = await mount(
-      <MemoryRouter initialEntries={[`/w/${toSlug(WS.id)}`]}>
-        <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>
-          <Chat>
-            <Probe />
-            <Routes>
-              <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
-            </Routes>
-          </Chat>
-        </WorkspaceProvider>
-      </MemoryRouter>,
-    );
-    expect(panelState).toBe("closed");
+    mounted = await mount(harness());
+    expect(probe.panelState).toBe("closed");
     const input = findByTestId(
       mounted.container,
       "workspace-overview-ask-input",
@@ -480,86 +363,7 @@ describe("WorkspaceOverviewPage — actions", () => {
     });
 
     expect(sent).toEqual(["what changed this week?"]);
-    expect(panelState).toBe("sidebar");
+    expect(probe.panelState).toBe("fullscreen");
     expect(input.value).toBe("");
-  });
-});
-
-describe("WorkspaceOverviewPage — briefing", () => {
-  function Where() {
-    return <div data-testid="location">{useLocation().pathname}</div>;
-  }
-
-  test("a connector needing reconnection opens its connector page", async () => {
-    callToolImpl = (server) =>
-      server === "nb"
-        ? Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } })
-        : new Promise(() => {});
-    const gmail: InstalledConnector = {
-      serverName: "gmail",
-      connectorName: "gmail",
-      displayName: "gmail",
-      disconnectable: true,
-      version: "1.0.0",
-      state: "reauth_required",
-      scope: "workspace",
-      interactive: false,
-      toolCount: 0,
-      allowedTools: [],
-      status: "needs_auth",
-    };
-    const slug = toSlug(WS.id);
-    mounted = await mount(
-      <WorkspaceAppIconsContext.Provider
-        value={{ iconFor: () => undefined, connectors: { workspaceId: WS.id, installed: [gmail] } }}
-      >
-        <MemoryRouter initialEntries={[`/w/${slug}`]}>
-          <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>
-            <Chat>
-              <Routes>
-                <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
-                <Route path="*" element={<Where />} />
-              </Routes>
-            </Chat>
-          </WorkspaceProvider>
-        </MemoryRouter>
-      </WorkspaceAppIconsContext.Provider>,
-    );
-
-    const row = findByTestId(mounted.container, "briefing-connector-status");
-    expect(row?.textContent).toBe("Critical: Reconnection needed · gmail");
-    expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
-    await act(async () => {
-      row?.getElementsByTagName("button")[0]?.click();
-    });
-    expect(findByTestId(mounted.container, "location")?.textContent).toBe(
-      `/w/${slug}/settings/connectors/gmail`,
-    );
-  });
-
-  test("renders nothing until the connectors list names this workspace", async () => {
-    callToolImpl = (server) =>
-      server === "nb"
-        ? Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } })
-        : new Promise(() => {});
-    mounted = await mount(
-      <WorkspaceAppIconsContext.Provider
-        value={{
-          iconFor: () => undefined,
-          connectors: { workspaceId: "ws_005820c54ca342ad", installed: [] },
-        }}
-      >
-        <MemoryRouter initialEntries={[`/w/${toSlug(WS.id)}`]}>
-          <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>
-            <Chat>
-              <Routes>
-                <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
-              </Routes>
-            </Chat>
-          </WorkspaceProvider>
-        </MemoryRouter>
-      </WorkspaceAppIconsContext.Provider>,
-    );
-    expect(findByTestId(mounted.container, "workspace-briefing")).toBeNull();
   });
 });
