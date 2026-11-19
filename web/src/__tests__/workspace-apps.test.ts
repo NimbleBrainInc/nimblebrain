@@ -10,7 +10,6 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
-import type { InstalledConnector } from "../api/client";
 import {
   appForPath,
   appRouteOf,
@@ -19,8 +18,6 @@ import {
   iconMapFromInstalled,
   MAX_INLINE_APPS,
   orderApps,
-  pluginCountLabel,
-  viewlessConnectors,
   workspaceApps,
 } from "../lib/workspace-apps";
 import type { PlacementEntry } from "../types";
@@ -212,39 +209,5 @@ describe("appRouteOf", () => {
     expect(appRouteOf("/w/acme/app")).toBeNull();
     expect(appRouteOf("/w/acme/settings/general")).toBeNull();
     expect(appRouteOf("/profile/general")).toBeNull();
-  });
-});
-
-describe("viewlessConnectors", () => {
-  const installed = (serverName: string): InstalledConnector => ({
-    serverName,
-    connectorName: serverName,
-    displayName: serverName,
-    disconnectable: false,
-    version: "1.0.0",
-    state: "running",
-    scope: "workspace",
-    interactive: false,
-    toolCount: 1,
-    allowedTools: [],
-    status: "ready",
-  });
-
-  test("every install that is neither an app nor an identity app, so each appears once", () => {
-    const apps = appsByConnector(workspaceApps([p({ serverName: "crm", slot: "sidebar.apps" })]));
-    const rest = viewlessConnectors(
-      [installed("crm"), installed("linear"), installed("conversations"), installed("notion")],
-      apps,
-    );
-    expect(rest.map((c) => c.serverName)).toEqual(["linear", "notion"]);
-  });
-});
-
-describe("pluginCountLabel", () => {
-  test("a count of plugins, singular for one, with 'more' after the apps", () => {
-    expect(pluginCountLabel(1, { more: false })).toBe("1 plugin");
-    expect(pluginCountLabel(3, { more: false })).toBe("3 plugins");
-    expect(pluginCountLabel(1, { more: true })).toBe("1 more plugin");
-    expect(pluginCountLabel(30, { more: true })).toBe("30 more plugins");
   });
 });

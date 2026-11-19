@@ -9,13 +9,13 @@
 // Readiness is `shell.shellWorkspaceId === <this page's workspace id>`. The
 // three states:
 //   not-ready  → a stable spacer    (never the empty card; no pulsing skeleton)
-//   ready+empty → "No apps in this workspace yet", counting the plugins
-//                 installed without an app, as the sidebar's grouped row does
+//   ready+empty → "No apps in this workspace yet", what an app is, and a way
+//                 to the plugin catalog
 //   ready+populated → the app grid
 //
-// The grid and the sidebar's APPS read one set (`workspaceApps`), and the
-// empty card and the sidebar's grouped row one set of plugins without an app
-// (`viewlessConnectors`): with the same placements and installs, they agree.
+// The grid and the sidebar's APPS read one set (`workspaceApps`): with the
+// same placements, they list the same apps, and plugins without a view appear
+// in neither.
 //
 // Briefing is independent (its own async timeline) — callTool is stubbed to a
 // never-resolving promise so it sits in its skeleton and doesn't interfere.
@@ -250,7 +250,7 @@ describe("WorkspaceOverviewPage — app grid three states", () => {
     expect(findByTestId(mounted.container, "workspace-overview-empty")).toBeNull();
   });
 
-  test("ready + no app but plugins installed → the empty card counts them, never 'none installed'", async () => {
+  test("ready + empty → says what an app is, and a writer gets Browse plugins", async () => {
     mounted = await mount(
       harness(WS.id, [], WS, {
         installed: [installedConnector("linear"), installedConnector("notion", "needs_auth")],
@@ -259,18 +259,22 @@ describe("WorkspaceOverviewPage — app grid three states", () => {
 
     const empty = findByTestId(mounted.container, "workspace-overview-empty");
     expect(empty?.textContent).toContain("No apps in this workspace yet.");
+    expect(empty?.textContent).toContain("Apps are plugins with a page to open.");
     expect(empty?.textContent).not.toContain("installed");
-    const plugins = findByTestId(mounted.container, "workspace-overview-empty-plugins");
-    expect(plugins?.textContent).toContain("2 plugins work here");
-    expect(plugins?.getElementsByTagName("a")[0]?.getAttribute("href")).toBe(
-      `/w/${toSlug(WS.id)}/plugins`,
-    );
+    // Installed plugins without a view are not counted here: Plugins lists them.
+    expect(empty?.textContent).not.toMatch(/\d+ plugins?/);
+    const browse = findByTestId(mounted.container, "workspace-overview-browse");
+    expect(browse?.textContent).toBe("Browse plugins");
+    expect(browse?.getAttribute("href")).toBe(`/w/${toSlug(WS.id)}/plugins?tab=browse`);
   });
 
-  test("ready + nothing installed → no plugins line", async () => {
-    mounted = await mount(harness(WS.id, [], WS, { installed: [] }));
-    expect(findByTestId(mounted.container, "workspace-overview-empty")).not.toBeNull();
-    expect(findByTestId(mounted.container, "workspace-overview-empty-plugins")).toBeNull();
+  test("ready + empty, for a member who may not write → no Browse plugins", async () => {
+    const member: WorkspaceInfo = { ...WS, userRole: "member" };
+    mounted = await mount(harness(member.id, [], member));
+    expect(findByTestId(mounted.container, "workspace-overview-empty")?.textContent).toContain(
+      "Apps are plugins with a page to open.",
+    );
+    expect(findByTestId(mounted.container, "workspace-overview-browse")).toBeNull();
   });
 });
 
@@ -310,22 +314,22 @@ describe("WorkspaceOverviewPage — agrees with the sidebar", () => {
 
     expect(appLabels(mounted.container, "workspace-overview-app-card")).toEqual(["CRM", "Todo"]);
     expect(appLabels(mounted.container, "sidebar-workspace-app")).toEqual(["CRM", "Todo"]);
-    expect(findByTestId(mounted.container, "sidebar-workspace-tools")).toBeNull();
   });
 
-  test("a workspace with only a plugin without an app: no app in either, one plugin in both", async () => {
+  test("a plugin without a view is an app in neither, and the sidebar has no APPS", async () => {
     mounted = await mount(
-      harness(WS.id, [], WS, { installed: [installedConnector("linear")], withNav: true }),
+      harness(WS.id, [appPlacement({ serverName: "files", slot: "sidebar", label: "Files" })], WS, {
+        installed: [installedConnector("linear")],
+        withNav: true,
+      }),
     );
 
     expect(findAllByTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(0);
     expect(findAllByTestId(mounted.container, "workspace-overview-app-card")).toHaveLength(0);
-    expect(findByTestId(mounted.container, "sidebar-workspace-tools")?.textContent).toEndWith(
-      "1 plugin",
-    );
-    expect(
-      findByTestId(mounted.container, "workspace-overview-empty-plugins")?.textContent,
-    ).toStartWith("1 plugin works here");
+    expect(findByTestId(mounted.container, "workspace-overview-empty")).not.toBeNull();
+    const nav = findByTestId(mounted.container, "sidebar-workspace-nav");
+    expect(nav?.textContent).not.toContain("Apps");
+    expect(nav?.textContent).not.toContain("linear");
   });
 });
 

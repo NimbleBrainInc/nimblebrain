@@ -18,16 +18,10 @@
 //      page.
 //   6. Collapsed, the nav renders the same destinations icon-only; an app with
 //      several views opens a menu of them from its icon.
-//   7. The APPS header carries a "+" to the connector catalog for a member
-//      who may write the workspace, even before any app is installed, and
-//      no "+" for anyone else.
-//   8. Installed connectors with no view share one row under the apps, to the
-//      installed list; one with a view is never counted there. The row is a
-//      count of plugins, even of one, whatever their connection state: it
-//      never names a plugin as if it were an app, and never says "connected".
-//   9. With nothing installed, the expanded APPS section shows an "Add an app"
-//      row to the catalog, once the installed list names this workspace.
-//  10. Choosing an app's view opens it at its home, the one already on screen
+//   7. APPS lists only apps (connectors that place a view). An installed
+//      connector with no view is not in the sidebar at all (Plugins lists it),
+//      APPS has no "+", and with no apps there is no APPS section.
+//   8. Choosing an app's view opens it at its home, the one already on screen
 //      included: the link carries the view's own address as the app target.
 // ---------------------------------------------------------------------------
 
@@ -319,7 +313,6 @@ describe("WorkspaceNav — the focused workspace only", () => {
       "/w/003eba8844413cd9/tasks",
       "/w/003eba8844413cd9/files",
       "/w/003eba8844413cd9/plugins",
-      "/w/003eba8844413cd9/plugins?tab=browse",
       "/w/003eba8844413cd9/app/people",
       "/w/003eba8844413cd9/app/todos",
     ]);
@@ -732,79 +725,74 @@ describe("WorkspaceNav — pinned apps", () => {
   });
 });
 
-describe("WorkspaceNav — add a connector", () => {
-  test("the APPS header carries a + to Plugins' Browse tab", async () => {
+describe("WorkspaceNav — APPS lists only apps", () => {
+  test("installed connectors without a view get no row, and APPS has no +", async () => {
     mounted = await mount({
       workspaces: [HELIX],
       activeId: "ws_003eba8844413cd9",
       initialPath: "/w/003eba8844413cd9/",
       placements: [appPlacement("people")],
+      installed: [
+        installedConnector("people", "People"),
+        installedConnector("gmail", "Gmail"),
+        installedConnector("granola", "Granola"),
+      ],
     });
 
-    const add = byTestId(mounted.container, "sidebar-add-connector");
-    expect(add).toHaveLength(1);
-    expect(add[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/plugins?tab=browse");
-    expect(add[0]?.getAttribute("aria-label")).toBe("Add apps and tools");
-    expect(add[0]?.parentElement?.textContent).toBe("Apps");
+    const nav = byTestId(mounted.container, "sidebar-workspace-nav")[0];
+    expect(byTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(1);
+    expect(nav?.textContent).toContain("Apps");
+    expect(nav?.textContent).not.toContain("Gmail");
+    expect(nav?.textContent).not.toContain("Granola");
+    expect(nav?.textContent).not.toMatch(/\d+ (more )?plugins?/);
+    // Plugins is the one way to the installed list; nothing in APPS adds.
+    expect(anchorHrefs(mounted.container).filter((h) => h.includes("/plugins"))).toEqual([
+      "/w/003eba8844413cd9/plugins",
+    ]);
   });
 
-  test("a workspace with no apps still shows APPS and its +", async () => {
-    mounted = await mount({
-      workspaces: [HELIX],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-    });
-
-    expect(byTestId(mounted.container, "sidebar-add-connector")).toHaveLength(1);
-    expect(byTestId(mounted.container, "sidebar-workspace-nav")[0]?.textContent).toContain("Apps");
+  test("no apps, no APPS section, whatever is installed", async () => {
+    for (const installed of [[], [installedConnector("gmail", "Gmail")], undefined]) {
+      mounted = await mount({
+        workspaces: [HELIX],
+        activeId: "ws_003eba8844413cd9",
+        initialPath: "/w/003eba8844413cd9/",
+        placements: IDENTITY_PLACEMENTS,
+        installed,
+      });
+      const nav = byTestId(mounted.container, "sidebar-workspace-nav")[0];
+      expect(nav?.textContent).not.toContain("Apps");
+      expect(nav?.textContent).not.toContain("Add an app");
+      expect(nav?.textContent).not.toContain("Gmail");
+      expect(anchorHrefs(mounted.container)).toEqual([
+        "/w/003eba8844413cd9/",
+        "/w/003eba8844413cd9/conversations",
+        "/w/003eba8844413cd9/tasks",
+        "/w/003eba8844413cd9/files",
+        "/w/003eba8844413cd9/plugins",
+      ]);
+      mounted.unmount();
+      mounted = null;
+    }
   });
 
-  test("a workspace with nothing installed shows an Add an app row", async () => {
+  test("collapsed with no apps, no divider and no add button", async () => {
     mounted = await mount({
       workspaces: [HELIX],
       activeId: "ws_003eba8844413cd9",
       initialPath: "/w/003eba8844413cd9/",
-      installed: [],
-    });
-
-    const empty = byTestId(mounted.container, "sidebar-workspace-apps-empty");
-    expect(empty).toHaveLength(1);
-    expect(empty[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/plugins?tab=browse");
-    expect(empty[0]?.textContent).toBe("Add an app");
-  });
-
-  test("no Add an app row before the installed list names this workspace", async () => {
-    mounted = await mount({
-      workspaces: [HELIX],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-    });
-
-    expect(byTestId(mounted.container, "sidebar-workspace-apps-empty")).toHaveLength(0);
-  });
-
-  test("no Add an app row once an app is installed, or when collapsed", async () => {
-    mounted = await mount({
-      workspaces: [HELIX],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-      placements: [appPlacement("people")],
-      installed: [installedConnector("people")],
-    });
-    expect(byTestId(mounted.container, "sidebar-workspace-apps-empty")).toHaveLength(0);
-    mounted.unmount();
-
-    mounted = await mount({
-      workspaces: [HELIX],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-      installed: [],
+      placements: IDENTITY_PLACEMENTS,
+      installed: [installedConnector("gmail", "Gmail")],
       collapsed: true,
     });
-    expect(byTestId(mounted.container, "sidebar-workspace-apps-empty")).toHaveLength(0);
+    const nav = byTestId(mounted.container, "sidebar-workspace-nav")[0];
+    expect(nav?.querySelector('[aria-hidden="true"].h-px')).toBeNull();
+    expect(
+      Array.from(nav!.getElementsByTagName("a")).map((a) => a.getAttribute("aria-label")),
+    ).toEqual(["Overview", "Conversations", "Tasks", "Files", "Plugins"]);
   });
 
-  test("a member who cannot write the workspace gets no +", async () => {
+  test("a member who cannot write the workspace sees the same apps", async () => {
     mounted = await mount({
       workspaces: [ws({ id: "ws_003eba8844413cd9", name: "Helix", userRole: "member" })],
       activeId: "ws_003eba8844413cd9",
@@ -812,125 +800,7 @@ describe("WorkspaceNav — add a connector", () => {
       placements: [appPlacement("people")],
     });
 
-    expect(byTestId(mounted.container, "sidebar-add-connector")).toHaveLength(0);
     expect(byTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(1);
-  });
-
-  test("no connectors without a view, no shared row", async () => {
-    mounted = await mount({
-      workspaces: [HELIX],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-      placements: [appPlacement("people")],
-      installed: [installedConnector("people")],
-    });
-
-    expect(byTestId(mounted.container, "sidebar-workspace-tools")).toHaveLength(0);
-  });
-});
-
-describe("WorkspaceNav — connectors without a view", () => {
-  test("share one row after the apps, counting only those without a view", async () => {
-    mounted = await mount({
-      workspaces: [HELIX],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-      placements: [appPlacement("people")],
-      installed: [
-        installedConnector("people"),
-        installedConnector("gmail", "Gmail"),
-        installedConnector("granola", "Granola"),
-      ],
-    });
-
-    const row = byTestId(mounted.container, "sidebar-workspace-tools");
-    expect(row).toHaveLength(1);
-    expect(row[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/plugins");
-    expect(row[0]?.textContent).toEndWith("2 more plugins");
-    expect(row[0]?.getAttribute("title")).toBe("Gmail, Granola");
-    // After the apps (the Plugins item above them shares the href).
-    const hrefs = anchorHrefs(mounted.container);
-    expect(hrefs.lastIndexOf("/w/003eba8844413cd9/plugins")).toBeGreaterThan(
-      hrefs.indexOf("/w/003eba8844413cd9/app/people"),
-    );
-  });
-
-  test("a single one is counted, not named as an app; with no apps the count drops 'more'", async () => {
-    mounted = await mount({
-      workspaces: [HELIX],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-      installed: [installedConnector("gmail", "Gmail")],
-    });
-    const row = byTestId(mounted.container, "sidebar-workspace-tools")[0];
-    expect(row?.textContent).toEndWith("1 plugin");
-    expect(row?.getAttribute("title")).toBe("Gmail");
-    expect(byTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(0);
-    mounted.unmount();
-
-    mounted = await mount({
-      workspaces: [HELIX],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-      installed: [installedConnector("gmail", "Gmail"), installedConnector("exa", "Exa")],
-    });
-    expect(byTestId(mounted.container, "sidebar-workspace-tools")[0]?.textContent).toEndWith(
-      "2 plugins",
-    );
-  });
-
-  test("counts installs in every state, and never says connected", async () => {
-    const states: InstalledConnector["status"][] = [
-      "ready",
-      "not_connected",
-      "needs_auth",
-      "failed",
-      "needs_setup",
-    ];
-    mounted = await mount({
-      workspaces: [HELIX],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-      placements: [appPlacement("people")],
-      installed: [
-        installedConnector("people"),
-        ...states.map((status) => ({ ...installedConnector(`c-${status}`), status })),
-      ],
-    });
-    const text = byTestId(mounted.container, "sidebar-workspace-tools")[0]?.textContent ?? "";
-    expect(text).toEndWith("5 more plugins");
-    expect(text).not.toContain("connected");
-  });
-
-  test("an app past the inline cap is still an app, not counted in the row", async () => {
-    const appNames = Array.from({ length: MAX_INLINE_APPS + 1 }, (_, i) => `app-${i}`);
-    mounted = await mount({
-      workspaces: [HELIX],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-      placements: appNames.map((name, i) => appPlacement(name, { priority: (i + 1) * 10 })),
-      installed: [
-        ...appNames.map((name) => installedConnector(name)),
-        installedConnector("gmail", "Gmail"),
-      ],
-    });
-
-    expect(byTestId(mounted.container, "sidebar-workspace-view-all")).toHaveLength(1);
-    expect(byTestId(mounted.container, "sidebar-workspace-tools")[0]?.textContent).toEndWith(
-      "1 more plugin",
-    );
-  });
-
-  test("no row while the installed list still names another workspace", async () => {
-    mounted = await mount({
-      workspaces: [HELIX, ACME],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-      installed: [installedConnector("gmail", "Gmail")],
-      installedFor: ACME.id,
-    });
-
-    expect(byTestId(mounted.container, "sidebar-workspace-tools")).toHaveLength(0);
   });
 });
 
@@ -1136,7 +1006,6 @@ describe("WorkspaceNav — collapsed", () => {
       "Files",
       "Plugins",
       "people",
-      "Add apps and tools",
     ]);
     // Icon-only: no visible labels in the rail.
     for (const label of ["Overview", "Conversations", "Plugins", "Apps"]) {
