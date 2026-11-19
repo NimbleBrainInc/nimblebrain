@@ -22,7 +22,7 @@ from nimblebrain_server_sdk import ADDS, CHANGES, READS
 async def get_note(note_id: str) -> dict[str, str]: ...
 ```
 
-Under the specification's defaults an unannotated tool is a destructive write, and a host treats it as one: it may ask the user to confirm a call that only reads. Give every tool one of the three.
+Under the specification's defaults an unannotated tool is a destructive write, and a host treats it as one: it may ask the user to confirm a call that only reads. NimbleBrain runs an agent's consecutive calls to `READS` tools together and every other call one at a time, in the order the agent made them, so an unannotated read also waits its turn. Give every tool one of the three.
 
 <Aside type="note">
 The annotation describes the tool to the host. It does not enforce anything: a tool marked `READS` that writes will still write.

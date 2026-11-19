@@ -990,6 +990,39 @@ function toolSchemaFor(ctx: ToolExecContext, name: string): ToolSchema | undefin
 }
 
 /**
+ * Whether the tool a call names declares itself read-only. Absent, the MCP
+ * spec reads the tool as one that may write, and so does this.
+ */
+function isReadOnlyTool(ctx: ToolExecContext, name: string): boolean {
+  return toolSchemaFor(ctx, name)?.annotations?.readOnlyHint === true;
+}
+
+/**
+ * Split calls, in order, into the phases {@link AgentEngine} runs one after
+ * another: each maximal run of consecutive read-only calls is one phase, and
+ * every other call is a phase of its own. Returns call indices.
+ */
+function orderPhases(
+  toolCalls: readonly LanguageModelV4ToolCall[],
+  isReadOnly: (toolName: string) => boolean,
+): number[][] {
+  const phases: number[][] = [];
+  let reads: number[] | null = null;
+  for (let i = 0; i < toolCalls.length; i++) {
+    if (!isReadOnly((toolCalls[i] as LanguageModelV4ToolCall).toolName)) {
+      reads = null;
+      phases.push([i]);
+    } else if (reads) {
+      reads.push(i);
+    } else {
+      reads = [i];
+      phases.push(reads);
+    }
+  }
+  return phases;
+}
+
+/**
  * Refusal for a call naming a tool without "model" in its `ui.visibility`.
  * Such a tool is withheld from every list the model sees, and that alone does
  * not stop a model that names it: an injected instruction can carry the name.
@@ -1625,7 +1658,8 @@ export class AgentEngine {
         const historyContent = normalizeForReplay(response.content);
         history.push({ role: "assistant", content: historyContent });
 
-        // 5. Execute tools in PARALLEL (sync + task-augmented concurrently, §13)
+        // 5. Execute tools: reads concurrently, writes in the model's order
+        // (see executeToolCallsBounded).
         const toolExecContext: ToolExecContext = {
           config,
           runId,
@@ -1637,7 +1671,7 @@ export class AgentEngine {
         };
         const toolResults = await this.executeToolCallsBounded(toolCalls, toolExecContext);
 
-        // Build result arrays from parallel results. `modelOutput` is the
+        // Build result arrays from the per-call results. `modelOutput` is the
         // already-bounded text the model sees (computed once, during execution,
         // and persisted on tool.done) — so the live prompt and the replayed
         // prompt carry the identical bounded result.
@@ -2179,32 +2213,74 @@ export class AgentEngine {
   }
 
   /**
-   * Execute one iteration's tool calls, grouped by source and bounded within
-   * each group. See {@link MAX_PARALLEL_TOOL_CALLS_PER_SOURCE_PER_RUN} for the
-   * scope this does and does not enforce.
+   * Execute one iteration's tool calls in the order the model emitted them
+   * wherever order can matter, and concurrently wherever it cannot.
    *
-   * The grouping key is the source prefix `ToolRegistry.execute` routes on — the
-   * same first-`__` split every dispatch door performs, though each hand-rolls
-   * it rather than sharing one function, so the correspondence is CONVENTION,
-   * not enforcement: changing the decomposition means changing every site, or
-   * this grouping silently desyncs from the registry's routing. The
-   * correspondence is what makes the bound meaningful — one group is exactly one
-   * `ToolSource`, so the thing bounded is the thing that owns the connection.
+   * The model's order is its intent: "record X, then show me Y" emitted as two
+   * calls in one response means Y should see X. Running every call at once
+   * discards that, and a read issued after a write can finish first and report
+   * the state before it. So the calls are split, in model order, into phases:
    *
-   * Calls to different sources still go out together; only depth against any one
-   * source is capped. Results are written by index, so `buildToolResults`, which
-   * pairs positionally, is unaffected.
+   *   - a maximal run of consecutive calls whose tools are read-only
+   *     (`annotations.readOnlyHint === true`) is one phase, and runs
+   *     concurrently;
+   *   - every other call is a phase of its own. The MCP spec reads an absent
+   *     annotation as "may write", so an unannotated tool, or one the registry
+   *     does not know, is treated as a write.
    *
-   * In-process sources are bounded too. Every `nb__*` tool shares the `nb` key,
-   * so the cap covers 6 concurrent `nb__*` calls of any kind.
+   * Phases run one after another, so a write waits for every call before it
+   * and every call after it waits for the write. Reads never reorder against
+   * each other, so a response of reads only is one phase and runs exactly as
+   * fast as it would unordered. A read-only hint is the server's claim about
+   * itself; trusting it can only parallelize what the server says changes
+   * nothing, and a false claim costs that server's own ordering, never a
+   * check. The tool is classified by the name the model sent: a
+   * `beforeToolCall` hook that renames a call does so inside that call's phase.
+   * A call held for its skill guidance does not run, so its phase ends as soon
+   * as the hold answers. Once the run is cancelled no further phase starts;
+   * replay drops the calls that never ran.
+   *
+   * Within a phase, calls are grouped by source and bounded within each group.
+   * See {@link MAX_PARALLEL_TOOL_CALLS_PER_SOURCE_PER_RUN} for the scope this
+   * does and does not enforce. The grouping key is the source prefix
+   * `ToolRegistry.execute` routes on — the same first-`__` split every
+   * dispatch door performs, though each hand-rolls it rather than sharing one
+   * function, so the correspondence is CONVENTION, not enforcement: changing
+   * the decomposition means changing every site, or this grouping silently
+   * desyncs from the registry's routing. The correspondence is what makes the
+   * bound meaningful — one group is exactly one `ToolSource`, so the thing
+   * bounded is the thing that owns the connection. Calls to different sources
+   * in one phase go out together; only depth against any one source is capped.
+   * In-process sources are bounded too: every `nb__*` tool shares the `nb` key.
+   *
+   * Results are written by call index, so `buildToolResults`, which pairs
+   * positionally, is unaffected by phases or completion order.
    */
   private async executeToolCallsBounded(
     toolCalls: LanguageModelV4ToolCall[],
     ctx: ToolExecContext,
   ): Promise<ToolExecResult[]> {
     const results = new Array<ToolExecResult>(toolCalls.length);
+    const phases = orderPhases(toolCalls, (name) => isReadOnlyTool(ctx, name));
+    for (let p = 0; p < phases.length; p++) {
+      if (p > 0) throwIfAborted(ctx.config.signal);
+      await this.executePhase(phases[p] as number[], toolCalls, ctx, results);
+    }
+    return results;
+  }
+
+  /**
+   * Run one phase's calls concurrently, grouped by source and bounded per
+   * source, writing each result at its call index.
+   */
+  private async executePhase(
+    phase: number[],
+    toolCalls: LanguageModelV4ToolCall[],
+    ctx: ToolExecContext,
+    results: ToolExecResult[],
+  ): Promise<void> {
     const bySource = new Map<string, number[]>();
-    for (let i = 0; i < toolCalls.length; i++) {
+    for (const i of phase) {
       // Passing the raw wire name: `splitInnerToolName` documents its input as
       // already stripped of any `ws_<id>-` prefix, which holds here because that
       // form is rejected at the door before a call reaches the engine.
@@ -2233,8 +2309,6 @@ export class AgentEngine {
         ),
       ),
     );
-
-    return results;
   }
 
   /**
@@ -2358,8 +2432,8 @@ export class AgentEngine {
   /**
    * Run one tool call end-to-end: check and gate (checkAndGate) → execute →
    * bound → afterToolCall → supervisor → emit. Returns the record the loop
-   * needs to build history and telemetry. Called concurrently (up to the
-   * per-source cap) from the iteration's bounded dispatch above.
+   * needs to build history and telemetry. Called from one phase of the
+   * iteration's dispatch above, concurrently with that phase's other calls.
    */
   private async executeToolCall(
     toolCall: LanguageModelV4ToolCall,

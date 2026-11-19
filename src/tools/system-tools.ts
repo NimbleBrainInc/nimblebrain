@@ -14,7 +14,7 @@ import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
 import { createManageConnectorsTool, type ManageConnectorsContext } from "./connector-tools.ts";
 import { createCoreToolDefs } from "./core-source.ts";
-import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
+import { defineInProcessApp, type InProcessTool, READ_ONLY } from "./in-process-app.ts";
 import { createManageToolsToolDefs } from "./manage-tools.ts";
 import { McpSource } from "./mcp-source.ts";
 import {
@@ -96,6 +96,7 @@ export async function createSystemTools(
   const systemToolDefs: InProcessTool[] = [
     {
       name: "search",
+      annotations: READ_ONLY,
       description:
         "Search installed tools by keyword (scope: tools) or the connector catalog for servers to install (scope: catalog). Returns matches as a list; to call a matched tool that is not already in your tool list, activate it first with nb__manage_tools.",
       inputSchema: {
@@ -235,6 +236,7 @@ function readLimitFor(uri: string): number {
 function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool {
   return {
     name: "read_resource",
+    annotations: READ_ONLY,
     description:
       "Read a resource published by an installed app or by the platform. Use this when an app's instructions tell you to load a specific resource, when you need to inspect platform-published context, or to read one of an app's records whole: the URI shapes an app serves are listed under it in an `app-resource-templates` block, and its tool results often carry a record's `uri`. Supported URI schemes include " +
       `${READ_RESOURCE_SCHEMES_PROSE}, and any connector-published scheme matching the connector's source name. ` +
@@ -330,6 +332,7 @@ function createStatusTool(
 ): InProcessTool {
   return {
     name: "status",
+    annotations: READ_ONLY,
     description:
       "Get platform status. Default scope shows a concise overview. Use 'connectors' for per-connector health, 'skills' for loaded skills, or 'config' for model and limit details.",
     inputSchema: {

@@ -58,6 +58,7 @@ import { partitionSkillsByRole } from "../../skills/select.ts";
 import {
   defineInProcessApp,
   type InProcessTool,
+  READ_ONLY,
   type ToolErrorResult,
   type ToolSuccessResult,
   type TypedToolResult,
@@ -126,6 +127,7 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
   const tools: InProcessTool[] = [
     typedTool({
       name: "effective_context",
+      annotations: READ_ONLY,
       description: COMPOSE_DESCRIPTION,
       inputSchema: ComposeEffectiveContextInput,
       outputSchema: ComposeEffectiveContextOutput,
@@ -171,6 +173,7 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
     }),
     typedTool({
       name: "assembled_context",
+      annotations: READ_ONLY,
       description: ASSEMBLED_CONTEXT_DESCRIPTION,
       inputSchema: ComposeAssembledContextInput,
       outputSchema: ComposeAssembledContextOutput,
