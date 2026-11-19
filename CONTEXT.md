@@ -16,7 +16,8 @@ it belongs in an MCP server, a Synapse app, or upstream MCP — not the runtime.
 
 1. **Manage skills** — discover, compose, and apply `SKILL.md`-format guidance
    into the agent's prompt without busting the prompt cache. *(Domain terms:
-   skill, role/channel, catalog, provenance. ADRs 0009–0019.)*
+   skill, role/channel, skill index, provenance, plugin. ADRs 0009–0019,
+   0068.)*
 2. **Orchestrate over remote MCP servers** — treat every tool/resource provider
    (a directly-addressed server, a gateway-brokered one, a Synapse app) as an
    interchangeable MCP source through one boundary, and keep those connections
@@ -92,7 +93,8 @@ never crosses the workspace wall — it means "to this workspace," never beyond.
 The workspace boundary, enforced **structurally** (the storage path, ADR-0003)
 and **at dispatch** (`routeToolCall`, ADR-0005). Reaching another workspace is
 **denied, not gated**. The one sanctioned crossing is a personal-connector grant
-(ADR-0006), which fails closed with `ConnectorGrantDenied`.
+(ADR-0006), which fails closed with `ConnectorGrantDenied`. ADR-0069 makes that
+grant per plugin (see *Plugin grant*).
 
 ### Identity door / tool namespacing
 A tool name's shape is its scope (ADR-0005). **Workspace tools** are bare
@@ -217,18 +219,20 @@ unmodified, with the runtime's own configuration nested under
 the filesystem, from an MCP server's `skills/list` under the MCP Skills
 Extension (a peer, not a lesser kind; its body fetched when needed and verified
 against the listed digest — ADR-0011), or from a curated connector overlay
-(ADR-0013).
+(ADR-0013). Under ADR-0068 a connector's curated guidance is a skill in that
+connector's plugin, bound to the server it names, and the overlay repo goes
+away (see *Plugin*).
 
 ### Role / channel
 A skill's declared `loading-strategy`, and the prompt channel that follows from
 it (ADR-0010). `always` composes into the system prompt every turn. `dynamic`
 reaches the model by tool-affinity (selected once at turn start), by an explicit
 trigger phrase (matched per message, the deterministic must-fire channel), or —
-carrying neither — by the catalog. The sets are disjoint by construction, so a
+carrying neither — by the skill index. The sets are disjoint by construction, so a
 skill is never in two channels, and one predicate answers "how would this skill
 load?" for every read surface.
 
-### Catalog
+### Skill index
 The model-facing index of activatable skills: name and description only, sorted
 and deduplicated (ADR-0015). It lists what **can** be activated and never what
 **is** loaded, so its bytes move only on install and authoring events and the
@@ -239,6 +243,34 @@ Who authored a skill. `chat`, `admin`, `connector`, and `import` are audit facts
 written to disk. `vendored` is not: it is the trust marker for platform-shipped
 skills, stamped in memory at load on the platform's own source-tree directories
 and absent from the on-disk schema, so a file cannot forge it (ADR-0012).
+
+### Plugin *(decided, ADR-0068; not yet built)*
+The unit of install: an Agent Plugins directory that bundles servers (named in
+`mcp.json`, or by a `ServerDetail` in its `ai.nimblebrain` extension) and
+skills. A **catalog** is a curated set of plugins someone vouches for, and
+`name@catalog` addresses a plugin in it (`linear@nimblebrain`). The operator's
+policy names which catalogs an instance trusts. The runtime reconciles a
+declared list of plugins into installed connectors and skills, and records the
+result in a lock. A plugin's servers are remote; one that names a `stdio`
+server is not installable. A workspace or a person owns a plugin: it is
+whichever declared list holds it (ADR-0069). Today connectors and skills
+install separately, as *Source* and *Skill* describe.
+
+### App
+A view a plugin's server places (`ui://`, MCP Apps). A plugin is what is
+installed; an app is what is opened, and not every plugin has one (ADR-0068).
+Distinct from a *platform app*, which is one of the kernel's own sources.
+
+### Plugin grant *(decided, ADR-0069; not yet built)*
+A personal plugin acts in a workspace only while its owner grants it there. A
+grant names one personal plugin and one workspace, and covers the plugin's
+connectors and its skills; without it, neither reaches the workspace. No
+workspace is granted by default, the first one included; installing from inside
+a workspace grants it there. Only the owner grants, from a first-party client,
+and a model's call for a grant asks the person. A grant never composes the
+plugin into the workspace's registry, so other members gain nothing. It
+replaces ADR-0006's per-connector grant, which is what the runtime enforces
+today.
 
 ## Decisions
 
@@ -252,7 +284,7 @@ Foundational (secure RBAC):
 - [0003](adr/0003-primitives-are-workspace-owned-and-path-authoritative.md) — primitives are workspace-owned and path-authoritative
 - [0004](adr/0004-private-by-default-visibility-is-a-field.md) — private by default; visibility is a mutable field
 - [0005](adr/0005-no-cross-workspace-reach-tool-shape-is-scope.md) — no cross-workspace reach; a tool name's shape is its scope
-- [0006](adr/0006-personal-connector-use-requires-a-grant.md) — personal-connector use in a shared workspace requires a grant
+- [0006](adr/0006-personal-connector-use-requires-a-grant.md) — personal-connector use in a shared workspace requires a grant (amended by 0069)
 - [0007](adr/0007-offboarding-revokes-active-use.md) — offboarding revokes active use; ownership is necessary, not sufficient
 - [0008](adr/0008-notifications-are-pulled-and-routed-by-the-operator.md) — notifications are pulled into a workspace inbox and routed by the operator
 - [0036](adr/0036-an-mcp-connection-is-addressed-to-one-workspace-by-url.md) — an MCP connection is addressed to one workspace by URL; a token is valid only for its resource; membership authorizes (amended by 0048)
@@ -263,6 +295,7 @@ Foundational (secure RBAC):
 - [0042](adr/0042-a-workspace-id-is-generated-and-boot-refuses-any-other.md) — a workspace id is generated to one grammar; boot refuses a workspace directory with any other
 - [0043](adr/0043-a-tool-that-acts-on-the-caller-or-the-org-needs-no-workspace.md) — a kernel tool that acts on the caller or the org declares that it needs no workspace
 - [0044](adr/0044-the-url-is-the-only-thing-that-names-a-workspace.md) — the URL is the only thing that names a workspace; the server chooses none
+- [0069](adr/0069-a-plugin-belongs-to-a-workspace-or-a-person-and-a-personal-plugin-acts-only-where-its-owner-grants-it.md) — a plugin belongs to a workspace or a person; a personal plugin acts in a workspace only while its owner grants it there, and the grant covers its connectors and skills
 
 Manage skills:
 
@@ -270,16 +303,17 @@ Manage skills:
 - [0010](adr/0010-role-decides-the-channel.md) — a skill's role decides its prompt channel (amended by 0053)
 - [0011](adr/0011-a-server-published-skill-is-a-peer-of-a-filesystem-skill.md) — a server-published skill is a peer of a filesystem skill
 - [0012](adr/0012-vendored-provenance-is-loader-stamped.md) — vendored provenance is loader-stamped, never on disk
-- [0013](adr/0013-connector-overlays-are-curated-pinned-and-reconciled-at-boot.md) — connector overlays: one curated repo, pinned, content-addressed, reconciled at boot (amended by 0053)
+- [0013](adr/0013-connector-overlays-are-curated-pinned-and-reconciled-at-boot.md) — connector overlays: one curated repo, pinned, content-addressed, reconciled at boot (amended by 0053; the overlay repo superseded by 0068)
 - [0014](adr/0014-skill-markers-are-host-owned-meta.md) — skill activation and suppression markers are host-owned `_meta`
-- [0015](adr/0015-the-catalog-lists-what-can-be-activated.md) — the catalog lists what can be activated, never what is loaded
-- [0016](adr/0016-a-curated-overlay-binds-by-the-connectors-derived-identity.md) — a curated overlay binds by the connector's derived identity
+- [0015](adr/0015-the-catalog-lists-what-can-be-activated.md) — the catalog (the skill index) lists what can be activated, never what is loaded
+- [0016](adr/0016-a-curated-overlay-binds-by-the-connectors-derived-identity.md) — *(superseded by 0068)* a curated overlay binds by the connector's derived identity
 - [0017](adr/0017-the-trigger-matcher-is-the-must-fire-channel.md) — the trigger matcher is the must-fire channel, not a relevance hint
 - [0018](adr/0018-skill-channels-and-the-cache-breakpoints.md) — no system-prompt section depends on the turn's tool set
 - [0019](adr/0019-the-most-local-skill-wins-a-shared-name.md) — the most local skill wins a shared name: user, workspace, platform and org, server-published, overlay
 - [0034](adr/0034-a-skills-scope-names-where-it-is-stored.md) — a skill's scope names where it is stored; its name prefix names who published it
 - [0053](adr/0053-a-bound-skill-reaches-the-model-before-its-tools-first-call.md) — a skill bound to a tool reaches the model before that tool's first call; the engine holds the call until it does
 - [0055](adr/0055-guidance-for-one-app-is-a-skill-bound-to-its-tools.md) — guidance for one app is a skill bound to its tools
+- [0068](adr/0068-a-plugin-is-the-unit-of-install-and-a-catalog-vouches-for-it.md) — a plugin is the unit of install, a catalog vouches for it, and the runtime reconciles what is installed
 
 Orchestrate over remote MCP:
 

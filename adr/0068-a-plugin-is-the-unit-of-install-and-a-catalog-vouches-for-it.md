@@ -1,6 +1,6 @@
 # 0068. A plugin is the unit of install, a catalog vouches for it, and the runtime reconciles what is installed
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-18
 - Serves: manage skills; orchestrate remote MCP; secure RBAC
 

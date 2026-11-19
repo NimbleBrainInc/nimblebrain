@@ -1,6 +1,6 @@
 # 0006. Personal-connector use in a shared workspace requires an explicit grant
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0069
 - Date: 2026-06-29
 - Serves: secure RBAC, orchestrate remote MCP
 
