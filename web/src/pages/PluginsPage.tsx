@@ -21,6 +21,8 @@ import {
   useConnectedNotice,
 } from "../components/connectors/useConnectedNotice";
 import { InstalledView, type RowMenuItem } from "../components/plugins/InstalledView";
+import { SkillHereSwitch } from "../components/plugins/SkillHereSwitch";
+import { StopUsingDialog } from "../components/plugins/StopUsingDialog";
 import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
 import { Button } from "../components/ui/button";
 import { ConfirmDialog } from "../components/ui/confirm-dialog";
@@ -437,6 +439,22 @@ function InstalledPlugins({
         skillTo={(skill) => skillPath(slug, skill.scope, skill.name)}
         rowAction={rowAction}
         rowMenu={rowMenu}
+        skillControl={(skill) =>
+          skill.scope === "user" ? (
+            <SkillHereSwitch
+              skill={skill}
+              workspaceId={wsId}
+              onChange={(onHere) =>
+                setSkills(
+                  (prev) =>
+                    prev?.map((s) =>
+                      s.scope === "user" && s.id === skill.id ? { ...s, onHere } : s,
+                    ) ?? prev,
+                )
+              }
+            />
+          ) : null
+        }
         justConnected={(plugin) =>
           justConnected !== null &&
           pluginConnected(plugin) &&
@@ -473,13 +491,12 @@ function InstalledPlugins({
         onClose={() => setConfirming(null)}
         onConfirm={grantHere}
       />
-      <ConfirmDialog
+      <StopUsingDialog
         open={stopping !== null}
         onOpenChange={(open) => !open && setStopping(null)}
-        title={`Stop using ${stopping?.displayName ?? ""} here?`}
-        description={`Your agent can't use it in ${workspaceName} until you turn it back on. It stays connected to your account.`}
-        confirmLabel="Stop using here"
-        pendingLabel="Stopping…"
+        pluginName={stopping?.displayName ?? ""}
+        workspaceName={workspaceName}
+        here
         onConfirm={() => (stopping ? stopHere(stopping) : undefined)}
       />
       <ConfirmDialog

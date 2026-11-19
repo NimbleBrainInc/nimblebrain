@@ -7,7 +7,8 @@
 // and never one that came with a plugin. A
 // skill's page edits under the server's write rules: a workspace skill needs
 // workspace write, the viewer's own is theirs, an org skill is read-only here.
-// A new skill asks whom it is for, and only a writer may pick everyone.
+// A new skill asks whom it is for, and only a writer may pick everyone. The
+// viewer's own skills, and only theirs, carry On here, on their row and page.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -115,6 +116,13 @@ const listPersonalConnectors = mock<typeof ApiClient.listPersonalConnectors>(asy
   connectors: [],
 }));
 const getInstalledConnectors = mock(async () => ({ installed: [] }));
+/** How `skills__set_here` answers this test; it saves what it is sent by default. */
+const setSkillOnHere = mock<typeof ApiClient.setSkillOnHere>(async (workspaceId, id, on) => ({
+  id,
+  name: skills.find((s) => s.id === id)?.name ?? "",
+  workspaceId,
+  onHere: on,
+}));
 
 mock.module("../api/client", () => ({
   ...realClient,
@@ -124,13 +132,14 @@ mock.module("../api/client", () => ({
   listDirectory,
   listPersonalConnectors,
   getInstalledConnectors,
+  setSkillOnHere,
 }));
 
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
-const { NoticeProvider } = await import("../components/notices");
+const { NoticeProvider, NoticeViewport } = await import("../components/notices");
 const { toSlug } = await import("../lib/workspace-slug");
 const { PluginsPage } = await import("../pages/PluginsPage");
 const { NewSkillPage, SkillPage } = await import("../pages/SkillPage");
@@ -159,6 +168,13 @@ beforeEach(() => {
   skills = [WORKSPACE_SKILL, USER_SKILL, ORG_SKILL, PROVIDED_SKILL, CONNECTOR_SKILL];
   callTool.mockClear();
   callToolWithoutWorkspace.mockClear();
+  setSkillOnHere.mockClear();
+  setSkillOnHere.mockImplementation(async (workspaceId, id, on) => ({
+    id,
+    name: skills.find((s) => s.id === id)?.name ?? "",
+    workspaceId,
+    onHere: on,
+  }));
   refuse = null;
 });
 
@@ -189,6 +205,7 @@ async function mount(path: string, role: "admin" | "member" = "admin"): Promise<
             </Routes>
           </MemoryRouter>
         </WorkspaceProvider>
+        <NoticeViewport />
       </NoticeProvider>,
     );
   });
@@ -448,5 +465,95 @@ describe("Writing a skill", () => {
     expect(mounted.container.textContent).toContain(
       "A workspace admin can write a skill for everyone in Helix.",
     );
+  });
+});
+
+describe("On here", () => {
+  const onHere = (scope: ParentNode, name: string) =>
+    (name ? rowFor(scope as HTMLElement, name) : scope)?.querySelector<HTMLElement>(
+      '[data-testid="skill-on-here"]',
+    ) ?? null;
+  const switchIn = (el: HTMLElement | null) => el?.querySelector<HTMLElement>('[role="switch"]');
+
+  test("only the viewer's own skills carry it, named for the skill", async () => {
+    mounted = await mount(`/w/${SLUG}/plugins`);
+    const mine = onHere(mounted.container, "my-voice");
+    expect(mine?.textContent).toBe("On here");
+    expect(switchIn(mine)?.getAttribute("aria-label")).toBe("On here: my-voice");
+    expect(switchIn(mine)?.getAttribute("aria-checked")).toBe("true");
+    expect(onHere(mounted.container, "house-style")).toBeNull();
+    expect(onHere(mounted.container, "policy")).toBeNull();
+  });
+
+  test("Just you says the viewer's skills apply everywhere unless turned off here", async () => {
+    mounted = await mount(`/w/${SLUG}/plugins`);
+    expect(
+      mounted.container.querySelector('[data-testid="installed-section-you"]')?.textContent,
+    ).toContain("your skills apply in every workspace unless you turn one off here.");
+  });
+
+  test("a skill turned off here lists as Off here", async () => {
+    skills = [{ ...USER_SKILL, onHere: false }];
+    mounted = await mount(`/w/${SLUG}/plugins`);
+    const mine = onHere(mounted.container, "my-voice");
+    expect(mine?.textContent).toBe("Off here");
+    expect(switchIn(mine)?.getAttribute("aria-checked")).toBe("false");
+  });
+
+  test("flipping it reads Off here at once, holds while the save runs, and saves in this workspace", async () => {
+    let release: () => void = () => {};
+    setSkillOnHere.mockImplementation(
+      (workspaceId, id, on) =>
+        new Promise((resolve) => {
+          release = () => resolve({ id, name: "my-voice", workspaceId, onHere: on });
+        }),
+    );
+    mounted = await mount(`/w/${SLUG}/plugins`);
+    await click(switchIn(onHere(mounted.container, "my-voice")));
+    const mine = onHere(mounted.container, "my-voice");
+    expect(mine?.textContent).toBe("Off here");
+    expect(switchIn(mine)?.hasAttribute("data-disabled")).toBe(true);
+    // A second flip while the first is in flight sends nothing.
+    await click(switchIn(mine));
+    expect(setSkillOnHere).toHaveBeenCalledTimes(1);
+    expect(setSkillOnHere).toHaveBeenCalledWith(WS_ID, USER_SKILL.id, false);
+
+    await act(async () => release());
+    await settle();
+    const saved = onHere(mounted.container, "my-voice");
+    expect(saved?.textContent).toBe("Off here");
+    expect(switchIn(saved)?.hasAttribute("data-disabled")).toBe(false);
+  });
+
+  test("a refused save puts it back and says why in a notice", async () => {
+    setSkillOnHere.mockImplementation(async () => {
+      throw new Error("Not yours to change");
+    });
+    mounted = await mount(`/w/${SLUG}/plugins`);
+    await click(switchIn(onHere(mounted.container, "my-voice")));
+    const mine = onHere(mounted.container, "my-voice");
+    expect(mine?.textContent).toBe("On here");
+    expect(switchIn(mine)?.getAttribute("aria-checked")).toBe("true");
+    expect(document.body.textContent).toContain("Couldn't turn my-voice off here");
+    expect(document.body.textContent).toContain("Not yours to change");
+  });
+
+  test("the viewer's own skill's page offers it, with the hint", async () => {
+    mounted = await mount(`/w/${SLUG}/plugins/skills/user/my-voice`);
+    const here = mounted.container.querySelector<HTMLElement>('[data-testid="skill-here"]')!;
+    expect(here.textContent).toContain(
+      "Your skills apply in every workspace unless you turn one off here.",
+    );
+    await click(switchIn(onHere(here, "")));
+    expect(setSkillOnHere).toHaveBeenCalledWith(WS_ID, USER_SKILL.id, false);
+    expect(onHere(here, "")?.textContent).toBe("Off here");
+  });
+
+  test("a workspace or org skill's page does not", async () => {
+    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    expect(mounted.container.querySelector('[data-testid="skill-here"]')).toBeNull();
+    mounted.unmount();
+    mounted = await mount(`/w/${SLUG}/plugins/skills/org/policy`);
+    expect(mounted.container.querySelector('[data-testid="skill-here"]')).toBeNull();
   });
 });

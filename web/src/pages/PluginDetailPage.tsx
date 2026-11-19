@@ -25,6 +25,7 @@ import {
 import { ToolPermissionsTable } from "../components/connectors/ToolPermissionsTable";
 import { UninstallConnectorDialog } from "../components/connectors/UninstallConnectorDialog";
 import { WorkspaceSecretsSection } from "../components/connectors/WorkspaceSecretsSection";
+import { StopUsingDialog } from "../components/plugins/StopUsingDialog";
 import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
 import { Button } from "../components/ui/button";
 import { ConfirmDialog } from "../components/ui/confirm-dialog";
@@ -327,6 +328,8 @@ function PersonalPlugin({
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmingUse, setConfirmingUse] = useState(false);
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+  // The workspace a Stop using is being confirmed for.
+  const [stopping, setStopping] = useState<{ id: string; name: string } | null>(null);
 
   const loadConnectors = useCallback(async () => {
     try {
@@ -363,13 +366,13 @@ function PersonalPlugin({
     onChanged();
   };
 
+  // Throws, so the confirm stays open with the error shown.
   const revoke = async (targetWsId: string) => {
     setError(null);
     setBusy(targetWsId);
     try {
       await setGrant(targetWsId, false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setStopping(null);
     } finally {
       setBusy(null);
     }
@@ -480,7 +483,7 @@ function PersonalPlugin({
                 variant="outline"
                 size="sm"
                 disabled={busy === wsId}
-                onClick={() => void revoke(wsId)}
+                onClick={() => setStopping({ id: wsId, name: workspaceName })}
               >
                 {busy === wsId ? "Stopping…" : "Stop using here"}
               </Button>
@@ -530,7 +533,7 @@ function PersonalPlugin({
                     variant="ghost"
                     size="sm"
                     disabled={busy === ws.id}
-                    onClick={() => void revoke(ws.id)}
+                    onClick={() => setStopping(ws)}
                     aria-label={`Stop using ${name} in ${ws.name}`}
                   >
                     {busy === ws.id ? "Stopping…" : "Stop using"}
@@ -582,6 +585,13 @@ function PersonalPlugin({
           setConfirmingUse(false);
         }}
       />
+      <StopUsingIn
+        pluginName={name}
+        workspace={stopping}
+        hereId={wsId}
+        onClose={() => setStopping(null)}
+        onConfirm={revoke}
+      />
       <ConfirmDialog
         open={confirmingDisconnect}
         onOpenChange={setConfirmingDisconnect}
@@ -598,6 +608,34 @@ function PersonalPlugin({
         }}
       />
     </div>
+  );
+}
+
+/** The confirm for Stop using in one workspace: this one ("here") or another it is on in. */
+function StopUsingIn({
+  pluginName,
+  workspace,
+  hereId,
+  onClose,
+  onConfirm,
+}: {
+  pluginName: string;
+  /** The workspace being confirmed for; none while closed. */
+  workspace: { id: string; name: string } | null;
+  /** The workspace the page is in. */
+  hereId: string;
+  onClose: () => void;
+  onConfirm: (workspaceId: string) => Promise<void>;
+}) {
+  return (
+    <StopUsingDialog
+      open={workspace !== null}
+      onOpenChange={(open) => !open && onClose()}
+      pluginName={pluginName}
+      workspaceName={workspace?.name ?? ""}
+      here={workspace?.id === hereId}
+      onConfirm={() => (workspace ? onConfirm(workspace.id) : undefined)}
+    />
   );
 }
 

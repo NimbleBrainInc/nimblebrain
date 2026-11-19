@@ -482,6 +482,11 @@ describe("PluginsPage — a person's plugin's next step", () => {
   /** The row in its section, not its copy under Needs you. */
   const inSection = (id: string, pluginId: string) =>
     section(mounted!.container, id)!.querySelector<HTMLElement>(`[data-plugin-id="${pluginId}"]`)!;
+  /** The row under Needs you, which carries the action. */
+  const inNeedsYou = (pluginId: string) =>
+    mounted!.container
+      .querySelector('[data-testid="installed-needs-you"]')!
+      .querySelector<HTMLElement>(`[data-plugin-id="${pluginId}"]`)!;
   const action = (r: HTMLElement) => r.querySelector('[data-testid="plugin-action"]');
   const account = (r: HTMLElement) =>
     r.querySelector('[data-testid="plugin-account"]')?.textContent;
@@ -497,12 +502,14 @@ describe("PluginsPage — a person's plugin's next step", () => {
     expect(account(r)).toBe("Not signed in");
   });
 
-  test("on here, not connected: Connect, and nothing else beside it", async () => {
+  test("on here, not connected: Connect under Needs you, and its section row says why once", async () => {
     plugins = [notConnected(GMAIL)];
     personal = [connector({ serverName: "gmail", displayName: "Gmail" })];
     mounted = await mount();
+    expect(action(inNeedsYou("person:gmail"))?.textContent).toBe("Connect");
     const r = inSection("you", "person:gmail");
-    expect(action(r)?.textContent).toBe("Connect");
+    // The account line already says it, so the row adds nothing beside it.
+    expect(action(r)).toBeNull();
     expect(account(r)).toBe("Not signed in");
   });
 
@@ -569,7 +576,7 @@ describe("PluginsPage — a person's plugin's next step", () => {
     plugins = [notConnected(GMAIL)];
     personal = [connector({ serverName: "gmail", displayName: "Gmail" })];
     mounted = await mount();
-    await click(button(inSection("you", "person:gmail"), "Connect"));
+    await click(button(inNeedsYou("person:gmail"), "Connect"));
     expect(initiateIdentityConnect).toHaveBeenCalledWith("gmail", WS_ID);
     expect(grantConnector).not.toHaveBeenCalled();
   });
