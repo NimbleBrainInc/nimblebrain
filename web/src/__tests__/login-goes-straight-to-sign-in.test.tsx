@@ -31,10 +31,14 @@ const originalFetch = globalThis.fetch;
 let container: HTMLDivElement | null = null;
 let root: ReturnType<typeof ReactDOMClient.createRoot> | null = null;
 
+let bootstrapCalls = 0;
+
 function bootstrapAnswers(status: number) {
+  bootstrapCalls = 0;
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
     if (url.endsWith("/v1/bootstrap")) {
+      bootstrapCalls += 1;
       return status === 200
         ? new Response(JSON.stringify(BOOTSTRAP), { status })
         : new Response("{}", { status });
@@ -44,7 +48,7 @@ function bootstrapAnswers(status: number) {
   }) as typeof fetch;
 }
 
-async function mount() {
+async function mount(firstAnswer?: "signedOut" | "unavailable") {
   const navigated: string[] = [];
   const received: BootstrapResponse[] = [];
   container = document.createElement("div");
@@ -61,6 +65,7 @@ async function mount() {
         React.createElement(Login, {
           onLogin: (data) => received.push(data),
           navigate: (path) => navigated.push(path),
+          firstAnswer,
         }),
       ),
     );
@@ -126,5 +131,19 @@ describe("Login", () => {
     bootstrapAnswers(401);
     const view = await mount();
     expect(view.navigated).toEqual([SIGN_IN_PATH]);
+  });
+
+  test("parentFoundNoSession_goesStraightToSignIn_onceAndWithoutAskingAgain", async () => {
+    bootstrapAnswers(401);
+    const view = await mount("signedOut");
+    expect(view.navigated).toEqual([SIGN_IN_PATH]);
+    expect(bootstrapCalls).toBe(0);
+  });
+
+  test("parentFoundServerNotReady_keepsConnecting_neverNavigates", async () => {
+    bootstrapAnswers(503);
+    const view = await mount("unavailable");
+    expect(view.navigated).toEqual([]);
+    expect(view.text()).toContain("Connecting");
   });
 });
