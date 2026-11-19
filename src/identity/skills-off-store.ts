@@ -19,7 +19,9 @@ import { IdentityContext } from "./context.ts";
  *
  * Reads are synchronous because the per-run skill overlay
  * (`Runtime.loadConversationSkills`) is. Writes are read-modify-write with an
- * atomic commit, the same discipline as `IdentityConnectorStore`.
+ * atomic commit, and each runs whole inside a per-person chain: the record is
+ * replaced wholesale, so two overlapping writes would each persist their own
+ * read and the later would erase the earlier, even for different workspaces.
  */
 
 const RECORD_VERSION = 1 as const;
@@ -64,6 +66,26 @@ async function writeRecord(
   await writeJsonAtomic(path, record);
 }
 
+/**
+ * One read-through-write at a time per person, the same chain as
+ * `serializePerWorkspace` keyed on the person instead. In-process only, which
+ * holds while a tenant runs one runtime pod.
+ */
+const writeChains = new Map<string, Promise<unknown>>();
+
+function serializePerUser<T>(userId: string, task: () => Promise<T>): Promise<T> {
+  const next = (writeChains.get(userId) ?? Promise.resolve()).then(task, task);
+  const tail = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  writeChains.set(userId, tail);
+  void tail.then(() => {
+    if (writeChains.get(userId) === tail) writeChains.delete(userId);
+  });
+  return next;
+}
+
 /** The names of the person's own skills they turned off in `wsId`. Empty when none. */
 export function skillsOffIn(workDir: string, userId: string, wsId: string): Set<string> {
   return new Set(readRecord(workDir, userId)[wsId] ?? []);
@@ -81,18 +103,20 @@ export async function setSkillOnIn(
   name: string,
   on: boolean,
 ): Promise<void> {
-  const workspaces = readRecord(workDir, userId);
-  const current = workspaces[wsId] ?? [];
-  const has = current.includes(name);
-  if (on !== has) return;
-  if (on) {
-    const next = current.filter((n) => n !== name);
-    if (next.length > 0) workspaces[wsId] = next;
-    else delete workspaces[wsId];
-  } else {
-    workspaces[wsId] = [...current, name].sort();
-  }
-  await writeRecord(workDir, userId, workspaces);
+  return serializePerUser(userId, async () => {
+    const workspaces = readRecord(workDir, userId);
+    const current = workspaces[wsId] ?? [];
+    const has = current.includes(name);
+    if (on !== has) return;
+    if (on) {
+      const next = current.filter((n) => n !== name);
+      if (next.length > 0) workspaces[wsId] = next;
+      else delete workspaces[wsId];
+    } else {
+      workspaces[wsId] = [...current, name].sort();
+    }
+    await writeRecord(workDir, userId, workspaces);
+  });
 }
 
 /**
@@ -100,14 +124,16 @@ export async function setSkillOnIn(
  * on everywhere. Called when the person deletes the skill.
  */
 export async function clearSkillOffs(workDir: string, userId: string, name: string): Promise<void> {
-  const workspaces = readRecord(workDir, userId);
-  let changed = false;
-  for (const [wsId, names] of Object.entries(workspaces)) {
-    if (!names.includes(name)) continue;
-    changed = true;
-    const next = names.filter((n) => n !== name);
-    if (next.length > 0) workspaces[wsId] = next;
-    else delete workspaces[wsId];
-  }
-  if (changed) await writeRecord(workDir, userId, workspaces);
+  return serializePerUser(userId, async () => {
+    const workspaces = readRecord(workDir, userId);
+    let changed = false;
+    for (const [wsId, names] of Object.entries(workspaces)) {
+      if (!names.includes(name)) continue;
+      changed = true;
+      const next = names.filter((n) => n !== name);
+      if (next.length > 0) workspaces[wsId] = next;
+      else delete workspaces[wsId];
+    }
+    if (changed) await writeRecord(workDir, userId, workspaces);
+  });
 }
