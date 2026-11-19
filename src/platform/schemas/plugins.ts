@@ -144,6 +144,8 @@ export type PluginRequestOutput = Static<typeof PluginRequestOutput>;
 export const PluginRequestAnswer = Type.Object({
   /** The plugin's server, as the request named it. */
   serverName: Type.String(),
-  answer: StringEnum(["use", "not_now"] as const),
+  // Union of literals, not StringEnum: this rides the chat request body, which
+  // the REST handler checks with TypeBox `Value.Check` (see `_shared.ts`).
+  answer: Type.Union([Type.Literal("use"), Type.Literal("not_now")]),
 });
 export type PluginRequestAnswer = Static<typeof PluginRequestAnswer>;
