@@ -1291,18 +1291,18 @@ export class Runtime {
         ),
       );
 
-      // Reconcile connector-skill overlays to the pinned version. Overlays bind
-      // only at connector install, and the pin is deploy-time config — so boot
-      // (a restart) is exactly when a pin bump must reach connectors that are
-      // already installed. Best-effort + version-gated: a no-op when nothing is
-      // stale, so steady-state boots pay only a per-connector version comparison.
+      // Reconcile connector skills to the pinned plugin catalog. They bind only
+      // at connector install, and the pin is deploy-time config — so boot (a
+      // restart) is exactly when a pin bump must reach connectors that are
+      // already installed. Best-effort + pin-gated: a no-op when nothing is
+      // stale, so steady-state boots pay only a per-connector pin comparison.
       await bootReconcileConnectorSkills({
         workDir: rt.getWorkDir(),
         listWorkspaces: () => workspaceStore.list(),
         updateWorkspaceConnectors: (wsId, connectors) =>
           workspaceStore.update(wsId, { connectors }),
-        syncBoundSkills: (identity, serverName, wsId, wd) =>
-          lifecycle.syncBoundSkills(identity, serverName, wsId, wd),
+        syncBoundSkills: (server, serverName, wsId, wd) =>
+          lifecycle.syncBoundSkills(server, serverName, wsId, wd),
         catalogByIdMap: () => rt.getConnectorCatalog().catalogByIdMap(),
         catalogByUrl: () => rt.getConnectorCatalog().catalogByUrl(),
       });

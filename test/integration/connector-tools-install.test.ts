@@ -20,7 +20,7 @@ import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
-import { fakeFetch } from "../helpers/fake-fetch.ts";
+import { boundSkill, buildCatalog, TEST_CATALOG_URL } from "../helpers/plugin-catalog.ts";
 import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
@@ -274,37 +274,50 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     expect((personalDoc.connectors as unknown[]).length).toBe(1);
   });
 
-  test("DCR connector binds its overlay via the canonical (reverse-DNS) identity, not the slug", async () => {
-    // The overlay repo is keyed by connector identity (`granola/SKILL.md`).
-    // Install must derive that identity from the canonical `entry.id`
-    // (`ai.granola/mcp` → `granola`), NOT the slugified serverName
-    // (`ai-granola-mcp`). This fixture serves the overlay ONLY at the correct
-    // `/granola/SKILL.md` path, so a regression that derives the identity from
-    // the slug 404s and binds nothing — failing the assertion below.
-    const overlayBody =
-      "---\nname: granola-usage\ndescription: How to use Granola.\n---\nUse Granola carefully.\n";
-    const fetchOnlyGranola = fakeFetch(async (url) => {
-      const u = typeof url === "string" ? url : url.toString();
-      return u.includes("/granola/SKILL.md")
-        ? new Response(overlayBody, { status: 200 })
-        : new Response("", { status: 404 });
-    });
-    h.runtime.getLifecycle().setConnectorSkillFetch(fetchOnlyGranola);
+  test("DCR connector binds its plugin's skill by registry name, not the slug", async () => {
+    // A plugin names its server by registry name (`ai.granola/mcp`), which is the
+    // catalog entry's id, NOT the slugified serverName (`ai-granola-mcp`). The
+    // fixture catalog binds a skill only to the registry name, so a regression
+    // that looks up the slug binds nothing and fails the assertion below.
+    const catalog = buildCatalog([
+      {
+        name: "granola",
+        servers: { granola: "ai.granola/mcp" },
+        skills: { "granola-usage": boundSkill("granola-usage", "granola") },
+      },
+    ]);
+    process.env.NB_PLUGIN_CATALOG_URL = TEST_CATALOG_URL;
+    process.env.NB_PLUGIN_CATALOG_SHA256 = catalog.pin;
+    h.runtime.getLifecycle().setConnectorSkillFetch(catalog.fetch);
 
-    const result = await h.tool.handler({
-      action: "install",
-      entry: dcrEntry(),
-      wsId: h.sharedWsId,
-    });
-    expect(result.isError).toBe(false);
+    try {
+      const result = await h.tool.handler({
+        action: "install",
+        entry: dcrEntry(),
+        wsId: h.sharedWsId,
+      });
+      expect(result.isError).toBe(false);
+    } finally {
+      delete process.env.NB_PLUGIN_CATALOG_URL;
+      delete process.env.NB_PLUGIN_CATALOG_SHA256;
+    }
 
     const wsDoc = JSON.parse(
       readFileSync(join(h.workDir, "workspaces", h.sharedWsId, "workspace.json"), "utf-8"),
     );
     const installed = (
-      wsDoc.connectors as Array<{ url?: string; skillsLock?: Array<{ identity: string }> }>
+      wsDoc.connectors as Array<{ url?: string; skillsLock?: Array<Record<string, string>> }>
     ).find((b) => b.url === "https://mcp.granola.ai/mcp");
-    expect(installed?.skillsLock?.[0]?.identity).toBe("granola");
+    expect(installed?.skillsLock).toEqual([
+      {
+        plugin: "granola@nimblebrain",
+        server: "ai.granola/mcp",
+        skill: "granola-usage",
+        version: catalog.pin,
+        digest: catalog.digests.granola!,
+        sha: installed!.skillsLock![0]!.sha!,
+      },
+    ]);
   });
 });
 

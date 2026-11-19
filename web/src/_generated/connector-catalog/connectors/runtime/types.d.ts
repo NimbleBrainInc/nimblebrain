@@ -95,18 +95,30 @@ export interface RemoteTransportConfig {
     sessionId?: string;
 }
 /**
- * One materialized connector-skill overlay bound to a connector. Recorded on
- * the connector's `ConnectorRef.skillsLock` at install so the dedupe path can tell a
- * connector HAS a curated overlay (skip its `skill://<name>/SKILL.md`), and so the binding
- * is auditable. Cleanup on uninstall is keyed on `serverName` (it removes the
- * whole `connector-skills/<server>/` dir), not on these entries.
+ * One curated skill bound to a connector, from the connector's plugin in the
+ * pinned catalog (ADR-0068). Recorded on the connector's `ConnectorRef.skillsLock`
+ * at install so the dedupe path can tell a connector HAS a curated overlay (skip
+ * its `skill://<name>/SKILL.md`), so the boot reconcile knows which pin it was
+ * bound at, and so the binding is auditable down to the bytes. Cleanup on
+ * uninstall is keyed on `serverName` (it removes the whole
+ * `connector-skills/<server>/` dir), not on these entries.
+ *
+ * A lock written by a runtime that read the connector-skills repo carries
+ * `identity` instead of `plugin`/`server`/`skill`/`digest`, and a `version` that
+ * is a git tag; its version never equals a catalog pin, so boot re-binds it.
  */
 export interface ConnectorSkillLockEntry {
-    /** Overlay identity used for the lookup (e.g. `gmail`). */
-    identity: string;
-    /** Pinned overlay-repo version the overlay was fetched at. */
+    /** The plugin carrying the skill, as `name@catalog` (`gmail@nimblebrain`). */
+    plugin?: string;
+    /** Registry name of the server the skill is bound to (`com.google/gmail`). */
+    server?: string;
+    /** The skill's name in its plugin. */
+    skill?: string;
+    /** The catalog pin the skill was resolved at: sha256 of the catalog's NimbleBrain index. */
     version: string;
-    /** sha256 (hex) of the fetched overlay body — tamper-evidence. */
+    /** sha256 (hex) of the plugin archive the skill was read from. */
+    digest?: string;
+    /** sha256 (hex) of the SKILL.md. */
     sha: string;
 }
 /**

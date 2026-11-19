@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { oauthClientIdentity } from "../../brand/index.ts";
-import { resolveConnectorSkillsConfig } from "../../config/connector-skills.ts";
+import { resolvePluginCatalogConfig } from "../../config/plugin-catalog.ts";
 import type { AccountLookup } from "../../connectors/catalog/account-lookup.ts";
 import type { CatalogEntriesReader } from "../../connectors/catalog/binding.ts";
 import type { ManagedConnectorProvider } from "../../connectors/providers/managed-provider.ts";
@@ -15,7 +15,7 @@ import { IdentityConnectorStore } from "../../identity/connector-store.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { log } from "../../observability/log.ts";
 import type { PlacementRegistry } from "../../runtime/placement-registry.ts";
-import { resolveOverlay } from "../../skills/connector-skill-resolver.ts";
+import { resolveServerSkills } from "../../skills/connector-skill-resolver.ts";
 import {
   CONNECTOR_SKILLS_SUBDIR,
   materializeConnectorSkill,
@@ -289,7 +289,7 @@ export class ConnectorLifecycleManager {
   private onConnectionRunning: ((wsId: string, serverName: string) => void) | null = null;
 
   /**
-   * Fetch used to resolve curated connector-skill overlays. Defaults to
+   * Fetch used to read curated connector skills from the plugin catalog. Defaults to
    * global `fetch`; tests inject a fixture via {@link setConnectorSkillFetch}
    * so overlay binding stays hermetic (no network).
    */
@@ -465,53 +465,71 @@ export class ConnectorLifecycleManager {
   // ---- Connector-skill binding -------------------------------------
 
   /**
-   * Resolve and materialize the curated overlay bound to a connector identity,
-   * if one is curated. Called at install time; the returned lock entries are
-   * recorded on the connector's `ConnectorRef.skillsLock` so uninstall can clean up
-   * and the dedupe path knows the connector has an overlay.
+   * Resolve and materialize the curated skills bound to a connector's server,
+   * from the server's plugin in the pinned catalog (ADR-0068). Called at install
+   * and by the boot reconcile; the returned lock entries are recorded on the
+   * connector's `ConnectorRef.skillsLock` so uninstall can clean up and the
+   * dedupe path knows the connector has an overlay.
    *
-   * Best-effort and NON-FATAL: a missing overlay (404), an unparseable overlay,
-   * or any fetch/IO error returns `[]` and never throws —
-   * the connector install must not fail because its optional guidance couldn't
-   * be fetched. The overlay materializes into the workspace's `connector-skills/`
-   * store and is surfaced into the conversation only on first matching tool call.
+   * `server` is the connector's registry name (`com.google/gmail`), which the
+   * plugin names; `serverName` is this install's namespace.
+   *
+   * Best-effort and NON-FATAL: a server no plugin binds a skill to, an
+   * unparseable skill, or any fetch/integrity/IO error returns `[]` and never
+   * throws. The connector install must not fail because its optional guidance
+   * couldn't be fetched. The skills materialize into the workspace's
+   * `connector-skills/` store and surface into the conversation only on a
+   * matching tool call.
    */
   async syncBoundSkills(
-    identity: string,
+    server: string,
     serverName: string,
     wsId: string,
     workDir: string,
   ): Promise<ConnectorSkillLockEntry[]> {
-    const config = resolveConnectorSkillsConfig();
     try {
-      const cacheDir = join(workDir, "cache", "connector-skills");
-      const resolved = await resolveOverlay(identity, {
-        cacheDir,
-        repo: config.repo,
-        version: config.version,
+      const config = resolvePluginCatalogConfig();
+      const resolved = await resolveServerSkills(server, {
+        cacheDir: join(workDir, "cache", "plugin-catalog"),
+        catalogUrl: config.url,
+        pin: config.sha256,
         fetchImpl: this.connectorSkillFetch,
       });
-      if (!resolved) return []; // No overlay curated for this connector — no-op.
+      if (resolved.length === 0) return []; // No curated skill for this server — no-op.
 
       const connectorSkillsDir = new WorkspaceContext({ wsId, workDir }).getDataPath(
         CONNECTOR_SKILLS_SUBDIR,
       );
-      const materialized = materializeConnectorSkill({
-        connectorSkillsDir,
-        serverName,
-        overlayBody: resolved.body,
-        source: `connector:${identity}@${config.version}`,
-        now: new Date().toISOString(),
-      });
-      if (!materialized) return [];
-
-      log.debug("mcp", `[connector-skills] bound overlay "${identity}" → ${serverName} (${wsId})`);
-      return [{ identity, version: config.version, sha: resolved.sha }];
+      const now = new Date().toISOString();
+      const lock: ConnectorSkillLockEntry[] = [];
+      for (const skill of resolved) {
+        const plugin = `${skill.plugin}@${skill.catalog}`;
+        const materialized = materializeConnectorSkill({
+          connectorSkillsDir,
+          serverName,
+          overlayBody: skill.body,
+          source: `plugin:${plugin}:${skill.skill}`,
+          now,
+        });
+        if (!materialized) continue;
+        lock.push({
+          plugin,
+          server,
+          skill: skill.skill,
+          version: config.sha256,
+          digest: skill.digest,
+          sha: skill.sha,
+        });
+      }
+      if (lock.length > 0) {
+        log.debug("mcp", `[connector-skills] bound ${server} → ${serverName} (${wsId})`);
+      }
+      return lock;
     } catch (err) {
       // Non-fatal: the connector is installed regardless. Surface the reason so
       // an operator can see why an expected overlay didn't bind.
       log.warn(
-        `[connector-skills] failed to bind overlay "${identity}" for ${serverName}: ${
+        `[connector-skills] failed to bind skills for ${server} (${serverName}): ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
