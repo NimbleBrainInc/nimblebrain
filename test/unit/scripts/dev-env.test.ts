@@ -13,6 +13,7 @@ import {
   loadDotenvIntoProcess,
   mainRepoRootFor,
   parseDotenv,
+  resolveDevOrigins,
 } from "../../../scripts/lib/dev-env.ts";
 
 describe("parseDotenv", () => {
@@ -239,5 +240,76 @@ describe("loadDotenvIntoProcess", () => {
     expect(result.skipped).toEqual([TEST_KEY_A]);
     expect(process.env[TEST_KEY_A]).toBe("from-shell");
     expect(process.env[TEST_KEY_B]).toBe("only-in-file");
+  });
+});
+
+describe("resolveDevOrigins", () => {
+  // A main-repo `.env` written for the default dev ports (web 27246, API 27247).
+  const defaultPortsEnv = {
+    NB_PUBLIC_ORIGIN: "http://localhost:27246",
+    ALLOWED_ORIGINS: "http://localhost:27246",
+    NB_WEB_URL: "http://localhost:27246",
+  };
+  const fileKeys = Object.keys(defaultPortsEnv);
+  const worktreePorts = { api: 27271, web: 27270 };
+
+  test("replaces origins a .env set for other ports with this launch's web origin", () => {
+    expect(resolveDevOrigins(defaultPortsEnv, fileKeys, worktreePorts)).toEqual({
+      NB_PUBLIC_ORIGIN: "http://localhost:27270",
+      ALLOWED_ORIGINS: "http://localhost:27270",
+      NB_WEB_URL: "http://localhost:27270",
+    });
+  });
+
+  test("keeps values exported in the shell", () => {
+    const env = { ...defaultPortsEnv, NB_PUBLIC_ORIGIN: "https://tunnel.example.test" };
+    const fromFile = fileKeys.filter((k) => k !== "NB_PUBLIC_ORIGIN");
+    expect(resolveDevOrigins(env, fromFile, worktreePorts)).toEqual({
+      NB_PUBLIC_ORIGIN: "https://tunnel.example.test",
+      ALLOWED_ORIGINS: "http://localhost:27270",
+      NB_WEB_URL: "http://localhost:27270",
+    });
+  });
+
+  test("fills unset and empty values from the ports", () => {
+    expect(resolveDevOrigins({ NB_WEB_URL: "" }, [], worktreePorts)).toEqual({
+      NB_PUBLIC_ORIGIN: "http://localhost:27270",
+      ALLOWED_ORIGINS: "http://localhost:27270",
+      NB_WEB_URL: "http://localhost:27270",
+    });
+  });
+
+  test("uses the API origin and leaves NB_WEB_URL alone under --no-web", () => {
+    expect(resolveDevOrigins(defaultPortsEnv, fileKeys, { api: 27271, web: null })).toEqual({
+      NB_PUBLIC_ORIGIN: "http://localhost:27271",
+      ALLOWED_ORIGINS: "http://localhost:27271",
+    });
+  });
+
+  test("applies to the keys loadDotenvIntoProcess reports as applied", () => {
+    const root = mkdtempSync(join(tmpdir(), "dev-env-origins-"));
+    const saved = Object.fromEntries(fileKeys.map((k) => [k, process.env[k]]));
+    try {
+      for (const k of fileKeys) delete process.env[k];
+      process.env.NB_WEB_URL = "http://localhost:3000";
+      writeFileSync(
+        join(root, ".env"),
+        Object.entries(defaultPortsEnv)
+          .map(([k, v]) => `${k}=${v}`)
+          .join("\n"),
+      );
+      const { applied } = loadDotenvIntoProcess(root);
+      expect(resolveDevOrigins(process.env, applied, worktreePorts)).toEqual({
+        NB_PUBLIC_ORIGIN: "http://localhost:27270",
+        ALLOWED_ORIGINS: "http://localhost:27270",
+        NB_WEB_URL: "http://localhost:3000",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
 });

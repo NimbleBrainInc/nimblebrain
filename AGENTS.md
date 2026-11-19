@@ -56,7 +56,10 @@ bun run build:platform-apps      # Rebuild every src/platform/*/ui (vite single-
 | Config | `<worktree>/.nimblebrain-worktree/nimblebrain.json` (auto-seeded on first run) |
 | API / Web ports | 27271 / 27270 (override via `NB_API_PORT` / `NB_WEB_PORT`) |
 | Auth | the `dev` adapter, written to `<workdir>/instance.json` when it has none |
-| LLM keys | `ANTHROPIC_API_KEY` (and friends) read from your shell environment |
+| Origins | `NB_PUBLIC_ORIGIN`, `ALLOWED_ORIGINS`, `NB_WEB_URL` = `http://localhost:<web port>`, unless exported in your shell |
+| LLM keys | `ANTHROPIC_API_KEY` (and friends) from your shell, else `<worktree>/.env`, else the main repo's `.env` |
+
+**A dev launcher owns the origins built from its ports.** `scripts/dev.ts` loads `.env` itself and sets the origins above for the ports it serves, replacing a value the `.env` supplied and keeping one exported in the shell; a `.env` written for the default ports would otherwise point an OAuth callback at another dev server. The launchers on other ports (`dev:worktree`, `dev:empty`, `dev:minimal`, `dev:docs-demo`) run under `bun --no-env-file`, because under Bun's own `.env` load every key reads as the shell's. `dev` and `dev:api` keep Bun's load, so a `.env` origin applies to them as written. Under `--no-web` the origins are the API port's and `NB_WEB_URL` is left alone.
 
 Reset with `rm -rf .nimblebrain-worktree && bun run dev:worktree`. Share state across worktrees with `NB_WORK_DIR=/abs/path bun run dev:worktree`. Suitable for Chrome DevTools-driven E2E tests against `/v1/*` (no login).
 

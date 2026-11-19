@@ -1,5 +1,6 @@
 /**
- * `.env` discovery + merge for `dev:worktree`.
+ * `.env` discovery + merge for the dev launchers, and the origins a launch
+ * derives from its own ports.
  *
  * The user expectation: "I have an `ANTHROPIC_API_KEY` in my main
  * repo's `.env`; `bun run dev:worktree` should pick it up." Without
@@ -177,4 +178,53 @@ export function loadDotenvIntoProcess(worktreeRoot: string): EnvFileLoadResult {
     applied.push(k);
   }
   return { path, applied, skipped };
+}
+
+/** The ports one dev launch serves on. `web` is null under `--no-web`. */
+export interface DevPorts {
+  api: number | string;
+  web: number | string | null;
+}
+
+/**
+ * The origin-shaped variables a dev launch derives from its own ports, keyed
+ * by name. The launcher owns its ports, so it owns every origin built from
+ * them: a value carried in from a `.env` written for other ports would send an
+ * OAuth callback, or the post-login landing, to a different dev server.
+ *
+ *  - `NB_PUBLIC_ORIGIN`: the web origin. Vite proxies `/v1` to the API, so
+ *    vendor callbacks reach the API through it, on the origin the browser is
+ *    signed in on. The API origin under `--no-web`.
+ *  - `ALLOWED_ORIGINS`: that same origin, the browser's.
+ *  - `NB_WEB_URL`: the web origin (`webOrigin()`); unset under `--no-web`.
+ *
+ * `NB_API_URL` and `NB_HOST_URL` are not here because the runtime reads
+ * neither (`check:public-origin` keeps `NB_API_URL` out).
+ */
+export function devOrigins(ports: DevPorts): Record<string, string> {
+  const api = `http://localhost:${ports.api}`;
+  if (ports.web === null) return { NB_PUBLIC_ORIGIN: api, ALLOWED_ORIGINS: api };
+  const web = `http://localhost:${ports.web}`;
+  return { NB_PUBLIC_ORIGIN: web, ALLOWED_ORIGINS: web, NB_WEB_URL: web };
+}
+
+/**
+ * The origin values to set for a dev launch: each of {@link devOrigins} unless
+ * the developer set it in the shell. A key counts as shell-set when it is
+ * non-empty in `env` and not in `fileKeys` (the `applied` list of
+ * {@link loadDotenvIntoProcess}), so a value the `.env` supplied is replaced
+ * and an exported one is kept.
+ */
+export function resolveDevOrigins(
+  env: Readonly<Record<string, string | undefined>>,
+  fileKeys: readonly string[],
+  ports: DevPorts,
+): Record<string, string> {
+  const fromFile = new Set(fileKeys);
+  const out: Record<string, string> = {};
+  for (const [key, derived] of Object.entries(devOrigins(ports))) {
+    const current = env[key];
+    out[key] = current && !fromFile.has(key) ? current : derived;
+  }
+  return out;
 }
