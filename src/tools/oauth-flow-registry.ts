@@ -48,6 +48,8 @@ interface PendingFlow {
   scopeFallback?: ScopeFallback;
   /** The workspace a personal sign-in was started from, to return to (`setFlowReturnWorkspace`). */
   returnWsId?: string;
+  /** The caller's conversation in `returnWsId` to reopen on return (`setFlowReturnWorkspace`). */
+  returnConversationId?: string;
 }
 
 /**
@@ -196,25 +198,40 @@ export function peekFlowOwner(state: string): FlowOwner | null {
  * callback peeks both before `resolveWithCode` deletes the flow: the owner picks
  * the page to return to, and the server name tells that page what connected.
  */
-export function peekFlow(
-  state: string,
-): { owner: FlowOwner; serverName: string; returnWsId?: string } | null {
+export function peekFlow(state: string): {
+  owner: FlowOwner;
+  serverName: string;
+  returnWsId?: string;
+  returnConversationId?: string;
+} | null {
   const flow = flows.get(state);
   if (!flow) return null;
-  const { owner, serverName, returnWsId } = flow;
-  return returnWsId ? { owner, serverName, returnWsId } : { owner, serverName };
+  const { owner, serverName, returnWsId, returnConversationId } = flow;
+  return {
+    owner,
+    serverName,
+    ...(returnWsId ? { returnWsId } : {}),
+    ...(returnConversationId ? { returnConversationId } : {}),
+  };
 }
 
 /**
  * Record the workspace a personal (user-owned) sign-in was started from, so its
  * callback returns there rather than to the profile. The authenticated initiate
  * sets it after checking the caller is a member; a workspace-owned flow returns
- * to its own workspace and needs none. False when no flow is pending for `state`.
+ * to its own workspace and needs none. `conversationId`, when given, is the
+ * caller's conversation in that workspace (the initiate checked it), which the
+ * return reopens. False when no flow is pending for `state`.
  */
-export function setFlowReturnWorkspace(state: string, wsId: string): boolean {
+export function setFlowReturnWorkspace(
+  state: string,
+  wsId: string,
+  conversationId?: string,
+): boolean {
   const flow = flows.get(state);
   if (!flow) return false;
   flow.returnWsId = wsId;
+  if (conversationId) flow.returnConversationId = conversationId;
   return true;
 }
 

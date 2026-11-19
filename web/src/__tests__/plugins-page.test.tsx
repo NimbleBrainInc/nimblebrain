@@ -16,6 +16,7 @@ import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 import type { Plugin } from "../_generated/platform-schemas/plugins";
 import type * as ApiClient from "../api/client";
+import type { PersonalConnector } from "../api/client";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,9 +29,18 @@ let plugins: Plugin[] = [];
 const listPlugins = mock<typeof ApiClient.listPlugins>(async (wsId) => ({ wsId, plugins }));
 const grantConnector = mock<typeof ApiClient.grantConnector>(async () => {});
 const revokeConnector = mock<typeof ApiClient.revokeConnector>(async () => {});
+let personal: PersonalConnector[] = [];
 const listPersonalConnectors = mock<typeof ApiClient.listPersonalConnectors>(async () => ({
-  connectors: [],
+  connectors: personal,
 }));
+// Connected without an interactive flow, so the page stays put and the test
+// reads which route the sign-in took.
+const initiateIdentityConnect = mock<typeof ApiClient.initiateIdentityConnect>(async () => ({
+  authorizationUrl: null,
+}));
+const initiateComposioIdentityConnect = mock<typeof ApiClient.initiateComposioIdentityConnect>(
+  async () => ({}) as Awaited<ReturnType<typeof ApiClient.initiateComposioIdentityConnect>>,
+);
 const disconnectPersonalConnector = mock<typeof ApiClient.disconnectPersonalConnector>(
   async (serverName) => ({ ok: true, scope: "identity", serverName, revokedWorkspaces: 0 }),
 );
@@ -67,6 +77,8 @@ mock.module("../api/client", () => ({
   revokeConnector,
   listPersonalConnectors,
   disconnectPersonalConnector,
+  initiateIdentityConnect,
+  initiateComposioIdentityConnect,
   listDirectory,
   getInstalledConnectors,
 }));
@@ -128,7 +140,16 @@ beforeEach(() => {
   listPlugins.mockClear();
   grantConnector.mockClear();
   revokeConnector.mockClear();
-  disconnectPersonalConnector.mockClear();
+  personal = [];
+  for (const m of [
+    disconnectPersonalConnector,
+    listPersonalConnectors,
+    initiateIdentityConnect,
+    initiateComposioIdentityConnect,
+  ]) {
+    m.mockClear();
+  }
+  listPersonalConnectors.mockImplementation(async () => ({ connectors: personal }));
   localStorage.clear();
 });
 
@@ -262,10 +283,10 @@ describe("PluginsPage — Installed", () => {
     await expand(mounted.container, "not-here");
     const account = (id: string) =>
       row(mounted!.container, id)?.querySelector('[data-testid="plugin-account"]')?.textContent;
-    expect(account("person:gmail")).toBe("Uses your account · pat@acme.test");
-    expect(account("person:granola")).toBe("Uses your account · Pat");
+    expect(account("person:gmail")).toBe("pat@acme.test");
+    expect(account("person:granola")).toBe("Pat");
     // No account recorded: the line says whose, and invents no account.
-    expect(account("workspace:github")).toBe("Uses the workspace's account");
+    expect(account("workspace:github")).toBe("Workspace account");
   });
 
   test("a workspace sign-in a member cannot do shows the connector list's status words", async () => {
@@ -429,6 +450,128 @@ describe("PluginsPage — Installed", () => {
     expect(menuItems(popup)).toEqual(["Plugin from the directory", "Write a skill"]);
     await click(menuItem(popup, "Plugin from the directory"));
     expect(mounted.container.textContent).toContain("Acme Tasks");
+  });
+});
+
+// A person's row offers its next step, and nothing once there is none: Use
+// here signs in too when the plugin has no account behind it, Connect signs in
+// one already on here, and one on here and signed in offers nothing.
+describe("PluginsPage — a person's plugin's next step", () => {
+  const notConnected = (p: Plugin): Plugin => ({
+    ...p,
+    servers: p.servers.map((s) => ({ ...s, status: "not_connected" as const, account: null })),
+  });
+  const BASSET = plugin({
+    id: "person:bassethound",
+    displayName: "Bassethound",
+    owner: { kind: "person" },
+    granted: false,
+    servers: [{ serverName: "bassethound", status: "not_connected", account: null }],
+  });
+  function connector(over: Partial<PersonalConnector> = {}): PersonalConnector {
+    return {
+      serverName: "bassethound",
+      displayName: "Bassethound",
+      description: null,
+      state: "not_authenticated",
+      auth: "dcr",
+      grantedWorkspaces: [],
+      ...over,
+    };
+  }
+  /** The row in its section, not its copy under Needs you. */
+  const inSection = (id: string, pluginId: string) =>
+    section(mounted!.container, id)!.querySelector<HTMLElement>(`[data-plugin-id="${pluginId}"]`)!;
+  const action = (r: HTMLElement) => r.querySelector('[data-testid="plugin-action"]');
+  const account = (r: HTMLElement) =>
+    r.querySelector('[data-testid="plugin-account"]')?.textContent;
+
+  test("not on here, not connected: Use here, and the subtitle says it is not signed in", async () => {
+    plugins = [BASSET];
+    personal = [connector()];
+    mounted = await mount();
+    await expand(mounted.container, "not-here");
+    const r = inSection("not-here", "person:bassethound");
+    expect(button(r, "Use here")?.disabled).toBe(false);
+    expect(button(r, "Connect")).toBeUndefined();
+    expect(account(r)).toBe("Not signed in");
+  });
+
+  test("on here, not connected: Connect, and nothing else beside it", async () => {
+    plugins = [notConnected(GMAIL)];
+    personal = [connector({ serverName: "gmail", displayName: "Gmail" })];
+    mounted = await mount();
+    const r = inSection("you", "person:gmail");
+    expect(action(r)?.textContent).toBe("Connect");
+    expect(account(r)).toBe("Not signed in");
+  });
+
+  test("on here, not connected: the menu has no Disconnect", async () => {
+    plugins = [notConnected(GMAIL)];
+    personal = [connector({ serverName: "gmail", displayName: "Gmail" })];
+    mounted = await mount();
+    const popup = await openMenu(inSection("you", "person:gmail"));
+    expect(menuItems(popup)).toEqual(["Open", "Stop using here"]);
+  });
+
+  test("Use here on a plugin with no sign-in waits for its record before it can start", async () => {
+    plugins = [BASSET];
+    listPersonalConnectors.mockImplementation(() => new Promise(() => {}));
+    mounted = await mount();
+    await expand(mounted.container, "not-here");
+    expect(button(inSection("not-here", "person:bassethound"), "Use here")?.disabled).toBe(true);
+  });
+
+  test("Use here on a DCR plugin with no sign-in grants, then signs in back to Plugins", async () => {
+    plugins = [BASSET];
+    personal = [connector()];
+    mounted = await mount();
+    await expand(mounted.container, "not-here");
+    await click(button(inSection("not-here", "person:bassethound"), "Use here"));
+    expect(document.body.textContent).toContain("You'll sign in to Bassethound next.");
+
+    await click(button(dialog(), "Use here"));
+    expect(grantConnector).toHaveBeenCalledWith("bassethound", WS_ID);
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("bassethound", WS_ID);
+    expect(initiateComposioIdentityConnect).not.toHaveBeenCalled();
+    expect(grantConnector.mock.invocationCallOrder[0]).toBeLessThan(
+      initiateIdentityConnect.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  test("Use here on a Composio plugin with no sign-in keys its sign-in on the catalog id", async () => {
+    plugins = [BASSET];
+    personal = [connector({ auth: "composio", connectorId: "ai.bassethound/bassethound" })];
+    mounted = await mount();
+    await expand(mounted.container, "not-here");
+    await click(button(inSection("not-here", "person:bassethound"), "Use here"));
+    await click(button(dialog(), "Use here"));
+    expect(grantConnector).toHaveBeenCalledWith("bassethound", WS_ID);
+    expect(initiateComposioIdentityConnect).toHaveBeenCalledWith(
+      "ai.bassethound/bassethound",
+      WS_ID,
+    );
+    expect(initiateIdentityConnect).not.toHaveBeenCalled();
+  });
+
+  test("Use here on a connected plugin grants and starts no sign-in", async () => {
+    plugins = [GRANOLA];
+    mounted = await mount();
+    await expand(mounted.container, "not-here");
+    await click(button(inSection("not-here", "person:granola"), "Use here"));
+    expect(document.body.textContent).not.toContain("sign in to Granola next");
+    await click(button(dialog(), "Use here"));
+    expect(grantConnector).toHaveBeenCalledWith("granola", WS_ID);
+    expect(initiateIdentityConnect).not.toHaveBeenCalled();
+  });
+
+  test("Connect signs in back to Plugins, and grants nothing", async () => {
+    plugins = [notConnected(GMAIL)];
+    personal = [connector({ serverName: "gmail", displayName: "Gmail" })];
+    mounted = await mount();
+    await click(button(inSection("you", "person:gmail"), "Connect"));
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("gmail", WS_ID);
+    expect(grantConnector).not.toHaveBeenCalled();
   });
 });
 

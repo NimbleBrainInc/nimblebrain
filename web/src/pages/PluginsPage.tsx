@@ -14,7 +14,7 @@ import {
 import { connectorStatusSummary } from "../components/connectors/ConnectorList";
 import {
   disconnectConsequence,
-  personalConnectUrl,
+  startPluginSignIn,
 } from "../components/connectors/personal-connector";
 import {
   type ReturnedConnector,
@@ -34,7 +34,7 @@ import {
   type InstalledFilters,
   pluginAttention,
 } from "../lib/installed-view";
-import { newSkillPath, pluginPath, skillPath } from "../lib/plugins";
+import { newSkillPath, pluginConnected, pluginPath, skillPath } from "../lib/plugins";
 import { cn } from "../lib/utils";
 import { toWsId } from "../lib/workspace-slug";
 import { ConnectorDirectory } from "./settings/ConnectorBrowsePage";
@@ -310,8 +310,15 @@ function InstalledPlugins({
     [plugins, skills, filters, canManage],
   );
 
+  // Turn it on here, then sign in when it has no account behind it. The grant
+  // needs only the install, so it stands across the sign-in's round trip. The
+  // redirect leaves the page, so the dialog stays as it is until it does.
   const grantHere = async (plugin: Plugin) => {
     for (const server of plugin.servers) await grantConnector(server.serverName, wsId);
+    if (!pluginConnected(plugin)) {
+      const signedIn = await startPluginSignIn(plugin, connectors ?? [], { workspaceId: wsId });
+      if (signedIn === "redirected") return;
+    }
     await refresh();
     setConfirming(null);
   };
@@ -321,7 +328,8 @@ function InstalledPlugins({
     setBusyId(plugin.id);
     try {
       // The redirect leaves the page, so the row stays busy until it does.
-      if ((await signInHere(plugin, connectors ?? [], wsId)) === "redirected") return;
+      const signedIn = await startPluginSignIn(plugin, connectors ?? [], { workspaceId: wsId });
+      if (signedIn === "redirected") return;
       await refresh();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
@@ -364,6 +372,9 @@ function InstalledPlugins({
           type="button"
           size="sm"
           variant="outline"
+          // Use here signs in when it is not connected, which needs the
+          // connector's record to pick the route.
+          disabled={!pluginConnected(plugin) && connectors === null}
           onClick={() => {
             setActionError(null);
             setConfirming(plugin);
@@ -397,7 +408,7 @@ function InstalledPlugins({
     if (plugin.granted) {
       items.push({ kind: "action", label: "Stop using here", onSelect: () => setStopping(plugin) });
     }
-    if (plugin.servers.every((s) => s.status === "ready")) {
+    if (pluginConnected(plugin)) {
       items.push({
         kind: "action",
         label: "Disconnect",
@@ -427,7 +438,7 @@ function InstalledPlugins({
         rowMenu={rowMenu}
         justConnected={(plugin) =>
           justConnected !== null &&
-          plugin.servers.every((s) => s.status === "ready") &&
+          pluginConnected(plugin) &&
           justConnected.owner === plugin.owner.kind &&
           plugin.servers.some((s) => s.serverName === justConnected.serverName)
         }
@@ -529,31 +540,6 @@ function AttentionButton({
       {busy ? "Connecting…" : label}
     </Button>
   );
-}
-
-/**
- * Sign in each of a person's plugin's servers that is not connected, returning
- * to this workspace's Plugins page. The route follows each connector's record,
- * which the caller has loaded. The first server that needs the browser sends it
- * there and answers `redirected`; when every one connected without an
- * interactive flow, it answers `connected`.
- */
-async function signInHere(
-  plugin: Plugin,
-  connectors: readonly PersonalConnector[],
-  wsId: string,
-): Promise<"redirected" | "connected"> {
-  for (const server of plugin.servers) {
-    if (server.status === "ready") continue;
-    const connector = connectors.find((c) => c.serverName === server.serverName);
-    if (!connector) throw new Error(`${plugin.displayName} is not one of your connectors.`);
-    const url = await personalConnectUrl(connector, wsId);
-    if (url) {
-      window.location.assign(url);
-      return "redirected";
-    }
-  }
-  return "connected";
 }
 
 /**

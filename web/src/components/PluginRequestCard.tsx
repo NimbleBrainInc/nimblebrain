@@ -1,19 +1,26 @@
 import { Check } from "lucide-react";
-import { useState } from "react";
-import type { PluginRequestAnswer } from "../_generated/platform-schemas/plugins";
-import { grantConnector } from "../api/client";
+import { useEffect, useRef, useState } from "react";
+import type { Plugin, PluginRequestAnswer } from "../_generated/platform-schemas/plugins";
+import { grantConnector, listPersonalConnectors } from "../api/client";
 import { useChatAnswer } from "../context/ChatAnswerContext";
 import { useChatPlugins } from "../context/ChatPluginsContext";
 import {
   answerMessage,
+  clearSignInPending,
+  isSignInPending,
+  markSignInPending,
   personalPluginNamed,
   pluginAccountLabel,
   USE_HERE_NOTE,
 } from "../lib/plugin-request";
+import { pluginConnected } from "../lib/plugins";
 import { ConnectorIcon } from "./connectors/ConnectorIcon";
+import { startPluginSignIn } from "./connectors/personal-connector";
 import { Button } from "./ui/button";
 
 type Answer = "use" | "not_now";
+/** How a card action ended: it left for a sign-in, or it is done here. */
+type Outcome = "redirected" | "done";
 
 /**
  * The agent asked the person to turn on one of their own plugins in the chat's
@@ -21,6 +28,15 @@ type Answer = "use" | "not_now";
  * grants"). The card asks the question the Plugins page asks; "Use here" makes
  * the same first-party `grant_connector` call, and either answer goes to the
  * agent as the person's next message.
+ *
+ * Use here follows the Plugins page's rule, that the button is the next step.
+ * A plugin with no account behind it is turned on and then signed in to, and
+ * the sign-in returns to the workspace's Plugins page with this conversation
+ * reopened (`returnConversationId`, which the server checks is the caller's
+ * conversation there, comes back as `?chat=`); the answer goes once the person is
+ * back with it connected, never before they leave, since they may abandon the
+ * sign-in (`markSignInPending`). A plugin already on here but not signed in
+ * offers Connect, which does the same.
  *
  * Everything shown comes from the caller's own plugin listing, not from the
  * call: a name that is not one of their plugins renders nothing. The workspace
@@ -34,39 +50,102 @@ export function PluginRequestCard({
   serverName: string;
   isLatestMessage: boolean;
 }) {
-  const plugins = useChatPlugins();
+  const plugin = personalPluginNamed(useChatPlugins(), serverName);
+  if (!plugin) return null;
+  return <RequestCard plugin={plugin} serverName={serverName} isLatestMessage={isLatestMessage} />;
+}
+
+function RequestCard({
+  plugin,
+  serverName,
+  isLatestMessage,
+}: {
+  plugin: Plugin;
+  serverName: string;
+  isLatestMessage: boolean;
+}) {
   const chat = useChatAnswer();
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const answered = useRef(false);
 
-  const plugin = personalPluginNamed(plugins, serverName);
-  if (!plugin) return null;
+  const connected = pluginConnected(plugin);
+  const conversationId = chat?.conversationId;
+  const live = answer === null && isLatestMessage && chat?.canAnswer === true && !!chat.workspaceId;
+
+  const sendAnswer = async (choice: Answer) => {
+    if (!chat || answered.current) return;
+    answered.current = true;
+    clearSignInPending();
+    setAnswer(choice);
+    try {
+      await chat.send(answerMessage(plugin.displayName, choice), { serverName, answer: choice });
+    } catch (err) {
+      answered.current = false;
+      setAnswer(null);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  // Back from the sign-in this card started, with the plugin connected: answer.
+  const returnedSignedIn =
+    live &&
+    plugin.granted &&
+    connected &&
+    !!conversationId &&
+    isSignInPending(conversationId, serverName);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `returnedSignedIn` is the trigger; `sendAnswer` sends at most once
+  useEffect(() => {
+    if (returnedSignedIn) void sendAnswer("use");
+  }, [returnedSignedIn]);
+
+  // Run one of the card's actions: busy while it runs, its failure shown. An
+  // action that left for a sign-in keeps the card busy until the page goes.
+  const run = async (action: () => Promise<Outcome>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      if ((await action()) === "redirected") return;
+    } catch (err) {
+      clearSignInPending();
+      setError(err instanceof Error ? err.message : String(err));
+    }
+    setBusy(false);
+  };
+
+  // Sign in to the plugin, coming back to this conversation, then answer. The
+  // answer goes now when it connected without leaving; otherwise it waits for
+  // the return.
+  const signInThenAnswer = async (): Promise<Outcome> => {
+    const workspaceId = chat?.workspaceId;
+    if (!workspaceId) return "done";
+    const { connectors } = await listPersonalConnectors();
+    if (conversationId) markSignInPending(conversationId, serverName);
+    const back = conversationId ? { workspaceId, conversationId } : { workspaceId };
+    if ((await startPluginSignIn(plugin, connectors, back)) === "redirected") {
+      return "redirected";
+    }
+    await sendAnswer("use");
+    return "done";
+  };
+
+  const answerNow = async (choice: Answer): Promise<Outcome> => {
+    await sendAnswer(choice);
+    return "done";
+  };
+
+  const turnOnHere = () =>
+    run(async () => {
+      const wsId = chat?.workspaceId;
+      if (!wsId) return "done";
+      for (const server of plugin.servers) await grantConnector(server.serverName, wsId);
+      return connected ? answerNow("use") : signInThenAnswer();
+    });
 
   const account = pluginAccountLabel(plugin);
   const workspaceName = chat?.workspaceName ?? "this workspace";
   const question = `Use ${plugin.displayName}${account ? ` (${account})` : ""} in ${workspaceName}?`;
-  const on = plugin.granted || answer === "use";
-  const canAnswer =
-    !on && answer === null && isLatestMessage && chat?.canAnswer === true && !!chat.workspaceId;
-
-  const respond = async (choice: Answer) => {
-    const wsId = chat?.workspaceId;
-    if (!chat || !wsId) return;
-    setBusy(true);
-    setError(null);
-    try {
-      if (choice === "use") {
-        for (const server of plugin.servers) await grantConnector(server.serverName, wsId);
-      }
-      setAnswer(choice);
-      await chat.send(answerMessage(plugin.displayName, choice), { serverName, answer: choice });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <fieldset
@@ -82,25 +161,15 @@ export function PluginRequestCard({
         />
         <p className="font-medium">{question}</p>
       </div>
-      {on ? (
-        <p className="mt-1 text-muted-foreground" data-testid="plugin-request-status">
-          Turned on here.
-        </p>
-      ) : answer === "not_now" ? (
-        <p className="mt-1 text-muted-foreground" data-testid="plugin-request-status">
-          Not turned on.
-        </p>
-      ) : (
-        <p className="mt-1 text-muted-foreground">{USE_HERE_NOTE}</p>
-      )}
+      <RequestStatus plugin={plugin} answer={answer} />
       {error && <p className="mt-1 text-destructive">{error}</p>}
-      {canAnswer && (
+      {live && !plugin.granted && (
         <div className="mt-2 flex gap-1.5">
           <Button
             type="button"
             size="sm"
             disabled={busy}
-            onClick={() => void respond("use")}
+            onClick={() => void turnOnHere()}
             data-testid="plugin-request-use"
           >
             {busy ? "Turning on…" : "Use here"}
@@ -110,14 +179,51 @@ export function PluginRequestCard({
             size="sm"
             variant="outline"
             disabled={busy}
-            onClick={() => void respond("not_now")}
+            onClick={() => void run(() => answerNow("not_now"))}
             data-testid="plugin-request-not-now"
           >
             Not now
           </Button>
         </div>
       )}
+      {live && plugin.granted && !connected && (
+        <div className="mt-2 flex gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            disabled={busy}
+            onClick={() => void run(signInThenAnswer)}
+            data-testid="plugin-request-connect"
+          >
+            {busy ? "Connecting…" : "Connect"}
+          </Button>
+        </div>
+      )}
     </fieldset>
+  );
+}
+
+/** Where the request stands, under the question. */
+function RequestStatus({ plugin, answer }: { plugin: Plugin; answer: Answer | null }) {
+  const connected = pluginConnected(plugin);
+  const on = plugin.granted || answer === "use";
+  if (!on && answer !== "not_now") {
+    return (
+      <p className="mt-1 text-muted-foreground">
+        {USE_HERE_NOTE}
+        {!connected && ` You'll sign in to ${plugin.displayName} next.`}
+      </p>
+    );
+  }
+  const status = !on
+    ? "Not turned on."
+    : connected
+      ? "Turned on here."
+      : `On here. Sign in to ${plugin.displayName} to finish.`;
+  return (
+    <p className="mt-1 text-muted-foreground" data-testid="plugin-request-status">
+      {status}
+    </p>
   );
 }
 
