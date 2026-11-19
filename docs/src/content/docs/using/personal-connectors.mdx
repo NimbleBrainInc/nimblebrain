@@ -14,9 +14,9 @@ This is the counterpart to a workspace [Connector](/using/connectors), which is 
 In a workspace, open **Plugins**: your connectors are listed there as plugins marked **Yours**, and clicking one opens its page (see [A personal plugin's page](#a-personal-plugins-page)). **Profile → Connectors** lists them too, outside any workspace. It has two lists:
 
 - **Your connectors** — what you've already connected. Each row shows the account it's connected as and where it is on (for example, **On in 2 of 3 workspaces**). Click a row to open it and manage that connector.
-- **Add a connector** — the curated set of services offered for a personal connection you haven't added yet.
+- **Add a connector** — the services in the catalog that can sign in with your own account, minus the ones you've already added.
 
-Which services appear under **Add a connector** is set by the platform operator (a connector is flagged as personal in the catalog). Personal connectors authenticate by standard OAuth (**dcr**), through **Composio**, or with a pre-registered OAuth client (**static**) when the operator has [declared that client for the whole instance](/config/connectors-catalog/#an-oauth-client-for-the-whole-instance).
+A service appears under **Add a connector** when its sign-in can hold a credential that is yours: standard OAuth (**dcr**), a broker such as **Composio** that runs an interactive sign-in, or a pre-registered OAuth client (**static**) when the operator has [declared that client for the whole instance](/config/connectors-catalog/#an-oauth-client-for-the-whole-instance). A service that signs in only with a credential the workspace or operator holds (an API key, a workspace's own OAuth client) installs into a workspace instead.
 
 ## Adding one from Plugins
 

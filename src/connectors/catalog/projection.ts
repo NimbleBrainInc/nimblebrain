@@ -111,7 +111,6 @@ export function projectServerDetailToCatalogListing(s: ServerDetail): CatalogLis
     description: s.description,
     ...(iconUrl ? { iconUrl } : {}),
     ...(meta?.tags && meta.tags.length > 0 ? { tags: meta.tags } : {}),
-    ...(meta?.personal === true ? { personal: true } : {}),
     install,
   };
 }
@@ -174,7 +173,6 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     ...(meta?.tags ? { tags: meta.tags } : {}),
     ...(interactive ? { interactive: true } : {}),
     ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),
-    ...(meta?.personal === true ? { personal: true } : {}),
     ...(account ? { account } : {}),
     ...(ui ? { ui } : {}),
     ...(hooks.length > 0 ? { hooks } : {}),

@@ -39,8 +39,8 @@ servers:
           hint: Create a Scoped Access app, add the redirect URI, paste App key + secret
           clientSecretKey: dropbox.client_secret
         tags: [storage, files]
-        # `personal` flag set on a NON-dcr entry: exercises that the personal
-        # catalog's hard gate is still DCR auth (this stays excluded).
+        # Carries the retired `personal` key, which is ignored: a static entry
+        # without an instance OAuth client stays workspace-only either way.
         personal: true
 
   - name: ai.granola/mcp
@@ -57,5 +57,6 @@ servers:
       ai.nimblebrain/connector:
         auth: dcr
         tags: [meetings, notes]
-        # Offered for personal (identity-plane) connection.
+        # Carries the retired `personal` key, which is ignored: this DCR entry
+        # is offered for personal install exactly as the unflagged Notion is.
         personal: true

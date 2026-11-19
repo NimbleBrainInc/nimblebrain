@@ -34,13 +34,6 @@ export interface CatalogListing {
     description: string;
     iconUrl?: string;
     tags?: string[];
-    /**
-     * Offered for personal (identity-plane) connection — the curated set the
-     * profile's Connectors page presents. Set from the connector's
-     * `_meta.ai.nimblebrain/connector.personal`; the hard gate is still DCR auth
-     * (`list_personal_catalog` filters `install.auth === "dcr"`).
-     */
-    personal?: boolean;
     install: InstallAction;
     /**
      * For static-auth entries: whether the workspace has OAuth client
@@ -130,8 +123,6 @@ export interface ConnectorCatalogEntry {
     tags?: string[];
     interactive?: boolean;
     docsUrl?: string;
-    /** Offered for personal (identity-plane) connection — see `NimbleBrainConnectorMeta.personal`. */
-    personal?: boolean;
     /**
      * The tool to ask for the signed-in account, from
      * `_meta["ai.nimblebrain/connector"].account`. Absent for a connector whose

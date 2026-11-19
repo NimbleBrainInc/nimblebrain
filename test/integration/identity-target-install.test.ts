@@ -502,10 +502,11 @@ describe("manage_connectors.list_directory — personalInstallable per entry", (
       expect(e.personalInstallable).toBe(offered.has(e.id));
     }
     const byId = new Map(directory.entries.map((e) => [e.id, e.personalInstallable]));
-    // Granola: dcr + personal. Notion: not flagged personal. Dropbox: static
-    // with no instance OAuth client, so one account for the workspace.
+    // Notion and Granola are DCR, so each person holds their own credential;
+    // Granola's retired `personal` key changes nothing. Dropbox is static with no
+    // instance OAuth client, so one account for the workspace, key or not.
+    expect(byId.get("com.notion/mcp")).toBe(true);
     expect(byId.get("ai.granola/mcp")).toBe(true);
-    expect(byId.get("com.notion/mcp")).toBe(false);
     expect(byId.get("com.dropbox/mcp")).toBe(false);
   });
 });
@@ -544,20 +545,22 @@ describe("manage_connectors.list_personal_catalog — the curated personal-conne
     expect(ids).not.toContain("io.asana/mcp");
   });
 
-  test("offers personal DCR + brokered connectors; excludes non-personal and static", async () => {
+  test("offers every DCR and brokered connector by its auth; excludes static", async () => {
     const result = await h.tool.handler({ action: "list_personal_catalog" });
     expect(result.isError).toBe(false);
     const sc = result.structuredContent as {
-      catalog: Array<{ id: string; personal?: boolean; install: { auth?: string } }>;
+      catalog: Array<{ id: string; install: { auth?: string } }>;
     };
     const ids = sc.catalog.map((e) => e.id);
-    // Granola: dcr + personal → offered.
+    // Notion: dcr, no catalog flag → offered.
+    expect(ids).toContain("com.notion/mcp");
+    // Granola: dcr carrying the retired `personal` key → offered, the same as Notion.
     expect(ids).toContain("ai.granola/mcp");
-    // Asana: composio + personal, and the broker is configured → offered.
+    // Asana and Linear: composio, and the broker is configured → offered.
     expect(ids).toContain("io.asana/mcp");
-    // Notion: dcr but NOT flagged personal → excluded.
-    expect(ids).not.toContain("com.notion/mcp");
-    // Dropbox: flagged personal but static → excluded; static stays workspace-bound.
+    expect(ids).toContain("io.linear/mcp");
+    // Dropbox: static with no instance OAuth client → excluded, though it carries
+    // the retired key; static stays workspace-bound.
     expect(ids).not.toContain("com.dropbox/mcp");
     // Everything offered is a DCR or brokered remote MCP connection — lockstep
     // with the install gate.

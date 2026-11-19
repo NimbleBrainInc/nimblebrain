@@ -143,15 +143,16 @@ function identityInstallableAuth(
 }
 
 /**
- * Whether a catalog entry is offered for installing for one person: flagged
- * `personal` by the operator, a remote MCP connection, and an auth the identity
- * install accepts ({@link identityInstallableAuth}). `list_personal_catalog`
- * filters by it and `list_directory` reports it per entry, so neither offers a
- * personal install that `handleInstallIdentity` then refuses.
+ * Whether a catalog entry is offered for installing for one person: a remote
+ * MCP connection whose auth can hold the person's own credential
+ * ({@link identityInstallableAuth}). It is a property of the entry's auth, not
+ * a catalog flag (ADR-0069); restricting a connector to workspace install is
+ * the operator's policy (ADR-0068). `list_personal_catalog` filters by it and
+ * `list_directory` reports it per entry, so neither offers a personal install
+ * that `handleInstallIdentity` then refuses.
  */
 function offeredForPersonalInstall(ctx: ManageConnectorsContext, entry: CatalogListing): boolean {
   return (
-    entry.personal === true &&
     entry.install.kind === "remote-oauth" &&
     identityInstallableAuth(ctx, entry.install.auth, entry.id)
   );
@@ -3823,10 +3824,9 @@ function recordSourcesSummary(
 // connector and don't re-derive "is this a connector."
 
 /**
- * `list_personal_catalog` — the curated set of connectors offered for PERSONAL
- * (identity-plane) connection: operator-flagged `personal` connectors, narrowed
- * to what `handleInstallIdentity` will actually accept, minus the ones the
- * caller already installed on their identity. The read behind the profile "Add a
+ * `list_personal_catalog` — the connectors offered for PERSONAL
+ * (identity-plane) connection: every catalog entry `handleInstallIdentity` will
+ * accept, minus the ones the caller already installed on their identity. The read behind the profile "Add a
  * connector" picker.
  *
  * Both sides read the same predicate ({@link identityInstallableAuth}), so the

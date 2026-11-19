@@ -3,7 +3,10 @@ import {
   projectServerDetailToCatalogListing,
   serverDetailToCatalogEntry,
 } from "../../src/connectors/catalog/projection.ts";
-import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
+import {
+  type ServerDetail,
+  validateServerDetail,
+} from "../../src/connectors/catalog/server-detail.ts";
 
 function detail(over: Partial<ServerDetail> = {}): ServerDetail {
   return {
@@ -387,5 +390,35 @@ describe("directory and catalog projections agree on shared meta auth fields", (
     expect(cat.requiredScopes).toBeUndefined();
     expect(dir.install.providerAuth).toBeUndefined();
     expect(cat.providerAuth).toBeUndefined();
+  });
+});
+
+describe("a catalog entry's retired `personal` key", () => {
+  // Whether a person can install an entry follows from its auth, not a catalog
+  // flag. A catalog that still sets the key must load, and the key changes nothing.
+  const remote = {
+    remotes: [{ type: "streamable-http" as const, url: "https://example.com/mcp" }],
+  };
+  const unflagged = detail({
+    ...remote,
+    _meta: { "ai.nimblebrain/connector": { auth: "dcr", tags: ["notes"] } },
+  });
+  // Built apart from the literal: the key is no longer part of the meta type,
+  // which is how an older catalog file reaches the projection.
+  const retiredMeta = { auth: "dcr" as const, tags: ["notes"], personal: true };
+  const flagged = detail({ ...remote, _meta: { "ai.nimblebrain/connector": retiredMeta } });
+
+  test("still validates against the upstream schema", () => {
+    expect(validateServerDetail(flagged).errors).toEqual([]);
+    expect(validateServerDetail(flagged).valid).toBe(true);
+  });
+
+  test("projects to the same listing and catalog entry as an unflagged entry", () => {
+    expect(projectServerDetailToCatalogListing(flagged)).toEqual(
+      projectServerDetailToCatalogListing(unflagged),
+    );
+    expect(serverDetailToCatalogEntry(flagged)).toEqual(serverDetailToCatalogEntry(unflagged));
+    expect(projectServerDetailToCatalogListing(flagged)).not.toHaveProperty("personal");
+    expect(serverDetailToCatalogEntry(flagged)).not.toHaveProperty("personal");
   });
 });
