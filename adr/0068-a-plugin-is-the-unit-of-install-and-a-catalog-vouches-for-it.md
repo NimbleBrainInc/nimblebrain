@@ -162,7 +162,9 @@ Removing a plugin reverses each step.
 A plugin's `skills/` are installed with it and removed with it: pinned,
 content-addressed, materialized into their own store, and re-bound at boot, the
 mechanics of ADR-0013. Their names follow the publisher-prefix rule of
-ADR-0034, as `plugin:<plugin>:<skill>`, so two plugins never shadow each other.
+ADR-0034, as `plugin:<name>@<catalog>:<skill>` (`plugin:linear@nimblebrain:usage`).
+The `name@catalog` address is unique within an instance, so two plugins never
+shadow each other, even when two catalogs each list a plugin of the same name.
 
 **A skill binds to a server by naming it.** A skill's `metadata.nimblebrain`
 may name one of its plugin's servers, by its key in the plugin. Install stamps
