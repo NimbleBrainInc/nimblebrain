@@ -16,7 +16,7 @@ export function elsewhereNote(workspaceName: string): string {
 
 /**
  * The plugin a finished call asked the person to turn on, when it is one
- * (`nb__manage_tools` with `request_plugin`). Read from the call's input, which
+ * (`nb__request_plugin`). Read from the call's input, which
  * history keeps; the facts shown come from the caller's own plugin listing,
  * never from the call. Null for every other call.
  */
@@ -25,15 +25,20 @@ export function requestedPluginName(call: ToolCallDisplay): string | null {
 }
 
 /**
- * The plugin a call asks for, finished or not: the `request_plugin` of an
- * `nb__manage_tools` call, or null for any other call.
+ * The plugin a call asks for, finished or not: the `plugin` of an
+ * `nb__request_plugin` call, or null for any other call. Conversations recorded
+ * while the request rode `nb__manage_tools` as `request_plugin` read the same.
  */
 export function requestPluginArg(call: {
   name: string;
   input?: Record<string, unknown>;
 }): string | null {
-  if (call.name !== "nb__manage_tools") return null;
-  const name = call.input?.request_plugin;
+  const name =
+    call.name === "nb__request_plugin"
+      ? call.input?.plugin
+      : call.name === "nb__manage_tools"
+        ? call.input?.request_plugin
+        : undefined;
   return typeof name === "string" && name ? name : null;
 }
 

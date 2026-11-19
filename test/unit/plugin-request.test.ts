@@ -1,7 +1,7 @@
 /**
  * The in-conversation ask for a personal plugin (ADR-0069 "Only the owner
  * grants"): `nb__search` names the caller's own plugins that are off in the
- * run's workspace, and `nb__manage_tools` `request_plugin` asks for one. The ask
+ * run's workspace, and `nb__request_plugin` asks for one. The ask
  * writes no grant, is refused in an unattended run, and never names another
  * member's plugin.
  */
@@ -26,7 +26,6 @@ import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { type RequestContext, runWithRequestContext } from "../../src/runtime/request-context.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import type { ManageConnectorsContext } from "../../src/tools/connector-tools.ts";
-import { createManageToolsToolDefs } from "../../src/tools/manage-tools.ts";
 import {
   describeUngrantedPlugins,
   discoverUngrantedPlugins,
@@ -160,7 +159,7 @@ describe("discovery", () => {
     );
     const text = extractText(result.content);
     expect(text).toContain("**granola** (Granola)");
-    expect(text).toContain("request_plugin");
+    expect(text).toContain("nb__request_plugin");
     expect(text).not.toContain("notion");
     expect(text).not.toContain("granola__");
     expect(result.structuredContent?.pluginsOffHere).toEqual([
@@ -168,11 +167,11 @@ describe("discovery", () => {
     ]);
   });
 
-  test("the description tells the model to call request_plugin with the exact name", () => {
+  test("the description tells the model to call nb__request_plugin with the exact name", () => {
     const text = describeUngrantedPlugins([
       { serverName: "granola", displayName: "Granola", description: null, account: null },
     ]);
-    expect(text).toContain('call nb__manage_tools with `{"request_plugin": "granola"}` yourself');
+    expect(text).toContain('call nb__request_plugin with `{"plugin": "granola"}` yourself');
     expect(text).toContain("do not send them to the Plugins page");
     expect(text).not.toContain("<name>");
   });
@@ -183,12 +182,12 @@ describe("discovery", () => {
       { serverName: "notion", displayName: "Notion", description: null, account: null },
     ]);
     expect(text).toContain(
-      'call nb__manage_tools yourself with its exact name: `{"request_plugin": "granola"}` or `{"request_plugin": "notion"}`',
+      'call nb__request_plugin yourself with its exact name: `{"plugin": "granola"}` or `{"plugin": "notion"}`',
     );
   });
 });
 
-describe("request_plugin", () => {
+describe("nb__request_plugin", () => {
   test("asks for the caller's plugin and writes no grant", async () => {
     const result = await runWithRequestContext(chatContext(ALICE), () =>
       requestPlugin(requestScopedCtx(), "granola"),
@@ -241,24 +240,10 @@ describe("request_plugin", () => {
     expect(result.isError).toBe(true);
   });
 
-  test("nb__manage_tools routes request_plugin, sent alone", async () => {
-    const asked: string[] = [];
-    const [tool] = createManageToolsToolDefs(undefined, async (name) => {
-      asked.push(name);
-      return { content: [], isError: false };
-    });
-    if (!tool) throw new Error("manage_tools not built");
-    const alone = await tool.handler({ request_plugin: "granola" });
-    expect(alone.isError).toBe(false);
-    const mixed = await tool.handler({ request_plugin: "granola", add: ["granola__x"] });
-    expect(mixed.isError).toBe(true);
-    expect(asked).toEqual(["granola"]);
-  });
-
-  test("nb__manage_tools request_plugin reaches the caller's plugin through the nb source", async () => {
+  test("nb__request_plugin reaches the caller's plugin through the nb source", async () => {
     const systemTools = await createSystemTools(() => new ToolRegistry(), { runtime });
     const result = await runWithRequestContext(chatContext(ALICE), () =>
-      systemTools.execute("manage_tools", { request_plugin: "granola" }),
+      systemTools.execute("request_plugin", { plugin: "granola" }),
     );
     expect(result.isError).toBe(false);
     expect((result.structuredContent as PluginRequestOutput).pluginRequest.serverName).toBe(
@@ -266,11 +251,20 @@ describe("request_plugin", () => {
     );
     expect(await permissions.getConnectorGrants(ALICE.id, "granola")).toEqual([]);
   });
+
+  test("nb__manage_tools no longer takes a request: it only adds and removes", async () => {
+    const systemTools = await createSystemTools(() => new ToolRegistry(), { runtime });
+    const result = await runWithRequestContext(chatContext(ALICE), () =>
+      systemTools.execute("manage_tools", { request_plugin: "granola" }),
+    );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.pluginRequest).toBeUndefined();
+  });
 });
 
 /** What an `add` or a direct call returns for a plugin of the caller's that is off here. */
 const ASK_GRANOLA =
-  'Granola is your plugin but isn\'t turned on in this workspace. To use it, call nb__manage_tools with `{"request_plugin": "granola"}` yourself. That shows the person a one-click **Use here**. It is already theirs, so do not send them to the Plugins page.';
+  'Granola is your plugin but isn\'t turned on in this workspace. To use it, call nb__request_plugin with `{"plugin": "granola"}` yourself. That shows the person a one-click **Use here**. It is already theirs, so do not send them to the Plugins page.';
 
 describe("a name of the caller's plugin that is off here", () => {
   test("names the plugin and how to ask for it", async () => {

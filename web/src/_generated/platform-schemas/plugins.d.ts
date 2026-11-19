@@ -153,10 +153,20 @@ export declare const PluginsListOutput: import("@sinclair/typebox").TObject<{
 }>;
 export type PluginsListOutput = Static<typeof PluginsListOutput>;
 /**
+ * `nb__request_plugin`: a model asks the caller to turn on one of their own
+ * plugins in the workspace its run is in (ADR-0070). Its own tool, not a field
+ * of `nb__manage_tools`: promotion is the native engine's state, which an
+ * external agent runtime does not have, while a request touches none of it.
+ */
+export declare const RequestPluginInput: import("@sinclair/typebox").TObject<{
+    plugin: import("@sinclair/typebox").TString;
+}>;
+export type RequestPluginInput = Static<typeof RequestPluginInput>;
+/**
  * A model's request to use one of the caller's own plugins in the workspace
- * its run is in (`nb__manage_tools` `request_plugin`, ADR-0069 "Only the owner
- * grants"). The request writes nothing: a first-party client shows it to the
- * plugin's owner, and only their answer there writes the grant.
+ * its run is in (`nb__request_plugin`, ADR-0069 "Only the owner grants"). The
+ * request writes nothing: a first-party client shows it to the plugin's owner,
+ * and only their answer there writes the grant.
  */
 export declare const PluginRequest: import("@sinclair/typebox").TObject<{
     /** The plugin's server: the name `grant_connector` takes. */
