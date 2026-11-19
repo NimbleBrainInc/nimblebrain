@@ -28,3 +28,20 @@ export function accountLine(plugin: Plugin): string {
   const account = pluginAccount(plugin);
   return account ? `${ownerLine(plugin)} · ${account}` : ownerLine(plugin);
 }
+
+/** A skill's scope as it appears in its page's URL: the tiers a person authors in. */
+export type AuthoredSkillScope = "workspace" | "user" | "org";
+
+/**
+ * A skill's page under Plugins, `/w/<slug>/plugins/skills/<scope>/<name>`. A
+ * scope and a name address one authored skill: names are unique within a tier,
+ * and the same name in two tiers is two skills.
+ */
+export function skillPath(slug: string, scope: AuthoredSkillScope, name: string): string {
+  return `/w/${slug}/plugins/skills/${scope}/${encodeURIComponent(name)}`;
+}
+
+/** Where a new skill is written, `/w/<slug>/plugins/skills/new`. */
+export function newSkillPath(slug: string): string {
+  return `/w/${slug}/plugins/skills/new`;
+}
