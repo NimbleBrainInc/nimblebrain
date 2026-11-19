@@ -207,6 +207,6 @@ export type PluginRequestOutput = Static<typeof PluginRequestOutput>;
 export declare const PluginRequestAnswer: import("@sinclair/typebox").TObject<{
     /** The plugin's server, as the request named it. */
     serverName: import("@sinclair/typebox").TString;
-    answer: import("@sinclair/typebox").TUnsafe<"not_now" | "use">;
+    answer: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"use">, import("@sinclair/typebox").TLiteral<"not_now">]>;
 }>;
 export type PluginRequestAnswer = Static<typeof PluginRequestAnswer>;
