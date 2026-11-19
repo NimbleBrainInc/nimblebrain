@@ -1,6 +1,6 @@
 # 0013. Connector overlays: one curated repo, pinned, content-addressed, reconciled at boot
 
-- Status: Accepted; amended by ADR-0053
+- Status: Accepted; amended by ADR-0053; the overlay repo superseded by ADR-0068
 - Date: 2026-09-03
 - Serves: manage skills, orchestrate remote MCP
 

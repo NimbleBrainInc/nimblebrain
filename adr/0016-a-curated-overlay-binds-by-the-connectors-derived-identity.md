@@ -1,6 +1,6 @@
 # 0016. A curated overlay binds by the connector's derived identity
 
-- Status: Accepted
+- Status: Superseded by ADR-0068 (a connector's guidance is a skill in its plugin, bound to the server it names)
 - Date: 2026-09-03
 - Serves: manage skills, orchestrate remote MCP
 
