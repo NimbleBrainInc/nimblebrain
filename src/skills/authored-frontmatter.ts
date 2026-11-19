@@ -24,7 +24,7 @@
  *   - `provenance` / `scope` — stamped by the runtime, never author-supplied.
  */
 
-import matter from "gray-matter";
+import { type FrontmatterFile, parseFrontmatter } from "./frontmatter.ts";
 import {
   mapFrontmatterToManifest,
   type SkillFrontmatter,
@@ -137,9 +137,9 @@ function isPopulatedMapping(data: unknown): data is Record<string, unknown> {
 export function absorbFrontmatter(body: string): AbsorbedFrontmatter {
   if (!hasClosedFence(body)) return { kind: "absent" };
 
-  let parsed: matter.GrayMatterFile<string>;
+  let parsed: FrontmatterFile;
   try {
-    parsed = matter(body);
+    parsed = parseFrontmatter(body);
   } catch (err) {
     // Malformed YAML inside a well-formed fence — gray-matter throws with the
     // line and column, which is the most actionable thing anyone can say here.

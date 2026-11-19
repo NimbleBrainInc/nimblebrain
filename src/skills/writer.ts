@@ -7,8 +7,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import matter from "gray-matter";
 import { ensureWorkspaceDir } from "../workspace/context.ts";
+import { stringifyFrontmatter } from "./frontmatter.ts";
 import { parseSkillContent } from "./loader.ts";
 import { validateFrontmatter } from "./schemas/skill-manifest.ts";
 import type { Skill, SkillManifest } from "./types.ts";
@@ -121,7 +121,7 @@ function atomicWriteFile(filePath: string, content: string): void {
  */
 function serializeSkill(manifest: SkillManifest, body: string): string {
   const fm = manifestToFrontmatter(manifest);
-  return matter.stringify(`\n${body}\n`, fm);
+  return stringifyFrontmatter(`\n${body}\n`, fm);
 }
 
 // ---------------------------------------------------------------------------
