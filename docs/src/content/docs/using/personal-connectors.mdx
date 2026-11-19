@@ -11,7 +11,7 @@ This is the counterpart to a workspace [Connector](/using/connectors), which is 
 
 ## Where personal connectors live
 
-In any workspace, open **Plugins**: your connectors are listed there as plugins marked **Yours**, under **Yours** when they are on in that workspace and under **Yours, not used here** otherwise. Every workspace lists all of them, so you can manage them from whichever one you are in. Clicking one opens its page (see [A personal plugin's page](#a-personal-plugins-page)). An old link to Profile → Connectors opens Plugins.
+In any workspace, open **Plugins**: your connectors are listed there as plugins marked **Yours**, under **In this workspace** when they are on in that workspace and under **Yours, not used here** otherwise. Every workspace lists all of them, so you can manage them from whichever one you are in. Clicking one opens its page (see [A personal plugin's page](#a-personal-plugins-page)). An old link to Profile → Connectors opens Plugins.
 
 A service can be yours when its sign-in can hold a credential that is yours: standard OAuth (**dcr**), a broker such as **Composio** that runs an interactive sign-in, or a pre-registered OAuth client (**static**) when the operator has [declared that client for the whole instance](/config/connectors-catalog/#an-oauth-client-for-the-whole-instance). A service that signs in only with a credential the workspace or operator holds (an API key, a workspace's own OAuth client) installs into a workspace instead.
 
@@ -26,7 +26,7 @@ The quickest way to add a personal connector is from the workspace you want to u
 4. Sign in and approve access. You're returned to this workspace's **Plugins**, where a notice confirms the connection and the plugin's row reads **Connected just now**.
 </Steps>
 
-The grant is made before the sign-in, so it holds even if you don't finish signing in; the connector then reads **Not connected** under **Yours**, with **Connect**. Installing the same service from another workspace turns it on there too, and if it is already connected there is no second sign-in.
+The grant is made before the sign-in, so it holds even if you don't finish signing in; the connector then reads **Not signed in** under **In this workspace**, with **Connect**. Installing the same service from another workspace turns it on there too, and if it is already connected there is no second sign-in.
 
 **Just me** is offered only for a service that can sign in with your own account, and any member can choose it. The other choice, **Everyone in** the workspace, installs it as a [workspace connector](/using/connectors) and is shown only to the workspace's admins. A service that signs in only with one account for the workspace has no **Just me**; its card says **Uses one account for the workspace**. A service the workspace already has sits under **Installed** with **Install for me**, which adds your own beside the workspace's.
 
