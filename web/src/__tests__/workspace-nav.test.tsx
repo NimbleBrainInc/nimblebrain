@@ -22,7 +22,9 @@
 //      who may write the workspace, even before any app is installed, and
 //      no "+" for anyone else.
 //   8. Installed connectors with no view share one row under the apps, to the
-//      installed list; one with a view is never counted there.
+//      installed list; one with a view is never counted there. The row is a
+//      count of plugins, even of one, whatever their connection state: it
+//      never names a plugin as if it were an app, and never says "connected".
 //   9. With nothing installed, the expanded APPS section shows an "Add an app"
 //      row to the catalog, once the installed list names this workspace.
 //  10. Choosing an app's view opens it at its home, the one already on screen
@@ -844,7 +846,7 @@ describe("WorkspaceNav — connectors without a view", () => {
     const row = byTestId(mounted.container, "sidebar-workspace-tools");
     expect(row).toHaveLength(1);
     expect(row[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/plugins");
-    expect(row[0]?.textContent).toContain("2 more connected");
+    expect(row[0]?.textContent).toEndWith("2 more plugins");
     expect(row[0]?.getAttribute("title")).toBe("Gmail, Granola");
     // After the apps (the Plugins item above them shares the href).
     const hrefs = anchorHrefs(mounted.container);
@@ -853,16 +855,17 @@ describe("WorkspaceNav — connectors without a view", () => {
     );
   });
 
-  test("a single one is named; with no apps the count drops 'more'", async () => {
+  test("a single one is counted, not named as an app; with no apps the count drops 'more'", async () => {
     mounted = await mount({
       workspaces: [HELIX],
       activeId: "ws_003eba8844413cd9",
       initialPath: "/w/003eba8844413cd9/",
       installed: [installedConnector("gmail", "Gmail")],
     });
-    expect(byTestId(mounted.container, "sidebar-workspace-tools")[0]?.textContent).toEndWith(
-      "Gmail",
-    );
+    const row = byTestId(mounted.container, "sidebar-workspace-tools")[0];
+    expect(row?.textContent).toEndWith("1 plugin");
+    expect(row?.getAttribute("title")).toBe("Gmail");
+    expect(byTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(0);
     mounted.unmount();
 
     mounted = await mount({
@@ -872,8 +875,31 @@ describe("WorkspaceNav — connectors without a view", () => {
       installed: [installedConnector("gmail", "Gmail"), installedConnector("exa", "Exa")],
     });
     expect(byTestId(mounted.container, "sidebar-workspace-tools")[0]?.textContent).toEndWith(
-      "2 connected",
+      "2 plugins",
     );
+  });
+
+  test("counts installs in every state, and never says connected", async () => {
+    const states: InstalledConnector["status"][] = [
+      "ready",
+      "not_connected",
+      "needs_auth",
+      "failed",
+      "needs_setup",
+    ];
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
+      placements: [appPlacement("people")],
+      installed: [
+        installedConnector("people"),
+        ...states.map((status) => ({ ...installedConnector(`c-${status}`), status })),
+      ],
+    });
+    const text = byTestId(mounted.container, "sidebar-workspace-tools")[0]?.textContent ?? "";
+    expect(text).toEndWith("5 more plugins");
+    expect(text).not.toContain("connected");
   });
 
   test("an app past the inline cap is still an app, not counted in the row", async () => {
@@ -891,7 +917,7 @@ describe("WorkspaceNav — connectors without a view", () => {
 
     expect(byTestId(mounted.container, "sidebar-workspace-view-all")).toHaveLength(1);
     expect(byTestId(mounted.container, "sidebar-workspace-tools")[0]?.textContent).toEndWith(
-      "Gmail",
+      "1 more plugin",
     );
   });
 

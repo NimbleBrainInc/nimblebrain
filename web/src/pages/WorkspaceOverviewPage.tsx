@@ -21,13 +21,17 @@
 // from container queries on the main area (web/DESIGN.md), never the viewport.
 //
 // App data source: `forSlot("sidebar")` → `workspaceApps()`, the same set the
-// sidebar quick-list reads, so the grid and the count agree. Icons are the
-// apps' brand icons via `useWorkspaceAppIcons`, with a letter-avatar fallback.
+// sidebar quick-list reads, so the grid and the count agree. With no app, the
+// empty card counts the plugins installed without one (`viewlessConnectors`,
+// the set the sidebar's grouped row counts), so it never says nothing is
+// installed while the sidebar shows installs. Icons are the apps' brand icons
+// via `useWorkspaceAppIcons`, with a letter-avatar fallback.
 // ---------------------------------------------------------------------------
 
 import { ArrowUp, MessageSquare, Plus, Settings, UserPlus } from "lucide-react";
 import { type FormEvent, useCallback, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import type { InstalledConnector } from "../api/client";
 import { BriefingView } from "../components/briefing/BriefingView";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { relativeTime } from "../components/RecentConversationsPopover";
@@ -42,7 +46,13 @@ import { type RecentConversation, useRecentConversations } from "../hooks/useRec
 import { canManageWorkspaceMembers, canWriteWorkspace } from "../hooks/useScopedRole";
 import { useWorkspaceBriefing } from "../hooks/useWorkspaceBriefing";
 import { cn } from "../lib/utils";
-import { connectorSettingsPath, workspaceApps } from "../lib/workspace-apps";
+import {
+  appsByConnector,
+  connectorSettingsPath,
+  pluginCountLabel,
+  viewlessConnectors,
+  workspaceApps,
+} from "../lib/workspace-apps";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 
@@ -118,6 +128,10 @@ export function WorkspaceOverviewPage() {
   // `apps === null` branch below) until the array resolves — no skeleton flash.
   const appsReady = shell != null && shell.shellWorkspaceId === workspace.id;
   const apps = appsReady && shell ? workspaceApps(shell.forSlot("sidebar")) : null;
+  // Installed plugins with no app, for the empty card: known once the
+  // installed list names this workspace, and zero until then.
+  const viewless =
+    apps && connectorsReady ? viewlessConnectors(connectors.installed, appsByConnector(apps)) : [];
 
   const slugPath = `/w/${toSlug(workspace.id)}`;
   const canAddApps = canWriteWorkspace(workspace.userRole);
@@ -175,63 +189,102 @@ export function WorkspaceOverviewPage() {
           onOpen={openPanel}
         />
 
-        <section data-tour="apps">
-          <SectionLabel className="mb-3">Apps</SectionLabel>
-          {apps === null ? (
-            // Brief shell-catch-up window after a switch — hold the space, don't
-            // flash a skeleton (the page stays mounted, so this is a sub-second gap).
-            <div
-              className="min-h-[4.5rem]"
-              aria-hidden
-              data-testid="workspace-overview-apps-pending"
-            />
-          ) : apps.length === 0 ? (
-            <div
-              className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
-              data-testid="workspace-overview-empty"
-            >
-              <p>No apps installed in this workspace yet.</p>
-              {canAddApps && (
-                <Link
-                  to={`${slugPath}/plugins?tab=browse`}
-                  className="mt-3 inline-flex h-8 items-center gap-2 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/80 transition-colors"
-                >
-                  <Plus className="size-4" aria-hidden />
-                  Add an app
-                </Link>
-              )}
-            </div>
-          ) : (
-            <div
-              className="grid grid-cols-1 gap-3 @md:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4 @7xl:grid-cols-5"
-              data-testid="workspace-overview-app-grid"
-            >
-              {apps.map((p) => (
-                <AppCard
-                  key={p.resourceUri}
-                  placement={p}
-                  iconUrl={iconFor(p.serverName)}
-                  onOpen={() => {
-                    if (!p.route) return;
-                    navigate(`${slugPath}/app/${p.route}`);
-                  }}
-                />
-              ))}
-              {canAddApps && (
-                <Link
-                  to={`${slugPath}/plugins?tab=browse`}
-                  data-testid="workspace-overview-add-app"
-                  className="flex items-center gap-2 p-4 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
-                >
-                  <Plus className="size-5" aria-hidden />
-                  Add app
-                </Link>
-              )}
-            </div>
-          )}
-        </section>
+        <AppsSection
+          apps={apps}
+          viewless={viewless}
+          slugPath={slugPath}
+          canAddApps={canAddApps}
+          iconFor={iconFor}
+          onOpen={(route) => navigate(`${slugPath}/app/${route}`)}
+        />
       </div>
     </div>
+  );
+}
+
+/**
+ * The apps grid: one card per placement, or the empty card, which counts the
+ * plugins installed without an app. `apps` is null until the shell reflects
+ * this workspace, and the section holds its space meanwhile.
+ */
+function AppsSection({
+  apps,
+  viewless,
+  slugPath,
+  canAddApps,
+  iconFor,
+  onOpen,
+}: {
+  apps: PlacementEntry[] | null;
+  viewless: InstalledConnector[];
+  slugPath: string;
+  canAddApps: boolean;
+  iconFor: (serverName: string) => string | undefined;
+  onOpen: (route: string) => void;
+}) {
+  return (
+    <section data-tour="apps">
+      <SectionLabel className="mb-3">Apps</SectionLabel>
+      {apps === null ? (
+        // Brief shell-catch-up window after a switch — hold the space, don't
+        // flash a skeleton (the page stays mounted, so this is a sub-second gap).
+        <div className="min-h-[4.5rem]" aria-hidden data-testid="workspace-overview-apps-pending" />
+      ) : apps.length === 0 ? (
+        <div
+          className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
+          data-testid="workspace-overview-empty"
+        >
+          <p>No apps in this workspace yet.</p>
+          {viewless.length > 0 && (
+            <p className="mt-1" data-testid="workspace-overview-empty-plugins">
+              <Link
+                to={`${slugPath}/plugins`}
+                className="underline-offset-2 hover:text-foreground hover:underline"
+              >
+                {pluginCountLabel(viewless.length, { more: false })}
+              </Link>{" "}
+              {viewless.length === 1 ? "works" : "work"} here through the agent, with no app to
+              open.
+            </p>
+          )}
+          {canAddApps && (
+            <Link
+              to={`${slugPath}/plugins?tab=browse`}
+              className="mt-3 inline-flex h-8 items-center gap-2 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/80 transition-colors"
+            >
+              <Plus className="size-4" aria-hidden />
+              Add an app
+            </Link>
+          )}
+        </div>
+      ) : (
+        <div
+          className="grid grid-cols-1 gap-3 @md:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4 @7xl:grid-cols-5"
+          data-testid="workspace-overview-app-grid"
+        >
+          {apps.map((p) => (
+            <AppCard
+              key={p.resourceUri}
+              placement={p}
+              iconUrl={iconFor(p.serverName)}
+              onOpen={() => {
+                if (p.route) onOpen(p.route);
+              }}
+            />
+          ))}
+          {canAddApps && (
+            <Link
+              to={`${slugPath}/plugins?tab=browse`}
+              data-testid="workspace-overview-add-app"
+              className="flex items-center gap-2 p-4 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
+            >
+              <Plus className="size-5" aria-hidden />
+              Add app
+            </Link>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

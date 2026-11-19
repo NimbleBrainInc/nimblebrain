@@ -14,8 +14,11 @@
 //
 // APPS holds everything installed. A connector with a view gets a row; the
 // ones without (tools the agent uses, with nothing to open) share one row,
-// their icons and a count, that opens Plugins, where each is listed and
-// links to its configuration. So every install shows up, and screen-less ones cost one row.
+// their icons and a count of plugins, that opens Plugins, where each is listed
+// and links to its configuration. So every install shows up, and screen-less
+// ones cost one row. The row is always a count, even of one, so it never reads
+// as an app the overview does not list, and it says "plugins", not "connected":
+// it counts installs, whatever their connection state.
 // With nothing installed, a member who may install sees an "Add an app" row.
 // The header's "+" opens Plugins' Browse tab. The identity views' TOOLS still
 // dispatch bare through the identity door (see lib/identity-apps); the slug
@@ -44,6 +47,8 @@ import {
   appsByConnector,
   MAX_INLINE_APPS,
   orderApps,
+  pluginCountLabel,
+  viewlessConnectors,
   type WorkspaceApp,
   workspaceApps,
 } from "../../lib/workspace-apps";
@@ -105,10 +110,7 @@ function WorkspaceViews({
   // only once the list names this workspace (it lags a switch, like the shell).
   const toolsOnly = useMemo(() => {
     if (!ready || connectors?.workspaceId !== workspace.id) return [];
-    const withViews = new Set(apps.map((app) => app.serverName));
-    return connectors.installed.filter(
-      (c) => !withViews.has(c.serverName) && !isIdentityApp(c.serverName),
-    );
+    return viewlessConnectors(connectors.installed, apps);
   }, [ready, connectors, workspace.id, apps]);
   const hasSection = shownApps.length > 0 || toolsOnly.length > 0 || canInstall;
   // Nothing installed, known only once both lists name this workspace. The
@@ -227,8 +229,8 @@ function AddLink({ slug, collapsed }: { slug: string; collapsed: boolean }) {
 }
 
 // The installed connectors with no view, as one row: up to three of their
-// icons, overlapped, and a count (or the name, when there is one). It opens
-// Plugins, and the Plugins item above is the one lit there.
+// icons, overlapped, and a count of plugins.
+// It opens Plugins, and the Plugins item above is the one lit there.
 const STACKED_ICONS = 3;
 
 function ToolsOnlyLink({
@@ -243,11 +245,7 @@ function ToolsOnlyLink({
   collapsed: boolean;
 }) {
   const names = connectors.map((c) => c.displayName).join(", ");
-  const [only] = connectors;
-  const label =
-    connectors.length === 1 && only
-      ? only.displayName
-      : `${connectors.length} ${afterApps ? "more " : ""}connected`;
+  const label = pluginCountLabel(connectors.length, { more: afterApps });
   const shown = connectors.slice(0, collapsed ? 1 : STACKED_ICONS);
   const link = (
     <Link

@@ -1,3 +1,4 @@
+import type { InstalledConnector } from "../api/client";
 import type { PlacementEntry } from "../types";
 import { isIdentityApp } from "./identity-apps";
 
@@ -70,6 +71,25 @@ export function appRouteOf(pathname: string): string | null {
   const [first, , view, ...rest] = pathname.split("/").filter(Boolean);
   const route = rest.join("/");
   return first === "w" && view === "app" && route ? route : null;
+}
+
+/**
+ * The installed connectors that place no app: each one installed here that is
+ * neither among `apps` (`appsByConnector`) nor an identity app. With `apps`,
+ * every install appears exactly once. The sidebar groups these into one row and
+ * the overview names them when it has no app to show, so both count the same.
+ */
+export function viewlessConnectors(
+  installed: readonly InstalledConnector[],
+  apps: readonly WorkspaceApp[],
+): InstalledConnector[] {
+  const withViews = new Set(apps.map((app) => app.serverName));
+  return installed.filter((c) => !withViews.has(c.serverName) && !isIdentityApp(c.serverName));
+}
+
+/** "1 plugin", "3 plugins", or after the apps "3 more plugins". */
+export function pluginCountLabel(count: number, { more }: { more: boolean }): string {
+  return `${count} ${more ? "more " : ""}plugin${count === 1 ? "" : "s"}`;
 }
 
 /**
