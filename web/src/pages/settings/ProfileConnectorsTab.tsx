@@ -1,5 +1,5 @@
 import { ChevronDown } from "lucide-react";
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import {
   type CatalogListing,
   disconnectPersonalConnector,
@@ -14,6 +14,10 @@ import {
 } from "../../api/client";
 import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
 import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
+import {
+  type ReturnedConnector,
+  useConnectedNotice,
+} from "../../components/connectors/useConnectedNotice";
 import { Button } from "../../components/ui/button";
 import { ConfirmDialog } from "../../components/ui/confirm-dialog";
 import { Switch } from "../../components/ui/switch";
@@ -86,6 +90,16 @@ export function ProfileConnectorsTab() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Confirm the connector an OAuth sign-in just connected (`?connected=`).
+  const rereadSilently = useCallback(() => {
+    void fetchLists();
+  }, [fetchLists]);
+  const returned = useMemo(
+    () => (loading ? null : connectors.map(toReturnedConnector)),
+    [connectors, loading],
+  );
+  useConnectedNotice(returned, rereadSilently);
 
   // Redirect into the connector's Connect flow. The route depends on the auth
   // type: composio keys on the catalog connector id, DCR on the serverName. The
@@ -539,4 +553,13 @@ function AvailableConnectorRow({
       </Button>
     </div>
   );
+}
+
+/** A running personal connector is connected; anything else is still settling. */
+function toReturnedConnector(c: PersonalConnector): ReturnedConnector {
+  return {
+    serverName: c.serverName,
+    displayName: c.displayName,
+    state: c.state === "running" ? "connected" : "pending",
+  };
 }

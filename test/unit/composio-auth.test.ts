@@ -426,15 +426,13 @@ describe("GET /v1/composio-auth/callback", () => {
         headers: { cookie: `nb_composio_state=${cookieHash}` },
       });
 
-      expect(res.status).toBe(200);
-      expect(res.headers.get("content-type") ?? "").toContain("text/html");
-
-      // Redirect back to the workspace-scoped connectors page for the
-      // workspace the connection landed in (ws_0076759dbbe19fcc → slug "test"), not the
-      // pre-scoping `/settings/workspace/connectors` (which 404s now).
-      const html = await res.text();
-      expect(html).toContain("/w/0076759dbbe19fcc/settings/connectors");
-      expect(html).not.toContain("/settings/workspace/connectors");
+      // Redirect straight back to the workspace-scoped connectors page for the
+      // workspace the connection landed in, naming the connector's server name
+      // so the page can confirm it. No page is rendered.
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location") ?? "").toEndWith(
+        "/w/0076759dbbe19fcc/settings/connectors?connected=com-google-gmail",
+      );
 
       const stored = await readComposioConnection(dir, { type: "workspace", wsId }, cid);
       expect(stored).not.toBeNull();
@@ -1193,11 +1191,11 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
         headers: { cookie: `nb_composio_state=${cookieHash}` },
       });
 
-      expect(res.status).toBe(200);
-      const html = await res.text();
-      expect(html).toContain("/profile/connectors");
+      expect(res.status).toBe(302);
+      const location = res.headers.get("Location") ?? "";
+      expect(location).toEndWith("/profile/connectors?connected=com-google-gmail");
       // Never a workspace connectors URL for an identity connection.
-      expect(html).not.toContain("/settings/connectors");
+      expect(location).not.toContain("/settings/connectors");
 
       const owner = { type: "user", userId } as const;
       const stored = await readComposioConnection(dir, owner, cid);
@@ -1244,7 +1242,7 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
         headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` },
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(302);
       const { existsSync } = await import("node:fs");
       // Nothing under the spoofed attacker user.
       expect(

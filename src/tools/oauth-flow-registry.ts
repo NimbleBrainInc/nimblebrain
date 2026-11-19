@@ -190,6 +190,16 @@ export function peekFlowOwner(state: string): FlowOwner | null {
 }
 
 /**
+ * Read the owner and server name of a pending flow, without resolving it. The
+ * callback peeks both before `resolveWithCode` deletes the flow: the owner picks
+ * the page to return to, and the server name tells that page what connected.
+ */
+export function peekFlow(state: string): { owner: FlowOwner; serverName: string } | null {
+  const flow = flows.get(state);
+  return flow ? { owner: flow.owner, serverName: flow.serverName } : null;
+}
+
+/**
  * Take a pending flow's scope fallback: the authorize URL to send the browser
  * to after the server answered `invalid_scope`. Returns it once and never
  * again, so a server that refuses the fallback too gets no further retry.

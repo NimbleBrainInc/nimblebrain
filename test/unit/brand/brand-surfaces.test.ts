@@ -1,13 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { brandRoutes } from "../../../src/api/routes/brand.ts";
-import { reinitiateParagraph, successPage } from "../../../src/api/routes/oauth-success-page.ts";
+import { reinitiateParagraph } from "../../../src/api/routes/oauth-error-page.ts";
 import { loadBrand, renderBrandName } from "../../../src/brand/index.ts";
 import { composeSystemPrompt, defaultIdentity } from "../../../src/prompt/compose.ts";
 import { loadCoreSkills } from "../../../src/skills/loader.ts";
 import type { Skill } from "../../../src/skills/types.ts";
-import { colors } from "../../../web/src/theme/palette.ts";
 import { ACME_BRAND } from "../../helpers/acme-brand.ts";
 
 afterEach(() => {
@@ -111,35 +109,7 @@ describe("GET /v1/brand.js", () => {
   });
 });
 
-describe("OAuth pages", () => {
-  const styleOf = (html: string) => html.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
-  const hashOf = (s: string) => createHash("sha256").update(s).digest("base64");
-
-  test("the CSP hash is of the exact style served", () => {
-    loadBrand({ brand: ACME_BRAND });
-    const page = successPage("Authorization complete", "/w/x/settings/connectors");
-    expect(page.csp).toContain(`style-src 'sha256-${hashOf(styleOf(page.html))}'`);
-  });
-
-  test("unbranded: canonical accent, NimbleBrain wordmark and diamond", () => {
-    const page = successPage("t", "/r");
-    expect(styleOf(page.html)).toContain(`fill:${colors.primary[0]}`);
-    expect(styleOf(page.html)).toContain(`color:${colors.primary[1]}`);
-    expect(page.html).toContain("<svg");
-    expect(page.html).toContain("NimbleBrain</div>");
-  });
-
-  test("branded: brand accent, brand wordmark, no NimbleBrain mark", () => {
-    loadBrand({ brand: ACME_BRAND });
-    const page = successPage("t", "/r");
-    const style = styleOf(page.html);
-    expect(style).toContain("fill:#B53707");
-    expect(style).toContain("color:#FF8A4C");
-    expect(page.html).toContain(">ACME</div>");
-    expect(page.html).not.toContain("<svg");
-    expect(page.html).not.toContain("NimbleBrain");
-  });
-
+describe("OAuth error pages", () => {
   test("the error-page line names the brand, escaped", () => {
     expect(reinitiateParagraph()).toBe("<p>Re-initiate the connection from NimbleBrain.</p>");
     loadBrand({ brand: { name: "A&B" } });
