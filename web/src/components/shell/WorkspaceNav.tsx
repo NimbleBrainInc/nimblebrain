@@ -6,7 +6,7 @@
 // another workspace's is to switch to it (WorkspaceSwitcher, above this).
 //
 // Order: Overview, the identity views (Conversations / Tasks / Files),
-// then APPS (People, Tasks, … — the viewer's pinned apps first, capped with a
+// Plugins (what the agent can do here), then APPS (People, Tasks, … — the viewer's pinned apps first, capped with a
 // View-all overflow). Each routes
 // into `/w/<slug>/…`. An app that places several views is one entry; while it
 // is open its views list beneath it. The inbox is not here: it is the top
@@ -14,10 +14,10 @@
 //
 // APPS holds everything installed. A connector with a view gets a row; the
 // ones without (tools the agent uses, with nothing to open) share one row,
-// their icons and a count, that opens the installed list where each is
-// configured. So every install shows up, and screen-less ones cost one row.
+// their icons and a count, that opens Plugins, where each is listed and
+// links to its configuration. So every install shows up, and screen-less ones cost one row.
 // With nothing installed, a member who may install sees an "Add an app" row.
-// The header's "+" opens the catalog. The identity views' TOOLS still
+// The header's "+" opens Plugins' Browse tab. The identity views' TOOLS still
 // dispatch bare through the identity door (see lib/identity-apps); the slug
 // here is the focused workspace = view scope, not a tool namespace.
 //
@@ -27,7 +27,7 @@
 // ---------------------------------------------------------------------------
 
 import { Menu } from "@base-ui/react/menu";
-import { ArrowRight, Check, LayoutGrid, Pin, Plus } from "lucide-react";
+import { ArrowRight, Check, LayoutGrid, Pin, Plus, Puzzle } from "lucide-react";
 import { useMemo } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import type { InstalledConnector } from "../../api/client";
@@ -144,6 +144,7 @@ function WorkspaceViews({
           collapsed={collapsed}
         />
       ))}
+      <ViewLink to={`/w/${slug}/plugins`} icon={Puzzle} label="Plugins" end collapsed={collapsed} />
 
       {hasSection &&
         (collapsed ? (
@@ -179,7 +180,7 @@ function WorkspaceViews({
 
       {toolsOnly.length > 0 && (
         <ToolsOnlyLink
-          to={`/w/${slug}/settings/connectors`}
+          to={`/w/${slug}/plugins`}
           connectors={toolsOnly}
           afterApps={shownApps.length > 0}
           collapsed={collapsed}
@@ -187,7 +188,7 @@ function WorkspaceViews({
       )}
       {!collapsed && empty && canInstall && (
         <Link
-          to={`/w/${slug}/settings/connectors/browse`}
+          to={`/w/${slug}/plugins?tab=browse`}
           data-testid="sidebar-workspace-apps-empty"
           className={cn(rowClass(false, false), "text-muted-foreground")}
         >
@@ -200,7 +201,7 @@ function WorkspaceViews({
   );
 }
 
-// The "+" that opens the connector catalog. Beside the APPS header it shows
+// The "+" that opens Plugins' Browse tab. Beside the APPS header it shows
 // while the pointer is over the nav or it has keyboard focus; `hover:` applies
 // only on devices that hover, so a touch screen shows it at rest. In the rail
 // it is an icon button like the rows above it.
@@ -209,7 +210,7 @@ function AddLink({ slug, collapsed }: { slug: string; collapsed: boolean }) {
   return (
     <Tooltip label={label} side="right">
       <Link
-        to={`/w/${slug}/settings/connectors/browse`}
+        to={`/w/${slug}/plugins?tab=browse`}
         aria-label={label}
         data-testid="sidebar-add-connector"
         className={cn(
@@ -226,8 +227,8 @@ function AddLink({ slug, collapsed }: { slug: string; collapsed: boolean }) {
 }
 
 // The installed connectors with no view, as one row: up to three of their
-// icons, overlapped, and a count (or the name, when there is one). Lit on the
-// installed list and its sub-pages, so not `end`.
+// icons, overlapped, and a count (or the name, when there is one). It opens
+// Plugins, and the Plugins item above is the one lit there.
 const STACKED_ICONS = 3;
 
 function ToolsOnlyLink({
@@ -249,12 +250,12 @@ function ToolsOnlyLink({
       : `${connectors.length} ${afterApps ? "more " : ""}connected`;
   const shown = connectors.slice(0, collapsed ? 1 : STACKED_ICONS);
   const link = (
-    <NavLink
+    <Link
       to={to}
       aria-label={collapsed ? `${label}: ${names}` : undefined}
       title={collapsed ? undefined : names}
       data-testid="sidebar-workspace-tools"
-      className={({ isActive }) => rowClass(isActive, collapsed)}
+      className={rowClass(false, collapsed)}
     >
       <span className="flex shrink-0 -space-x-1">
         {shown.map((c) => (
@@ -267,7 +268,7 @@ function ToolsOnlyLink({
         ))}
       </span>
       {!collapsed && <span className="flex-1 truncate">{label}</span>}
-    </NavLink>
+    </Link>
   );
   return collapsed ? (
     <Tooltip label={names} side="right">

@@ -67,6 +67,7 @@ import { ContextInspectorPage } from "./pages/ContextInspectorPage";
 import { GlobalHomePage } from "./pages/GlobalHomePage";
 import { NotFoundPage, WorkspaceNotFoundPage } from "./pages/NotFoundPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
+import { PluginsPage } from "./pages/PluginsPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
@@ -437,6 +438,9 @@ function AuthenticatedAppContent({
                   workspace rather than to any connector, and no connector may
                   claim, reorder, or replace it. */}
               <Route path="notifications" element={<NotificationsPage />} />
+              {/* What the agent can do here: the workspace's plugins, the
+                  viewer's own, and the directory to add more. */}
+              <Route path="plugins" element={<PluginsPage />} />
               {/* Workspace settings — General/Members/Connectors/Skills/MCP/Notifications/Webhooks. */}
               <Route path="settings" element={<WorkspaceSettingsPage />}>
                 <Route

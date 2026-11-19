@@ -40,6 +40,10 @@ A personal connector is yours, so **you** decide which of your workspaces may us
 
 The rule has **no exception for a workspace only you belong to** — you grant the connector there too before your agent can use it. There is no "free at home".
 
+The quickest place to grant is the workspace itself. Its **Plugins** page lists your connectors granted there under **Yours**, and the rest under **Yours, not used here**, each with **Use here**. Use here asks you to confirm, naming the account and the workspace, then grants it. A granted one offers **Stop using here**, which revokes the grant. Any member can do this for their own connectors.
+
+To manage every workspace at once, use your profile:
+
 <Steps>
 1. In **Your connectors**, click the connector's row to open it.
 2. Under **Workspaces**, switch the connector on in each workspace where you want your agent to use it. Switching it on grants it there; switching it off revokes the grant.
@@ -100,7 +104,7 @@ A personal connector's credentials are **identity-owned**: they live at `users/<
 | | Personal connector | Workspace [connector](/using/connectors) |
 |---|---|---|
 | **Owned by** | You (your identity) | The workspace |
-| **Managed under** | Profile → Connectors | Settings → Connectors (per workspace) |
+| **Managed under** | Profile → Connectors, or **Plugins** in a workspace | **Plugins**, or Settings → Connectors (per workspace) |
 | **Who can use it** | Only you, and only in workspaces you grant it into | Every member of that workspace |
 | **Credentials** | `users/<userId>/credentials/` | `workspaces/<wsId>/credentials/` |
 | **To use in a workspace** | Grant it in | Already shared with all members |

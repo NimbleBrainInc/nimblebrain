@@ -111,13 +111,24 @@ export const ACTIONS: ActionDef[] = [
     },
   },
   {
-    id: "manage-connectors",
-    title: "Manage connectors",
-    keywords: ["connectors", "integrations", "mcp", "tools"],
-    icon: "Plug",
+    id: "plugins",
+    title: "Plugins",
+    keywords: ["plugins", "connectors", "skills", "integrations", "mcp", "tools"],
+    icon: "Puzzle",
     available: hasWorkspace,
     run: (run, ctx) => {
-      run.navigate(`/w/${ctx.activeWorkspaceSlug}/settings/connectors`);
+      run.navigate(`/w/${ctx.activeWorkspaceSlug}/plugins`);
+      run.closePalette();
+    },
+  },
+  {
+    id: "browse-plugins",
+    title: "Browse plugins",
+    keywords: ["add", "install", "plugins", "connectors", "directory", "catalog", "apps"],
+    icon: "Plus",
+    available: hasWorkspace,
+    run: (run, ctx) => {
+      run.navigate(`/w/${ctx.activeWorkspaceSlug}/plugins?tab=browse`);
       run.closePalette();
     },
   },

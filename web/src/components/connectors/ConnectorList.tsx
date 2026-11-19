@@ -127,7 +127,7 @@ function ConnectorRow({
 }) {
   const name = installed.displayName;
   const iconUrl = installed.iconUrl;
-  const summary = listSummary(installed);
+  const summary = connectorStatusSummary(installed.status, installed.missingOAuthClient);
 
   return (
     <Link
@@ -164,19 +164,25 @@ function ConnectorRow({
  *
  * Returns `null` for the ready state so the row renders without
  * any status block — that's the visual signal "this one's fine,
- * nothing to do."
+ * nothing to do." The Plugins page shows a plugin's servers with the
+ * same words.
  */
-function listSummary(installed: InstalledConnector): {
+export interface ConnectorStatusSummary {
   label: string;
   tone: string;
   dot: boolean;
   dotColor: string;
-} | null {
-  switch (installed.status) {
+}
+
+export function connectorStatusSummary(
+  status: InstalledConnector["status"],
+  missingOAuthClient?: boolean,
+): ConnectorStatusSummary | null {
+  switch (status) {
     case "ready":
       return null;
     case "needs_setup": {
-      const verb = installed.missingOAuthClient ? "Set up" : "Configure";
+      const verb = missingOAuthClient ? "Set up" : "Configure";
       return { label: verb, tone: "text-amber-600", dot: true, dotColor: "bg-amber-500" };
     }
     case "not_connected":
