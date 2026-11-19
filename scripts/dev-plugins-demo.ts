@@ -12,6 +12,11 @@
  *
  * Ports: API 27255, Web 27254 (override via `NB_API_PORT` / `NB_WEB_PORT`).
  * Reset: `git clean -fdX .environments/plugins-demo && bun run dev:plugins-demo`.
+ *
+ * The demo owns its workdir: `NB_WORK_DIR` is pinned to the demo directory for
+ * the seed and the runtime alike, so neither an exported value nor one in a
+ * `.env` (which `scripts/dev.ts` applies only to keys not already set) can send
+ * either one to another workdir.
  */
 
 import { spawn } from "node:child_process";
@@ -29,9 +34,22 @@ const CATALOG_DIR = join(ENV_DIR, "catalog");
 const API_PORT = process.env.NB_API_PORT || "27255";
 const WEB_PORT = process.env.NB_WEB_PORT || "27254";
 
+/** The environment the seed and the runtime both run under: `base` with the demo's workdir, ports, and catalog. */
+export function demoEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...base,
+    NB_WORK_DIR: ENV_DIR,
+    NB_API_PORT: API_PORT,
+    NB_WEB_PORT: WEB_PORT,
+    NB_CURATED_CATALOG_DIR: CATALOG_DIR,
+  };
+}
+
 async function main(): Promise<void> {
+  const env = demoEnv(process.env);
+  process.env.NB_WORK_DIR = env.NB_WORK_DIR;
   const { workDir, secrets } = loadConfig({ config: CONFIG_PATH });
-  if (!workDir) throw new Error(`${CONFIG_PATH} names no workDir`);
+  if (workDir !== ENV_DIR) throw new Error(`workDir resolved to ${workDir}, not ${ENV_DIR}`);
 
   const fleet = startMockFleet(MOCK_SERVERS);
   const summary = await seedPluginsDemo({ workDir, catalogDir: CATALOG_DIR, fleet, secrets });
@@ -50,12 +68,7 @@ async function main(): Promise<void> {
     {
       cwd: ROOT,
       stdio: "inherit",
-      env: {
-        ...process.env,
-        NB_API_PORT: API_PORT,
-        NB_WEB_PORT: WEB_PORT,
-        NB_CURATED_CATALOG_DIR: CATALOG_DIR,
-      },
+      env,
     },
   );
   // `scripts/dev.ts` shuts its own children down on these; keep the mocks up until it has.
@@ -68,7 +81,9 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch((err) => {
-  log.error(`[plugins-demo] ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((err) => {
+    log.error(`[plugins-demo] ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  });
+}
