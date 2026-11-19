@@ -275,8 +275,9 @@ renamed *skill index*. ADR-0015 is unchanged in substance.
 
 Each step stands alone:
 
-1. the catalog serving `/v0.1/servers` and `marketplace.json`, the runtime
-   reconciling a declared list from it;
+1. the catalog serving `/v0.1/servers`, `marketplace.json` and
+   `nimblebrain/marketplace.json`, the runtime reconciling a declared list
+   from `nimblebrain/marketplace.json`;
 2. plugin install, removal and listing in the runtime, with the CLI and web UI
    as clients;
 3. policy: catalogs and allow and deny lists per instance;
