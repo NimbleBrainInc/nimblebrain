@@ -36,8 +36,10 @@ import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
 interface PendingConnectFlow {
   owner: ConnectorOwner;
   connectorId: string;
-  /** The shell page a personal sign-in returns to, already validated same-origin. */
-  returnPath?: string;
+  /** The workspace a personal connect was started from, to return to. */
+  returnWsId?: string;
+  /** The caller's conversation in `returnWsId` to reopen on return, checked by the initiate. */
+  returnConversationId?: string;
   timeout: ReturnType<typeof setTimeout>;
 }
 
@@ -51,18 +53,15 @@ const flows = new Map<string, PendingConnectFlow>();
  */
 export const DEFAULT_CONNECT_FLOW_TTL_MS = 15 * 60 * 1000;
 
-/**
- * Record a pending connect flow keyed by `nonce`. Overwrites (and reclaims) any
- * prior record for the same nonce. `returnPath` is the page the callback returns
- * the browser to; the initiate checks it is on the web origin before it lands here.
- */
+/** Record a pending connect flow keyed by `nonce`. Overwrites (and reclaims) any prior record for the same nonce. */
 export function registerConnectFlow(
   nonce: string,
   owner: ConnectorOwner,
   connectorId: string,
-  opts: { ttlMs?: number; returnPath?: string } = {},
+  ttlMs: number = DEFAULT_CONNECT_FLOW_TTL_MS,
+  returnWsId?: string,
+  returnConversationId?: string,
 ): void {
-  const ttlMs = opts.ttlMs ?? DEFAULT_CONNECT_FLOW_TTL_MS;
   // A fresh 256-bit nonce never collides in practice; clearing a pre-existing
   // record's timer is pure hygiene so a double-register can't leak a timer.
   const prev = flows.get(nonce);
@@ -81,26 +80,32 @@ export function registerConnectFlow(
     owner,
     connectorId,
     timeout,
-    ...(opts.returnPath ? { returnPath: opts.returnPath } : {}),
+    ...(returnWsId ? { returnWsId } : {}),
+    ...(returnWsId && returnConversationId ? { returnConversationId } : {}),
   });
 }
 
 /**
  * Consume the pending flow for `nonce`: return its trusted `owner`,
- * `connectorId` and return page, and remove the record (one-shot). Returns null when no record
+ * `connectorId`, return workspace and conversation, and remove the record (one-shot). Returns null when no record
  * exists — the callback treats that as an unknown/expired flow and rejects.
  */
-export function consumeConnectFlow(
-  nonce: string,
-): { owner: ConnectorOwner; connectorId: string; returnPath?: string } | null {
+export function consumeConnectFlow(nonce: string): {
+  owner: ConnectorOwner;
+  connectorId: string;
+  returnWsId?: string;
+  returnConversationId?: string;
+} | null {
   const flow = flows.get(nonce);
   if (!flow) return null;
   flows.delete(nonce);
   clearTimeout(flow.timeout);
+  const { owner, connectorId, returnWsId, returnConversationId } = flow;
   return {
-    owner: flow.owner,
-    connectorId: flow.connectorId,
-    ...(flow.returnPath ? { returnPath: flow.returnPath } : {}),
+    owner,
+    connectorId,
+    ...(returnWsId ? { returnWsId } : {}),
+    ...(returnConversationId ? { returnConversationId } : {}),
   };
 }
 

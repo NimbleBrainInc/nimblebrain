@@ -19,7 +19,7 @@ import { unqualifiedModelIdError } from "../model/model-id.ts";
 import { isModelSlot, MODEL_SLOTS } from "../model/slots.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { TelemetryLockedError } from "../telemetry/manager.ts";
-import type { InProcessTool } from "./in-process-app.ts";
+import { type InProcessTool, READ_ONLY } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
 import { createOpenAppTool } from "./open-app.ts";
 import { SharedSourceRef } from "./registry.ts";
@@ -838,6 +838,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
     },
     {
       name: "list_artifacts",
+      annotations: READ_ONLY,
       description:
         "List stored artifacts in this workspace (anything a capability has saved to the artifact store), newest first. Optionally filter by `type`. Returns each artifact's id, title, type, and created_at; read one's content with read_artifact. Workspace-scoped — only this workspace's artifacts are returned.",
       inputSchema: {
@@ -878,6 +879,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
     },
     {
       name: "read_artifact",
+      annotations: READ_ONLY,
       description:
         "Read a stored artifact's content by its `artifact://` URI (or bare id), scoped to this workspace. Use this to retrieve an artifact referenced in this or a past conversation (a tool result's resource link), or an id from list_artifacts. Returns the artifact text.",
       inputSchema: {

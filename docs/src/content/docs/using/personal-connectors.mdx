@@ -26,7 +26,7 @@ The quickest way to add a personal connector is from the workspace you want to u
 1. Open **Plugins** and choose the **Browse** tab.
 2. Click **Install** on the service. You're asked who it is for; **Just me** is selected.
 3. Click **Install**. The connector is added to your identity and turned on in this workspace in the same step, then you're sent to the vendor's sign-in.
-4. Sign in and approve access. You're returned to **Plugins**, where the service is listed under **Yours** and reads **In use here**.
+4. Sign in and approve access. You're returned to this workspace's **Plugins**, where a notice confirms the connection and the plugin's row reads **Connected just now**.
 </Steps>
 
 The grant is made before the sign-in, so it holds even if you don't finish signing in; the connector then reads **Not connected** under **Yours**, with **Connect**. Installing the same service from another workspace turns it on there too, and if it is already connected there is no second sign-in.
@@ -55,14 +55,14 @@ A personal connector is yours, so **you** decide which of your workspaces may us
 
 The rule has **no exception for a workspace only you belong to** — you grant the connector there too before your agent can use it. There is no "free at home".
 
-The quickest place to grant is the workspace itself. Its **Plugins** page lists your connectors granted there under **Yours**, and the rest under **Yours, not used here**, each with **Use here**. Use here asks you to confirm, naming the account and the workspace, then grants it. When the connector is not signed in, the confirm says you'll sign in next: Use here grants it and then sends you to the vendor's sign-in, and you come back to **Plugins**. Any member can do this for their own connectors. The plugin's own page offers the same, and lists every workspace it is used in.
+The quickest place to grant is the workspace itself. Its **Plugins** page lists your connectors granted there under **In this workspace**, marked **Yours**, beside the workspace's own, and the rest under **Yours, not used here**, each with **Use here**. Use here asks you to confirm, naming the account and the workspace, then grants it. When the connector is not signed in, the confirm says you'll sign in next: Use here grants it and then sends you to the vendor's sign-in, and you come back to this workspace's **Plugins**, where the row reads **Connected just now**. Any member can do this for their own connectors. The plugin's own page offers the same, and lists every workspace it is used in.
 
-Each of your connectors under **Yours** shows its next step:
+A row shows only what needs you:
 
 - **Connect** when it is on here but not signed in. Connect runs the sign-in and brings you back to **Plugins**.
-- **In use here** when it is on and signed in.
+- Nothing when it is on and signed in. Its subtitle names the account it uses.
 
-Either way, **Stop using here** sits beside it and revokes the grant.
+Each row's **⋯** menu holds **Open**, and for your own connectors **Stop using here** (which revokes the grant) and **Disconnect**, each confirmed first.
 
 To manage every workspace at once, use your profile:
 
@@ -73,11 +73,11 @@ To manage every workspace at once, use your profile:
 
 Granting into a workspace makes that connector's tools appear to the agent there on its next turn. Revoking removes them just as immediately. Grants are per-workspace and independent — granting into one never affects another.
 
-You can also answer from **chat**. The agent knows which of your connectors are off in the workspace (it sees their names, not their tools), so when you ask for something only one of them can do, it asks you. The chat shows the same question as **Use here**, naming the account and the workspace, with **Use here** and **Not now**. Use here grants it; either answer goes to the agent as your next message, and once it is on, the agent can use it in the same conversation. When the connector is not signed in, Use here also sends you to the vendor's sign-in and brings you back to the same conversation; the answer goes to the agent once you are back and it is connected, so a sign-in you abandon tells the agent nothing. The card then offers **Connect** to finish. The agent cannot grant on its own, and a scheduled task never asks: it has no one to ask, so turn the connector on before the task runs.
+You can also answer from **chat**. The agent knows which of your connectors are off in the workspace (it sees their names, not their tools), so when you ask for something only one of them can do, it asks you. The chat shows the same question as **Use here**, naming the account and the workspace, with **Use here** and **Not now**. Use here grants it; either answer goes to the agent as your next message, and once it is on, the agent can use it in the same conversation. When the connector is not signed in, Use here also sends you to the vendor's sign-in and brings you back to this workspace's **Plugins** with the same conversation open in the chat; the answer goes to the agent once you are back and it is connected, so a sign-in you abandon tells the agent nothing. The card then offers **Connect** to finish. The agent cannot grant on its own, and a scheduled task never asks: it has no one to ask, so turn the connector on before the task runs.
 
 ## A personal plugin's page
 
-In a workspace, **Plugins** → your connector opens its page. The header shows the account it is signed in as and that it uses your account; when the sign-in is not ready, it offers **Connect**, which brings you back to this page. Below it:
+In a workspace, **Plugins** → your connector opens its page. The header shows the account it is signed in as and that it uses your account; when the sign-in is not ready, it offers **Connect**, which brings you back to this workspace's **Plugins**. Below it:
 
 - **In this workspace** — **Use here** (after the same confirm as on Plugins, signing you in when it needs to), or **In use here** with **Stop using here**.
 - **Used in** — every workspace it is granted to, each with **Stop using**, which revokes that grant.

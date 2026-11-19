@@ -1,7 +1,7 @@
 import { Menu } from "@base-ui/react/menu";
-import { MoreHorizontal, User } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Check, MoreHorizontal, User } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Plugin, PluginsListOutput } from "../_generated/platform-schemas/plugins";
 import {
   disconnectPersonalConnector,
@@ -17,6 +17,11 @@ import {
   disconnectConsequence,
   startPluginSignIn,
 } from "../components/connectors/personal-connector";
+import {
+  type ConnectedTarget,
+  type ReturnedConnector,
+  useConnectedNotice,
+} from "../components/connectors/useConnectedNotice";
 import { SkillsGroup } from "../components/plugins/SkillsGroup";
 import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
 import { Badge } from "../components/ui/badge";
@@ -32,7 +37,6 @@ import {
   pluginConnected,
   pluginNextStep,
   pluginPath,
-  shellPath,
 } from "../lib/plugins";
 import { cn } from "../lib/utils";
 import { toWsId } from "../lib/workspace-slug";
@@ -206,7 +210,6 @@ function InstalledPlugins({
   onBrowse: () => void;
 }) {
   const { workspaces } = useWorkspaceContext();
-  const location = useLocation();
   const navigate = useNavigate();
   // Installing and signing in a workspace plugin write the workspace; granting
   // your own plugin does not, so only those affordances are gated.
@@ -267,6 +270,15 @@ function InstalledPlugins({
   // A sign-in finishing elsewhere changes a row's status and account.
   useEvents({ onConnectionStateChanged: () => void refresh() });
 
+  // Confirm the connector an OAuth sign-in just connected (`?connected=`): a
+  // notice, and its plugin's row marked while the page is open.
+  const rereadSilently = useCallback(() => void refresh(), [refresh]);
+  const returned = useMemo(
+    () => (listing && listing.wsId === wsId ? listing.plugins.flatMap(toReturnedConnectors) : null),
+    [listing, wsId],
+  );
+  const justConnected = useConnectedNotice(returned, rereadSilently);
+
   const groups = useMemo(
     () => (listing && listing.wsId === wsId ? groupPlugins(listing.plugins) : null),
     [listing, wsId],
@@ -278,7 +290,7 @@ function InstalledPlugins({
   const grantHere = async (plugin: Plugin) => {
     for (const server of plugin.servers) await grantConnector(server.serverName, wsId);
     if (!pluginConnected(plugin)) {
-      const signedIn = await startPluginSignIn(plugin, connectors ?? [], shellPath(location));
+      const signedIn = await startPluginSignIn(plugin, connectors ?? [], { workspaceId: wsId });
       if (signedIn === "redirected") return;
     }
     await refresh();
@@ -289,7 +301,7 @@ function InstalledPlugins({
     setActionError(null);
     setBusyId(plugin.id);
     try {
-      const signedIn = await startPluginSignIn(plugin, connectors ?? [], shellPath(location));
+      const signedIn = await startPluginSignIn(plugin, connectors ?? [], { workspaceId: wsId });
       // The redirect leaves the page, so the row stays busy until it does.
       if (signedIn === "redirected") return;
       await refresh();
@@ -342,6 +354,7 @@ function InstalledPlugins({
         plugin={plugin}
         to={to}
         muted={personal && !plugin.granted}
+        justConnected={justConnected}
         action={rowAction(plugin, to)}
         menu={menu}
       />
@@ -514,19 +527,37 @@ type RowMenuItem =
 function PluginRow({
   plugin,
   to,
+  justConnected,
   action,
   menu,
   muted = false,
 }: {
   plugin: Plugin;
   to: string;
+  /** The connector an OAuth sign-in on this page just connected, if any. */
+  justConnected: ConnectedTarget | null;
   action?: React.ReactNode;
   menu: RowMenuItem[];
   muted?: boolean;
 }) {
   const subtitle = [accountLine(plugin), contentsLine(plugin)].filter(Boolean).join(" · ");
+  // Marked while the page is open, and only once every server is ready: a
+  // healthy row otherwise shows nothing, so the mark is the only thing it says.
+  const fresh =
+    justConnected !== null &&
+    pluginConnected(plugin) &&
+    justConnected.owner === plugin.owner.kind &&
+    plugin.servers.some((s) => s.serverName === justConnected.serverName);
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  // A long list may hold the plugin below the fold.
+  useEffect(() => {
+    if (fresh) rowRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [fresh]);
+
   return (
     <div
+      ref={rowRef}
       className="relative flex items-center gap-3 border-b border-border py-2.5"
       data-testid="plugin-row"
       data-plugin-id={plugin.id}
@@ -558,6 +589,15 @@ function PluginRow({
           </p>
         )}
       </div>
+      {fresh && (
+        <span
+          className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-success"
+          data-testid="plugin-connected-now"
+        >
+          <Check className="h-3.5 w-3.5" aria-hidden />
+          <span>Connected just now</span>
+        </span>
+      )}
       {action && (
         <div className="relative shrink-0" data-testid="plugin-action">
           {action}
@@ -622,4 +662,19 @@ function rowMenuItem(item: RowMenuItem, itemClass: string): React.ReactNode {
         </Menu.Item>
       );
   }
+}
+
+/**
+ * A plugin's servers as the sign-in confirmation reads them, each named by its
+ * plugin and carrying its owner: a ready server is connected, a failed one is
+ * dead, anything else is still settling.
+ */
+function toReturnedConnectors(plugin: Plugin): ReturnedConnector[] {
+  return plugin.servers.map((server) => ({
+    serverName: server.serverName,
+    displayName: plugin.displayName,
+    owner: plugin.owner.kind,
+    state:
+      server.status === "ready" ? "connected" : server.status === "failed" ? "failed" : "pending",
+  }));
 }

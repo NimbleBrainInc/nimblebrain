@@ -87,6 +87,7 @@ const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { toSlug } = await import("../lib/workspace-slug");
 const { PluginsPage } = await import("../pages/PluginsPage");
+const { NoticeProvider } = await import("../components/notices");
 
 const SLUG = toSlug(WS_ID);
 
@@ -170,12 +171,14 @@ async function mount(opts: { role?: "admin" | "member"; path?: string } = {}): P
   await act(async () => {
     root.render(
       <WorkspaceProvider initialWorkspaces={[workspace]} initialActiveId={WS_ID}>
-        <MemoryRouter initialEntries={[opts.path ?? `/w/${SLUG}/plugins`]}>
-          <Routes>
-            <Route path="/w/:slug/plugins" element={<PluginsPage />} />
-            <Route path="/w/:slug/plugins/:pluginRef" element={<PluginPageStub />} />
-          </Routes>
-        </MemoryRouter>
+        <NoticeProvider>
+          <MemoryRouter initialEntries={[opts.path ?? `/w/${SLUG}/plugins`]}>
+            <Routes>
+              <Route path="/w/:slug/plugins" element={<PluginsPage />} />
+              <Route path="/w/:slug/plugins/:pluginRef" element={<PluginPageStub />} />
+            </Routes>
+          </MemoryRouter>
+        </NoticeProvider>
       </WorkspaceProvider>,
     );
   });
@@ -376,6 +379,49 @@ describe("PluginsPage — Installed", () => {
     expect(action(r)?.textContent).toBe("Reconnect");
   });
 
+  test("marks the plugin an OAuth sign-in just connected, and only that one", async () => {
+    plugins = [GITHUB, GMAIL];
+    mounted = await mount({ path: `/w/${SLUG}/plugins?connected=gmail&owner=person` });
+    expect(row(mounted.container, "person:gmail")?.textContent).toContain("Connected just now");
+    expect(row(mounted.container, "workspace:github")?.textContent).not.toContain(
+      "Connected just now",
+    );
+  });
+
+  test("a workspace and a person sharing a server name: marks only the owner that connected", async () => {
+    const workspaceGmail = plugin({
+      id: "workspace:gmail",
+      displayName: "Gmail",
+      owner: { kind: "workspace" },
+    });
+    plugins = [workspaceGmail, GMAIL];
+    mounted = await mount({ path: `/w/${SLUG}/plugins?connected=gmail&owner=person` });
+    expect(row(mounted.container, "person:gmail")?.textContent).toContain("Connected just now");
+    expect(row(mounted.container, "workspace:gmail")?.textContent).not.toContain(
+      "Connected just now",
+    );
+    mounted.unmount();
+
+    mounted = await mount({ path: `/w/${SLUG}/plugins?connected=gmail&owner=workspace` });
+    expect(row(mounted.container, "workspace:gmail")?.textContent).toContain("Connected just now");
+    expect(row(mounted.container, "person:gmail")?.textContent).not.toContain("Connected just now");
+  });
+
+  test("marks nothing until the connected server is ready", async () => {
+    plugins = [
+      plugin({
+        id: "workspace:linear",
+        displayName: "Linear",
+        owner: { kind: "workspace" },
+        servers: [{ serverName: "linear", status: "connecting", account: null }],
+      }),
+    ];
+    mounted = await mount({ path: `/w/${SLUG}/plugins?connected=linear&owner=workspace` });
+    expect(row(mounted.container, "workspace:linear")?.textContent).not.toContain(
+      "Connected just now",
+    );
+  });
+
   test("Use here grants only after the confirm, naming the account and workspace", async () => {
     plugins = [GRANOLA];
     mounted = await mount();
@@ -498,7 +544,6 @@ describe("PluginsPage — a person's plugin's next step", () => {
       ...over,
     };
   }
-  const PLUGINS_PATH = `/w/${SLUG}/plugins`;
 
   test("not on here, not connected: Use here, and the subtitle says it is not signed in", async () => {
     plugins = [BASSET];
@@ -558,7 +603,7 @@ describe("PluginsPage — a person's plugin's next step", () => {
 
     await click(button(dialog(), "Use here"));
     expect(grantConnector).toHaveBeenCalledWith("bassethound", WS_ID);
-    expect(initiateIdentityConnect).toHaveBeenCalledWith("bassethound", PLUGINS_PATH);
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("bassethound", WS_ID);
     expect(initiateComposioIdentityConnect).not.toHaveBeenCalled();
     expect(grantConnector.mock.invocationCallOrder[0]).toBeLessThan(
       initiateIdentityConnect.mock.invocationCallOrder[0]!,
@@ -574,7 +619,7 @@ describe("PluginsPage — a person's plugin's next step", () => {
     expect(grantConnector).toHaveBeenCalledWith("bassethound", WS_ID);
     expect(initiateComposioIdentityConnect).toHaveBeenCalledWith(
       "ai.bassethound/bassethound",
-      PLUGINS_PATH,
+      WS_ID,
     );
     expect(initiateIdentityConnect).not.toHaveBeenCalled();
   });
@@ -594,7 +639,7 @@ describe("PluginsPage — a person's plugin's next step", () => {
     personal = [connector({ serverName: "gmail", displayName: "Gmail" })];
     mounted = await mount();
     await click(button(row(mounted.container, "person:gmail")!, "Connect"));
-    expect(initiateIdentityConnect).toHaveBeenCalledWith("gmail", PLUGINS_PATH);
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("gmail", WS_ID);
     expect(grantConnector).not.toHaveBeenCalled();
   });
 });

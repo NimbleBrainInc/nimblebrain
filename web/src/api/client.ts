@@ -576,40 +576,60 @@ export async function initiateMcpOAuth(
 /**
  * Begin the interactive OAuth flow to connect a PERSONAL connector on the
  * caller's identity. Returns the authorization URL to send the browser to; the
- * callback lands back on `returnTo` (a path in this shell, which the server
- * checks is same-origin), else on `/profile/connectors`. The identity-plane
- * sibling of `initiateMcpOAuth` (no workspace / principal).
+ * callback lands back on the Plugins page of `returnWorkspaceId` (the workspace
+ * the sign-in is started from), or on `/profile/connectors` without one. With
+ * `returnConversationId` (the caller's conversation in that workspace) it also
+ * reopens the chat on it. The identity-plane sibling of `initiateMcpOAuth`: the
+ * connection belongs to no workspace either way.
  */
 export async function initiateIdentityConnect(
   serverName: string,
-  returnTo?: string,
+  returnWorkspaceId?: string,
+  returnConversationId?: string,
 ): Promise<OAuthInitiateResponse> {
   // `authorizationUrl` is null when the connector connected without an interactive
   // flow (already authenticated) — caller must not redirect.
   return request<OAuthInitiateResponse>("/v1/mcp-auth/initiate-identity", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(returnTo ? { serverName, returnTo } : { serverName }),
+    body: JSON.stringify({
+      serverName,
+      ...returnTargetBody(returnWorkspaceId, returnConversationId),
+    }),
   });
 }
 
 /**
  * Begin the Composio Connect flow for a PERSONAL connector on the caller's
  * identity. The composio sibling of {@link initiateIdentityConnect}: keyed on the
- * catalog connector id (Composio auth is per-toolkit), no workspace. The callback
- * lands back on `returnTo` when given, else on `/profile/connectors`.
- * `alreadyConnected` is returned when an existing active Composio account was
- * adopted without a second OAuth round-trip; the URL is then that same page.
+ * catalog connector id (Composio auth is per-toolkit), and returning to the
+ * Plugins page of `returnWorkspaceId` (reopening `returnConversationId` when
+ * given), or `/profile/connectors` without one. `alreadyConnected` is returned
+ * when an existing active Composio account was adopted without a second OAuth
+ * round-trip.
  */
 export async function initiateComposioIdentityConnect(
   connectorId: string,
-  returnTo?: string,
+  returnWorkspaceId?: string,
+  returnConversationId?: string,
 ): Promise<ComposioInitiateResponse> {
   return request<ComposioInitiateResponse>("/v1/composio-auth/initiate-identity", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(returnTo ? { connectorId, returnTo } : { connectorId }),
+    body: JSON.stringify({
+      connectorId,
+      ...returnTargetBody(returnWorkspaceId, returnConversationId),
+    }),
   });
+}
+
+/** The return fields a personal initiate sends: none, the workspace, or the workspace and conversation. */
+function returnTargetBody(
+  returnWorkspaceId: string | undefined,
+  returnConversationId: string | undefined,
+): { returnWorkspaceId?: string; returnConversationId?: string } {
+  if (!returnWorkspaceId) return {};
+  return returnConversationId ? { returnWorkspaceId, returnConversationId } : { returnWorkspaceId };
 }
 
 /**

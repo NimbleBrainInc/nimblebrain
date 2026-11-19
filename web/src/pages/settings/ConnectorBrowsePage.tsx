@@ -1,6 +1,6 @@
 import { Check, Loader2 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   type CatalogListing,
   getInstalledConnectors,
@@ -30,7 +30,6 @@ import { Button } from "../../components/ui/button";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import { installCompletesWithoutSignIn } from "../../lib/connector-auth-flow.ts";
-import { shellPath } from "../../lib/plugins";
 import { type SecretHeaderField, secretHeaderFields } from "../../lib/secret-headers";
 import { toWsId } from "../../lib/workspace-slug";
 
@@ -139,7 +138,6 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
   // here is refused by `canWriteWorkspaceScoped` server-side.
   const canManage = useCanWriteActiveWorkspace();
   const navigate = useNavigate();
-  const location = useLocation();
   const { slug } = useParams<{ slug: string }>();
   const wsId = slug ? toWsId(slug) : undefined;
   const { workspaces } = useWorkspaceContext();
@@ -347,12 +345,10 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
     }
     // The Connect route follows the auth, as on the profile: a brokered
     // connector keys on its catalog id, everything else on its server name.
-    // The sign-in returns to this page, where the install started.
-    const returnTo = shellPath(location);
     const { authorizationUrl } =
       entry.install.kind === "remote-oauth" && entry.install.auth === "composio"
-        ? await initiateComposioIdentityConnect(entry.id, returnTo)
-        : await initiateIdentityConnect(result.serverName, returnTo);
+        ? await initiateComposioIdentityConnect(entry.id, wsId)
+        : await initiateIdentityConnect(result.serverName, wsId);
     if (authorizationUrl) {
       window.location.assign(authorizationUrl);
       return;

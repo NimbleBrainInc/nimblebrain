@@ -203,8 +203,10 @@ describe("PluginRequestCard", () => {
 });
 
 // Use here on a plugin with no account behind it turns it on and signs in,
-// returning to this conversation; the answer goes once the person is back with
-// it connected, never before they leave.
+// naming the chat's workspace and this conversation, so the callback returns to
+// the workspace's Plugins page with `?chat=<conversation>` and the chat panel
+// reopens it; the answer goes once the person is back with it connected, never
+// before they leave.
 describe("PluginRequestCard — a plugin that is not signed in", () => {
   const NOT_SIGNED_IN: Plugin = {
     ...GRANOLA,
@@ -218,7 +220,6 @@ describe("PluginRequestCard — a plugin that is not signed in", () => {
     auth: "dcr",
     grantedWorkspaces: [],
   };
-  const returnPath = `${window.location.pathname}?chat=${CONVERSATION_ID}`;
 
   test("says the sign-in comes next", () => {
     render({ serverName: "granola", plugins: [NOT_SIGNED_IN] });
@@ -231,7 +232,7 @@ describe("PluginRequestCard — a plugin that is not signed in", () => {
     await act(async () => button("plugin-request-use")?.click());
 
     expect(grantConnector).toHaveBeenCalledWith("granola", WS_ID);
-    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", returnPath);
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", WS_ID, CONVERSATION_ID);
     expect(grantConnector.mock.invocationCallOrder[0]).toBeLessThan(
       initiateIdentityConnect.mock.invocationCallOrder[0]!,
     );
@@ -244,9 +245,40 @@ describe("PluginRequestCard — a plugin that is not signed in", () => {
     personal = [{ ...CONNECTOR, auth: "composio", connectorId: "ai.granola/granola" }];
     render({ serverName: "granola", plugins: [NOT_SIGNED_IN] });
     await act(async () => button("plugin-request-use")?.click());
-    expect(initiateComposioIdentityConnect).toHaveBeenCalledWith("ai.granola/granola", returnPath);
+    expect(initiateComposioIdentityConnect).toHaveBeenCalledWith(
+      "ai.granola/granola",
+      WS_ID,
+      CONVERSATION_ID,
+    );
     expect(initiateIdentityConnect).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+
+  test("Use here, then the page the callback returns to (`?chat=`) with it connected: one answer", async () => {
+    personal = [CONNECTOR];
+    render({ serverName: "granola", plugins: [NOT_SIGNED_IN] });
+    await act(async () => button("plugin-request-use")?.click());
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
+
+    // The callback loads `/w/<slug>/plugins?…&chat=<conversation>` in this tab:
+    // a fresh page whose chat panel reopens the conversation and its card.
+    act(() => root.unmount());
+    root = ReactDOMClient.createRoot(container);
+    render({ serverName: "granola", plugins: [{ ...GRANOLA, granted: true }] });
+    await act(async () => {});
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith("I turned on Granola in this workspace. Go ahead.", {
+      serverName: "granola",
+      answer: "use",
+    });
+
+    // The listing refreshing again, or the page reloading, sends nothing more.
+    act(() => root.unmount());
+    root = ReactDOMClient.createRoot(container);
+    render({ serverName: "granola", plugins: [{ ...GRANOLA, granted: true }] });
+    await act(async () => {});
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   test("back from the sign-in with it connected, the card answers once", async () => {
@@ -296,7 +328,7 @@ describe("PluginRequestCard — a plugin that is not signed in", () => {
     render({ serverName: "granola", plugins: [{ ...NOT_SIGNED_IN, granted: true }] });
     await act(async () => button("plugin-request-connect")?.click());
     expect(grantConnector).not.toHaveBeenCalled();
-    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", returnPath);
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", WS_ID, CONVERSATION_ID);
     expect(send).not.toHaveBeenCalled();
     expect(isSignInPending(CONVERSATION_ID, "granola")).toBe(true);
   });

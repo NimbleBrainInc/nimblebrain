@@ -396,11 +396,8 @@ describe("PluginDetailPage — a person's plugin", () => {
     });
     await settle();
     await click(button(mounted.container, "Connect"));
-    // The sign-in returns to this page.
-    expect(initiateComposioIdentityConnect).toHaveBeenCalledWith(
-      "ai.granola/granola",
-      pagePath("person:granola"),
-    );
+    // Named with the workspace it is pressed in, so the sign-in returns to its Plugins page.
+    expect(initiateComposioIdentityConnect).toHaveBeenCalledWith("ai.granola/granola", WS_ID);
     expect(initiateIdentityConnect).not.toHaveBeenCalled();
   });
 
@@ -414,7 +411,7 @@ describe("PluginDetailPage — a person's plugin", () => {
     personal = [{ ...granolaConnector([]), state: "not_authenticated", identity: undefined }];
     mounted = await mount(pagePath("person:granola"));
     await click(button(mounted.container, "Connect"));
-    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", pagePath("person:granola"));
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", WS_ID);
     expect(initiateComposioIdentityConnect).not.toHaveBeenCalled();
   });
 
@@ -444,7 +441,7 @@ describe("PluginDetailPage — a person's plugin", () => {
     expect(button(here, "Stop using here")).toBeDefined();
   });
 
-  test("Use here on a plugin with no sign-in turns it on, then signs in back to this page", async () => {
+  test("Use here on a plugin with no sign-in turns it on, then signs in back to Plugins", async () => {
     plugins = [
       {
         ...granola(false),
@@ -459,7 +456,7 @@ describe("PluginDetailPage — a person's plugin", () => {
     await click(button(document.body.querySelector('[role="dialog"]')!, "Use here"));
 
     expect(grantConnector).toHaveBeenCalledWith("granola", WS_ID);
-    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", pagePath("person:granola"));
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola", WS_ID);
     expect(grantConnector.mock.invocationCallOrder[0]).toBeLessThan(
       initiateIdentityConnect.mock.invocationCallOrder[0]!,
     );

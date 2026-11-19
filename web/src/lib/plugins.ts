@@ -76,13 +76,3 @@ export function pluginNextStep(plugin: Plugin): PluginNextStep {
   if (!plugin.granted) return "use_here";
   return pluginConnected(plugin) ? "in_use" : "connect";
 }
-
-/**
- * A shell location as the same-origin path a sign-in returns to. Pages pass
- * the router's `useLocation()`; outside a route, `window.location`.
- */
-export function shellPath(
-  location: { pathname: string; search: string } = window.location,
-): string {
-  return `${location.pathname}${location.search}`;
-}

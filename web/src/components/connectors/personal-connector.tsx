@@ -17,8 +17,10 @@ import { ToolPermissionsTable } from "./ToolPermissionsTable";
  * The authorization URL to send the browser to for a personal connector's
  * Connect, or null when it connected without an interactive flow. The route
  * depends on the auth: composio keys on the catalog connector id, DCR on the
- * serverName. `returnTo` is the shell path the sign-in comes back to; without
- * it, Profile → Connectors.
+ * serverName. `returnWorkspaceId` is the workspace the Connect is pressed in, so
+ * the sign-in returns to its Plugins page; omit it on the profile.
+ * `returnConversationId` is the caller's conversation there to reopen on return
+ * (the in-chat request card).
  */
 export async function personalConnectUrl(
   target: {
@@ -26,18 +28,34 @@ export async function personalConnectUrl(
     serverName: string;
     connectorId?: string;
   },
-  returnTo?: string,
+  returnWorkspaceId?: string,
+  returnConversationId?: string,
 ): Promise<string | null> {
+  // The conversation is sent only when there is one, so a Connect outside the
+  // chat makes the same call it always has.
+  const back = returnConversationId
+    ? ([returnWorkspaceId, returnConversationId] as const)
+    : ([returnWorkspaceId] as const);
   const { authorizationUrl } =
     target.auth === "composio" && target.connectorId
-      ? await initiateComposioIdentityConnect(target.connectorId, returnTo)
-      : await initiateIdentityConnect(target.serverName, returnTo);
+      ? await initiateComposioIdentityConnect(target.connectorId, ...back)
+      : await initiateIdentityConnect(target.serverName, ...back);
   return authorizationUrl ?? null;
 }
 
 /**
+ * Where a sign-in started in a workspace comes back to: that workspace's
+ * Plugins page, and with `conversationId` the chat reopened on that
+ * conversation (the server checks both belong to the caller).
+ */
+export interface SignInReturn {
+  workspaceId: string;
+  conversationId?: string;
+}
+
+/**
  * Start the sign-in for each of a person's plugin's servers that is not
- * connected, returning to `returnTo` (a path in this shell) when it finishes.
+ * connected, returning to `back` when it finishes.
  *
  * The route follows each connector's record (`connectors`, from
  * `listPersonalConnectors`): the caller has it loaded before calling, so the
@@ -49,14 +67,14 @@ export async function personalConnectUrl(
 export async function startPluginSignIn(
   plugin: Plugin,
   connectors: readonly PersonalConnector[],
-  returnTo: string,
+  back: SignInReturn,
   go: (url: string) => void = (url) => window.location.assign(url),
 ): Promise<"redirected" | "connected"> {
   for (const server of plugin.servers) {
     if (server.status === "ready") continue;
     const connector = connectors.find((c) => c.serverName === server.serverName);
     if (!connector) throw new Error(`${plugin.displayName} is not one of your connectors.`);
-    const url = await personalConnectUrl(connector, returnTo);
+    const url = await personalConnectUrl(connector, back.workspaceId, back.conversationId);
     if (url) {
       go(url);
       return "redirected";

@@ -100,12 +100,3 @@ export function clearSignInPending(): void {
     // Nothing stored.
   }
 }
-
-/**
- * The path a card's sign-in returns to: the page it is on, with the
- * conversation named, so the shell reopens it (`?chat=`) and the card can
- * send its answer.
- */
-export function conversationReturnPath(pathname: string, conversationId: string): string {
-  return `${pathname}?chat=${encodeURIComponent(conversationId)}`;
-}

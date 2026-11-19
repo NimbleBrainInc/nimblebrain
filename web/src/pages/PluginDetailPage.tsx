@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { Plugin, PluginServer } from "../_generated/platform-schemas/plugins";
 import {
   disconnectPersonalConnector,
@@ -31,7 +31,7 @@ import { ConfirmDialog } from "../components/ui/confirm-dialog";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useEvents } from "../hooks/useEvents";
 import { useCanWriteActiveWorkspace } from "../hooks/useScopedRole";
-import { ownerLine, pluginAccount, pluginConnected, pluginPath, shellPath } from "../lib/plugins";
+import { ownerLine, pluginAccount, pluginConnected, pluginPath } from "../lib/plugins";
 import { cn } from "../lib/utils";
 import { toSlug, toWsId } from "../lib/workspace-slug";
 import { ConnectorSkillsSection } from "./settings/ConnectorSkillsSection";
@@ -320,7 +320,6 @@ function PersonalPlugin({
   onChanged: () => void;
 }) {
   const navigate = useNavigate();
-  const location = useLocation();
   const { workspaces } = useWorkspaceContext();
   const [connectors, setConnectors] = useState<PersonalConnector[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -391,7 +390,7 @@ function PersonalPlugin({
           serverName: connector.serverName,
           connectorId: connector.connectorId,
         },
-        shellPath(location),
+        wsId,
       );
       // The redirect leaves the page, so the button stays busy until it does.
       if (url) {
@@ -576,7 +575,7 @@ function PersonalPlugin({
           // the page, so the dialog stays as it is until it does.
           if (
             !connected &&
-            (await startPluginSignIn(plugin, mine, shellPath(location))) === "redirected"
+            (await startPluginSignIn(plugin, mine, { workspaceId: wsId })) === "redirected"
           ) {
             return;
           }

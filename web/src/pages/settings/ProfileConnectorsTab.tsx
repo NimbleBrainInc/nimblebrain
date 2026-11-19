@@ -102,7 +102,7 @@ export function ProfileConnectorsTab() {
     () => (loading ? null : connectors.map(toReturnedConnector)),
     [connectors, loading],
   );
-  useConnectedNotice(returned, rereadSilently);
+  const justConnected = useConnectedNotice(returned, rereadSilently);
 
   // Redirect into the connector's Connect flow. The route depends on the auth
   // type: composio keys on the catalog connector id, DCR on the serverName. The
@@ -227,6 +227,7 @@ export function ProfileConnectorsTab() {
                     onConnect={() => onConnectExisting(c)}
                     onDisconnect={() => onDisconnect(c.serverName)}
                     onSetGrant={onSetGrant}
+                    justConnected={c.serverName === justConnected?.serverName}
                   />
                 ))}
               </div>
@@ -278,6 +279,7 @@ function PersonalConnectorRow({
   onConnect,
   onDisconnect,
   onSetGrant,
+  justConnected,
 }: {
   connector: PersonalConnector;
   workspaces: WorkspaceInfo[];
@@ -285,12 +287,15 @@ function PersonalConnectorRow({
   onConnect: () => void;
   onDisconnect: () => Promise<void>;
   onSetGrant: (serverName: string, wsId: string, granted: boolean) => void;
+  /** This page's OAuth sign-in just connected it: the row says so while the page is open. */
+  justConnected: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
   const panelId = useId();
   const name = connector.displayName || connector.serverName;
   const connected = connector.state === "running";
+  const connectedLabel = justConnected ? "Connected just now" : "Connected";
   const account = connector.identity?.email ?? connector.identity?.name;
   const connectBusy = busyKey === connector.serverName;
   const reach = workspaceReach(connector.grantedWorkspaces, workspaces);
@@ -324,10 +329,10 @@ function PersonalConnectorRow({
                 "Not connected"
               ) : account ? (
                 <>
-                  Connected as <span className="font-medium text-foreground">{account}</span>
+                  {connectedLabel} as <span className="font-medium text-foreground">{account}</span>
                 </>
               ) : (
-                "Connected"
+                connectedLabel
               )}
             </span>
           </div>

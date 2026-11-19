@@ -3,9 +3,9 @@ import { type Context, Hono } from "hono";
 import { requireAuth } from "../../../api/middleware/auth.ts";
 import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../../../api/middleware/workspace.ts";
 import {
-  personalReturnUrl,
-  sameOriginReturnPath,
-  workspaceConnectorsUrl,
+  connectorReturnUrl,
+  type ReturnTarget,
+  resolveReturnTarget,
 } from "../../../api/routes/connectors-redirect.ts";
 import { reinitiateParagraph } from "../../../api/routes/oauth-error-page.ts";
 import type { ComposioInitiateResponse } from "../../../api/schemas/responses.ts";
@@ -95,18 +95,22 @@ function isValidConnectorId(cid: string): boolean {
 }
 
 /**
- * Where the browser returns after a successful connect: a workspace connector
- * to its workspace's connectors page, a personal one to the page that started
- * its sign-in (`returnPath`), else to the profile's connectors page.
+ * Where the browser returns after a successful connect: the owner's workspace's
+ * Plugins page, or for a personal connector the workspace its connect was
+ * started from (`returnTarget`, reopening its conversation if it names one),
+ * else the profile.
  */
 function connectorsReturnUrl(
   owner: ConnectorOwner,
+  returnTarget: ReturnTarget | undefined,
   connected?: string,
-  returnPath?: string,
 ): string {
-  return owner.type === "workspace"
-    ? workspaceConnectorsUrl(owner.wsId, connected)
-    : personalReturnUrl(returnPath, connected);
+  const isWorkspace = owner.type === "workspace";
+  return connectorReturnUrl(
+    isWorkspace ? owner.wsId : returnTarget?.wsId,
+    connected ? { serverName: connected, owner: isWorkspace ? "workspace" : "person" } : undefined,
+    isWorkspace ? undefined : returnTarget?.conversationId,
+  );
 }
 
 export function composioAuthRoutes(ctx: AppContext) {
@@ -149,17 +153,19 @@ export function composioAuthRoutes(ctx: AppContext) {
   // ── POST /v1/composio-auth/initiate-identity ──────────────────────
   // The identity-plane sibling of `/initiate`: connect a PERSONAL Composio
   // connector on the caller's own identity (the "Connect" click from the
-  // profile). No workspace — the connection binds `{type:"user"}`, its
-  // `connection.json` lives under the user's credential root, and the callback
-  // lands the user on the page that started the sign-in (`returnTo`, a
-  // same-origin path), else on `/profile/connectors`.
+  // profile or a workspace's Plugins page). No workspace owns it — the connection
+  // binds `{type:"user"}` and its `connection.json` lives under the user's
+  // credential root. The callback lands the user on the Plugins page of
+  // `returnWorkspaceId` when the body names one (reopening the chat on
+  // `returnConversationId` when it names one too), else on `/profile/connectors`.
   app.post("/v1/composio-auth/initiate-identity", requireAuth(ctx.authOptions), async (c) => {
     const parsed = await parseInitiateRequest(c);
     if (parsed instanceof Response) return parsed;
     const { connectorId } = parsed;
-    const returnPath = sameOriginReturnPath(parsed.returnTo);
 
     const userId = ctx.runtime.resolveRequestUserId(c.var.identity);
+    const returnTarget = await resolveReturnTarget(ctx.workspaceStore, ctx.runtime, parsed, userId);
+    if (returnTarget instanceof Response) return returnTarget;
 
     // A personal connector must be installed on the caller's identity before it
     // can be connected — mirrors the OAuth identity initiate
@@ -190,7 +196,7 @@ export function composioAuthRoutes(ctx: AppContext) {
       owner: { type: "user", userId },
       apiKey,
       authConfigId,
-      ...(returnPath ? { returnPath } : {}),
+      returnTarget,
     });
   });
 
@@ -201,7 +207,7 @@ export function composioAuthRoutes(ctx: AppContext) {
 
     const validated = await validateCallbackParams(c);
     if (validated instanceof Response) return validated;
-    const { connectedAccountId, status, cid, owner, returnPath } = validated;
+    const { connectedAccountId, status, cid, owner, returnTarget } = validated;
 
     const entry = await loadCallbackCatalogEntry(ctx, c, cid);
     if (entry instanceof Response) return entry;
@@ -239,7 +245,7 @@ export function composioAuthRoutes(ctx: AppContext) {
     c.header("Set-Cookie", buildComposioStateCookie("", 0, ctx.secureCookies));
 
     // Back to the connectors page, naming what connected; the page confirms it.
-    return c.redirect(connectorsReturnUrl(owner, slugifyServerName(cid), returnPath), 302);
+    return c.redirect(connectorsReturnUrl(owner, returnTarget, slugifyServerName(cid)), 302);
   });
 
   // ── GET /v1/composio-auth/proxy ───────────────────────────────────
@@ -284,15 +290,13 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/**
- * Parse the initiate body and validate `connectorId` is a catalog id, else an
- * error Response. `returnTo` is passed on raw; only the identity route reads
- * it, through `sameOriginReturnPath`.
- */
+/** Parse the initiate body and validate `connectorId` is a catalog id, else an error Response. */
 async function parseInitiateRequest(
   c: Context<AppEnv>,
-): Promise<{ connectorId: string; returnTo: unknown } | Response> {
-  let body: { connectorId?: unknown; returnTo?: unknown };
+): Promise<
+  { connectorId: string; returnWorkspaceId: unknown; returnConversationId: unknown } | Response
+> {
+  let body: { connectorId?: unknown; returnWorkspaceId?: unknown; returnConversationId?: unknown };
   try {
     body = await c.req.json();
   } catch {
@@ -302,7 +306,11 @@ async function parseInitiateRequest(
   if (!connectorId || !isValidConnectorId(connectorId)) {
     return apiError(400, "bad_request", "connectorId is required and must be a catalog id.");
   }
-  return { connectorId, returnTo: body.returnTo };
+  return {
+    connectorId,
+    returnWorkspaceId: body.returnWorkspaceId,
+    returnConversationId: body.returnConversationId,
+  };
 }
 
 /** Load `connectorId` from the catalog and confirm it is Composio-backed, else an error Response. */
@@ -376,10 +384,10 @@ async function adoptExistingComposioConnection(
     owner: ConnectorOwner;
     apiKey: string;
     authConfigId: string;
-    returnPath?: string;
+    returnTarget?: ReturnTarget;
   },
 ): Promise<Response | null> {
-  const { entry, connectorId, owner, apiKey, authConfigId, returnPath } = args;
+  const { entry, connectorId, owner, apiKey, authConfigId, returnTarget } = args;
   const composioUser = composioUserId(owner);
   const ownerLabel = connectorOwnerKey(owner);
   // The chat-side `manageConnections` flow and an earlier explicit
@@ -456,7 +464,7 @@ async function adoptExistingComposioConnection(
         );
       }
       return json<ComposioInitiateResponse>({
-        authorizationUrl: connectorsReturnUrl(owner, undefined, returnPath),
+        authorizationUrl: connectorsReturnUrl(owner, returnTarget),
         alreadyConnected: true,
       });
     }
@@ -483,7 +491,8 @@ async function connectComposio(
     owner: ConnectorOwner;
     apiKey: string;
     authConfigId: string;
-    returnPath?: string;
+    /** A personal connect's starting workspace and conversation, checked by the caller. */
+    returnTarget?: ReturnTarget;
   },
 ): Promise<Response> {
   const adopted = await adoptExistingComposioConnection(ctx, args);
@@ -493,7 +502,7 @@ async function connectComposio(
     owner: args.owner,
     apiKey: args.apiKey,
     authConfigId: args.authConfigId,
-    ...(args.returnPath ? { returnPath: args.returnPath } : {}),
+    ...(args.returnTarget ? { returnTarget: args.returnTarget } : {}),
   });
 }
 
@@ -505,10 +514,10 @@ async function initiateFreshComposioConnection(
     owner: ConnectorOwner;
     apiKey: string;
     authConfigId: string;
-    returnPath?: string;
+    returnTarget?: ReturnTarget;
   },
 ): Promise<Response> {
-  const { connectorId, owner, apiKey, authConfigId, returnPath } = args;
+  const { connectorId, owner, apiKey, authConfigId, returnTarget } = args;
   const composioUser = composioUserId(owner);
   const ownerLabel = connectorOwnerKey(owner);
   const nonce = randomBytes(32).toString("hex");
@@ -540,7 +549,14 @@ async function initiateFreshComposioConnection(
   // initiate leaves no orphan record. The nonce is a value only this
   // authenticated initiate could mint — that's what makes the record the
   // callback's anti-forgery gate.
-  registerConnectFlow(nonce, owner, connectorId, returnPath ? { returnPath } : {});
+  registerConnectFlow(
+    nonce,
+    owner,
+    connectorId,
+    undefined,
+    returnTarget?.wsId,
+    returnTarget?.conversationId,
+  );
 
   // Cookie scoped to /v1/composio-auth/callback so it's only sent on the return
   // leg — never leaked to /initiate calls on adjacent paths or to the SPA. The
@@ -563,7 +579,7 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
       status: string;
       cid: string;
       owner: ConnectorOwner;
-      returnPath?: string;
+      returnTarget?: ReturnTarget;
     }
   | Response
 > {
@@ -636,13 +652,12 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
     );
   }
 
-  return {
-    connectedAccountId,
-    status,
-    cid: flow.connectorId,
-    owner: flow.owner,
-    ...(flow.returnPath ? { returnPath: flow.returnPath } : {}),
-  };
+  const { connectorId: cid, owner, returnWsId, returnConversationId } = flow;
+  if (!returnWsId) return { connectedAccountId, status, cid, owner };
+  const returnTarget: ReturnTarget = returnConversationId
+    ? { wsId: returnWsId, conversationId: returnConversationId }
+    : { wsId: returnWsId };
+  return { connectedAccountId, status, cid, owner, returnTarget };
 }
 
 /** Load a callback `cid` from the catalog and confirm it is Composio-backed, else an error Response. */

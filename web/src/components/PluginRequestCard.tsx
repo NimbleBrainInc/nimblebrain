@@ -7,14 +7,13 @@ import { useChatPlugins } from "../context/ChatPluginsContext";
 import {
   answerMessage,
   clearSignInPending,
-  conversationReturnPath,
   isSignInPending,
   markSignInPending,
   personalPluginNamed,
   pluginAccountLabel,
   USE_HERE_NOTE,
 } from "../lib/plugin-request";
-import { pluginConnected, shellPath } from "../lib/plugins";
+import { pluginConnected } from "../lib/plugins";
 import { ConnectorIcon } from "./connectors/ConnectorIcon";
 import { startPluginSignIn } from "./connectors/personal-connector";
 import { Button } from "./ui/button";
@@ -32,7 +31,9 @@ type Outcome = "redirected" | "done";
  *
  * Use here follows the Plugins page's rule, that the button is the next step.
  * A plugin with no account behind it is turned on and then signed in to, and
- * the sign-in returns to this conversation; the answer goes once the person is
+ * the sign-in returns to the workspace's Plugins page with this conversation
+ * reopened (`returnConversationId`, which the server checks is the caller's
+ * conversation there, comes back as `?chat=`); the answer goes once the person is
  * back with it connected, never before they leave, since they may abandon the
  * sign-in (`markSignInPending`). A plugin already on here but not signed in
  * offers Connect, which does the same.
@@ -117,12 +118,12 @@ function RequestCard({
   // answer goes now when it connected without leaving; otherwise it waits for
   // the return.
   const signInThenAnswer = async (): Promise<Outcome> => {
+    const workspaceId = chat?.workspaceId;
+    if (!workspaceId) return "done";
     const { connectors } = await listPersonalConnectors();
     if (conversationId) markSignInPending(conversationId, serverName);
-    const returnTo = conversationId
-      ? conversationReturnPath(window.location.pathname, conversationId)
-      : shellPath();
-    if ((await startPluginSignIn(plugin, connectors, returnTo)) === "redirected") {
+    const back = conversationId ? { workspaceId, conversationId } : { workspaceId };
+    if ((await startPluginSignIn(plugin, connectors, back)) === "redirected") {
       return "redirected";
     }
     await sendAnswer("use");

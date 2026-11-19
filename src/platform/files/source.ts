@@ -34,6 +34,7 @@ import {
   defineInProcessApp,
   type InProcessResource,
   type InProcessTool,
+  READ_ONLY,
   type ToolErrorResult,
   type ToolSuccessResult,
   type TypedToolResult,
@@ -483,6 +484,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
   const tools: InProcessTool[] = [
     typedTool({
       name: "list",
+      annotations: READ_ONLY,
       description:
         "List your files: in one folder (with the folders inside it) or across all of them, " +
         "filtered by text, kind, source, conversation, run, creation time, tags, or MIME type, " +
@@ -500,6 +502,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     }),
     typedTool({
       name: "search",
+      annotations: READ_ONLY,
       description:
         "Search files by keyword. Case-insensitive substring match on filename, description, and tags.",
       inputSchema: FilesSearchInput,
@@ -514,6 +517,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     }),
     typedTool({
       name: "read",
+      annotations: READ_ONLY,
       description:
         "Read a file by ID. Returns a resource_link reference and a human-readable summary. " +
         "For text-extractable formats (text, code, JSON, Markdown, CSV, HTML, XML, YAML, PDF, " +
@@ -533,6 +537,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     }),
     typedTool({
       name: "read_pdf_pages",
+      annotations: READ_ONLY,
       description:
         "Read extracted text from specific 1-based pages of a PDF by file ID. " +
         "Use this for oversized PDFs or when the user asks about pages beyond the truncated attachment preview. " +
@@ -568,6 +573,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     }),
     typedTool({
       name: "info",
+      annotations: READ_ONLY,
       description: "Get file metadata by ID (no file content returned).",
       inputSchema: FilesInfoInput,
       outputSchema: FilesInfoOutput,
