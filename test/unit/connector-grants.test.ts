@@ -3,9 +3,10 @@
  * `grant_connector`, `revoke_connector`, `list_personal_connectors`.
  *
  * A grant lets the caller use one of THEIR OWN personal connectors (installed on
- * their identity) inside a workspace they belong to — any workspace, including
- * their own personal one (a personal workspace is just a workspace). It is
- * written to the caller's own grant ledger and is per-granter — no admin gate.
+ * their identity) inside a workspace they belong to. It is written to the
+ * caller's own grant ledger and is per-granter — no admin gate. Only the owner
+ * grants (ADR-0069): an agent's call is refused, and the person's own client's
+ * call grants.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -13,6 +14,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import type { AccountLookup } from "../../src/connectors/catalog/account-lookup.ts";
 import type { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.ts";
@@ -25,6 +28,8 @@ import type { ManagedConnectorRegistry } from "../../src/connectors/providers/re
 import type { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import type { ConnectorInstance } from "../../src/connectors/runtime/types.ts";
+import { AgentEngine } from "../../src/engine/engine.ts";
+import { isModelVisible, type ToolSchema } from "../../src/engine/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
@@ -41,6 +46,7 @@ import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { createMockModel } from "../helpers/mock-model.ts";
 import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
@@ -223,7 +229,6 @@ describe("manage_connectors — personal-connector grants", () => {
   });
 
   test("grant_connector grants to a workspace only the caller belongs to — just a workspace", async () => {
-    // Grant-gated like any other (no free-at-home).
     h = await buildHarness({ personalConnectors: ["granola"] });
     const res = await h.tool.handler({
       action: "grant_connector",
@@ -745,5 +750,91 @@ describe("manage_connectors — permissions when a personal connector and a work
       scope: "identity",
     });
     expect(res.isError).toBe(true);
+  });
+});
+
+describe("manage_connectors — only the owner grants (ADR-0069)", () => {
+  let h: Harness;
+  afterEach(() => {
+    resetTestCredentialStore();
+    if (h) rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  /** The tool as the chat door lists it: the `nb` source's wire name, its own schema and meta. */
+  function wireSchema(tool: Harness["tool"]): ToolSchema {
+    return {
+      name: "nb__manage_connectors",
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      ...(tool.meta ? { meta: tool.meta } : {}),
+    };
+  }
+
+  test("the tool is app-only, so no door lists it to an agent", async () => {
+    h = await buildHarness({ personalConnectors: ["granola"] });
+    expect(isModelVisible(h.tool)).toBe(false);
+  });
+
+  test("a model's grant_connector is refused and writes no grant", async () => {
+    h = await buildHarness({ personalConnectors: ["granola"] });
+    let turns = 0;
+    const model = createMockModel(() => {
+      turns++;
+      if (turns > 1) return { content: [{ type: "text", text: "done" }] };
+      return {
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call_grant",
+            toolName: "nb__manage_connectors",
+            input: JSON.stringify({
+              action: "grant_connector",
+              serverName: "granola",
+              wsId: SHARED_WS,
+            }),
+          },
+        ],
+        finishReason: "tool-calls",
+      };
+    });
+    let dispatched = 0;
+    const tool = h.tool;
+    const router = new StaticToolRouter([wireSchema(tool)], (call) => {
+      dispatched++;
+      return tool.handler(call.input);
+    });
+    const engine = new AgentEngine(model, router, new NoopEventSink());
+
+    const result = await engine.run(
+      { model: "test-model", maxIterations: 4, maxInputTokens: 500_000, maxOutputTokens: 16_384 },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "turn on granola here" }] }],
+      [wireSchema(tool)],
+    );
+
+    expect(dispatched).toBe(0);
+    const call = result.toolCalls.find((c) => c.name === "nb__manage_connectors");
+    expect(call?.ok).toBe(false);
+    expect(await h.store.getConnectorGrants(ALICE.id, "granola")).toEqual([]);
+  });
+
+  test("the person's own client grants, and revokes", async () => {
+    // The web shell's REST tool call reaches the handler directly.
+    h = await buildHarness({ personalConnectors: ["granola"] });
+    const granted = await h.tool.handler({
+      action: "grant_connector",
+      serverName: "granola",
+      wsId: SHARED_WS,
+    });
+    expect(granted.isError).toBeFalsy();
+    expect(await h.store.getConnectorGrants(ALICE.id, "granola")).toEqual([SHARED_WS]);
+
+    const revoked = await h.tool.handler({
+      action: "revoke_connector",
+      serverName: "granola",
+      wsId: SHARED_WS,
+    });
+    expect(revoked.isError).toBeFalsy();
+    expect(await h.store.getConnectorGrants(ALICE.id, "granola")).toEqual([]);
   });
 });

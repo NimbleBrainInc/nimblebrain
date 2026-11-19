@@ -299,7 +299,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         wsId: {
           type: "string",
           description:
-            "Target workspace. For `install`: defaults to the workspace this call is made in (the one its URL names), so omit it to install there; supply it only to install elsewhere. For `grant_connector` / `revoke_connector`: the workspace to grant/revoke the caller's personal connector to (any workspace the caller belongs to, including their own personal one) — REQUIRED and explicit (never defaulted).",
+            "Target workspace. For `install`: defaults to the workspace this call is made in (the one its URL names), so omit it to install there; supply it only to install elsewhere. For `grant_connector` / `revoke_connector`: the workspace to grant/revoke the caller's personal connector to (any workspace the caller belongs to) — REQUIRED and explicit (never defaulted).",
         },
         clientId: {
           type: "string",
@@ -3681,12 +3681,17 @@ function recordSourcesSummary(
 //
 // A personal connector is installed on the caller's identity (their
 // `connectors.json`). A grant lets the caller USE it inside a workspace they
-// belong to — any workspace, including their own personal one (a personal
-// workspace is just a workspace); reaching it there fails closed at dispatch
-// without an active grant. The grant is the caller's own (`grantedBy =
-// callerId`) and is per-granter: it only widens the granter's OWN reach, never
-// another member's, so no admin gate is needed — any member may grant their own
-// connector.
+// belong to; reaching it there fails closed at dispatch without an active
+// grant. The grant is the caller's own (`grantedBy = callerId`) and is
+// per-granter: it only widens the granter's OWN reach, never another member's,
+// so no admin gate is needed — any member may grant their own connector.
+//
+// Only the owner grants (ADR-0069): a grant is written from the person's answer
+// in a first-party client, never on a model's say. `manage_connectors` is
+// app-only (`ui.visibility: ["app"]`), so every door refuses an agent's call to
+// it — the engine on the chat door, `assertAgentMayCall` on `/mcp`, and an ACP
+// run's tool projection — and the grant handler is reached only from the web
+// shell's REST tool call or a first-party app call.
 //
 // A caller's personal connectors are all remote MCP connections (install admits
 // only `remote-oauth`), so the grant / list handlers trust that every entry is a
@@ -3854,8 +3859,9 @@ async function handleListPersonalConnectors(
  * `grant_connector` — grant the caller's personal connector `serverName` for use
  * inside the workspace `targetWsId`. Validates the connector is one the caller
  * installed on their identity, and the target is a workspace the caller belongs
- * to. The grant is required in EVERY workspace, including one the caller
- * alone belongs to — there is no free-at-home.
+ * to. The grant is required in every workspace the connector is used in, one
+ * the caller alone belongs to included. Reached only from a first-party client,
+ * never an agent (see the section note above).
  */
 async function handleGrantConnector(
   ctx: ManageConnectorsContext,

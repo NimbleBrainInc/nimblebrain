@@ -879,9 +879,10 @@ export async function listPersonalCatalog(): Promise<{ catalog: CatalogListing[]
 
 /**
  * Grant the caller's personal connector `serverName` for use inside `wsId`. A
- * personal connector is identity-bound and must be granted into EVERY workspace
- * it's used in (no free-at-home). Its tools
- * then surface to the agent in that workspace.
+ * personal connector is identity-bound and must be granted into every workspace
+ * it is used in. Its tools then surface to the agent in that workspace. Only the
+ * person grants (ADR-0069): this is their own choice in Profile → Connectors,
+ * and an agent cannot call the action.
  */
 export async function grantConnector(serverName: string, wsId: string): Promise<void> {
   const result = await callToolWithoutWorkspace("nb", "manage_connectors", {

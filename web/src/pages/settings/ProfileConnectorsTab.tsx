@@ -33,10 +33,9 @@ import { EmptyState, InlineError, Section, SettingsPageHeader } from "./componen
  * (`scope: "identity"`), read by the gate on every call to the connector in any
  * workspace it is granted to.
  *
- * A personal connector is identity-bound and must be granted into EVERY
- * workspace it's used in (no free-at-home);
- * only then do its tools surface to the agent there. Connecting redirects the
- * browser through the connector's OAuth flow (`installPersonalConnector` → a
+ * A personal connector is identity-bound and must be granted into every
+ * workspace it is used in; only then do its tools surface to the agent there.
+ * Connecting redirects the browser through the connector's OAuth flow (`installPersonalConnector` → a
  * Connect initiate → the vendor's authorization URL); the callback lands back
  * here. The Connect route depends on the connector's auth: DCR goes through
  * `initiateIdentityConnect` (keyed on the serverName), composio through
