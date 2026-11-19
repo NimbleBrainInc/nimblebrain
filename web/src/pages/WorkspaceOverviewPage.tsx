@@ -154,6 +154,15 @@ function OverviewComposer({
   const chat = useChatContext();
   const { fileLimits } = useChatConfigContext();
   const { models, boundModel, defaultModel, pendingModel, setPendingModel } = useComposerModel();
+  // A bound conversation's menu offers a new conversation on the chosen model.
+  const { newConversation } = chat;
+  const newConversationWithModel = useCallback(
+    (model: string) => {
+      newConversation();
+      setPendingModel(model);
+    },
+    [newConversation, setPendingModel],
+  );
   return (
     <div data-testid="workspace-overview-ask" data-tour="ask">
       <MessageInput
@@ -165,6 +174,7 @@ function OverviewComposer({
         defaultModel={defaultModel}
         pendingModel={pendingModel}
         onPendingModelChange={setPendingModel}
+        onNewConversationWithModel={newConversationWithModel}
         fileLimits={fileLimits}
         placeholder="Ask anything, or pick something below…"
         label={`Ask anything in ${workspaceName}`}

@@ -32,6 +32,11 @@ mock.module("../src/api/client", () => ({
     startChatTurnImpl ? startChatTurnImpl(req) : realClient.startChatTurn(req),
 }));
 
+// A loaded conversation attaches to its stream; nothing here streams.
+mock.module("../src/api/conversation-stream", () => ({
+  connectConversationStream: () => ({ close() {} }),
+}));
+
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
@@ -39,7 +44,7 @@ const { WorkspaceOverviewPage } = await import("../src/pages/WorkspaceOverviewPa
 const { WorkspaceProvider } = await import("../src/context/WorkspaceContext");
 const { toSlug } = await import("../src/lib/workspace-slug");
 const { WorkspaceAppIconsContext } = await import("../src/context/WorkspaceAppIconsContext");
-const { ChatProvider } = await import("../src/context/ChatContext");
+const { ChatProvider, useChatContext } = await import("../src/context/ChatContext");
 const { ChatPanelProvider, useChatPanelContext } = await import("../src/context/ChatPanelContext");
 const { SessionProvider } = await import("../src/context/SessionContext");
 const { FIRST_QUESTION } = await import("../src/components/overview/actions");
@@ -157,10 +162,18 @@ function answer({ items = [], conversations = [], reviewRuns = 0 }: Sources = {}
   };
 }
 
-const probe = { panelState: "", path: "" };
+const probe: {
+  panelState: string;
+  path: string;
+  conversationId: string | null;
+  loadConversation: (id: string) => Promise<void>;
+} = { panelState: "", path: "", conversationId: null, loadConversation: async () => {} };
 function Probe() {
   probe.panelState = useChatPanelContext().panelState;
   probe.path = useLocation().pathname + useLocation().search;
+  const chat = useChatContext();
+  probe.conversationId = chat.conversationId;
+  probe.loadConversation = chat.loadConversation;
   return null;
 }
 
@@ -179,7 +192,18 @@ function harness(
     >
       <MemoryRouter initialEntries={[`/w/${toSlug(ws.id)}`]}>
         <WorkspaceProvider initialWorkspaces={[ws]} initialActiveId={ws.id}>
-          <ChatProvider currentUserId="u1" initialConfig={{ configuredProviders: ["anthropic"] }}>
+          <ChatProvider
+            currentUserId="u1"
+            initialConfig={{
+              configuredProviders: ["anthropic"],
+              availableModels: {
+                anthropic: [
+                  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
+                  { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
+                ],
+              },
+            }}
+          >
             <ChatPanelProvider>
               <Probe />
               <Routes>
@@ -370,5 +394,65 @@ describe("WorkspaceOverviewPage — the composer", () => {
 
     expect(sent).toEqual(["what changed this week?"]);
     expect(probe.panelState).toBe("fullscreen");
+  });
+
+  test("a model chosen from a bound conversation's menu starts a new conversation on it", async () => {
+    answer();
+    const answerReads = callToolImpl;
+    callToolImpl = (server, tool) =>
+      server === "conversations" && tool === "get"
+        ? Promise.resolve({
+            isError: false,
+            structuredContent: {
+              metadata: {
+                id: "c1",
+                ownerId: "u1",
+                workspaceId: WS.id,
+                model: "anthropic:claude-haiku-4-5",
+              },
+              messages: [],
+            },
+          })
+        : answerReads(server, tool);
+    const sent: ChatRequest[] = [];
+    startChatTurnImpl = (req) => {
+      sent.push(req);
+      return new Promise(() => {});
+    };
+    mounted = await mount(harness());
+    await act(async () => {
+      await probe.loadConversation("c1");
+    });
+    expect(probe.conversationId).toBe("c1");
+
+    const box = findByTestId(mounted.container, "workspace-overview-ask") as HTMLElement;
+    const pickerButton = Array.from(box.getElementsByTagName("button")).find((b) =>
+      /Haiku 4\.5/.test(b.textContent ?? ""),
+    );
+    await act(async () => {
+      pickerButton?.click();
+    });
+    const option = Array.from(box.querySelectorAll('[role="option"]')).find((o) =>
+      /Sonnet 5/.test(o.textContent ?? ""),
+    ) as HTMLElement | undefined;
+    expect(option).toBeDefined();
+    await act(async () => {
+      option?.click();
+    });
+    expect(probe.conversationId).toBeNull();
+
+    const textarea = box.getElementsByTagName("textarea")[0] as HTMLTextAreaElement;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    const WindowEvent = window.Event;
+    await act(async () => {
+      setValue?.call(textarea, "hello");
+      textarea.dispatchEvent(new WindowEvent("input", { bubbles: true }));
+    });
+    await act(async () => {
+      sendButton(mounted?.container as HTMLElement)?.click();
+    });
+    expect(sent.map((r) => [r.conversationId, r.model])).toEqual([
+      [undefined, "anthropic:claude-sonnet-5"],
+    ]);
   });
 });
