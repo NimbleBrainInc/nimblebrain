@@ -70,7 +70,7 @@ const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
 
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
-const { ConnectorBrowsePage, INSTALL_MIN_SPINNER_MS } = await import(
+const { ConnectorDirectory, INSTALL_MIN_SPINNER_MS } = await import(
   "../pages/settings/ConnectorBrowsePage"
 );
 
@@ -95,10 +95,10 @@ const ADMIN_WORKSPACE = {
 function Page() {
   return (
     <WorkspaceProvider initialWorkspaces={[ADMIN_WORKSPACE]} initialActiveId={ADMIN_WORKSPACE.id}>
-      <MemoryRouter initialEntries={["/w/000f7ed6658f9d30/settings/connectors/browse"]}>
+      <MemoryRouter initialEntries={["/w/000f7ed6658f9d30/plugins?tab=browse"]}>
         <LocationProbe />
         <Routes>
-          <Route path="/w/:slug/settings/connectors/browse" element={<ConnectorBrowsePage />} />
+          <Route path="/w/:slug/plugins" element={<ConnectorDirectory />} />
           <Route path="*" element={null} />
         </Routes>
       </MemoryRouter>
@@ -207,7 +207,7 @@ describe("installing a provider connector", () => {
     const done = buttonIn(card(mounted.container, "Acme Tasks"));
     expect(done?.textContent).toContain("Installed");
     expect(done?.disabled).toBe(true);
-    expect(lastPath).toBe("/w/000f7ed6658f9d30/settings/connectors/browse");
+    expect(lastPath).toBe("/w/000f7ed6658f9d30/plugins");
     // Stays in the grid for this visit rather than jumping to the section.
     expect(installedSection(mounted.container)).toBeNull();
   });

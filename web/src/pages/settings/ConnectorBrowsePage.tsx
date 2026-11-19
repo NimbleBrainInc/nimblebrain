@@ -43,46 +43,21 @@ type InstallResult = Awaited<ReturnType<typeof installConnector>>;
  */
 export const INSTALL_MIN_SPINNER_MS = 400;
 
-/** Where a person's own connectors are managed: sign-in, workspaces, tools. */
-export const PERSONAL_CONNECTORS_PATH = "/profile/connectors";
-
 /**
- * The Browse connectors page under workspace settings: a way back to the
- * installed list, a header, and the directory.
+ * The address of a person's own connectors. It opens Plugins in the workspace
+ * in focus (`ProfilePluginsRedirect`), where they are managed.
  */
-export function ConnectorBrowsePage() {
-  const { slug } = useParams<{ slug: string }>();
-  const backPath = `/w/${slug}/settings/connectors`;
-  return (
-    <div className="space-y-6">
-      <div>
-        <Link to={backPath} className="text-xs text-muted-foreground hover:underline">
-          ← Installed connectors
-        </Link>
-      </div>
-
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Browse connectors</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Tools and services to add to this workspace.
-        </p>
-      </div>
-
-      <ConnectorDirectory />
-    </div>
-  );
-}
+export const PERSONAL_CONNECTORS_PATH = "/profile/connectors";
 
 /**
  * Connector directory — what's available to install. Entries not yet in
  * this workspace fill the grid; installed ones sit in their own section
  * below, muted, with a link to their Configure page, so the directory
- * answers "do we have this already?" without a trip to the Connectors
- * list. Registry attribution is dropped from each card to reduce visual
+ * answers "do we have this already?" without a trip to the Installed
+ * tab. Registry attribution is dropped from each card to reduce visual
  * noise. Cards render in a two-column grid because the catalog is long
  * enough that a single column wastes horizontal space. The grid steps on
- * its own container, since it renders both in settings and on the Plugins
- * page.
+ * its own container, since it renders beside the docked chat.
  *
  * An install that needs no sign-in finishes here: the card turns to
  * "Installed" in place. It moves to the Installed section on the next
@@ -144,7 +119,8 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
   const workspaceName = workspaces.find((w) => w.id === wsId)?.name ?? "this workspace";
 
   // Connectors are addressed by the URL slug — install targets whichever
-  // workspace the user is currently viewing.
+  // workspace the user is currently viewing. A connector's address under it
+  // opens the page of the plugin that holds it (`ConnectorPageRedirect`).
   const configureBasePath = `/w/${slug}/settings/connectors`;
 
   // One fetcher for the page. Stable identity across renders via
@@ -308,7 +284,7 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
   // Install, asking for the entry's declared workspace secrets first when it has
   // any. Cancelling the dialog installs nothing, which is the honest outcome: a
   // connector that cannot reach its upstream was never added, so there is no
-  // dead row on the Connectors list and nothing to clean up.
+  // dead row on Plugins and nothing to clean up.
   //
   // The symmetry stops at cancel. If the install itself fails after the dialog
   // wrote the keys, those values stay in the store with no connector attached —

@@ -743,7 +743,7 @@ describe("ConnectorHeader — banner and primary action", () => {
   });
 
   test("a member blocked on OAuth client setup is told that, not just that they lack the role", async () => {
-    // The hero half of a must-match pair: ConnectorBrowsePage says "Needs an
+    // The hero half of a must-match pair: the connector directory says "Needs an
     // OAuth client" for this same user in this same state, and that string
     // is pinned in connector-browse-card-action.test.tsx. Pinning one side
     // doesn't pin the pair — this is the other side.

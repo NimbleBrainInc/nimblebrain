@@ -191,6 +191,6 @@ describe("LedgerLine", () => {
 
     const link = container.getElementsByTagName("a")[0];
     expect(link?.textContent).toContain("Manage skills");
-    expect(link?.getAttribute("href")).toContain("/settings/skills");
+    expect(link?.getAttribute("href")).toMatch(/^\/w\/[^/]+\/plugins$/);
   });
 });

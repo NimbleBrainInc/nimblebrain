@@ -154,7 +154,7 @@ export function ContextInspectorPage() {
             <span className="font-mono">{convId}</span>
           </span>
           {slug && (
-            <Link to={`/w/${slug}/settings/skills`} className="shrink-0 hover:text-foreground">
+            <Link to={`/w/${slug}/plugins`} className="shrink-0 hover:text-foreground">
               Manage skills ↗
             </Link>
           )}

@@ -507,7 +507,7 @@ describe("host context for other placements", () => {
 });
 
 describe("workspace settings navigation", () => {
-  test("has no Apps tab, and a settings placement adds no nav entry", async () => {
+  test("has no Apps, Connectors or Skills tab, and a settings placement adds no nav entry", async () => {
     const ws = workspace("admin");
     const { container } = await render(
       <SessionProvider
@@ -536,8 +536,11 @@ describe("workspace settings navigation", () => {
 
     const links = Array.from(container.getElementsByTagName("a"));
     const labels = links.map((a) => a.textContent?.trim());
-    expect(labels).toContain("Connectors");
+    expect(labels).toContain("Members");
     expect(labels).not.toContain("Apps");
+    // Connectors and skills are on Plugins.
+    expect(labels).not.toContain("Connectors");
+    expect(labels).not.toContain("Skills");
     expect(labels).not.toContain("CRM settings");
     expect(links.some((a) => a.getAttribute("href")?.includes("/settings/apps"))).toBe(false);
   });

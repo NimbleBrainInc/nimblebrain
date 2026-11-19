@@ -5,8 +5,8 @@ import { type SettingsNavItem, SettingsShell } from "./settings/SettingsShell";
 //
 // Profile is identity-level: it follows the user across every workspace
 // and isn't gated by workspace role. Items declare `minRole: "none"` so
-// any authenticated identity sees them. Future identity-level config
-// (custom instructions, model preferences) slots in alongside Skills.
+// any authenticated identity sees them. A person's own plugins and skills are
+// on each workspace's Plugins page, where they are used.
 
 const PROFILE_ITEMS: SettingsNavItem[] = PROFILE_TABS.map((tab) => ({
   id: `profile-${tab.segment}`,

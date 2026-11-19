@@ -47,10 +47,8 @@ describe("pageTitle", () => {
   test("a settings tab is named as its nav names it, deeper routes by their tab", () => {
     expect(pageTitle("/w/000f7ed6658f9d30/settings/general", PLACEMENTS)).toBe("General");
     expect(pageTitle("/w/000f7ed6658f9d30/settings/members", PLACEMENTS)).toBe("Members");
-    expect(pageTitle("/w/000f7ed6658f9d30/settings/connectors", PLACEMENTS)).toBe("Connectors");
-    expect(pageTitle("/w/000f7ed6658f9d30/settings/connectors/browse", PLACEMENTS)).toBe(
-      "Connectors",
-    );
+    expect(pageTitle("/w/000f7ed6658f9d30/settings/mcp", PLACEMENTS)).toBe("MCP");
+    expect(pageTitle("/org/workspaces/acme-corp", PLACEMENTS)).toBe("Workspaces");
   });
 
   test("a settings tab follows a crumb back to its area's first tab", () => {
@@ -62,8 +60,8 @@ describe("pageTitle", () => {
       crumbs: [{ label: "Organization", to: "/org/workspaces" }],
       title: "Users",
     });
-    expect(settingsLocation("/profile/skills")).toEqual({
-      crumbs: [{ label: "Profile", to: "/profile/general" }],
+    expect(settingsLocation("/org/skills")).toEqual({
+      crumbs: [{ label: "Organization", to: "/org/workspaces" }],
       title: "Skills",
     });
     // The landing tab has no crumb back to itself; a page below it does.
