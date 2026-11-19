@@ -13,6 +13,7 @@ import { parseToolResponse } from "./tool-response";
 export type AuthoredSkill = SkillSummary & { scope: AuthoredSkillScope };
 
 const SCOPE_ORDER: Record<AuthoredSkillScope, number> = { workspace: 0, user: 1, org: 2 };
+const AUTHORED_SCOPES: readonly AuthoredSkillScope[] = ["workspace", "user", "org"];
 
 export function isAuthoredScope(scope: string): scope is AuthoredSkillScope {
   return scope === "workspace" || scope === "user" || scope === "org";
@@ -34,10 +35,20 @@ export function authoredSkills(skills: readonly SkillSummary[]): AuthoredSkill[]
     );
 }
 
-/** Every authored skill that reaches this workspace for the viewer. */
+/**
+ * Every authored skill that reaches this workspace for the viewer, one listing
+ * per tier. An unfiltered listing merges tiers by name the way a conversation
+ * loads them, so a personal skill would hide a same-named workspace skill;
+ * a tier's own listing keeps it.
+ */
 export async function listAuthoredSkills(wsId: string): Promise<AuthoredSkill[]> {
-  const res = await callTool("skills", "list", {}, { workspaceId: wsId });
-  return authoredSkills(parseToolResponse<SkillsListOutput>(res).skills);
+  const tiers = await Promise.all(
+    AUTHORED_SCOPES.map(async (scope) => {
+      const res = await callTool("skills", "list", { scope }, { workspaceId: wsId });
+      return parseToolResponse<SkillsListOutput>(res).skills;
+    }),
+  );
+  return authoredSkills(tiers.flat());
 }
 
 /**

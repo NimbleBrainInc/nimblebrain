@@ -57,13 +57,33 @@ const CONNECTOR_SKILL = summary({
 });
 
 let skills: SkillSummary[] = [];
+/** A write tool the server refuses this test, if any. */
+let refuse: string | null = null;
+
+const PRECEDENCE: Record<string, number> = { provided: 0, org: 0, workspace: 1, user: 2 };
+
+/**
+ * `skills__list` as the server answers it: a scope filter lists that tier
+ * whole; with none, tiers merge by name, the viewer's own winning.
+ */
+function listed(scope: unknown): SkillSummary[] {
+  if (typeof scope === "string") return skills.filter((s) => s.scope === scope);
+  const byName = new Map<string, SkillSummary>();
+  for (const s of [...skills].sort((a, b) => PRECEDENCE[a.scope]! - PRECEDENCE[b.scope]!)) {
+    byName.set(s.name, s);
+  }
+  return [...byName.values()];
+}
 
 function ok(structuredContent: Record<string, unknown>): ToolCallResponse {
   return { content: [{ type: "text", text: "" }], structuredContent, isError: false };
 }
 
 function answer(tool: string, args: Record<string, unknown> | undefined): ToolCallResponse {
-  if (tool === "list") return ok({ skills });
+  if (tool === "list") return ok({ skills: listed(args?.scope) });
+  if (tool === refuse) {
+    return { content: [{ type: "text", text: `Refused ${tool}` }], isError: true };
+  }
   if (tool === "read") {
     const s = skills.find((k) => k.id === args?.id)!;
     return ok({
@@ -134,6 +154,7 @@ beforeEach(() => {
   skills = [WORKSPACE_SKILL, USER_SKILL, ORG_SKILL, PROVIDED_SKILL, CONNECTOR_SKILL];
   callTool.mockClear();
   callToolWithoutWorkspace.mockClear();
+  refuse = null;
 });
 
 async function settle(): Promise<void> {
@@ -210,6 +231,24 @@ async function fillNewSkill(container: HTMLElement): Promise<void> {
   await type(container.querySelector<HTMLTextAreaElement>("#rule-body")!, "Lead with the change.");
 }
 
+async function blur(el: Element): Promise<void> {
+  await act(async () => {
+    el.dispatchEvent(new window.FocusEvent("focusout", { bubbles: true }));
+  });
+  await settle();
+}
+
+async function editBody(container: HTMLElement, value: string): Promise<void> {
+  const body = container.querySelector<HTMLTextAreaElement>("#rule-body")!;
+  await type(body, value);
+  await blur(body);
+}
+
+/** Answer the delete confirmation with `answer` for the rest of the test. */
+function confirmWith(answer: boolean): void {
+  window.confirm = () => answer;
+}
+
 function calls(fn: typeof callTool | typeof callToolWithoutWorkspace, tool: string) {
   return fn.mock.calls.filter((c) => c[1] === tool);
 }
@@ -249,6 +288,12 @@ describe("Installed — the Skills group", () => {
     expect(href("house-style")).toBe(`/w/${SLUG}/plugins/skills/workspace/house-style`);
     expect(href("my-voice")).toBe(`/w/${SLUG}/plugins/skills/user/my-voice`);
   });
+
+  test("a workspace skill named like one of the viewer's own is listed beside it", async () => {
+    skills = [WORKSPACE_SKILL, summary({ name: "house-style", scope: "user" })];
+    mounted = await mount(`/w/${SLUG}/plugins`);
+    expect(rows(mounted.container)).toEqual(["workspace/house-style", "user/house-style"]);
+  });
 });
 
 describe("A skill's page", () => {
@@ -285,6 +330,79 @@ describe("A skill's page", () => {
     expect(mounted.container.querySelector("#rule-body")).toBeNull();
     expect(mounted.container.textContent).toContain("Body of policy");
     expect(mounted.container.textContent).toContain("Org admins change it in org settings.");
+  });
+
+  test("a workspace skill named like one of the viewer's own opens as itself", async () => {
+    const mine = summary({ name: "house-style", scope: "user" });
+    skills = [WORKSPACE_SKILL, mine];
+    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    expect(mounted.container.querySelector<HTMLTextAreaElement>("#rule-body")?.value).toBe(
+      "Body of house-style",
+    );
+    expect(calls(callTool, "read")[0]?.[2]).toEqual({ id: WORKSPACE_SKILL.id });
+  });
+
+  test("an edited workspace skill body saves in this workspace when the field is left", async () => {
+    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    await editBody(mounted.container, "Write plainly.");
+    const update = calls(callTool, "update")[0];
+    expect(update?.[2]).toMatchObject({ id: WORKSPACE_SKILL.id, body: "Write plainly." });
+    expect(update?.[3]).toEqual({ workspaceId: WS_ID });
+    expect(calls(callToolWithoutWorkspace, "update")).toHaveLength(0);
+  });
+
+  test("an edited body of the viewer's own skill saves with no workspace", async () => {
+    mounted = await mount(`/w/${SLUG}/plugins/skills/user/my-voice`, "member");
+    await editBody(mounted.container, "Sound like me.");
+    const update = calls(callToolWithoutWorkspace, "update")[0];
+    expect(update?.[2]).toMatchObject({ id: USER_SKILL.id, body: "Sound like me." });
+    expect(calls(callTool, "update")).toHaveLength(0);
+  });
+
+  test("a refused body save shows the refusal on the field", async () => {
+    refuse = "update";
+    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    await editBody(mounted.container, "Write plainly.");
+    const alert = mounted.container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("Refused update");
+  });
+
+  test("deleting a workspace skill writes in this workspace and returns to Plugins", async () => {
+    confirmWith(true);
+    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    await click(button(mounted.container, "Delete skill"));
+    const del = calls(callTool, "delete")[0];
+    expect(del?.[2]).toEqual({ id: WORKSPACE_SKILL.id });
+    expect(del?.[3]).toEqual({ workspaceId: WS_ID });
+    expect(location).toBe(`/w/${SLUG}/plugins`);
+  });
+
+  test("deleting the viewer's own skill writes with no workspace", async () => {
+    confirmWith(true);
+    mounted = await mount(`/w/${SLUG}/plugins/skills/user/my-voice`, "member");
+    await click(button(mounted.container, "Delete skill"));
+    expect(calls(callToolWithoutWorkspace, "delete")[0]?.[2]).toEqual({ id: USER_SKILL.id });
+    expect(calls(callTool, "delete")).toHaveLength(0);
+    expect(location).toBe(`/w/${SLUG}/plugins`);
+  });
+
+  test("a refused delete stays on the skill and says why", async () => {
+    confirmWith(true);
+    refuse = "delete";
+    const path = `/w/${SLUG}/plugins/skills/workspace/house-style`;
+    mounted = await mount(path);
+    await click(button(mounted.container, "Delete skill"));
+    expect(location).toBe(path);
+    expect(mounted.container.querySelector('[role="alert"]')?.textContent).toContain(
+      "Refused delete",
+    );
+  });
+
+  test("a delete not confirmed writes nothing", async () => {
+    confirmWith(false);
+    mounted = await mount(`/w/${SLUG}/plugins/skills/workspace/house-style`);
+    await click(button(mounted.container, "Delete skill"));
+    expect(calls(callTool, "delete")).toHaveLength(0);
   });
 
   test("a skill that came with a plugin has no page here", async () => {

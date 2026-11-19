@@ -133,7 +133,7 @@ function SkillDetailView({
       if (cancelled) return;
       setSkill(found);
       if (!found) return;
-      // Read where it was listed: the workspace's listing carries every tier.
+      // Read where it was listed: the workspace's listings carry every tier.
       const res = await callTool("skills", "read", { id: found.id }, { workspaceId: wsId });
       if (!cancelled) setDetail(parseToolResponse<SkillDetail>(res));
     })().catch((err: unknown) => {

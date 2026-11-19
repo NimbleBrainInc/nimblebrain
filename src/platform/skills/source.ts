@@ -132,6 +132,8 @@ const SKILLS_LIST_DESCRIPTION =
   "Filter by `scope` (org | workspace | user | provided), `layer` (1 | 3), `loading_strategy` (always | dynamic), " +
   "`tool_affinity` (a tool name; returns skills whose `tool-affinity` glob matches it), " +
   "`status` (active | disabled), or `modified_since` (ISO 8601). " +
+  "Unfiltered, a name in several tiers lists once, the one conversations load (user over workspace over org); " +
+  "a `scope` filter lists that tier whole. " +
   "Returns id, name, layer, scope, status, token count, and source metadata for each skill. " +
   "Use this to answer 'what skills do I have?' or 'what's available for the active tool set?'";
 
@@ -616,9 +618,7 @@ async function listSkills(
   // entry below.
   const layer1SourcePaths = new Set<string>([resolve(authoringGuidePath)]);
   if (includeLayer3) {
-    const { wsId, userId } = resolveCallContext(runtime);
-    const skills = runtime.loadConversationSkills(wsId, userId);
-    for (const skill of skills) {
+    for (const skill of loadListedTiers(runtime, filter.scope)) {
       if (isListableLayer3Skill(skill, layer1SourcePaths)) out.push(skillToListed(skill));
     }
   }
@@ -633,6 +633,19 @@ async function listSkills(
 
   // Apply scalar filters
   return out.filter((s) => matchesListFilters(s, filter));
+}
+
+/**
+ * The Layer 3 skills `skills__list` draws from. A scope filter lists that tier
+ * whole: the overlay merges by name with user > workspace > org precedence, so
+ * loading only the tiers at or below the one asked for keeps a skill that a
+ * higher tier shadows.
+ */
+function loadListedTiers(runtime: Runtime, scope: SkillsListInput["scope"]): Skill[] {
+  const { wsId, userId } = resolveCallContext(runtime);
+  if (scope === "org") return runtime.loadConversationSkills(null, null);
+  if (scope === "workspace") return runtime.loadConversationSkills(wsId, null);
+  return runtime.loadConversationSkills(wsId, userId);
 }
 
 /**
