@@ -15,9 +15,9 @@ This page is about connectors **shared by a workspace**. To connect a service to
 
 ## Where connectors live
 
-Everything the agent can use in a workspace is on its **Plugins** page, in the sidebar under the workspace's views. Each connector is a plugin there. **Installed** lists the workspace's own plugins, then yours (see [Personal connectors](/using/personal-connectors)); each row says whose account it uses, which account it is signed in as when the sign-in recorded one, how many skills and apps it brings, and its status when it needs attention. Click a row to open its **Configure** page. The **Browse** tab is the full directory of available services. Browse lists what the workspace already has too, in an **Installed** section below the rest, each with a link to its **Configure** page.
+Everything the agent can use in a workspace is on its **Plugins** page, in the sidebar under the workspace's views. Each connector is a plugin there. **Installed** lists the workspace's own plugins, then yours (see [Personal connectors](/using/personal-connectors)); each row says whose account it uses, which account it is signed in as when the sign-in recorded one, how many skills and apps it brings, and its status when it needs attention. Click a row to open the plugin's page, where it is configured. The **Browse** tab is the full directory of available services. Browse lists what the workspace already has too, in an **Installed** section below the rest, each with a link to its page.
 
-**Settings → Connectors** still lists the workspace's connectors, with the same **Browse**.
+**Settings → Connectors** still lists the workspace's connectors, with the same **Browse**; a connector there opens on its plugin's page, as does an old link to a connector's settings page.
 
 A connected service is **shared by everyone in the workspace** — its tools are available to all members. The credentials behind it are stored once, in the workspace.
 
@@ -32,7 +32,7 @@ A connected service is **shared by everyone in the workspace** — its tools are
 
 Installing or connecting a service requires the **admin** role in the workspace.
 
-On a connector's **Configure** page, the header shows the connector's name and status ("Connected as …" when there is a sign-in), and its **⋯** menu holds **Documentation**, **Disconnect**, **Uninstall** and the connector's version and tool count. Under the header come its connection settings, then the connector's own **Settings** section when it has one, then **Tool permissions**, collapsed to a summary until you choose **Show tools**.
+On a workspace plugin's page, the header shows the connector's name and status ("Connected as …" when there is a sign-in), that it uses the workspace's account, and the apps it places, each a link to the app. Its **⋯** menu holds **Documentation**, **Disconnect**, **Uninstall** (for a workspace admin) and the connector's version and tool count. Under the header come its connection settings, then the connector's own **Settings** section when it has one, then the **Skills** the plugin brings, then **Tool permissions**, collapsed to a summary until you choose **Show tools**. Any member can open the page; only a workspace admin can change it.
 
 **Disconnect** appears only for a connection someone signed in to: the **dcr** and **static** kinds, and a brokered connector whose broker can reconnect it, such as an OAuth **composio** toolkit. Disconnecting is reversible — reconnecting re-runs that sign-in. A **provider** connector (one of the platform's own services) or one with a stored credential has no sign-in, so there is nothing to disconnect and the menu does not offer it; remove it with **Uninstall**.
 
@@ -64,7 +64,7 @@ not have reached anything.
 
 Values are masked, go straight to the workspace credential store, and are never
 shown again — not in the UI, not in a log, and never in a conversation. Replace
-one later from the connector's **Configure** page; the next request uses it, with
+one later from the connector's plugin page; the next request uses it, with
 no restart. See [Secrets](/config/secrets/) for the storage model.
 
 Uninstalling takes them with it. The confirmation names each stored credential

@@ -94,8 +94,18 @@ const rowKey = (row: { server: string; name: string }) => `${row.server}\u0000${
  * servers put into the agent's context, read-only. They ship with the server,
  * so the only thing to do here is read them. The parent keys this by
  * workspace, and every read names the workspace it was opened on.
+ *
+ * Given `servers`, it lists only those servers' skills, as one plugin's page
+ * does for the servers in that plugin.
  */
-export function ConnectorSkillsSection({ workspaceId }: { workspaceId: string }) {
+export function ConnectorSkillsSection({
+  workspaceId,
+  servers,
+}: {
+  workspaceId: string;
+  servers?: readonly string[];
+}) {
+  const serverKey = servers?.join("\u0000");
   const [groups, setGroups] = useState<ReturnType<typeof connectorSkillGroups> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -105,7 +115,10 @@ export function ConnectorSkillsSection({ workspaceId }: { workspaceId: string })
     let cancelled = false;
     listConnectorSkills(workspaceId)
       .then((data) => {
-        if (!cancelled) setGroups(connectorSkillGroups(data));
+        if (cancelled) return;
+        const all = connectorSkillGroups(data);
+        const only = serverKey?.split("\u0000");
+        setGroups(only ? all.filter((g) => only.includes(g.server)) : all);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -115,7 +128,7 @@ export function ConnectorSkillsSection({ workspaceId }: { workspaceId: string })
     return () => {
       cancelled = true;
     };
-  }, [workspaceId]);
+  }, [workspaceId, serverKey]);
 
   const openRow = useMemo(
     () => groups?.flatMap((g) => g.skills).find((s) => rowKey(s) === openKey) ?? null,
@@ -146,14 +159,26 @@ export function ConnectorSkillsSection({ workspaceId }: { workspaceId: string })
   }, [openKey, openRow, workspaceId, needsBody]);
 
   return (
+    // A plugin's page rules its sections itself, so the section brings no rule of its own there.
     <Section
-      title="From connectors"
-      description="Skills your connected servers put into the agent's context. They ship with the server, so they are read-only here."
+      flush={!!servers}
+      title={servers ? "Skills" : "From connectors"}
+      description={
+        servers
+          ? "Guidance this plugin puts into the agent's context. It ships with the plugin, so it is read-only here."
+          : "Skills your connected servers put into the agent's context. They ship with the server, so they are read-only here."
+      }
     >
       {groups === null && <p className="py-2 text-sm text-muted-foreground">Loading…</p>}
       {error && <InlineError message={error} />}
       {groups !== null && !error && groups.length === 0 && (
-        <EmptyState message="No connected server publishes skills in this workspace." />
+        <EmptyState
+          message={
+            servers
+              ? "This plugin brings no skills."
+              : "No connected server publishes skills in this workspace."
+          }
+        />
       )}
       {groups !== null && groups.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-border bg-card divide-y divide-border">
