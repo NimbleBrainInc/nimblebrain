@@ -1,3 +1,4 @@
+import { findCompose } from "./compose.ts";
 import type { Deps } from "./deps.ts";
 import { CliError, type ErrorCode, type FixVariant } from "./result.ts";
 
@@ -102,34 +103,17 @@ async function checkDaemon(deps: Deps, log: Recorder): Promise<DaemonFacts> {
   return parseInfo(info.stdout);
 }
 
+/** Compose v2, as Docker's plugin or the standalone `docker-compose` (`findCompose`). */
 async function checkCompose(deps: Deps, log: Recorder): Promise<void> {
-  const compose = await deps.exec("docker", ["compose", "version", "--short"]);
-  const major = majorOf(compose.stdout);
-  if (compose.code !== 0 || !(major >= 2)) {
-    log.fail(
-      "compose",
-      "COMPOSE_MISSING",
-      "Docker Compose v2 is not available.",
-      await composeFix(deps),
-    );
+  const program = await findCompose(deps);
+  if (!program) {
+    const variant = deps.platform === "darwin" && (await deps.which("brew")) ? "brew" : undefined;
+    log.fail("compose", "COMPOSE_MISSING", "Docker Compose v2 is not available.", variant);
   }
-  log.pass("compose", compose.stdout.trim());
-}
-
-/**
- * A standalone `docker-compose` v2 (Homebrew's, on a Colima machine) is the
- * same program as the plugin, but `docker compose` finds plugins only in
- * Docker's plugin folders, so it is linked there. Without one, Homebrew installs it.
- */
-async function composeFix(deps: Deps): Promise<FixVariant | undefined> {
-  const standalone = await deps.exec("docker-compose", ["version", "--short"]);
-  if (standalone.code === 0 && majorOf(standalone.stdout) >= 2) return "link_plugin";
-  if (deps.platform === "darwin" && (await deps.which("brew"))) return "brew";
-  return undefined;
-}
-
-function majorOf(version: string): number {
-  return Number.parseInt(version.trim().replace(/^v/, ""), 10);
+  log.pass(
+    "compose",
+    program.cmd === "docker" ? program.version : `${program.version} (${program.cmd})`,
+  );
 }
 
 function checkArch(arch: string, log: Recorder): void {

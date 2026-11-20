@@ -60,6 +60,28 @@ describe("the release's Compose file", () => {
 });
 
 describe("init", () => {
+  test("runs every Compose command through a standalone docker-compose v2 when Docker has no plugin", async () => {
+    const m = machine({
+      env,
+      exec: {
+        "docker compose version --short": fail("docker: 'compose' is not a docker command."),
+        "docker-compose version --short": ok("2.29.1"),
+      },
+    });
+    const { body } = await json(["--yes"], m);
+    expect(body).toMatchObject({ ok: true, health: "ok" });
+    expect(m.calls).toContain("$ docker-compose ls -a --format json");
+    expect(m.calls).toContain(`${HOME}$ docker-compose up -d --no-build`);
+    expect(m.calls.filter((c) => c.includes("docker compose ") && !c.includes("version"))).toEqual(
+      [],
+    );
+    // One lookup per run, however many Compose commands it runs.
+    expect(m.calls.filter((c) => c.endsWith("docker-compose version --short"))).toHaveLength(1);
+    const down = await json(["down"], m);
+    expect(down.body.ok).toBe(true);
+    expect(m.calls).toContain(`${HOME}$ docker-compose down`);
+  });
+
   test("an agent's unattended run installs, starts, connects, and succeeds with model_key missing", async () => {
     const { body, code, m } = await json(["--yes", "--agent", "claude-code"]);
     expect(code).toBe(0);

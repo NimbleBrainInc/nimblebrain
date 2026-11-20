@@ -9,6 +9,7 @@ import { AGENTS, type Agent, type Flags } from "./args.ts";
 import {
   asksConsent,
   compose,
+  composeExec,
   DEFAULT_PROJECT,
   fetchCompose,
   hasKey,
@@ -592,7 +593,7 @@ async function guardOurs(deps: Deps, home: string): Promise<string> {
       throw new CliError("NOT_OURS", `${file} already exists and this CLI did not write it.`);
     }
   }
-  const projects = await deps.exec("docker", ["compose", "ls", "-a", "--format", "json"]);
+  const projects = await composeExec(deps, ["ls", "-a", "--format", "json"]);
   const taken = projects.code === 0 && listsProject(projects.stdout, project);
   const volumes = await deps.exec("docker", [
     "volume",
