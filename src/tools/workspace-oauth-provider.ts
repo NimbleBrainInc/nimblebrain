@@ -6,6 +6,7 @@ import type {
   OAuthClientMetadata,
   OAuthClientProvider,
   OAuthTokens,
+  StoredOAuthTokens,
 } from "@modelcontextprotocol/client";
 import { type FetchLike, UnauthorizedError } from "@modelcontextprotocol/client";
 import { DEFAULT_OAUTH_CLIENT_IDENTITY, type OAuthClientIdentity } from "../brand/index.ts";
@@ -423,6 +424,24 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+/**
+ * `tokens` bound to `issuer` when they carry no `issuer` stamp of their own
+ * (SEP-2352; tokens saved before the SDK stamped them). The SDK binds an
+ * unstamped credential by saving its own copy back with the stamp, and that
+ * copy is a read from before any rotation a sibling landed since: saved, it
+ * would write a spent refresh token over the newer stored one. Stamping on
+ * read binds the credential the same way with no write. The stored record
+ * takes its stamp at the next refresh, whose result the SDK stamps.
+ */
+function withIssuerStamp(
+  tokens: OAuthTokens | undefined,
+  issuer: string | undefined,
+): StoredOAuthTokens | undefined {
+  if (!tokens || issuer === undefined) return tokens;
+  const stamped: StoredOAuthTokens = tokens;
+  return typeof stamped.issuer === "string" ? stamped : { ...stamped, issuer };
+}
+
 /** How many recently served refresh tokens a provider remembers (see `servedRefreshTokens`). */
 const SERVED_REFRESH_TOKENS_KEPT = 8;
 
@@ -545,6 +564,13 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   /** Cached DCR result + tokens to avoid redundant store reads within a flow. */
   private cachedClientInfo: OAuthClientInformationFull | null = null;
   private cachedTokens: OAuthTokens | null = null;
+  /**
+   * Counts every change to `cachedTokens` (a save caching its tokens, an
+   * invalidation or a dropped result clearing them). A store read fills the
+   * cache only when no change landed while it ran, so a read that began before
+   * a save never overwrites the newer tokens that save cached.
+   */
+  private cachedTokensGeneration = 0;
   /**
    * The tail of this provider's token saves. Saves run one at a time, so a
    * save's stale check never reads the store before a sibling's write lands:
@@ -980,8 +1006,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    *
    * `ctx.issuer` is the authorization server a provider would key persisted
    * credentials by. This one has nothing to key: a provider instance is already
-   * scoped to one (workspace, server) pair and holds exactly one token set, so
-   * the parameter is accepted and ignored.
+   * scoped to one (workspace, server) pair and holds exactly one token set. It
+   * only stamps that issuer on tokens stored without one (`withIssuerStamp`),
+   * so the SDK never saves a stamped copy of a read back over a rotation.
    *
    * Every SDK-side read is a `"transport"` read for audit purposes: one
    * `tokens()` serves both presenting the access token and exchanging the
@@ -989,8 +1016,8 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * after the read — so a separate `"refresh"` purpose would be a guess. The
    * one call site that knows better goes through `readTokens` directly.
    */
-  async tokens(_ctx?: OAuthClientInformationContext): Promise<OAuthTokens | undefined> {
-    const tokens = await this.readTokens("transport");
+  async tokens(ctx?: OAuthClientInformationContext): Promise<StoredOAuthTokens | undefined> {
+    const tokens = withIssuerStamp(await this.readTokens("transport"), ctx?.issuer);
     const refresh = tokens?.refresh_token;
     if (refresh) {
       this.servedRefreshTokens.delete(refresh);
@@ -1003,15 +1030,31 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     return tokens;
   }
 
-  /** The token read proper. `purpose` is what the audit line says it was for. */
+  /**
+   * The token read proper. `purpose` is what the audit line says it was for.
+   *
+   * A store read that a cache change overtook is read again: the change may be
+   * a save whose newer tokens the read predates, or an invalidation of the
+   * tokens the read returned. Caching that read would serve a superseded token.
+   */
   private async readTokens(purpose: "transport" | "revoke"): Promise<OAuthTokens | undefined> {
-    if (this.cachedTokens) return this.cachedTokens;
-    const data = await this.records.read<OAuthTokens>("tokens", {
-      caller: "oauth:tokens",
-      purpose: `${purpose} ${this.serverName}`,
-    });
-    if (data) this.cachedTokens = data;
-    return data ?? undefined;
+    for (;;) {
+      if (this.cachedTokens) return this.cachedTokens;
+      const generation = this.cachedTokensGeneration;
+      const data = await this.records.read<OAuthTokens>("tokens", {
+        caller: "oauth:tokens",
+        purpose: `${purpose} ${this.serverName}`,
+      });
+      if (this.cachedTokensGeneration !== generation) continue;
+      if (data) this.cachedTokens = data;
+      return data ?? undefined;
+    }
+  }
+
+  /** Set or clear the token cache, marking the change for reads in flight. */
+  private setCachedTokens(tokens: OAuthTokens | null): void {
+    this.cachedTokens = tokens;
+    this.cachedTokensGeneration++;
   }
 
   saveTokens(tokens: OAuthTokens): Promise<void> {
@@ -1031,7 +1074,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     const received = tokens.refresh_token;
     const spent = this.exchangingCode || !received ? undefined : spentRefreshTokenHash(received);
     if (await this.droppedStaleResult(received, spent)) return;
-    this.cachedTokens = tokens;
+    this.setCachedTokens(tokens);
     // Fresh tokens landed — a subsequent auth loss is a NEW episode, so
     // re-arm the one-shot `notifyAuthLost` guard. Without this, a connection
     // that went reauth_required, reconnected, then expired again would never
@@ -1662,7 +1705,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     }
     if (scope === "tokens" && (await this.keptStoredTokens())) return;
     if (scope === "all" || scope === "tokens") {
-      this.cachedTokens = null;
+      this.setCachedTokens(null);
       await this.records.delete("tokens");
       // The identity record is bound 1:1 with tokens — when tokens go, the
       // captured identity is no longer meaningful (the user might
@@ -1689,7 +1732,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     if (stored === undefined || stored === received || refreshTokenHash(stored) === spent) {
       return false;
     }
-    this.cachedTokens = null;
+    this.setCachedTokens(null);
     this.logRefreshOutcome("dropped-stale", {
       spent_refresh_hash: spent.slice(0, 8),
       received_refresh_hash: refreshTokenTag(received),
@@ -1728,7 +1771,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       });
       return false;
     }
-    this.cachedTokens = null;
+    this.setCachedTokens(null);
     this.logRefreshOutcome("kept-stored", {
       error: refreshTokenRefusal(refusedServed),
       spent_refresh_hash: refreshTokenTag(refusedServed),
