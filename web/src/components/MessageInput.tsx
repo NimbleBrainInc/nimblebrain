@@ -104,6 +104,12 @@ interface MessageInputProps {
   onStop?: () => void;
   /** Attachment limits. The composer states them and refuses a set past them. */
   fileLimits?: FileLimits;
+  /** What the empty box says. Defaults to "Ask anything...". */
+  placeholder?: string;
+  /** Show the shortcut hints under the box. Off where the panel's shortcuts do not apply. */
+  hints?: boolean;
+  /** The box's accessible name. */
+  label?: string;
 }
 
 export function MessageInput({
@@ -120,6 +126,9 @@ export function MessageInput({
   onShowShortcuts,
   onStop,
   fileLimits,
+  placeholder = "Ask anything...",
+  hints = true,
+  label,
 }: MessageInputProps) {
   const [draft, setDraft] = useComposerDraft(conversationKey);
   const { text, files: attachedFiles } = draft;
@@ -291,12 +300,9 @@ export function MessageInput({
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
             placeholder={
-              isDragOver
-                ? "Drop files here..."
-                : busy
-                  ? "Write your next message..."
-                  : "Ask anything..."
+              isDragOver ? "Drop files here..." : busy ? "Write your next message..." : placeholder
             }
+            aria-label={label}
             rows={1}
             style={{ minHeight: "28px", maxHeight: "200px" }}
           />
@@ -344,7 +350,10 @@ export function MessageInput({
       </div>
 
       {/* Shortcut hints — status copy lives on the BlockTimeline / LiveCursor, not here. */}
-      <div className="flex items-center justify-center gap-3 mt-2 text-3xs text-muted-foreground">
+      <div
+        className="flex items-center justify-center gap-3 mt-2 text-3xs text-muted-foreground"
+        hidden={!hints && !sendWaiting}
+      >
         {sendWaiting ? (
           <span role="status">Still replying — send when it finishes, or press Stop.</span>
         ) : (
