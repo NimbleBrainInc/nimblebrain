@@ -1687,7 +1687,7 @@ describe("manage_connectors — disconnect applies only to a sign-in", () => {
     });
     expect(result.isError).toBe(true);
     expect((result.content?.[0] as { text?: string } | undefined)?.text).toContain(
-      "no sign-in to disconnect",
+      "no sign-in to sign out of",
     );
   });
 
@@ -1702,7 +1702,7 @@ describe("manage_connectors — disconnect applies only to a sign-in", () => {
       serverName: STUB_SERVER_NAME,
     });
     expect((result.content?.[0] as { text?: string } | undefined)?.text ?? "").not.toContain(
-      "no sign-in to disconnect",
+      "no sign-in to sign out of",
     );
   });
 

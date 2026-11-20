@@ -333,7 +333,7 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
   // Install on the viewer's own account, granted into this workspace by the
   // same call, then sign in. The grant needs only the install, so it is
   // already in place when the sign-in's callback lands, and stands if the
-  // person never finishes it (the connector then reads Not connected on their
+  // person never finishes it (the connector then reads Not signed in on their
   // profile, with Connect). A connector already connected needs no sign-in: a
   // Connect on a live connection is refused as busy. Throws, so the dialog
   // shows the failure beside the choice that caused it.

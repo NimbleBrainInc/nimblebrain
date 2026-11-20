@@ -114,7 +114,9 @@ async function buildHarness(): Promise<Harness> {
   installTestCredentialStore(workDir);
 
   const workspaceStore = new WorkspaceStore(workDir);
-  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
+  const events: EngineEvent[] = [];
+  const eventSink = { emit: (event: EngineEvent) => events.push(event) };
+  const lifecycle = new ConnectorLifecycleManager(eventSink);
   const workspaceRegistry = new ToolRegistry();
 
   // One shared workspace (admin) + a workspace the caller alone belongs to.
@@ -129,10 +131,9 @@ async function buildHarness(): Promise<Harness> {
   // Per-tool allow/deny policies, keyed serverName — the user-scope
   // `connectors[serverName]` block a disconnect must also clear.
   const toolPolicies: Record<string, unknown> = {};
-  const events: EngineEvent[] = [];
   const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
-    getEventSink: () => ({ emit: (event: EngineEvent) => events.push(event) }),
+    getEventSink: () => eventSink,
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
     getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
@@ -618,7 +619,82 @@ describe("startIdentityAuth reserved-name guard", () => {
   });
 });
 
-describe("manage_connectors.disconnect scope:identity — full remove", () => {
+describe("manage_connectors.disconnect scope:identity — sign out, keep the plugin", () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = await buildHarness();
+  });
+  afterEach(() => {
+    resetTestCredentialStore();
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  const SERVER = "ai-granola-mcp"; // slugifyServerName("ai.granola/mcp")
+
+  test("clears the identity credentials and keeps the install record, every grant, and the tool policies", async () => {
+    await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
+    await h.tool.handler({ action: "grant_connector", serverName: SERVER, wsId: h.sharedWsId });
+    await h.tool.handler({ action: "grant_connector", serverName: SERVER, wsId: h.ownWsId });
+    h.toolPolicies[SERVER] = { tools: { some_tool: "allow" } };
+    const records = new McpOAuthRecords({
+      owner: { type: "user", userId: USER.id },
+      serverName: SERVER,
+    });
+    await records.write("tokens", { access_token: "x" });
+    await records.write("identity", { email: "alice@example.test" });
+
+    const before = await h.tool.handler({ action: "list_personal_connectors" });
+    const stateOf = (r: typeof before) =>
+      (r.structuredContent as { connectors: Array<{ serverName: string; state: string }> })
+        .connectors[0]?.state;
+    expect(stateOf(before)).toBe("running");
+    h.events.length = 0;
+
+    const result = await h.tool.handler({
+      action: "disconnect",
+      serverName: SERVER,
+      scope: "identity",
+    });
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toEqual({ ok: true, scope: "identity", serverName: SERVER });
+
+    // The plugin stays: install record, both grants, its tool policy.
+    expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(1);
+    expect(h.grants[SERVER]).toEqual([h.sharedWsId, h.ownWsId]);
+    expect(h.toolPolicies[SERVER]).toEqual({ tools: { some_tool: "allow" } });
+    expect(grantChanges(h)).toEqual([]);
+    // The account goes.
+    expect(await records.has("tokens")).toBe(false);
+    expect(await records.has("identity")).toBe(false);
+    expect(stateOf(await h.tool.handler({ action: "list_personal_connectors" }))).toBe(
+      "not_authenticated",
+    );
+    // Its owner's tabs hear the new state; no workspace is named, so no member does.
+    expect(
+      h.events.filter((e) => e.type === "connection.state_changed").map((e) => e.data),
+    ).toEqual([
+      {
+        userId: USER.id,
+        serverName: SERVER,
+        connectorName: SERVER,
+        principalId: USER.id,
+        state: "not_authenticated",
+      },
+    ]);
+  });
+
+  test("errors on a connector that isn't installed on the identity", async () => {
+    const result = await h.tool.handler({
+      action: "disconnect",
+      serverName: "not-installed",
+      scope: "identity",
+    });
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toMatch(/not one of your personal connectors/i);
+  });
+});
+
+describe("manage_connectors.uninstall scope:identity — full remove", () => {
   let h: Harness;
   beforeEach(async () => {
     h = await buildHarness();
@@ -636,7 +712,7 @@ describe("manage_connectors.disconnect scope:identity — full remove", () => {
     await h.tool.handler({ action: "grant_connector", serverName: SERVER, wsId: h.ownWsId });
 
     // A per-tool allow policy the user set on this personal connector — it must not
-    // survive the disconnect (else it silently rebinds on a reconnect).
+    // survive the removal (else it silently rebinds on a reinstall).
     h.toolPolicies[SERVER] = { tools: { some_tool: "allow" } };
 
     // Simulate a completed OAuth: tokens at the identity's credential scope.
@@ -652,7 +728,7 @@ describe("manage_connectors.disconnect scope:identity — full remove", () => {
     h.events.length = 0;
 
     const result = await h.tool.handler({
-      action: "disconnect",
+      action: "uninstall",
       serverName: SERVER,
       scope: "identity",
     });
@@ -682,7 +758,7 @@ describe("manage_connectors.disconnect scope:identity — full remove", () => {
 
   test("errors on a connector that isn't installed on the identity", async () => {
     const result = await h.tool.handler({
-      action: "disconnect",
+      action: "uninstall",
       serverName: "not-installed",
       scope: "identity",
     });
@@ -690,10 +766,10 @@ describe("manage_connectors.disconnect scope:identity — full remove", () => {
     expect(resultText(result)).toMatch(/not one of your personal connectors/i);
   });
 
-  test("disconnect with no grants succeeds (revokedWorkspaces: 0)", async () => {
+  test("uninstall with no grants succeeds (revokedWorkspaces: 0)", async () => {
     await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
     const result = await h.tool.handler({
-      action: "disconnect",
+      action: "uninstall",
       serverName: SERVER,
       scope: "identity",
     });

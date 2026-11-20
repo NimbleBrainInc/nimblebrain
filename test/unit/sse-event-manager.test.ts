@@ -111,6 +111,29 @@ describe("SseEventManager — routing table", () => {
     expect(wsB.events).not.toContain("connection.state_changed");
   });
 
+  test("a person's own connection.state_changed reaches that person alone", async () => {
+    // Shared workspace: routing by a workspace the plugin is on in would tell
+    // every member which plugins this person uses.
+    const owner = collect(mgr.addIdentityClient("usr_a", new Set(["ws_00079598e311c160"])));
+    const member = collect(mgr.addIdentityClient("usr_b", new Set(["ws_00079598e311c160"])));
+    released.push(owner.release, member.release);
+
+    mgr.emit({
+      type: "connection.state_changed",
+      data: {
+        userId: "usr_a",
+        serverName: "granola",
+        connectorName: "granola",
+        principalId: "usr_a",
+        state: "not_authenticated",
+      },
+    });
+    await flush();
+
+    expect(owner.events).toContain("connection.state_changed");
+    expect(member.events).not.toContain("connection.state_changed");
+  });
+
   test("connector.* events are workspace-scoped", async () => {
     const wsA = collect(mgr.addIdentityClient("usr_a", new Set(["ws_00079598e311c160"])));
     const wsB = collect(mgr.addIdentityClient("usr_b", new Set(["ws_001c32f121060ff3"])));

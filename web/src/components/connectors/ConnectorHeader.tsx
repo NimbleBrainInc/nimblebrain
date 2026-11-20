@@ -21,10 +21,10 @@ import { OAuthClientSetupModal, type OAuthClientSetupTarget } from "./OAuthClien
  *   [ status banner + primary action — only when something needs doing ]
  *
  * - **Identity and state on one line.** The status badge says what is true now
- *   ("Connected", "Connected as <account>", "Not connected"), so a connection
+ *   ("Connected", "Connected as <account>", "Not signed in"), so a connection
  *   needs no row of its own.
- * - **Secondary and destructive actions behind ⋯.** Documentation, Disconnect and
- *   Uninstall are rare and, for the last two, costly to click by accident, so they
+ * - **Secondary and destructive actions behind ⋯.** Documentation, Sign out and
+ *   Remove are rare and, for the last two, costly to click by accident, so they
  *   do not sit on the page. Each of those two confirms in its own dialog.
  * - **Technical detail in the menu's footer**, not under the name: the version,
  *   the tool count and whether the connector has an interface.
@@ -42,7 +42,7 @@ import { OAuthClientSetupModal, type OAuthClientSetupTarget } from "./OAuthClien
  *   - failed                                → initiateMcpOAuth (same as Reconnect)
  *   - connecting/starting                   → Cancel (reset a wedged OAuth)
  *
- * The banner carries forward-motion CTAs only; disconnecting an established
+ * The banner carries forward-motion CTAs only; signing out an established
  * connection is in the menu. The one exception is Cancel on a connector wedged
  * mid-connect: it resets a connection that never completed (no live session to
  * tear down), turning a dead-end "Connecting…" back into an actionable Connect.
@@ -57,7 +57,7 @@ export function ConnectorHeader({
   installed: InstalledConnector;
   canManage: boolean;
   onChanged: () => void;
-  /** Opens the page's uninstall confirmation. Offered to a workspace admin only. */
+  /** Opens the page's Remove confirmation. Offered to a workspace admin only. */
   onUninstall: () => void;
   /** What the page adds about the connector under its description (whose account it uses, its apps). */
   meta?: ReactNode;
@@ -294,9 +294,9 @@ function StatusBadge({ installed }: { installed: InstalledConnector }) {
 }
 
 /**
- * Disconnect asks first, and says what it leaves: the connection is shared, so it
+ * Sign out asks first, and says what it leaves: the account is shared, so it
  * goes for everyone, while the install, its tool permissions and its settings stay,
- * and Uninstall is what removes them. Without that, a disconnected connector reads
+ * and Remove is what removes them. Without that, a signed-out connector reads
  * as something to clean up rather than a connector at rest. A failure stays in the
  * dialog with its error.
  */
@@ -316,10 +316,10 @@ export function DisconnectDialog({
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={`Disconnect ${name}?`}
-      description="Disconnects it for everyone in this workspace. Its tools stop working in chats and tasks until someone connects it again."
-      confirmLabel="Disconnect"
-      pendingLabel="Disconnecting…"
+      title={`Sign out of ${name}?`}
+      description="Signs it out for everyone in this workspace. The agent can't use it in chats and tasks until someone signs in again."
+      confirmLabel="Sign out"
+      pendingLabel="Signing out…"
       onConfirm={async () => {
         await disconnectConnector(installed.serverName, installed.scope);
         onOpenChange(false);
@@ -327,7 +327,7 @@ export function DisconnectDialog({
       }}
     >
       <p className="text-muted-foreground">
-        {name} stays installed, with its tool permissions and settings. To remove it, use Uninstall.
+        {name} stays installed, with its tool permissions and settings. To remove it, use Remove.
       </p>
     </ConfirmDialog>
   );
@@ -343,8 +343,8 @@ export type ConnectorMenuItem =
 /**
  * What the ⋯ menu offers, decided here and only rendered by the component.
  * A member gets the documentation link and the details; a workspace admin also
- * gets Disconnect — only for an established connection whose credential a person
- * authorized (`disconnectable`); a fleet connector has none — and Uninstall.
+ * gets Sign out — only for an established connection whose credential a person
+ * authorized (`disconnectable`); a fleet connector has none — and Remove.
  */
 export function connectorMenuItems(
   installed: InstalledConnector,
@@ -442,7 +442,7 @@ function renderMenuItem(
     case "disconnect":
       return (
         <Menu.Item key="disconnect" className={itemClass} disabled={acting} onClick={onDisconnect}>
-          Disconnect
+          Sign out
         </Menu.Item>
       );
     case "uninstall":
@@ -452,7 +452,7 @@ function renderMenuItem(
           className={`${itemClass} text-destructive`}
           onClick={onUninstall}
         >
-          Uninstall…
+          Remove…
         </Menu.Item>
       );
     case "details":
@@ -599,7 +599,7 @@ export function statusLabel(status: InstalledConnector["status"]): string {
     case "needs_setup":
       return "Configuration required";
     case "not_connected":
-      return "Not connected";
+      return "Not signed in";
     case "needs_auth":
       return "Reconnection needed";
     case "connecting":
@@ -669,8 +669,8 @@ function resolveAction(
       // `not_authenticated`), after which the normal Connect CTA reappears.
       //
       // Admin-only: cancelling calls `disconnectConnector`, and `handleDisconnect`
-      // refuses a non-admin outright ("Workspace admin role required to disconnect
-      // shared connectors"). The OAuth runs as `WORKSPACE_PRINCIPAL_ID`, so there
+      // refuses a non-admin outright ("Workspace admin role required to sign out a
+      // shared connector"). The OAuth runs as `WORKSPACE_PRINCIPAL_ID`, so there
       // is no per-member session for a member to cancel — the server is right to
       // refuse, and offering the button only wedges them with a red error.
       return { kind: "cancel", label: "Cancel", adminOnly: true };

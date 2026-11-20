@@ -241,7 +241,7 @@ Every NimbleBrain instance gives the agent these `nb__*` tools:
 | `nb__read_resource` | Read an MCP resource by URI |
 | `nb__open_app` | Open an app at its home, or what a resource URI names (a record, a file, a conversation) in whichever app shows it |
 
-Administration tools are app-only: `nb__manage_connectors` (install and disconnect connectors), `nb__manage_workspaces` (create workspaces and manage their members), and `nb__manage_users` are called by the settings pages and never appear in the agent's tool list. The agent can find a connector in the catalog with `nb__search`, but installing it and creating a workspace happen in the UI.
+Administration tools are app-only: `nb__manage_connectors` (install, sign out, and remove connectors), `nb__manage_workspaces` (create workspaces and manage their members), and `nb__manage_users` are called by the settings pages and never appear in the agent's tool list. The agent can find a connector in the catalog with `nb__search`, but installing it and creating a workspace happen in the UI.
 
 App-platform capabilities are exposed through prefixed tool families: `conversations__*`, `files__*`, `tasks__*`, `skills__*`, `usage__report`, and `compose__effective_context`.
 

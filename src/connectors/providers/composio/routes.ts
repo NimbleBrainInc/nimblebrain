@@ -443,7 +443,7 @@ async function adoptExistingComposioConnection(
         return apiError(
           502,
           "composio_adopt_source_start_failed",
-          "Reconnect failed: the existing Composio account was found but the MCP source could not start. Try Disconnect, then Connect again.",
+          "Reconnect failed: the existing Composio account was found but the MCP source could not start. Try Sign out, then Connect again.",
         );
       }
       const connection: ComposioConnection = {

@@ -3,19 +3,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Plugin, PluginsListOutput } from "../_generated/platform-schemas/plugins";
 import {
-  disconnectPersonalConnector,
   grantConnector,
   listPersonalConnectors,
   listPlugins,
   type PersonalConnector,
   revokeConnector,
+  signOutPersonalConnector,
 } from "../api/client";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { connectorStatusSummary } from "../components/connectors/ConnectorList";
-import {
-  disconnectConsequence,
-  startPluginSignIn,
-} from "../components/connectors/personal-connector";
+import { signOutConsequence, startPluginSignIn } from "../components/connectors/personal-connector";
 import {
   type ConnectedTarget,
   type ReturnedConnector,
@@ -124,7 +121,7 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
   const [needsOnly, setNeedsOnly] = useState(false);
   const [confirming, setConfirming] = useState<Plugin | null>(null);
   const [stopping, setStopping] = useState<Plugin | null>(null);
-  const [disconnecting, setDisconnecting] = useState<Plugin | null>(null);
+  const [signingOut, setSigningOut] = useState<Plugin | null>(null);
   // The viewer's connector records, which say which route each sign-in takes
   // and where each plugin is on. An action that signs in waits for them rather
   // than guess the route.
@@ -250,19 +247,10 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
     setStopping(null);
   };
 
-  const disconnect = async (plugin: Plugin) => {
-    for (const server of plugin.servers) await disconnectPersonalConnector(server.serverName);
+  const signOut = async (plugin: Plugin) => {
+    for (const server of plugin.servers) await signOutPersonalConnector(server.serverName);
     await Promise.all([refresh(), loadConnectors()]);
-    setDisconnecting(null);
-  };
-
-  // The workspaces a person's plugin is on in, which Disconnect turns it off in.
-  const grantCount = (plugin: Plugin) => {
-    const names = plugin.servers.map((s) => s.serverName);
-    const ids = (connectors ?? [])
-      .filter((c) => names.includes(c.serverName))
-      .flatMap((c) => c.grantedWorkspaces);
-    return new Set(ids).size;
+    setSigningOut(null);
   };
 
   if (loadError && !plugins) {
@@ -288,7 +276,7 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
   const rowMenu = (plugin: Plugin): RowMenuItem[] =>
     rowMenuFor(plugin, pluginPath(slug, plugin), {
       onStop: () => setStopping(plugin),
-      onDisconnect: () => setDisconnecting(plugin),
+      onSignOut: () => setSigningOut(plugin),
     });
 
   // With one plugin needing the viewer, the line above the list carries its
@@ -346,10 +334,9 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
         stopping={stopping}
         onStopClose={() => setStopping(null)}
         onStop={stopHere}
-        disconnecting={disconnecting}
-        onDisconnectClose={() => setDisconnecting(null)}
-        onDisconnect={disconnect}
-        grantCount={grantCount}
+        signingOut={signingOut}
+        onSignOutClose={() => setSigningOut(null)}
+        onSignOut={signOut}
       />
     </div>
   );
@@ -414,23 +401,18 @@ function isJustConnected(target: ConnectedTarget | null, plugin: Plugin): boolea
 
 /**
  * A row's ⋯ menu: Open, and for the viewer's own plugin, Stop using here while
- * it is on here and Disconnect while it is signed in.
+ * it is on here and Sign out while it is signed in.
  */
 function rowMenuFor(
   plugin: Plugin,
   to: string,
-  on: { onStop: () => void; onDisconnect: () => void },
+  on: { onStop: () => void; onSignOut: () => void },
 ): RowMenuItem[] {
   const items: RowMenuItem[] = [{ kind: "link", label: "Open", to }];
   if (plugin.owner.kind !== "person") return items;
   if (plugin.granted) items.push({ kind: "action", label: "Stop using here", onSelect: on.onStop });
   if (pluginConnected(plugin)) {
-    items.push({
-      kind: "action",
-      label: "Disconnect",
-      destructive: true,
-      onSelect: on.onDisconnect,
-    });
+    items.push({ kind: "action", label: "Sign out", onSelect: on.onSignOut });
   }
   return items;
 }
@@ -462,27 +444,24 @@ function PluginListBody({
   );
 }
 
-/** The confirms for Stop using here and Disconnect on the viewer's own plugin. */
+/** The confirms for Stop using here and Sign out on the viewer's own plugin. */
 function PersonalPluginDialogs({
   workspaceName,
   stopping,
   onStopClose,
   onStop,
-  disconnecting,
-  onDisconnectClose,
-  onDisconnect,
-  grantCount,
+  signingOut,
+  onSignOutClose,
+  onSignOut,
 }: {
   workspaceName: string;
   stopping: Plugin | null;
   onStopClose: () => void;
   /** Throws on failure, so the confirm stays open with the error shown. */
   onStop: (plugin: Plugin) => Promise<void>;
-  disconnecting: Plugin | null;
-  onDisconnectClose: () => void;
-  onDisconnect: (plugin: Plugin) => Promise<void>;
-  /** The workspaces the plugin is on in, which Disconnect turns it off in. */
-  grantCount: (plugin: Plugin) => number;
+  signingOut: Plugin | null;
+  onSignOutClose: () => void;
+  onSignOut: (plugin: Plugin) => Promise<void>;
 }) {
   return (
     <>
@@ -495,14 +474,13 @@ function PersonalPluginDialogs({
         onConfirm={() => (stopping ? onStop(stopping) : undefined)}
       />
       <ConfirmDialog
-        open={disconnecting !== null}
-        onOpenChange={(open) => !open && onDisconnectClose()}
-        title={`Disconnect ${disconnecting?.displayName ?? ""}?`}
-        description={disconnectConsequence(disconnecting ? grantCount(disconnecting) : 0)}
-        confirmLabel="Disconnect"
-        pendingLabel="Disconnecting…"
-        destructive
-        onConfirm={() => (disconnecting ? onDisconnect(disconnecting) : undefined)}
+        open={signingOut !== null}
+        onOpenChange={(open) => !open && onSignOutClose()}
+        title={`Sign out of ${signingOut?.displayName ?? ""}?`}
+        description={signOutConsequence(signingOut?.displayName ?? "")}
+        confirmLabel="Sign out"
+        pendingLabel="Signing out…"
+        onConfirm={() => (signingOut ? onSignOut(signingOut) : undefined)}
       />
     </>
   );

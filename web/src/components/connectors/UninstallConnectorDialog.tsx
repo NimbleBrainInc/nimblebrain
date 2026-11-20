@@ -8,7 +8,7 @@ import { workspaceKeysDeclaredBy } from "../../lib/secret-headers";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 
 /**
- * Confirm an uninstall, and say what it takes with it.
+ * Confirm a Remove (the `uninstall` action), and say what it takes with it.
  *
  * The connector's `secretHeaders` declaration names the workspace secrets it
  * owns, and removing the connector removes them: leaving them behind strands a
@@ -54,7 +54,7 @@ function uninstallNotice(
         : "its stored credentials could not be removed";
     return {
       tone: "error",
-      text: `${displayName} was uninstalled, but ${what}: ${res.secretDeleteError}`,
+      text: `${displayName} was removed, but ${what}: ${res.secretDeleteError}`,
     };
   }
   const retained = res.retainedSecretKeys ?? [];
@@ -63,7 +63,7 @@ function uninstallNotice(
     retained.length === 1
       ? "was kept — another installed connector uses it"
       : "were kept — other installed connectors use them";
-  return { tone: "info", text: `${displayName} was uninstalled. ${retained.join(", ")} ${why}.` };
+  return { tone: "info", text: `${displayName} was removed. ${retained.join(", ")} ${why}.` };
 }
 
 export function UninstallConnectorDialog({
@@ -137,10 +137,10 @@ export function UninstallConnectorDialog({
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={`Uninstall ${displayName}?`}
+      title={`Remove ${displayName}?`}
       description="Removes it for everyone in this workspace, along with its tool permissions."
-      confirmLabel="Uninstall"
-      pendingLabel="Uninstalling…"
+      confirmLabel="Remove"
+      pendingLabel="Removing…"
       destructive
       onConfirm={async () => {
         onUninstalled(

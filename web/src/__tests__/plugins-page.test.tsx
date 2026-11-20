@@ -4,7 +4,7 @@
 // Plugins lists what is installed, split Workspace | Personal with a search,
 // and offers each row only its next step, with the rest in its ⋯ menu. A
 // person's own plugin gets Use here (after a confirm) or, from its menu, Stop
-// using here and Disconnect. A line above the list appears only while
+// using here and Sign out. A line above the list appears only while
 // something in the segment needs the viewer. Browse plugins is its own page:
 // the directory, whose install actions only a member who may write the
 // workspace sees. Use here is the viewer's own grant, so any member gets it.
@@ -42,8 +42,8 @@ const initiateIdentityConnect = mock<typeof ApiClient.initiateIdentityConnect>(a
 const initiateComposioIdentityConnect = mock<typeof ApiClient.initiateComposioIdentityConnect>(
   async () => ({}) as Awaited<ReturnType<typeof ApiClient.initiateComposioIdentityConnect>>,
 );
-const disconnectPersonalConnector = mock<typeof ApiClient.disconnectPersonalConnector>(
-  async (serverName) => ({ ok: true, scope: "identity", serverName, revokedWorkspaces: 0 }),
+const signOutPersonalConnector = mock<typeof ApiClient.signOutPersonalConnector>(
+  async (serverName) => ({ ok: true, scope: "identity", serverName }),
 );
 const listDirectory = mock(async () => ({
   entries: [
@@ -77,7 +77,7 @@ mock.module("../api/client", () => ({
   grantConnector,
   revokeConnector,
   listPersonalConnectors,
-  disconnectPersonalConnector,
+  signOutPersonalConnector,
   initiateIdentityConnect,
   initiateComposioIdentityConnect,
   listDirectory,
@@ -150,7 +150,7 @@ beforeEach(() => {
   revokeConnector.mockClear();
   personal = [];
   for (const m of [
-    disconnectPersonalConnector,
+    signOutPersonalConnector,
     listPersonalConnectors,
     initiateIdentityConnect,
     initiateComposioIdentityConnect,
@@ -697,15 +697,15 @@ describe("PluginsPage — a person's plugin", () => {
     expect(initiateIdentityConnect).not.toHaveBeenCalled();
   });
 
-  test("a granted, connected row's menu offers Open, Stop using here, and Disconnect", async () => {
+  test("a granted, connected row's menu offers Open, Stop using here, and Sign out", async () => {
     plugins = [GMAIL];
     mounted = await mount();
     const popup = await openMenu(row(mounted.container, "person:gmail")!);
-    expect(menuItems(popup)).toEqual(["Open", "Stop using here", "Disconnect"]);
+    expect(menuItems(popup)).toEqual(["Open", "Stop using here", "Sign out"]);
     expect(menuItem(popup, "Open")?.getAttribute("href")).toBe(`/w/${SLUG}/plugins/person%3Agmail`);
   });
 
-  test("on here, not connected: the menu has no Disconnect", async () => {
+  test("on here, not connected: the menu has no Sign out", async () => {
     plugins = [notConnected(GMAIL)];
     personal = [connector({ serverName: "gmail", displayName: "Gmail" })];
     mounted = await mount();
@@ -730,14 +730,15 @@ describe("PluginsPage — a person's plugin", () => {
     expect(revokeConnector).toHaveBeenCalledWith("gmail", WS_ID);
   });
 
-  test("Disconnect signs out after its confirm", async () => {
+  test("Sign out signs out after its confirm, which says the plugin stays", async () => {
     plugins = [GMAIL];
     mounted = await mount();
     const popup = await openMenu(row(mounted.container, "person:gmail")!);
-    await click(menuItem(popup, "Disconnect"));
-    expect(disconnectPersonalConnector).not.toHaveBeenCalled();
-    await click(button(dialog(), "Disconnect"));
-    expect(disconnectPersonalConnector).toHaveBeenCalledWith("gmail");
+    await click(menuItem(popup, "Sign out"));
+    expect(signOutPersonalConnector).not.toHaveBeenCalled();
+    expect(dialog().textContent).toContain("stays in your account");
+    await click(button(dialog(), "Sign out"));
+    expect(signOutPersonalConnector).toHaveBeenCalledWith("gmail");
   });
 });
 

@@ -38,9 +38,9 @@ export const WORKSPACE_PRINCIPAL_ID = "_workspace";
  *
  * UI contract:
  *   - `not_authenticated`: a resting state, not an error — never connected, or
- *     disconnected on purpose. Neutral "Not connected", "Connect" button.
+ *     signed out on purpose. Neutral "Not signed in", "Connect" button.
  *   - `pending_auth`: silent during normal flow (browser is being redirected). If we render anything, "Connecting…" + spinner.
- *   - `running`: green pill, "Disconnect" button.
+ *   - `running`: green pill, "Sign out" in its menu.
  *   - `reauth_required`: amber pill "Reconnection needed", "Reconnect" button.
  *   - `dead`: red pill "Failed", "Reconnect" button.
  *   - `starting` / `crashed` / `stopped`: transient or end states; surfaced as needed.
@@ -57,7 +57,7 @@ export type ConnectionState =
   /**
    * URL connector is installed but no tokens exist for this principal. Initial
    * state for a freshly-installed URL connector, and the resting state after
-   * `disconnect`. UI shows a neutral "Not connected" with "Connect" — clicking
+   * `disconnect` (Sign out). UI shows a neutral "Not signed in" with "Connect" — clicking
    * initiates the OAuth flow (transitioning to `pending_auth`).
    */
   | "not_authenticated"

@@ -11,13 +11,13 @@
 //      operator section.
 //
 //   2. State→affordance mapping on ConnectorHeader mirrors the
-//      ConnectionState union exactly (running → Disconnect, in its menu;
+//      ConnectionState union exactly (running → Sign out, in its menu;
 //      reauth_required / crashed / dead → Reconnect; not_authenticated →
 //      Connect; pending_auth / starting → no button). A regression here
 //      would strand the user with no way to recover a broken connection.
 //
 //   3. `canManage=false` hides the affordances the server admin-gates —
-//      Edit, Disconnect, Clear, Cancel — while member-actionable ones
+//      Edit, Sign out, Clear, Cancel — while member-actionable ones
 //      (authorising your *own* account via a native OAuth flow) stay.
 //      "Member-actionable" here means the server permits it, not that the
 //      flow is per-caller — native OAuth binds the workspace's shared
@@ -287,8 +287,8 @@ function staticAuthConnector(over: Partial<InstalledConnector> = {}): InstalledC
 
 // ── ConnectorHeader: status badge and menu ──────────────────────────
 //
-// The connection is stated by the badge beside the name, and Disconnect,
-// Uninstall and the technical details sit behind the ⋯ menu. The menu's popup
+// The connection is stated by the badge beside the name, and Sign out,
+// Remove and the technical details sit behind the ⋯ menu. The menu's popup
 // renders in a portal, so its contents are read from `document.body`.
 
 describe("ConnectorHeader — badge and menu", () => {
@@ -315,11 +315,11 @@ describe("ConnectorHeader — badge and menu", () => {
       />,
     );
     expect(mounted.container.textContent).toContain("Connected as you@example.com");
-    // No Disconnect on the page itself; it is in the menu.
-    expect(findButton(mounted.container, "Disconnect")).toBeNull();
+    // No Sign out on the page itself; it is in the menu.
+    expect(findButton(mounted.container, "Sign out")).toBeNull();
   });
 
-  test("offers an admin Disconnect, Uninstall and the details, in that order", () => {
+  test("offers an admin Sign out, Remove and the details, in that order", () => {
     const kinds = connectorMenuItems(
       dcrConnector({ state: "running", handshakeVersion: "4.0.10" }),
       true,
@@ -336,7 +336,7 @@ describe("ConnectorHeader — badge and menu", () => {
     ]);
   });
 
-  test("offers Disconnect only for an established connection a person signed in to", () => {
+  test("offers Sign out only for an established connection a person signed in to", () => {
     const kinds = (c: InstalledConnector) => connectorMenuItems(c, true).map((i) => i.kind);
     expect(kinds(uncataloguedConnector())).not.toContain("disconnect");
     expect(kinds(dcrConnector({ state: "reauth_required" }))).not.toContain("disconnect");
@@ -361,7 +361,7 @@ describe("connectorDetails", () => {
 });
 
 describe("DisconnectDialog", () => {
-  test("Disconnect asks first, saying what stays and that Uninstall removes it", async () => {
+  test("Sign out asks first, saying what stays and that Remove removes it", async () => {
     mounted = await mount(
       <DisconnectDialog
         installed={dcrConnector({ state: "running" })}
@@ -371,13 +371,15 @@ describe("DisconnectDialog", () => {
       />,
     );
     const text = dialog()?.textContent ?? "";
+    expect(text).toContain("Sign out of Granola?");
     expect(text).toContain("for everyone in this workspace");
+    expect(text).toContain("can't use it in chats and tasks until someone signs in again");
     expect(text).toContain("stays installed, with its tool permissions");
-    expect(text).toContain("Uninstall");
+    expect(text).toContain("use Remove");
     expect(disconnectConnector).not.toHaveBeenCalled();
   });
 
-  test("confirming Disconnect disconnects and refreshes", async () => {
+  test("confirming Sign out signs out and refreshes", async () => {
     const onChanged = mock(() => {});
     mounted = await mount(
       <DisconnectDialog
@@ -387,12 +389,12 @@ describe("DisconnectDialog", () => {
         onDisconnected={onChanged}
       />,
     );
-    await click(dialogButton("Disconnect"));
+    await click(dialogButton("Sign out"));
     expect(disconnectConnector).toHaveBeenCalledTimes(1);
     expect(onChanged).toHaveBeenCalledTimes(1);
   });
 
-  test("cancelling Disconnect leaves the connection alone", async () => {
+  test("cancelling Sign out leaves the connection alone", async () => {
     const onOpenChange = mock((_open: boolean) => {});
     mounted = await mount(
       <DisconnectDialog
@@ -407,7 +409,7 @@ describe("DisconnectDialog", () => {
     expect(onOpenChange).toHaveBeenLastCalledWith(false);
   });
 
-  test("a failed Disconnect stays in the dialog with the error", async () => {
+  test("a failed Sign out stays in the dialog with the error", async () => {
     disconnectConnector.mockImplementationOnce(async () => {
       throw new Error("Workspace admin role required");
     });
@@ -419,7 +421,7 @@ describe("DisconnectDialog", () => {
         onDisconnected={() => {}}
       />,
     );
-    await click(dialogButton("Disconnect"));
+    await click(dialogButton("Sign out"));
     expect(dialog()?.textContent).toContain("Workspace admin role required");
   });
 });
@@ -542,8 +544,8 @@ describe("ConnectorHeader — banner and primary action", () => {
     expect(findButton(mounted.container, "Set up OAuth")).not.toBeNull();
   });
 
-  test("status=not_connected → neutral 'Not connected' + 'Connect', no Reconnect", async () => {
-    // Disconnect leaves the connector here on purpose. It must read as a
+  test("status=not_connected → neutral 'Not signed in' + 'Connect', no Reconnect", async () => {
+    // Sign out leaves the connector here on purpose. It must read as a
     // connector at rest, not as a broken connection to fix.
     mounted = await mount(
       <ConnectorHeader
@@ -553,7 +555,7 @@ describe("ConnectorHeader — banner and primary action", () => {
         onChanged={() => {}}
       />,
     );
-    expect(mounted.container.textContent).toContain("Not connected");
+    expect(mounted.container.textContent).toContain("Not signed in");
     expect(mounted.container.querySelector(".bg-amber-500")).toBeNull();
     expect(findButton(mounted.container, "Connect")).not.toBeNull();
     expect(findButton(mounted.container, "Reconnect")).toBeNull();

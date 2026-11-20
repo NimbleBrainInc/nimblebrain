@@ -156,12 +156,14 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
   let workDir: string;
   let mock: MockAS;
   let lifecycle: ConnectorLifecycleManager;
+  let sink: CapturingSink;
 
   beforeEach(async () => {
     workDir = mkdtempSync(join(tmpdir(), "nb-identity-oauth-"));
     installTestCredentialStore(workDir);
     mock = startMockAuthServer();
-    lifecycle = new ConnectorLifecycleManager(new CapturingSink(), /* allowInsecure */ true);
+    sink = new CapturingSink();
+    lifecycle = new ConnectorLifecycleManager(sink, /* allowInsecure */ true);
     // The connector is installed on the caller's identity — no workspace.
     await new IdentityConnectorStore({ workDir }).add(USER_ID, {
       url: `${mock.base}/mcp`,
@@ -300,6 +302,36 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
     });
     const again = await retryConnect(lifecycle, workDir, 2_000);
     expect(again.authorizationUrl).toContain("/authorize");
+  }, 20_000);
+
+  it("signing out keeps the connector — Connect starts a fresh sign-in with nothing to re-add", async () => {
+    const { authorizationUrl } = await lifecycle.startIdentityAuth(SERVER, USER_ID, {
+      workDir,
+      allowInsecureRemotes: true,
+    });
+    const state = new URL(authorizationUrl as string).searchParams.get("state") as string;
+
+    await lifecycle.signOutIdentityConnector(USER_ID, SERVER, { workDir });
+
+    // The source and its credentials went, and the flow with them.
+    expect(resolveWithCode(state, "late-code")).toBe(false);
+    expect(lifecycle.isIdentityConnectorRunning(USER_ID, SERVER)).toBe(false);
+    expect(await clientRecordStored()).toBe(false);
+    // The install did not.
+    expect(await new IdentityConnectorStore({ workDir }).get(USER_ID, SERVER)).not.toBeNull();
+    expect(
+      sink.events.filter((e) => e.type === "connection.state_changed").map((e) => e.data),
+    ).toContainEqual({
+      userId: USER_ID,
+      serverName: SERVER,
+      connectorName: SERVER,
+      principalId: USER_ID,
+      state: "not_authenticated",
+    });
+
+    const again = await retryConnect(lifecycle, workDir, 2_000);
+    expect(again.authorizationUrl).toContain("/authorize");
+    expect(new URL(again.authorizationUrl).searchParams.get("state")).not.toBe(state);
   }, 20_000);
 
   it("a second Connect while the sign-in waits on the person resumes it — same flow, nothing started (#1611)", async () => {

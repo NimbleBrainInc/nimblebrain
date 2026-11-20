@@ -80,10 +80,12 @@ const SSE_ROUTES: { [K in WorkspaceStreamEngineEvent]?: SseRoute<K> } = {
   // identity's tabs; `wsId` is data, not the audience. Routing it by workspace
   // would tell every member which personal connectors this person uses there.
   "connector.grant_changed": { scope: "owner", userIdField: "userId" },
-  // Per-principal connection state — workspace-scoped. Drives the
-  // pending-auth banner; without forwarding here, the banner never auto-clears
-  // after a user completes interactive OAuth.
-  "connection.state_changed": { scope: "workspace", wsIdField: "wsId" },
+  // Per-principal connection state. Drives the pending-auth banner; without
+  // forwarding here, the banner never auto-clears after a user completes
+  // interactive OAuth. A workspace connector's goes to the workspace's members;
+  // a person's own plugin's goes to that person alone, since routing it by a
+  // workspace it is on in would tell every member which plugins they use.
+  "connection.state_changed": { scope: "owner", wsIdField: "wsId", userIdField: "userId" },
   // An app server's own notification, relayed to that server's views
   // (`src/tools/server-notifications.ts`). Each is stamped with its one owner.
   // A workspace's source is stamped with the workspace whose registry received
