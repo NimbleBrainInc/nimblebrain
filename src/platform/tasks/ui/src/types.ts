@@ -343,6 +343,8 @@ export interface TaskStats {
   passRate: number | null;
   costUsd: number;
   lastRun?: { id: string; startedAt: string; label: RunLabel };
+  /** The newest runs, newest first (batch runs left out). */
+  recent?: { id: string; startedAt: string; label: RunLabel; error?: string }[];
 }
 
 /** `tasks__judges` (mirror of TasksJudgesOutput). */
