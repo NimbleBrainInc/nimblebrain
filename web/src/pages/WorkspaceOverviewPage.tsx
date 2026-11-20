@@ -15,9 +15,14 @@
 //
 // The column is the full-screen chat's (`max-w-4xl` with `px-8`, as in
 // ChatPanel), centered, so a send reads as the page turning into the
-// conversation rather than a jump to another box. It sits lower when the main
-// area is wide and fills it when the docked chat narrows it; widths come from
-// container queries on the main area (web/DESIGN.md), never the viewport.
+// conversation rather than a jump to another box. When the main area is wide,
+// the column starts far enough down that the composer sits near the optical
+// center (about 40% down a typical window), and the rows hang below it. The
+// composer is placed, not the whole group centered: the rows arrive after the
+// composer renders, and centering the group would move the composer under the
+// pointer when they do. When the docked chat narrows the main area the column
+// fills it; widths come from container queries on the main area
+// (web/DESIGN.md), never the viewport.
 // ---------------------------------------------------------------------------
 
 import { useCallback } from "react";
@@ -118,7 +123,7 @@ export function WorkspaceOverviewPage() {
 
   return (
     <div className="@container h-full overflow-y-auto" data-testid="workspace-overview-page">
-      <div className="mx-auto w-full max-w-4xl px-8 pt-10 pb-12 @3xl:pt-[14vh]">
+      <div className="mx-auto w-full max-w-4xl px-8 pt-10 pb-12 @3xl:pt-[28vh]">
         <h1 className="mb-2 ml-1 truncate text-sm text-muted-foreground">
           Working in <span className="font-semibold text-foreground">{workspace.name}</span>
         </h1>
