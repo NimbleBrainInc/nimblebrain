@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { RequestRateLimiter } from "../../src/api/rate-limiter.ts";
@@ -56,6 +56,14 @@ let upstreamResponse: () => Response;
 let logLines: string[] = [];
 /** The vendors the connector's bound catalog entry declares, as the runtime would answer. */
 let declaredVendors: string[] = [VENDOR];
+/**
+ * The clock the door's buckets earn tokens against. It moves only when a test
+ * moves it: the buckets refill continuously (the anon one a token every 100ms),
+ * so on the wall clock a drive that ran slow would earn its way past the
+ * boundary it is asserting.
+ */
+let bucketClockMs = 0;
+const bucketClock = (): number => bucketClockMs;
 
 /**
  * Run `fn` with every log line the runtime writes captured.
@@ -161,8 +169,12 @@ function makeApp(identity: HookIdentity = IDENTITY): Hono {
     // Fresh buckets per app so one test's traffic never counts against
     // another's, sized from the door's own constants so a deliberate resize
     // moves the fixture and the boundary tests together.
-    anonLimiter: new RequestRateLimiter(HOOK_ANON_BUCKET_MAX, HOOK_BUCKET_WINDOW_MS),
-    workspaceLimiter: new RequestRateLimiter(HOOK_WORKSPACE_BUCKET_MAX, HOOK_BUCKET_WINDOW_MS),
+    anonLimiter: new RequestRateLimiter(HOOK_ANON_BUCKET_MAX, HOOK_BUCKET_WINDOW_MS, bucketClock),
+    workspaceLimiter: new RequestRateLimiter(
+      HOOK_WORKSPACE_BUCKET_MAX,
+      HOOK_BUCKET_WINDOW_MS,
+      bucketClock,
+    ),
     fetchImpl: captureFetch,
   });
   if (!routes) throw new Error("hooks routes should mount when an identity is supplied");
@@ -575,12 +587,6 @@ describe("the two rate-limit buckets", () => {
     expect(await res.text()).toBe("");
   }
 
-  afterEach(() => {
-    // Only the recovery tests move it, but a leaked fake clock would be a
-    // confusing failure two files away.
-    setSystemTime();
-  });
-
   describe("the pre-token bucket, per source address", () => {
     test("admits exactly its size from one source and 429s the next", async () => {
       const app = makeApp();
@@ -610,13 +616,11 @@ describe("the two rate-limit buckets", () => {
 
     test("admits again once its window has passed", async () => {
       const app = makeApp();
-      const openedAt = Date.now();
       await drive(app, SOURCE_A, BAD_TOKEN_PATH, HOOK_ANON_BUCKET_MAX + 1);
       expect((await deliverFrom(app, SOURCE_A, BAD_TOKEN_PATH)).status).toBe(429);
 
-      // The limiter reads the wall clock and takes no clock of its own, so the
-      // clock is what moves. A real wait would be a minute per bucket.
-      setSystemTime(new Date(openedAt + HOOK_BUCKET_WINDOW_MS + 1_000));
+      // The buckets' clock is what moves. A real wait would be a minute per bucket.
+      bucketClockMs += HOOK_BUCKET_WINDOW_MS;
 
       const res = await deliverFrom(app, SOURCE_A, goodPath());
       expect(res.status).toBe(202);
@@ -675,11 +679,10 @@ describe("the two rate-limit buckets", () => {
 
     test("admits again once its window has passed", async () => {
       const app = makeApp();
-      const openedAt = Date.now();
       await drive(app, SOURCE_A, goodPath(), HOOK_WORKSPACE_BUCKET_MAX + 1);
       expect((await deliverFrom(app, SOURCE_A, goodPath())).status).toBe(429);
 
-      setSystemTime(new Date(openedAt + HOOK_BUCKET_WINDOW_MS + 1_000));
+      bucketClockMs += HOOK_BUCKET_WINDOW_MS;
 
       const res = await deliverFrom(app, SOURCE_A, goodPath());
       expect(res.status).toBe(202);
