@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// UninstallConnectorDialog — what the uninstall takes with it.
+// UninstallConnectorDialog — what Remove takes with it.
 //
 // An uninstall that removed the connector and left its credentials on the
 // volume would leave them where nothing references them and no surface admits
@@ -193,7 +193,7 @@ describe("UninstallConnectorDialog — what it names", () => {
   test("names the connector and each stored key it will delete", async () => {
     mounted = await open(installed({ secretHeaders: DECLARED }));
     const text = popup()?.textContent ?? "";
-    expect(text).toContain("Uninstall Acme DB Query?");
+    expect(text).toContain("Remove Acme DB Query?");
     expect(text).toContain("acme.db_url");
     expect(text).toContain("will be deleted");
   });
@@ -223,9 +223,9 @@ describe("UninstallConnectorDialog — what it names", () => {
   test("a connector declaring no secrets gets the same dialog with no secrets section", async () => {
     mounted = await open(installed({}));
     const text = popup()?.textContent ?? "";
-    expect(text).toContain("Uninstall Acme DB Query?");
+    expect(text).toContain("Remove Acme DB Query?");
     expect(text).not.toContain("will be deleted");
-    expect(dialogButton("Uninstall")).not.toBeNull();
+    expect(dialogButton("Remove")).not.toBeNull();
   });
 
   test("a connector whose only credential is providerAuth.config.key names it", async () => {
@@ -289,7 +289,7 @@ describe("UninstallConnectorDialog — deciding", () => {
     mounted = await open(installed({ secretHeaders: DECLARED }));
     expect(popup()?.querySelector('input[type="checkbox"]')).toBeNull();
 
-    await click(dialogButton("Uninstall"));
+    await click(dialogButton("Remove"));
     expect(uninstallConnector).toHaveBeenCalledTimes(1);
     expect(uninstallConnector.mock.calls[0]).toEqual(["com-acme-db-query", "workspace"]);
   });
@@ -306,7 +306,7 @@ describe("UninstallConnectorDialog — deciding", () => {
     // intent rather than a key — a client-supplied key would be a delete
     // pointed at any secret in the workspace.
     mounted = await open(installed({ secretHeaders: DECLARED }));
-    await click(dialogButton("Uninstall"));
+    await click(dialogButton("Remove"));
     expect(JSON.stringify(uninstallConnector.mock.calls)).not.toContain("acme.db_url");
   });
 });
@@ -314,7 +314,7 @@ describe("UninstallConnectorDialog — deciding", () => {
 describe("UninstallConnectorDialog — reporting", () => {
   test("a clean uninstall reports no warning", async () => {
     mounted = await open(installed({ secretHeaders: DECLARED }));
-    await click(dialogButton("Uninstall"));
+    await click(dialogButton("Remove"));
     expect(uninstalledWith).toEqual([undefined]);
   });
 
@@ -331,7 +331,7 @@ describe("UninstallConnectorDialog — reporting", () => {
       secretDeleteError: "EACCES",
     });
     mounted = await open(installed({ secretHeaders: DECLARED }));
-    await click(dialogButton("Uninstall"));
+    await click(dialogButton("Remove"));
     expect(uninstalledWith).toHaveLength(1);
     expect(uninstalledWith[0]?.tone).toBe("error");
     expect(uninstalledWith[0]?.text).toContain("acme.db_url");
@@ -352,7 +352,7 @@ describe("UninstallConnectorDialog — reporting", () => {
       retainedSecretKeys: ["acme.db_url"],
     });
     mounted = await open(installed({ secretHeaders: DECLARED }));
-    await click(dialogButton("Uninstall"));
+    await click(dialogButton("Remove"));
     expect(uninstalledWith).toHaveLength(1);
     expect(uninstalledWith[0]?.tone).toBe("info");
     expect(uninstalledWith[0]?.text).toContain("acme.db_url");
@@ -364,7 +364,7 @@ describe("UninstallConnectorDialog — reporting", () => {
       throw new Error("connector is busy");
     };
     mounted = await open(installed({ secretHeaders: DECLARED }));
-    await click(dialogButton("Uninstall"));
+    await click(dialogButton("Remove"));
     expect(popup()?.textContent).toContain("connector is busy");
     expect(uninstalledWith).toEqual([]);
   });

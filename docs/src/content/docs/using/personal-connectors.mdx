@@ -32,7 +32,7 @@ The grant is made before the sign-in, so it holds even if you don't finish signi
 
 ## The account it signs in as
 
-For a Composio connector, the sign-in goes through Composio's hosted flow. When the service reports which account you signed in with, its page reads **Connected as** that account (for example, an email address). A service whose sign-in supports OpenID Connect reports it, since the platform asks it for your email address, and so does a Composio connection. A service without OpenID Connect has no standard way to report the account, so its page reads **Connected**. So does a service that supports OpenID Connect but won't share your email address with the platform: the sign-in goes ahead without it. To switch accounts, **Disconnect** and connect again with the other account.
+For a Composio connector, the sign-in goes through Composio's hosted flow. When the service reports which account you signed in with, its page reads **Connected as** that account (for example, an email address). A service whose sign-in supports OpenID Connect reports it, since the platform asks it for your email address, and so does a Composio connection. A service without OpenID Connect has no standard way to report the account, so its page reads **Connected**. So does a service that supports OpenID Connect but won't share your email address with the platform: the sign-in goes ahead without it. To switch accounts, **Sign out** and **Connect** again with the other account; the connector stays on wherever it was on.
 
 Connecting installs the connector on your identity and runs the sign-in in one step. Nothing runs on the platform host except the connection itself; your tokens are stored against your identity, outside any workspace.
 
@@ -50,7 +50,7 @@ A row says the connector's state in words, never a button:
 - **Off here** when it is not on in this workspace.
 - The account it uses, and **on here**, when it is on and signed in.
 
-A row has no menu and no button: click it to open the plugin's page, which holds **Stop using** (which revokes the grant) and **Disconnect**, each confirmed first.
+A row has no menu and no button: click it to open the plugin's page, which holds **Stop using** (which revokes the grant), **Sign out** and **Remove**, each confirmed first.
 
 To turn it on in another workspace, use the plugin's page, or open that workspace's **Plugins**.
 
@@ -65,7 +65,8 @@ In a workspace, **Plugins** → your connector opens its page. The header shows 
 - **In this workspace** — **Use here** (after a confirm naming the account and the workspace, signing you in when it needs to), or **In use here** with **Stop using here**, confirmed first.
 - **Workspaces** — every workspace you belong to, this one first and marked **This workspace**, each reading **On** or **Off** (see below).
 - **Tool permissions** — your own policy for its tools (see below).
-- **Disconnect** — signs out and removes it from your account, ending every grant.
+- **Sign out** — while it is signed in: ends the sign-in and keeps the connector (see [below](#signing-out-and-removing)).
+- **Remove** — removes it from your account, ending every grant.
 
 Under **Workspaces**, a workspace where it is off offers **Use in** that workspace: the confirm names the account and the workspace, and says only you can use it there. Confirming grants it there and nowhere else. A workspace where it is on offers **Stop using**, confirmed first. The row shows the new state at once, and a notice says when the change lands; if it fails, the row goes back to how it was and a notice says why.
 
@@ -97,22 +98,31 @@ new:
 - **The connector has to be granted into that workspace.** Same grant as for
   chat; without it the tool is not present there for anyone, including a route.
 
-Revoking the grant, or disconnecting the connector, stops the route the same
+Revoking the grant, or signing the connector out or removing it, stops the route the same
 way it stops the agent — immediately, and visibly in the item's delivery ledger.
 
-## Disconnecting
+## Signing out and removing
 
-**Disconnect**, at the bottom of the connector's plugin page, fully removes it from your identity in one step:
+A personal connector has the same three verbs as a [workspace one](/using/connectors#sign-out-and-remove): **Stop using here** ends a grant, **Sign out** ends the sign-in, and **Remove** ends the connector. Each asks you to confirm first.
+
+**Sign out**, on the connector's plugin page (and in its row's **⋯** menu on **Plugins**), ends the sign-in and keeps everything else:
+
+- deletes the connection's stored credentials, and
+- stops the running connection.
+
+The connector stays in your account and on in every workspace it was on in, with your tool permissions. It reads **Not signed in** there, and the agent can't use it until you sign in again. **Connect** signs it back in, with the same account or another one, and nothing else needs redoing. Use it to switch accounts or to recover a sign-in that went wrong.
+
+**Remove**, at the bottom of the connector's plugin page, removes it from your identity in one step:
 
 - revokes **every** workspace grant,
-- deletes the connection's stored credentials,
+- deletes the connection's stored credentials and your tool permissions for it,
 - stops and removes the running connection, and
 - drops the install record.
 
-The connector leaves Plugins in every workspace, and **Browse** offers it again. There is no "de-authenticate but keep it" half-state — disconnect is a clean removal. To use the service again later, connect it again and re-grant it where you want it. Disconnecting asks you to confirm first, and tells you how many workspaces will lose access.
+The connector leaves Plugins in every workspace, and **Browse** offers it again. To use the service again later, add it again and turn it on where you want it. The confirm tells you how many workspaces it turns off in.
 
 <Aside type="note" title="The vendor-side grant">
-Disconnect removes NimbleBrain's copy of your credentials. It does **not yet revoke the grant at the vendor** — the service may still list NimbleBrain among its authorized apps until the token expires. To remove that too, revoke access in the vendor's own account settings.
+Sign out and Remove delete NimbleBrain's copy of your credentials. It does **not yet revoke the grant at the vendor** — the service may still list NimbleBrain among its authorized apps until the token expires. To remove that too, revoke access in the vendor's own account settings.
 </Aside>
 
 ## Where your credentials live

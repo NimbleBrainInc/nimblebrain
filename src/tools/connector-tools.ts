@@ -266,7 +266,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
   return {
     name: "manage_connectors",
     description:
-      "List, install, and disconnect remote MCP connectors. Workspace connectors are shared by all members; user connectors are personal and follow you across workspaces.",
+      "List, install, sign out, and remove remote MCP connectors. Workspace connectors are shared by all members; personal (identity) connectors are a person's own and follow them across workspaces. The verbs mean the same for both owners: `disconnect` signs a connector out (its credentials go; it stays installed, with its tool permissions and every workspace it is on in), and `uninstall` removes it (a personal connector's grants and permissions go with it).",
     meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
     inputSchema: {
       type: "object",
@@ -329,7 +329,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         serverName: {
           type: "string",
           description:
-            "Connector server name (required for disconnect, list_tools, get_permissions, set_permissions, set_record_sources, grant_connector, revoke_connector, read_bound_skill).",
+            "Connector server name (required for disconnect, uninstall, list_tools, get_permissions, set_permissions, set_record_sources, grant_connector, revoke_connector, read_bound_skill).",
         },
         skillName: {
           type: "string",
@@ -410,16 +410,15 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           );
         case "connect_api_key":
           return handleConnectApiKey(ctx, args.wsId, args.identity, args.catalogId, args.fields);
+        // One verb per thing, whoever owns the connector: `disconnect` signs it
+        // out and keeps it, `uninstall` removes it.
         case "disconnect":
-          // A personal connector's only teardown is full removal (there's no
-          // "de-auth but keep installed" half-state on the identity plane), so
-          // both disconnect and uninstall with scope:identity route here.
           if (args.scope === "identity")
-            return handleDisconnectIdentity(ctx, args.identity, args.serverName);
+            return handleSignOutIdentity(ctx, args.identity, args.serverName);
           return handleDisconnect(ctx, args.wsId, args.identity, args.serverName, args.scope);
         case "uninstall":
           if (args.scope === "identity")
-            return handleDisconnectIdentity(ctx, args.identity, args.serverName);
+            return handleUninstallIdentity(ctx, args.identity, args.serverName);
           return handleUninstall(ctx, args.wsId, args.identity, args.serverName, args.scope);
         case "get_permissions":
           return handleGetPermissions(ctx, args.wsId, args.callerId, args.serverName, args.scope);
@@ -496,7 +495,7 @@ const NO_WORKSPACE_ACTIONS = new Set([
   "set_permissions",
 ]);
 
-/** With `scope: "identity"`, removing a personal connector, which needs no workspace. */
+/** With `scope: "identity"`, signing out or removing a personal connector, which needs no workspace. */
 const IDENTITY_SCOPED_ACTIONS = new Set(["disconnect", "uninstall"]);
 
 function actsWithoutWorkspace(args: DispatchArgs): boolean {
@@ -1877,7 +1876,7 @@ async function registerApiKeySource(
       Array.isArray(ws.connectors) && ws.connectors.some((b) => b.serverName === serverName);
     return isInstalled
       ? `Connector "${catalogId}" is installed but its MCP source could not start. ` +
-          "Try Disconnect, then Connect again."
+          "Try Sign out, then Connect again."
       : `Connector "${catalogId}" must be installed before connecting. ` +
           "Install it, then submit the API key.";
   }
@@ -3006,7 +3005,7 @@ async function handleDisconnect(
   const lifecycle = ctx.runtime.getLifecycle();
 
   // Workspace connectors only. A personal (identity-owned) connector is
-  // disconnected via `handleDisconnectIdentity`, which the dispatcher routes to
+  // signed out via `handleSignOutIdentity`, which the dispatcher routes to
   // for `scope:"identity"` before reaching here — so this path always has a
   // workspace.
   if (!wsId) return errResult("Workspace context required.");
@@ -3023,7 +3022,7 @@ async function handleDisconnect(
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
   if (!isWorkspaceAdmin(ws, identity)) {
     return {
-      content: textContent("Workspace admin role required to disconnect shared connectors."),
+      content: textContent("Workspace admin role required to sign out a shared connector."),
       structuredContent: { error: "permission_denied" },
       isError: true,
     };
@@ -3034,8 +3033,8 @@ async function handleDisconnect(
   const target = lifecycle.getInstance(serverName, wsId);
   if (target?.state === "running" && !lifecycle.isDisconnectable(target.ref)) {
     return errResult(
-      `"${serverName}" has no sign-in to disconnect: its credential is configuration, not ` +
-        "an authorization a person made. Uninstall it to remove it.",
+      `"${serverName}" has no sign-in to sign out of: its credential is configuration, not ` +
+        "an authorization a person made. Remove it instead.",
     );
   }
   try {
@@ -3044,7 +3043,7 @@ async function handleDisconnect(
       allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
     });
     return {
-      content: textContent(`Disconnected "${serverName}" from workspace.`),
+      content: textContent(`Signed out of "${serverName}" for the workspace. It stays installed.`),
       structuredContent: { ok: true, scope: "workspace", ...result },
       isError: false,
     };
@@ -3221,7 +3220,7 @@ async function workspaceOAuthClientOf(
  * stay and the key is reported as retained.
  *
  * Workspace connectors only — a personal (identity-owned) connector is removed
- * via `handleDisconnectIdentity` (the dispatcher routes `scope:"identity"` there).
+ * via `handleUninstallIdentity` (the dispatcher routes `scope:"identity"` there).
  */
 async function handleUninstall(
   ctx: ManageConnectorsContext,
@@ -3235,7 +3234,7 @@ async function handleUninstall(
   const lifecycle = ctx.runtime.getLifecycle();
 
   // Workspace connectors only. A personal (identity-owned) connector is removed
-  // via `handleDisconnectIdentity` (dispatcher routes `scope:"identity"` there
+  // via `handleUninstallIdentity` (dispatcher routes `scope:"identity"` there
   // before reaching here) — so this path always has a workspace.
   if (!wsId) return errResult("Workspace context required.");
   if (!identity) return errResult("Authentication required.");
@@ -3252,7 +3251,7 @@ async function handleUninstall(
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
   if (!isWorkspaceAdmin(ws, identity)) {
     return {
-      content: textContent("Workspace admin role required to uninstall shared connectors."),
+      content: textContent("Workspace admin role required to remove a shared connector."),
       structuredContent: { error: "permission_denied" },
       isError: true,
     };
@@ -3276,7 +3275,7 @@ async function handleUninstall(
   const secrets = await releaseWorkspaceOAuthClient(ctx, wsId, workspaceClient, outcome.secrets);
   return {
     content: textContent(
-      `Uninstalled "${serverName}" from workspace.${describeSecretOutcome(secrets, retainedKeys)}`,
+      `Removed "${serverName}" from the workspace.${describeSecretOutcome(secrets, retainedKeys)}`,
     ),
     structuredContent: {
       ok: true,
@@ -4158,15 +4157,55 @@ async function handleRevokeConnector(
 }
 
 /**
- * `disconnect` / `uninstall` with `scope: "identity"` — fully remove a PERSONAL
- * connector from the caller's identity. Revokes every workspace grant first (no
- * grant should outlive the connector), then tears down the source, deletes the
- * identity credentials, and drops the install record
+ * `disconnect` with `scope: "identity"` — sign a PERSONAL connector out and keep
+ * it. Ends the live connection and deletes the identity credentials
+ * (`lifecycle.signOutIdentityConnector`); the install record, every workspace
+ * grant, and the per-tool policies stay. It reads `not_authenticated` wherever
+ * it is on, and Connect signs it back in (another account, or the same one after
+ * a broken sign-in) with nothing else to redo. Not-installed is an error.
+ */
+async function handleSignOutIdentity(
+  ctx: ManageConnectorsContext,
+  identity: UserIdentity | null,
+  serverName: string,
+): Promise<ToolResult> {
+  if (!identity) return errResult("Authentication required.");
+  if (!serverName) return errResult("serverName is required.");
+  const callerId = identity.id;
+  const workDir = ctx.runtime.getWorkDir();
+
+  if (!(await new IdentityConnectorStore({ workDir }).get(callerId, serverName))) {
+    return errResult(`"${serverName}" is not one of your personal connectors.`);
+  }
+  try {
+    await ctx.runtime.getLifecycle().signOutIdentityConnector(callerId, serverName, { workDir });
+  } catch (err) {
+    log.warn(
+      `[disconnect] identity sign-out failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return errResult(
+      `Could not sign out of "${serverName}": its sign-in could not be deleted. Try again.`,
+    );
+  }
+  return {
+    content: textContent(
+      `Signed out of "${serverName}". It stays installed and on where it was on; connect it to sign in again.`,
+    ),
+    structuredContent: { ok: true, scope: "identity", serverName },
+    isError: false,
+  };
+}
+
+/**
+ * `uninstall` with `scope: "identity"` — fully remove a PERSONAL connector from
+ * the caller's identity. Revokes every workspace grant first (no grant should
+ * outlive the connector), then tears down the source, deletes the identity
+ * credentials, and drops the install record
  * (`lifecycle.uninstallIdentityConnector`). The inverse of install + Connect +
  * grant; the connector leaves "Your connectors" and is offered again under "Add a
  * connector". Not-installed is an error (nothing to remove).
  */
-async function handleDisconnectIdentity(
+async function handleUninstallIdentity(
   ctx: ManageConnectorsContext,
   identity: UserIdentity | null,
   serverName: string,
@@ -4193,7 +4232,7 @@ async function handleDisconnectIdentity(
   // Drop the connector's per-tool allow/deny policies too — personal-connector
   // policies live under the user-scope record (`resolvePermissionOwner` →
   // `{scope:"user"}`). They have no meaning once the connector is gone, and
-  // leaving them lets a stale "always allow" silently rebind on a reconnect (same
+  // leaving them lets a stale "always allow" silently rebind on a reinstall (same
   // deterministic serverName). Mirrors the workspace uninstall's `deleteConnector`.
   await ctx.runtime
     .getPermissionStore()
@@ -4208,8 +4247,8 @@ async function handleDisconnectIdentity(
   return {
     content: textContent(
       grantedWorkspaces.length > 0
-        ? `Disconnected "${serverName}" and revoked access in ${grantedWorkspaces.length} workspace(s).`
-        : `Disconnected "${serverName}".`,
+        ? `Removed "${serverName}" and turned it off in ${grantedWorkspaces.length} workspace(s).`
+        : `Removed "${serverName}".`,
     ),
     structuredContent: {
       ok: true,
@@ -4429,7 +4468,7 @@ async function handleRemoveOAuthClient(
   const installed = ws.connectors.some((b) => b.url === entry.url);
   if (installed) {
     return errResult(
-      `"${entry.name}" is installed — uninstall it first, then remove the OAuth client config.`,
+      `"${entry.name}" is installed — remove it first, then remove the OAuth client config.`,
     );
   }
 
