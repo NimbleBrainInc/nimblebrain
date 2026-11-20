@@ -373,7 +373,9 @@ describe("DisconnectDialog", () => {
     const text = dialog()?.textContent ?? "";
     expect(text).toContain("Sign out of Granola?");
     expect(text).toContain("for everyone in this workspace");
-    expect(text).toContain("stop working in chats and scheduled tasks until someone signs in again");
+    expect(text).toContain(
+      "stop working in chats and scheduled tasks until someone signs in again",
+    );
     expect(text).toContain("stays installed, with its tool permissions");
     expect(text).toContain("use Remove");
     expect(disconnectConnector).not.toHaveBeenCalled();
