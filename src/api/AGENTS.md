@@ -62,7 +62,7 @@ SSE events follow the same rule. `schemas/events.ts` declares every frame each s
 
 ## Router middleware is chained per route
 
-A router (`routes/*.ts`, a provider's `routes`) chains `requireAuth`, `errorLog` and any other middleware on each of its routes and never calls `.use()`. Every router is mounted at "/", and Hono turns a sub-app's `.use("*")` into a `/*` matcher on the parent, so it would run for every request the app handles: another router's routes and paths no router registered. Mount order in `app.ts` therefore decides nothing about auth. Only `app.ts` mounts app-wide middleware (tracing, metrics, CORS, security headers, the cross-site guard). The Biome plugin `biome-plugins/router-use.grit` enforces this (CODE_STYLE.md), and `test/integration/route-middleware-scope.test.ts` walks the route table.
+A router (`routes/*.ts`, a provider's `routes`) chains `requireAuth`, `errorLog` and any other middleware on each of its routes and never calls `.use()`. Every router is mounted at "/", and Hono turns a sub-app's `.use("*")` into a `/*` matcher on the parent, so it would run for every request the app handles: another router's routes and paths no router registered. Mount order in `app.ts` therefore decides nothing about auth. Only `app.ts` mounts app-wide middleware (tracing, metrics, the host allowlist without sign-in, CORS, security headers, the cross-site guard). The Biome plugin `biome-plugins/router-use.grit` enforces this (CODE_STYLE.md), and `test/integration/route-middleware-scope.test.ts` walks the route table.
 
 ## Browser writes from another origin
 
@@ -71,6 +71,10 @@ A browser write (any method but `GET`/`HEAD`/`OPTIONS`) from another origin is r
 ## `/mcp/<wsId>` and the `/v1` tool-call doors refuse an untrusted browser origin
 
 A request carrying `Origin` is refused with `403` before authentication unless the origin is trusted (`rejectUntrustedOrigin`, `src/api/middleware/origin.ts`, chained on the route in `routes/mcp.ts` and on `POST /v1/workspaces/:wsId/tools/call` and `POST /v1/tools/call` in `routes/tools.ts`, both over `trustedBrowserOrigins`): the canonical origins, `webOrigin()` and `ALLOWED_ORIGINS`, or the request's own origin when its host is `localhost` or an IP literal, matched against `Host`. This is the transport's DNS-rebinding rule: a rebound page is same-origin to the browser, so neither CORS nor `rejectCrossSiteWrites` stops it, and the `dev` provider authenticates it; on `/v1` it could otherwise call `manage_connectors` (ADR-0065). Its `Origin` and `Host` both name the attacker's hostname, so a hostname is trusted only when configured; never trust a request's own origin by name.
+
+## Without sign-in, only loopback or configured hosts are answered
+
+When the provider checks no credential (`capabilities.checksNoCredential`, the `dev` adapter), `app.ts` mounts `rejectUnlistedHost` (`src/api/middleware/host.ts`) on `*`: a request whose `Host` is not `localhost`, an IP literal (`isLocalAddressHostname`, shared with `rejectUntrustedOrigin`), or the host of a `trustedBrowserOrigins` entry gets `403 untrusted_host`, before CORS and every route. The Origin check above covers only the tool doors and only requests that carry `Origin`; a same-origin `GET` carries none, and under `dev` every route is the admin, so the rule is on the address, app-wide. A provider that checks a credential is unaffected. Gate it on the capability, never on a provider name, and do NOT exempt a route: `test/integration/local-host-allowlist.test.ts` covers it.
 
 ## `/mcp/<wsId>` speaks `2026-07-28` only
 
