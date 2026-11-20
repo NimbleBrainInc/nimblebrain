@@ -717,6 +717,9 @@ function testStartedOf(started: RunStarted): TestStarted {
     : { runId: started.runId, taskId: started.taskId, note: started.note };
 }
 
+/** A run that takes no input. */
+const NO_INPUT: InputState = { ok: true, input: undefined };
+
 /** The test run: its input, the button, and the result inline. */
 function TestRunSection({
   draft,
@@ -729,11 +732,13 @@ function TestRunSection({
 }) {
   const runTool = useTool<string>("run");
   const ref = useRef<HTMLDivElement>(null);
-  const [input, setInput] = useState<InputState>({ ok: true, input: undefined });
+  const [entered, setInput] = useState<InputState>(NO_INPUT);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [test, setTest] = useState<TestStarted | null>(null);
   const schema = draftInputSchema(draft);
+  // What the input form last reported holds only while the form is shown.
+  const input = schema ? entered : NO_INPUT;
 
   async function run() {
     if (!input.ok) return;
