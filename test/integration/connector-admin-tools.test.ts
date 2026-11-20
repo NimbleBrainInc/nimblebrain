@@ -750,3 +750,52 @@ for (const [title, declaration] of [
     });
   });
 }
+
+// A block written entirely in the retired spelling has no `hostVersion`, so its
+// entry is dropped from Browse. Its `admin_tools` still gates the connector
+// already installed from it: dropping the entry must not drop the restriction.
+describe("a catalog entry written entirely in snake_case", () => {
+  it("leaves Browse, and still refuses a member every tool and runs an admin's", async () => {
+    const hostBlock = CATALOG_YAML.slice(CATALOG_YAML.indexOf("      ai.nimblebrain/host:"));
+    writeFileSync(
+      join(catalogDir, "acme.yaml"),
+      CATALOG_YAML.replace(
+        hostBlock,
+        `      ai.nimblebrain/host:\n        host_version: "1.5"\n        admin_tools: [configure]\n`,
+      ),
+    );
+    runtime.getConnectorCatalog().resetCache();
+    resetCalls();
+    const member = await mcpClient(MEMBER_WS);
+    const admin = await mcpClient(ADMIN_WS);
+    try {
+      const { entries } = await runtime.getConnectorCatalog().list();
+      expect(entries.map((e) => e.id)).not.toContain("ai.acme/crm");
+
+      const memberNames = (await member.listTools()).tools.map((t) => t.name);
+      expect(memberNames).not.toContain(SEARCH);
+      expect(memberNames).not.toContain(CONFIGURE);
+
+      const refused = await member.callTool({ name: SEARCH, arguments: {} });
+      expect(refused.structuredContent).toMatchObject({ error: "workspace_admin_required" });
+      const router = new IdentityToolRouter({
+        caller: "chat",
+        identityId: DEV_IDENTITY.id,
+        workspaceId: MEMBER_WS,
+        runtime,
+      });
+      const chatRefused = await router.execute({ id: "s1", name: CONFIGURE, input: {} });
+      expect(chatRefused.structuredContent).toMatchObject({ error: "workspace_admin_required" });
+      expect(ran(MEMBER_WS)).toEqual([]);
+
+      const allowed = await admin.callTool({ name: SEARCH, arguments: {} });
+      expect(allowed.isError).toBeFalsy();
+      expect(ran(ADMIN_WS)).toEqual(["search"]);
+    } finally {
+      await member.close();
+      await admin.close();
+      writeFileSync(join(catalogDir, "acme.yaml"), CATALOG_YAML);
+      runtime.getConnectorCatalog().resetCache();
+    }
+  });
+});

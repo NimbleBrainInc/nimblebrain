@@ -76,7 +76,9 @@ version, so the entry is dropped, and a hook with only `register_tool` is
 dropped. One key is the exception: a block that contains `admin_tools`, with any
 value and whether or not `adminTools` is beside it, gates every tool on the
 server, so a catalog still written in the old spelling can never open admin-only
-tools to every member. The host logs a warning naming the key.
+tools to every member. That holds when the entry is dropped too: it leaves
+Browse, and a connector already installed from it keeps every tool admin-only.
+The host logs a warning naming the key.
 
 ### `PlacementDeclaration`
 
