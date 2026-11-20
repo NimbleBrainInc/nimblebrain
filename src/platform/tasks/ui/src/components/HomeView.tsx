@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useState } from "react";
 import {
   byUrgency,
   type HealthAction,
+  hasTrigger,
   headline,
   healthOf,
   type TaskHealth,
@@ -200,7 +201,6 @@ function TriggerSwitch({
 function BoardRow({ row, actions }: { row: HomeRow; actions: HomeActions }) {
   const { task, health } = row;
   const [busy, setBusy] = useState(false);
-  const trigger = triggerOf(task);
   const problem = health.needsYou && health.reason;
 
   async function toggle(on: boolean) {
@@ -253,7 +253,8 @@ function BoardRow({ row, actions }: { row: HomeRow; actions: HomeActions }) {
       </div>
       <RunCells runs={row.recent} />
       <span className="board-ctl">
-        {trigger === "demand" ? (
+        {/* A retired once task has no trigger left to switch: it runs by hand. */}
+        {!hasTrigger(task) ? (
           <button type="button" className="btn btn-sm" onClick={() => actions.onRunNow(task)}>
             Run
           </button>

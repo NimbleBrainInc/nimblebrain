@@ -180,6 +180,18 @@ describe("Home", () => {
     expect(html).toContain(">Run<");
     expect(html).not.toContain('role="switch"');
   });
+  test("a once task that ran or was missed has Run, not a switch it cannot turn on", () => {
+    for (const outcome of ["ran", "missed"] as const) {
+      const once = {
+        ...TASK,
+        scheduleType: "once" as const,
+        onceDone: { at: "2026-01-01T00:00:00.000Z", outcome },
+      };
+      const html = body({ tasks: [once] });
+      expect(html).toContain(">Run<");
+      expect(html).not.toContain('role="switch"');
+    }
+  });
   test("a paused task is a hollow light at the end, with its switch off", () => {
     const html = body({ tasks: [TASK], stats: STATS("Succeeded") });
     expect(html).toContain("is-off");
