@@ -1,5 +1,6 @@
 import { useApp, useDataSync, useSendMessage, useTrail } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { savedTaskOf, withSavedTask } from "../lib/saved-task.ts";
 import type { TaskRun, TaskSummary, TaskWarning } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, toolErrorText } from "../utils.ts";
@@ -178,13 +179,18 @@ export function TasksUI() {
   async function setEnabled(task: TaskRef, enabled: boolean) {
     mark(task.id, enabled ? "resuming" : "pausing");
     try {
-      await updateTool.call({ taskId: task.id, manifest: { enabled } });
+      const res = await updateTool.call({ taskId: task.id, manifest: { enabled } });
+      // One task changed, so its row takes the saved state; reloading every
+      // task, the stats, and the queue here would repeat the read the server's
+      // change announcement already makes.
+      const saved = savedTaskOf(res.data);
+      if (saved) setTasks((prev) => withSavedTask(prev, saved));
+      else refresh();
     } catch (err) {
       setNotice(toolErrorText(err));
       throw err;
     } finally {
       mark(task.id, null);
-      refresh();
     }
   }
 
