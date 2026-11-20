@@ -105,7 +105,13 @@ import {
   setTelemetryWorkspace,
   type TelemetryPerson,
 } from "./telemetry";
-import type { BootstrapResponse, ConfigInfo, FileLimits, PlacementEntry } from "./types";
+import type {
+  BootstrapResponse,
+  ConfigInfo,
+  FileLimits,
+  PlacementEntry,
+  ToolCallResponse,
+} from "./types";
 import "./index.css";
 
 /** The signed-in person for telemetry, only when the deployment identifies (`workspace_info`). */
@@ -120,6 +126,22 @@ function telemetryPerson(
     name: user.displayName,
     tenantId: typeof ws.tenantId === "string" ? ws.tenantId : undefined,
   };
+}
+
+/** Starts telemetry from a `workspace_info` answer, when the deployment has it on. */
+function startTelemetry(res: ToolCallResponse, user: BootstrapResponse["user"]): void {
+  let raw: unknown = res.structuredContent;
+  if (!raw && res.content?.[0]?.text) {
+    try {
+      raw = JSON.parse(res.content[0].text);
+    } catch {
+      raw = {};
+    }
+  }
+  const ws = (raw ?? {}) as Record<string, unknown>;
+  if (ws.telemetryEnabled && ws.installId) {
+    initTelemetry(ws.installId as string, telemetryPerson(ws, user));
+  }
 }
 
 /** Stores a theme toggled from the palette or shortcut as the person's preference. */
@@ -143,24 +165,19 @@ function AuthenticatedApp({
     setSentryUser(bootstrap.user.id);
   }, [bootstrap.user.id]);
 
-  // Fire-and-forget telemetry init (non-blocking)
+  // Fire-and-forget telemetry init (non-blocking). An answer that arrives after
+  // sign-out (or another person's sign-in) is dropped, so it cannot name a
+  // person the shell no longer holds.
   useEffect(() => {
+    let stale = false;
     callToolWithoutWorkspace("nb", "workspace_info", {})
       .then((res) => {
-        let raw: unknown = res.structuredContent;
-        if (!raw && res.content?.[0]?.text) {
-          try {
-            raw = JSON.parse(res.content[0].text);
-          } catch {
-            raw = {};
-          }
-        }
-        const ws = (raw ?? {}) as Record<string, unknown>;
-        if (ws.telemetryEnabled && ws.installId) {
-          initTelemetry(ws.installId as string, telemetryPerson(ws, bootstrap.user));
-        }
+        if (!stale) startTelemetry(res, bootstrap.user);
       })
       .catch(() => {});
+    return () => {
+      stale = true;
+    };
   }, [bootstrap.user]);
 
   // The focused workspace is the `workspace` group of identified events.
