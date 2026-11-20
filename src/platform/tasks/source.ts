@@ -72,7 +72,12 @@ import {
 } from "./store.ts";
 import { createTaskRunSource } from "./task-source.ts";
 import type { Batch, RunTicket, Task, TaskRun } from "./types.ts";
-import { TASKS_PANEL_HTML } from "./ui-resource.ts";
+import {
+  TASKS_CARD_HTML,
+  TASKS_CARD_URI,
+  TASKS_PANEL_HTML,
+  TASKS_PANEL_URI,
+} from "./ui-resource.ts";
 
 /** What a tool's handler answers: the static type of its output schema. */
 type ToolOutput<K extends TaskToolName> = Static<(typeof TOOL_SCHEMAS)[K]["outputSchema"]>;
@@ -189,11 +194,11 @@ function createJudgePort(runtime: Runtime): JudgePort {
  * while a task is private to its owner (ADR-0004). So the item is generic: it
  * names no task, no criterion or rule, and nothing of the deliverable, only
  * the run's id and its owner's id. The detail stays on the run, which only the
- * owner can open (`tasks__run_result`, the Tasks panel).
+ * owner can open (`tasks__run_result`, the Scheduled panel).
  */
 export function poorResultEnvelope(task: Task, run: TaskRun): NotificationEnvelope {
   const body = [
-    `The task's owner can read run ${run.id} in Tasks.`,
+    `The task's owner can read run ${run.id} in Scheduled.`,
     run.retryOf ? `It retried run ${run.retryOf}.` : "",
   ]
     .filter(Boolean)
@@ -210,7 +215,7 @@ export function poorResultEnvelope(task: Task, run: TaskRun): NotificationEnvelo
     _meta: {
       "ai.nimblebrain/notification": {
         level: "attention",
-        title: "A task run had a poor result",
+        title: "A scheduled task's result needs a look",
         body,
       },
     },
@@ -237,10 +242,12 @@ export function runFailedEnvelope(
     _meta: {
       "ai.nimblebrain/notification": {
         level: "attention",
-        title: disabled ? "A task was turned off after repeated failures" : "A task run failed",
+        title: disabled
+          ? "A scheduled task was turned off after repeated failures"
+          : "A scheduled task didn't work",
         body: disabled
-          ? `Its schedule is off until its owner turns it back on. The owner can read run ${run.id} in Tasks.`
-          : `It ended without a result. The owner can read run ${run.id} in Tasks.`,
+          ? `Its schedule is off until its owner turns it back on. The owner can read run ${run.id} in Scheduled.`
+          : `It ended without a result. The owner can read run ${run.id} in Scheduled.`,
       },
     },
   };
@@ -301,11 +308,11 @@ export function batchPausedEnvelope(batch: Batch): NotificationEnvelope {
     _meta: {
       "ai.nimblebrain/notification": {
         level: "attention",
-        title: "A task batch paused",
+        title: "A batch of scheduled task runs paused",
         body:
           `Batch ${batch.id} paused because ${why} (${done} of ${batch.items} done: ` +
           `${pass} pass, ${fail} fail, ${uncertain} uncertain). Its owner can resume or ` +
-          "cancel it in Tasks.",
+          "cancel it in Scheduled.",
       },
     },
   };
@@ -341,6 +348,13 @@ function notifyPoorResult(runtime: Runtime, task: Task, run: TaskRun): void {
     });
   }
 }
+
+/**
+ * The view a host that renders MCP Apps shows under a tool's call. Only a save
+ * gets one: chat reads the saved task back as a card, so a person sees what the
+ * agent set up without opening the panel.
+ */
+export const TOOL_VIEWS: Partial<Record<TaskToolName, string>> = { create: TASKS_CARD_URI };
 
 /**
  * Create the "tasks" platform source — an in-process MCP server.
@@ -723,12 +737,16 @@ export async function createTasksSource(
     // the general `OutputSchema` it publishes.
     const { description, inputSchema, annotations } = TOOL_SCHEMAS[name];
     const outputSchema: OutputSchema = TOOL_SCHEMAS[name].outputSchema;
+    const view = TOOL_VIEWS[name];
     return typedTool({
       name,
       description,
       inputSchema,
       outputSchema,
       annotations,
+      // MCP Apps: a host that renders views shows this one under the call,
+      // fed the call's result. The model still reads the text result.
+      ...(view ? { meta: { ui: { resourceUri: view } } } : {}),
       handler: withErrorHandling((input) => {
         // Unattended-run wall. A task must not reach the
         // task-authoring surface (create/update/delete/run, and any authoring
@@ -747,7 +765,10 @@ export async function createTasksSource(
 
   const tools: InProcessTool[] = (Object.keys(TOOL_SCHEMAS) as TaskToolName[]).map(registerTool);
 
-  const resources = new Map([["ui://tasks/panel", TASKS_PANEL_HTML]]);
+  const resources = new Map([
+    [TASKS_PANEL_URI, TASKS_PANEL_HTML],
+    [TASKS_CARD_URI, TASKS_CARD_HTML],
+  ]);
 
   const source = defineInProcessApp(
     {
@@ -761,9 +782,9 @@ export async function createTasksSource(
       placements: [
         {
           slot: "sidebar",
-          resourceUri: "ui://tasks/panel",
+          resourceUri: TASKS_PANEL_URI,
           route: "@nimblebraininc/tasks",
-          label: "Tasks",
+          label: "Scheduled",
           icon: "clock",
           priority: 3,
         },

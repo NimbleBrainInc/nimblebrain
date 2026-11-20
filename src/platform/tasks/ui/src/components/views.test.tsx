@@ -9,16 +9,14 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { TaskBatch, TaskRun, TaskSummary, UpcomingData } from "../types.ts";
+import type { TaskBatch, TaskRun, TaskSummary } from "../types.ts";
 
 type Mod<T> = T extends Promise<infer U> ? U : never;
 let home: Mod<ReturnType<typeof importHome>>;
-let upcoming: Mod<ReturnType<typeof importUpcoming>>;
 let activity: Mod<ReturnType<typeof importActivity>>;
 let result: Mod<ReturnType<typeof importResult>>;
 let input: Mod<ReturnType<typeof importInput>>;
 const importHome = () => import("./HomeView.tsx");
-const importUpcoming = () => import("./UpcomingView.tsx");
 const importActivity = () => import("./ActivityView.tsx");
 const importResult = () => import("./ResultView.tsx");
 const importInput = () => import("./InputEditor.tsx");
@@ -57,9 +55,8 @@ beforeAll(async () => {
     HTMLElement: window.HTMLElement,
     Node: window.Node,
   });
-  [home, upcoming, activity, result, input] = await Promise.all([
+  [home, activity, result, input] = await Promise.all([
     importHome(),
-    importUpcoming(),
     importActivity(),
     importResult(),
     importInput(),
@@ -85,8 +82,9 @@ const TASK: TaskSummary = {
 const ACTIONS = {
   onOpenTask: noop,
   onOpenRun: noop,
+  onRunNow: noop,
+  onSetEnabled: async () => {},
   onCreate: noop,
-  onSeeUpcoming: noop,
   onSeeActivity: noop,
 };
 
@@ -126,33 +124,82 @@ describe("Home", () => {
   test("loading shows skeletons", () => {
     expect(body({ loading: true })).toContain('aria-busy="true"');
   });
-  test("empty offers templates", () => {
+  test("empty asks what should run, with examples and the form a click away", () => {
     const html = body({});
-    expect(html).toContain("No tasks yet");
-    expect(html).toContain("Weekly Summary");
+    expect(html).toContain("Nothing scheduled yet");
+    expect(html).toContain("What should run, and when?");
+    expect(html).toContain("Every Friday at 4pm, recap the week");
+    expect(html).toContain("Fill in a form instead");
+    // The host's sandbox withholds allow-forms: a <form> submit never fires.
+    expect(html).not.toContain("<form");
   });
   test("an error with nothing loaded says so", () => {
     expect(body({ error: "boom" })).toContain('role="alert"');
   });
-  test("a poor result leads, as a card with its reason and a link to the run", () => {
+  test("a poor result leads, its reason on its row, with Review", () => {
     const html = body({ tasks: [live], stats: STATS("Poor result") });
-    expect(html).toContain("1 task needs you");
-    expect(html).toContain("attn-card tone-danger");
-    expect(html).toContain("The latest result didn&#x27;t meet its rules.");
-    expect(html).toContain("Open the run");
+    expect(html).toContain("1 needs you");
+    expect(html).toContain("board-row tone-danger");
+    expect(html).toContain("The last result fell short of its checks.");
+    expect(html).toContain(">Review<");
   });
-  test("a task on track sits in the list with its schedule", () => {
-    const html = body({ tasks: [live], stats: STATS("Succeeded") });
+  test("a healthy task reads as one short line and its last runs as squares", () => {
+    const recent = new Map([
+      [
+        "digest",
+        [
+          {
+            id: "r1",
+            taskId: "digest",
+            status: "success",
+            label: "Succeeded" as const,
+            startedAt: "2026-01-01T00:00:00.000Z",
+          },
+          {
+            id: "r2",
+            taskId: "digest",
+            status: "success",
+            label: "Succeeded" as const,
+            startedAt: "2026-01-02T00:00:00.000Z",
+          },
+        ],
+      ],
+    ]);
+    const html = body({ tasks: [live], stats: STATS("Succeeded"), recent });
     expect(html).toContain("Everything is on track");
-    expect(html).toContain("home-row tone-success");
-    expect(html).toContain("Weekdays at 7:20 AM");
-    expect(html).not.toContain("attn-card");
+    expect(html).toContain("board-row tone-success");
+    // The server's "Weekdays at 7:20 AM" shortens to "Weekdays 7:20 AM".
+    expect(html).toContain("Weekdays 7:20 AM");
+    expect(html).toContain('aria-label="Last 2 runs: Done, Done"');
+    expect(html.match(/class="cell empty"/g)).toHaveLength(home.STRIP_RUNS - 2);
+    expect(html).toContain('role="switch" aria-checked="true"');
   });
-  test("a paused task is folded under Paused", () => {
+  test("an on-demand task has Run, not a switch, and says it runs on demand", () => {
+    const html = body({ tasks: [{ ...live, scheduleType: "none", schedule: "Manual only" }] });
+    expect(html).toContain("On demand");
+    expect(html).toContain(">Run<");
+    expect(html).not.toContain('role="switch"');
+  });
+  test("a once task that ran or was missed has Run, not a switch it cannot turn on", () => {
+    for (const outcome of ["ran", "missed"] as const) {
+      const once = {
+        ...TASK,
+        scheduleType: "once" as const,
+        onceDone: { at: "2026-01-01T00:00:00.000Z", outcome },
+      };
+      const html = body({ tasks: [once] });
+      expect(html).toContain(">Run<");
+      expect(html).not.toContain('role="switch"');
+    }
+  });
+  test("a paused task is a hollow light at the end, with its switch off", () => {
     const html = body({ tasks: [TASK], stats: STATS("Succeeded") });
-    expect(html).toMatch(/Paused<\/h2><div class="card-aside"><span class="muted">1</);
+    expect(html).toContain("is-off");
+    expect(html).toContain('class="light hollow"');
+    expect(html).toContain('aria-checked="false"');
+    expect(html).toContain("· paused");
   });
-  test("a run in flight shows with Watch, and coming fires show in the strip", () => {
+  test("a run in flight says so on its row", () => {
     const html = body({
       tasks: [live],
       stats: STATS("Succeeded"),
@@ -168,138 +215,51 @@ describe("Home", () => {
         queued: [],
         days: 7,
         windowEnd: "",
-        scheduled: [
-          {
-            taskId: "digest",
-            taskName: "Digest",
-            at: new Date(Date.now() + 3_600_000).toISOString(),
-            schedule: "Weekdays at 7:20 AM",
-            scheduleType: "cron",
-          },
-        ],
+        scheduled: [],
         frequent: [],
         events: [],
       },
     });
-    expect(html).toContain("is running");
-    expect(html).toContain(">Watch<");
-    expect(html).toContain("Coming up");
-    expect(html).toContain("See everything coming up");
+    expect(html).toContain("running now");
+    expect(html).toContain("board-row tone-active");
+  });
+  test("the filter offers only the kinds present, with counts", () => {
+    const html = body({
+      tasks: [live, { ...live, id: "x", name: "X", scheduleType: "none", schedule: "Manual only" }],
+    });
+    expect(html).toContain('All <span class="muted">2</span>');
+    expect(html).toContain('Scheduled <span class="muted">1</span>');
+    expect(html).toContain('On demand <span class="muted">1</span>');
+    expect(html).not.toContain("On events");
+  });
+  test("describing one goes to chat where the host takes a message, else to the form", () => {
+    expect(body({ actions: { ...ACTIONS, onDescribe: noop } })).toContain(
+      "The agent sets it up in chat",
+    );
+    expect(body({})).not.toContain("The agent sets it up in chat");
   });
 });
 
-describe("Upcoming", () => {
-  const DATA: UpcomingData = {
-    running: [
-      {
-        taskId: "research",
-        taskName: "Research",
-        runId: "run_a",
-        state: "running",
-        batchId: "batch_4f2a00000000",
-        batchIndex: 511,
-        startedAt: new Date().toISOString(),
-      },
-    ],
-    queued: [
-      {
-        taskId: "digest",
-        taskName: "Digest",
-        runId: "run_b",
-        state: "queued",
-        position: 1,
-        trigger: "manual",
-      },
-    ],
-    days: 7,
-    windowEnd: new Date(Date.now() + 7 * 86_400_000).toISOString(),
-    frequent: [
-      {
-        taskId: "poll",
-        taskName: "Poll",
-        schedule: "Every 5 minutes",
-        scheduleType: "interval",
-        count: 2016,
-        first: new Date(Date.now() + 60_000).toISOString(),
-        last: new Date(Date.now() + 6 * 86_400_000).toISOString(),
-      },
-    ],
-    scheduled: [
-      {
-        taskId: "digest",
-        taskName: "Digest",
-        at: new Date(Date.now() + 3_600_000).toISOString(),
-        schedule: "Daily",
-        scheduleType: "cron",
-      },
-      {
-        taskId: "rare",
-        taskName: "Rare",
-        at: new Date(Date.now() + 20 * 86_400_000).toISOString(),
-        schedule: "Every 21 days",
-        scheduleType: "interval",
-        beyondWindow: true,
-      },
-    ],
-    events: [
-      {
-        taskId: "triage",
-        taskName: "Triage",
-        schedule: "On notifications from mail",
-        enabled: true,
-        maxFiresPerHour: 12,
-        firesLastHour: 2,
-      },
-    ],
-  };
-  const body = (p: Partial<Parameters<typeof upcoming.UpcomingBody>[0]>) =>
-    render(
-      createElement(upcoming.UpcomingBody, {
-        data: null,
-        loading: false,
-        error: null,
-        batches: new Map(),
-        days: 7 as const,
-        onDays: noop,
-        onOpenRun: noop,
-        onOpenTask: noop,
-        ...p,
-      }),
+describe("recentByTask", () => {
+  test("keeps each task's newest runs, oldest first", () => {
+    const runs = Array.from({ length: 14 }, (_, i) => ({
+      id: `r${i}`,
+      taskId: i % 2 ? "a" : "b",
+      status: "success",
+      startedAt: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+    }));
+    const byTask = home.recentByTask(runs);
+    expect(byTask.get("a")?.map((r) => r.id)).toEqual(["r1", "r3", "r5", "r7", "r9", "r11", "r13"]);
+    const many = home.recentByTask(
+      Array.from({ length: home.STRIP_RUNS + 2 }, (_, i) => ({
+        id: `x${i}`,
+        taskId: "a",
+        status: "success",
+        startedAt: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+      })),
     );
-
-  test("loading, error, and empty", () => {
-    expect(body({ loading: true })).toContain('aria-busy="true"');
-    expect(body({ error: "down" })).toContain("down");
-    expect(
-      body({
-        data: {
-          running: [],
-          queued: [],
-          days: 7,
-          windowEnd: "",
-          scheduled: [],
-          frequent: [],
-          events: [],
-        },
-      }),
-    ).toContain("Nothing is lined up");
-  });
-  test("loaded: the queue with batch items, scheduled fires, and event tasks", () => {
-    const html = body({
-      data: DATA,
-      batches: new Map([[BATCH.id, { ...BATCH, items: 1000 }]]),
-    });
-    expect(html).toContain("1 running · 1 waiting");
-    expect(html).toContain("Research · batch 4f2a · item 512/1000");
-    expect(html).toContain("Waiting · 1");
-    expect(html).toContain("Digest · run now");
-    expect(html).toContain("Scheduled");
-    expect(html).toContain("Every 5 minutes · 2,016 runs in the next 7 days");
-    expect(html).toContain("Every 21 days · after the next 7 days");
-    expect(html).toContain("7 days");
-    expect(html).toContain("30 days");
-    expect(html).toContain("at most 12/hr");
-    expect(html).toContain("2 in the last hour");
+    expect(many.get("a")).toHaveLength(home.STRIP_RUNS);
+    expect(many.get("a")?.[0]?.id).toBe("x2");
   });
 });
 

@@ -3,7 +3,7 @@
 //
 // Pure: it takes what the overview has already loaded and returns the actions
 // in the order the page shows them. Four groups, in this order:
-//   1. Alerts. A connector that is not ready, automation runs waiting for a
+//   1. Alerts. A connector that is not ready, scheduled task runs waiting for a
 //      verdict, and each facet an app's server counted. Ordered by level:
 //      `critical` (something has stopped), then `warning` (someone should act),
 //      then `info` (worth knowing). Within a level, connectors lead, then runs to
@@ -87,7 +87,7 @@ export interface OverviewActionsInput {
   briefing: BriefingOutput | null;
   /** The workspace's installed connectors. */
   connectors: readonly InstalledConnector[];
-  /** Automation runs waiting for a person's verdict. */
+  /** Scheduled task runs waiting for a person's verdict. */
   reviewCount: number;
   /** Which setup steps to offer; each is true only while undone and takeable. */
   setup: { connectPlugin: boolean; firstQuestion: boolean; invite: boolean };
@@ -169,8 +169,8 @@ function reviewAction(count: number, slug: string): OverviewAction {
     signature: `ok:${count}`,
     level: "warning",
     count,
-    title: count === 1 ? "Automation run to review" : "Automation runs to review",
-    detail: "Automations",
+    title: count === 1 ? "Result to review" : "Results to review",
+    detail: "Scheduled",
     muted: false,
     target: { type: "navigate", to: `/w/${slug}/tasks` },
     testId: "overview-action-review",

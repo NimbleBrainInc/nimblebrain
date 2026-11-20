@@ -1,4 +1,4 @@
-import { useDataSync, useTrail } from "@nimblebrain/synapse/react";
+import { useApp, useDataSync, useSendMessage, useTrail } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TaskRun, TaskSummary, TaskWarning } from "../types.ts";
 import { useTool } from "../useTool.ts";
@@ -14,7 +14,6 @@ import { RunDialog, type RunStarted, runStartedOf } from "./RunDialog.tsx";
 import { TaskEditor } from "./TaskEditor.tsx";
 import { TaskPage, type TaskPageActions } from "./TaskPage.tsx";
 import { type Screen, trailFor, withRun } from "./trail.ts";
-import { UpcomingView } from "./UpcomingView.tsx";
 
 /**
  * Read every task by following `nextCursor` to the end.
@@ -56,6 +55,11 @@ export function TasksUI() {
   const runTool = useTool<string>("run");
   const updateTool = useTool<string>("update");
   const deleteTool = useTool<string>("delete");
+  const app = useApp();
+  const sendMessage = useSendMessage();
+  // Describing one in a sentence hands it to the agent, which asks what it
+  // needs and saves it with tasks__create; a host without chat gets the form.
+  const canChat = !!app.hostCapabilities?.message;
 
   const [stack, setStack] = useState<Screen[]>([]);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
@@ -200,8 +204,15 @@ export function TasksUI() {
   const homeActions: HomeActions = {
     onOpenTask: (t) => push({ kind: "task", taskId: t.id, taskName: t.name }),
     onOpenRun: (taskId, runId) => openRun(runId, taskId),
+    onRunNow: (t) => void runNow({ id: t.id, name: t.name, inputSchema: t.inputSchema }),
+    onSetEnabled: (t, enabled) => setEnabled({ id: t.id, name: t.name }, enabled),
     onCreate: (template) => push({ kind: "editor", template: template ?? null }),
-    onSeeUpcoming: () => push({ kind: "upcoming" }),
+    onDescribe: canChat
+      ? (sentence) =>
+          sendMessage(
+            `Set up a scheduled task: ${sentence}\n\nAsk me anything you need to know, then show me what you set up.`,
+          )
+      : undefined,
     onSeeActivity: () => push({ kind: "activity" }),
   };
 
@@ -381,19 +392,6 @@ function ScreenRoute({
             );
           }}
         />
-      );
-    case "upcoming":
-      return (
-        <div className="app">
-          <PageHeader title="Coming up" onBack={onBack} />
-          <main className="content">
-            <UpcomingView
-              refreshKey={refreshKey}
-              onOpenRun={(r) => r.runId && openRun(r.runId, r.taskId)}
-              onOpenTask={(t) => onPush({ kind: "task", taskId: t.id, taskName: t.name })}
-            />
-          </main>
-        </div>
       );
     case "activity":
       return (

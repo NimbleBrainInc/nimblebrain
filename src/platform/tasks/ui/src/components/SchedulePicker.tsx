@@ -143,13 +143,21 @@ export function SchedulePicker({
   value,
   onChange,
   timezone = "Pacific/Honolulu",
+  simple = false,
 }: {
   /** `null`: no schedule (manual only). */
   value: ScheduleSpec | null;
   onChange: (spec: ScheduleSpec | null) => void;
   timezone?: string;
+  /**
+   * The form's plain choices: no Manual only (the form asks that above) and no
+   * custom cron, unless the schedule it opens with already is one.
+   */
+  simple?: boolean;
 }) {
   const [mode, setMode] = useState<ScheduleMode>(() => detectMode(value));
+  // A schedule that opens as a custom cron keeps its field, so it can be read and edited.
+  const [showCron] = useState(() => !simple || detectMode(value) === "cron");
   const [minutes, setMinutes] = useState(() =>
     value?.type === "interval" && value.intervalMs ? value.intervalMs / 60_000 : 30,
   );
@@ -305,27 +313,29 @@ export function SchedulePicker({
       </label>
 
       {/* Custom cron */}
-      <label className="sched-option">
-        <input
-          type="radio"
-          name="schedule-mode"
-          checked={mode === "cron"}
-          onChange={() => handleMode("cron")}
-        />
-        <span>Custom cron:</span>
-        <input
-          type="text"
-          value={cronExpr}
-          onChange={(e) => {
-            setCronExpr(e.target.value);
-            if (mode === "cron") emit("cron", minutes, time, dow, e.target.value);
-          }}
-          onFocus={() => handleMode("cron")}
-          placeholder="0 8 * * *"
-          className="sched-input"
-          style={{ width: 120 }}
-        />
-      </label>
+      {showCron && (
+        <label className="sched-option">
+          <input
+            type="radio"
+            name="schedule-mode"
+            checked={mode === "cron"}
+            onChange={() => handleMode("cron")}
+          />
+          <span>Custom cron:</span>
+          <input
+            type="text"
+            value={cronExpr}
+            onChange={(e) => {
+              setCronExpr(e.target.value);
+              if (mode === "cron") emit("cron", minutes, time, dow, e.target.value);
+            }}
+            onFocus={() => handleMode("cron")}
+            placeholder="0 8 * * *"
+            className="sched-input"
+            style={{ width: 120 }}
+          />
+        </label>
+      )}
 
       {/* Once at a date and time, then it stops */}
       <label className="sched-option">
@@ -350,16 +360,18 @@ export function SchedulePicker({
       </label>
 
       {/* No schedule */}
-      <label className="sched-option">
-        <input
-          type="radio"
-          name="schedule-mode"
-          checked={mode === "manual"}
-          onChange={() => handleMode("manual")}
-        />
-        <span>Manual only</span>
-        <span className="muted">runs only when you run it</span>
-      </label>
+      {!simple && (
+        <label className="sched-option">
+          <input
+            type="radio"
+            name="schedule-mode"
+            checked={mode === "manual"}
+            onChange={() => handleMode("manual")}
+          />
+          <span>Manual only</span>
+          <span className="muted">runs only when you run it</span>
+        </label>
+      )}
     </div>
   );
 }

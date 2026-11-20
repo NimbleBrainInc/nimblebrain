@@ -315,7 +315,7 @@ function BatchRow({
         ))}
         <td>
           {row.label ? (
-            <RunBadge label={row.label} />
+            <RunBadge label={row.label} exact />
           ) : (
             <span className="batch-pending">pending</span>
           )}
