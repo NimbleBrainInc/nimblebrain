@@ -202,12 +202,17 @@ function expectAllCapturedValid(): void {
 describe("Synapse SDK ⇄ host bridge schema parity", () => {
   it("ui/initialize handshake envelope passes the bridge validator", async () => {
     const { connect } = await import("@nimblebrain/synapse");
-    void connect({ name: "test-app", version: "1.0.0" });
+    const pending = connect({ name: "test-app", version: "1.0.0" });
     await flush();
     const init = lastEnvelopeWithMethod("ui/initialize");
     expect(init, "SDK must emit ui/initialize on instantiation").toBeDefined();
     const v = validateAppToHostMessage(init);
     expect(v.ok, `initialize: ${v.reason}`).toBe(true);
+    // `ui/initialize` carries the SDK's 60s request deadline. Left unanswered,
+    // `connect()` rejects a minute later, in whichever test file is running
+    // then, and bun fails that test for an error it did not raise.
+    completeHandshake();
+    await pending;
   });
 
   it("ui/notifications/initialized notification passes the validator", async () => {
