@@ -822,13 +822,10 @@ function groupToolsBySource(all: Array<{ name: string; description: string }>): 
   };
 }
 
-/** Feature-flag gate for `search`: an error result when the scope is disabled, else null. */
+/** Feature-flag gate for `search`: an error result when tool discovery is disabled, else null. */
 function checkSearchScopeGate(scope: string, features?: ResolvedFeatures): ToolResult | null {
   if (scope === "tools" && features && !features.toolDiscovery) {
     return { content: textContent("Tool discovery is disabled."), isError: true };
-  }
-  if (scope === "catalog" && features && !features.catalogSearch) {
-    return { content: textContent("Catalog search is disabled."), isError: true };
   }
   return null;
 }

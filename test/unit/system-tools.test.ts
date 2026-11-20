@@ -812,18 +812,9 @@ describe("search — feature flag gating", () => {
     expect(extractText(result.content)).toContain("disabled");
   });
 
-  it("scope=catalog returns error when catalogSearch is disabled", async () => {
-    const registry = await makeRegistry();
-    const features = resolveFeatures({ catalogSearch: false });
-    const systemTools = await createSystemTools(() => registry, { features });
-    const result = await systemTools.execute("search", { scope: "catalog", query: "test" });
-    expect(result.isError).toBe(true);
-    expect(extractText(result.content)).toContain("disabled");
-  });
-
   it("scope=tools works when toolDiscovery is enabled", async () => {
     const registry = await makeRegistry();
-    const features = resolveFeatures({ catalogSearch: false });
+    const features = resolveFeatures({ skillManagement: false });
     const systemTools = await createSystemTools(() => registry, { features });
     const result = await systemTools.execute("search", { scope: "tools", query: "hello" });
     expect(result.isError).toBe(false);
