@@ -32,6 +32,11 @@ mock.module("../src/api/client", () => ({
     startChatTurnImpl ? startChatTurnImpl(req) : realClient.startChatTurn(req),
 }));
 
+// A loaded conversation attaches to its stream; nothing here streams.
+mock.module("../src/api/conversation-stream", () => ({
+  connectConversationStream: () => ({ close() {} }),
+}));
+
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
@@ -39,7 +44,7 @@ const { WorkspaceOverviewPage } = await import("../src/pages/WorkspaceOverviewPa
 const { WorkspaceProvider } = await import("../src/context/WorkspaceContext");
 const { toSlug } = await import("../src/lib/workspace-slug");
 const { WorkspaceAppIconsContext } = await import("../src/context/WorkspaceAppIconsContext");
-const { ChatProvider } = await import("../src/context/ChatContext");
+const { ChatProvider, useChatContext } = await import("../src/context/ChatContext");
 const { ChatPanelProvider, useChatPanelContext } = await import("../src/context/ChatPanelContext");
 const { SessionProvider } = await import("../src/context/SessionContext");
 const { FIRST_QUESTION } = await import("../src/components/overview/actions");
@@ -86,7 +91,7 @@ function findByTestId(container: HTMLElement, testid: string): HTMLElement | nul
   return null;
 }
 
-function cardIds(container: HTMLElement): string[] {
+function rowIds(container: HTMLElement): string[] {
   const list = findByTestId(container, "overview-actions");
   return Array.from(list?.getElementsByTagName("li") ?? []).map(
     (li) => li.getAttribute("data-testid") ?? "",
@@ -157,10 +162,18 @@ function answer({ items = [], conversations = [], reviewRuns = 0 }: Sources = {}
   };
 }
 
-const probe = { panelState: "", path: "" };
+const probe: {
+  panelState: string;
+  path: string;
+  conversationId: string | null;
+  loadConversation: (id: string) => Promise<void>;
+} = { panelState: "", path: "", conversationId: null, loadConversation: async () => {} };
 function Probe() {
   probe.panelState = useChatPanelContext().panelState;
   probe.path = useLocation().pathname + useLocation().search;
+  const chat = useChatContext();
+  probe.conversationId = chat.conversationId;
+  probe.loadConversation = chat.loadConversation;
   return null;
 }
 
@@ -179,7 +192,18 @@ function harness(
     >
       <MemoryRouter initialEntries={[`/w/${toSlug(ws.id)}`]}>
         <WorkspaceProvider initialWorkspaces={[ws]} initialActiveId={ws.id}>
-          <ChatProvider currentUserId="u1" initialConfig={{ configuredProviders: ["anthropic"] }}>
+          <ChatProvider
+            currentUserId="u1"
+            initialConfig={{
+              configuredProviders: ["anthropic"],
+              availableModels: {
+                anthropic: [
+                  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
+                  { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
+                ],
+              },
+            }}
+          >
             <ChatPanelProvider>
               <Probe />
               <Routes>
@@ -195,23 +219,27 @@ function harness(
 }
 
 describe("WorkspaceOverviewPage — what it shows", () => {
-  test("the title and composer, and no settings button, app grid, or conversation list", async () => {
+  test("the workspace line and the chat's composer, and no settings button, app grid, or conversation list", async () => {
     answer();
     mounted = await mount(harness(WS, [installedConnector("crm")]));
-    expect(mounted.container.getElementsByTagName("h1")[0]?.textContent).toBe("Acme");
+    expect(mounted.container.getElementsByTagName("h1")[0]?.textContent).toBe("Working in Acme");
+    const box = findByTestId(mounted.container, "workspace-overview-ask")?.getElementsByTagName(
+      "textarea",
+    )[0];
+    expect(box?.getAttribute("aria-label")).toBe("Ask anything in Acme");
     expect(findByTestId(mounted.container, "workspace-overview-ask")).not.toBeNull();
     expect(findByTestId(mounted.container, "workspace-overview-settings")).toBeNull();
     expect(findByTestId(mounted.container, "workspace-overview-app-grid")).toBeNull();
     expect(findByTestId(mounted.container, "workspace-overview-recent")).toBeNull();
   });
 
-  test("no cards until the connectors list names this workspace", async () => {
+  test("no rows until the connectors list names this workspace", async () => {
     answer();
     mounted = await mount(harness(WS, [], "ws_005820c54ca342ad"));
     expect(findByTestId(mounted.container, "overview-actions")).toBeNull();
   });
 
-  test("no cards until every read has answered", async () => {
+  test("no rows until every read has answered", async () => {
     callToolImpl = (server) =>
       server === "nb"
         ? Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } })
@@ -227,7 +255,7 @@ describe("WorkspaceOverviewPage — a new workspace", () => {
   test("an admin alone in it gets the three setup steps", async () => {
     answer();
     mounted = await mount(harness(SOLO));
-    expect(cardIds(mounted.container)).toEqual([
+    expect(rowIds(mounted.container)).toEqual([
       "overview-action-setup-plugin",
       "overview-action-setup-ask",
       "overview-action-setup-invite",
@@ -237,7 +265,7 @@ describe("WorkspaceOverviewPage — a new workspace", () => {
   test("a member who may not write gets neither Connect a plugin nor Invite", async () => {
     answer();
     mounted = await mount(harness({ ...SOLO, userRole: "member" }));
-    expect(cardIds(mounted.container)).toEqual(["overview-action-setup-ask"]);
+    expect(rowIds(mounted.container)).toEqual(["overview-action-setup-ask"]);
   });
 
   test("an org admin outside the membership role may still invite", async () => {
@@ -253,7 +281,7 @@ describe("WorkspaceOverviewPage — a new workspace", () => {
         {harness(member)}
       </SessionProvider>,
     );
-    expect(cardIds(mounted.container)).toContain("overview-action-setup-invite");
+    expect(rowIds(mounted.container)).toContain("overview-action-setup-invite");
   });
 
   test("Connect a plugin opens Browse plugins", async () => {
@@ -295,14 +323,13 @@ describe("WorkspaceOverviewPage — a busy workspace", () => {
       reviewRuns: 2,
     });
     mounted = await mount(harness(WS, [installedConnector("gmail", "needs_auth")]));
-    expect(cardIds(mounted.container)).toEqual([
+    expect(rowIds(mounted.container)).toEqual([
       "overview-action-connector",
       "overview-action-review",
       "overview-action-facet",
+      "overview-action-resume",
     ]);
-    expect(findByTestId(mounted.container, "overview-actions-more")?.textContent).toBe(
-      "Show 1 more",
-    );
+    expect(findByTestId(mounted.container, "overview-actions-more")).toBeNull();
   });
 
   test("a connector needing reconnection opens its connector page", async () => {
@@ -322,21 +349,27 @@ describe("WorkspaceOverviewPage — a busy workspace", () => {
   test("the last conversation reopens in the chat, full-screen", async () => {
     answer({ conversations: [{ id: "c1", title: "Q3 pipeline", preview: "", updatedAt: "" }] });
     mounted = await mount(harness(WS, [installedConnector("crm")]));
-    expect(cardIds(mounted.container)).toEqual(["overview-action-resume"]);
+    expect(rowIds(mounted.container)).toEqual(["overview-action-resume"]);
     await choose(mounted.container, "overview-action-resume");
     expect(probe.panelState).toBe("fullscreen");
   });
 });
 
 describe("WorkspaceOverviewPage — the composer", () => {
-  test("is disabled until there is something to send", async () => {
+  function sendButton(container: HTMLElement): HTMLButtonElement | undefined {
+    const box = findByTestId(container, "workspace-overview-ask");
+    return Array.from(box?.getElementsByTagName("button") ?? []).find(
+      (b) => b.getAttribute("aria-label") === "Send message",
+    );
+  }
+
+  test("is the chat's composer, with no shortcut hints, and cannot send empty", async () => {
     mounted = await mount(harness());
-    const form = findByTestId(mounted.container, "workspace-overview-ask");
-    const send = form?.getElementsByTagName("button")[0] as HTMLButtonElement | undefined;
-    expect(send?.disabled).toBe(true);
+    expect(sendButton(mounted.container)?.disabled).toBe(true);
+    expect(mounted.container.textContent).not.toContain("shortcuts");
   });
 
-  test("sends the trimmed question, opens the chat full-screen, and clears", async () => {
+  test("sends the trimmed question and opens the chat full-screen", async () => {
     const sent: string[] = [];
     startChatTurnImpl = (req) => {
       sent.push(req.message);
@@ -346,24 +379,80 @@ describe("WorkspaceOverviewPage — the composer", () => {
     localStorage.setItem("nb:chatPanelState", "closed");
     mounted = await mount(harness());
     expect(probe.panelState).toBe("closed");
-    const input = findByTestId(
-      mounted.container,
-      "workspace-overview-ask-input",
-    ) as HTMLInputElement;
-    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    const box = findByTestId(mounted.container, "workspace-overview-ask")?.getElementsByTagName(
+      "textarea",
+    )[0] as HTMLTextAreaElement;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
     const WindowEvent = window.Event;
     await act(async () => {
-      setValue?.call(input, "  what changed this week?  ");
-      input.dispatchEvent(new WindowEvent("input", { bubbles: true }));
+      setValue?.call(box, "  what changed this week?  ");
+      box.dispatchEvent(new WindowEvent("input", { bubbles: true }));
     });
     await act(async () => {
-      (
-        findByTestId(mounted?.container as HTMLElement, "workspace-overview-ask") as HTMLFormElement
-      ).requestSubmit();
+      sendButton(mounted?.container as HTMLElement)?.click();
     });
 
     expect(sent).toEqual(["what changed this week?"]);
     expect(probe.panelState).toBe("fullscreen");
-    expect(input.value).toBe("");
+  });
+
+  test("a model chosen from a bound conversation's menu starts a new conversation on it", async () => {
+    answer();
+    const answerReads = callToolImpl;
+    callToolImpl = (server, tool) =>
+      server === "conversations" && tool === "get"
+        ? Promise.resolve({
+            isError: false,
+            structuredContent: {
+              metadata: {
+                id: "c1",
+                ownerId: "u1",
+                workspaceId: WS.id,
+                model: "anthropic:claude-haiku-4-5",
+              },
+              messages: [],
+            },
+          })
+        : answerReads(server, tool);
+    const sent: ChatRequest[] = [];
+    startChatTurnImpl = (req) => {
+      sent.push(req);
+      return new Promise(() => {});
+    };
+    mounted = await mount(harness());
+    await act(async () => {
+      await probe.loadConversation("c1");
+    });
+    expect(probe.conversationId).toBe("c1");
+
+    const box = findByTestId(mounted.container, "workspace-overview-ask") as HTMLElement;
+    const pickerButton = Array.from(box.getElementsByTagName("button")).find((b) =>
+      /Haiku 4\.5/.test(b.textContent ?? ""),
+    );
+    await act(async () => {
+      pickerButton?.click();
+    });
+    const option = Array.from(box.querySelectorAll('[role="option"]')).find((o) =>
+      /Sonnet 5/.test(o.textContent ?? ""),
+    ) as HTMLElement | undefined;
+    expect(option).toBeDefined();
+    await act(async () => {
+      option?.click();
+    });
+    expect(probe.conversationId).toBeNull();
+
+    const textarea = box.getElementsByTagName("textarea")[0] as HTMLTextAreaElement;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    const WindowEvent = window.Event;
+    await act(async () => {
+      setValue?.call(textarea, "hello");
+      textarea.dispatchEvent(new WindowEvent("input", { bubbles: true }));
+    });
+    await act(async () => {
+      sendButton(mounted?.container as HTMLElement)?.click();
+    });
+    expect(sent.map((r) => [r.conversationId, r.model])).toEqual([
+      [undefined, "anthropic:claude-sonnet-5"],
+    ]);
   });
 });

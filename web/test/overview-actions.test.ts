@@ -104,14 +104,14 @@ describe("overviewActions", () => {
       level: "critical",
       title: "gmail",
       detail: "Reconnection needed",
-      verb: "Fix",
+      kind: "connector",
       target: { type: "navigate", to: `/w/${SLUG}/settings/connectors/gmail` },
     });
   });
 
   test("a connector still coming up is info, muted", () => {
     const [a] = overviewActions(input({ connectors: [connector("crm", "connecting")] }));
-    expect(a).toMatchObject({ level: "info", muted: true, verb: "Open" });
+    expect(a).toMatchObject({ level: "info", muted: true, kind: "connector" });
   });
 
   test("a facet shows its count and opens its app; an absolute route passes through", () => {
@@ -191,7 +191,8 @@ describe("overviewActions", () => {
     );
     expect(a).toMatchObject({
       detail: "draft",
-      verb: "Continue",
+      kind: "resume",
+      title: "Continue",
       target: { type: "conversation", id: "c9" },
     });
   });

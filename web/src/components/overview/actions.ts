@@ -3,7 +3,7 @@
 //
 // Pure: it takes what the overview has already loaded and returns the actions
 // in the order the page shows them. Three groups, in this order:
-//   1. Alerts. A connector that is not ready, automation runs waiting for a
+//   1. Alerts. A connector that is not ready, scheduled task runs waiting for a
 //      verdict, and each facet an app's server counted. Ordered by level:
 //      `critical` (something has stopped), then `warning` (someone should act),
 //      then `info` (worth knowing). Within a level, connectors lead, then runs to
@@ -41,8 +41,12 @@ export type ActionTarget =
   | { type: "ask"; prompt: string }
   | { type: "none" };
 
+/** What an action is about; the row's icon follows it. */
+export type ActionKind = "connector" | "review" | "facet" | "plugin" | "ask" | "invite" | "resume";
+
 export interface OverviewAction {
   key: string;
+  kind: ActionKind;
   /**
    * What an alert says now; a hidden alert returns when this changes. `null`
    * for an action that cannot be hidden.
@@ -53,8 +57,6 @@ export interface OverviewAction {
   count: number | null;
   title: string;
   detail: string;
-  /** The button's word: what choosing the action does. */
-  verb: string;
   /** Rendered muted: a facet that could not be read, a connector still coming up. */
   muted: boolean;
   target: ActionTarget;
@@ -98,12 +100,12 @@ function connectorAction(c: InstalledConnector, slug: string): OverviewAction {
   const to = connectorSettingsPath(slug, c.serverName);
   return {
     key: `connector:${c.serverName}`,
+    kind: "connector",
     signature: c.status,
     level,
     count: null,
     title: c.displayName,
     detail: statusLabel(c.status),
-    verb: level === "info" ? "Open" : "Fix",
     muted: level === "info",
     target: to ? { type: "navigate", to } : { type: "none" },
     testId: "overview-action-connector",
@@ -115,12 +117,12 @@ function facetAction(item: BriefingItem, slug: string): OverviewAction {
   const { route } = item;
   return {
     key: `facet:${item.app}/${item.facet}`,
+    kind: "facet",
     signature: unavailable ? "unavailable" : `ok:${item.count}`,
     level: levelOf(item.level),
     count: unavailable ? null : item.count,
     title: item.label,
     detail: unavailable ? `${item.app} · unavailable` : item.app,
-    verb: "Open",
     muted: unavailable,
     // An item carries its app's placement route (e.g. "@scope/name"). Absolute
     // paths pass through; bare routes open the app in this workspace.
@@ -134,12 +136,12 @@ function facetAction(item: BriefingItem, slug: string): OverviewAction {
 function reviewAction(count: number, slug: string): OverviewAction {
   return {
     key: "review:runs",
+    kind: "review",
     signature: `ok:${count}`,
     level: "warning",
     count,
     title: count === 1 ? "Result to review" : "Results to review",
     detail: "Scheduled",
-    verb: "Review",
     muted: false,
     target: { type: "navigate", to: `/w/${slug}/tasks` },
     testId: "overview-action-review",
@@ -150,37 +152,33 @@ function setupActions(input: OverviewActionsInput): OverviewAction[] {
   const { slug, setup } = input;
   const out: OverviewAction[] = [];
   const step = (
-    key: string,
+    key: "plugin" | "ask" | "invite",
     title: string,
     detail: string,
-    verb: string,
     target: ActionTarget,
   ): OverviewAction => ({
     key: `setup:${key}`,
+    kind: key,
     signature: null,
     level: "none",
     count: null,
     title,
     detail,
-    verb,
     muted: false,
     target,
     testId: `overview-action-setup-${key}`,
   });
   if (setup.connectPlugin) {
     out.push(
-      step(
-        "plugin",
-        "Connect a plugin",
-        "Give the agent the tools this workspace works with",
-        "Browse",
-        { type: "navigate", to: `/w/${slug}/plugins/browse` },
-      ),
+      step("plugin", "Connect a plugin", "Give the agent the tools this workspace works with", {
+        type: "navigate",
+        to: `/w/${slug}/plugins/browse`,
+      }),
     );
   }
   if (setup.firstQuestion) {
     out.push(
-      step("ask", "Ask what it can do", "See what the agent can do in this workspace", "Ask", {
+      step("ask", "Ask what it can do", "See what the agent can do in this workspace", {
         type: "ask",
         prompt: FIRST_QUESTION,
       }),
@@ -188,7 +186,7 @@ function setupActions(input: OverviewActionsInput): OverviewAction[] {
   }
   if (setup.invite) {
     out.push(
-      step("invite", "Invite people", "Only you so far", "Invite", {
+      step("invite", "Invite people", "Only you so far", {
         type: "navigate",
         to: `/w/${slug}/settings/members?add`,
       }),
@@ -220,15 +218,15 @@ export function overviewActions(input: OverviewActionsInput): OverviewAction[] {
     ? [
         {
           key: `resume:${input.lastConversation.id}`,
+          kind: "resume",
           signature: null,
           level: "none",
           count: null,
-          title: "Pick up where you left off",
+          title: "Continue",
           detail:
             input.lastConversation.title ||
             input.lastConversation.preview ||
             "Untitled conversation",
-          verb: "Continue",
           muted: false,
           target: { type: "conversation", id: input.lastConversation.id },
           testId: "overview-action-resume",

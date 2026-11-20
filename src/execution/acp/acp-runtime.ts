@@ -71,8 +71,14 @@ export function createAcpRuntime(
 ): AgentRuntime {
   return {
     id,
-    // An agent with its own loop counts its own model calls, whatever its driver.
-    capabilities: { spendGate: false, ...driver.capabilities, usage: "reported" },
+    // An agent with its own loop counts its own model calls, and is served its
+    // tools by the projection, whatever its driver.
+    capabilities: {
+      spendGate: false,
+      ...driver.capabilities,
+      usage: "reported",
+      promotesTools: false,
+    },
     execute: (run, io) => executeOverAcp(id, driver, connection, opts, run, io),
   };
 }
