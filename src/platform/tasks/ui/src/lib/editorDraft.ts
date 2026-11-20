@@ -11,6 +11,7 @@ import {
   toCriteria,
   validateDrafts,
 } from "./criteria.ts";
+import { inZone, viewerTimezone } from "./schedule-zone.ts";
 import {
   type BuilderField,
   builderProblem,
@@ -336,7 +337,9 @@ function readTrigger(d: EditorDraft, out: BuiltDefinition): void {
   if (d.trigger !== "schedule") return;
   const problem = scheduleProblem(d.schedule);
   if (problem) out.problems.push(problem);
-  else out.schedule = scheduleArg(d.schedule as ScheduleSpec);
+  // A clock time is sent with the timezone the form says it is in, so a
+  // schedule the picker never touched (a new task's default) reads the same.
+  else out.schedule = scheduleArg(inZone(d.schedule as ScheduleSpec, viewerTimezone()));
 }
 
 /**

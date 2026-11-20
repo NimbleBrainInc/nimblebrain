@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { inZone, scheduleZone, viewerTimezone } from "../lib/schedule-zone.ts";
 
 export interface ScheduleSpec {
   type: "cron" | "interval" | "once";
@@ -142,13 +143,11 @@ export function defaultOnceLocal(now: number = Date.now()): string {
 export function SchedulePicker({
   value,
   onChange,
-  timezone = "Pacific/Honolulu",
   simple = false,
 }: {
   /** `null`: no schedule (manual only). */
   value: ScheduleSpec | null;
   onChange: (spec: ScheduleSpec | null) => void;
-  timezone?: string;
   /**
    * The form's plain choices: no Manual only (the form asks that above) and no
    * custom cron, unless the schedule it opens with already is one.
@@ -209,14 +208,24 @@ export function SchedulePicker({
     } else if (m === "interval") {
       spec = { type: "interval", intervalMs: Math.max(1, mins) * 60_000 };
     } else if (m === "daily" || m === "weekly") {
-      spec = { type: "cron", expression: cronFor(m, t, d), timezone };
+      spec = withZone({ type: "cron", expression: cronFor(m, t, d) });
     } else {
-      spec = { type: "cron", expression: cron, timezone };
+      spec = withZone({ type: "cron", expression: cron });
     }
     // Record what we emitted so the reconcile above recognizes the parent's
     // resulting `value` update as ours (structurally equal) and skips re-derive.
     setLastSpec(spec);
     onChange(spec);
+  }
+
+  const shownZone = scheduleZone(value, viewerTimezone());
+
+  /** A cron spec in the schedule's zone: the one it has now, else the viewer's. */
+  function withZone(spec: ScheduleSpec): ScheduleSpec {
+    return inZone(
+      { ...spec, ...(value?.timezone ? { timezone: value.timezone } : {}) },
+      viewerTimezone(),
+    );
   }
 
   function handleMode(m: ScheduleMode) {
@@ -358,6 +367,11 @@ export function SchedulePicker({
           style={{ width: 190 }}
         />
       </label>
+
+      {/* The clock the times above are read on, so a time typed here means what it says. */}
+      {(mode === "daily" || mode === "weekly" || mode === "cron") && shownZone && (
+        <p className="hint sched-zone">Times are in {shownZone}.</p>
+      )}
 
       {/* No schedule */}
       {!simple && (

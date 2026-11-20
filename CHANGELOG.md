@@ -311,6 +311,7 @@
 
 ### Fixed
 
+- **A schedule set in the form runs at the time you picked.** The form read every daily, weekly, or custom schedule in Pacific/Honolulu, and moved an edited schedule there too. It now uses your browser's timezone for a new schedule, keeps a schedule's own when you edit it, and shows which one applies.
 - **Turning a personal plugin on or off shows everywhere at once.** The chat's plugin list, a plugin request card, and the Plugins pages in every open tab refresh on the new `connector.grant_changed` event, sent to that person only.
 - **A connector's sign-in completes on an `npx nimblebrain` install.** The release Compose file sets `NB_PUBLIC_ORIGIN` to the published web port, so OAuth callbacks no longer point at the runtime's unpublished port 27247.
 - **A batch no longer re-runs the same items without end when its budget, split among its runs, cannot pay for one.** It halves how many run at once and tries again, and pauses once an item cannot finish alone. ([docs](https://docs.nimblebrain.ai/using/tasks/#batches))
