@@ -1759,6 +1759,21 @@ export const TaskRunStats = Type.Object({
   lastRun: Type.Optional(
     Type.Object({ id: Type.String(), startedAt: Type.String(), label: TaskRunLabel }),
   ),
+  /**
+   * The newest runs, newest first, whenever they started (batch runs left
+   * out): what a list draws as a strip, read in the same pass as `lastRun`.
+   */
+  recent: Type.Optional(
+    Type.Array(
+      Type.Object({
+        id: Type.String(),
+        startedAt: Type.String(),
+        label: TaskRunLabel,
+        /** The run's error, cut to a line. */
+        error: Type.Optional(Type.String()),
+      }),
+    ),
+  ),
 });
 export type TaskRunStats = Static<typeof TaskRunStats>;
 

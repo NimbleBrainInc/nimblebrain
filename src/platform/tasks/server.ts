@@ -1246,6 +1246,11 @@ export function handleStats(args: TasksStatsInput, ctx: ToolContext): TasksStats
   return { since, tasks: tasks.map((t) => statsOf(t.id, since, ctx)) };
 }
 
+/** Runs `tasks__stats` returns per task as `recent`: what the board's strip draws. */
+export const STATS_RECENT_RUNS = 14;
+/** How much of a recent run's error `tasks__stats` returns. */
+const STATS_ERROR_CHARS = 240;
+
 /** One task's figures since `since`. */
 function statsOf(taskId: string, since: string, ctx: ToolContext): TaskRunStats {
   const stats: TaskRunStats = {
@@ -1260,8 +1265,18 @@ function statsOf(taskId: string, since: string, ctx: ToolContext): TaskRunStats 
   for (const run of ctx.readRunsSince(taskId, since)) countRun(stats, run);
   const decided = stats.pass + stats.fail;
   stats.passRate = decided > 0 ? stats.pass / decided : null;
+  // One read of the hot index serves the newest run and the strip.
+  const newest = ctx.readRuns(taskId, { limit: STATS_RECENT_RUNS, excludeBatch: true });
   const last = ctx.readRuns(taskId, { limit: 1 })[0];
   if (last) stats.lastRun = { id: last.id, startedAt: last.startedAt, label: labelOf(last) };
+  if (newest.length > 0) {
+    stats.recent = newest.map((r) => ({
+      id: r.id,
+      startedAt: r.startedAt,
+      label: labelOf(r),
+      ...(r.error ? { error: r.error.slice(0, STATS_ERROR_CHARS) } : {}),
+    }));
+  }
   return stats;
 }
 

@@ -121,6 +121,21 @@ export function homeRows(
   });
 }
 
+/** Each task's newest runs as `tasks__stats` returns them, oldest first, as runs the strip draws. */
+export function recentFromStats(list: TaskStats[]): Map<string, TaskRun[]> {
+  const runs: TaskRun[] = list.flatMap((t) =>
+    (t.recent ?? []).map((r) => ({
+      id: r.id,
+      taskId: t.taskId,
+      status: r.label === "Failed" ? "failure" : "success",
+      label: r.label,
+      startedAt: r.startedAt,
+      ...(r.error ? { error: r.error } : {}),
+    })),
+  );
+  return recentByTask(runs);
+}
+
 /** Runs grouped by task, newest STRIP_RUNS each, oldest first. */
 export function recentByTask(runs: TaskRun[]): Map<string, TaskRun[]> {
   const out = new Map<string, TaskRun[]>();
@@ -569,10 +584,11 @@ export function HomeView({
 }) {
   const statsTool = useTool<string>("stats");
   const upcomingTool = useTool<string>("upcoming");
-  const runsTool = useTool<string>("runs");
   const [stats, setStats] = useState<Map<string, TaskStats> | null>(null);
-  const [upcoming, setUpcoming] = useState<UpcomingData | null>(null);
+  // The strips come with the figures (`tasks__stats` returns each task's
+  // newest runs), so drawing them costs no read of its own.
   const [recent, setRecent] = useState<Map<string, TaskRun[]> | null>(null);
+  const [upcoming, setUpcoming] = useState<UpcomingData | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [upcomingError, setUpcomingError] = useState<string | null>(null);
 
@@ -581,6 +597,7 @@ export function HomeView({
       const res = await statsTool.call({});
       const list = (asDict(res.data).tasks as TaskStats[]) ?? [];
       setStats(new Map(list.map((x) => [x.taskId, x])));
+      setRecent(recentFromStats(list));
       setStatsError(null);
     } catch (err) {
       setStatsError(toolErrorText(err));
@@ -600,24 +617,6 @@ export function HomeView({
     }
   }, [upcomingTool]);
 
-  // Each task's own latest runs, read per task: one read across every task
-  // would let a task that runs every few minutes push the others' runs out of
-  // the page. A task whose read fails draws empty squares rather than a banner,
-  // since the rows are drawn either way.
-  const taskIds = tasks.map((t) => t.id).join(",");
-  const loadRecent = useCallback(async () => {
-    const ids = taskIds ? taskIds.split(",") : [];
-    const lists = await Promise.all(
-      ids.map((taskId) =>
-        runsTool
-          .call({ taskId, limit: STRIP_RUNS, excludeBatchRuns: true })
-          .then((res) => (asDict(res.data).runs as TaskRun[]) ?? [])
-          .catch(() => [] as TaskRun[]),
-      ),
-    );
-    setRecent(recentByTask(lists.flat()));
-  }, [runsTool, taskIds]);
-
   // The figures count recorded runs, and every record, assessment and verdict
   // announces a data change, so that signal keeps them current. Counting 30
   // days of runs is the panel's costliest read, so the timer is hourly: it only
@@ -628,12 +627,6 @@ export function HomeView({
     const timer = setInterval(() => void loadStats(), STATS_REFRESH_MS);
     return () => clearInterval(timer);
   }, [loadStats, refreshKey]);
-
-  // A recorded run announces a data change, so that signal alone keeps the strips current.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the runs are re-read
-  useEffect(() => {
-    void loadRecent();
-  }, [loadRecent, refreshKey]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the queue is re-read at once
   useEffect(() => {

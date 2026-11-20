@@ -110,6 +110,9 @@ test("a run that ages out of the window leaves the figures with no data change",
   );
   expect(calls.stats).toBe(1);
   expect(container.innerHTML).toContain("board-row tone-danger");
+  // The strips come with the figures: the board reads no task's runs on its
+  // own, so its reads do not grow with the number of tasks.
+  expect(calls.runs).toBeUndefined();
 
   // The run is now older than the window: the tool no longer counts it.
   statsAnswer = [
