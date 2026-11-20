@@ -135,7 +135,7 @@ When you install a connector, the platform can automatically apply a short **usa
 
 ## Listing what a workspace has
 
-The connector tool's `list_plugins` action lists, for the workspace it is called in, every connector installed there and every one of your personal connectors, each as a plugin. A plugin says whose it is (`owner.kind`: `workspace` or `person`), whether it acts in this workspace (`granted`, always true for the workspace's own), each server's status and the account it is signed in as (`account`, or `null` when the connection records none, as with an API key), the skills that come with it, and the views it places in the sidebar (for a personal plugin, only where it is granted, and with no `route`, since a personal view opens from the chat). It never returns a token or other credential.
+The connector tool's `list_plugins` action lists, for the workspace it is called in, every connector installed there and every one of your personal connectors, each as a plugin. A plugin says what it does (`description`, from its catalog entry, when it has one), whose it is (`owner.kind`: `workspace` or `person`), whether it acts in this workspace (`granted`, always true for the workspace's own), each server's status and the account it is signed in as (`account`, or `null` when the connection records none, as with an API key), the skills that come with it, and the views it places in the sidebar (for a personal plugin, only where it is granted, and with no `route`, since a personal view opens from the chat). It never returns a token or other credential.
 
 ## What's next
 
