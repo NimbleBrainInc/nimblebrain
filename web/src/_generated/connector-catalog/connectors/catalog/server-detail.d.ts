@@ -22,7 +22,6 @@
  */
 import type { CredentialRef } from "../../tools/credential-ref.ts";
 import type { ConnectorAuthKind } from "../auth-kind.ts";
-import type { HostManifestMeta } from "../runtime/types.ts";
 /** Optional sized icon. Upstream Icon definition. */
 export interface Icon {
     src: string;
@@ -314,7 +313,8 @@ export interface ServerDetail {
     remotes?: RemoteTransport[];
     _meta?: Record<string, unknown> & {
         "ai.nimblebrain/connector"?: NimbleBrainConnectorMeta;
-        "ai.nimblebrain/host"?: HostManifestMeta;
+        /** Raw catalog JSON in either spelling; read it through `getNimbleBrainHostMeta` (`host-meta.ts`). */
+        "ai.nimblebrain/host"?: unknown;
     };
 }
 /** Reverse-DNS namespace key for our `_meta` extension. */
@@ -324,11 +324,11 @@ export declare function getNimbleBrainConnectorMeta(s: ServerDetail): NimbleBrai
 /**
  * Reverse-DNS namespace key for the host-integration `_meta` extension —
  * how a server declares its UI placement in the NimbleBrain host shell.
- * See schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json.
+ * See schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json. Read through
+ * `getNimbleBrainHostMeta` (`host-meta.ts`), never directly: the block is raw
+ * catalog JSON in either spelling.
  */
 export declare const NIMBLEBRAIN_HOST_META_KEY = "ai.nimblebrain/host";
-/** Convenience accessor for the host-integration extension. */
-export declare function getNimbleBrainHostMeta(s: ServerDetail): HostManifestMeta | undefined;
 /** Result of validating a candidate against the upstream schema. */
 export interface ServerDetailValidation {
     valid: boolean;

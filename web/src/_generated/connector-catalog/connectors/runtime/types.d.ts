@@ -32,8 +32,6 @@ export interface PlacementDeclaration {
     icon?: string;
     /** Route path. Registers as /app/<path> (or "/" for Home). Works in sidebar and main slots. */
     route?: string;
-    /** Size hint for the slot renderer. */
-    size?: "compact" | "full" | "auto";
 }
 /** Resolved placement entry — PlacementDeclaration + the server it belongs to. */
 export interface PlacementEntry extends PlacementDeclaration {
@@ -300,7 +298,13 @@ export interface InstanceOAuthClientRef {
 export declare function isInstanceOAuthClientRef(client: OAuthClientConfig | undefined): client is InstanceOAuthClientRef;
 /** The workspace secret reference a ref's OAuth client carries, if any. */
 export declare function oauthClientSecretRef(client: OAuthClientConfig | undefined): CredentialRef | undefined;
-/** Host manifest metadata at _meta["ai.nimblebrain/host"]. */
+/**
+ * Host manifest metadata at _meta["ai.nimblebrain/host"], as the runtime reads
+ * it: camelCase, from `normalizeHostMeta` (`src/connectors/catalog/host-meta.ts`),
+ * which also reads the deprecated snake spelling. Every key here is a property
+ * of `host-manifest.schema.json`; `test/unit/host-manifest-schema-drift.test.ts`
+ * holds the two in step.
+ */
 export interface HostManifestMeta {
     /**
      * Contract major version, written `"1.0"`. It changes only on a breaking
@@ -309,12 +313,12 @@ export interface HostManifestMeta {
      * dropped at the catalog boundary (`validateServerDetailSafety`). Any `1.x`
      * is major 1.
      */
-    host_version: string;
+    hostVersion: string;
     placements?: PlacementDeclaration[];
     /**
      * Inbound event streams this server accepts, one per vendor. The runtime
      * mints a capability URL per `(workspace, connector, vendor)` at install and
-     * hands it to the declared `register_tool`; deliveries to that URL are
+     * hands it to the declared `registerTool`; deliveries to that URL are
      * forwarded verbatim to the declared `route` on this same server.
      *
      * This is the ENTIRE vendor-specific configuration the runtime ever holds —
@@ -350,16 +354,16 @@ export interface HostManifestMeta {
      * in the bound workspace, with no org-admin bypass. See
      * `src/permissions/admin-tools.ts`.
      */
-    admin_tools?: string[];
+    adminTools?: string[];
     /**
      * Whether the host reads resources for this server through its tools'
      * declared arguments (`ai.nimblebrain/resource-arguments`, ADR-0058), from
      * other connectors in the workspace; without it the host reads none. `true` grants it
      * in every workspace that installs the server, narrowed or revoked per
      * workspace by `ConnectorRef.recordSources`. Read from the operator-trusted
-     * catalog only, like {@link admin_tools}: the grant is the operator's.
+     * catalog only, like {@link adminTools}: the grant is the operator's.
      */
-    record_arguments?: boolean;
+    recordArguments?: boolean;
 }
 /** Runtime tracking for an installed connector. One per source. */
 export interface ConnectorInstance {

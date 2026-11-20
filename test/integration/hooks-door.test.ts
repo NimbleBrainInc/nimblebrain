@@ -148,7 +148,7 @@ function makeCtx(over: Partial<AppContext> = {}): AppContext {
       getHookReconcileDeps: () =>
         stub<HookReconcileDeps>({
           declarationsFor: async () =>
-            declaredVendors.map((vendor) => ({ vendor, route: ROUTE, register_tool: "register" })),
+            declaredVendors.map((vendor) => ({ vendor, route: ROUTE, registerTool: "register" })),
         }),
     }),
     ...over,

@@ -19,7 +19,7 @@
  *
  * A ref that carries an entry's name and fails the second test is a different
  * server under that name. It gets none of the entry's grants and runs as a plain
- * remote connector. The entry's restrictions (`admin_tools`, host-only
+ * remote connector. The entry's restrictions (`adminTools`, host-only
  * lifecycle handlers) still apply to it by name, because they narrow and open
  * nothing.
  *

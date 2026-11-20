@@ -861,7 +861,7 @@ export interface EngineEventPayloads {
    */
   "audit.unattended_dispatch": UnattendedDispatchPayload;
   /**
-   * A call to a connector tool its catalog entry declares in `admin_tools`
+   * A call to a connector tool its catalog entry declares in `adminTools`
    * reached the role gate. Emitted once per call, admitted or refused, from
    * the gate every door runs, so no door and no connector has to remember to
    * write it. The connector is never told who called; this line is the only

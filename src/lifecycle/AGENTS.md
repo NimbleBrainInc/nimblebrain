@@ -70,7 +70,7 @@ Three rules that are load-bearing rather than stylistic:
 **Declared handlers are host-only** (`src/permissions/host-only-tools.ts`):
 absent from every listing and refused on every door, for every principal,
 admins included, through the same `Runtime.connectorAdmission` /
-`connectorAdminDenial` pair `admin_tools` uses. `connectorGatesFor` feeds that
+`connectorAdminDenial` pair `adminTools` uses. `connectorGatesFor` feeds that
 one predicate from the connection's binding; there is no second withholding path.
 The kernel's own calls reach the source through `connectorPortForSource` and
 pass no door, so they need no exemption; never add one by caller name.

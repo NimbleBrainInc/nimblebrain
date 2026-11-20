@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- A Server Card's host block carries `hostVersion`, the camelCase key the host reads. See [Server Card](https://docs.nimblebrain.ai/server-sdk/server-card/).
+
+### Removed
+
+- `Placement.size`: the shell never read it, and the host schema no longer has it. A placement that sets it is refused at import.
+
 ## [0.8.1]
 
 ### Changed

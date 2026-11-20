@@ -39,7 +39,7 @@ const OTHER_CONNECTOR = "acme-shipping-mcp";
 const DECL: HookDeclaration = {
   vendor: "acme",
   route: "/ingest/acme",
-  register_tool: "set_webhook_url",
+  registerTool: "set_webhook_url",
 };
 
 /** A tool as the REGISTRY advertises it: qualified with its source. */

@@ -290,7 +290,7 @@ export class IdentityToolRouter implements ToolRouter {
   }
 
   /**
-   * Connector gate (`lifecycle` handlers, `admin_tools`), beside the
+   * Connector gate (`lifecycle` handlers, `adminTools`), beside the
    * `disallow` gate. Only a workspace route is checked: a personal connector acts on its owner's own
    * account, and a kernel identity source keeps its own gates.
    *

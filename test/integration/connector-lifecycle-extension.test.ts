@@ -85,7 +85,7 @@ const CATALOG_YAML = `servers:
       ai.nimblebrain/connector:
         auth: dcr
       ai.nimblebrain/host:
-        host_version: "1.5"
+        hostVersion: "1.5"
         lifecycle:
           on_ready: catalog_ready
           on_removing: catalog_removing
