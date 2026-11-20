@@ -36,7 +36,7 @@ const CARD = {
   icons: [{ src: "data:image/svg+xml;base64,PHN2Zy8+" }],
   _meta: {
     "ai.nimblebrain/host": {
-      host_version: "1.5",
+      hostVersion: "1.5",
       placements: [
         {
           slot: "sidebar.apps",
@@ -45,6 +45,7 @@ const CARD = {
           route: "forecast",
         },
       ],
+      adminTools: ["forecast"],
       admin_tools: ["forecast"],
     },
   },
@@ -201,6 +202,7 @@ describe("direct-url install on a local install", () => {
     const [row] = await storedRows();
     expect(row?.url).toBe(serverUrl);
     expect(row?.transport).toEqual({ type: "streamable-http", auth: { type: "none" } });
+    expect(JSON.stringify(row)).not.toContain("adminTools");
     expect(JSON.stringify(row)).not.toContain("admin_tools");
 
     // No credential was stored for it.

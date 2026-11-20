@@ -113,7 +113,6 @@ export interface PlacementEntry {
   icon?: string;
   /** Route path. Registers as /app/<path>. */
   route?: string;
-  size?: "compact" | "full" | "auto";
   /** Workspace this placement belongs to (absent = global). */
   wsId?: string;
 }

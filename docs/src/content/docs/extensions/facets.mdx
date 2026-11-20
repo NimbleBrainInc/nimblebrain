@@ -255,6 +255,8 @@ opening your app.
   JSON body and may ignore them. A server that does not implement it lists no
   marked resources and shows nothing. Neither side rejects the other.
 - This is version 1. New optional fields in the read result, the marker object
-  or the settings object keep the identifier; `level` is one. Removing or renaming `count` or `title`, changing
-  their types, or adding a required field would ship under a new identifier
-  (`ai.nimblebrain/facets-v2`).
+  or the settings object keep the identifier; `level` is one. A breaking change
+  (removing or renaming `count` or `title`, changing their types, or adding a
+  required field) keeps the identifier too: the host reads the old form beside
+  the new one until every server has moved
+  ([One spelling](/extensions/overview/#design-rules)).

@@ -18,7 +18,7 @@ as a placement with `slot: "settings"`, not as a separate top-level object.
 ```json
 "_meta": {
   "ai.nimblebrain/host": {
-    "host_version": "1.0",
+    "hostVersion": "1.0",
     "placements": [
       { "slot": "settings", "resourceUri": "ui://settings" }
     ]
@@ -58,7 +58,7 @@ in the handshake's host context:
 
 - `allowedTools` lists the bare names of your tools this viewer may call. The
   host computes it with the same check that refuses a call: your
-  [`admin_tools`](/host/admin-tools/) against the viewer's role in this
+  [`adminTools`](/host/admin-tools/) against the viewer's role in this
   workspace. Gate each control on whether the tool behind it is in the list.
 - It names tools, not a role. If the host's role model changes, the list
   changes and your code does not.
@@ -77,7 +77,7 @@ in the handshake's host context:
 Use `allowedTools` to disable or omit controls the viewer cannot use. It does
 not stop anyone. The iframe can send any tool call to its own server regardless
 of the list, and so can the agent. A tool that only a workspace admin may call
-must be declared in [`admin_tools`](/host/admin-tools/), so the host refuses it
+must be declared in [`adminTools`](/host/admin-tools/), so the host refuses it
 to everyone else on every path.
 </Aside>
 
@@ -90,11 +90,11 @@ declares the section and gates the write tool:
 ```json
 "_meta": {
   "ai.nimblebrain/host": {
-    "host_version": "1.0",
+    "hostVersion": "1.0",
     "placements": [
       { "slot": "settings", "resourceUri": "ui://settings" }
     ],
-    "admin_tools": ["set_default_signature"]
+    "adminTools": ["set_default_signature"]
   }
 }
 ```
@@ -123,7 +123,7 @@ document.querySelector("#save").addEventListener("click", async () => {
 });
 ```
 
-One rule, asked twice: `admin_tools` decides who may call the tool, and
+One rule, asked twice: `adminTools` decides who may call the tool, and
 `allowedTools` is the host asking that same rule which tools this viewer may
 call, so the section never shows a control that would fail.
 

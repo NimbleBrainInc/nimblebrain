@@ -29,7 +29,7 @@ Add a `placements` array to your manifest's `_meta["ai.nimblebrain/host"]`:
 {
   "_meta": {
     "ai.nimblebrain/host": {
-      "host_version": "1.0",
+      "hostVersion": "1.0",
       "placements": [
         {
           "slot": "sidebar.apps",
@@ -126,7 +126,7 @@ The resolver accepts kebab-case or PascalCase (`"message-square"` and `"MessageS
 
 ## Size hints
 
-The `size` field (`"compact"`, `"full"`, `"auto"`) is accepted as a hint. The shell does not read it. A `main` or `sidebar.<group>` view fills the main area; a `settings` component is sized to its content.
+A `main` or `sidebar.<group>` view fills the main area; a `settings` component is sized to its content.
 
 ## Placement registry internals
 
@@ -162,7 +162,7 @@ const items = registry.forWorkspace("ws_0030a37f450693bf");
 {
   "_meta": {
     "ai.nimblebrain/host": {
-      "host_version": "1.0",
+      "hostVersion": "1.0",
       "placements": [
         {
           "slot": "sidebar.apps",

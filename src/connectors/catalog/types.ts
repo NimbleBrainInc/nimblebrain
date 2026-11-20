@@ -159,7 +159,7 @@ export interface ConnectorCatalogEntry {
   notifications?: NotificationsDeclaration;
   /**
    * The tools the server declares in
-   * `ServerDetail._meta["ai.nimblebrain/host"].admin_tools` — the ones only a
+   * `ServerDetail._meta["ai.nimblebrain/host"].adminTools` — the ones only a
    * workspace admin may call.
    *
    * Carried from the operator-trusted catalog beside `hooks`, and for a reason
@@ -169,7 +169,7 @@ export interface ConnectorCatalogEntry {
    */
   adminTools?: AdminToolsDeclaration;
   /**
-   * `true` when `ServerDetail._meta["ai.nimblebrain/host"].record_arguments`
+   * `true` when `ServerDetail._meta["ai.nimblebrain/host"].recordArguments`
    * is: the operator grants this server record arguments in every workspace
    * that installs it (ADR-0058), narrowed per workspace by
    * `ConnectorRef.recordSources`. Absent otherwise.
@@ -178,7 +178,7 @@ export interface ConnectorCatalogEntry {
 }
 
 /**
- * A parsed `admin_tools` declaration. `names` gates those tools; `all` gates
+ * A parsed `adminTools` declaration. `names` gates those tools; `all` gates
  * every tool on the connector, which is what a malformed declaration means:
  * the field only narrows, so a declaration the kernel cannot read fails
  * closed. Interpreted only by `isAdminToolAllowed`.

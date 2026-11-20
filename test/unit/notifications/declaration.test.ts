@@ -25,7 +25,7 @@ import {
 /** A `HostManifestMeta` carrying whatever the caller wants under `notifications`. */
 function metaWith(notifications: unknown): HostManifestMeta {
   // biome-ignore lint/plugin/double-cast: an unvalidated manifest block whose `notifications` is any JSON, claimed as HostManifestMeta as the catalog's unchecked read claims it
-  return { host_version: "1.3", notifications } as unknown as HostManifestMeta;
+  return { hostVersion: "1.3", notifications } as unknown as HostManifestMeta;
 }
 
 describe("parseNotificationsDeclaration", () => {
@@ -81,7 +81,7 @@ describe("parseNotificationsDeclaration", () => {
   });
 
   test("no block, no declaration", () => {
-    expect(parseNotificationsDeclaration({ host_version: "1.0" })).toBeUndefined();
+    expect(parseNotificationsDeclaration({ hostVersion: "1.0" })).toBeUndefined();
     expect(parseNotificationsDeclaration(undefined)).toBeUndefined();
   });
 
@@ -125,7 +125,7 @@ describe("isOutboxResource", () => {
 
 describe("the catalog carries the declaration to the install path", () => {
   /** A `ServerDetail` with the host extension the operator published. */
-  function detail(hostMeta: HostManifestMeta): ServerDetail {
+  function detail(hostMeta: Record<string, unknown>): ServerDetail {
     return {
       name: "test.acme/mcp",
       description: "Acme",
@@ -143,7 +143,7 @@ describe("the catalog carries the declaration to the install path", () => {
   });
 
   test("an entry that declares none carries no field at all", () => {
-    const entry = serverDetailToCatalogEntry(detail({ host_version: "1.0" }));
+    const entry = serverDetailToCatalogEntry(detail({ hostVersion: "1.0" }));
     expect(entry).not.toBeNull();
     expect("notifications" in (entry as object)).toBe(false);
   });

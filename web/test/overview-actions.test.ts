@@ -196,4 +196,72 @@ describe("overviewActions", () => {
       target: { type: "conversation", id: "c9" },
     });
   });
+
+  describe("conversation starters", () => {
+    const starter = (serverName: string, title: string) => ({
+      serverName,
+      plugin: serverName,
+      title,
+      text: `${title}, please.`,
+    });
+
+    test("come last, from ready connectors, one plugin at a time, at most three", () => {
+      const out = overviewActions(
+        input({
+          connectors: [connector("gmail", "ready"), connector("linear", "ready")],
+          lastConversation: { id: "c1", title: "Q3", preview: "", updatedAt: "" },
+          conversationStarters: [
+            starter("gmail", "Summarize"),
+            starter("gmail", "Draft replies"),
+            starter("gmail", "Find an email"),
+            starter("linear", "What's due?"),
+          ],
+        }),
+      );
+      expect(out.map((a) => a.key)).toEqual([
+        "resume:c1",
+        "starter:gmail:Summarize",
+        "starter:linear:What's due?",
+        "starter:gmail:Draft replies",
+      ]);
+      const [, first] = out;
+      expect(first).toMatchObject({
+        kind: "starter",
+        title: "Summarize",
+        detail: "gmail",
+        iconServer: "gmail",
+        target: { type: "ask", prompt: "Summarize, please." },
+        signature: null,
+      });
+    });
+
+    test("rotate which plugins come first by the rotation key, stable for one key", () => {
+      const names = ["asana", "box", "github", "gmail", "linear", "notion", "slack", "zoom"];
+      const base = {
+        connectors: names.map((n) => connector(n, "ready")),
+        conversationStarters: names.map((n) => starter(n, "First")),
+      };
+      const shown = (rotation: string) =>
+        overviewActions(input({ ...base, starterRotation: rotation }))
+          .filter((a) => a.kind === "starter")
+          .map((a) => a.iconServer);
+      expect(shown("ws_a:2026-11-20")).toEqual(shown("ws_a:2026-11-20"));
+      expect(shown("ws_a:2026-11-20")).toHaveLength(3);
+      const seen = new Set<string | undefined>();
+      for (let day = 1; day <= 30; day++) {
+        for (const s of shown(`ws_a:2026-11-${String(day).padStart(2, "0")}`)) seen.add(s);
+      }
+      expect([...seen].sort()).toEqual(names);
+    });
+
+    test("leave out a plugin whose connector is not ready", () => {
+      const out = overviewActions(
+        input({
+          connectors: [connector("gmail", "needs_auth")],
+          conversationStarters: [starter("gmail", "Summarize")],
+        }),
+      );
+      expect(out.map((a) => a.key)).toEqual(["connector:gmail"]);
+    });
+  });
 });

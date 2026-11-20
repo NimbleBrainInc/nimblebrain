@@ -62,7 +62,7 @@ export interface HookDeclaration {
    * fail at first delivery instead — months later, at a vendor nobody is
    * watching.
    */
-  register_tool: string;
+  registerTool: string;
   /** Human-readable summary of what this stream carries. Operator-facing only —
    *  the runtime never acts on it. */
   description?: string;
@@ -79,7 +79,7 @@ export interface HookDeclaration {
    * Deliberately a header-name map and nothing else: it renames, it does not
    * interpret. Values are never read here.
    */
-  header_renames?: Record<string, string>;
+  headerRenames?: Record<string, string>;
 }
 
 /**

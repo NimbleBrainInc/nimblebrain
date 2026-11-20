@@ -112,6 +112,22 @@ describe("RequestRateLimiter", () => {
     }
   });
 
+  it("test_earns_tokens_against_the_clock_it_is_given", () => {
+    // 600 a minute is a token every 100ms of the wall clock. On an injected
+    // clock that has not moved, a burst earns nothing however long it really
+    // takes, and moving that clock is what refills it.
+    let clockMs = 0;
+    const limiter = new RequestRateLimiter(600, 60_000, () => clockMs);
+    for (let i = 0; i < 600; i++) expect(limiter.consume("u")).toBe(true);
+    const start = Date.now();
+    while (Date.now() - start < 150) {
+      // busy-wait past one wall-clock token
+    }
+    expect(limiter.consume("u")).toBe(false);
+    clockMs += 100;
+    expect(limiter.consume("u")).toBe(true);
+  });
+
   it("removes expired entries on cleanup", () => {
     const limiter = new RequestRateLimiter(2, 1);
     limiter.consume("user-1");

@@ -136,11 +136,18 @@ interface Sources {
   items?: BriefingItem[];
   conversations?: Array<{ id: string; title: string | null; preview: string; updatedAt: string }>;
   reviewRuns?: number;
+  starters?: Array<{ serverName: string; plugin: string; title: string; text: string }>;
 }
 
 /** Answer each read the page makes. */
-function answer({ items = [], conversations = [], reviewRuns = 0 }: Sources = {}) {
+function answer({ items = [], conversations = [], reviewRuns = 0, starters = [] }: Sources = {}) {
   callToolImpl = (server, tool) => {
+    if (server === "nb" && tool === "conversation_starters") {
+      return Promise.resolve({
+        isError: false,
+        structuredContent: { conversationStarters: starters },
+      });
+    }
     if (server === "nb" && tool === "briefing") {
       return Promise.resolve({
         isError: false,
@@ -301,6 +308,35 @@ describe("WorkspaceOverviewPage — a new workspace", () => {
     mounted = await mount(harness(SOLO));
     await choose(mounted.container, "overview-action-setup-ask");
     expect(sent).toEqual([FIRST_QUESTION]);
+    expect(probe.panelState).toBe("fullscreen");
+  });
+});
+
+describe("WorkspaceOverviewPage — conversation starters", () => {
+  test("a ready plugin's starter is a row that sends its text with the chat full-screen", async () => {
+    const sent: string[] = [];
+    startChatTurnImpl = (req) => {
+      sent.push(req.message);
+      return new Promise(() => {});
+    };
+    answer({
+      conversations: [{ id: "c1", title: "Q3", preview: "", updatedAt: "" }],
+      starters: [
+        {
+          serverName: "gmail",
+          plugin: "gmail",
+          title: "Summarize my unread email",
+          text: "Summarize my unread email from today.",
+        },
+      ],
+    });
+    mounted = await mount(harness(WS, [installedConnector("gmail", "ready")]));
+    expect(rowIds(mounted.container)).toEqual([
+      "overview-action-resume",
+      "overview-action-starter",
+    ]);
+    await choose(mounted.container, "overview-action-starter");
+    expect(sent).toEqual(["Summarize my unread email from today."]);
     expect(probe.panelState).toBe("fullscreen");
   });
 });
