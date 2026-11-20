@@ -204,6 +204,8 @@ export function TasksUI() {
   const homeActions: HomeActions = {
     onOpenTask: (t) => push({ kind: "task", taskId: t.id, taskName: t.name }),
     onOpenRun: (taskId, runId) => openRun(runId, taskId),
+    onRunNow: (t) => void runNow({ id: t.id, name: t.name, inputSchema: t.inputSchema }),
+    onSetEnabled: (t, enabled) => setEnabled({ id: t.id, name: t.name }, enabled),
     onCreate: (template) => push({ kind: "editor", template: template ?? null }),
     onDescribe: canChat
       ? (sentence) =>

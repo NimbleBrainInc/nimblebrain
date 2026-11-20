@@ -671,7 +671,7 @@ export function taskHealth(
     disabledReason: detail.disabledReason,
     onceDone: detail.onceDone,
   };
-  return healthOf(task, stats ?? undefined, live);
+  return healthOf(task, stats ?? undefined, live, runs ?? []);
 }
 
 /** The task page's actions: the Enabled switch for a task with a trigger, Run now or Watch, the menu. */

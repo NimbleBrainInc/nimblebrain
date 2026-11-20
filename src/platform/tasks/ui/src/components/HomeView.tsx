@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useId, useState } from "react";
-import { StatusIcon } from "../icons.tsx";
-import { byUrgency, headline, healthOf, type TaskHealth } from "../lib/attention.ts";
+import {
+  byUrgency,
+  type HealthAction,
+  headline,
+  healthOf,
+  type TaskHealth,
+} from "../lib/attention.ts";
 import { outcomeOf } from "../lib/outcome.ts";
+import { shortSchedule } from "../lib/schedule-label.ts";
 import type { TaskRun, TaskStats, TaskSummary, UpcomingData, UpcomingRun } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatWhen, relativeTime, toolErrorText } from "../utils.ts";
 import { PageHeader } from "./Chrome.tsx";
-import { Section, Sections } from "./Section.tsx";
 import { SkeletonRows } from "./Skeleton.tsx";
 import { TEMPLATES, type Template } from "./templates.ts";
 
@@ -17,14 +22,16 @@ const REFRESH_MS = 15_000;
  * window moves with the clock, so a run leaves it without an announcement.
  */
 export const STATS_REFRESH_MS = 60 * 60_000;
-/** Runs drawn in each row's strip, oldest to newest. */
-export const STRIP_RUNS = 10;
-/** Runs read for the strips: enough for STRIP_RUNS each across a typical home. */
-const STRIP_READ = 300;
+/** Runs drawn in each row, oldest to newest. */
+export const STRIP_RUNS = 14;
 
 export interface HomeActions {
   onOpenTask: (task: TaskSummary) => void;
   onOpenRun: (taskId: string, runId: string) => void;
+  /** Run it now: the way a failure is cleared. */
+  onRunNow: (task: TaskSummary) => void;
+  /** Turn its trigger on or off. */
+  onSetEnabled: (task: TaskSummary, enabled: boolean) => Promise<void>;
   /** Open the form, empty or seeded from an example. */
   onCreate: (template?: Template) => void;
   /** Hand a sentence to the agent in chat; absent where the host takes no message. */
@@ -32,17 +39,26 @@ export interface HomeActions {
   onSeeActivity: () => void;
 }
 
-/** A task with its health, as the list draws it. */
+/** What starts a task: the board's filter. */
+export type Trigger = "schedule" | "event" | "demand";
+
+export function triggerOf(task: Pick<TaskSummary, "scheduleType">): Trigger {
+  if (task.scheduleType === "event") return "event";
+  if (!task.scheduleType || task.scheduleType === "none") return "demand";
+  return "schedule";
+}
+
+/** A task with its health, as the board draws it. */
 export interface HomeRow {
   task: TaskSummary;
   name: string;
   health: TaskHealth;
   live?: UpcomingRun;
-  /** Its latest runs, oldest first, for the strip. */
+  /** Its latest runs, oldest first. */
   recent: TaskRun[];
 }
 
-/** Each task's health from its figures and any run of it in flight, with its latest runs. */
+/** Each task's health from its figures, any run of it in flight, and its latest runs. */
 export function homeRows(
   tasks: TaskSummary[],
   stats: Map<string, TaskStats> | null,
@@ -54,13 +70,16 @@ export function homeRows(
   for (const r of [...(upcoming?.queued ?? []), ...(upcoming?.running ?? [])]) {
     if (!r.batchId) live.set(r.taskId, r);
   }
-  return tasks.map((task) => ({
-    task,
-    name: task.name,
-    live: live.get(task.id),
-    health: healthOf(task, stats?.get(task.id), live.get(task.id)),
-    recent: recent?.get(task.id) ?? [],
-  }));
+  return tasks.map((task) => {
+    const runs = recent?.get(task.id) ?? [];
+    return {
+      task,
+      name: task.name,
+      live: live.get(task.id),
+      health: healthOf(task, stats?.get(task.id), live.get(task.id), runs),
+      recent: runs,
+    };
+  });
 }
 
 /** Runs grouped by task, newest STRIP_RUNS each, oldest first. */
@@ -76,34 +95,57 @@ export function recentByTask(runs: TaskRun[]): Map<string, TaskRun[]> {
   return out;
 }
 
-/** The row's line in plain words: when it runs, and what happens next or happened last. */
-export function rowLine(row: HomeRow, stats?: TaskStats): string {
+/** "Tomorrow 9:00 AM" reads mid-sentence as "tomorrow 9:00 AM"; a day or date keeps its capital. */
+function lowerFirst(text: string): string {
+  return /^(Today|Tomorrow|Yesterday)\b/.test(text)
+    ? text.charAt(0).toLowerCase() + text.slice(1)
+    : text;
+}
+
+/**
+ * The row's second line: the schedule in a few words, and the one fact worth
+ * adding (running now, paused, next run, or for an on-demand task its last run).
+ */
+export function rowLine(row: HomeRow): string {
   const { task, health, live } = row;
-  const when = task.scheduleType === "none" ? "Only when you run it" : task.schedule;
-  if (live?.state === "running") {
-    return `${when} · running now${live.startedAt ? `, started ${relativeTime(live.startedAt)}` : ""}`;
-  }
+  const when = shortSchedule(task.schedule);
+  if (live?.state === "running") return `${when} · running now`;
   if (live?.state === "queued") return `${when} · waiting to start`;
   if (health.paused) return `${when} · paused`;
-  if (task.nextRunAt && task.enabled) return `${when} · next ${formatWhen(task.nextRunAt)}`;
-  if (stats?.lastRun) return `${when} · last ran ${relativeTime(stats.lastRun.startedAt)}`;
+  if (task.nextRunAt && task.enabled)
+    return `${when} · next ${lowerFirst(formatWhen(task.nextRunAt))}`;
+  if (triggerOf(task) === "demand" && task.lastRunAt) {
+    return `${when} · last ran ${relativeTime(task.lastRunAt)}`;
+  }
   return when;
 }
 
-/** The last few runs as ticks, each in its outcome's tone, newest on the right. */
-function RunStrip({ runs }: { runs: TaskRun[] }) {
-  if (runs.length === 0) return <span className="run-strip" aria-hidden="true" />;
+/** The button a problem row carries, by what clears it. */
+const ACTION_LABEL: Record<HealthAction, string> = {
+  retry: "Try again",
+  "enable-and-retry": "Turn on and try again",
+  review: "Review",
+  "open-task": "See runs",
+};
+
+/** The latest runs as squares, oldest to newest, each in its outcome's tone; empty slots first. */
+function RunCells({ runs }: { runs: TaskRun[] }) {
+  const pad = Math.max(0, STRIP_RUNS - runs.length);
   const words = runs.map((r) => (r.label ? outcomeOf(r.label).word : r.status));
   return (
     <span
-      className="run-strip"
+      className="run-cells"
       role="img"
-      aria-label={`Last ${runs.length} runs: ${words.join(", ")}`}
+      aria-label={runs.length ? `Last ${runs.length} runs: ${words.join(", ")}` : "No runs yet"}
     >
+      {Array.from({ length: pad }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: empty slots have no identity but their place
+        <i key={`pad-${i}`} className="cell empty" />
+      ))}
       {runs.map((r) => (
         <i
           key={r.id}
-          className={`tick tone-${r.label ? outcomeOf(r.label).tone : "muted"}`}
+          className={`cell tone-${r.label ? outcomeOf(r.label).tone : "muted"}`}
           title={`${r.label ? outcomeOf(r.label).word : r.status} · ${relativeTime(r.startedAt)}`}
         />
       ))}
@@ -111,64 +153,109 @@ function RunStrip({ runs }: { runs: TaskRun[] }) {
   );
 }
 
-/** A task that needs a person: why, in words, and the one thing to do about it. */
-function AttentionCard({ row, actions }: { row: HomeRow; actions: HomeActions }) {
-  const { task, health } = row;
-  const runId = health.runId;
+/** A small on/off switch for a task's trigger. */
+function TriggerSwitch({
+  on,
+  busy,
+  name,
+  onChange,
+}: {
+  on: boolean;
+  busy: boolean;
+  name: string;
+  onChange: (on: boolean) => void;
+}) {
   return (
-    <li className={`attn-card tone-${health.tone}`}>
-      <span className="attn-icon">
-        <StatusIcon tone={health.tone} />
-      </span>
-      <div className="attn-text">
-        <button type="button" className="attn-name" onClick={() => actions.onOpenTask(task)}>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={`${name} runs on its own`}
+      title={on ? "On: it runs on its own" : "Off: it runs only when you run it"}
+      className={`mini-switch${on ? " on" : ""}`}
+      disabled={busy}
+      onClick={(e) => {
+        e.stopPropagation();
+        onChange(!on);
+      }}
+    />
+  );
+}
+
+function BoardRow({ row, actions }: { row: HomeRow; actions: HomeActions }) {
+  const { task, health } = row;
+  const [busy, setBusy] = useState(false);
+  const trigger = triggerOf(task);
+  const problem = health.needsYou && health.reason;
+
+  async function toggle(on: boolean) {
+    setBusy(true);
+    try {
+      await actions.onSetEnabled(task, on);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function act(action: HealthAction) {
+    if (action === "retry") actions.onRunNow(task);
+    else if (action === "enable-and-retry")
+      void actions.onSetEnabled(task, true).then(() => actions.onRunNow(task));
+    else if (action === "review" && health.runId) actions.onOpenRun(task.id, health.runId);
+    else actions.onOpenTask(task);
+  }
+
+  return (
+    <li
+      className={`board-row tone-${health.paused ? "muted" : health.tone}${health.paused ? " is-off" : ""}`}
+    >
+      <span className={`light${health.paused ? " hollow" : ""}`} aria-hidden="true" />
+      <div className="board-who">
+        <button type="button" className="board-name" onClick={() => actions.onOpenTask(task)}>
           {task.name}
+          <span className="sr-only">, {health.word}</span>
         </button>
-        <span className="attn-why">{health.reason}</span>
+        {problem ? (
+          <span className="board-reason">
+            <span className="board-reason-text" title={health.reason}>
+              {health.reason}
+            </span>
+            {health.action && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => health.action && act(health.action)}
+              >
+                {ACTION_LABEL[health.action]}
+              </button>
+            )}
+          </span>
+        ) : (
+          <span className="board-when" title={task.schedule}>
+            {rowLine(row)}
+          </span>
+        )}
       </div>
-      {runId ? (
-        <button
-          type="button"
-          className="btn btn-sm"
-          onClick={() => actions.onOpenRun(task.id, runId)}
-        >
-          See what happened
-        </button>
-      ) : (
-        <button type="button" className="btn btn-sm" onClick={() => actions.onOpenTask(task)}>
-          Open
-        </button>
-      )}
+      <RunCells runs={row.recent} />
+      <span className="board-ctl">
+        {trigger === "demand" ? (
+          <button type="button" className="btn btn-sm" onClick={() => actions.onRunNow(task)}>
+            Run
+          </button>
+        ) : (
+          <TriggerSwitch on={task.enabled} busy={busy} name={task.name} onChange={toggle} />
+        )}
+      </span>
     </li>
   );
 }
 
-function TaskRowItem({
-  row,
-  stats,
-  onOpen,
-}: {
-  row: HomeRow;
-  stats?: TaskStats;
-  onOpen: () => void;
-}) {
-  const { task, health } = row;
-  return (
-    <li>
-      <button type="button" className={`home-row tone-${health.tone}`} onClick={onOpen}>
-        <StatusIcon tone={health.tone} />
-        <span className="home-row-text">
-          <span className="home-row-name">
-            {task.name}
-            <span className="sr-only">, {health.word}</span>
-          </span>
-          <span className="home-row-line">{rowLine(row, stats)}</span>
-        </span>
-        <RunStrip runs={row.recent} />
-      </button>
-    </li>
-  );
-}
+const FILTERS: { id: Trigger | "all"; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "schedule", label: "Scheduled" },
+  { id: "event", label: "On events" },
+  { id: "demand", label: "On demand" },
+];
 
 /**
  * Say what it should do, in a sentence: the agent sets it up in chat and shows
@@ -283,33 +370,11 @@ function HomeEmpty({
   );
 }
 
-function RowGroup({
-  title,
-  rows,
-  stats,
-  onOpen,
-}: {
-  title: string;
-  rows: HomeRow[];
-  stats: Map<string, TaskStats> | null;
-  onOpen: (r: HomeRow) => () => void;
-}) {
-  if (rows.length === 0) return null;
-  return (
-    <Section title={title} aside={<span className="muted">{rows.length}</span>}>
-      <ul className="home-rows">
-        {rows.map((r) => (
-          <TaskRowItem key={r.task.id} row={r} stats={stats?.get(r.task.id)} onOpen={onOpen(r)} />
-        ))}
-      </ul>
-    </Section>
-  );
-}
-
 /**
- * The home: one list in three groups. What needs you first, each with its
- * reason and one way forward; then what is active, each with when it runs and
- * its last few outcomes; then what is paused.
+ * The board: one row per task, worst first. Each row has a light, its name,
+ * its schedule in a few words, its latest runs as squares, and its switch
+ * (Run for an on-demand task). A row that needs you says why on its second
+ * line, with the one action that clears it.
  */
 export function HomeBody({
   tasks,
@@ -332,6 +397,7 @@ export function HomeBody({
   readError: string | null;
   actions: HomeActions;
 }) {
+  const [filter, setFilter] = useState<Trigger | "all">("all");
   const newTask = (
     <button type="button" className="btn btn-primary" onClick={() => actions.onCreate()}>
       New
@@ -353,48 +419,55 @@ export function HomeBody({
     );
   }
 
-  const rows = homeRows(tasks, stats, upcoming, recent);
-  const needsYou = byUrgency(rows.filter((r) => r.health.needsYou));
-  const paused = rows.filter((r) => r.health.paused);
-  const active = rows.filter((r) => !r.health.needsYou && !r.health.paused);
-  const open = (r: HomeRow) => () => actions.onOpenTask(r.task);
+  const rows = byUrgency(homeRows(tasks, stats, upcoming, recent));
+  const needsYou = rows.filter((r) => r.health.needsYou).length;
+  const count = (id: Trigger | "all") =>
+    id === "all" ? rows.length : rows.filter((r) => triggerOf(r.task) === id).length;
+  const shown = filter === "all" ? rows : rows.filter((r) => triggerOf(r.task) === filter);
 
   return (
     <>
-      <PageHeader title={headline(needsYou.length, rows.length)} actions={newTask} />
+      <PageHeader title={headline(needsYou, rows.length)} actions={newTask} />
       <main className="content">
         <div className="view-pad home">
-          <Sections>
-            {error && <div className="error-banner">{error}</div>}
-            {readError && (
-              <div className="note-banner">Some of what's below may be missing: {readError}</div>
-            )}
-
-            {needsYou.length > 0 && (
-              <Section title="Needs you" aside={<span className="muted">{needsYou.length}</span>}>
-                <ul className="attn-list" aria-label="Needs you">
-                  {needsYou.map((r) => (
-                    <AttentionCard key={r.task.id} row={r} actions={actions} />
-                  ))}
-                </ul>
-              </Section>
-            )}
-
-            <RowGroup title="Active" rows={active} stats={stats} onOpen={open} />
-            <RowGroup title="Paused" rows={paused} stats={stats} onOpen={open} />
-
-            <DescribeBox
-              onCreate={actions.onCreate}
-              onDescribe={actions.onDescribe}
-              showExamples={false}
-            />
-
-            <div className="home-foot">
-              <button type="button" className="link-btn" onClick={actions.onSeeActivity}>
-                Every run, newest first
-              </button>
-            </div>
-          </Sections>
+          {error && <div className="error-banner">{error}</div>}
+          {readError && (
+            <div className="note-banner">Some of what's below may be missing: {readError}</div>
+          )}
+          <div className="board-bar">
+            <fieldset className="board-filters">
+              <legend className="sr-only">Show</legend>
+              {FILTERS.filter((f) => f.id === "all" || count(f.id) > 0).map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  className={`filter-chip${filter === f.id ? " on" : ""}`}
+                  aria-pressed={filter === f.id}
+                  onClick={() => setFilter(f.id)}
+                >
+                  {f.label} <span className="muted">{count(f.id)}</span>
+                </button>
+              ))}
+            </fieldset>
+            <span className="board-legend muted" aria-hidden="true">
+              Last {STRIP_RUNS} runs →
+            </span>
+          </div>
+          <ul className="board" aria-label="Scheduled tasks">
+            {shown.map((r) => (
+              <BoardRow key={r.task.id} row={r} actions={actions} />
+            ))}
+          </ul>
+          <DescribeBox
+            onCreate={actions.onCreate}
+            onDescribe={actions.onDescribe}
+            showExamples={false}
+          />
+          <div className="home-foot">
+            <button type="button" className="link-btn" onClick={actions.onSeeActivity}>
+              Every run, newest first
+            </button>
+          </div>
         </div>
       </main>
     </>
@@ -452,16 +525,23 @@ export function HomeView({
     }
   }, [upcomingTool]);
 
-  // The strips are decoration on rows the list already draws, so a failed
-  // read leaves them empty rather than raising a banner.
+  // Each task's own latest runs, read per task: one read across every task
+  // would let a task that runs every few minutes push the others' runs out of
+  // the page. A task whose read fails draws empty squares rather than a banner,
+  // since the rows are drawn either way.
+  const taskIds = tasks.map((t) => t.id).join(",");
   const loadRecent = useCallback(async () => {
-    try {
-      const res = await runsTool.call({ limit: STRIP_READ, excludeBatchRuns: true });
-      setRecent(recentByTask((asDict(res.data).runs as TaskRun[]) ?? []));
-    } catch {
-      setRecent(null);
-    }
-  }, [runsTool]);
+    const ids = taskIds ? taskIds.split(",") : [];
+    const lists = await Promise.all(
+      ids.map((taskId) =>
+        runsTool
+          .call({ taskId, limit: STRIP_RUNS, excludeBatchRuns: true })
+          .then((res) => (asDict(res.data).runs as TaskRun[]) ?? [])
+          .catch(() => [] as TaskRun[]),
+      ),
+    );
+    setRecent(recentByTask(lists.flat()));
+  }, [runsTool, taskIds]);
 
   // The figures count recorded runs, and every record, assessment and verdict
   // announces a data change, so that signal keeps them current. Counting 30

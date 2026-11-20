@@ -145,7 +145,7 @@ describe("TaskPageBody", () => {
       }),
     );
     expect(html).toContain("callout tone-warning");
-    expect(html).toContain("Check the latest result and accept or reject it.");
+    expect(html).toContain("A result is waiting for your check.");
     expect(html).toContain("Latest result");
     expect(html).toContain("<dt>note</dt>");
     expect(html).toContain("Three prospects found.");

@@ -183,7 +183,30 @@ Pausing keeps the definition and its run history intact; the scheduler simply sk
 
 ## The Scheduled page
 
-**Scheduled** in the sidebar lists your scheduled tasks in three groups. **Needs you** comes first: each task whose trigger was turned off, whose runs keep failing, or whose last run didn't work or needs checking, with the reason in a sentence and **See what happened**. **Active** lists the rest, each on one line with when it runs and what happens next ("Weekdays at 7:00 AM · next tomorrow 7:00 AM", or "running now"), and a strip of its last ten runs, colored by outcome. **Paused** holds the ones you turned off. **Every run, newest first** at the foot lists every run from every source, filtered by outcome, task, what started it, and date; a batch is one row you can expand.
+**Scheduled** in the sidebar lists your scheduled tasks on one board, worst first. Each row has:
+
+- a light: green when it is healthy, amber when it is flaky or a result is waiting for your check, red when it is broken or was turned off after repeated failures, and hollow when you paused it;
+- its name and its schedule in a few words ("Weekdays 7 AM", "On mail.* events", "On demand"), with when it runs next;
+- its last 14 runs as squares, oldest to newest, each colored by how it went;
+- an on/off switch for a task with a schedule or event trigger, or **Run** for an on-demand task.
+
+A row that needs you says why on its second line, with the one action that clears it. The filter above the board shows all tasks, or only the scheduled, event, or on-demand ones. **Every run, newest first** at the foot lists every run from every source, filtered by outcome, task, what started it, and date; a batch is one row you can expand.
+
+A task is **flaky** when 2 or more of its last 10 runs didn't work, even if the latest one did.
+
+### What clears a problem
+
+A task's health is read from its runs, so only new evidence changes it:
+
+| The row says | What clears it |
+|---|---|
+| Last run failed, or Failed N times in a row | A run that works. **Try again** runs it now; fix the cause first (reconnect a connector in Plugins, for example), since fixing it alone runs nothing. |
+| Turned off after repeated failures | **Turn on and try again** turns the trigger back on and runs it. Turning it on alone resets the failure count, but the light stays red until a run works. |
+| A result is waiting for your check | Accept or Reject it on the run (**Review**). |
+| The last result fell short of its checks | Review it, then fix the task or run it again. |
+| Flaky | Failures age out: once fewer than 2 of the last 10 runs failed, it reads healthy again. |
+
+Turning a task off is a decision, so a paused task reads as paused, not as a problem, whatever its last run did. A result waiting for your check still needs you while it is paused.
 
 Outcomes read in three words wherever runs are listed: **Done**, **Needs you** (the result is waiting for your check), and **Didn't work** (the run failed, or its result fell short of its checks). A run that never started reads **Didn't run**, and one you stopped reads **Stopped**. A run's own page also names the precise label (Succeeded, Needs review, Poor result, Failed, Skipped, Cancelled); see [Judging results](#judging-results).
 

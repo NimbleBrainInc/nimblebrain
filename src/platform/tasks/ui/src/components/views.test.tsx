@@ -82,6 +82,8 @@ const TASK: TaskSummary = {
 const ACTIONS = {
   onOpenTask: noop,
   onOpenRun: noop,
+  onRunNow: noop,
+  onSetEnabled: async () => {},
   onCreate: noop,
   onSeeActivity: noop,
 };
@@ -134,14 +136,14 @@ describe("Home", () => {
   test("an error with nothing loaded says so", () => {
     expect(body({ error: "boom" })).toContain('role="alert"');
   });
-  test("a poor result leads under Needs you, with its reason and what happened", () => {
+  test("a poor result leads, its reason on its row, with Review", () => {
     const html = body({ tasks: [live], stats: STATS("Poor result") });
     expect(html).toContain("1 needs you");
-    expect(html).toContain("attn-card tone-danger");
-    expect(html).toContain("The latest result didn&#x27;t meet its rules.");
-    expect(html).toContain("See what happened");
+    expect(html).toContain("board-row tone-danger");
+    expect(html).toContain("The last result fell short of its checks.");
+    expect(html).toContain(">Review<");
   });
-  test("an active task reads as one line: when it runs, and its last runs as a strip", () => {
+  test("a healthy task reads as one short line and its last runs as squares", () => {
     const recent = new Map([
       [
         "digest",
@@ -156,8 +158,8 @@ describe("Home", () => {
           {
             id: "r2",
             taskId: "digest",
-            status: "failure",
-            label: "Failed" as const,
+            status: "success",
+            label: "Succeeded" as const,
             startedAt: "2026-01-02T00:00:00.000Z",
           },
         ],
@@ -165,19 +167,25 @@ describe("Home", () => {
     ]);
     const html = body({ tasks: [live], stats: STATS("Succeeded"), recent });
     expect(html).toContain("Everything is on track");
-    expect(html).toMatch(/Active<\/h2>/);
-    expect(html).toContain("home-row tone-success");
-    expect(html).toContain("Weekdays at 7:20 AM");
-    expect(html).toContain('aria-label="Last 2 runs: Done, Didn&#x27;t work"');
-    expect(html).not.toContain("attn-card");
+    expect(html).toContain("board-row tone-success");
+    // The server's "Weekdays at 7:20 AM" shortens to "Weekdays 7:20 AM".
+    expect(html).toContain("Weekdays 7:20 AM");
+    expect(html).toContain('aria-label="Last 2 runs: Done, Done"');
+    expect(html.match(/class="cell empty"/g)).toHaveLength(home.STRIP_RUNS - 2);
+    expect(html).toContain('role="switch" aria-checked="true"');
   });
-  test("a manual task says it runs only when you run it", () => {
-    const html = body({ tasks: [{ ...live, scheduleType: "none", schedule: "Manual" }] });
-    expect(html).toContain("Only when you run it");
+  test("an on-demand task has Run, not a switch, and says it runs on demand", () => {
+    const html = body({ tasks: [{ ...live, scheduleType: "none", schedule: "Manual only" }] });
+    expect(html).toContain("On demand");
+    expect(html).toContain(">Run<");
+    expect(html).not.toContain('role="switch"');
   });
-  test("a paused task is folded under Paused", () => {
+  test("a paused task is a hollow light at the end, with its switch off", () => {
     const html = body({ tasks: [TASK], stats: STATS("Succeeded") });
-    expect(html).toMatch(/Paused<\/h2><div class="card-aside"><span class="muted">1</);
+    expect(html).toContain("is-off");
+    expect(html).toContain('class="light hollow"');
+    expect(html).toContain('aria-checked="false"');
+    expect(html).toContain("· paused");
   });
   test("a run in flight says so on its row", () => {
     const html = body({
@@ -201,7 +209,16 @@ describe("Home", () => {
       },
     });
     expect(html).toContain("running now");
-    expect(html).toContain("home-row tone-active");
+    expect(html).toContain("board-row tone-active");
+  });
+  test("the filter offers only the kinds present, with counts", () => {
+    const html = body({
+      tasks: [live, { ...live, id: "x", name: "X", scheduleType: "none", schedule: "Manual only" }],
+    });
+    expect(html).toContain('All <span class="muted">2</span>');
+    expect(html).toContain('Scheduled <span class="muted">1</span>');
+    expect(html).toContain('On demand <span class="muted">1</span>');
+    expect(html).not.toContain("On events");
   });
   test("describing one goes to chat where the host takes a message, else to the form", () => {
     expect(body({ actions: { ...ACTIONS, onDescribe: noop } })).toContain(
@@ -222,7 +239,7 @@ describe("recentByTask", () => {
     const byTask = home.recentByTask(runs);
     expect(byTask.get("a")?.map((r) => r.id)).toEqual(["r1", "r3", "r5", "r7", "r9", "r11", "r13"]);
     const many = home.recentByTask(
-      Array.from({ length: 12 }, (_, i) => ({
+      Array.from({ length: home.STRIP_RUNS + 2 }, (_, i) => ({
         id: `x${i}`,
         taskId: "a",
         status: "success",
