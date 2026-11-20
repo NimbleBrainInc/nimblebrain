@@ -791,6 +791,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             telemetryEnabled: tm.isEnabled(),
             installId: tm.getAnonymousId(),
             telemetry: tm.status(),
+            // The web client names the signed-in person only when the
+            // deployment identifies; the tenant is the group it joins.
+            telemetryIdentify: tm.isEnabled() && tm.isIdentified(),
+            ...(tm.getTenantId() ? { tenantId: tm.getTenantId() } : {}),
           },
           isError: false,
         };

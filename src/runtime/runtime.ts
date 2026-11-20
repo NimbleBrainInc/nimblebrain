@@ -856,6 +856,19 @@ export class Runtime {
     const telemetryManager = TelemetryManager.create({
       workDir,
       enabled: declaredConfig.telemetry?.enabled,
+      identify: declaredConfig.telemetry?.identify,
+    });
+    // An identified event is about whoever made the request: the verified
+    // identity and the one workspace the request is bound to.
+    telemetryManager.setSubjectSource(() => {
+      const ctx = getRequestContext();
+      if (!ctx?.identity) return undefined;
+      return {
+        userId: ctx.identity.id,
+        email: ctx.identity.email,
+        name: ctx.identity.displayName,
+        workspaceId: ctx.workspaceId,
+      };
     });
     const telemetrySink = new PostHogEventSink(telemetryManager);
     const events = buildRuntimeEventSink(declaredConfig, telemetrySink);

@@ -39,17 +39,58 @@ export const INIT_OPTIONS = {
   before_send: scrubUrls,
 } satisfies Partial<PostHogConfig>;
 
-export function initTelemetry(installId?: string): void {
-  if (initialized || !installId || !POSTHOG_KEY) return;
+/**
+ * The signed-in person, named only when the deployment identifies
+ * (`telemetryIdentify` from `workspace_info`). Absent, events stay anonymous.
+ */
+export interface TelemetryPerson {
+  userId: string;
+  email?: string;
+  name?: string;
+  tenantId?: string;
+}
 
-  // Flip the guard before posthog.init to prevent concurrent callers
-  // (e.g. React StrictMode double-invoking effects) from racing into a
-  // second init, which PostHog logs as "already initialized".
-  initialized = true;
+let workspaceId: string | null = null;
+let identified = false;
 
-  posthog.init(POSTHOG_KEY, INIT_OPTIONS);
+export function initTelemetry(installId?: string, person?: TelemetryPerson): void {
+  if (!installId || !POSTHOG_KEY) return;
 
+  if (!initialized) {
+    // Flip the guard before posthog.init to prevent concurrent callers
+    // (e.g. React StrictMode double-invoking effects) from racing into a
+    // second init, which PostHog logs as "already initialized".
+    initialized = true;
+    posthog.init(POSTHOG_KEY, INIT_OPTIONS);
+  }
   posthog.register({ installId });
+
+  if (!person) return;
+  // The same id the runtime sends under, so a person's browser and server
+  // events are one person.
+  identified = true;
+  posthog.identify(person.userId, {
+    ...(person.email ? { email: person.email } : {}),
+    ...(person.name ? { name: person.name } : {}),
+  });
+  if (person.tenantId) posthog.group("tenant", person.tenantId);
+  if (workspaceId) posthog.group("workspace", workspaceId);
+}
+
+/**
+ * The focused workspace, as the `workspace` group of identified events. Kept
+ * even before init, which waits on `workspace_info`.
+ */
+export function setTelemetryWorkspace(id: string | null): void {
+  workspaceId = id;
+  if (initialized && identified && id) posthog.group("workspace", id);
+}
+
+/** Forget the signed-in person, so the next sign-in starts a new one. */
+export function resetTelemetry(): void {
+  if (!initialized) return;
+  identified = false;
+  posthog.reset();
 }
 
 export function captureEvent(name: string, properties?: Record<string, unknown>): void {
