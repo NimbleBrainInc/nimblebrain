@@ -1907,6 +1907,7 @@ export class Runtime {
       briefingWsId,
       activeWorkspace,
       carry: conversationCarry(recordedHistory),
+      promotesTools: agentRuntime.capabilities.promotesTools,
     });
     const { tools, skill, systemPrompt, stableSystem, volatileHead } = composed;
 
@@ -2326,6 +2327,8 @@ export class Runtime {
       activeWorkspace: Workspace | null;
       /** What the conversation already brought into context (ADR-0066). */
       carry: ConversationCarry;
+      /** Whether the run's runtime promotes tools (`RuntimeCapabilities.promotesTools`). */
+      promotesTools: boolean;
     },
   ): Promise<RunComposition> {
     const { attended, briefingWsId, activeWorkspace, carry } = ctx;
@@ -2458,6 +2461,10 @@ export class Runtime {
       ...buildSurfaceOptions(focusedServerName, spec.input.allowedTools),
       carriedTools: carry.calledTools,
     });
+    // Promotion guidance describes the native loop. A runtime served by the
+    // tool projection gets every tool from the start, so for it nothing is
+    // proxied, whatever the surfacing held back for a native run.
+    const hasProxiedTools = ctx.promotesTools && proxied.length > 0;
 
     // Per-user preferences from the authenticated identity.
     const prefs = buildPromptPrefs(identity);
@@ -2540,7 +2547,7 @@ export class Runtime {
       focusedApp,
       appState,
       prefs,
-      proxied.length > 0,
+      hasProxiedTools,
       workspaceContext,
       layer3Entries,
       attended ? "chat" : "task",
@@ -2553,7 +2560,7 @@ export class Runtime {
 
     return {
       tools,
-      hasProxiedTools: proxied.length > 0,
+      hasProxiedTools,
       skill: matchedSkill,
       skillMatch: composedMatch,
       alwaysOnSkills: requestContextSkills,

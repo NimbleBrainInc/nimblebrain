@@ -29,7 +29,7 @@ import type { ConnectorLifecycleManager } from "../../src/connectors/runtime/lif
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import type { ConnectorInstance } from "../../src/connectors/runtime/types.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
-import { isModelVisible, type ToolSchema } from "../../src/engine/types.ts";
+import { type EngineEvent, isModelVisible, type ToolSchema } from "../../src/engine/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
@@ -64,6 +64,8 @@ interface Harness {
   workDir: string;
   store: PermissionStore;
   tool: ReturnType<typeof createManageConnectorsTool>;
+  /** Every event the tool emitted on the runtime's sink, in order. */
+  events: EngineEvent[];
 }
 
 async function buildHarness(opts: {
@@ -128,8 +130,10 @@ async function buildHarness(opts: {
   }
   const composio = createComposioProvider();
 
+  const events: EngineEvent[] = [];
   const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
+    getEventSink: () => ({ emit: (event: EngineEvent) => events.push(event) }),
     getManagedConnectorRegistry: () =>
       stub<ManagedConnectorRegistry>({
         get: (id: string) => (id === "composio" ? composio : undefined),
@@ -179,7 +183,7 @@ async function buildHarness(opts: {
     getIdentity: () => (opts.identity === undefined ? ALICE : opts.identity),
     getWorkspaceId: () => opts.wsId ?? null,
   };
-  return { workDir, store, tool: createManageConnectorsTool(ctx) };
+  return { workDir, store, tool: createManageConnectorsTool(ctx), events };
 }
 
 /** A running source that lists `tools` under the registry's `<server>__` prefix. */
@@ -278,6 +282,38 @@ describe("manage_connectors — personal-connector grants", () => {
       wsId: SHARED_WS,
     });
     expect(again.isError).toBeFalsy();
+  });
+
+  test("grant and revoke tell the caller's tabs only when the stored grant changed", async () => {
+    h = await buildHarness({ personalConnectors: ["granola"] });
+    const grantChanges = () => h.events.filter((e) => e.type === "connector.grant_changed");
+    const call = (action: string) =>
+      h.tool.handler({ action, serverName: "granola", wsId: SHARED_WS });
+
+    await call("grant_connector");
+    expect(grantChanges().map((e) => e.data)).toEqual([
+      { userId: ALICE.id, serverName: "granola", wsId: SHARED_WS, granted: true },
+    ]);
+
+    // A re-grant changes nothing, so no client can be stale from it.
+    await call("grant_connector");
+    expect(grantChanges()).toHaveLength(1);
+
+    await call("revoke_connector");
+    expect(grantChanges().map((e) => e.data)).toEqual([
+      { userId: ALICE.id, serverName: "granola", wsId: SHARED_WS, granted: true },
+      { userId: ALICE.id, serverName: "granola", wsId: SHARED_WS, granted: false },
+    ]);
+
+    // Revoking a grant that is already gone is a no-op, and says nothing.
+    await call("revoke_connector");
+    expect(grantChanges()).toHaveLength(2);
+  });
+
+  test("a refused grant emits nothing", async () => {
+    h = await buildHarness({ personalConnectors: ["granola"], memberOfShared: false });
+    await h.tool.handler({ action: "grant_connector", serverName: "granola", wsId: SHARED_WS });
+    expect(h.events.filter((e) => e.type === "connector.grant_changed")).toEqual([]);
   });
 
   test("list_personal_connectors returns the caller's connectors with their grant state", async () => {

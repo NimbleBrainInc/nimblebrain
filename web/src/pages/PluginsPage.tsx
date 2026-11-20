@@ -170,8 +170,15 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
     };
   }, [loadConnectors]);
 
-  // A sign-in finishing elsewhere changes a row's status and account.
-  useEvents({ onConnectionStateChanged: () => void refresh() });
+  // A sign-in finishing elsewhere changes a row's status and account; a plugin
+  // turned on or off from another tab or the chat changes where it is on.
+  useEvents({
+    onConnectionStateChanged: () => void refresh(),
+    onConnectorGrantChanged: () => {
+      void refresh();
+      void loadConnectors();
+    },
+  });
 
   const plugins = listing && listing.wsId === wsId ? listing.plugins : null;
 

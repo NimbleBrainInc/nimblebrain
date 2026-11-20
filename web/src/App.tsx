@@ -64,7 +64,7 @@ import { connectorSettingsPath } from "./lib/workspace-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
 import { ContextInspectorPage } from "./pages/ContextInspectorPage";
-import { GlobalHomePage } from "./pages/GlobalHomePage";
+import { LandingRedirect } from "./pages/LandingRedirect";
 import { NotFoundPage, WorkspaceNotFoundPage } from "./pages/NotFoundPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
 import { ConnectorPageRedirect, PluginDetailPage } from "./pages/PluginDetailPage";
@@ -322,15 +322,15 @@ function AuthenticatedAppContent({
   // membership, or a dynamic /w/:slug deep-link the user can't see) returns
   // `workspace_error`. Bootstrap validates the active workspace on load, so
   // this is the mid-session net: drop the bad selection (excluding the
-  // rejected id), fall back to a valid workspace, and route home rather than
-  // surface raw error JSON. See recoverFromWorkspaceError for the contract.
+  // rejected id), and open a valid workspace rather than surface raw error
+  // JSON. See recoverFromWorkspaceError for the contract.
   useEffect(() => {
     setOnWorkspaceError(() => {
       recoverFromWorkspaceError(
         wsCtx.workspaces,
         wsCtx.activeWorkspace?.id,
         wsCtx.setActiveWorkspace,
-        () => navigate("/", { replace: true }),
+        (ws) => navigate(`/w/${toSlug(ws.id)}/`, { replace: true }),
         () => window.location.assign("/"),
       );
     });
@@ -371,8 +371,8 @@ function AuthenticatedAppContent({
   const allRoutable = routablePlacements(forSlot("sidebar"), mainRoutes());
 
   // App placements: everything routable except route "/", which is the shell's
-  // own: `/` is `GlobalHomePage` (workspace-agnostic) and `/w/<slug>/` is
-  // `WorkspaceOverviewPage` (app grid).
+  // own: `/` opens a workspace (`LandingRedirect`) and `/w/<slug>/` is its
+  // `WorkspaceOverviewPage`.
   // Identity apps (conversations, …) are also excluded from the app grid set —
   // they render at their own segment under `/w/<slug>` (see
   // `identityAppPlacements`), not as `app/<route>`.
@@ -399,11 +399,9 @@ function AuthenticatedAppContent({
       <ShellLayout forSlot={forSlot} onLogout={onLogout}>
         <ErrorBoundary resetKeys={[location.pathname]}>
           <Routes>
-            {/* Global Home — workspace-agnostic landing (greeting +
-                workspaces grid). Chat, Conversations, Tasks, Files
-                are all identity-bound now, so the root URL is the
-                user's cross-workspace home. */}
-            <Route path="/" element={<GlobalHomePage />} />
+            {/* `/` is not a page: it opens the workspace this browser was
+                last in, else the first in the switcher's order (ADR-0073). */}
+            <Route path="/" element={<LandingRedirect />} />
 
             {/* Workspace-scoped routes: /w/:slug/... — the slug is the single
                 source of truth for the focused workspace. WorkspaceRouteGuard
@@ -760,7 +758,7 @@ export function App() {
 
   // Single auth check: try bootstrap. Authenticated → render app. Not → show login.
   // Bootstrap carries no workspace hint — the focused workspace is owned by
-  // the URL (`/w/:slug`), and login lands on `/` (the workspace-agnostic home).
+  // the URL (`/w/:slug`), and login lands on `/`, which opens a workspace.
   useEffect(() => {
     let cancelled = false;
     probeBootstrap().then((result) => {

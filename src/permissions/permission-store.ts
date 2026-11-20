@@ -191,33 +191,36 @@ export class PermissionStore {
    * including the user's own personal one).
    * Idempotent — re-granting an existing (connector, workspace) is a no-op.
    * Throws on a malformed serverName or target wsId (strict write).
+   * Returns whether the stored grants changed.
    */
-  async grantConnector(userId: string, serverName: string, wsId: string): Promise<void> {
+  async grantConnector(userId: string, serverName: string, wsId: string): Promise<boolean> {
     if (!ID_RE.test(serverName)) throw new Error(`Invalid connector name: ${serverName}`);
     if (!WORKSPACE_ID_RE.test(wsId)) throw new Error(`Invalid workspace id: ${wsId}`);
     const owner: PermissionOwner = { scope: "user", userId };
     const record = (await this.load(owner)) ?? { connectors: {} };
     const grants = record.grants ?? {};
     const existing = grants[serverName] ?? [];
-    if (existing.includes(wsId)) return;
+    if (existing.includes(wsId)) return false;
     grants[serverName] = [...existing, wsId];
     record.grants = grants;
     await this.save(owner, record);
+    return true;
   }
 
   /**
    * Revoke a personal connector's grant for a workspace.
    * Idempotent. Prunes the connector key when its last grant is removed
    * and the `grants` block when it empties, so the file stays small.
+   * Returns whether the stored grants changed.
    */
-  async revokeConnector(userId: string, serverName: string, wsId: string): Promise<void> {
+  async revokeConnector(userId: string, serverName: string, wsId: string): Promise<boolean> {
     // No ID_RE / WORKSPACE_ID_RE guard here (unlike grantConnector): a
     // malformed key can never be in a strictly-written ledger, so revoking
     // one is a safe no-op — the includes() check below simply misses.
     const owner: PermissionOwner = { scope: "user", userId };
     const record = await this.load(owner);
     const existing = record?.grants?.[serverName];
-    if (!record?.grants || !existing?.includes(wsId)) return;
+    if (!record?.grants || !existing?.includes(wsId)) return false;
     const grants = record.grants;
     const remaining = existing.filter((id) => id !== wsId);
     if (remaining.length === 0) {
@@ -229,6 +232,7 @@ export class PermissionStore {
       record.grants = undefined;
     }
     await this.save(owner, record);
+    return true;
   }
 
   // ── internals ─────────────────────────────────────────────────
