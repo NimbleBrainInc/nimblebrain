@@ -25,7 +25,7 @@ Each task is **owned by a workspace and a user** — it lives at `workspaces/<ws
 This has one practical consequence: if a task needs to reach a connector (for example, to post to Teams or Slack), that connector must be installed in the **same workspace the task was created in**. A connector connected only in another workspace is never reachable by that task, and a run that tries is recorded as a failure.
 
 <Aside type="note">
-A cron schedule is read in the instance's timezone unless it carries its own IANA `timezone`. The instance's is `Pacific/Honolulu` unless the operator sets the `NB_TIMEZONE` environment variable. Creating, updating, or inspecting a task says which timezone its schedule is read in.
+A cron schedule is read in the instance's timezone unless it carries its own IANA `timezone`. The form on the Scheduled page saves a new schedule in your browser's timezone, keeps a schedule's own timezone when you edit it, and says which one its times are in. The instance's is `Pacific/Honolulu` unless the operator sets the `NB_TIMEZONE` environment variable. Creating, updating, or inspecting a task says which timezone its schedule is read in.
 </Aside>
 
 ## Schedules
