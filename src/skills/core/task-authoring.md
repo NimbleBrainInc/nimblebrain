@@ -29,6 +29,11 @@ schedule or events). Each run leaves a deliverable, judged against the task's
 criteria when it has any. Tasks are yours, in the workspace you are in, and run
 as you.
 
+**Say "scheduled task" to the person, never a bare "task".** To a person, "task"
+means a to-do. The page that lists them is **Scheduled**: point there ("it's in
+Scheduled"), not to "Tasks". Say "run" for one execution and "result" for what it
+made. The tool names stay `tasks__*`.
+
 ## The tools
 
 | Tool | Use it to |
@@ -96,10 +101,14 @@ A run reads as one `label`:
 4. Pick the schedule (see Schedules). Give `schedule.timezone` when the person
    names a timezone or theirs is known; otherwise the instance timezone applies,
    and `tasks__create` returns it as `timezone`.
-5. If the person has not said what the task does, when it runs, or what to call
-   it, ask for that. When they have, create it without asking again, then show
-   the name, the schedule in words, the prompt, and the tools.
-6. `tasks__create`, then offer a test: `tasks__run {taskId}` and follow it.
+5. If the person has not said what the task does or when it runs, ask for that.
+   Name it yourself from what it does when they have not; do not ask for a name.
+   When you have what you need, create it without asking again.
+6. `tasks__create`. Where the host renders views, chat shows the saved task as
+   a card with its schedule and a Try it now button, so do not restate every
+   field: say in a sentence what it will do and when, and offer a test run.
+   Elsewhere, show the name, the schedule in words, the prompt, and the tools.
+   A test is `tasks__run {taskId}`, followed to its end.
 7. Say when it runs next (`nextRunAt` from `tasks__status`).
 
 If the name is taken, `tasks__create` refuses: change that task with

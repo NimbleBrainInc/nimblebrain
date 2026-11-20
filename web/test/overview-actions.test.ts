@@ -162,15 +162,15 @@ describe("overviewActions", () => {
     expect(levels).toEqual(["warning", "warning"]);
   });
 
-  test("runs to review open Automations with their count", () => {
+  test("results to review open Scheduled with their count", () => {
     const [a] = overviewActions(input({ reviewCount: 3 }));
     expect(a).toMatchObject({
       level: "warning",
       count: 3,
-      title: "Automation runs to review",
+      title: "Results to review",
       target: { type: "navigate", to: `/w/${SLUG}/tasks` },
     });
-    expect(overviewActions(input({ reviewCount: 1 }))[0]?.title).toBe("Automation run to review");
+    expect(overviewActions(input({ reviewCount: 1 }))[0]?.title).toBe("Result to review");
   });
 
   test("each setup step appears only when asked for, and none can be hidden", () => {

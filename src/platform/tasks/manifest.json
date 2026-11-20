@@ -15,7 +15,7 @@
           "slot": "sidebar",
           "resourceUri": "ui://tasks/panel",
           "route": "@nimblebraininc/tasks",
-          "label": "Tasks",
+          "label": "Scheduled",
           "icon": "clock",
           "priority": 3
         }

@@ -120,7 +120,7 @@ export function byUrgency<T extends { name: string; health: TaskHealth }>(rows: 
 
 /** The home list's opening line. */
 export function headline(needsYou: number, total: number): string {
-  if (total === 0) return "No tasks yet";
+  if (total === 0) return "Nothing scheduled yet";
   if (needsYou === 0) return "Everything is on track";
-  return needsYou === 1 ? "1 task needs you" : `${needsYou} tasks need you`;
+  return needsYou === 1 ? "1 needs you" : `${needsYou} need you`;
 }

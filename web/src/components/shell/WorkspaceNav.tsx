@@ -5,7 +5,7 @@
 // one workspace, so the nav shows only that one's views, and the way to see
 // another workspace's is to switch to it (WorkspaceSwitcher, above this).
 //
-// Order: Overview, the identity views (Conversations / Tasks / Files),
+// Order: Overview, the identity views (Conversations / Scheduled / Files),
 // Plugins (what the agent can do here), Skills (what it is taught), then APPS (People, Tasks, … — the viewer's pinned apps first, then the
 // rest; every app, since the sidebar is the only place that lists them). Each
 // routes into `/w/<slug>/…`. An app that places several views is one entry; while it
@@ -69,7 +69,7 @@ function WorkspaceViews({
   const { iconFor, connectors } = useWorkspaceAppIcons();
   const slug = toSlug(workspace.id);
 
-  // Identity views (Conversations / Tasks / Files): the bare-"sidebar"
+  // Identity views (Conversations / Scheduled / Files): the bare-"sidebar"
   // placements that are identity-owned, priority-ordered.
   const identityViews = useMemo(() => {
     const placements = shell?.forSlot("sidebar") ?? [];

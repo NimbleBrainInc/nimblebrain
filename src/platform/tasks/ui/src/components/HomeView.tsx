@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { StatusIcon } from "../icons.tsx";
 import { byUrgency, headline, healthOf, type TaskHealth } from "../lib/attention.ts";
-import type { TaskStats, TaskSummary, UpcomingData, UpcomingFire, UpcomingRun } from "../types.ts";
+import { outcomeOf } from "../lib/outcome.ts";
+import type { TaskRun, TaskStats, TaskSummary, UpcomingData, UpcomingRun } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatWhen, relativeTime, toolErrorText } from "../utils.ts";
 import { PageHeader } from "./Chrome.tsx";
@@ -16,14 +17,18 @@ const REFRESH_MS = 15_000;
  * window moves with the clock, so a run leaves it without an announcement.
  */
 export const STATS_REFRESH_MS = 60 * 60_000;
-/** Scheduled runs shown under "Coming up"; the rest are a link away. */
-const COMING_UP = 4;
+/** Runs drawn in each row's strip, oldest to newest. */
+export const STRIP_RUNS = 10;
+/** Runs read for the strips: enough for STRIP_RUNS each across a typical home. */
+const STRIP_READ = 300;
 
 export interface HomeActions {
   onOpenTask: (task: TaskSummary) => void;
   onOpenRun: (taskId: string, runId: string) => void;
+  /** Open the form, empty or seeded from an example. */
   onCreate: (template?: Template) => void;
-  onSeeUpcoming: () => void;
+  /** Hand a sentence to the agent in chat; absent where the host takes no message. */
+  onDescribe?: (sentence: string) => void;
   onSeeActivity: () => void;
 }
 
@@ -33,13 +38,16 @@ export interface HomeRow {
   name: string;
   health: TaskHealth;
   live?: UpcomingRun;
+  /** Its latest runs, oldest first, for the strip. */
+  recent: TaskRun[];
 }
 
-/** Each task's health from its figures and any run of it in flight. */
+/** Each task's health from its figures and any run of it in flight, with its latest runs. */
 export function homeRows(
   tasks: TaskSummary[],
   stats: Map<string, TaskStats> | null,
   upcoming: UpcomingData | null,
+  recent: Map<string, TaskRun[]> | null = null,
 ): HomeRow[] {
   const live = new Map<string, UpcomingRun>();
   // A batch's runs are the batch's, not the task's own state.
@@ -51,21 +59,59 @@ export function homeRows(
     name: task.name,
     live: live.get(task.id),
     health: healthOf(task, stats?.get(task.id), live.get(task.id)),
+    recent: recent?.get(task.id) ?? [],
   }));
 }
 
-/** The right-hand note on a list row: when it runs next, or when it last ran. */
-function whenNote(row: HomeRow, stats?: TaskStats): string {
-  const { task, health } = row;
-  if (health.word === "Running" && row.live?.startedAt) {
-    return `Started ${relativeTime(row.live.startedAt)}`;
+/** Runs grouped by task, newest STRIP_RUNS each, oldest first. */
+export function recentByTask(runs: TaskRun[]): Map<string, TaskRun[]> {
+  const out = new Map<string, TaskRun[]>();
+  const newestFirst = [...runs].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  for (const r of newestFirst) {
+    const list = out.get(r.taskId) ?? [];
+    if (list.length < STRIP_RUNS) list.push(r);
+    out.set(r.taskId, list);
   }
-  if (health.paused) return "Paused";
-  if (task.nextRunAt && task.enabled) return `Next ${formatWhen(task.nextRunAt)}`;
-  if (stats?.lastRun) return `Last ran ${relativeTime(stats.lastRun.startedAt)}`;
-  return task.scheduleType === "none" ? "Runs when you start it" : "";
+  for (const list of out.values()) list.reverse();
+  return out;
 }
 
+/** The row's line in plain words: when it runs, and what happens next or happened last. */
+export function rowLine(row: HomeRow, stats?: TaskStats): string {
+  const { task, health, live } = row;
+  const when = task.scheduleType === "none" ? "Only when you run it" : task.schedule;
+  if (live?.state === "running") {
+    return `${when} · running now${live.startedAt ? `, started ${relativeTime(live.startedAt)}` : ""}`;
+  }
+  if (live?.state === "queued") return `${when} · waiting to start`;
+  if (health.paused) return `${when} · paused`;
+  if (task.nextRunAt && task.enabled) return `${when} · next ${formatWhen(task.nextRunAt)}`;
+  if (stats?.lastRun) return `${when} · last ran ${relativeTime(stats.lastRun.startedAt)}`;
+  return when;
+}
+
+/** The last few runs as ticks, each in its outcome's tone, newest on the right. */
+function RunStrip({ runs }: { runs: TaskRun[] }) {
+  if (runs.length === 0) return <span className="run-strip" aria-hidden="true" />;
+  const words = runs.map((r) => (r.label ? outcomeOf(r.label).word : r.status));
+  return (
+    <span
+      className="run-strip"
+      role="img"
+      aria-label={`Last ${runs.length} runs: ${words.join(", ")}`}
+    >
+      {runs.map((r) => (
+        <i
+          key={r.id}
+          className={`tick tone-${r.label ? outcomeOf(r.label).tone : "muted"}`}
+          title={`${r.label ? outcomeOf(r.label).word : r.status} · ${relativeTime(r.startedAt)}`}
+        />
+      ))}
+    </span>
+  );
+}
+
+/** A task that needs a person: why, in words, and the one thing to do about it. */
 function AttentionCard({ row, actions }: { row: HomeRow; actions: HomeActions }) {
   const { task, health } = row;
   const runId = health.runId;
@@ -86,88 +132,14 @@ function AttentionCard({ row, actions }: { row: HomeRow; actions: HomeActions })
           className="btn btn-sm"
           onClick={() => actions.onOpenRun(task.id, runId)}
         >
-          Open the run
+          See what happened
         </button>
       ) : (
         <button type="button" className="btn btn-sm" onClick={() => actions.onOpenTask(task)}>
-          Open task
+          Open
         </button>
       )}
     </li>
-  );
-}
-
-function LiveRow({ row, actions }: { row: HomeRow; actions: HomeActions }) {
-  const { task, live, health } = row;
-  return (
-    <li className={`live-row tone-${health.tone}`}>
-      <StatusIcon tone={health.tone} />
-      <span className="live-text">
-        <button type="button" className="attn-name" onClick={() => actions.onOpenTask(task)}>
-          {task.name}
-        </button>{" "}
-        <span className="muted">
-          {live?.state === "queued"
-            ? `is waiting for a run slot${live.position ? ` (${live.position} in line)` : ""}.`
-            : `is running${live?.startedAt ? `, started ${relativeTime(live.startedAt)}` : ""}.`}
-        </span>
-      </span>
-      {live?.runId && (
-        <button
-          type="button"
-          className="btn btn-sm"
-          onClick={() => live.runId && actions.onOpenRun(task.id, live.runId)}
-        >
-          Watch
-        </button>
-      )}
-    </li>
-  );
-}
-
-function ComingUp({
-  fires,
-  rows,
-  actions,
-}: {
-  fires: UpcomingFire[];
-  rows: HomeRow[];
-  actions: HomeActions;
-}) {
-  const byId = new Map(rows.map((r) => [r.task.id, r]));
-  return (
-    <Section
-      title="Coming up"
-      aside={
-        <button type="button" className="btn btn-sm" onClick={actions.onSeeUpcoming}>
-          See everything coming up
-        </button>
-      }
-    >
-      <ul className="coming-strip">
-        {fires.map((f) => {
-          const row = byId.get(f.taskId);
-          const atRisk = row?.health.tone === "danger";
-          return (
-            <li key={`${f.taskId}-${f.at}`}>
-              <button
-                type="button"
-                className="coming-slot"
-                onClick={() => row && actions.onOpenTask(row.task)}
-              >
-                <time className="muted" dateTime={f.at}>
-                  {formatWhen(f.at)}
-                </time>
-                <span className="coming-name">{f.taskName}</span>
-                <span className={atRisk ? "coming-risk" : "coming-sched"} title={f.schedule}>
-                  {atRisk ? "Its last run failed" : f.schedule}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </Section>
   );
 }
 
@@ -185,39 +157,89 @@ function TaskRowItem({
     <li>
       <button type="button" className={`home-row tone-${health.tone}`} onClick={onOpen}>
         <StatusIcon tone={health.tone} />
-        <span className="home-row-name">
-          {task.name}
-          <span className="sr-only">, {health.word}</span>
+        <span className="home-row-text">
+          <span className="home-row-name">
+            {task.name}
+            <span className="sr-only">, {health.word}</span>
+          </span>
+          <span className="home-row-line">{rowLine(row, stats)}</span>
         </span>
-        <span className="home-row-sched">{task.schedule}</span>
-        <span className="home-row-when">{whenNote(row, stats)}</span>
+        <RunStrip runs={row.recent} />
       </button>
     </li>
   );
 }
 
-/** No tasks yet: what a task is, and templates to start from. */
-function NoTasks({ onCreate }: { onCreate: (template?: Template) => void }) {
+/**
+ * Say what it should do, in a sentence: the agent sets it up in chat and shows
+ * what it saved. Where the host takes no message, the sentence seeds the form.
+ */
+export function DescribeBox({
+  onCreate,
+  onDescribe,
+  showExamples,
+}: {
+  onCreate: (template?: Template) => void;
+  onDescribe?: (sentence: string) => void;
+  showExamples: boolean;
+}) {
+  const id = useId();
+  const canChat = !!onDescribe;
+  const [text, setText] = useState("");
+
+  function submit() {
+    const sentence = text.trim();
+    if (!sentence) return;
+    if (onDescribe) {
+      onDescribe(sentence);
+    } else {
+      onCreate({ id: "described", sentence, name: "", prompt: sentence, schedule: null });
+    }
+    setText("");
+  }
+
   return (
-    <div className="empty-block">
-      <h2 className="empty-state-title">No tasks yet</h2>
-      <p className="empty-state-desc">
-        A task is a prompt the agent carries out on its own: on a schedule, when an event arrives,
-        or when you run it. Start from one of these, or from scratch.
-      </p>
-      <div className="template-grid">
-        {TEMPLATES.map((t) => (
-          <button
-            type="button"
-            key={t.id}
-            className={`template-card${t.id === "custom" ? " dashed" : ""}`}
-            onClick={() => onCreate(t)}
-          >
-            <span className="template-card-name">{t.name}</span>
-            <span className="template-card-desc">{t.description}</span>
-          </button>
-        ))}
+    <div className="describe">
+      <label className="describe-label" htmlFor={`${id}-say`}>
+        What should run, and when?
+      </label>
+      {/* No <form>: the host's sandbox withholds allow-forms, so a submit is
+          blocked before any handler runs. Enter and the button call `submit`. */}
+      <div className="describe-box">
+        <input
+          id={`${id}-say`}
+          className="describe-input"
+          value={text}
+          placeholder="Every weekday at 7am, summarize my unread email and post it in #team"
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+        />
+        <button type="button" className="btn btn-primary" disabled={!text.trim()} onClick={submit}>
+          Set it up
+        </button>
       </div>
+      {showExamples && (
+        <ul className="describe-examples" aria-label="Examples">
+          {TEMPLATES.map((t) => (
+            <li key={t.id}>
+              <button type="button" className="example-chip" onClick={() => setText(t.sentence)}>
+                {t.sentence}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="hint">
+        {canChat ? "The agent sets it up in chat and shows you what it saved. " : ""}
+        <button type="button" className="link-btn" onClick={() => onCreate()}>
+          Fill in a form instead
+        </button>
+      </p>
     </div>
   );
 }
@@ -227,10 +249,12 @@ function HomeEmpty({
   loading,
   error,
   onCreate,
+  onDescribe,
 }: {
   loading: boolean;
   error: string | null;
   onCreate: (template?: Template) => void;
+  onDescribe?: (sentence: string) => void;
 }) {
   if (loading) {
     return (
@@ -246,65 +270,46 @@ function HomeEmpty({
           {error}
         </div>
       ) : (
-        <NoTasks onCreate={onCreate} />
+        <div className="empty-block">
+          <h2 className="empty-state-title">Nothing scheduled yet</h2>
+          <p className="empty-state-desc">
+            The agent can do work for you on a schedule, or whenever something happens, and leave
+            the result here.
+          </p>
+          <DescribeBox onCreate={onCreate} onDescribe={onDescribe} showExamples />
+        </div>
       )}
     </div>
   );
 }
 
-/** Tasks listed quietly: the rest under a heading, paused ones folded. */
-function TaskLists({
-  rest,
-  paused,
-  needsYou,
+function RowGroup({
+  title,
+  rows,
   stats,
   onOpen,
 }: {
-  rest: HomeRow[];
-  paused: HomeRow[];
-  needsYou: number;
+  title: string;
+  rows: HomeRow[];
   stats: Map<string, TaskStats> | null;
   onOpen: (r: HomeRow) => () => void;
 }) {
+  if (rows.length === 0) return null;
   return (
-    <>
-      {rest.length > 0 && (
-        <Section title={needsYou > 0 ? "Everything else" : "Your tasks"}>
-          <ul className="home-rows">
-            {rest.map((r) => (
-              <TaskRowItem
-                key={r.task.id}
-                row={r}
-                stats={stats?.get(r.task.id)}
-                onOpen={onOpen(r)}
-              />
-            ))}
-          </ul>
-        </Section>
-      )}
-
-      {paused.length > 0 && (
-        <Section title="Paused" aside={<span className="muted">{paused.length}</span>}>
-          <ul className="home-rows">
-            {paused.map((r) => (
-              <TaskRowItem
-                key={r.task.id}
-                row={r}
-                stats={stats?.get(r.task.id)}
-                onOpen={onOpen(r)}
-              />
-            ))}
-          </ul>
-        </Section>
-      )}
-    </>
+    <Section title={title} aside={<span className="muted">{rows.length}</span>}>
+      <ul className="home-rows">
+        {rows.map((r) => (
+          <TaskRowItem key={r.task.id} row={r} stats={stats?.get(r.task.id)} onOpen={onOpen(r)} />
+        ))}
+      </ul>
+    </Section>
   );
 }
 
 /**
- * The panel's home: what needs you first, then what is running and coming
- * up, then every other task. Paused tasks and the full history sit one
- * click away.
+ * The home: one list in three groups. What needs you first, each with its
+ * reason and one way forward; then what is active, each with when it runs and
+ * its last few outcomes; then what is paused.
  */
 export function HomeBody({
   tasks,
@@ -312,6 +317,7 @@ export function HomeBody({
   error,
   stats,
   upcoming,
+  recent = null,
   readError,
   actions,
 }: {
@@ -320,45 +326,42 @@ export function HomeBody({
   error: string | null;
   stats: Map<string, TaskStats> | null;
   upcoming: UpcomingData | null;
+  /** Each task's latest runs, oldest first. */
+  recent?: Map<string, TaskRun[]> | null;
   /** The figures or the queue could not be read. */
   readError: string | null;
   actions: HomeActions;
 }) {
   const newTask = (
     <button type="button" className="btn btn-primary" onClick={() => actions.onCreate()}>
-      New task
+      New
     </button>
   );
   if (tasks.length === 0) {
     return (
       <>
-        <PageHeader title="Tasks" actions={newTask} />
+        <PageHeader title="Scheduled" actions={newTask} />
         <main className="content">
-          <HomeEmpty loading={loading} error={error} onCreate={actions.onCreate} />
+          <HomeEmpty
+            loading={loading}
+            error={error}
+            onCreate={actions.onCreate}
+            onDescribe={actions.onDescribe}
+          />
         </main>
       </>
     );
   }
 
-  const rows = homeRows(tasks, stats, upcoming);
+  const rows = homeRows(tasks, stats, upcoming, recent);
   const needsYou = byUrgency(rows.filter((r) => r.health.needsYou));
-  const live = rows.filter((r) => r.live);
   const paused = rows.filter((r) => r.health.paused);
-  const rest = rows.filter((r) => !r.health.needsYou && !r.health.paused);
-  const fires = (upcoming?.scheduled ?? []).filter((f) => !f.beyondWindow).slice(0, COMING_UP);
+  const active = rows.filter((r) => !r.health.needsYou && !r.health.paused);
   const open = (r: HomeRow) => () => actions.onOpenTask(r.task);
 
   return (
     <>
-      <PageHeader
-        title={headline(needsYou.length, rows.length)}
-        status={
-          needsYou.length > 0 && rest.length > 0
-            ? `${rest.length} other ${rest.length === 1 ? "task is" : "tasks are"} fine.`
-            : undefined
-        }
-        actions={newTask}
-      />
+      <PageHeader title={headline(needsYou.length, rows.length)} actions={newTask} />
       <main className="content">
         <div className="view-pad home">
           <Sections>
@@ -368,34 +371,27 @@ export function HomeBody({
             )}
 
             {needsYou.length > 0 && (
-              <ul className="attn-list" aria-label="Needs you">
-                {needsYou.map((r) => (
-                  <AttentionCard key={r.task.id} row={r} actions={actions} />
-                ))}
-              </ul>
+              <Section title="Needs you" aside={<span className="muted">{needsYou.length}</span>}>
+                <ul className="attn-list" aria-label="Needs you">
+                  {needsYou.map((r) => (
+                    <AttentionCard key={r.task.id} row={r} actions={actions} />
+                  ))}
+                </ul>
+              </Section>
             )}
 
-            {live.length > 0 && (
-              <ul className="live-list" aria-label="Running now">
-                {live.map((r) => (
-                  <LiveRow key={r.task.id} row={r} actions={actions} />
-                ))}
-              </ul>
-            )}
+            <RowGroup title="Active" rows={active} stats={stats} onOpen={open} />
+            <RowGroup title="Paused" rows={paused} stats={stats} onOpen={open} />
 
-            {fires.length > 0 && <ComingUp fires={fires} rows={rows} actions={actions} />}
-
-            <TaskLists
-              rest={rest}
-              paused={paused}
-              needsYou={needsYou.length}
-              stats={stats}
-              onOpen={open}
+            <DescribeBox
+              onCreate={actions.onCreate}
+              onDescribe={actions.onDescribe}
+              showExamples={false}
             />
 
             <div className="home-foot">
-              <button type="button" className="btn" onClick={actions.onSeeActivity}>
-                See every run
+              <button type="button" className="link-btn" onClick={actions.onSeeActivity}>
+                Every run, newest first
               </button>
             </div>
           </Sections>
@@ -405,7 +401,10 @@ export function HomeBody({
   );
 }
 
-/** The home list's container: reads the 30-day figures and the queue when the data changes, and each on its own timer while open. */
+/**
+ * The home's container: reads the 30-day figures, the queue, and each task's
+ * latest runs when the data changes, and the queue and figures on timers.
+ */
 export function HomeView({
   tasks,
   loading,
@@ -422,8 +421,10 @@ export function HomeView({
 }) {
   const statsTool = useTool<string>("stats");
   const upcomingTool = useTool<string>("upcoming");
+  const runsTool = useTool<string>("runs");
   const [stats, setStats] = useState<Map<string, TaskStats> | null>(null);
   const [upcoming, setUpcoming] = useState<UpcomingData | null>(null);
+  const [recent, setRecent] = useState<Map<string, TaskRun[]> | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [upcomingError, setUpcomingError] = useState<string | null>(null);
 
@@ -451,6 +452,17 @@ export function HomeView({
     }
   }, [upcomingTool]);
 
+  // The strips are decoration on rows the list already draws, so a failed
+  // read leaves them empty rather than raising a banner.
+  const loadRecent = useCallback(async () => {
+    try {
+      const res = await runsTool.call({ limit: STRIP_READ, excludeBatchRuns: true });
+      setRecent(recentByTask((asDict(res.data).runs as TaskRun[]) ?? []));
+    } catch {
+      setRecent(null);
+    }
+  }, [runsTool]);
+
   // The figures count recorded runs, and every record, assessment and verdict
   // announces a data change, so that signal keeps them current. Counting 30
   // days of runs is the panel's costliest read, so the timer is hourly: it only
@@ -461,6 +473,12 @@ export function HomeView({
     const timer = setInterval(() => void loadStats(), STATS_REFRESH_MS);
     return () => clearInterval(timer);
   }, [loadStats, refreshKey]);
+
+  // A recorded run announces a data change, so that signal alone keeps the strips current.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the runs are re-read
+  useEffect(() => {
+    void loadRecent();
+  }, [loadRecent, refreshKey]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the queue is re-read at once
   useEffect(() => {
@@ -476,6 +494,7 @@ export function HomeView({
       error={error}
       stats={stats}
       upcoming={upcoming}
+      recent={recent}
       readError={statsError ?? upcomingError}
       actions={actions}
     />

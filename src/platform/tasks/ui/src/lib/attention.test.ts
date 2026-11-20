@@ -107,9 +107,9 @@ describe("byUrgency", () => {
 
 describe("headline", () => {
   test("says how many need you", () => {
-    expect(headline(0, 0)).toBe("No tasks yet");
+    expect(headline(0, 0)).toBe("Nothing scheduled yet");
     expect(headline(0, 4)).toBe("Everything is on track");
-    expect(headline(1, 4)).toBe("1 task needs you");
-    expect(headline(3, 4)).toBe("3 tasks need you");
+    expect(headline(1, 4)).toBe("1 needs you");
+    expect(headline(3, 4)).toBe("3 need you");
   });
 });
