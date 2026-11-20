@@ -8,7 +8,7 @@ import { BatchDialog } from "./BatchDialog.tsx";
 import { BatchScreen } from "./BatchPane.tsx";
 import { HostTrailContext, PageHeader } from "./Chrome.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
-import { type HomeActions, HomeView } from "./HomeView.tsx";
+import { type HomeActions, type HomeTab, HomeView } from "./HomeView.tsx";
 import { ResultScreen } from "./ResultView.tsx";
 import { RunDialog, type RunStarted, runStartedOf } from "./RunDialog.tsx";
 import { TaskEditor } from "./TaskEditor.tsx";
@@ -71,6 +71,7 @@ export function TasksUI() {
   const [runDialog, setRunDialog] = useState<TaskRef | null>(null);
   const [batchDialog, setBatchDialog] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<TaskRef | null>(null);
+  const [homeTab, setHomeTab] = useState<HomeTab>("board");
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
@@ -214,6 +215,8 @@ export function TasksUI() {
           )
       : undefined,
     onSeeActivity: () => push({ kind: "activity" }),
+    onOpenBatch: (batch) => push({ kind: "batch", batchId: batch.id, batch }),
+    onOpenOneoff: (taskId, name) => push({ kind: "activity", taskId, taskName: name }),
   };
 
   const taskActions: TaskPageActions = {
@@ -315,6 +318,8 @@ export function TasksUI() {
             error={error}
             refreshKey={refreshKey}
             actions={homeActions}
+            tab={homeTab}
+            onTab={setHomeTab}
           />
         </div>
       )}

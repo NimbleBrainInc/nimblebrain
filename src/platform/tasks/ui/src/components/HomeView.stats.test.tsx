@@ -37,6 +37,8 @@ const ACTIONS = {
   onSetEnabled: async () => {},
   onCreate: noop,
   onSeeActivity: noop,
+  onOpenBatch: noop,
+  onOpenOneoff: noop,
 };
 
 beforeAll(async () => {
@@ -101,6 +103,8 @@ test("a run that ages out of the window leaves the figures with no data change",
         error: null,
         refreshKey: 0,
         actions: ACTIONS,
+        tab: "board",
+        onTab: noop,
       }),
     ),
   );

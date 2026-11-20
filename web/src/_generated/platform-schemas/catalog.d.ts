@@ -299,6 +299,8 @@ export declare const PlatformToolCatalog: {
                             options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
                         }>>;
                         onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"notify" | "record" | "retry_once">>;
+                    } & {
+                        name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     }>>;
                     body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 }>>;

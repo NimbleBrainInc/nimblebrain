@@ -144,7 +144,9 @@ type SummaryOverlay =
   | "lastRunStatus"
   | "disabledAt"
   | "disabledReason"
-  | "estimatedCostPerDay";
+  | "estimatedCostPerDay"
+  // A one-off's prompt, cut to recognize it by.
+  | "promptPreview";
 type SummaryShared = Exclude<keyof Task & keyof TaskSummary, SummaryOverlay>;
 export type DriftSummarySharedA = AssertAssignable<
   Pick<TaskSummary, SummaryShared>,

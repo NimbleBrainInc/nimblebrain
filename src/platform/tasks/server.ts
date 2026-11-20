@@ -445,6 +445,11 @@ export interface ToolContext {
    * caller. Attribution only.
    */
   callerVia?: () => "ui" | "remote";
+  /**
+   * The name the calling client gave itself (an MCP client's `clientInfo.name`),
+   * when it gave one. Attribution only, like `callerVia`.
+   */
+  callerName?: () => string | undefined;
   defaultTimezone: string;
   /**
    * The caps a run of a task executes under, for create and update to
@@ -879,6 +884,7 @@ export function handleList(args: TasksListInput, ctx: ToolContext): TasksListOut
     disabledReason: a.disabledReason ?? null,
     estimatedCostPerDay: estimateCost(a, ctx.defaultModel).perDayUsd,
     ...(a.inputSchema ? { inputSchema: a.inputSchema } : {}),
+    ...oneoffSummary(a),
   }));
 
   const hasMore = remaining > 0;
@@ -1420,9 +1426,11 @@ export const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
 
 /**
  * An inline one-off's manifest: create's definition fields, without identity
- * (name, kind) or trigger (schedule, enabled).
+ * (kind) or trigger (schedule, enabled). `name` only labels it in lists: the
+ * one-off's id comes from its idempotency key.
  */
 export interface InlineManifest {
+  name?: string;
   skills?: string[];
   model?: string;
   thinkingEffort?: ThinkingEffort;
@@ -1512,6 +1520,18 @@ function oneoffDefinition(
   return canonicalJson(Object.fromEntries(ONEOFF_DEFINITION_FIELDS.map((f) => [f, source[f]])));
 }
 
+/** How much of a one-off's prompt `tasks__list` returns, to recognize it by. */
+export const PROMPT_PREVIEW_CHARS = 140;
+
+/** What `tasks__list` adds for a one-off: who made it, and the start of its prompt. Nothing for a saved task. */
+function oneoffSummary(task: Task): Pick<TaskSummary, "startedVia" | "promptPreview"> {
+  if (kindOf(task) !== "oneoff") return {};
+  return {
+    ...(task.startedVia ? { startedVia: task.startedVia } : {}),
+    promptPreview: task.prompt.slice(0, PROMPT_PREVIEW_CHARS),
+  };
+}
+
 /**
  * Find or create the `oneoff` task an inline `definition` names
  * (`tasks__run`, `tasks__run_batch`). The definition and the input(s) are
@@ -1531,9 +1551,10 @@ export function ensureOneoff(
   if (!def.body && !manifest.skills?.length) {
     throw new Error("A `definition` needs a `body` (the prompt), or `manifest.skills`.");
   }
-  validateTaskFields(manifest);
+  const { name: label, ...fields } = manifest;
+  validateTaskFields(fields);
   const id = oneoffId(idSeed);
-  const definition = { prompt: def.body ?? "", ...manifest };
+  const definition = { prompt: def.body ?? "", ...fields };
 
   checkInput(id, manifest.inputSchema);
 
@@ -1549,11 +1570,15 @@ export function ensureOneoff(
     return existing;
   }
 
+  const startedVia = ctx.callerName?.();
   const { task } = createTask(
     {
-      name: id,
+      id,
+      // A label is display only; without one the panel names it from its prompt.
+      name: label ?? id,
       kind: "oneoff",
       ...definition,
+      ...(startedVia ? { startedVia } : {}),
       source: "agent",
       ownerId: ctx.currentUserId,
       workspaceId: ctx.currentWorkspaceId,

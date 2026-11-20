@@ -133,6 +133,14 @@ export interface RequestContext {
    * first-party (`oidc`, `dev`) an external client can claim to be a view.
    */
   shellCall?: boolean;
+  /**
+   * The name an outside MCP client gave itself on the call
+   * (`_meta["io.modelcontextprotocol/clientInfo"].name`), capped. Set by the
+   * `/mcp` door for a call that is not the shell's own; never from a header a
+   * browser can set. Self-declared, so it is attribution shown to the owner
+   * ("via Claude Code"), never authority.
+   */
+  clientName?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

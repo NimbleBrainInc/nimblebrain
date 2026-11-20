@@ -558,6 +558,43 @@ fieldset.builder-row { border: none; min-width: 0; padding: 10px 0; border-botto
 }
 .example-chip:hover { color: var(--color-text-primary); border-color: var(--color-text-accent); }
 
+/* ---------- Board / Runs switch, and the Runs list ---------- */
+.tab-switch { display: inline-flex; align-self: flex-start; padding: 2px; border: 1px solid var(--color-border-primary); border-radius: 999px; }
+.tab-switch button {
+  padding: 4px 14px; border: none; border-radius: 999px; background: none; cursor: pointer;
+  color: var(--color-text-secondary); font-size: var(--font-text-sm-size);
+}
+.tab-switch button.on { background: var(--color-text-primary); color: var(--color-background-primary); }
+.tab-switch button:focus-visible { outline: 2px solid var(--color-text-accent); outline-offset: 2px; }
+.runs { display: flex; flex-direction: column; gap: 14px; }
+.runs-day { display: flex; flex-direction: column; }
+.runs-day-label {
+  font-size: var(--font-text-xs-size); font-weight: var(--font-weight-medium); text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--color-text-secondary); margin: 0 0 2px;
+}
+.job-list { list-style: none; display: flex; flex-direction: column; }
+.job-row {
+  width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 240px) 64px; gap: 14px; align-items: center;
+  padding: 10px 4px; border: none; border-bottom: 1px solid var(--color-border-secondary); background: none; text-align: left; cursor: pointer;
+}
+.job-list li:last-child .job-row { border-bottom: none; }
+.job-row:hover { background: color-mix(in srgb, var(--color-border-primary) 22%, transparent); }
+.job-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.job-name { font-weight: var(--font-weight-medium); overflow-wrap: anywhere; color: var(--color-text-primary); }
+.job-times { margin-left: 6px; font-size: var(--font-text-xs-size); color: var(--color-text-secondary); border: 1px solid var(--color-border-primary); border-radius: 4px; padding: 0 5px; }
+.job-meta { font-size: var(--font-text-xs-size); color: var(--color-text-secondary); }
+.job-progress { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.job-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--color-background-secondary); }
+.job-bar i { display: block; height: 100%; background: var(--tone); }
+.job-bar i.tone-success { opacity: 0.75; }
+.job-counts { font-size: var(--font-text-xs-size); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+.job-status { font-size: var(--font-text-xs-size); font-weight: var(--font-weight-medium); color: var(--tone); }
+.job-cost { text-align: right; font-size: var(--font-text-xs-size); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+@container panel (max-width: 560px) {
+  .job-row { grid-template-columns: minmax(0, 1fr) 56px; row-gap: 6px; }
+  .job-progress, .job-status { grid-column: 1; grid-row: 2; }
+}
+
 /* ---------- Saved card (chat) ---------- */
 .saved-card { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border: 1px solid var(--color-border-primary); border-radius: var(--border-radius-md); background: var(--color-background-primary); }
 .saved-card-head { display: flex; flex-direction: column; gap: 2px; }

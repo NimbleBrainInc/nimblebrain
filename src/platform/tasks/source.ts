@@ -559,6 +559,7 @@ export async function createTasksSource(
         return updated;
       },
       callerVia: () => (getRequestContext()?.shellCall ? "ui" : "remote"),
+      callerName: () => getRequestContext()?.clientName,
       defaultTimezone,
       runLimitsOf,
       defaultModel: runtime.getDefaultModel(),

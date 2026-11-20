@@ -129,7 +129,9 @@ If the name is taken, `tasks__create` refuses: change that task with
    before spending on the rest.
 4. `tasks__run_batch {taskId, items, budgetUsd, stopWhen, idempotencyKey}`.
    `budgetUsd` caps the whole batch; `stopWhen {minPassRate, afterItems}` pauses
-   it when the judged pass rate collapses.
+   it when the judged pass rate collapses. A batch over an inline `definition`
+   takes `manifest.name` as its name in the Runs list; one over a saved task is
+   listed under the task's name.
 5. Follow with `tasks__batch {batchId}`. Page item results with `results: true`,
    or a `filter` (`failing`, `uncertain`, ...).
 6. Control with `tasks__batch_control`:
@@ -155,11 +157,14 @@ If the name is taken, `tasks__create` refuses: change that task with
 
 Run a single job without saving a task to keep:
 
-`tasks__run {definition: {body, manifest}, input, idempotencyKey}`
+`tasks__run {definition: {body, manifest: {name, ...}}, input, idempotencyKey}`
 
-`definition` has the shape of `tasks__create`'s arguments, without a name or
-schedule. It is saved as a `oneoff` task (left out of `tasks__list`) and run
-once. Follow it as in "Running and following a run". A client on the
+`definition` has the shape of `tasks__create`'s arguments, without a schedule.
+Give `manifest.name`: a few words a person would recognize ("Fit grade, arm
+A"). It is how the run reads in the panel's Runs list, which otherwise names it
+from the prompt's first words; it only labels the run and is not part of what
+the `idempotencyKey` compares. It is saved as a `oneoff` task (left out of
+`tasks__list`) and run once. Follow it as in "Running and following a run". A client on the
 2026-07-28 MCP tasks extension gets a task handle instead and polls that.
 The same `idempotencyKey` with the same definition returns the same run.
 

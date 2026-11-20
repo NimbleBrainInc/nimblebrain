@@ -44,6 +44,7 @@ import type {
 } from "@modelcontextprotocol/server";
 import {
   CLIENT_CAPABILITIES_META_KEY,
+  CLIENT_INFO_META_KEY,
   createMcpHandler,
   createRequestStateCodec,
   isInputRequiredResult,
@@ -401,6 +402,7 @@ function createHandlers(
     // Identity request (bare `<source>__<tool>`): dispatch against the caller's
     // identity, no workspace. See `executeIdentityToolCall` for the rationale.
     if (routed.kind === "identity") {
+      const appCall = isAppCall(appSource, requestCtx);
       return executeIdentityToolCall(
         routed,
         name,
@@ -409,7 +411,8 @@ function createHandlers(
         features,
         requestCtx,
         runtime,
-        isAppCall(appSource, requestCtx),
+        appCall,
+        outsideClientName(appCall, request.params._meta),
       );
     }
     return executeWorkspaceToolCall(
@@ -1128,6 +1131,8 @@ async function executeIdentityToolCall(
   runtime: Runtime,
   /** Whether an app view in the first-party shell made the call (`isAppCall`). */
   appCall = false,
+  /** The outside client's own name for itself, when it gave one (`clientNameOf`). */
+  clientName?: string,
 ): Promise<ToolCallAnswer> {
   const fullName = routed.toolName;
   if (!isToolEnabled(fullName, features)) {
@@ -1170,6 +1175,7 @@ async function executeIdentityToolCall(
     // consistent with the resources wall.
     workspaceId: requestCtx.workspaceId,
     ...(appCall ? { shellCall: true } : {}),
+    ...(clientName ? { clientName } : {}),
   };
 
   if (!routed.policyOwner) {
@@ -1539,6 +1545,34 @@ async function assertAgentMayCall(
 }
 
 /** The source a resource or task request is scoped to, or undefined for none. */
+/** The longest client name kept: it is shown in lists, and it is the client's own string. */
+export const MAX_CLIENT_NAME_CHARS = 80;
+
+/**
+ * The name the client gave itself on this request
+ * (`_meta["io.modelcontextprotocol/clientInfo"].name`), trimmed and capped, or
+ * undefined. Self-declared: attribution only, never authority.
+ */
+export function clientNameOf(meta: Record<string, unknown> | undefined): string | undefined {
+  const info = meta?.[CLIENT_INFO_META_KEY];
+  const name = info && typeof info === "object" ? (info as { name?: unknown }).name : undefined;
+  if (typeof name !== "string") return undefined;
+  const printable = [...name].filter((ch) => {
+    const code = ch.codePointAt(0) ?? 0;
+    return code >= 0x20 && code !== 0x7f;
+  });
+  const trimmed = printable.join("").trim().slice(0, MAX_CLIENT_NAME_CHARS);
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** The outside client's name for a call that is not the shell's own; the shell's calls carry none. */
+function outsideClientName(
+  appCall: boolean,
+  meta: Record<string, unknown> | undefined,
+): string | undefined {
+  return appCall ? undefined : clientNameOf(meta);
+}
+
 function scopedSourceName(meta: Record<string, unknown> | undefined): string | undefined {
   const name = meta?.[RESOURCE_SOURCE_META_KEY];
   return typeof name === "string" && name.length > 0 ? name : undefined;
