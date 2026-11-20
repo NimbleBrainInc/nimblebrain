@@ -1,6 +1,6 @@
 # 0060. A viewer may choose the workspace the app opens in
 
-- Status: Accepted
+- Status: Superseded by [ADR-0073](./0073-the-app-opens-in-the-workspace-last-used-in-this-browser.md)
 - Date: 2026-11-09
 - Serves: secure RBAC
 - Amends: [ADR-0044](./0044-the-url-is-the-only-thing-that-names-a-workspace.md) (where `/` sends a user in several workspaces)

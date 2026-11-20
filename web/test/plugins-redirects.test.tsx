@@ -159,13 +159,11 @@ describe("old profile addresses", () => {
     expect(await visit("/profile/connectors", [])).toBe("/");
   });
 
-  test("the focused workspace wins, then the default, then the first in sidebar order", () => {
-    const none = new Set<string>();
-    expect(profileRedirectWorkspace([ALPHA, BETA], BETA.id, ALPHA.id, none)).toBe(BETA);
-    expect(profileRedirectWorkspace([ALPHA, BETA], null, BETA.id, none)).toBe(BETA);
-    expect(profileRedirectWorkspace([ALPHA, BETA], null, "ws_gone", none)).toBe(ALPHA);
-    expect(profileRedirectWorkspace([ALPHA, BETA], null, null, new Set([BETA.id]))).toBe(BETA);
-    expect(profileRedirectWorkspace([], null, null, none)).toBeUndefined();
+  test("the focused workspace wins, then the last one, then the first in sidebar order", () => {
+    expect(profileRedirectWorkspace([ALPHA, BETA], BETA.id, ALPHA.id)).toBe(BETA);
+    expect(profileRedirectWorkspace([ALPHA, BETA], null, BETA.id)).toBe(BETA);
+    expect(profileRedirectWorkspace([ALPHA, BETA], null, "ws_gone")).toBe(ALPHA);
+    expect(profileRedirectWorkspace([], null, null)).toBeUndefined();
   });
 });
 

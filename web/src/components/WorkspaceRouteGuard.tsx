@@ -1,8 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import { Navigate, Outlet, useParams } from "react-router-dom";
 import { getActiveWorkspaceId, setActiveWorkspaceId } from "../api/client";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { rememberWorkspace } from "../lib/last-workspace";
 import { toWsId } from "../lib/workspace-slug";
+import { useNotice } from "./notices";
 
 /**
  * Route guard for `/w/:slug/*`.
@@ -52,8 +54,28 @@ export function WorkspaceRouteGuard() {
     if (target) setActiveWorkspace(target);
   }, [routeWsId, workspaces, activeWorkspace?.id, setActiveWorkspace]);
 
-  // Unknown / non-member slug → bounce to the default landing.
-  if (routeWsId && workspaces.length > 0 && !isMember) {
+  // The workspace this browser is in, so `/` reopens it (ADR-0073). Only a
+  // workspace the viewer belongs to is recorded.
+  useEffect(() => {
+    if (isMember && routeWsId) rememberWorkspace(routeWsId);
+  }, [isMember, routeWsId]);
+
+  // Unknown / non-member slug → bounce to `/`, which opens a workspace the
+  // viewer can reach, and say why the address did not open.
+  const bounce = routeWsId !== null && workspaces.length > 0 && !isMember;
+  // Said once per address: an effect can run twice for one bounce (React's
+  // strict mode does so in development).
+  const notify = useNotice();
+  const saidFor = useRef<string | null>(null);
+  const sayNoAccess = useEffectEvent((wsId: string) => {
+    if (saidFor.current === wsId) return;
+    saidFor.current = wsId;
+    notify({ level: "warning", title: "You don't have access to that workspace" });
+  });
+  useEffect(() => {
+    if (bounce && routeWsId) sayNoAccess(routeWsId);
+  }, [bounce, routeWsId]);
+  if (bounce) {
     return <Navigate to="/" replace />;
   }
 

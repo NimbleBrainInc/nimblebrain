@@ -903,7 +903,7 @@ describe("WorkspaceSwitcher — footer", () => {
     expect(mounted.navigationTarget()).toBe("/org/workspaces");
   });
 
-  test("All workspaces opens the home grid", async () => {
+  test("its footer is the focused workspace's settings and New workspace, and nothing else", async () => {
     mounted = await mount({
       workspaces: [MINE, HELIX],
       activeId: "ws_003eba8844413cd9",
@@ -911,40 +911,10 @@ describe("WorkspaceSwitcher — footer", () => {
     });
     await openSwitcher();
 
-    await click(buttons(document.body, "workspace-switcher-home")[0]);
-
-    expect(mounted.navigationTarget()).toBe("/");
-  });
-
-  test("makes the focused workspace the default, and clears it, with the list left open", async () => {
-    mounted = await mount({
-      workspaces: [MINE, HELIX],
-      activeId: "ws_003eba8844413cd9",
-      initialPath: "/w/003eba8844413cd9/",
-    });
-    await openSwitcher();
-    const toggle = () => buttons(document.body, "workspace-switcher-default")[0];
-
-    expect(toggle()?.textContent).toBe("Open by default");
-    expect(toggle()?.getAttribute("aria-label")).toBe("Open Helix by default");
-    await click(toggle());
-    expect(localStorage.getItem("nb:default-workspace")).toBe(
-      JSON.stringify("ws_003eba8844413cd9"),
-    );
-    expect(toggle()?.getAttribute("aria-pressed")).toBe("true");
-    expect(toggle()?.textContent).toContain("Opens by default");
-
-    await click(toggle());
-    expect(localStorage.getItem("nb:default-workspace")).toBeNull();
-    expect(toggle()?.getAttribute("aria-pressed")).toBe("false");
-  });
-
-  test("on the home grid, offers neither the default nor the way to the grid", async () => {
-    mounted = await mount({ workspaces: [MINE, HELIX], activeId: "ws_003eba8844413cd9" });
-    await openSwitcher();
-
-    expect(buttons(document.body, "workspace-switcher-default")).toHaveLength(0);
+    expect(buttons(document.body, "workspace-switcher-settings")).toHaveLength(1);
+    expect(buttons(document.body, "workspace-switcher-new")).toHaveLength(1);
     expect(buttons(document.body, "workspace-switcher-home")).toHaveLength(0);
+    expect(buttons(document.body, "workspace-switcher-default")).toHaveLength(0);
   });
 });
 

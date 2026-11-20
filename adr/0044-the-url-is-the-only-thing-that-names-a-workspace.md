@@ -1,6 +1,6 @@
 # 0044. The URL is the only thing that names a workspace
 
-- Status: Accepted; amended by ADR-0060
+- Status: Accepted; amended by ADR-0060 and ADR-0073
 - Date: 2026-10-03
 - Serves: secure RBAC
 - Supersedes: the bootstrap default-focus rule of ADR-0037, and the landing preference of ADR-0039

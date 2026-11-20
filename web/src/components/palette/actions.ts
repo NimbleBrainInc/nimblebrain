@@ -39,8 +39,8 @@ const isOrgAdmin = (ctx: CommandSourceContext): boolean =>
 export const ACTIONS: ActionDef[] = [
   {
     id: "go-home",
-    title: "Go to Home",
-    keywords: ["home", "dashboard"],
+    title: "Go to overview",
+    keywords: ["home", "overview", "dashboard"],
     icon: "Home",
     run: (run) => {
       run.navigate("/");

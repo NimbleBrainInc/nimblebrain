@@ -43,6 +43,7 @@ const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { WorkspaceRouteGuard } = await import("../components/WorkspaceRouteGuard");
+const { NoticeProvider, NoticeViewport } = await import("../components/notices");
 const { getActiveWorkspaceId } = await import("../api/client");
 
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
@@ -95,17 +96,20 @@ async function mount({
   await act(async () => {
     root.render(
       <React.StrictMode>
-        <MemoryRouter initialEntries={[initialPath]}>
-          <WorkspaceProvider initialWorkspaces={workspaces} initialActiveId={activeId}>
-            <NavigationProbe />
-            <Routes>
-              <Route path="/" element={<div data-testid="home" />} />
-              <Route path="/w/:slug" element={<WorkspaceRouteGuard />}>
-                <Route path="probe" element={<ProbeChild />} />
-              </Route>
-            </Routes>
-          </WorkspaceProvider>
-        </MemoryRouter>
+        <NoticeProvider>
+          <MemoryRouter initialEntries={[initialPath]}>
+            <WorkspaceProvider initialWorkspaces={workspaces} initialActiveId={activeId}>
+              <NavigationProbe />
+              <Routes>
+                <Route path="/" element={<div data-testid="home" />} />
+                <Route path="/w/:slug" element={<WorkspaceRouteGuard />}>
+                  <Route path="probe" element={<ProbeChild />} />
+                </Route>
+              </Routes>
+            </WorkspaceProvider>
+          </MemoryRouter>
+          <NoticeViewport />
+        </NoticeProvider>
       </React.StrictMode>,
     );
   });
@@ -128,7 +132,12 @@ beforeEach(() => {
 afterEach(() => {
   mounted?.unmount();
   mounted = null;
+  localStorage.clear();
 });
+
+function notices(): Element[] {
+  return Array.from(document.body.querySelectorAll("[data-testid='notice']"));
+}
 
 function hasTestId(container: HTMLElement, testid: string): boolean {
   return Array.from(container.getElementsByTagName("*")).some(
@@ -182,5 +191,51 @@ describe("WorkspaceRouteGuard — workspace single-source-of-truth", () => {
     });
     expect(hasTestId(mounted.container, "probe")).toBe(false);
     expect(navTarget).toBe("/");
+  });
+
+  test("a bounce from a non-member address says so once, under strict mode", async () => {
+    mounted = await mount({
+      workspaces: [ws({ id: DEFAULT_WS, name: "Mat's workspace" })],
+      activeId: DEFAULT_WS,
+      initialPath: "/w/ws_005344c2653be0d6/probe",
+    });
+    const said = notices();
+    expect(said).toHaveLength(1);
+    expect(said[0].getAttribute("data-level")).toBe("warning");
+    expect(said[0].textContent).toContain("You don't have access to that workspace");
+  });
+
+  test("a member's workspace raises no notice", async () => {
+    mounted = await mount({
+      workspaces: [
+        ws({ id: DEFAULT_WS, name: "Mat's workspace" }),
+        ws({ id: SHARED, name: "NimbleBrain Shared" }),
+      ],
+      activeId: DEFAULT_WS,
+      initialPath: `/w/${SHARED_SLUG}/probe`,
+    });
+    expect(notices()).toHaveLength(0);
+  });
+
+  test("a workspace the viewer belongs to becomes the last one, so `/` reopens it", async () => {
+    mounted = await mount({
+      workspaces: [
+        ws({ id: DEFAULT_WS, name: "Mat's workspace" }),
+        ws({ id: SHARED, name: "NimbleBrain Shared" }),
+      ],
+      activeId: DEFAULT_WS,
+      initialPath: `/w/${SHARED_SLUG}/probe`,
+    });
+    expect(localStorage.getItem("nb:last-workspace")).toBe(JSON.stringify(SHARED));
+  });
+
+  test("a workspace the viewer cannot reach is never recorded as the last one", async () => {
+    localStorage.setItem("nb:last-workspace", JSON.stringify(DEFAULT_WS));
+    mounted = await mount({
+      workspaces: [ws({ id: DEFAULT_WS, name: "Mat's workspace" })],
+      activeId: DEFAULT_WS,
+      initialPath: "/w/ws_005344c2653be0d6/probe",
+    });
+    expect(localStorage.getItem("nb:last-workspace")).toBe(JSON.stringify(DEFAULT_WS));
   });
 });
