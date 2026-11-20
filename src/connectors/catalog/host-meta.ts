@@ -17,7 +17,9 @@ import { NIMBLEBRAIN_HOST_META_KEY, type ServerDetail } from "./server-detail.ts
  *
  * - `adminTools`: declared when either copy is present. Two well-formed copies
  *   gate their union (a second copy can only narrow); a malformed copy is
- *   passed on as the value, so the strict parse gates every tool.
+ *   passed on as the value, so the strict parse gates every tool. The union is
+ *   the declaration, so the 64-name cap applies to it: a union over the cap
+ *   gates every tool, as one list over it does.
  * - `recordArguments`: granted only when every present copy is `true`.
  * - `hostVersion`: present copies must be equal, and major 1, or the entry is
  *   dropped ({@link hostBlockViolation}).

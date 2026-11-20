@@ -114,28 +114,47 @@ describe("adminTools", () => {
 });
 
 describe("the gated admin set holds every name from either spelling", () => {
-  // A seeded generator, so a failure replays.
-  let seed = 0x5eed;
-  const next = () => {
-    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-    return seed;
-  };
-  const pool = ["configure", "rotate", "export", "purge", "invite", "set_webhook_url"];
-  const pick = () => pool.filter(() => next() % 2 === 0);
+  // Every pair over these shapes: absent, empty, disjoint, overlapping, equal.
+  const shapes: (string[] | undefined)[] = [
+    undefined,
+    [],
+    ["configure"],
+    ["rotate", "export"],
+    ["configure", "purge"],
+    ["configure", "rotate", "export", "purge", "invite", "set_webhook_url"],
+  ];
 
-  test("over random pairs of copies", () => {
-    for (let i = 0; i < 500; i++) {
-      const camel = next() % 4 === 0 ? undefined : pick();
-      const snake = next() % 4 === 0 ? undefined : pick();
-      const raw: Record<string, unknown> = { hostVersion: "1.0" };
-      if (camel) raw.adminTools = camel;
-      if (snake) raw.admin_tools = snake;
-      const decl = parseAdminToolsDeclaration(normalize(raw), "ai.acme/crm");
-      for (const name of [...(camel ?? []), ...(snake ?? [])]) {
-        const gated = decl?.kind === "all" || (decl?.kind === "names" && decl.names.includes(name));
-        expect(gated).toBe(true);
+  test("over every pair of copies", () => {
+    let differingDual = 0;
+    for (const camel of shapes) {
+      for (const snake of shapes) {
+        const raw: Record<string, unknown> = { hostVersion: "1.0" };
+        if (camel) raw.adminTools = camel;
+        if (snake) raw.admin_tools = snake;
+        if (camel?.length && snake?.length && camel !== snake) differingDual++;
+        const decl = parseAdminToolsDeclaration(normalize(raw), "ai.acme/crm");
+        const names = [...(camel ?? []), ...(snake ?? [])];
+        if (names.length === 0) {
+          expect(decl).toBeUndefined();
+          continue;
+        }
+        expect(decl?.kind).toBe("names");
+        expect(decl?.kind === "names" ? [...decl.names].sort() : []).toEqual(
+          [...new Set(names)].sort(),
+        );
       }
     }
+    // The matrix exercises the merge, not just one copy at a time.
+    expect(differingDual).toBe(12);
+  });
+
+  test("the cap applies to the union: two copies naming over 64 distinct tools gate every tool", () => {
+    const camel = Array.from({ length: 64 }, (_, i) => `tool_${i}`);
+    const decl = parseAdminToolsDeclaration(
+      normalize({ hostVersion: "1.0", adminTools: camel, admin_tools: ["tool_64"] }),
+      "ai.acme/crm",
+    );
+    expect(decl?.kind).toBe("all");
   });
 });
 
