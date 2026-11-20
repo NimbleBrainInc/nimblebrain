@@ -1,21 +1,16 @@
 import { Check, Plus } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Plugin, PluginsListOutput } from "../_generated/platform-schemas/plugins";
 import {
-  disconnectPersonalConnector,
   grantConnector,
   listPersonalConnectors,
   listPlugins,
   type PersonalConnector,
-  revokeConnector,
 } from "../api/client";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { connectorStatusSummary } from "../components/connectors/ConnectorList";
-import {
-  disconnectConsequence,
-  startPluginSignIn,
-} from "../components/connectors/personal-connector";
+import { startPluginSignIn } from "../components/connectors/personal-connector";
 import {
   type ConnectedTarget,
   type ReturnedConnector,
@@ -27,15 +22,11 @@ import {
   ListEmpty,
   ListPageHeader,
   ROW_LINK,
-  ROW_TEXT,
-  RowMenu,
-  type RowMenuItem,
+  RowChevron,
   SegmentBar,
 } from "../components/plugins/list-parts";
-import { StopUsingDialog } from "../components/plugins/StopUsingDialog";
 import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
 import { Button } from "../components/ui/button";
-import { ConfirmDialog } from "../components/ui/confirm-dialog";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useEvents } from "../hooks/useEvents";
 import { useCanWriteActiveWorkspace } from "../hooks/useScopedRole";
@@ -48,7 +39,7 @@ import {
   pluginAttention,
   type Segment,
 } from "../lib/plugin-lists";
-import { accountLine, browsePluginsPath, pluginConnected, pluginPath } from "../lib/plugins";
+import { browsePluginsPath, pluginAccount, pluginConnected, pluginPath } from "../lib/plugins";
 import { cn } from "../lib/utils";
 import { toWsId } from "../lib/workspace-slug";
 import { EmptyState, InlineError } from "./settings/components";
@@ -59,9 +50,10 @@ import { EmptyState, InlineError } from "./settings/components";
  *
  * **Workspace** lists the workspace's plugins, which act for everyone here.
  * **Personal** lists the viewer's own, on here or not; one not on here offers
- * Use here. A row names the plugin and the account it uses, offers only the
- * next step when there is one, and opens the plugin's page; the rest is in its
- * ⋯ menu. A line above the list says when something in the segment needs the
+ * Use here. A row is one link to the plugin's page, where every action is. It
+ * names the plugin and what it does, and on its right offers the next step
+ * when there is one, else says the plugin's state in words. A line above the
+ * list says when something in the segment needs the
  * viewer: with one, it carries that plugin's action, and the plugin's row says
  * what is wrong instead, so the action is offered once; with more, it filters
  * the list to them.
@@ -123,8 +115,6 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
   const [query, setQuery] = useState("");
   const [needsOnly, setNeedsOnly] = useState(false);
   const [confirming, setConfirming] = useState<Plugin | null>(null);
-  const [stopping, setStopping] = useState<Plugin | null>(null);
-  const [disconnecting, setDisconnecting] = useState<Plugin | null>(null);
   // The viewer's connector records, which say which route each sign-in takes
   // and where each plugin is on. An action that signs in waits for them rather
   // than guess the route.
@@ -243,34 +233,12 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
     setBusyId(null);
   };
 
-  // Both throw on failure, so the confirm stays open with the error shown.
-  const stopHere = async (plugin: Plugin) => {
-    for (const server of plugin.servers) await revokeConnector(server.serverName, wsId);
-    await refresh();
-    setStopping(null);
-  };
-
-  const disconnect = async (plugin: Plugin) => {
-    for (const server of plugin.servers) await disconnectPersonalConnector(server.serverName);
-    await Promise.all([refresh(), loadConnectors()]);
-    setDisconnecting(null);
-  };
-
-  // The workspaces a person's plugin is on in, which Disconnect turns it off in.
-  const grantCount = (plugin: Plugin) => {
-    const names = plugin.servers.map((s) => s.serverName);
-    const ids = (connectors ?? [])
-      .filter((c) => names.includes(c.serverName))
-      .flatMap((c) => c.grantedWorkspaces);
-    return new Set(ids).size;
-  };
-
   if (loadError && !plugins) {
     return <InlineError message={`Unable to load plugins: ${loadError}. Reload to retry.`} />;
   }
   if (!model || !plugins) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
-  // The next step a row offers: nothing for a healthy plugin.
+  // The one control a row offers: nothing for a plugin that needs nothing of the viewer.
   const nextStep = (plugin: Plugin): React.ReactNode =>
     nextStepFor(plugin, {
       canManage,
@@ -283,12 +251,6 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
       },
       onConnect: () => void connectHere(plugin),
       onOpen: () => navigate(pluginPath(slug, plugin)),
-    });
-
-  const rowMenu = (plugin: Plugin): RowMenuItem[] =>
-    rowMenuFor(plugin, pluginPath(slug, plugin), {
-      onStop: () => setStopping(plugin),
-      onDisconnect: () => setDisconnecting(plugin),
     });
 
   // With one plugin needing the viewer, the line above the list carries its
@@ -323,16 +285,25 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
         rows={model.rows}
         empty={emptyMessage(query, segment, workspaceName)}
         segment={segment}
-        renderRow={(plugin) => (
-          <PluginRow
-            key={plugin.id}
-            plugin={plugin}
-            to={pluginPath(slug, plugin)}
-            action={plugin.id === actionInBanner ? attentionWords(plugin) : nextStep(plugin)}
-            menu={rowMenu(plugin)}
-            fresh={isJustConnected(justConnected, plugin)}
-          />
-        )}
+        renderRow={(plugin) => {
+          const action = plugin.id === actionInBanner ? null : nextStep(plugin);
+          return (
+            <PluginRow
+              key={plugin.id}
+              plugin={plugin}
+              to={pluginPath(slug, plugin)}
+              action={action}
+              state={
+                plugin.id === actionInBanner
+                  ? attentionWords(plugin)
+                  : action
+                    ? null
+                    : stateWords(plugin)
+              }
+              fresh={isJustConnected(justConnected, plugin)}
+            />
+          );
+        }}
       />
 
       <UsePluginHereDialog
@@ -341,24 +312,14 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
         onClose={() => setConfirming(null)}
         onConfirm={grantHere}
       />
-      <PersonalPluginDialogs
-        workspaceName={workspaceName}
-        stopping={stopping}
-        onStopClose={() => setStopping(null)}
-        onStop={stopHere}
-        disconnecting={disconnecting}
-        onDisconnectClose={() => setDisconnecting(null)}
-        onDisconnect={disconnect}
-        grantCount={grantCount}
-      />
     </div>
   );
 }
 
 /**
- * What a plugin's row offers next. A person's plugin not on here offers Use
- * here; otherwise the row offers what `pluginAttention` asks, or the status
- * words of one settling. A workspace plugin signs in on its page, where its
+ * The one control a plugin's row offers. A person's plugin not on here offers
+ * Use here; otherwise the row offers what `pluginAttention` asks, or nothing.
+ * A workspace plugin signs in on its page, where its
  * admin connects it, and a failed or unset-up one is fixed there; only a
  * person's own sign-in starts from the row.
  */
@@ -390,7 +351,7 @@ function nextStepFor(
     );
   }
   const step = pluginAttention(plugin, opts);
-  if (!step) return statusWords(plugin);
+  if (!step) return null;
   const fromRow = step !== "open" && plugin.owner.kind === "person";
   return (
     <AttentionButton
@@ -410,29 +371,6 @@ function isJustConnected(target: ConnectedTarget | null, plugin: Plugin): boolea
     target.owner === plugin.owner.kind &&
     plugin.servers.some((s) => s.serverName === target.serverName)
   );
-}
-
-/**
- * A row's ⋯ menu: Open, and for the viewer's own plugin, Stop using here while
- * it is on here and Disconnect while it is signed in.
- */
-function rowMenuFor(
-  plugin: Plugin,
-  to: string,
-  on: { onStop: () => void; onDisconnect: () => void },
-): RowMenuItem[] {
-  const items: RowMenuItem[] = [{ kind: "link", label: "Open", to }];
-  if (plugin.owner.kind !== "person") return items;
-  if (plugin.granted) items.push({ kind: "action", label: "Stop using here", onSelect: on.onStop });
-  if (pluginConnected(plugin)) {
-    items.push({
-      kind: "action",
-      label: "Disconnect",
-      destructive: true,
-      onSelect: on.onDisconnect,
-    });
-  }
-  return items;
 }
 
 /** The list: rows, or what to say when there are none. */
@@ -459,52 +397,6 @@ function PluginListBody({
     <div data-testid="plugin-list" data-segment={segment}>
       {rows.map(renderRow)}
     </div>
-  );
-}
-
-/** The confirms for Stop using here and Disconnect on the viewer's own plugin. */
-function PersonalPluginDialogs({
-  workspaceName,
-  stopping,
-  onStopClose,
-  onStop,
-  disconnecting,
-  onDisconnectClose,
-  onDisconnect,
-  grantCount,
-}: {
-  workspaceName: string;
-  stopping: Plugin | null;
-  onStopClose: () => void;
-  /** Throws on failure, so the confirm stays open with the error shown. */
-  onStop: (plugin: Plugin) => Promise<void>;
-  disconnecting: Plugin | null;
-  onDisconnectClose: () => void;
-  onDisconnect: (plugin: Plugin) => Promise<void>;
-  /** The workspaces the plugin is on in, which Disconnect turns it off in. */
-  grantCount: (plugin: Plugin) => number;
-}) {
-  return (
-    <>
-      <StopUsingDialog
-        open={stopping !== null}
-        onOpenChange={(open) => !open && onStopClose()}
-        pluginName={stopping?.displayName ?? ""}
-        workspaceName={workspaceName}
-        here
-        onConfirm={() => (stopping ? onStop(stopping) : undefined)}
-      />
-      <ConfirmDialog
-        open={disconnecting !== null}
-        onOpenChange={(open) => !open && onDisconnectClose()}
-        title={`Disconnect ${disconnecting?.displayName ?? ""}?`}
-        description={disconnectConsequence(disconnecting ? grantCount(disconnecting) : 0)}
-        confirmLabel="Disconnect"
-        pendingLabel="Disconnecting…"
-        destructive
-        onConfirm={() => (disconnecting ? onDisconnect(disconnecting) : undefined)}
-      />
-    </>
   );
 }
 
@@ -572,36 +464,38 @@ function NeedsYou({
 }
 
 /**
- * One plugin: its icon, its name and account (one line on a wide column, two
- * on a narrow one), its next step, and its ⋯ menu. The whole row opens the
- * plugin's page.
+ * One plugin, as one link to its page: its icon, its name over what it does,
+ * then on the right either its one control (`action`, beside the link rather
+ * than inside it, so it is its own tab stop and never navigates) or its state
+ * in words, and a ›. Two lines at every width; the words truncate rather than
+ * wrap.
  */
 function PluginRow({
   plugin,
   to,
   action,
-  menu,
+  state,
   fresh,
 }: {
   plugin: Plugin;
   to: string;
   action: React.ReactNode;
-  menu: RowMenuItem[];
+  state: React.ReactNode;
   /** A sign-in on this page just connected it. */
   fresh: boolean;
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
+  const descriptionId = useId();
   // A long list may hold the plugin below the fold.
   useEffect(() => {
     if (fresh) rowRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [fresh]);
   const muted = plugin.owner.kind === "person" && !plugin.granted;
-  const line = accountLine(plugin);
 
   return (
     <div
       ref={rowRef}
-      className="relative flex min-h-11 items-center gap-3 border-b border-border/60 py-1.5 last:border-b-0"
+      className="relative flex min-h-11 items-center gap-3 border-b border-border/60 py-2 last:border-b-0"
       data-testid="plugin-row"
       data-plugin-id={plugin.id}
     >
@@ -610,66 +504,83 @@ function PluginRow({
         iconUrl={plugin.iconUrl}
         className={cn("h-6 w-6 shrink-0 rounded text-[11px]", muted && "opacity-60")}
       />
-      <div className={ROW_TEXT} data-testid="row-text">
+      <div className="flex min-w-0 flex-1 flex-col" data-testid="row-text">
         <Link
           to={to}
           data-row-link
+          aria-describedby={plugin.description ? descriptionId : undefined}
           className={cn("min-w-0 truncate text-sm font-medium", ROW_LINK)}
         >
           {plugin.displayName}
         </Link>
-        {line && (
-          <span className="truncate text-xs text-muted-foreground" data-testid="plugin-account">
-            {line}
+        {plugin.description && (
+          <span
+            id={descriptionId}
+            className="truncate text-xs text-muted-foreground"
+            data-testid="plugin-description"
+          >
+            {plugin.description}
           </span>
         )}
       </div>
-      {fresh && (
-        <span className="relative flex shrink-0 items-center gap-1.5 text-xs font-medium text-success">
+      {fresh ? (
+        <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-success">
           <Check className="h-3.5 w-3.5" aria-hidden />
           <span>Connected just now</span>
         </span>
+      ) : (
+        state && <div className="flex min-w-0 max-w-[45%] shrink justify-end">{state}</div>
       )}
       {action && (
         <div className="relative shrink-0" data-testid="plugin-action">
           {action}
         </div>
       )}
-      <RowMenu name={plugin.displayName} items={menu} testId="plugin-menu" />
+      <RowChevron />
     </div>
   );
 }
 
-/**
- * What is wrong, on the row whose action the Needs-you line carries. Said
- * once: a reason the account line already gives ("Not signed in") is left out.
- */
+/** What is wrong, on the row whose action the Needs-you line carries. */
 function attentionWords(plugin: Plugin): React.ReactNode {
   const label = attentionLabel(plugin);
-  if (!label || label === accountLine(plugin)) return null;
+  if (!label) return null;
   return (
-    <span className="px-2 text-xs text-warning" data-testid="plugin-attention">
+    <span className="truncate text-xs text-warning" data-testid="plugin-attention">
       {label}
     </span>
   );
 }
 
 /**
- * A plugin that is not ready but asks the viewer nothing (settling, or a
- * workspace sign-in only its admin does) reads the connector list's status
- * words; a ready one shows nothing.
+ * A row's state in words, when it offers no control. One not ready that asks
+ * the viewer nothing (settling, or a workspace sign-in only its admin does)
+ * reads the connector list's status words. A ready one names the account it
+ * uses, else says Connected; a person's plugin adds that it is on here.
  */
-function statusWords(plugin: Plugin): React.ReactNode {
+function stateWords(plugin: Plugin): React.ReactNode {
   const notReady = plugin.servers.find((s) => s.status !== "ready");
   const status = notReady ? connectorStatusSummary(notReady.status) : null;
-  if (!status) return null;
+  if (status) {
+    return (
+      <span
+        className={cn("flex min-w-0 items-center gap-1.5 text-xs", status.tone)}
+        data-testid="plugin-status"
+      >
+        {status.dot && (
+          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dotColor)} />
+        )}
+        <span className="truncate">{status.label}</span>
+      </span>
+    );
+  }
+  if (notReady) return null;
+  const account = pluginAccount(plugin);
+  const person = plugin.owner.kind === "person";
   return (
-    <span
-      className={cn("flex items-center gap-1.5 px-2 text-xs", status.tone)}
-      data-testid="plugin-status"
-    >
-      {status.dot && <span className={cn("h-1.5 w-1.5 rounded-full", status.dotColor)} />}
-      <span>{status.label}</span>
+    <span className="truncate text-xs text-muted-foreground" data-testid="plugin-state">
+      {account ? <span data-testid="plugin-account">{account}</span> : !person && "Connected"}
+      {person && (account ? " · on here" : "On here")}
     </span>
   );
 }
