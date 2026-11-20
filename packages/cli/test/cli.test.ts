@@ -167,7 +167,7 @@ describe("doctor", () => {
     expect((await json(["doctor"], linux.deps)).body.fix).toContain("docs.docker.com/get-docker");
   });
 
-  test("COMPOSE_MISSING with a standalone docker-compose v2 links it as Docker's plugin", async () => {
+  test("a standalone docker-compose v2 passes when Docker has no Compose plugin", async () => {
     const deps = fakeDeps({
       execMap: {
         "docker compose version --short": fail("docker: 'compose' is not a docker command."),
@@ -175,9 +175,22 @@ describe("doctor", () => {
       },
     });
     const { body } = await json(["doctor"], deps);
-    expect(body.error).toBe("COMPOSE_MISSING");
-    expect(body.fix).toContain("~/.docker/cli-plugins/docker-compose");
-    expect(body.fix).toContain("command -v docker-compose");
+    expect(body.ok).toBe(true);
+    expect(body.checks).toContainEqual({
+      check: "compose",
+      ok: true,
+      detail: "2.29.1 (docker-compose)",
+    });
+  });
+
+  test("a standalone docker-compose v1 is not Compose v2", async () => {
+    const deps = fakeDeps({
+      execMap: {
+        "docker compose version --short": fail("docker: 'compose' is not a docker command."),
+        "docker-compose version --short": ok("1.29.2"),
+      },
+    });
+    expect((await json(["doctor"], deps)).body.error).toBe("COMPOSE_MISSING");
   });
 
   test("COMPOSE_MISSING on a Mac with Homebrew and no docker-compose installs it", async () => {
@@ -189,7 +202,9 @@ describe("doctor", () => {
       platform: "darwin",
       programs: ["brew"],
     });
-    expect((await json(["doctor"], m.deps)).body.fix).toContain("brew install docker-compose");
+    expect((await json(["doctor"], m.deps)).body.fix).toBe(
+      "Install Compose with `brew install docker-compose`, then run this again.",
+    );
   });
 
   test("under 2 GB of Docker memory is LOW_MEMORY", async () => {

@@ -76,9 +76,7 @@ export const FIX_VARIANTS = {
     mac: "Install Docker Desktop (https://docs.docker.com/desktop/setup/install/mac-install/), open it once, then run this again.",
   },
   COMPOSE_MISSING: {
-    link_plugin:
-      'Docker cannot see the docker-compose on this machine. Link it as a plugin with `mkdir -p ~/.docker/cli-plugins && ln -sfn "$(command -v docker-compose)" ~/.docker/cli-plugins/docker-compose`, then run this again.',
-    brew: 'Install Compose with `brew install docker-compose && mkdir -p ~/.docker/cli-plugins && ln -sfn "$(brew --prefix)/bin/docker-compose" ~/.docker/cli-plugins/docker-compose`, then run this again.',
+    brew: "Install Compose with `brew install docker-compose`, then run this again.",
   },
   LOW_MEMORY: {
     colima:

@@ -1,5 +1,5 @@
 import { basename, join } from "node:path";
-import type { Deps, ExecResult } from "./deps.ts";
+import type { Deps, ExecOptions, ExecResult } from "./deps.ts";
 import { CliError } from "./result.ts";
 
 /**
@@ -130,7 +130,59 @@ export function composeEnv(deps: Deps, vars: string[]): NodeJS.ProcessEnv {
   return env;
 }
 
-/** Runs `docker compose` in the install folder, with the key variables of its installed Compose file withheld. */
+/** How to run Compose v2 on this machine, and its version. */
+export interface ComposeProgram {
+  cmd: string;
+  args: string[];
+  version: string;
+}
+
+const PLUGIN = { cmd: "docker", args: ["compose"] };
+
+/** One lookup per run: every Compose call in it runs the same program. */
+const found = new WeakMap<Deps, Promise<ComposeProgram | undefined>>();
+
+/**
+ * Compose v2 as Docker's plugin (`docker compose`), else as the standalone
+ * `docker-compose` v2, which is the same program (Homebrew installs it that
+ * way, as on a Colima machine, and Docker finds it only once it is linked into
+ * a plugin folder). Undefined when neither is v2; `doctor` reports that as
+ * `COMPOSE_MISSING`. Compose v1 is a different program and is never used.
+ */
+export function findCompose(deps: Deps): Promise<ComposeProgram | undefined> {
+  let lookup = found.get(deps);
+  if (!lookup) {
+    lookup = lookUpCompose(deps);
+    found.set(deps, lookup);
+  }
+  return lookup;
+}
+
+async function lookUpCompose(deps: Deps): Promise<ComposeProgram | undefined> {
+  for (const program of [PLUGIN, { cmd: "docker-compose", args: [] }]) {
+    const res = await deps.exec(program.cmd, [...program.args, "version", "--short"]);
+    if (res.code === 0 && majorOf(res.stdout) >= 2)
+      return { ...program, version: res.stdout.trim() };
+  }
+  return undefined;
+}
+
+/** The major version in `2.29.1` or `v2.29.1`; NaN when there is none. */
+export function majorOf(version: string): number {
+  return Number.parseInt(version.trim().replace(/^v/, ""), 10);
+}
+
+/** Runs a Compose subcommand with the program `findCompose` chose, else the plugin, whose failure then says why. */
+export async function composeExec(
+  deps: Deps,
+  args: string[],
+  opts?: ExecOptions,
+): Promise<ExecResult> {
+  const program = (await findCompose(deps)) ?? PLUGIN;
+  return deps.exec(program.cmd, [...program.args, ...args], opts);
+}
+
+/** Runs Compose in the install folder, with the key variables of its installed Compose file withheld. */
 export async function compose(
   deps: Deps,
   home: string,
@@ -138,7 +190,7 @@ export async function compose(
   timeoutMs = 120_000,
 ): Promise<ExecResult> {
   const vars = keyVars((await deps.readText(paths(home).compose)) ?? "");
-  return deps.exec("docker", ["compose", ...args], {
+  return composeExec(deps, args, {
     cwd: home,
     env: composeEnv(deps, vars),
     timeoutMs,
