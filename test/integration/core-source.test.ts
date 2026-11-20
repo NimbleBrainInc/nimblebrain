@@ -164,6 +164,9 @@ describe("Core Source", () => {
       expect(result.isError).toBe(false);
       const data = result.structuredContent as Record<string, unknown>;
       expect(typeof data.version).toBe("string");
+      // A deployment that did not set telemetry.identify never names the person.
+      expect(data.telemetryIdentify).toBe(false);
+      expect(data.tenantId).toBeUndefined();
     } finally {
       await runtime.shutdown();
     }

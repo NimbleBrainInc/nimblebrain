@@ -324,12 +324,16 @@
       "additionalProperties": false
     },
     "telemetry": {
-      "description": "Anonymous usage telemetry. Unset, a person decides (the CLI or the web UI asks; nothing is sent before a yes). Turn off with telemetry.enabled: false, NB_TELEMETRY_DISABLED=1, or DO_NOT_TRACK=1.",
+      "description": "Usage telemetry, anonymous unless identify is set. Unset, a person decides (the CLI or the web UI asks; nothing is sent before a yes). Turn off with telemetry.enabled: false, NB_TELEMETRY_DISABLED=1, or DO_NOT_TRACK=1.",
       "type": "object",
       "properties": {
         "enabled": {
           "type": "boolean",
           "description": "The operator's decision. false: off, no one is asked. true: on, no one is asked. Unset: a person decides."
+        },
+        "identify": {
+          "type": "boolean",
+          "description": "Events name the person (id, email, name) and are grouped by tenant (NB_TENANT_ID) and workspace, for a deployment sending to its own analytics project (POSTHOG_API_KEY). Honored only with enabled: true."
         }
       },
       "additionalProperties": false

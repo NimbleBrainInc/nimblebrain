@@ -55,8 +55,24 @@ export class TelemetryLockedError extends Error {
 
 /** Minimal interface for PostHog client (production or mock). */
 export interface TelemetryClient {
-  capture(params: { distinctId: string; event: string; properties: Record<string, unknown> }): void;
+  capture(params: {
+    distinctId: string;
+    event: string;
+    properties: Record<string, unknown>;
+    groups?: Record<string, string>;
+  }): void;
   shutdown(): Promise<void>;
+}
+
+/**
+ * Who an event is about, read from the verified request context. Present only
+ * inside a request a person made; background work has none.
+ */
+export interface TelemetrySubject {
+  userId: string;
+  email?: string;
+  name?: string;
+  workspaceId?: string;
 }
 
 export type TelemetryClientFactory = (
@@ -77,6 +93,12 @@ export interface TelemetryManagerOptions {
    * answer to a person.
    */
   enabled?: boolean;
+  /**
+   * `telemetry.identify`: events name the person and the workspace instead of
+   * the install. Honored only alongside `enabled: true`, because it is an
+   * operator's decision about its own project, never a person's answer.
+   */
+  identify?: boolean;
   clientFactory?: TelemetryClientFactory;
   /** Defaults to `process.env`. */
   env?: NodeJS.ProcessEnv;
@@ -84,6 +106,9 @@ export interface TelemetryManagerOptions {
 
 export class TelemetryManager {
   private client: TelemetryClient | null = null;
+  private subjectSource: () => TelemetrySubject | undefined = () => undefined;
+  /** People whose email and name this process has already set, so each is sent once. */
+  private readonly described = new Set<string>();
 
   private constructor(
     private readonly workDir: string,
@@ -92,6 +117,8 @@ export class TelemetryManager {
     private readonly anonymousId: string,
     private consent: TelemetryConsent,
     private readonly locked: TelemetryLock | undefined,
+    private readonly identified = false,
+    private readonly tenantId?: string,
   ) {
     if (consent === "on") this.client = this.connect();
   }
@@ -110,7 +137,16 @@ export class TelemetryManager {
 
     const id = installId(options.workDir, env);
     if (options.enabled === true)
-      return new TelemetryManager(options.workDir, apiKey, factory, id, "on", "operator");
+      return new TelemetryManager(
+        options.workDir,
+        apiKey,
+        factory,
+        id,
+        "on",
+        "operator",
+        options.identify === true,
+        env.NB_TENANT_ID?.trim() || undefined,
+      );
     return new TelemetryManager(
       options.workDir,
       apiKey,
@@ -123,11 +159,55 @@ export class TelemetryManager {
 
   capture(event: string, properties: Record<string, unknown> = {}): void {
     if (this.consent !== "on" || !this.client) return;
+    if (!this.identified) {
+      this.client.capture({
+        distinctId: this.anonymousId,
+        event,
+        properties: { ...commonProperties(), ...properties },
+      });
+      return;
+    }
+    // Identified: the person who made the request, in their tenant and
+    // workspace. Work no person asked for stays with the install.
+    const subject = this.subjectSource();
+    const groups: Record<string, string> = {};
+    if (this.tenantId) groups.tenant = this.tenantId;
+    if (subject?.workspaceId) groups.workspace = subject.workspaceId;
+    const person = subject ? this.describe(subject) : {};
     this.client.capture({
-      distinctId: this.anonymousId,
+      distinctId: subject?.userId ?? this.anonymousId,
       event,
-      properties: { ...commonProperties(), ...properties },
+      properties: { ...commonProperties(), ...properties, ...person },
+      ...(Object.keys(groups).length > 0 ? { groups } : {}),
     });
+  }
+
+  /**
+   * Where identified events find their person: the runtime registers its
+   * request context here. Unused unless the deployment set `telemetry.identify`.
+   */
+  setSubjectSource(source: () => TelemetrySubject | undefined): void {
+    this.subjectSource = source;
+  }
+
+  /** Whether events name the person (`telemetry.identify` with `enabled: true`). */
+  isIdentified(): boolean {
+    return this.identified;
+  }
+
+  /** The tenant identified events are grouped under, from `NB_TENANT_ID`. */
+  getTenantId(): string | undefined {
+    return this.identified ? this.tenantId : undefined;
+  }
+
+  /** The person's email and name as `$set`, the first time this process sees them. */
+  private describe(subject: TelemetrySubject): Record<string, unknown> {
+    if (this.described.has(subject.userId)) return {};
+    this.described.add(subject.userId);
+    const set: Record<string, string> = {};
+    if (subject.email) set.email = subject.email;
+    if (subject.name) set.name = subject.name;
+    return Object.keys(set).length > 0 ? { $set: set } : {};
   }
 
   /** Records a person's answer and applies it at once. Throws `TelemetryLockedError` when the deployment owns it. */

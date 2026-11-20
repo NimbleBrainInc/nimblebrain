@@ -1,10 +1,7 @@
 #!/usr/bin/env bun
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { initTracing } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
-import { TelemetryManager } from "../telemetry/manager.ts";
 import { runSecrets } from "./secrets.ts";
 import { runServe } from "./serve.ts";
 
@@ -67,22 +64,16 @@ async function main(): Promise<void> {
 
   const values = parseServeArgs(argv);
 
-  const telemetry = TelemetryManager.create({ workDir: join(homedir(), ".nimblebrain") });
   try {
-    await runServe(
-      {
-        config: values.config,
-        port: values.port ? Number(values.port) : undefined,
-        debug: values.debug ?? false,
-      },
-      telemetry,
-    );
+    await runServe({
+      config: values.config,
+      port: values.port ? Number(values.port) : undefined,
+      debug: values.debug ?? false,
+    });
   } catch (err) {
     log.error(`Fatal: ${err}`);
-    await telemetry.shutdown();
     process.exit(1);
   }
-  await telemetry.shutdown();
 }
 
 main().catch((err) => {

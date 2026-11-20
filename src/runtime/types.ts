@@ -229,10 +229,16 @@ export interface RuntimeConfig {
    */
   brand?: Brand;
 
-  /** Anonymous telemetry configuration. */
+  /** Usage telemetry configuration. Anonymous unless the operator sets `identify`. */
   telemetry?: {
     /** The operator's decision: `false` off, `true` on, both without asking anyone. Unset, a person decides. */
     enabled?: boolean;
+    /**
+     * Events name the person (id, email, name) and are grouped by tenant and
+     * workspace, for a deployment sending to its own analytics project.
+     * Honored only with `enabled: true`.
+     */
+    identify?: boolean;
   };
 
   /**

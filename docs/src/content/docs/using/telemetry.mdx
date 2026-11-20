@@ -98,6 +98,24 @@ Any one of these turns telemetry off and stops anyone from being asked:
 
 `"telemetry": { "enabled": true }` turns it on without asking anyone. Set it only where you, as the operator, have the right to decide for the people using the install.
 
+## Identified deployments
+
+An operator running NimbleBrain for others, sending to its own PostHog project, can set `identify` beside `enabled: true`:
+
+```json
+{ "telemetry": { "enabled": true, "identify": true } }
+```
+
+Events then name the person instead of the install, so a person's runtime and web events are one person in that project:
+
+| | Anonymous (default) | Identified |
+|---|---|---|
+| Who an event is about | The install's random ID | The signed-in person's user ID; the install ID for work no person asked for |
+| Person properties | None | Email and display name, sent once per person per runtime start |
+| Groups | None | `tenant` (from `NB_TENANT_ID`, when set) and `workspace` (the workspace the request is bound to) |
+
+Everything else in [What is never sent](#what-is-never-sent) still holds, apart from the email address and the person's name. `identify` without `"enabled": true` does nothing: a person's yes in the CLI or the web UI never turns it on. Set it only where your terms with the people using the install allow it, and never with the key `npx nimblebrain` ships, which is the NimbleBrain project for anonymous installs.
+
 <Aside type="tip">
   A runtime with no `POSTHOG_API_KEY` has nowhere to send anything. It asks no one, creates no ID, and makes no request to PostHog.
 </Aside>

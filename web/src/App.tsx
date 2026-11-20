@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
+  addWorkspaceLifecycleHandler,
   callTool,
   callToolWithoutWorkspace,
+  getActiveWorkspaceId,
   logout,
   probeBootstrap,
   setAuthToken,
@@ -97,9 +99,28 @@ import { WorkspacesTab } from "./pages/settings/WorkspacesTab";
 import { WorkspaceWebhooksTab } from "./pages/settings/WorkspaceWebhooksTab";
 import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { clearSentryContext, setSentryUser } from "./sentry";
-import { initTelemetry } from "./telemetry";
+import {
+  initTelemetry,
+  resetTelemetry,
+  setTelemetryWorkspace,
+  type TelemetryPerson,
+} from "./telemetry";
 import type { BootstrapResponse, ConfigInfo, FileLimits, PlacementEntry } from "./types";
 import "./index.css";
+
+/** The signed-in person for telemetry, only when the deployment identifies (`workspace_info`). */
+function telemetryPerson(
+  ws: Record<string, unknown>,
+  user: BootstrapResponse["user"],
+): TelemetryPerson | undefined {
+  if (ws.telemetryIdentify !== true) return undefined;
+  return {
+    userId: user.id,
+    email: user.email,
+    name: user.displayName,
+    tenantId: typeof ws.tenantId === "string" ? ws.tenantId : undefined,
+  };
+}
 
 /** Stores a theme toggled from the palette or shortcut as the person's preference. */
 async function saveThemePreference(theme: ThemePreference): Promise<void> {
@@ -136,10 +157,16 @@ function AuthenticatedApp({
         }
         const ws = (raw ?? {}) as Record<string, unknown>;
         if (ws.telemetryEnabled && ws.installId) {
-          initTelemetry(ws.installId as string);
+          initTelemetry(ws.installId as string, telemetryPerson(ws, bootstrap.user));
         }
       })
       .catch(() => {});
+  }, [bootstrap.user]);
+
+  // The focused workspace is the `workspace` group of identified events.
+  useEffect(() => {
+    setTelemetryWorkspace(getActiveWorkspaceId());
+    return addWorkspaceLifecycleHandler(() => setTelemetryWorkspace(getActiveWorkspaceId()));
   }, []);
 
   const initialWorkspaces: WorkspaceInfo[] = bootstrapWorkspacesToInfo(bootstrap.workspaces);
@@ -737,6 +764,7 @@ export function App() {
     setBootstrap(null);
     setAuthenticated(false);
     clearSentryContext();
+    resetTelemetry();
   }, []);
 
   const initFromBootstrap = useCallback(
