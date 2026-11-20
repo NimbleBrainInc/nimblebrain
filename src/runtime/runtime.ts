@@ -597,7 +597,7 @@ export interface WorkspaceDeleteResult {
 }
 
 /**
- * What narrows who may call a connector's tools: the catalog's `admin_tools`,
+ * What narrows who may call a connector's tools: the catalog's `adminTools`,
  * and the lifecycle handlers its server binds, which only the host may call.
  */
 interface ConnectorGates {
@@ -4115,7 +4115,7 @@ export class Runtime {
       identityId ? this._listGrantedPersonalConnectorTools(identityId, wsId) : Promise.resolve([]),
       this.connectorAdmission(wsId, identityId ? { id: identityId } : null),
     ]);
-    // A connector's `admin_tools` leave a non-admin's listing here, where every
+    // A connector's `adminTools` leave a non-admin's listing here, where every
     // listing that reads this method (the engine's universe, `nb__search`,
     // `/mcp` `tools/list`) picks it up. Dispatch refuses the same set.
     const wsTools = filterAdmittedTools(allWsTools, admission);
@@ -4767,7 +4767,7 @@ export class Runtime {
    * The live MCP source of a workspace connector, as the lifecycle binding
    * reads it, or `undefined` when none is registered.
    *
-   * Workspace connectors only, the scope of `admin_tools` too: a personal
+   * Workspace connectors only, the scope of `adminTools` too: a personal
    * connector is not in the workspace registry, so one that advertises the
    * extension is neither notified nor has its handlers withheld.
    */
@@ -4789,7 +4789,7 @@ export class Runtime {
 
   /**
    * `principal`'s admission to the connector tools of `wsId`: which declared
-   * `admin_tools` it may list and call, minus every declared lifecycle handler,
+   * `adminTools` it may list and call, minus every declared lifecycle handler,
    * which only the host calls (`isHostOnlyTool`) and which no principal is
    * admitted to, admins included.
    *
@@ -4923,7 +4923,7 @@ export class Runtime {
   }
 
   /**
-   * Install warnings for the `admin_tools` a connector's catalog entry declares:
+   * Install warnings for the `adminTools` a connector's catalog entry declares:
    * names that are also kernel-called handlers, and names the running server
    * does not advertise. Empty when there is nothing to say.
    */
@@ -4953,7 +4953,7 @@ export class Runtime {
 
   /**
    * The gating declarations of `wsId`'s connectors: each catalog entry's
-   * `admin_tools` ({@link catalogAdminToolsByServer}), and the lifecycle
+   * `adminTools` ({@link catalogAdminToolsByServer}), and the lifecycle
    * handlers each connection's server binds through `ai.nimblebrain/lifecycle`,
    * which are withheld. One predicate, `isHostOnlyTool`, holds the handlers.
    *
@@ -4982,7 +4982,7 @@ export class Runtime {
   }
 
   /**
-   * Each catalog entry's `admin_tools`, under the server name its id slugifies
+   * Each catalog entry's `adminTools`, under the server name its id slugifies
    * to. A connector that declares none is absent.
    *
    * By name alone, NOT held to the ref's identity as every grant is
@@ -5004,7 +5004,7 @@ export class Runtime {
   /**
    * The record-arguments grant `serverName` holds in `wsId` (ADR-0058), or null
    * when it holds none: its operator-trusted catalog entry must declare
-   * `record_arguments`, and the workspace's `recordSources` narrows it to the
+   * `recordArguments`, and the workspace's `recordSources` narrows it to the
    * named connectors, or revokes it when empty. A `recordSources` that is not a
    * list of names grants nothing.
    */

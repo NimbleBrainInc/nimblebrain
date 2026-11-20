@@ -9,15 +9,20 @@
 //      side panel beside it.
 //   2. Next steps: rows ranked by `overviewActions`: what needs a member
 //      (alerts), then the workspace's next setup step, then the last
-//      conversation.
+//      conversation, then conversation starters from the installed plugins.
 // Apps, conversations, and settings are one click away in the sidebar and the
 // workspace menu, so the page does not repeat them.
 //
 // The column is the full-screen chat's (`max-w-4xl` with `px-8`, as in
 // ChatPanel), centered, so a send reads as the page turning into the
-// conversation rather than a jump to another box. It sits lower when the main
-// area is wide and fills it when the docked chat narrows it; widths come from
-// container queries on the main area (web/DESIGN.md), never the viewport.
+// conversation rather than a jump to another box. When the main area is wide,
+// the column starts far enough down that the composer sits near the optical
+// center (about 40% down a typical window), and the rows hang below it. The
+// composer is placed, not the whole group centered: the rows arrive after the
+// composer renders, and centering the group would move the composer under the
+// pointer when they do. When the docked chat narrows the main area the column
+// fills it; widths come from container queries on the main area
+// (web/DESIGN.md), never the viewport.
 // ---------------------------------------------------------------------------
 
 import { useCallback } from "react";
@@ -31,6 +36,7 @@ import { useSession } from "../context/SessionContext";
 import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useComposerModel } from "../hooks/useComposerModel";
+import { useConversationStarters } from "../hooks/useConversationStarters";
 import { useRecentConversations } from "../hooks/useRecentConversations";
 import { useRunsNeedingReview } from "../hooks/useRunsNeedingReview";
 import { canManageWorkspaceMembers, canWriteWorkspace } from "../hooks/useScopedRole";
@@ -40,7 +46,7 @@ import { toSlug } from "../lib/workspace-slug";
 export function WorkspaceOverviewPage() {
   const { slug } = useParams<{ slug: string }>();
   const wsCtx = useWorkspaceContext();
-  const { connectors } = useWorkspaceAppIcons();
+  const { connectors, iconFor } = useWorkspaceAppIcons();
   const navigate = useNavigate();
   const session = useSession();
   const chat = useChatContext();
@@ -58,6 +64,9 @@ export function WorkspaceOverviewPage() {
   } = useWorkspaceBriefing(workspace?.id);
   const recent = useRecentConversations(workspace?.id, 1);
   const reviewCount = useRunsNeedingReview(workspace?.id);
+  // Not part of `settled` below: starters come last in the list, so they can
+  // arrive after the rest without moving any row above them.
+  const conversationStarters = useConversationStarters(workspace?.id);
 
   // Connector status comes from the list the app icons already fetch. Until it
   // names this workspace (a switch in flight), the cards wait for it, so a
@@ -113,12 +122,16 @@ export function WorkspaceOverviewPage() {
             canManageWorkspaceMembers(session?.user?.orgRole, workspace.userRole),
         },
         lastConversation: recent[0] ?? null,
+        conversationStarters: conversationStarters ?? [],
+        // The workspace and today's local date: the plugins whose starters
+        // show change once a day, and stay put within it.
+        starterRotation: `${workspace.id}:${localDay()}`,
       })
     : null;
 
   return (
     <div className="@container h-full overflow-y-auto" data-testid="workspace-overview-page">
-      <div className="mx-auto w-full max-w-4xl px-8 pt-10 pb-12 @3xl:pt-[14vh]">
+      <div className="mx-auto w-full max-w-4xl px-8 pt-10 pb-12 @3xl:pt-[28vh]">
         <h1 className="mb-2 ml-1 truncate text-sm text-muted-foreground">
           Working in <span className="font-semibold text-foreground">{workspace.name}</span>
         </h1>
@@ -127,6 +140,7 @@ export function WorkspaceOverviewPage() {
 
         {actions && (
           <ActionRows
+            iconFor={iconFor}
             workspaceId={workspace.id}
             actions={actions}
             error={briefingError}
@@ -182,4 +196,11 @@ function OverviewComposer({
       />
     </div>
   );
+}
+
+/** Today's date in the viewer's own time zone, as `YYYY-MM-DD`. */
+function localDay(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }

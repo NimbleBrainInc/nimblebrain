@@ -7,7 +7,7 @@
  *   - the URL: refused `URL_NOT_LOOPBACK` unless it names a loopback host;
  *   - the name: `NAME_TAKEN`, `NAME_IS_CATALOG_ENTRY`, and where it comes from;
  *   - the card: only its display fields and `placements` reach the stored row,
- *     never `hooks` or `admin_tools`, and a missing card is not an error.
+ *     never `hooks` or `adminTools` (in either spelling), and a missing card is not an error.
  *
  * A real server installed this way, its tools, a restart and an uninstall are
  * in `test/integration/direct-url-install.test.ts`.
@@ -67,7 +67,7 @@ const CARD = {
   icons: [{ src: "http://10.0.0.5/icon.png" }, { src: "data:image/svg+xml;base64,PHN2Zy8+" }],
   _meta: {
     "ai.nimblebrain/host": {
-      host_version: "1.5",
+      hostVersion: "1.5",
       placements: [
         {
           slot: "sidebar.apps",
@@ -78,7 +78,9 @@ const CARD = {
         { slot: "main", resourceUri: "ui://other/evil" },
       ],
       hooks: [{ vendor: "acme", route: "/ingest/acme", register_tool: "set_webhook_url" }],
+      adminTools: ["configure"],
       admin_tools: ["configure"],
+      recordArguments: true,
       record_arguments: true,
       notifications: { resource: "ui://weather/outbox" },
     },
@@ -273,7 +275,14 @@ describe("an install with a card", () => {
       },
     });
     const raw = JSON.stringify(row);
-    for (const grant of ["hooks", "admin_tools", "record_arguments", "notifications"]) {
+    for (const grant of [
+      "hooks",
+      "adminTools",
+      "admin_tools",
+      "recordArguments",
+      "record_arguments",
+      "notifications",
+    ]) {
       expect(raw).not.toContain(grant);
     }
     expect(h.lifecycle.getInstance("io-github-dev-weather", WS)?.ui?.placements).toHaveLength(1);

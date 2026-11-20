@@ -86,7 +86,7 @@ the door never admits on it. The delivery id is never logged, because unlike a
 
 **Rotation** (`hooks__rotate_webhook { connector, vendor }`, workspace admin):
 mints a fresh id, keeps the outgoing one admissible for 24 h so in-flight
-redeliveries land, and calls the server's `register_tool` with the new URL. It
+redeliveries land, and calls the server's `registerTool` with the new URL. It
 **refuses when nothing was provisioned** — a connector that is not running
 cannot be handed a URL, and reporting a rotation that did not happen is worst
 exactly when this control is reached, which is after a URL has leaked. Cheap
@@ -105,17 +105,17 @@ fresh install, a boot, and an interactive OAuth flow completing long after the
 install returned — one path instead of three that drift. It provisions only
 what is missing, and **missing means unaddressable**: a registration with no
 `deliveryId` is refused by the door, so it counts as missing and the next pass
-gives it an address rather than skipping it. A declared `register_tool` that is
+gives it an address rather than skipping it. A declared `registerTool` that is
 missing or does not accept `{vendor, url}` **provisions nothing** and is reported
 as a warning on the install, which has already committed, and re-logged on every
-transition to `running`. A `register_tool` call that merely errors leaves the
+transition to `running`. A `registerTool` call that merely errors leaves the
 registration recorded (the connector is useful without its webhook, and a
 rotation or reinstall retries).
 
 **A hook route is never the MCP endpoint.** The forward carries the connection's
 credential, so a route at the connector's MCP endpoint path, or under it, would
 let anyone holding the delivery URL call the server's tools as the workspace,
-past `admin_tools` and every other runtime gate. `routeNamesMcpEndpoint` decides
+past `adminTools` and every other runtime gate. `routeNamesMcpEndpoint` decides
 it against the installed ref's URL, on the resolved, percent-decoded, and
 case-folded path.
 Provisioning refuses it as a contract error, minting nothing; `resolveForwardUrl`

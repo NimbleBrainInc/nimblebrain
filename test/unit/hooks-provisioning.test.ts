@@ -15,7 +15,7 @@ import { makeWorkspace } from "../helpers/test-workspace.ts";
 const DECL: HookDeclaration = {
   vendor: "acme",
   route: "/ingest/acme",
-  register_tool: "set_webhook_url",
+  registerTool: "set_webhook_url",
 };
 
 function tool(over: Partial<Tool> = {}): Tool {
@@ -58,7 +58,7 @@ describe("verifyRegisterTool", () => {
     expect(() => verifyRegisterTool([t], DECL, "acme-mcp")).not.toThrow();
   });
 
-  test("refuses a declaration whose register_tool does not exist", () => {
+  test("refuses a declaration whose registerTool does not exist", () => {
     // Catching this at install turns "the vendor never sends anything", noticed
     // months later, into a legible failure at the moment of the mistake.
     expect(() => verifyRegisterTool([tool({ name: "something_else" })], DECL, "acme-mcp")).toThrow(
@@ -69,14 +69,14 @@ describe("verifyRegisterTool", () => {
   test.each([
     ["vendor", { url: { type: "string" } }],
     ["url", { vendor: { type: "string" } }],
-  ])("refuses a register_tool that does not accept %s", (missing, properties) => {
+  ])("refuses a registerTool that does not accept %s", (missing, properties) => {
     // The manifest names a tool but the ARGUMENT SHAPE appears in no schema a
     // third-party author can read, so the runtime checks it rather than hoping.
     const t = tool({ inputSchema: { type: "object", properties } });
     expect(() => verifyRegisterTool([t], DECL, "acme-mcp")).toThrow(new RegExp(missing));
   });
 
-  test("refuses a register_tool whose argument is typed as something else", () => {
+  test("refuses a registerTool whose argument is typed as something else", () => {
     const t = tool({
       inputSchema: {
         type: "object",
@@ -146,7 +146,7 @@ describe("connectorPortForSource", () => {
   /**
    * A registry source advertises `<source>__<tool>` and takes the bare name on
    * `execute`. A declaration names the bare tool. Without the port translating
-   * between them, every declared `register_tool` is absent from every tool list
+   * between them, every declared `registerTool` is absent from every tool list
    * and a correct manifest is reported as a contract violation — which is not a
    * transient failure: it fires identically on every attempt, for every
    * workspace, so no stream is ever provisioned.

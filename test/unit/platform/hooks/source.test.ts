@@ -92,7 +92,7 @@ class FakeRuntime {
   ): Array<Record<string, unknown>> {
     const handed: Array<Record<string, unknown>> = [];
     this.declarations = [
-      { vendor: "acme", route: "/ingest/acme", register_tool: "set_webhook_url" },
+      { vendor: "acme", route: "/ingest/acme", registerTool: "set_webhook_url" },
     ];
     const registerTool: Tool = {
       name: "set_webhook_url",

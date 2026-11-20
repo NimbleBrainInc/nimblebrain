@@ -15,15 +15,14 @@
     ],
     "_meta": {
       "ai.nimblebrain/host": {
-        "host_version": "1.0",
+        "hostVersion": "1.0",
         "placements": [
           {
             "slot": "sidebar.apps",
             "resourceUri": "ui://probe/board",
             "priority": 20,
             "label": "Probe",
-            "route": "probe",
-            "size": "full"
+            "route": "probe"
           },
           { "slot": "settings", "resourceUri": "ui://probe/settings" }
         ]
@@ -42,8 +41,7 @@
           "resourceUri": "ui://probe/board",
           "priority": 20,
           "label": "Probe",
-          "route": "probe",
-          "size": "full"
+          "route": "probe"
         },
         { "slot": "settings", "resourceUri": "ui://probe/settings" }
       ]

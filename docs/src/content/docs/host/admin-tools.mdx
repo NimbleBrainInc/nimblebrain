@@ -1,23 +1,25 @@
 ---
 title: Admin-only tools
-description: Name tools in admin_tools and the host lets only a workspace admin list or call them, on every path, before the call reaches your server.
+description: Name tools in adminTools and the host lets only a workspace admin list or call them, on every path, before the call reaches your server.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
 Your server cannot check who is calling it: the host tells it the workspace, not
 the person or their role. When a tool changes how your connector behaves for
-everyone in the workspace, name it in `admin_tools` and the host enforces the
+everyone in the workspace, name it in `adminTools` and the host enforces the
 role for you.
 
-`admin_tools` is a capability of the [`ai.nimblebrain/host`](/host/manifest/)
+`adminTools` is a capability of the [`ai.nimblebrain/host`](/host/manifest/)
 block.
+
+The snake_case spelling (`admin_tools`) is still read during the migration; see [Spelling](/host/manifest/#spelling).
 
 ```json
 "_meta": {
   "ai.nimblebrain/host": {
-    "host_version": "1.0",
-    "admin_tools": ["configure_endpoint"]
+    "hostVersion": "1.0",
+    "adminTools": ["configure_endpoint"]
   }
 }
 ```
@@ -67,14 +69,14 @@ host's own controls on the connector's settings page.
 - **It only narrows.** It removes callers and grants nothing.
 - **Enforced by name.** A name your server does not advertise is still refused
   to non-admins, and is a warning on install.
-- **A malformed list gates every tool.** If `admin_tools` is present but is not a
+- **A malformed list gates every tool.** If `adminTools` is present but is not a
   list of at most 64 tool names with no whitespace (`null` included, such as a
-  bare `admin_tools:` in YAML), the host cannot tell which tools you meant. Since
+  bare `adminTools:` in YAML), the host cannot tell which tools you meant. Since
   dropping part of a narrowing list would widen access, it refuses every tool on
   your server to non-admins and warns on install. An empty list declares
   nothing. Duplicate names collapse.
 - **The host's own calls pass.** The host calls your
-  [`lifecycle`](/extensions/lifecycle/) handlers and `hooks` `register_tool`
+  [`lifecycle`](/extensions/lifecycle/) handlers and `hooks` `registerTool`
   itself; those calls are not checked. Naming one of them here is a warning on
   install.
 - **Personal connectors are not gated.** A connector a user
@@ -93,7 +95,7 @@ host's own controls on the connector's settings page.
 ## The honest limit
 
 <Aside type="caution" title="It gates who calls, not whether a person is present">
-`admin_tools` controls **who** can call a tool. A workspace admin's agent acts as
+`adminTools` controls **who** can call a tool. A workspace admin's agent acts as
 that admin and passes the check, and so does a task run as that admin. An
 admin-only tool must still be safe for that agent to call: validate its
 arguments, keep it idempotent where you can, and do not treat an admitted call
@@ -105,12 +107,12 @@ as proof that a human reviewed it.
 A tool that changes connector-wide behavior is usually driven from your
 [settings section](/host/settings-sections/) or your app's main view. Each shows
 every member the page and reads `hostContext.connector.allowedTools`, the tools
-this viewer may call as decided by `admin_tools`, to disable a control whose
-tool is not listed. The list only shapes the UI. `admin_tools` is what enforces
+this viewer may call as decided by `adminTools`, to disable a control whose
+tool is not listed. The list only shapes the UI. `adminTools` is what enforces
 it, for the app's own calls and for every other path to the tool.
 
 ## Related
 
 - [Settings sections](/host/settings-sections/): the UI side of the same rule
-- [Manifest Reference](/host/manifest/): the `admin_tools` field in the `ai.nimblebrain/host` block
+- [Manifest Reference](/host/manifest/): the `adminTools` field in the `ai.nimblebrain/host` block
 - [Connectors](/using/connectors/): tool permissions an admin sets per workspace

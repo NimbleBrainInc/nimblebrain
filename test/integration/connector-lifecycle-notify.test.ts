@@ -166,7 +166,7 @@ async function buildHarness(
     identity: { tid: "tenant-a", key: randomBytes(32) } satisfies HookIdentity,
     declarationsFor: async () =>
       opts.hooks
-        ? [{ vendor: "acme", route: "/ingest/acme", register_tool: "set_webhook_url" }]
+        ? [{ vendor: "acme", route: "/ingest/acme", registerTool: "set_webhook_url" }]
         : [],
     portFor: () => port,
   };

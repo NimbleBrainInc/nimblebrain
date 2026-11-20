@@ -31,6 +31,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { log } from "../../observability/log.ts";
 import { slugifyServerName } from "../runtime/paths.ts";
+import { deprecatedHostKeys } from "./host-meta.ts";
 import {
   projectServerDetailToCatalogListing,
   serverDetailToCatalogEntry,
@@ -99,7 +100,7 @@ export function readCatalogServers(path: string): ServerDetail[] {
 
 /**
  * Report the entries at `path` that would not reach Browse, or would reach it
- * with every tool admin-only (a malformed `admin_tools`, which the runtime
+ * with every tool admin-only (a malformed `adminTools`, which the runtime
  * keeps and fails closed on), without loading them into a registry.
  *
  * An entry is removed silently at three points, and all three show the
@@ -170,6 +171,27 @@ export function validateCatalog(path: string): CatalogDiagnostic[] {
     }
   }
   return diagnostics;
+}
+
+/**
+ * The entries at `path` whose `ai.nimblebrain/host` block uses a deprecated
+ * snake_case key. Warnings, not problems: the runtime still reads that
+ * spelling, so the entry loads as written. Entries `readCatalogEntries` drops
+ * are not reported here; `validateCatalog` reports those.
+ */
+export function catalogDeprecations(path: string): CatalogDiagnostic[] {
+  const out: CatalogDiagnostic[] = [];
+  for (const { detail, source, index } of readCatalogEntries(path).entries) {
+    const keys = deprecatedHostKeys(detail._meta?.["ai.nimblebrain/host"]);
+    if (keys.length === 0) continue;
+    out.push({
+      source,
+      index,
+      name: detail.name,
+      message: `${source}[${index}:${detail.name}] deprecated host key ${keys.join(", ")}; write the camelCase spelling`,
+    });
+  }
+  return out;
 }
 
 /**

@@ -452,7 +452,7 @@ describe("kernel-originated calls", () => {
     expect(ran(MEMBER_WS)).toEqual(["workspace_ready"]);
   });
 
-  it("hands a hook URL to a declared admin register_tool", async () => {
+  it("hands a hook URL to a declared admin registerTool (declared as register_tool)", async () => {
     resetCalls();
     await ensureHooks(
       { ...runtime.getHookReconcileDeps(), identity: { tid: "tenant-a", key: randomBytes(32) } },
@@ -468,7 +468,7 @@ describe("kernel-originated calls", () => {
       true,
     );
     expect(
-      warnings.some((w) => w.includes('"set_webhook_url"') && w.includes("register_tool")),
+      warnings.some((w) => w.includes('"set_webhook_url"') && w.includes("registerTool")),
     ).toBe(true);
     expect(warnings.some((w) => w.includes('"ghost"') && w.includes("not among"))).toBe(true);
     expect(warnings.some((w) => w.includes('"configure"'))).toBe(false);

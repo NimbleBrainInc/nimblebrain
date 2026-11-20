@@ -21,7 +21,7 @@ import type { HookDeclaration } from "./types.ts";
  *
  * It is a reconcile in shape, not a timer. It runs on the two events that make
  * both halves it needs true — a declaration to read, and a live source to call
- * `register_tool` on: a connection reaching `running`, and the connector's tool
+ * `registerTool` on: a connection reaching `running`, and the connector's tool
  * set becoming enumerable (`watchToolSurface`, shared with the lifecycle
  * notification in `src/tools/connector-surface.ts`). Nothing here polls, and
  * nothing needs to: the minted URL is stable across restarts and the server
@@ -48,7 +48,7 @@ export interface HookReconcileDeps {
 export interface EnsureHooksOptions {
   /**
    * Skip streams that already hold an ADDRESSABLE registration entirely — no
-   * re-mint and no `register_tool` call. A registration with no `deliveryId`
+   * re-mint and no `registerTool` call. A registration with no `deliveryId`
    * counts as missing: the door refuses it, so the stream is as dead as one
    * that was never provisioned.
    *
@@ -74,7 +74,7 @@ export interface EnsureHooksOptions {
  * and a connector must install and work normally in every one of them.
  *
  * A {@link HookContractError} propagates rather than being swallowed: a declared
- * `register_tool` that does not exist or does not accept `{vendor, url}` is a
+ * `registerTool` that does not exist or does not accept `{vendor, url}` is a
  * manifest bug, and provisioning nothing is better than leaving a stream that
  * can never be handed its URL. The caller decides how loud that is — the
  * install path reports it as a warning on a successful install (it cannot
@@ -150,7 +150,7 @@ export async function ensureHooks(
  * `startConnectorSource`, and the install handler on the line after the eager
  * start returns. Both read the workspace before either writes, so both see no
  * registration and both mint — two divergent `kid`s, one persisted, neither
- * recorded as the other's `prevKid`, and `register_tool` called twice with two
+ * recorded as the other's `prevKid`, and `registerTool` called twice with two
  * different URLs. Because which URL the server keeps is independent of which
  * write landed, the connector can be left registered on a `kid` the door will
  * never admit: every delivery 404s, permanently and silently, while the
