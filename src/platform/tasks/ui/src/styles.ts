@@ -95,10 +95,10 @@ code { font-family: var(--font-mono); font-size: var(--font-text-xs-size); }
 .app {
   height: 100%; display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; min-width: 0;
   container-type: inline-size; container-name: panel;
-  --page-x: var(--nb-gutter-wide, 20px); --page-top: 16px; --head-gap: 16px; --section-gap: 28px;
+  --page-x: var(--nb-gutter-wide); --page-top: 16px; --head-gap: 16px; --section-gap: 28px;
   --row-y: 10px; --stack: 8px; --inline: 6px; --card-pad: 16px;
 }
-@container panel (max-width: 560px) { .app > * { --page-x: var(--nb-gutter-narrow, 14px); --section-gap: 16px; --card-pad: 12px; } }
+@container panel (max-width: 560px) { .app > * { --page-x: var(--nb-gutter-narrow); --section-gap: 16px; --card-pad: 12px; } }
 /* One scroll container per page: the page header scrolls with the content
    (the host's own top bar stays pinned and carries the breadcrumb). */
 .content { flex: none; }
