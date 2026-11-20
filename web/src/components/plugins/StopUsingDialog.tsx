@@ -1,10 +1,8 @@
 import { ConfirmDialog } from "../ui/confirm-dialog";
 
 /**
- * The confirm before one of the viewer's plugins stops acting in a workspace.
- * Every Stop using asks through this one dialog, from a row's ⋯ menu or the
- * plugin's page, so the question and its consequence read the same wherever
- * it is asked.
+ * The confirm before one of the viewer's plugins stops acting in a workspace,
+ * asked from the plugin's page.
  */
 export function StopUsingDialog({
   pluginName,

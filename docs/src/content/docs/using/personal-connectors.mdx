@@ -42,14 +42,15 @@ A personal connector is yours, so **you** decide which of your workspaces may us
 
 The rule has **no exception for a workspace only you belong to** — you grant the connector there too before your agent can use it. There is no "free at home".
 
-The quickest place to grant is the workspace itself. Its **Plugins** page lists your connectors under **Personal**: those granted there, then the rest, each with **Use here**. Use here asks you to confirm, naming the account and the workspace, then grants it. When the connector is not signed in, the confirm says you'll sign in next: Use here grants it and then sends you to the vendor's sign-in, and you come back to this workspace's **Plugins**, where the row reads **Connected just now**. Any member can do this for their own connectors. The plugin's own page offers the same, and turns it on or off in any of your other workspaces too.
+The quickest place to grant is the workspace itself. Its **Plugins** page lists your connectors under **Personal**: those granted there, then the rest, which read **Off here**. Click one to open its page, where **Use here** asks you to confirm, naming the account and the workspace, then grants it. When the connector is not signed in, the confirm says you'll sign in next: Use here grants it and then sends you to the vendor's sign-in, and you come back to this workspace. Any member can do this for their own connectors. The plugin's page turns it on or off in any of your other workspaces too.
 
-A row shows only what needs you:
+A row says the connector's state in words, never a button:
 
-- **Connect** when it is on here but not signed in. Connect runs the sign-in and brings you back to **Plugins**. While it is the only one that needs you, **Connect** is on the line above the list instead, and the row says **Not signed in**.
-- Nothing when it is on and signed in. Its subtitle names the account it uses.
+- **Not signed in** when it is on here but not signed in. While it is the only plugin that needs you, the line above the list carries **Connect**, which runs the sign-in and brings you back to **Plugins**; otherwise Connect is on its page.
+- **Off here** when it is not on in this workspace.
+- The account it uses, and **on here**, when it is on and signed in.
 
-Each row's **⋯** menu holds **Open**, and for your own connectors **Stop using here** (which revokes the grant) and **Disconnect**, each confirmed first.
+A row has no menu and no button: click it to open the plugin's page, which holds **Stop using** (which revokes the grant) and **Disconnect**, each confirmed first.
 
 To turn it on in another workspace, use the plugin's page, or open that workspace's **Plugins**.
 
@@ -61,12 +62,12 @@ You can also answer from **chat**. The agent knows which of your connectors are 
 
 In a workspace, **Plugins** → your connector opens its page. The header shows the account it is signed in as and that it uses your account; when the sign-in is not ready, it offers **Connect**, which brings you back to this workspace's **Plugins**. Below it:
 
-- **In this workspace** — **Use here** (after the same confirm as on Plugins, signing you in when it needs to), or **In use here** with **Stop using here**, confirmed first as from the row's menu.
+- **In this workspace** — **Use here** (after a confirm naming the account and the workspace, signing you in when it needs to), or **In use here** with **Stop using here**, confirmed first.
 - **Workspaces** — every workspace you belong to, this one first and marked **This workspace**, each reading **On** or **Off** (see below).
 - **Tool permissions** — your own policy for its tools (see below).
 - **Disconnect** — signs out and removes it from your account, ending every grant.
 
-Under **Workspaces**, a workspace where it is off offers **Use in** that workspace: the confirm names the account and the workspace, and says only you can use it there. Confirming grants it there and nowhere else. A workspace where it is on offers **Stop using**, confirmed the same way as from the row's menu. The row shows the new state at once, and a notice says when the change lands; if it fails, the row goes back to how it was and a notice says why.
+Under **Workspaces**, a workspace where it is off offers **Use in** that workspace: the confirm names the account and the workspace, and says only you can use it there. Confirming grants it there and nowhere else. A workspace where it is on offers **Stop using**, confirmed first. The row shows the new state at once, and a notice says when the change lands; if it fails, the row goes back to how it was and a notice says why.
 
 Turning it on elsewhere needs no sign-in. When the connector is not signed in, the grant is still made, the confirm says it won't work there until you sign in, and the row reads **On · Not signed in**. Sign in with **Connect** at the top of the page; one sign-in serves every workspace it is on in.
 
