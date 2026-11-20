@@ -130,18 +130,6 @@ describe("updateArgs", () => {
       body: "Research {{company}} deeply",
     });
   });
-
-  test("a stored schedule with no timezone is saved in the one the form shows", () => {
-    const original = draftFromDetail({
-      ...DETAIL,
-      schedule: { type: "cron", expression: "0 8 * * *" },
-    });
-    const edited = { ...original, prompt: "Research {{company}} deeply" };
-    const viewer = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    expect(updateArgs("research", original, edited).args?.manifest).toEqual({
-      schedule: { cron: "0 8 * * *", timezone: viewer },
-    });
-  });
 });
 
 describe("testRunArgs", () => {

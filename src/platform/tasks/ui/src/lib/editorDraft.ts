@@ -96,18 +96,24 @@ export function emptyDraft(): EditorDraft {
 const str = (n: number | undefined | null) => (n == null ? "" : String(n));
 const json = (v: unknown) => (v === undefined ? "" : JSON.stringify(v, null, 2));
 
-/** The trigger fields of a stored schedule. */
+/**
+ * The trigger fields of a stored schedule. A cron schedule stored without a
+ * timezone runs in `zone`, the one the server reads it in, so the draft carries
+ * that zone: the form shows it, and an edit keeps it.
+ */
 function triggerOf(
   schedule: Record<string, unknown> | undefined,
+  zone: string,
 ): Pick<EditorDraft, "trigger" | "schedule" | "event"> {
   if (!schedule) return { trigger: "manual", schedule: null, event: emptyDraft().event };
   if (schedule.type !== "event") {
+    // The UI's `Task` mirror types a stored schedule as a plain record; any
+    // type but `event` is one of the `ScheduleSpec` shapes the picker edits.
+    // biome-ignore lint/plugin/double-cast: the UI mirror types a stored schedule as a plain record
+    const spec = schedule as unknown as ScheduleSpec;
     return {
       trigger: "schedule",
-      // The UI's `Task` mirror types a stored schedule as a plain record; any
-      // type but `event` is one of the `ScheduleSpec` shapes the picker edits.
-      // biome-ignore lint/plugin/double-cast: the UI mirror types a stored schedule as a plain record
-      schedule: schedule as unknown as ScheduleSpec,
+      schedule: spec.type === "cron" && !spec.timezone ? { ...spec, timezone: zone } : spec,
       event: emptyDraft().event,
     };
   }
@@ -152,7 +158,7 @@ function inputOf(
 export function draftFromDetail(d: TaskDetail): EditorDraft {
   return {
     ...emptyDraft(),
-    ...triggerOf(d.schedule as Record<string, unknown> | undefined),
+    ...triggerOf(d.schedule as Record<string, unknown> | undefined, d.timezone),
     ...budgetOf(d.tokenBudget),
     ...inputOf(d.inputSchema),
     name: d.name,
@@ -403,11 +409,6 @@ export function updateArgs(
   const next = buildDefinition(d);
   if (next.problems.length > 0) return { problems: next.problems };
   const before = buildDefinition(original);
-  // Compare against the schedule as stored, not as the form shows it: a stored
-  // schedule with no timezone is shown, and so saved, in the viewer's.
-  if (original.trigger === "schedule" && original.schedule) {
-    before.schedule = scheduleArg(original.schedule);
-  }
   const manifest: Record<string, unknown> = {};
   for (const k of DEFINITION_KEYS) {
     if (JSON.stringify(before[k]) === JSON.stringify(next[k])) continue;

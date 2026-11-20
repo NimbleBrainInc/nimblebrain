@@ -1,7 +1,7 @@
 /**
  * A schedule saved from the form is read on the clock its times were typed on:
- * an edit keeps the stored schedule's timezone, and a new schedule takes the
- * viewer's. The editor mounts here against stub tools that record what a save
+ * an edit keeps the stored schedule's timezone (the instance's, when it stores
+ * none), and a new schedule takes the viewer's. The editor mounts here against stub tools that record what a save
  * sends.
  */
 import { beforeAll, expect, mock, test } from "bun:test";
@@ -33,6 +33,22 @@ const DETAIL: TaskDetail = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
 
+/**
+ * A task that runs daily at 9 with no stored timezone, so in the instance's,
+ * which `tasks__status` reports as `timezone`.
+ */
+const ZONELESS: TaskDetail = {
+  ...DETAIL,
+  id: "tokyo-digest",
+  name: "Tokyo digest",
+  schedule: { type: "cron", expression: "0 9 * * *" },
+  scheduleHuman: "Every day at 9:00 AM Asia/Tokyo",
+  timezone: "Asia/Tokyo",
+};
+
+/** The task `tasks__status` returns. */
+let stored: TaskDetail = DETAIL;
+
 /** What each save sent, by tool. */
 const sent: Record<string, Record<string, unknown>[]> = {};
 
@@ -63,7 +79,7 @@ beforeAll(async () => {
               content: [],
             };
           }
-          const data = name === "status" ? { task: DETAIL } : { servers: [] };
+          const data = name === "status" ? { task: stored } : { servers: [] };
           return { data, isError: false, content: [] };
         },
       };
@@ -101,6 +117,7 @@ function savedSchedule(tool: "create" | "update"): Record<string, unknown> | und
 }
 
 test("an edited schedule keeps its own timezone, and the form says which it is", async () => {
+  stored = DETAIL;
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
@@ -138,5 +155,51 @@ test("a new schedule is read on the viewer's clock", async () => {
   const viewer = Intl.DateTimeFormat().resolvedOptions().timeZone;
   expect(savedSchedule("create")).toMatchObject({ cron: "0 9 * * *", timezone: viewer });
   expect(container.textContent).toContain(`Times are in ${viewer}.`);
+  await act(async () => root.unmount());
+});
+
+/** Mount the editor on the stored task. */
+async function mountStored(): Promise<{
+  container: HTMLElement;
+  root: ReturnType<typeof createRoot>;
+}> {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  await act(async () =>
+    root.render(
+      createElement(editor.TaskEditor, {
+        taskId: stored.id,
+        onSaved: () => {},
+        onCancel: () => {},
+      }),
+    ),
+  );
+  return { container, root };
+}
+
+test("a schedule stored with no timezone shows the instance's, and a prompt edit leaves it alone", async () => {
+  stored = ZONELESS;
+  const { container, root } = await mountStored();
+  expect(container.textContent).toContain("Times are in Asia/Tokyo.");
+
+  const prompt = container.querySelector("textarea") as HTMLTextAreaElement;
+  await act(async () => type(prompt, "Summarize all email."));
+  await act(async () => button(container, "Save changes").click());
+
+  expect(sent.update?.at(-1)?.body).toBe("Summarize all email.");
+  expect(savedSchedule("update")).toBeUndefined();
+  await act(async () => root.unmount());
+});
+
+test("a new time for a schedule stored with no timezone is sent in the instance's", async () => {
+  stored = ZONELESS;
+  const { container, root } = await mountStored();
+
+  const daily = container.querySelector('input[type="time"]') as HTMLInputElement;
+  await act(async () => type(daily, "10:00"));
+  await act(async () => button(container, "Save changes").click());
+
+  expect(savedSchedule("update")).toMatchObject({ cron: "0 10 * * *", timezone: "Asia/Tokyo" });
   await act(async () => root.unmount());
 });
