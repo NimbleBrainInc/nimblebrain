@@ -24,11 +24,25 @@ describe("labelTone", () => {
 });
 
 describe("RunBadge", () => {
-  test("renders the icon and the label text, apart, in its tone", () => {
+  test("renders the plain outcome and its icon, apart, in its tone, with the label on hover", () => {
     const html = renderToStaticMarkup(createElement(RunBadge, { label: "Needs review" }));
     expect(html).toMatch(
-      /^<span class="status-badge tone-warning"><svg[^>]*class="status-icon"[\s\S]*<\/svg><span>Needs review<\/span><\/span>$/,
+      /^<span class="status-badge tone-warning" title="Needs review"><svg[^>]*class="status-icon"[\s\S]*<\/svg><span>Needs you<\/span><\/span>$/,
     );
+  });
+  test("a poor result and a failure both read as didn't work", () => {
+    for (const label of ["Poor result", "Failed"] as const) {
+      const html = renderToStaticMarkup(createElement(RunBadge, { label }));
+      expect(html).toContain("tone-danger");
+      expect(html).toContain("Didn&#x27;t work");
+    }
+  });
+  test("exact shows the label itself", () => {
+    const html = renderToStaticMarkup(
+      createElement(RunBadge, { label: "Poor result", exact: true }),
+    );
+    expect(html).toContain("<span>Poor result</span>");
+    expect(html).not.toContain("title=");
   });
   test("renders nothing without a label", () => {
     expect(renderToStaticMarkup(createElement(RunBadge, {}))).toBe("");

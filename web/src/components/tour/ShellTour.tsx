@@ -117,7 +117,7 @@ const STEPS: TourStep[] = [
     anchor: "nav",
     page: "overview",
     title: "Your workspace",
-    body: "Overview, Conversations, Files and Tasks live here. Plugins and Skills hold what your agent can do, and the apps you can open are listed below them.",
+    body: "Overview, Conversations, Files and Scheduled live here. Plugins and Skills hold what your agent can do, and the apps you can open are listed below them.",
     next: "Browse plugins",
   },
   {

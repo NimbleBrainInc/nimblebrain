@@ -33,8 +33,9 @@ const noop = () => {};
 const ACTIONS = {
   onOpenTask: noop,
   onOpenRun: noop,
+  onRunNow: noop,
+  onSetEnabled: async () => {},
   onCreate: noop,
-  onSeeUpcoming: noop,
   onSeeActivity: noop,
 };
 
@@ -104,7 +105,7 @@ test("a run that ages out of the window leaves the figures with no data change",
     ),
   );
   expect(calls.stats).toBe(1);
-  expect(container.innerHTML).toContain("attn-card tone-danger");
+  expect(container.innerHTML).toContain("board-row tone-danger");
 
   // The run is now older than the window: the tool no longer counts it.
   statsAnswer = [
@@ -114,12 +115,12 @@ test("a run that ages out of the window leaves the figures with no data change",
     jest.advanceTimersByTime(home.STATS_REFRESH_MS - 1);
   });
   expect(calls.stats).toBe(1);
-  expect(container.innerHTML).toContain("attn-card tone-danger");
+  expect(container.innerHTML).toContain("board-row tone-danger");
 
   await act(async () => {
     jest.advanceTimersByTime(1);
   });
   expect(calls.stats).toBe(2);
-  expect(container.innerHTML).not.toContain("attn-card");
+  expect(container.innerHTML).not.toContain("board-row tone-danger");
   await act(async () => root.unmount());
 });
