@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadBrand, resolvedBrand } from "../../src/brand/index.ts";
 import { loadConfig } from "../../src/cli/config.ts";
+import { resolveFeatures } from "../../src/config/features.ts";
 import { ACME_BRAND } from "../helpers/acme-brand.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-cli-unit-${Date.now()}`);
@@ -153,16 +154,35 @@ describe("loadConfig", () => {
   it("loads features from config file", () => {
     const configPath = writeTestConfig("features.json", {
       features: {
-        catalogSearch: false,
+        toolDiscovery: false,
         workspaceManagement: false,
       },
     });
 
     const config = loadConfig({ config: configPath });
     expect(config.features).toEqual({
-      catalogSearch: false,
+      toolDiscovery: false,
       workspaceManagement: false,
     });
+  });
+
+  // A deployment's config can outlive a flag the runtime no longer has. The
+  // key warns and is ignored, so the config still boots.
+  it("boots a config carrying a removed feature flag, warning on the key", () => {
+    const configPath = writeTestConfig("removed-flag.json", {
+      features: { catalogSearch: false, toolDiscovery: false },
+    });
+    const spy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const config = loadConfig({ config: configPath });
+      const warnings = spy.mock.calls.map((c) => c[0] as string);
+      expect(warnings.some((w) => w.includes('Unknown key "catalogSearch"'))).toBe(true);
+      const features = resolveFeatures(config.features);
+      expect(features.toolDiscovery).toBe(false);
+      expect(Object.keys(features)).not.toContain("catalogSearch");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("loads maxToolResultSize from config file", () => {

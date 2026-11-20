@@ -93,7 +93,7 @@ describe("config schema validation", () => {
       isValid({
         features: {
           skillManagement: false,
-          catalogSearch: true,
+          toolDiscovery: true,
         },
       }),
     ).toBe(true);
@@ -115,7 +115,7 @@ describe("config schema validation", () => {
   });
 
   it("rejects features with non-boolean value", () => {
-    expect(isValid({ features: { catalogSearch: "yes" } })).toBe(false);
+    expect(isValid({ features: { toolDiscovery: "yes" } })).toBe(false);
   });
 
   it("accepts valid logging config", () => {
