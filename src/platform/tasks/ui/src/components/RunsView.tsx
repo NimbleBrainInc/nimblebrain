@@ -24,18 +24,8 @@ function statusWord(status: string | null): { word: string; tone: string } {
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
-/**
- * A one-off row's outcome: its last status, or, for repeats where some went
- * badly, how many of them did, so a collapsed row never hides a failure.
- */
+/** A one-off row's outcome: its last run's status. */
 function OneoffStatus({ job }: { job: Extract<Job, { kind: "oneoff" }> }) {
-  if (job.runs > 1 && job.failed > 0) {
-    return (
-      <span className="job-status tone-warning">
-        {job.runs - job.failed} done · {job.failed} didn't work
-      </span>
-    );
-  }
   const s = statusWord(job.lastStatus);
   return <span className={`job-status tone-${s.tone}`}>{s.word}</span>;
 }
@@ -110,6 +100,7 @@ export function RunsBody({
   jobs,
   loading,
   error,
+  partial = false,
   onOpenBatch,
   onOpenOneoff,
   onSeeActivity,
@@ -117,6 +108,8 @@ export function RunsBody({
   jobs: Job[];
   loading: boolean;
   error: string | null;
+  /** More one-offs exist than were read; the server pages by id, not time, so some newer ones may be missing. */
+  partial?: boolean;
   onOpenBatch: (batch: TaskBatch) => void;
   onOpenOneoff: (taskId: string, name: string) => void;
   onSeeActivity: () => void;
@@ -136,6 +129,12 @@ export function RunsBody({
         are on its row in Scheduled.
       </p>
       {error && <div className="error-banner">{error}</div>}
+      {partial && (
+        <p className="muted">
+          Showing the first {ONEOFF_PAGE * ONEOFF_PAGES} one-offs read, not the newest: some recent
+          ones may be missing here.
+        </p>
+      )}
       {!error && jobs.length === 0 && (
         <p className="muted">
           Nothing run once yet. Runs an MCP client asks for with an inline definition, and batches,
@@ -161,20 +160,23 @@ export function RunsBody({
   );
 }
 
-/** Read every one-off by following `nextCursor`, up to a page budget. */
+/**
+ * Read the one-offs by following `nextCursor`, up to a page budget. `partial`
+ * says the budget ran out with more to read.
+ */
 async function readOneoffs(
   call: (args: Record<string, unknown>) => Promise<{ data?: unknown }>,
-): Promise<TaskSummary[]> {
-  const out: TaskSummary[] = [];
+): Promise<{ tasks: TaskSummary[]; partial: boolean }> {
+  const tasks: TaskSummary[] = [];
   let cursor: string | undefined;
   for (let i = 0; i < ONEOFF_PAGES; i++) {
     const res = await call({ kind: "oneoff", limit: ONEOFF_PAGE, ...(cursor ? { cursor } : {}) });
     const data = asDict(res.data);
-    out.push(...((data.tasks as TaskSummary[]) ?? []));
+    tasks.push(...((data.tasks as TaskSummary[]) ?? []));
     cursor = (data.nextCursor as string | null | undefined) ?? undefined;
     if (!cursor) break;
   }
-  return out;
+  return { tasks, partial: cursor !== undefined };
 }
 
 /** The Runs list's container: reads one-offs and batches when the panel's data changes. */
@@ -195,6 +197,7 @@ export function RunsView({
   const listTool = useTool<string>("list");
   const batchesTool = useTool<string>("batches");
   const [oneoffs, setOneoffs] = useState<TaskSummary[]>([]);
+  const [partial, setPartial] = useState(false);
   const [batches, setBatches] = useState<TaskBatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -206,7 +209,8 @@ export function RunsView({
         readOneoffs(listTool.call),
         batchesTool.call({ limit: BATCHES_READ }),
       ]);
-      setOneoffs(o);
+      setOneoffs(o.tasks);
+      setPartial(o.partial);
       setBatches((asDict(b.data).batches as TaskBatch[]) ?? []);
       setError(null);
     } catch (err) {
@@ -226,6 +230,7 @@ export function RunsView({
       jobs={jobsOf(oneoffs, batches, saved)}
       loading={loading}
       error={error}
+      partial={partial}
       onOpenBatch={onOpenBatch}
       onOpenOneoff={onOpenOneoff}
       onSeeActivity={onSeeActivity}

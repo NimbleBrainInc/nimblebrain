@@ -1520,7 +1520,7 @@ function oneoffDefinition(
   return canonicalJson(Object.fromEntries(ONEOFF_DEFINITION_FIELDS.map((f) => [f, source[f]])));
 }
 
-/** How much of a one-off's prompt `tasks__list` returns, to recognize it and its repeats by. */
+/** How much of a one-off's prompt `tasks__list` returns, to recognize it by. */
 export const PROMPT_PREVIEW_CHARS = 140;
 
 /** What `tasks__list` adds for a one-off: who made it, and the start of its prompt. Nothing for a saved task. */

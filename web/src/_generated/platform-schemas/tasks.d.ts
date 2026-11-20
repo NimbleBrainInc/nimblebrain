@@ -394,7 +394,7 @@ export declare const TaskSummary: import("@sinclair/typebox").TObject<{
     inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
     /** A one-off's: the client that made it, by its own name. */
     startedVia: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    /** A one-off's: the start of its prompt, to recognize it and its repeats by. */
+    /** A one-off's: the start of its prompt, to recognize it by. */
     promptPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
 export type TaskSummary = Static<typeof TaskSummary>;
@@ -424,7 +424,7 @@ export declare const TasksListOutput: import("@sinclair/typebox").TObject<{
         inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
         /** A one-off's: the client that made it, by its own name. */
         startedVia: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        /** A one-off's: the start of its prompt, to recognize it and its repeats by. */
+        /** A one-off's: the start of its prompt, to recognize it by. */
         promptPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     }>>;
     /** Matches for the given filters BEFORE the page cap — not `tasks.length`. */

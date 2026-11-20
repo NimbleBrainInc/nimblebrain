@@ -999,7 +999,7 @@ export const TaskSummary = Type.Object({
   inputSchema: Type.Optional(JsonObject),
   /** A one-off's: the client that made it, by its own name. */
   startedVia: Type.Optional(Type.String()),
-  /** A one-off's: the start of its prompt, to recognize it and its repeats by. */
+  /** A one-off's: the start of its prompt, to recognize it by. */
   promptPreview: Type.Optional(Type.String()),
 });
 export type TaskSummary = Static<typeof TaskSummary>;

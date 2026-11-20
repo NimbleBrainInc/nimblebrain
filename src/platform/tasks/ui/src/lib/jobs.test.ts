@@ -1,4 +1,4 @@
-/** How work run once reads in the Runs list: names in words, batches whole, repeats collapsed. */
+/** How work run once reads in the Runs list: names in words, batches whole, one row per one-off. */
 import { describe, expect, test } from "bun:test";
 import type { TaskBatch, TaskSummary } from "../types.ts";
 import { batchName, jobsOf, oneoffName, wordsFromKey, wordsFromPrompt } from "./jobs.ts";
@@ -83,30 +83,33 @@ describe("jobsOf", () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({ kind: "batch", key: "b1" });
   });
-  test("repeats of the same one-off collapse into one row with their count, newest first", () => {
+  test("each one-off is its own row, newest first, opening only itself", () => {
+    const prefix = "x".repeat(140);
     const jobs = jobsOf(
       [
-        oneoff("oneoff-a", { promptPreview: "Grade fit", lastRunAt: "2026-10-27T09:58:00.000Z" }),
-        oneoff("oneoff-b", {
-          promptPreview: "Grade fit",
-          lastRunAt: "2026-10-27T09:59:30.000Z",
+        oneoff("oneoff-a", {
+          promptPreview: prefix,
+          lastRunAt: "2026-10-27T09:58:00.000Z",
           lastRunStatus: "failure",
+        }),
+        oneoff("oneoff-b", {
+          promptPreview: prefix,
+          lastRunAt: "2026-10-27T09:59:30.000Z",
           startedVia: "Claude Code",
         }),
-        oneoff("oneoff-c", { promptPreview: "Other job", lastRunAt: "2026-10-26T09:00:00.000Z" }),
       ],
       [],
       [],
     );
-    expect(jobs.map((j) => j.name)).toEqual(["Grade fit", "Other job"]);
+    expect(jobs).toHaveLength(2);
     expect(jobs[0]).toMatchObject({
       kind: "oneoff",
-      runs: 2,
-      failed: 1,
-      lastStatus: "failure",
+      runs: 1,
+      lastStatus: "success",
       taskId: "oneoff-b",
       via: "Claude Code",
     });
+    expect(jobs[1]).toMatchObject({ lastStatus: "failure", taskId: "oneoff-a" });
   });
   test("a one-off that never ran is not listed", () => {
     expect(jobsOf([oneoff("oneoff-x", { lastRunAt: null })], [], [])).toHaveLength(0);

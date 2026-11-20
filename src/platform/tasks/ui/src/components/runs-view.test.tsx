@@ -1,4 +1,4 @@
-/** The Runs list: jobs by day, a batch with its bar and counts, a repeated one-off with its count. */
+/** The Runs list: jobs by day, a batch with its bar and counts, a one-off with its run count. */
 import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -61,7 +61,7 @@ describe("RunsBody", () => {
     expect(html).toContain("100 items · 85 passed · 15 failed");
     expect(html).toContain("$4.71");
   });
-  test("a repeated one-off shows its count, and how many went badly instead of only the last", () => {
+  test("a one-off run more than once shows its count", () => {
     const html = body([
       {
         kind: "oneoff",
@@ -69,13 +69,12 @@ describe("RunsBody", () => {
         name: "Grade fit",
         at: "2026-10-27T09:59:00.000Z",
         runs: 8,
-        failed: 1,
         lastStatus: "success",
         taskId: "oneoff-b",
       },
     ]);
     expect(html).toContain("×8");
-    expect(html).toContain("7 done · 1 didn&#x27;t work");
+    expect(html).toContain("Done");
     expect(html).toContain("One-off");
   });
   test("a single one-off shows its outcome in plain words", () => {
@@ -86,7 +85,6 @@ describe("RunsBody", () => {
         name: "Vendor proposal",
         at: "2026-10-27T09:59:00.000Z",
         runs: 1,
-        failed: 1,
         lastStatus: "failure",
         taskId: "oneoff-c",
       },
@@ -97,5 +95,20 @@ describe("RunsBody", () => {
     const html = body([]);
     expect(html).toContain("Nothing run once yet");
     expect(html).toContain("Every run, scheduled ones included");
+  });
+  test("a list cut short by the page budget says so", () => {
+    expect(body([])).not.toContain("may be missing");
+    const html = renderToStaticMarkup(
+      createElement(RunsBody, {
+        jobs: [],
+        loading: false,
+        error: null,
+        partial: true,
+        onOpenBatch: noop,
+        onOpenOneoff: noop,
+        onSeeActivity: noop,
+      }),
+    );
+    expect(html).toContain("some recent ones may be missing");
   });
 });

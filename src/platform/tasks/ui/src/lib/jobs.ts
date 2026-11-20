@@ -23,13 +23,11 @@ export type Job =
       name: string;
       via?: string;
       at: string;
-      /** How many runs the row stands for: repeats of the same one-off collapse. */
+      /** How many times the one-off ran: a repeat under its idempotency key is the same one-off. */
       runs: number;
-      /** How many of the row's one-offs last ended badly. */
-      failed: number;
-      /** The newest one-off's last run status. */
+      /** Its last run's status. */
       lastStatus: string | null;
-      /** The newest one-off in the row, to open. */
+      /** The one-off, to open. */
       taskId: string;
     };
 
@@ -74,8 +72,6 @@ export function batchName(batch: TaskBatch, tasks: Map<string, TaskSummary>): st
   return task ? oneoffName(task) : "Batch";
 }
 
-type OneoffJob = Extract<Job, { kind: "oneoff" }>;
-
 function batchJob(b: TaskBatch, tasks: Map<string, TaskSummary>): Job {
   return {
     kind: "batch",
@@ -87,24 +83,12 @@ function batchJob(b: TaskBatch, tasks: Map<string, TaskSummary>): Job {
   };
 }
 
-/** A one-off folded into the row of its repeats: counts add up, the newest decides the rest. */
-function foldOneoff(
-  prev: OneoffJob | undefined,
-  t: TaskSummary,
-  key: string,
-  at: string,
-): OneoffJob {
-  const bad = t.lastRunStatus !== null && t.lastRunStatus !== "success" ? 1 : 0;
-  const counts = {
-    runs: (prev?.runs ?? 0) + Math.max(1, t.runCount),
-    failed: (prev?.failed ?? 0) + bad,
-  };
-  if (prev && prev.at >= at) return { ...prev, ...counts };
+function oneoffJob(t: TaskSummary, at: string): Job {
   return {
     kind: "oneoff",
-    key,
+    key: t.id,
     name: oneoffName(t),
-    ...counts,
+    runs: Math.max(1, t.runCount),
     at,
     lastStatus: t.lastRunStatus,
     taskId: t.id,
@@ -113,20 +97,17 @@ function foldOneoff(
 }
 
 /**
- * Every job, newest first: each batch on its own row, and one-offs grouped by
- * name and prompt so repeats read as one row with a count. A one-off that a
- * batch runs is that batch's, not a row of its own.
+ * Every job, newest first: each batch and each one-off on its own row, so a
+ * row opens exactly the runs it stands for. A one-off that a batch runs is
+ * that batch's, not a row of its own.
  */
 export function jobsOf(oneoffs: TaskSummary[], batches: TaskBatch[], saved: TaskSummary[]): Job[] {
   const tasks = new Map([...saved, ...oneoffs].map((t) => [t.id, t]));
   const batched = new Set(batches.map((b) => b.taskId));
-  const groups = new Map<string, OneoffJob>();
-  for (const t of oneoffs) {
-    if (batched.has(t.id) || !t.lastRunAt) continue;
-    const key = `${oneoffName(t)}\u0000${t.promptPreview ?? ""}`;
-    groups.set(key, foldOneoff(groups.get(key), t, key, t.lastRunAt));
-  }
-  return [...batches.map((b) => batchJob(b, tasks)), ...groups.values()].sort((a, b) =>
+  const rows = oneoffs.flatMap((t) =>
+    batched.has(t.id) || !t.lastRunAt ? [] : [oneoffJob(t, t.lastRunAt)],
+  );
+  return [...batches.map((b) => batchJob(b, tasks)), ...rows].sort((a, b) =>
     b.at.localeCompare(a.at),
   );
 }
