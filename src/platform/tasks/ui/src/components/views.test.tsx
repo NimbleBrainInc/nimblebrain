@@ -86,6 +86,8 @@ const ACTIONS = {
   onSetEnabled: async () => {},
   onCreate: noop,
   onSeeActivity: noop,
+  onOpenBatch: noop,
+  onOpenOneoff: noop,
 };
 
 const STATS = (label: "Succeeded" | "Poor result" | "Needs review") =>
@@ -225,6 +227,39 @@ describe("Home", () => {
       "The agent sets it up in chat",
     );
     expect(body({})).not.toContain("The agent sets it up in chat");
+  });
+});
+
+describe("Runs", () => {
+  test("the switch shows on the board and on Runs, which replaces the board", () => {
+    const board = render(
+      createElement(home.HomeBody, {
+        tasks: [{ ...TASK, enabled: true }],
+        loading: false,
+        error: null,
+        stats: new Map(),
+        upcoming: null,
+        readError: null,
+        actions: ACTIONS,
+      }),
+    );
+    expect(board).toContain('role="tablist"');
+    expect(board).toContain('aria-selected="true" class="on">Scheduled<');
+    const runs = render(
+      createElement(home.HomeBody, {
+        tasks: [{ ...TASK, enabled: true }],
+        loading: false,
+        error: null,
+        stats: new Map(),
+        upcoming: null,
+        readError: null,
+        actions: ACTIONS,
+        tab: "runs",
+        runs: createElement("p", null, "the runs list"),
+      }),
+    );
+    expect(runs).toContain("the runs list");
+    expect(runs).not.toContain("board-row");
   });
 });
 

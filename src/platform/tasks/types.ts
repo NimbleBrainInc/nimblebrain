@@ -54,6 +54,13 @@ export interface Task {
   kind?: TaskKind;
 
   /**
+   * The client that made a one-off, by its own name (an MCP client's declared
+   * `clientInfo.name`): attribution for the panel's Runs list, never authority.
+   * Absent for a saved task and for a call that named no client.
+   */
+  startedVia?: string;
+
+  /**
    * Set when a once schedule's occurrence is over: it fired (`ran`, whatever
    * the run's outcome) or was too late to fire (`missed`). The task is
    * then inert until a new `at` re-arms it, which clears this. Absent on every
@@ -822,6 +829,10 @@ export interface Batch {
   /** What the batch's runs cost so far, summed from its items. */
   costUsd: number;
   idempotencyKey?: string;
+  /** What the caller called it (an inline definition's `manifest.name`), for lists. */
+  name?: string;
+  /** The client that asked for it, by its own name; attribution only (see `Task.startedVia`). */
+  startedVia?: string;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;

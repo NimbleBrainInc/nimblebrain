@@ -1,0 +1,224 @@
+import { useCallback, useEffect, useState } from "react";
+import { dayLabel, type Job, jobsOf } from "../lib/jobs.ts";
+import type { TaskBatch, TaskSummary } from "../types.ts";
+import { useTool } from "../useTool.ts";
+import { asDict, formatUsd, toolErrorText } from "../utils.ts";
+import { SkeletonRows } from "./Skeleton.tsx";
+
+/** Most batches read for the list: the newest, which is what the list is for. */
+const BATCHES_READ = 100;
+/** One-offs read per page, and how many pages before the list stops. */
+const ONEOFF_PAGE = 500;
+const ONEOFF_PAGES = 4;
+
+/** A one-off's last status in the board's three words. */
+function statusWord(status: string | null): { word: string; tone: string } {
+  if (status === "success") return { word: "Done", tone: "success" };
+  if (status === "degraded") return { word: "Needs you", tone: "warning" };
+  if (status === "cancelled") return { word: "Stopped", tone: "muted" };
+  if (status === "skipped") return { word: "Didn't run", tone: "muted" };
+  if (status === null) return { word: "Running", tone: "active" };
+  return { word: "Didn't work", tone: "danger" };
+}
+
+const time = (iso: string) =>
+  new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+
+/** A batch's progress: a bar of passed and failed items, and its counts in words. */
+function BatchProgress({ batch }: { batch: TaskBatch }) {
+  const c = batch.counts;
+  const passed = c.pass + c.not_assessed;
+  const failed = c.fail + c.failed;
+  const other = c.uncertain + c.skipped + c.cancelled;
+  const pct = (n: number) => `${(n / Math.max(1, batch.items)) * 100}%`;
+  const parts = [
+    `${batch.items} item${batch.items === 1 ? "" : "s"}`,
+    passed ? `${passed} passed` : "",
+    failed ? `${failed} failed` : "",
+    c.uncertain ? `${c.uncertain} to review` : "",
+    batch.state === "running" ? `${batch.done} done` : "",
+    batch.state === "paused" ? "paused" : "",
+    batch.state === "cancelled" ? "cancelled" : "",
+  ].filter(Boolean);
+  return (
+    <div className="job-progress">
+      <div className="job-bar" aria-hidden="true">
+        <i className="tone-success" style={{ width: pct(passed) }} />
+        <i className="tone-danger" style={{ width: pct(failed) }} />
+        <i className="tone-warning" style={{ width: pct(other) }} />
+      </div>
+      <div className="job-counts">{parts.join(" · ")}</div>
+    </div>
+  );
+}
+
+function JobRow({
+  job,
+  onOpenBatch,
+  onOpenOneoff,
+}: {
+  job: Job;
+  onOpenBatch: (batch: TaskBatch) => void;
+  onOpenOneoff: (taskId: string, name: string) => void;
+}) {
+  const meta = [
+    job.kind === "batch" ? "Batch" : "One-off",
+    job.via ? `via ${job.via}` : "",
+    time(job.at),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const open = () =>
+    job.kind === "batch" ? onOpenBatch(job.batch) : onOpenOneoff(job.taskId, job.name);
+  return (
+    <li>
+      <button type="button" className="job-row" onClick={open}>
+        <span className="job-who">
+          <span className="job-name">
+            {job.name}
+            {job.kind === "oneoff" && job.runs > 1 && (
+              <span className="job-times">×{job.runs}</span>
+            )}
+          </span>
+          <span className="job-meta">{meta}</span>
+        </span>
+        {job.kind === "batch" ? (
+          <BatchProgress batch={job.batch} />
+        ) : (
+          <span className={`job-status tone-${statusWord(job.lastStatus).tone}`}>
+            {statusWord(job.lastStatus).word}
+          </span>
+        )}
+        <span className="job-cost">{job.kind === "batch" ? formatUsd(job.batch.costUsd) : ""}</span>
+      </button>
+    </li>
+  );
+}
+
+/** The Runs list from what was read: jobs grouped by day, newest first. */
+export function RunsBody({
+  jobs,
+  loading,
+  error,
+  onOpenBatch,
+  onOpenOneoff,
+  onSeeActivity,
+}: {
+  jobs: Job[];
+  loading: boolean;
+  error: string | null;
+  onOpenBatch: (batch: TaskBatch) => void;
+  onOpenOneoff: (taskId: string, name: string) => void;
+  onSeeActivity: () => void;
+}) {
+  if (loading && jobs.length === 0) return <SkeletonRows count={5} />;
+  const days: { label: string; jobs: Job[] }[] = [];
+  for (const job of jobs) {
+    const label = dayLabel(job.at);
+    const last = days[days.length - 1];
+    if (last?.label === label) last.jobs.push(job);
+    else days.push({ label, jobs: [job] });
+  }
+  return (
+    <div className="runs">
+      <p className="hint">
+        Work run once, from chat or an MCP client: one-offs and batches. Each scheduled task's runs
+        are on its row in Scheduled.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+      {!error && jobs.length === 0 && (
+        <p className="muted">
+          Nothing run once yet. Runs an MCP client asks for with an inline definition, and batches,
+          show here.
+        </p>
+      )}
+      {days.map((d) => (
+        <section key={d.label} className="runs-day" aria-label={d.label}>
+          <h2 className="runs-day-label">{d.label}</h2>
+          <ul className="job-list">
+            {d.jobs.map((j) => (
+              <JobRow key={j.key} job={j} onOpenBatch={onOpenBatch} onOpenOneoff={onOpenOneoff} />
+            ))}
+          </ul>
+        </section>
+      ))}
+      <div className="home-foot">
+        <button type="button" className="link-btn" onClick={onSeeActivity}>
+          Every run, scheduled ones included
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Read every one-off by following `nextCursor`, up to a page budget. */
+async function readOneoffs(
+  call: (args: Record<string, unknown>) => Promise<{ data?: unknown }>,
+): Promise<TaskSummary[]> {
+  const out: TaskSummary[] = [];
+  let cursor: string | undefined;
+  for (let i = 0; i < ONEOFF_PAGES; i++) {
+    const res = await call({ kind: "oneoff", limit: ONEOFF_PAGE, ...(cursor ? { cursor } : {}) });
+    const data = asDict(res.data);
+    out.push(...((data.tasks as TaskSummary[]) ?? []));
+    cursor = (data.nextCursor as string | null | undefined) ?? undefined;
+    if (!cursor) break;
+  }
+  return out;
+}
+
+/** The Runs list's container: reads one-offs and batches when the panel's data changes. */
+export function RunsView({
+  saved,
+  refreshKey,
+  onOpenBatch,
+  onOpenOneoff,
+  onSeeActivity,
+}: {
+  /** The saved tasks, to name a batch of one by. */
+  saved: TaskSummary[];
+  refreshKey: number;
+  onOpenBatch: (batch: TaskBatch) => void;
+  onOpenOneoff: (taskId: string, name: string) => void;
+  onSeeActivity: () => void;
+}) {
+  const listTool = useTool<string>("list");
+  const batchesTool = useTool<string>("batches");
+  const [oneoffs, setOneoffs] = useState<TaskSummary[]>([]);
+  const [batches, setBatches] = useState<TaskBatch[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [o, b] = await Promise.all([
+        readOneoffs(listTool.call),
+        batchesTool.call({ limit: BATCHES_READ }),
+      ]);
+      setOneoffs(o);
+      setBatches((asDict(b.data).batches as TaskBatch[]) ?? []);
+      setError(null);
+    } catch (err) {
+      setError(toolErrorText(err, "The runs could not be read."));
+    } finally {
+      setLoading(false);
+    }
+  }, [listTool, batchesTool]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the list is re-read
+  useEffect(() => {
+    void load();
+  }, [load, refreshKey]);
+
+  return (
+    <RunsBody
+      jobs={jobsOf(oneoffs, batches, saved)}
+      loading={loading}
+      error={error}
+      onOpenBatch={onOpenBatch}
+      onOpenOneoff={onOpenOneoff}
+      onSeeActivity={onSeeActivity}
+    />
+  );
+}

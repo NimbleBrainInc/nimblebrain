@@ -214,6 +214,8 @@ export declare const TasksRunInput: import("@sinclair/typebox").TObject<{
                 options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
             }>>;
             onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"notify" | "record" | "retry_once">>;
+        } & {
+            name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         }>>;
         body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     }>>;
@@ -270,6 +272,8 @@ export declare const TasksRunBatchInput: import("@sinclair/typebox").TObject<{
                 id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
             }>>;
+        } & {
+            name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         }>>;
         body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     }>>;
@@ -388,6 +392,10 @@ export declare const TaskSummary: import("@sinclair/typebox").TObject<{
     estimatedCostPerDay: import("@sinclair/typebox").TNumber;
     /** The task's input schema, when it has one: a caller can ask for the input before it runs. */
     inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
+    /** A one-off's: the client that made it, by its own name. */
+    startedVia: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    /** A one-off's: the start of its prompt, to recognize it and its repeats by. */
+    promptPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
 export type TaskSummary = Static<typeof TaskSummary>;
 export declare const TasksListOutput: import("@sinclair/typebox").TObject<{
@@ -414,6 +422,10 @@ export declare const TasksListOutput: import("@sinclair/typebox").TObject<{
         estimatedCostPerDay: import("@sinclair/typebox").TNumber;
         /** The task's input schema, when it has one: a caller can ask for the input before it runs. */
         inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
+        /** A one-off's: the client that made it, by its own name. */
+        startedVia: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        /** A one-off's: the start of its prompt, to recognize it and its repeats by. */
+        promptPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     }>>;
     /** Matches for the given filters BEFORE the page cap — not `tasks.length`. */
     total: import("@sinclair/typebox").TInteger;
@@ -1787,6 +1799,10 @@ export declare const TaskBatchRecord: import("@sinclair/typebox").TObject<{
     }>;
     costUsd: import("@sinclair/typebox").TNumber;
     idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    /** What the caller called it. */
+    name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    /** The client that asked for it, by its own name. */
+    startedVia: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     createdAt: import("@sinclair/typebox").TString;
     updatedAt: import("@sinclair/typebox").TString;
     completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -1800,6 +1816,7 @@ export declare const TaskBatchView: import("@sinclair/typebox").TObject<{
     idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     costUsd: import("@sinclair/typebox").TNumber;
     completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     items: import("@sinclair/typebox").TNumber;
     concurrency: import("@sinclair/typebox").TNumber;
     budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1813,6 +1830,7 @@ export declare const TaskBatchView: import("@sinclair/typebox").TObject<{
         at: import("@sinclair/typebox").TString;
     }>>;
     state: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "paused" | "running">;
+    startedVia: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     ownerId: import("@sinclair/typebox").TString;
     workspaceId: import("@sinclair/typebox").TString;
     createdAt: import("@sinclair/typebox").TString;
@@ -1865,6 +1883,7 @@ export declare const TasksRunBatchOutput: import("@sinclair/typebox").TObject<{
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1878,6 +1897,7 @@ export declare const TasksRunBatchOutput: import("@sinclair/typebox").TObject<{
             at: import("@sinclair/typebox").TString;
         }>>;
         state: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "paused" | "running">;
+        startedVia: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         ownerId: import("@sinclair/typebox").TString;
         workspaceId: import("@sinclair/typebox").TString;
         createdAt: import("@sinclair/typebox").TString;
@@ -1916,6 +1936,7 @@ export declare const TasksBatchOutput: import("@sinclair/typebox").TObject<{
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1929,6 +1950,7 @@ export declare const TasksBatchOutput: import("@sinclair/typebox").TObject<{
             at: import("@sinclair/typebox").TString;
         }>>;
         state: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "paused" | "running">;
+        startedVia: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         ownerId: import("@sinclair/typebox").TString;
         workspaceId: import("@sinclair/typebox").TString;
         createdAt: import("@sinclair/typebox").TString;
@@ -1983,6 +2005,7 @@ export declare const TasksBatchControlOutput: import("@sinclair/typebox").TObjec
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1996,6 +2019,7 @@ export declare const TasksBatchControlOutput: import("@sinclair/typebox").TObjec
             at: import("@sinclair/typebox").TString;
         }>>;
         state: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "paused" | "running">;
+        startedVia: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         ownerId: import("@sinclair/typebox").TString;
         workspaceId: import("@sinclair/typebox").TString;
         createdAt: import("@sinclair/typebox").TString;
@@ -2030,6 +2054,7 @@ export declare const TasksBatchesOutput: import("@sinclair/typebox").TObject<{
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -2043,6 +2068,7 @@ export declare const TasksBatchesOutput: import("@sinclair/typebox").TObject<{
             at: import("@sinclair/typebox").TString;
         }>>;
         state: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "paused" | "running">;
+        startedVia: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         ownerId: import("@sinclair/typebox").TString;
         workspaceId: import("@sinclair/typebox").TString;
         createdAt: import("@sinclair/typebox").TString;

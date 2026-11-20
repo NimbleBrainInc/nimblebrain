@@ -190,7 +190,17 @@ Pausing keeps the definition and its run history intact; the scheduler simply sk
 - its last 14 runs as squares, oldest to newest, each colored by how it went;
 - an on/off switch for a task with a schedule or event trigger, or **Run** for an on-demand task.
 
-A row that needs you says why on its second line, with the one action that clears it. The filter above the board shows all tasks, or only the scheduled, event, or on-demand ones. **Every run, newest first** at the foot lists every run from every source, filtered by outcome, task, what started it, and date; a batch is one row you can expand.
+A row that needs you says why on its second line, with the one action that clears it. The filter above the board shows all tasks, or only the scheduled, event, or on-demand ones.
+
+### Runs
+
+**Runs**, beside Scheduled at the top of the page, lists work run once: one-offs (a `tasks__run` with an inline `definition`, usually from an MCP client) and batches, newest first, grouped by day. These have an outcome, not health, so they never appear on the board.
+
+- **A batch** is one row: its name, who asked for it ("via Claude Code", from the client's own name for itself), a bar of passed and failed items with the counts, and its cost. Open it for its results table.
+- **A one-off** is one row with its last outcome. Repeats of the same one-off (same name and prompt) collapse into one row with a count (×8).
+- **A row's name** is the `manifest.name` the caller gave the inline definition; else, for a batch, its saved task's name or its `idempotencyKey` read as words; else the first words of its prompt.
+
+**Every run, scheduled ones included** at the foot lists every run from every source, filtered by outcome, task, what started it, and date.
 
 A task is **flaky** when 2 or more of its last 10 runs didn't work, even if the latest one did.
 
@@ -230,7 +240,7 @@ Every tool names a task by its id (`taskId`, as `tasks__list` returns it) and a 
 
 <Steps>
 
-1. **A saved task or an inline one-off.** Pass `taskId` to run a saved task. Or pass `definition` instead: `{ manifest, body }`, the shape `tasks__create` takes, without a name, schedule, or `enabled`. `body` is the prompt; `manifest` holds the rest (`skills`, `model`, `thinkingEffort`, `allowedTools`, `inputSchema`, `outputSchema`, `criteria`, `confidenceThreshold`, `judge`, `onPoorResult` (see [Judging results](#judging-results)), `maxIterations`, `maxInputTokens`, `maxRunDurationMs`, `tokenBudget`). An inline call creates a one-off task with no schedule, owned by you in that workspace, runs it once, and keeps it with its run for the [retention window](/config/nimblebrain-json/#run-data-retention).
+1. **A saved task or an inline one-off.** Pass `taskId` to run a saved task. Or pass `definition` instead: `{ manifest, body }`, the shape `tasks__create` takes, without a schedule or `enabled`. `manifest.name` is optional and only labels the run in the Runs list; it is not part of what an `idempotencyKey` compares. `body` is the prompt; `manifest` holds the rest (`skills`, `model`, `thinkingEffort`, `allowedTools`, `inputSchema`, `outputSchema`, `criteria`, `confidenceThreshold`, `judge`, `onPoorResult` (see [Judging results](#judging-results)), `maxIterations`, `maxInputTokens`, `maxRunDurationMs`, `tokenBudget`). An inline call creates a one-off task with no schedule, owned by you in that workspace, runs it once, and keeps it with its run for the [retention window](/config/nimblebrain-json/#run-data-retention).
 
 2. **Input.** `input` is any JSON value, at most 64 KiB serialized. When the task has an `inputSchema`, an input that does not match it, or a missing one, is refused before the run starts, with the reasons. The input is kept on the run record and given to the run as data, inside a block the model is told never to follow as instructions.
 

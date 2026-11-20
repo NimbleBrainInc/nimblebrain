@@ -20,6 +20,10 @@ export interface TaskSummary {
   estimatedCostPerDay?: number;
   /** Present when the task's runs take input. */
   inputSchema?: Record<string, unknown>;
+  /** A one-off's: the client that made it, by its own name. */
+  startedVia?: string;
+  /** A one-off's: the start of its prompt. */
+  promptPreview?: string;
 }
 
 export interface TaskDetail {
@@ -251,8 +255,14 @@ export interface TaskBatch {
   pause?: { reason: string; message: string; at: string };
   counts: BatchCounts;
   costUsd: number;
+  idempotencyKey?: string;
+  /** What the caller called it. */
+  name?: string;
+  /** The client that asked for it, by its own name. */
+  startedVia?: string;
   createdAt: string;
   updatedAt: string;
+  completedAt?: string;
   done: number;
   passRate: number | null;
 }

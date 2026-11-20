@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useId, useState } from "react";
 import {
   byUrgency,
   type HealthAction,
@@ -8,10 +8,18 @@ import {
 } from "../lib/attention.ts";
 import { outcomeOf } from "../lib/outcome.ts";
 import { shortSchedule } from "../lib/schedule-label.ts";
-import type { TaskRun, TaskStats, TaskSummary, UpcomingData, UpcomingRun } from "../types.ts";
+import type {
+  TaskBatch,
+  TaskRun,
+  TaskStats,
+  TaskSummary,
+  UpcomingData,
+  UpcomingRun,
+} from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatWhen, relativeTime, toolErrorText } from "../utils.ts";
 import { PageHeader } from "./Chrome.tsx";
+import { RunsView } from "./RunsView.tsx";
 import { SkeletonRows } from "./Skeleton.tsx";
 import { TEMPLATES, type Template } from "./templates.ts";
 
@@ -37,6 +45,37 @@ export interface HomeActions {
   /** Hand a sentence to the agent in chat; absent where the host takes no message. */
   onDescribe?: (sentence: string) => void;
   onSeeActivity: () => void;
+  /** Open a batch from the Runs list. */
+  onOpenBatch: (batch: TaskBatch) => void;
+  /** Open a one-off's runs from the Runs list. */
+  onOpenOneoff: (taskId: string, name: string) => void;
+}
+
+/** The page's two lists: what keeps running, and what ran once. */
+export type HomeTab = "board" | "runs";
+
+/** The switch between the board and the Runs list. */
+function TabSwitch({ tab, onTab }: { tab: HomeTab; onTab: (t: HomeTab) => void }) {
+  const tabs: { id: HomeTab; label: string }[] = [
+    { id: "board", label: "Scheduled" },
+    { id: "runs", label: "Runs" },
+  ];
+  return (
+    <div className="tab-switch" role="tablist" aria-label="Show">
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          role="tab"
+          aria-selected={tab === t.id}
+          className={tab === t.id ? "on" : ""}
+          onClick={() => onTab(t.id)}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 /** What starts a task: the board's filter. */
@@ -394,6 +433,9 @@ export function HomeBody({
   recent = null,
   readError,
   actions,
+  tab = "board",
+  onTab = () => {},
+  runs,
 }: {
   tasks: TaskSummary[];
   loading: boolean;
@@ -405,6 +447,10 @@ export function HomeBody({
   /** The figures or the queue could not be read. */
   readError: string | null;
   actions: HomeActions;
+  tab?: HomeTab;
+  onTab?: (t: HomeTab) => void;
+  /** The Runs list, drawn in place of the board when its tab is on. */
+  runs?: ReactNode;
 }) {
   const [filter, setFilter] = useState<Trigger | "all">("all");
   const newTask = (
@@ -412,11 +458,29 @@ export function HomeBody({
       New
     </button>
   );
+  if (tab === "runs") {
+    return (
+      <>
+        <PageHeader title="Runs" actions={newTask} />
+        <main className="content">
+          <div className="view-pad home">
+            <TabSwitch tab={tab} onTab={onTab} />
+            {runs}
+          </div>
+        </main>
+      </>
+    );
+  }
   if (tasks.length === 0) {
     return (
       <>
         <PageHeader title="Scheduled" actions={newTask} />
         <main className="content">
+          {!loading && (
+            <div className="view-pad">
+              <TabSwitch tab={tab} onTab={onTab} />
+            </div>
+          )}
           <HomeEmpty
             loading={loading}
             error={error}
@@ -443,6 +507,7 @@ export function HomeBody({
           {readError && (
             <div className="note-banner">Some of what's below may be missing: {readError}</div>
           )}
+          <TabSwitch tab={tab} onTab={onTab} />
           <DescribeBox
             onCreate={actions.onCreate}
             onDescribe={actions.onDescribe}
@@ -473,11 +538,6 @@ export function HomeBody({
               <BoardRow key={r.task.id} row={r} actions={actions} />
             ))}
           </ul>
-          <div className="home-foot">
-            <button type="button" className="link-btn" onClick={actions.onSeeActivity}>
-              Every run, newest first
-            </button>
-          </div>
         </div>
       </main>
     </>
@@ -494,6 +554,8 @@ export function HomeView({
   error,
   refreshKey,
   actions,
+  tab,
+  onTab,
 }: {
   tasks: TaskSummary[];
   loading: boolean;
@@ -501,6 +563,9 @@ export function HomeView({
   /** Changes when the panel's data changed. */
   refreshKey: number;
   actions: HomeActions;
+  /** Kept by the panel, so a page opened from Runs comes back to Runs. */
+  tab: HomeTab;
+  onTab: (t: HomeTab) => void;
 }) {
   const statsTool = useTool<string>("stats");
   const upcomingTool = useTool<string>("upcoming");
@@ -587,6 +652,19 @@ export function HomeView({
       recent={recent}
       readError={statsError ?? upcomingError}
       actions={actions}
+      tab={tab}
+      onTab={onTab}
+      runs={
+        tab === "runs" ? (
+          <RunsView
+            saved={tasks}
+            refreshKey={refreshKey}
+            onOpenBatch={actions.onOpenBatch}
+            onOpenOneoff={actions.onOpenOneoff}
+            onSeeActivity={actions.onSeeActivity}
+          />
+        ) : null
+      }
     />
   );
 }
