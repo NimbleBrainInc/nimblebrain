@@ -25,6 +25,8 @@ export type Job =
       at: string;
       /** How many runs the row stands for: repeats of the same one-off collapse. */
       runs: number;
+      /** How many of the row's one-offs last ended badly. */
+      failed: number;
       /** The newest one-off's last run status. */
       lastStatus: string | null;
       /** The newest one-off in the row, to open. */
@@ -72,6 +74,44 @@ export function batchName(batch: TaskBatch, tasks: Map<string, TaskSummary>): st
   return task ? oneoffName(task) : "Batch";
 }
 
+type OneoffJob = Extract<Job, { kind: "oneoff" }>;
+
+function batchJob(b: TaskBatch, tasks: Map<string, TaskSummary>): Job {
+  return {
+    kind: "batch",
+    key: b.id,
+    name: batchName(b, tasks),
+    ...(b.startedVia ? { via: b.startedVia } : {}),
+    at: b.completedAt ?? b.updatedAt ?? b.createdAt,
+    batch: b,
+  };
+}
+
+/** A one-off folded into the row of its repeats: counts add up, the newest decides the rest. */
+function foldOneoff(
+  prev: OneoffJob | undefined,
+  t: TaskSummary,
+  key: string,
+  at: string,
+): OneoffJob {
+  const bad = t.lastRunStatus !== null && t.lastRunStatus !== "success" ? 1 : 0;
+  const counts = {
+    runs: (prev?.runs ?? 0) + Math.max(1, t.runCount),
+    failed: (prev?.failed ?? 0) + bad,
+  };
+  if (prev && prev.at >= at) return { ...prev, ...counts };
+  return {
+    kind: "oneoff",
+    key,
+    name: oneoffName(t),
+    ...counts,
+    at,
+    lastStatus: t.lastRunStatus,
+    taskId: t.id,
+    ...(t.startedVia ? { via: t.startedVia } : {}),
+  };
+}
+
 /**
  * Every job, newest first: each batch on its own row, and one-offs grouped by
  * name and prompt so repeats read as one row with a count. A one-off that a
@@ -80,43 +120,15 @@ export function batchName(batch: TaskBatch, tasks: Map<string, TaskSummary>): st
 export function jobsOf(oneoffs: TaskSummary[], batches: TaskBatch[], saved: TaskSummary[]): Job[] {
   const tasks = new Map([...saved, ...oneoffs].map((t) => [t.id, t]));
   const batched = new Set(batches.map((b) => b.taskId));
-  const jobs: Job[] = batches.map((b) => ({
-    kind: "batch",
-    key: b.id,
-    name: batchName(b, tasks),
-    ...(b.startedVia ? { via: b.startedVia } : {}),
-    at: b.completedAt ?? b.updatedAt ?? b.createdAt,
-    batch: b,
-  }));
-
-  const groups = new Map<string, Extract<Job, { kind: "oneoff" }>>();
+  const groups = new Map<string, OneoffJob>();
   for (const t of oneoffs) {
     if (batched.has(t.id) || !t.lastRunAt) continue;
-    const name = oneoffName(t);
-    const key = `${name}\u0000${t.promptPreview ?? ""}`;
-    const prev = groups.get(key);
-    const newer = !prev || t.lastRunAt > prev.at;
-    groups.set(key, {
-      kind: "oneoff",
-      key,
-      name,
-      runs: (prev?.runs ?? 0) + Math.max(1, t.runCount),
-      ...(newer
-        ? {
-            at: t.lastRunAt,
-            lastStatus: t.lastRunStatus,
-            taskId: t.id,
-            ...(t.startedVia ? { via: t.startedVia } : {}),
-          }
-        : {
-            at: prev.at,
-            lastStatus: prev.lastStatus,
-            taskId: prev.taskId,
-            ...(prev.via ? { via: prev.via } : {}),
-          }),
-    });
+    const key = `${oneoffName(t)}\u0000${t.promptPreview ?? ""}`;
+    groups.set(key, foldOneoff(groups.get(key), t, key, t.lastRunAt));
   }
-  return [...jobs, ...groups.values()].sort((a, b) => b.at.localeCompare(a.at));
+  return [...batches.map((b) => batchJob(b, tasks)), ...groups.values()].sort((a, b) =>
+    b.at.localeCompare(a.at),
+  );
 }
 
 /** The day a job falls on, as a heading: "Today", "Yesterday", "Oct 18". */

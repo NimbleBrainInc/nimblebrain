@@ -562,7 +562,7 @@ fieldset.builder-row { border: none; min-width: 0; padding: 10px 0; border-botto
 .tab-switch { display: inline-flex; align-self: flex-start; padding: 2px; border: 1px solid var(--color-border-primary); border-radius: 999px; }
 .tab-switch button {
   padding: 4px 14px; border: none; border-radius: 999px; background: none; cursor: pointer;
-  color: var(--color-text-secondary); font-size: var(--font-text-sm-size, 13px);
+  color: var(--color-text-secondary); font-size: var(--font-text-sm-size);
 }
 .tab-switch button.on { background: var(--color-text-primary); color: var(--color-background-primary); }
 .tab-switch button:focus-visible { outline: 2px solid var(--color-text-accent); outline-offset: 2px; }

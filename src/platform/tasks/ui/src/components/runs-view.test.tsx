@@ -61,7 +61,7 @@ describe("RunsBody", () => {
     expect(html).toContain("100 items · 85 passed · 15 failed");
     expect(html).toContain("$4.71");
   });
-  test("a repeated one-off shows its count and its last outcome in plain words", () => {
+  test("a repeated one-off shows its count, and how many went badly instead of only the last", () => {
     const html = body([
       {
         kind: "oneoff",
@@ -69,13 +69,29 @@ describe("RunsBody", () => {
         name: "Grade fit",
         at: "2026-10-27T09:59:00.000Z",
         runs: 8,
-        lastStatus: "failure",
+        failed: 1,
+        lastStatus: "success",
         taskId: "oneoff-b",
       },
     ]);
     expect(html).toContain("×8");
-    expect(html).toContain("Didn&#x27;t work");
+    expect(html).toContain("7 done · 1 didn&#x27;t work");
     expect(html).toContain("One-off");
+  });
+  test("a single one-off shows its outcome in plain words", () => {
+    const html = body([
+      {
+        kind: "oneoff",
+        key: "k",
+        name: "Vendor proposal",
+        at: "2026-10-27T09:59:00.000Z",
+        runs: 1,
+        failed: 1,
+        lastStatus: "failure",
+        taskId: "oneoff-c",
+      },
+    ]);
+    expect(html).toContain("Didn&#x27;t work");
   });
   test("nothing yet says what will show here, and every run stays a link away", () => {
     const html = body([]);

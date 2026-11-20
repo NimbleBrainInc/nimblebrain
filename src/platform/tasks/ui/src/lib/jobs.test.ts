@@ -102,6 +102,7 @@ describe("jobsOf", () => {
     expect(jobs[0]).toMatchObject({
       kind: "oneoff",
       runs: 2,
+      failed: 1,
       lastStatus: "failure",
       taskId: "oneoff-b",
       via: "Claude Code",

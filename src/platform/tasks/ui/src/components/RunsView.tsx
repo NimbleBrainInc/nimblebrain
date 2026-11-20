@@ -24,6 +24,22 @@ function statusWord(status: string | null): { word: string; tone: string } {
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
+/**
+ * A one-off row's outcome: its last status, or, for repeats where some went
+ * badly, how many of them did, so a collapsed row never hides a failure.
+ */
+function OneoffStatus({ job }: { job: Extract<Job, { kind: "oneoff" }> }) {
+  if (job.runs > 1 && job.failed > 0) {
+    return (
+      <span className="job-status tone-warning">
+        {job.runs - job.failed} done · {job.failed} didn't work
+      </span>
+    );
+  }
+  const s = statusWord(job.lastStatus);
+  return <span className={`job-status tone-${s.tone}`}>{s.word}</span>;
+}
+
 /** A batch's progress: a bar of passed and failed items, and its counts in words. */
 function BatchProgress({ batch }: { batch: TaskBatch }) {
   const c = batch.counts;
@@ -82,13 +98,7 @@ function JobRow({
           </span>
           <span className="job-meta">{meta}</span>
         </span>
-        {job.kind === "batch" ? (
-          <BatchProgress batch={job.batch} />
-        ) : (
-          <span className={`job-status tone-${statusWord(job.lastStatus).tone}`}>
-            {statusWord(job.lastStatus).word}
-          </span>
-        )}
+        {job.kind === "batch" ? <BatchProgress batch={job.batch} /> : <OneoffStatus job={job} />}
         <span className="job-cost">{job.kind === "batch" ? formatUsd(job.batch.costUsd) : ""}</span>
       </button>
     </li>
