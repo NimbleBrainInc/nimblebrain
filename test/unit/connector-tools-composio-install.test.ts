@@ -19,7 +19,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -954,6 +962,36 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     const connectors = (listed.structuredContent as { connectors: Array<{ state: string }> })
       .connectors;
     expect(connectors.map((c) => c.state)).toEqual(["not_authenticated"]);
+  });
+
+  test("(m3) disconnect scope:identity fails when the composio connection dir cannot be deleted", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+
+    const tool = buildTool(h);
+    await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+    const composioDir = composioConnectorDir(
+      h.workDir,
+      { type: "user", userId: ADMIN.id },
+      GMAIL_ID,
+    );
+    mkdirSync(composioDir, { recursive: true });
+    writeFileSync(
+      join(composioDir, "connection.json"),
+      JSON.stringify({ connectedAccountId: "ca_x" }),
+    );
+    // A dir the process cannot write to: removing its connection.json fails EACCES.
+    chmodSync(composioDir, 0o500);
+    try {
+      const result = await tool.handler({
+        action: "disconnect",
+        serverName: "com-google-gmail",
+        scope: "identity",
+      });
+      expect(result.isError).toBe(true);
+      expect(existsSync(join(composioDir, "connection.json"))).toBe(true);
+    } finally {
+      chmodSync(composioDir, 0o700);
+    }
   });
 
   test("(n) list_personal_connectors reports `running` from a persisted composio connection (cold source)", async () => {

@@ -4177,7 +4177,16 @@ async function handleSignOutIdentity(
   if (!(await new IdentityConnectorStore({ workDir }).get(callerId, serverName))) {
     return errResult(`"${serverName}" is not one of your personal connectors.`);
   }
-  await ctx.runtime.getLifecycle().signOutIdentityConnector(callerId, serverName, { workDir });
+  try {
+    await ctx.runtime.getLifecycle().signOutIdentityConnector(callerId, serverName, { workDir });
+  } catch (err) {
+    log.warn(
+      `[disconnect] identity sign-out failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return errResult(
+      `Could not sign out of "${serverName}": its sign-in could not be deleted. Try again.`,
+    );
+  }
   return {
     content: textContent(
       `Signed out of "${serverName}". It stays installed and on where it was on; connect it to sign in again.`,

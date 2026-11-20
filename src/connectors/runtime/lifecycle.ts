@@ -1928,7 +1928,9 @@ export class ConnectorLifecycleManager {
    * brokered credential dir too when it's a brokered connector), then publishes
    * `not_authenticated` to its owner. The install record, every workspace grant,
    * and the per-tool policies stay, so the next Connect signs the same plugin
-   * back in where it was on.
+   * back in where it was on. A credential that could not be deleted throws and
+   * publishes nothing: the sign-in is still stored, so the plugin is not signed
+   * out.
    *
    * Upstream token revocation is NOT performed here — for a DCR connector the
    * vendor's OAuth grant (RFC 7009) and for a brokered connector the broker-side
@@ -1963,10 +1965,10 @@ export class ConnectorLifecycleManager {
    * of `uninstall` (workspace): its sign-out (`teardownIdentityConnection`), then
    * the install record removed from `IdentityConnectorStore`. Grant revocation is
    * the caller's job (permission store), exactly as `handleUninstall` drops tool
-   * permissions after `lifecycle.uninstall`. Each teardown step is best-effort so
-   * a partial failure still reaches the install-record removal — the
-   * user-visible "it's gone". Upstream revocation is as `signOutIdentityConnector`
-   * describes.
+   * permissions after `lifecycle.uninstall`. The teardown is best-effort here, so
+   * a credential that could not be deleted is logged and the install-record
+   * removal (the user-visible "it's gone") still runs. Upstream revocation is as
+   * `signOutIdentityConnector` describes.
    */
   async uninstallIdentityConnector(
     userId: string,
@@ -1978,7 +1980,11 @@ export class ConnectorLifecycleManager {
     // Read the ref BEFORE removing it — its brokered marker decides whether
     // there is also a provider credential dir to clear.
     const ref = await store.get(userId, serverName);
-    await this.teardownIdentityConnection(userId, serverName, workDir, ref ?? undefined);
+    try {
+      await this.teardownIdentityConnection(userId, serverName, workDir, ref ?? undefined);
+    } catch (err) {
+      log.warn(`[lifecycle] ${err instanceof Error ? err.message : String(err)}`);
+    }
     await store.remove(userId, serverName);
   }
 
@@ -1987,6 +1993,7 @@ export class ConnectorLifecycleManager {
    * stop + drop the source from the user's registry (if warm), then delete the
    * identity credentials. The OAuth records for every personal connector; the
    * provider's credential dir additionally when `ref` carries a brokered marker.
+   * Throws when a credential could not be deleted.
    */
   private async teardownIdentityConnection(
     userId: string,
@@ -2496,8 +2503,9 @@ export class ConnectorLifecycleManager {
 /**
  * Remove a personal connector's local credentials: the OAuth records every
  * personal connector has, plus the provider's credential dir when the ref is
- * brokered. Best-effort and independently guarded — a failure on one must not
- * skip the other, and `force` makes a never-connected connector a no-op.
+ * brokered. Both deletions are attempted even when one fails, and then any
+ * failure throws, so a caller never reports credentials gone that are still
+ * stored. `force` makes a never-connected connector a no-op.
  */
 async function clearIdentityConnectorCredentials(
   workDir: string,
@@ -2506,25 +2514,27 @@ async function clearIdentityConnectorCredentials(
   brokered: BrokeredRef | undefined,
 ): Promise<void> {
   const owner: ConnectorOwner = { type: "user", userId };
+  const failures: string[] = [];
   try {
     await new McpOAuthRecords({ owner, serverName }).deleteAll();
   } catch (err) {
-    log.warn(
-      `[lifecycle] failed to clear identity OAuth records for ${userId}|${serverName}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+    failures.push(`OAuth records: ${err instanceof Error ? err.message : String(err)}`);
   }
-  if (!brokered) return;
-  try {
-    rmSync(brokeredConnectorDir(workDir, owner, brokered.provider, brokered.connectorId), {
-      recursive: true,
-      force: true,
-    });
-  } catch (err) {
-    log.warn(
-      `[lifecycle] failed to clear the identity ${brokered.provider} dir for ` +
-        `${userId}|${serverName}: ${err instanceof Error ? err.message : String(err)}`,
+  if (brokered) {
+    try {
+      rmSync(brokeredConnectorDir(workDir, owner, brokered.provider, brokered.connectorId), {
+        recursive: true,
+        force: true,
+      });
+    } catch (err) {
+      failures.push(
+        `${brokered.provider} dir: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `failed to clear identity credentials for ${userId}|${serverName}: ${failures.join("; ")}`,
     );
   }
 }

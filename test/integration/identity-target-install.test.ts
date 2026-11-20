@@ -683,6 +683,31 @@ describe("manage_connectors.disconnect scope:identity — sign out, keep the plu
     ]);
   });
 
+  test("a sign-in that cannot be deleted fails the sign-out and publishes no state", async () => {
+    await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
+    const records = new McpOAuthRecords({
+      owner: { type: "user", userId: USER.id },
+      serverName: SERVER,
+    });
+    await records.write("tokens", { access_token: "x" });
+    const store = requireCredentialStore();
+    store.delete = async () => {
+      throw new Error("store unavailable");
+    };
+    h.events.length = 0;
+
+    const result = await h.tool.handler({
+      action: "disconnect",
+      serverName: SERVER,
+      scope: "identity",
+    });
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toMatch(/could not sign out/i);
+    expect(await records.has("tokens")).toBe(true);
+    expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(1);
+    expect(h.events.filter((e) => e.type === "connection.state_changed")).toEqual([]);
+  });
+
   test("errors on a connector that isn't installed on the identity", async () => {
     const result = await h.tool.handler({
       action: "disconnect",
