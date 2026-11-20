@@ -26,7 +26,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   const runtime = await Runtime.start(config);
   const startupMs = Math.round(performance.now() - startupTime);
   // The runtime's own manager, so the deployment's telemetry settings apply.
-  runtime.getTelemetryManager().capture("cli.startup", {
+  runtime.getTelemetryManager().capture("runtime.started", {
     mode: "serve",
     connector_count: runtime.connectorNames().length,
     startup_ms: startupMs,
