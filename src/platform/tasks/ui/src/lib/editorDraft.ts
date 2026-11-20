@@ -403,6 +403,11 @@ export function updateArgs(
   const next = buildDefinition(d);
   if (next.problems.length > 0) return { problems: next.problems };
   const before = buildDefinition(original);
+  // Compare against the schedule as stored, not as the form shows it: a stored
+  // schedule with no timezone is shown, and so saved, in the viewer's.
+  if (original.trigger === "schedule" && original.schedule) {
+    before.schedule = scheduleArg(original.schedule);
+  }
   const manifest: Record<string, unknown> = {};
   for (const k of DEFINITION_KEYS) {
     if (JSON.stringify(before[k]) === JSON.stringify(next[k])) continue;
