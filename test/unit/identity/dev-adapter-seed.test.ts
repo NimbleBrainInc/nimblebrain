@@ -112,4 +112,33 @@ describe("DevIdentityProvider profile seed", () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(await userStore.list()).toHaveLength(1);
   });
+
+  test("a failed seed fails its waiters and the next request seeds again", async () => {
+    const userStore = new UserStore(workDir);
+    const realCreate = userStore.create.bind(userStore);
+    const create = spyOn(userStore, "create").mockImplementationOnce(async () => {
+      throw new Error("disk full");
+    });
+    const adapter = new DevIdentityProvider(workDir, userStore);
+
+    const failed = await Promise.allSettled(
+      Array.from({ length: 3 }, (_, i) =>
+        adapter.verifyRequest(new Request(`http://localhost/fail-${i}`)),
+      ),
+    );
+    for (const result of failed) {
+      expect(result.status).toBe("rejected");
+      expect((result as PromiseRejectedResult).reason.message).toBe("disk full");
+    }
+    expect(create).toHaveBeenCalledTimes(1);
+
+    create.mockImplementation(realCreate);
+    const retried = await adapter.verifyRequest(new Request("http://localhost/retry"));
+    expect(retried?.id).toBe(DEV_IDENTITY.id);
+    expect(create).toHaveBeenCalledTimes(2);
+
+    await adapter.verifyRequest(new Request("http://localhost/after"));
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(await userStore.list()).toHaveLength(1);
+  });
 });
