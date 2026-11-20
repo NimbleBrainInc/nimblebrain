@@ -46,7 +46,7 @@ describe("serverDetailToCatalogEntry — host UI from ServerDetail._meta", () =>
 
   test("host block without a name still projects its placements", () => {
     const entry = serverDetailToCatalogEntry(
-      fleetDetail({ host_version: "1.0", placements: [{ slot: "main", resourceUri: "ui://x/y" }] }),
+      fleetDetail({ hostVersion: "1.0", placements: [{ slot: "main", resourceUri: "ui://x/y" }] }),
     );
     expect(entry?.ui).toEqual({ placements: [{ slot: "main", resourceUri: "ui://x/y" }] });
   });

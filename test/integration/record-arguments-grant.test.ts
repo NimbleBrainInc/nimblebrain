@@ -25,6 +25,10 @@ const OUTBOUND = "ai-acme-outbound";
 const NOTES = "ai-acme-notes";
 const OUTBOUND_URL = "https://outbound.acme.test/mcp";
 const NOTES_URL = "https://notes.acme.test/mcp";
+const LEDGER = "ai-acme-ledger";
+const LEDGER_URL = "https://ledger.acme.test/mcp";
+const SPLIT = "ai-acme-split";
+const SPLIT_URL = "https://split.acme.test/mcp";
 
 const testDir = join(tmpdir(), `nb-record-grant-${Date.now()}`);
 const catalogDir = join(testDir, "catalog");
@@ -43,6 +47,33 @@ const CATALOG_YAML = `servers:
       ai.nimblebrain/host:
         host_version: "1.5"
         record_arguments: true
+  - name: ai.acme/ledger
+    title: Acme Ledger
+    description: Declares the grant in camelCase
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: ${LEDGER_URL}
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+      ai.nimblebrain/host:
+        hostVersion: "1.5"
+        recordArguments: true
+  - name: ai.acme/split
+    title: Acme Split
+    description: Declares the grant in both spellings, which disagree
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: ${SPLIT_URL}
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+      ai.nimblebrain/host:
+        hostVersion: "1.5"
+        recordArguments: true
+        record_arguments: false
   - name: ai.acme/notes
     title: Acme Notes
     description: Declares nothing
@@ -75,6 +106,8 @@ beforeAll(async () => {
     connectors: [
       { url: OUTBOUND_URL, serverName: OUTBOUND },
       { url: NOTES_URL, serverName: NOTES },
+      { url: LEDGER_URL, serverName: LEDGER },
+      { url: SPLIT_URL, serverName: SPLIT },
     ],
   });
   await seedWorkspace(store, OTHER_WS, { name: OTHER_WS });
@@ -105,8 +138,16 @@ async function setRecordSources(sources: unknown): Promise<void> {
 }
 
 describe("record-arguments grant", () => {
-  it("grants every source to a connector whose catalog entry declares record_arguments", async () => {
+  it("grants every source to a connector whose catalog entry declares record_arguments (snake_case)", async () => {
     expect(await runtime.recordArgumentsGrantFor(WS, OUTBOUND)).toEqual({ sources: "all" });
+  });
+
+  it("grants the camelCase recordArguments the same way", async () => {
+    expect(await runtime.recordArgumentsGrantFor(WS, LEDGER)).toEqual({ sources: "all" });
+  });
+
+  it("grants nothing when the two spellings disagree", async () => {
+    expect(await runtime.recordArgumentsGrantFor(WS, SPLIT)).toBeNull();
   });
 
   it("grants nothing to a connector whose entry declares nothing, or to one not installed", async () => {

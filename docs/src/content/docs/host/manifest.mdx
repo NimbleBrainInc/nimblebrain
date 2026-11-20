@@ -32,7 +32,7 @@ servers:
         url: https://my-app.myorg.com/mcp
     _meta:
       ai.nimblebrain/host:
-        host_version: "1.0"
+        hostVersion: "1.0"
         placements:
           - slot: sidebar.apps
             resourceUri: ui://dashboard
@@ -47,25 +47,36 @@ servers:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `host_version` | `string` | Yes | Contract major version. Write `"1.0"`. It changes only on a breaking change: every field in this table is part of `1.0`, and a block is turned on by declaring it, not by the version. The host accepts any `1.x` and skips a catalog connector that declares another major. |
+| `hostVersion` | `string` | Yes | Contract major version. Write `"1.0"`. It changes only on a breaking change: every field in this table is part of `1.0`, and a block is turned on by declaring it, not by the version. The host accepts any `1.x` and skips a catalog connector that declares another major. |
 | `placements` | `PlacementDeclaration[]` | No | Shell layout placement declarations: sidebar items, main views, and the settings section. Shape [below](#placementdeclaration); behavior in [Placements & navigation](/host/placements/) and [Settings sections](/host/settings-sections/). |
-| `hooks` | `HookDeclaration[]` | No | Inbound event streams your server accepts from a vendor over plain HTTPS, one entry per vendor: `{ vendor, route, register_tool, description?, header_renames? }`. Read from a catalog entry only. A `route` may not be your MCP endpoint's path or a path under it. See [Inbound webhooks](/host/webhooks/). |
+| `hooks` | `HookDeclaration[]` | No | Inbound event streams your server accepts from a vendor over plain HTTPS, one entry per vendor: `{ vendor, route, registerTool, description?, headerRenames? }`. Read from a catalog entry only. A `route` may not be your MCP endpoint's path or a path under it. See [Inbound webhooks](/host/webhooks/). |
 | `notifications` | `object` | No | The outbox your server exposes, one resource the host polls for facts nobody asked for: `{ resource, description? }`. See [Notifications](/host/notifications/). |
-| `admin_tools` | `string[]` | No | Names of tools on your server that only a workspace admin may call, at most 64. Read from a catalog entry only. See [Admin-only tools](/host/admin-tools/). |
-| `record_arguments` | `boolean` | No | `true` grants your server record arguments in every workspace that installs it: the host reads the resources your tools' declared arguments name, from the servers in the workspace that serve them. Without it the host reads none. A workspace admin can narrow or revoke it. Read from a catalog entry only. See [The grant](/extensions/resource-arguments/#the-grant). |
+| `adminTools` | `string[]` | No | Names of tools on your server that only a workspace admin may call, at most 64. Read from a catalog entry only. See [Admin-only tools](/host/admin-tools/). |
+| `recordArguments` | `boolean` | No | `true` grants your server record arguments in every workspace that installs it: the host reads the resources your tools' declared arguments name, from the servers in the workspace that serve them. Without it the host reads none. A workspace admin can narrow or revoke it. Read from a catalog entry only. See [The grant](/extensions/resource-arguments/#the-grant). |
 
 <Aside type="note" title="A server added by URL on a local install">
   On a local install (`npx nimblebrain`), a server in development can be added
   by its loopback URL instead of a catalog entry. The runtime then reads the
   server's MCP Server Card (SEP-2127) at `<url>/server-card` and takes its `title`, `description`, `icons`, and,
-  from this block, `placements` only. `hooks`, `notifications`, `admin_tools`
-  and `record_arguments` are grants an operator makes in a catalog entry, and a
+  from this block, `placements` only. `hooks`, `notifications`, `adminTools`
+  and `recordArguments` are grants an operator makes in a catalog entry, and a
   card's are ignored. A card icon may be `https:`, a `data:` image, or a loopback
   `http:` URL. Without a card the server is added with no placements. A Python server built on `nimblebrain-server-sdk` serves its card with
   [`add_server_card`](/server-sdk/server-card/).
 </Aside>
 
-The block has no `name`, `icon`, `category` or `primaryView`; a block that still declares them loads, and the host ignores them like any unknown key. A connector's display name is its catalog entry's `title` (or `name`), and its icon the entry's `icons`, the fields the MCP Registry `ServerDetail` already defines. A sidebar entry's label is its placement's own `label`.
+The block has no `name`, `icon`, `category`, `primaryView` or `briefing`, and a placement has no `size`; a block that still declares them loads, and the host ignores them like any unknown key. A connector's display name is its catalog entry's `title` (or `name`), and its icon the entry's `icons`, the fields the MCP Registry `ServerDetail` already defines. A sidebar entry's label is its placement's own `label`.
+
+### Spelling
+
+Every field is camelCase. During the migration the host still reads the
+snake_case spelling (`host_version`, `admin_tools`, `record_arguments`, and a
+hook's `register_tool` and `header_renames`) and logs each entry that uses it;
+write camelCase. When an entry carries both spellings of one field, the host
+reads them so that nothing widens: it gates the union of the two `adminTools`
+lists (a malformed copy gates every tool), grants `recordArguments` only if
+both are `true`, drops the entry if the two `hostVersion` values differ, and
+drops a hook whose two copies differ.
 
 ### `PlacementDeclaration`
 
@@ -79,7 +90,6 @@ Each entry in the `placements` array:
 | `label` | `string` | No | — | Human-readable label for sidebar items. Ignored for `"settings"`. |
 | `icon` | `string` | No | — | Lucide icon name (kebab-case), shown on a `sidebar.bottom` entry. Falls back to `CircleDot` if unset or unrecognized. A connector's other sidebar entries show its catalog `icons`. |
 | `route` | `string` | No | — | Route path. Registers as `/w/<slug>/app/<route>`. Ignored for `"settings"`. |
-| `size` | `"compact" \| "full" \| "auto"` | No | — | Size hint. The shell does not read it. |
 
 ## Minimal example (UI app)
 
@@ -96,7 +106,7 @@ servers:
         url: https://hello.myorg.com/mcp
     _meta:
       ai.nimblebrain/host:
-        host_version: "1.0"
+        hostVersion: "1.0"
         placements:
           - slot: sidebar.apps
             resourceUri: ui://index

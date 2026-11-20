@@ -106,10 +106,10 @@ describe("EngineEventType", () => {
 describe("HostManifestMeta type", () => {
   it("matches manifest _meta structure", () => {
     const meta: HostManifestMeta = {
-      host_version: "1.0",
+      hostVersion: "1.0",
       placements: [{ slot: "sidebar.apps", resourceUri: "ui://tasks/board" }],
     };
-    expect(meta.host_version).toBe("1.0");
+    expect(meta.hostVersion).toBe("1.0");
     expect(meta.placements?.[0]?.resourceUri).toBe("ui://tasks/board");
   });
 });

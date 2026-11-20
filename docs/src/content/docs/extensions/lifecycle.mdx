@@ -410,9 +410,10 @@ uninstall has its own confirmation.
 
 This is version 1 of the extension. A new `event` value, or new optional fields
 in the marker or the settings object, keep the identifier; a host ignores what
-it does not recognise. Removing an event, changing its meaning or its delivery
-guarantee, or adding a required argument would ship under a new identifier
-(`ai.nimblebrain/lifecycle-v2`).
+it does not recognise. A breaking change (removing an event, changing its
+meaning or its delivery guarantee, or adding a required argument) keeps the
+identifier too: the host reads the old form beside the new one until every
+server has moved ([One spelling](/extensions/overview/#design-rules)).
 
 ## Where `pre_install` and `post_uninstall` went
 

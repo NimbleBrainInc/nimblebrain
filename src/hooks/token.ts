@@ -166,7 +166,7 @@ export function readHookTokenKeys(
 export const HOOKS_PATH_PREFIX = "/v1/hooks";
 
 /**
- * Build the URL handed to a server's `register_tool`.
+ * Build the URL handed to a server's `registerTool`.
  *
  * Origin comes from `publicOrigin()` — config-derived, never request-derived —
  * for the same reason every other outward-facing URL does: a host-header-derived

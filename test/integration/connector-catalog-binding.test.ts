@@ -2,12 +2,12 @@
  * A catalog entry's grants reach an installed connector only when the ref IS
  * the entry's server: the entry's name AND the entry's URL.
  *
- * One `Runtime`, one catalog entry declaring `admin_tools` and a hook, and two
+ * One `Runtime`, one catalog entry declaring `adminTools` and a hook, and two
  * workspaces where the dev identity is a member. Each holds
  * a ref under the entry's server name: one at the entry's URL, one at another
  * server's. The first gets the entry's grants. The second runs as a plain remote
  * connector with none of them, the operator is told once, and the entry's
- * restriction (`admin_tools`) still holds for it, because a restriction opens
+ * restriction (`adminTools`) still holds for it, because a restriction opens
  * nothing.
  */
 
@@ -49,12 +49,12 @@ const CATALOG_YAML = `servers:
       ai.nimblebrain/connector:
         auth: dcr
       ai.nimblebrain/host:
-        host_version: "1.5"
-        admin_tools: [configure]
+        hostVersion: "1.5"
+        adminTools: [configure]
         hooks:
           - vendor: acme
             route: /ingest/acme
-            register_tool: set_webhook_url
+            registerTool: set_webhook_url
 `;
 
 const ran = new Map<string, string[]>();
@@ -130,7 +130,7 @@ async function call(wsId: string, tool: string) {
 }
 
 describe("a connector at the catalog entry's URL", () => {
-  it("is held to the entry's admin_tools", async () => {
+  it("is held to the entry's adminTools", async () => {
     const admin = await call(AT_ENTRY_URL, "configure");
     expect(admin.structuredContent).toMatchObject({ error: "workspace_admin_required" });
     expect(ran.get(AT_ENTRY_URL)).toEqual([]);
@@ -143,7 +143,7 @@ describe("a connector at the catalog entry's URL", () => {
 });
 
 describe("a connector under the entry's name at another URL", () => {
-  it("is still held to the entry's admin_tools", async () => {
+  it("is still held to the entry's adminTools", async () => {
     const admin = await call(AT_OTHER_URL, "configure");
     expect(admin.structuredContent).toMatchObject({ error: "workspace_admin_required" });
     expect(ran.get(AT_OTHER_URL)).toEqual([]);

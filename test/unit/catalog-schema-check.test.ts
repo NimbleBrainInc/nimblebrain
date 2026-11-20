@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import { readCatalogServers, validateCatalog } from "../../src/connectors/catalog/read.ts";
+import {
+  catalogDeprecations,
+  readCatalogServers,
+  validateCatalog,
+} from "../../src/connectors/catalog/read.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
 /**
@@ -205,49 +209,79 @@ describe("validateCatalog", () => {
     expect(diagnostics[0]?.message).toContain("must NOT have more than 100 characters");
   });
 
-  test("a host block of another major is reported as a directory-boundary drop", () => {
-    // A host that predates major 2 would read its blocks as major 1 and
-    // ignore what it does not know — for admin_tools, widening access.
-    const withHost = (host_version: unknown) => ({
-      ...VALID_ENTRY,
-      _meta: { "ai.nimblebrain/host": { host_version, admin_tools: ["configure"] } },
-    });
-    writeCatalog("catalog.json", [withHost("2.0")]);
+  for (const [hostVersion, adminTools] of [
+    ["hostVersion", "adminTools"],
+    ["host_version", "admin_tools"],
+  ] as const) {
+    test(`a host block of another major is reported as a directory-boundary drop (${hostVersion})`, () => {
+      // A host that predates major 2 would read its blocks as major 1 and
+      // ignore what it does not know — for adminTools, widening access.
+      const withHost = (v: unknown) => ({
+        ...VALID_ENTRY,
+        _meta: { "ai.nimblebrain/host": { [hostVersion]: v, [adminTools]: ["configure"] } },
+      });
+      writeCatalog("catalog.json", [withHost("2.0")]);
 
+      const diagnostics = validateCatalog(dir);
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]?.message).toContain("directory boundary");
+      expect(diagnostics[0]?.message).toContain("hostVersion must be major 1");
+
+      // A null block is no block, as every host-block parser reads it.
+      writeCatalog("catalog.json", [{ ...VALID_ENTRY, _meta: { "ai.nimblebrain/host": null } }]);
+      expect(validateCatalog(dir)).toEqual([]);
+
+      for (const v of ["1", "1.0", "1.1", "1.5", "1.12"]) {
+        writeCatalog("catalog.json", [withHost(v)]);
+        expect(validateCatalog(dir)).toEqual([]);
+      }
+      for (const v of [undefined, null, 1, "2", "1.0.0", "v1", ""]) {
+        writeCatalog("catalog.json", [withHost(v)]);
+        expect(validateCatalog(dir)).toHaveLength(1);
+      }
+    });
+
+    test(`a malformed adminTools is reported, though the entry is kept (${adminTools})`, () => {
+      // The runtime keeps the entry and makes every tool on it admin-only, so
+      // members lose the connector; the gate is where that typo is caught.
+      const withAdmin = (v: unknown) => ({
+        ...VALID_ENTRY,
+        _meta: { "ai.nimblebrain/host": { [hostVersion]: "1.0", [adminTools]: v } },
+      });
+      writeCatalog("catalog.json", [withAdmin("configure")]);
+      const diagnostics = validateCatalog(dir);
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]?.message).toContain("every tool is admin-only");
+      expect(diagnostics[0]?.message).toContain("adminTools is not a list");
+
+      writeCatalog("catalog.json", [withAdmin(["configure", "configure"])]);
+      expect(validateCatalog(dir)).toEqual([]);
+    });
+  }
+
+  test("a host block whose two hostVersion copies disagree is a directory-boundary drop", () => {
+    writeCatalog("catalog.json", [
+      {
+        ...VALID_ENTRY,
+        _meta: { "ai.nimblebrain/host": { hostVersion: "1.0", host_version: "1.1" } },
+      },
+    ]);
     const diagnostics = validateCatalog(dir);
     expect(diagnostics).toHaveLength(1);
-    expect(diagnostics[0]?.message).toContain("directory boundary");
-    expect(diagnostics[0]?.message).toContain("host_version must be major 1");
+    expect(diagnostics[0]?.message).toContain("disagree");
 
-    // A null block is no block, as every host-block parser reads it.
-    writeCatalog("catalog.json", [{ ...VALID_ENTRY, _meta: { "ai.nimblebrain/host": null } }]);
+    writeCatalog("catalog.json", [
+      {
+        ...VALID_ENTRY,
+        _meta: { "ai.nimblebrain/host": { hostVersion: "1.0", host_version: "1.0" } },
+      },
+    ]);
     expect(validateCatalog(dir)).toEqual([]);
-
-    for (const v of ["1", "1.0", "1.1", "1.5", "1.12"]) {
-      writeCatalog("catalog.json", [withHost(v)]);
-      expect(validateCatalog(dir)).toEqual([]);
-    }
-    for (const v of [undefined, 1, "2", "1.0.0", "v1", ""]) {
-      writeCatalog("catalog.json", [withHost(v)]);
-      expect(validateCatalog(dir)).toHaveLength(1);
-    }
   });
 
-  test("a malformed admin_tools is reported, though the entry is kept", () => {
-    // The runtime keeps the entry and makes every tool on it admin-only, so
-    // members lose the connector; the gate is where that typo is caught.
-    const withAdmin = (admin_tools: unknown) => ({
-      ...VALID_ENTRY,
-      _meta: { "ai.nimblebrain/host": { host_version: "1.0", admin_tools } },
-    });
-    writeCatalog("catalog.json", [withAdmin("configure")]);
-    const diagnostics = validateCatalog(dir);
-    expect(diagnostics).toHaveLength(1);
-    expect(diagnostics[0]?.message).toContain("every tool is admin-only");
-    expect(diagnostics[0]?.message).toContain("admin_tools is not a list");
-
-    writeCatalog("catalog.json", [withAdmin(["configure", "configure"])]);
-    expect(validateCatalog(dir)).toEqual([]);
+  test("a host block that is not an object is a directory-boundary drop", () => {
+    writeCatalog("catalog.json", [{ ...VALID_ENTRY, _meta: { "ai.nimblebrain/host": "1.0" } }]);
+    expect(validateCatalog(dir)[0]?.message).toContain("not an object");
   });
 
   test("an entry with neither packages nor remotes is reported as not installable", () => {
@@ -317,5 +351,48 @@ describe("validateCatalog", () => {
     // fixture edit cannot quietly start relying on a dropped entry.
     expect(validateCatalog("src/connectors/catalog/curated")).toEqual([]);
     expect(validateCatalog(CONNECTOR_FIXTURE_DIR)).toEqual([]);
+  });
+});
+
+describe("catalogDeprecations", () => {
+  test("names each snake_case host key an entry uses, and passes a camel one", () => {
+    writeCatalog("catalog.json", [
+      {
+        ...VALID_ENTRY,
+        _meta: {
+          "ai.nimblebrain/host": {
+            host_version: "1.0",
+            admin_tools: ["configure"],
+            record_arguments: true,
+            hooks: [{ vendor: "acme", route: "/in", register_tool: "set", header_renames: {} }],
+          },
+        },
+      },
+      {
+        ...VALID_ENTRY,
+        name: "com.example/camel",
+        _meta: { "ai.nimblebrain/host": { hostVersion: "1.0", adminTools: ["configure"] } },
+      },
+    ]);
+    const warnings = catalogDeprecations(dir);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.name).toBe("com.example/mcp");
+    for (const key of [
+      "host_version",
+      "admin_tools",
+      "record_arguments",
+      "hooks[].register_tool",
+      "hooks[].header_renames",
+    ]) {
+      expect(warnings[0]?.message).toContain(key);
+    }
+  });
+
+  test("a deprecated key is a warning, never a gate failure", () => {
+    writeCatalog("catalog.json", [
+      { ...VALID_ENTRY, _meta: { "ai.nimblebrain/host": { host_version: "1.0" } } },
+    ]);
+    expect(validateCatalog(dir)).toEqual([]);
+    expect(catalogDeprecations(dir)).toHaveLength(1);
   });
 });

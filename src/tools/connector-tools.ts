@@ -352,7 +352,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           type: ["array", "null"],
           items: { type: "string" },
           description:
-            "For set_record_sources (workspace admin): the server names of the connectors in this workspace that `serverName` may receive records from through record arguments. An empty list revokes the grant; null clears the narrowing, so every connector in the workspace may be a source. Grants nothing unless the connector's catalog entry declares record_arguments.",
+            "For set_record_sources (workspace admin): the server names of the connectors in this workspace that `serverName` may receive records from through record arguments. An empty list revokes the grant; null clears the narrowing, so every connector in the workspace may be a source. Grants nothing unless the connector's catalog entry declares recordArguments.",
         },
         fields: {
           type: "object",
@@ -830,7 +830,7 @@ type InstalledEntry = {
   /**
    * The bare names of this connector's tools the caller may call, decided by
    * the gate every dispatch door refuses with (`Runtime.connectorAdmission`:
-   * the catalog's `admin_tools` against the caller's workspace role, and the
+   * the catalog's `adminTools` against the caller's workspace role, and the
    * host-only lifecycle handlers no one calls). A UI offers a control only
    * when the tool behind it is listed. It describes tools, never a role, so a
    * change to who may call what changes this list and nothing that reads it.
@@ -2085,7 +2085,7 @@ async function handleInstallRemoteOAuth(
   // call entirely and take its notice with it.
   const ready = await notifyConnectorReady(ctx, wsId, serverName);
 
-  // The `admin_tools` declaration's own contract: names the kernel calls
+  // The `adminTools` declaration's own contract: names the kernel calls
   // itself, and names the server does not advertise. Warnings only — every
   // declared name is enforced regardless.
   const adminWarning = await adminToolsWarning(ctx, wsId, serverName);
@@ -2401,7 +2401,7 @@ async function notifyConnectorReady(
 }
 
 /**
- * The `admin_tools` contract warnings for a freshly-installed connector, joined,
+ * The `adminTools` contract warnings for a freshly-installed connector, joined,
  * or `undefined`. Never an error, for the reason the hooks and lifecycle checks
  * are not: the install has committed by this line.
  */
@@ -3709,7 +3709,7 @@ async function handleSetPermissions(
 /**
  * `set_record_sources` — narrow or revoke a connector's record-arguments grant
  * in this workspace (ADR-0058). The grant itself is the operator's, from the
- * catalog entry's `record_arguments`; this only says which connectors here may
+ * catalog entry's `recordArguments`; this only says which connectors here may
  * be its sources. A list names them (empty revokes), `null` removes the
  * narrowing. Workspace admin only, like tool policy: it decides what reaches a
  * connector on every member's calls.

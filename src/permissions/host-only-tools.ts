@@ -18,7 +18,7 @@ import { LIFECYCLE_EVENTS, type LifecycleBinding } from "../lifecycle/types.ts";
  * advertises it. Believing the server is safe because the binding is about its
  * own tools only: withholding protects the server's
  * own handlers, so a server that lies exposes or hides nothing but its own.
- * The scope matches `admin_tools`: workspace connectors only. A
+ * The scope matches `adminTools`: workspace connectors only. A
  * personal connector acts on its owner's own account, is never called by the
  * host's lifecycle notifications, and has nothing withheld, whatever it
  * advertises.
