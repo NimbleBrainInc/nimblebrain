@@ -31,7 +31,7 @@ expect "$out" '.ok == true' "the machine passes every check"
 
 step "init, unattended, as an agent runs it"
 out=$(nb --yes --agent none)
-expect "$out" '.error == "MODEL_KEY_MISSING"' "init ends asking for a model key"
+expect "$out" '.ok == true and .model_key == "missing" and .local_model == null' "init succeeds, its answer saying no model is set"
 expect "$out" '.health == "ok"' "the runtime is healthy"
 expect "$out" '(.workspaces | length) >= 1' "a workspace exists"
 expect "$out" '.url == "http://127.0.0.1:27246"' "the UI is on 127.0.0.1:27246"

@@ -25,7 +25,7 @@ Tell your agent:
 
 > Install NimbleBrain with `npx nimblebrain`
 
-An agent runs it with `--yes --agent <its name> --json` and reads the result. When no model key is set, everything else still starts, and the result says `MODEL_KEY_MISSING`. The agent then asks you to run `npx nimblebrain key` in your own terminal, so the key never passes through the agent.
+An agent runs it with `--yes --agent <its name> --json` and reads the result. When no model is set, everything else still starts, the result is `ok: true` with `model_key: "missing"` and `local_model: null`, and the agent asks you to run `npx nimblebrain key` in your own terminal (so the key never passes through the agent) or `npx nimblebrain local-model` to run a model on this machine.
 
 The agent never decides whether usage data is sent. The result carries `telemetry.state: "undecided"` and the question to ask you; the agent runs `npx nimblebrain telemetry on` or `off` with your answer. See [Telemetry](/using/telemetry/).
 
@@ -128,11 +128,10 @@ Every command answers `{"ok": true, ...}` or `{"ok": false, "error": "<CODE>", "
 
 | `error` | Means |
 |---|---|
-| `DOCKER_MISSING`, `DOCKER_NOT_RUNNING`, `DOCKER_PERMISSION`, `COMPOSE_MISSING` | Docker is missing, stopped, not usable by this user, or lacks Compose v2. |
-| `ARCH_UNSUPPORTED`, `LOW_MEMORY`, `PORT_IN_USE` | No image for this CPU, under 2 GB for Docker, or the port is taken. |
+| `DOCKER_MISSING`, `DOCKER_NOT_RUNNING`, `DOCKER_PERMISSION`, `COMPOSE_MISSING` | Docker is missing, stopped, not usable by this user, or lacks Compose v2. On a Mac, `fix` names Docker Desktop (through Homebrew when it is there); a standalone `docker-compose` v2 that Docker cannot see gets the command that links it as Docker's plugin. |
+| `ARCH_UNSUPPORTED`, `LOW_MEMORY`, `PORT_IN_USE` | No image for this CPU, less memory than a Docker VM set to 2 GB reports, or the port is taken. `LOW_MEMORY`'s `fix` names Colima's or Docker Desktop's own setting when it is one of those. |
 | `NOT_INSTALLED`, `NOT_OURS` | No install here, or files, containers or data this CLI did not make are in the way. |
 | `NETWORK`, `START_FAILED`, `HEALTH_TIMEOUT` | A download failed, Compose could not start it, or it did not become healthy in time. |
-| `MODEL_KEY_MISSING` | NimbleBrain is running; chat needs a key (`npx nimblebrain key`). |
 | `NEEDS_TERMINAL`, `CANCELLED`, `AGENT_UNSUPPORTED`, `USAGE` | `key` needs a person, the action was declined, an unknown agent, or a bad command or flag. |
 | `RUNTIME_UNSUPPORTED` | The release `--runtime` names is older than this CLI supports, or its Compose file cannot be driven. |
 | `LOCAL_MODEL_UNREACHABLE`, `LOCAL_MODEL_MISSING`, `LOCAL_MODEL_NO_TOOLS`, `LOCAL_CONTEXT_SMALL` | Ollama does not answer (it is not installed, starting it was declined, or it did not answer after a start; `fix` names the step for this machine), the model is not on it (or its download was declined or failed), the model cannot call tools, or its context window is below the 32k NimbleBrain needs. |

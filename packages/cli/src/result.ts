@@ -24,7 +24,6 @@ export const ERRORS = {
   NOT_OURS:
     "Another install holds this name or its data. Remove it yourself, or choose a --home whose folder has another name.",
   NETWORK: "Check the network connection, then run the same command again.",
-  MODEL_KEY_MISSING: "Run `npx nimblebrain key` in your own terminal to enter a model key.",
   HEALTH_TIMEOUT: "Run `npx nimblebrain logs` and look at the last error line.",
   AGENT_UNSUPPORTED: "Pass --agent claude-code, cursor, codex or none.",
   START_FAILED: "Run `npx nimblebrain logs` and look at the last error line, then run this again.",
@@ -71,6 +70,22 @@ export type ErrorCode = keyof typeof ERRORS;
  * be too general. A closed set, so every fix a code can carry is listed here.
  */
 export const FIX_VARIANTS = {
+  DOCKER_MISSING: {
+    mac_brew:
+      "Install Docker Desktop with `brew install --cask docker`, open it once from Applications, then run this again.",
+    mac: "Install Docker Desktop (https://docs.docker.com/desktop/setup/install/mac-install/), open it once, then run this again.",
+  },
+  COMPOSE_MISSING: {
+    link_plugin:
+      'Docker cannot see the docker-compose on this machine. Link it as a plugin with `mkdir -p ~/.docker/cli-plugins && ln -sfn "$(command -v docker-compose)" ~/.docker/cli-plugins/docker-compose`, then run this again.',
+    brew: 'Install Compose with `brew install docker-compose && mkdir -p ~/.docker/cli-plugins && ln -sfn "$(brew --prefix)/bin/docker-compose" ~/.docker/cli-plugins/docker-compose`, then run this again.',
+  },
+  LOW_MEMORY: {
+    colima:
+      "Restart Colima with more memory: `colima stop && colima start --memory 4`, then run this again.",
+    docker_desktop:
+      "In Docker Desktop, open Settings > Resources, set Memory to at least 2 GB, apply, then run this again.",
+  },
   LOCAL_MODEL_UNREACHABLE: {
     brew_install:
       "Install Ollama with `brew install ollama`, then run this again; it offers to start Ollama for you.",
