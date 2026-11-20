@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Deps, ExecResult } from "../src/deps.ts";
 import { interrupted, run, VERSION } from "../src/main.ts";
-import { GB, machine, ok } from "./fake.ts";
+import { fail, GB, machine, missing, ok } from "./fake.ts";
 
 /** A machine where everything passes unless a test overrides one answer. */
 function fakeDeps(over: Partial<Deps> & { execMap?: Record<string, ExecResult> } = {}): Deps {
@@ -124,6 +124,72 @@ describe("doctor", () => {
       });
       expect((await json(["doctor"], deps)).body.ok).toBe(true);
     }
+  });
+
+  test("a VM set to 2 GB, which Docker reports as about 1.9, passes", async () => {
+    const deps = fakeDeps({
+      execMap: {
+        "docker info --format {{json .}}": ok(
+          JSON.stringify({ Architecture: "aarch64", MemTotal: 1.9 * GB }),
+        ),
+      },
+    });
+    expect((await json(["doctor"], deps)).body.ok).toBe(true);
+  });
+
+  test("LOW_MEMORY names Colima's and Docker Desktop's own fix", async () => {
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ Name: "colima" }, "colima stop && colima start --memory 4"],
+      [{ OperatingSystem: "Docker Desktop" }, "Settings > Resources"],
+      [{ Name: "colima-work" }, "Give Docker at least 2 GB"],
+    ];
+    for (const [extra, fix] of cases) {
+      const deps = fakeDeps({
+        execMap: {
+          "docker info --format {{json .}}": ok(
+            JSON.stringify({ Architecture: "aarch64", MemTotal: GB, ...extra }),
+          ),
+        },
+      });
+      const { body } = await json(["doctor"], deps);
+      expect(body.error).toBe("LOW_MEMORY");
+      expect(body.fix).toContain(fix);
+    }
+  });
+
+  test("DOCKER_MISSING on a Mac names Docker Desktop, through Homebrew when it is there", async () => {
+    const noDocker = { "docker --version": missing() };
+    const brew = machine({ exec: noDocker, platform: "darwin", programs: ["brew"] });
+    expect((await json(["doctor"], brew.deps)).body.fix).toContain("brew install --cask docker");
+    const mac = machine({ exec: noDocker, platform: "darwin" });
+    expect((await json(["doctor"], mac.deps)).body.fix).toContain("mac-install");
+    const linux = machine({ exec: noDocker });
+    expect((await json(["doctor"], linux.deps)).body.fix).toContain("docs.docker.com/get-docker");
+  });
+
+  test("COMPOSE_MISSING with a standalone docker-compose v2 links it as Docker's plugin", async () => {
+    const deps = fakeDeps({
+      execMap: {
+        "docker compose version --short": fail("docker: 'compose' is not a docker command."),
+        "docker-compose version --short": ok("2.29.1"),
+      },
+    });
+    const { body } = await json(["doctor"], deps);
+    expect(body.error).toBe("COMPOSE_MISSING");
+    expect(body.fix).toContain("~/.docker/cli-plugins/docker-compose");
+    expect(body.fix).toContain("command -v docker-compose");
+  });
+
+  test("COMPOSE_MISSING on a Mac with Homebrew and no docker-compose installs it", async () => {
+    const m = machine({
+      exec: {
+        "docker compose version --short": fail("docker: 'compose' is not a docker command."),
+        "docker-compose version --short": missing(),
+      },
+      platform: "darwin",
+      programs: ["brew"],
+    });
+    expect((await json(["doctor"], m.deps)).body.fix).toContain("brew install docker-compose");
   });
 
   test("under 2 GB of Docker memory is LOW_MEMORY", async () => {

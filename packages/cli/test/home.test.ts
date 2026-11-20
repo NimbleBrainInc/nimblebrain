@@ -42,17 +42,19 @@ describe("the install's own commands", () => {
     }
   });
 
-  test("test_unattendedInit_otherHome_fixAndTelemetrySetCarryHome", async () => {
+  test("test_unattendedInit_otherHome_nextStepAndTelemetrySetCarryHome", async () => {
     const m = machine({ env });
     const { body } = await json(["--yes", "--home", TRY], m);
-    expect(body.error).toBe("MODEL_KEY_MISSING");
-    expect(body.fix).toBe(`Run \`${CLI} key\` in your own terminal to enter a model key.`);
+    expect(body).toMatchObject({ ok: true, model_key: "missing" });
     expect(body.telemetry.set).toBe(`${CLI} telemetry on|off`);
+    const plain = await run(["--yes", "--home", TRY], machine({ env }).deps);
+    expect(plain.stdout).toContain(`Run ${CLI} key in your own terminal`);
+    expect(plain.stdout).toContain(`or ${CLI} local-model to run one`);
     const status = await json(["status", "--home", TRY], m);
     expect(status.body.telemetry.set).toBe(`${CLI} telemetry on|off`);
-    const plain = await run(["status", "--home", TRY], m.deps);
-    expect(plain.stdout).toContain(`missing (run ${CLI} key)`);
-    expect(plain.stdout).toContain(`answer with ${CLI} telemetry on|off`);
+    const statusText = await run(["status", "--home", TRY], m.deps);
+    expect(statusText.stdout).toContain(`missing (run ${CLI} key)`);
+    expect(statusText.stdout).toContain(`answer with ${CLI} telemetry on|off`);
   });
 
   test("test_failure_otherHome_fixNamesHome", async () => {

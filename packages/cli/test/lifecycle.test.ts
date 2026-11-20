@@ -60,12 +60,13 @@ describe("the release's Compose file", () => {
 });
 
 describe("init", () => {
-  test("an agent's unattended run installs, starts, connects, and ends on MODEL_KEY_MISSING with the status", async () => {
+  test("an agent's unattended run installs, starts, connects, and succeeds with model_key missing", async () => {
     const { body, code, m } = await json(["--yes", "--agent", "claude-code"]);
-    expect(code).toBe(1);
+    expect(code).toBe(0);
     expect(body).toMatchObject({
-      ok: false,
-      error: "MODEL_KEY_MISSING",
+      ok: true,
+      model_key: "missing",
+      local_model: null,
       health: "ok",
       version: "0.73.0",
       cli_version: VERSION,
@@ -313,7 +314,7 @@ describe("another home", () => {
   test("installs beside the default install as its own project, port and data", async () => {
     const m = machine({ env, exec: defaultInstalled });
     const { body } = await json(["--yes", "--home", RC, "--port", "27300"], m);
-    expect(body).toMatchObject({ error: "MODEL_KEY_MISSING", url: "http://127.0.0.1:27300" });
+    expect(body).toMatchObject({ ok: true, model_key: "missing", url: "http://127.0.0.1:27300" });
     expect(m.files.get(`${RC}/.env`)?.text).toContain("COMPOSE_PROJECT_NAME=nimblebrain-nb-rc\n");
     expect(JSON.parse(m.files.get(`${RC}/install.json`)?.text ?? "")).toMatchObject({
       project: "nimblebrain-nb-rc",
@@ -344,7 +345,7 @@ describe("another home", () => {
       env,
       exec: { "docker compose ls -a --format json": ok('[{"Name":"nimblebrain-local-rc"}]') },
     });
-    expect((await json(["--yes"], m)).body.error).toBe("MODEL_KEY_MISSING");
+    expect((await json(["--yes"], m)).body).toMatchObject({ ok: true, model_key: "missing" });
   });
 
   test("a .env naming another project is not this home's mark", async () => {

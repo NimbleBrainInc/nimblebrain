@@ -134,3 +134,8 @@ export async function readWorkspaces(deps: Deps, url: string): Promise<Workspace
     )
     .map((w) => ({ id: w.id, name: w.name, mcp: `${url}/mcp/${w.id}` }));
 }
+
+/** Whether NimbleBrain's own agents have a model: a key, or a local model. */
+export function hasModelIn(r: { model_key: string; local_model: string | null }): boolean {
+  return r.model_key === "set" || r.local_model !== null;
+}
