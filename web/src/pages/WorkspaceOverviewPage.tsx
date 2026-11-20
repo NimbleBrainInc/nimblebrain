@@ -123,6 +123,9 @@ export function WorkspaceOverviewPage() {
         },
         lastConversation: recent[0] ?? null,
         conversationStarters: conversationStarters ?? [],
+        // The workspace and today's local date: the plugins whose starters
+        // show change once a day, and stay put within it.
+        starterRotation: `${workspace.id}:${localDay()}`,
       })
     : null;
 
@@ -193,4 +196,11 @@ function OverviewComposer({
       />
     </div>
   );
+}
+
+/** Today's date in the viewer's own time zone, as `YYYY-MM-DD`. */
+function localDay(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }

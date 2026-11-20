@@ -14,7 +14,9 @@
 //   3. Resume. The workspace's most recent conversation.
 //   4. Conversation starters. What the workspace's ready plugins offer to try,
 //      from each plugin's catalog entry, taking one from each plugin in turn so
-//      one plugin does not fill the list. They come from a separate read that
+//      one plugin does not fill the list. Which plugins come first rotates by
+//      day (`starterRotation`), so a workspace with many plugins sees each of
+//      them over a week rather than the same few every visit. They come from a separate read that
 //      can arrive later, so they go last and never move a row above them.
 // The page shows the first few and folds the rest behind "Show more", so the
 // order is the whole ranking: the most urgent thing is always first.
@@ -92,6 +94,12 @@ export interface OverviewActionsInput {
   lastConversation: RecentConversation | null;
   /** The workspace plugins' conversation starters (`nb__conversation_starters`), or none yet. */
   conversationStarters?: readonly ConversationStarter[];
+  /**
+   * What orders the plugins whose starters show, so every connected plugin
+   * gets a turn over time: the page passes the workspace and the local date,
+   * which keeps the choice stable through a day and moves it the next.
+   */
+  starterRotation?: string;
 }
 
 /** The most conversation starters the list offers. */
@@ -258,10 +266,22 @@ export function overviewActions(input: OverviewActionsInput): OverviewAction[] {
   return [...alerts, ...setupActions(input), ...resume, ...starterActions(input)];
 }
 
+/** FNV-1a, 32-bit: a stable, well-spread order key from a string. */
+function hash32(text: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
 /**
  * Conversation starters of the plugins whose connector is ready, taking one
- * from each plugin in turn, at most {@link MAX_STARTERS_SHOWN}. A starter for a
- * connector that is not ready is left out: its alert says what to fix first.
+ * from each plugin in turn, at most {@link MAX_STARTERS_SHOWN}. The plugins
+ * take their turns in an order keyed by `starterRotation`; with none, in the
+ * catalog's order. A starter for a connector that is not ready is left out:
+ * its alert says what to fix first.
  */
 function starterActions(input: OverviewActionsInput): OverviewAction[] {
   const ready = new Map(
@@ -272,9 +292,16 @@ function starterActions(input: OverviewActionsInput): OverviewAction[] {
     if (!ready.has(s.serverName)) continue;
     byServer.set(s.serverName, [...(byServer.get(s.serverName) ?? []), s]);
   }
+  const rotation = input.starterRotation;
+  const turns =
+    rotation === undefined
+      ? [...byServer.values()]
+      : [...byServer.entries()]
+          .sort(([a], [b]) => hash32(`${rotation}:${a}`) - hash32(`${rotation}:${b}`))
+          .map(([, list]) => list);
   const picked: ConversationStarter[] = [];
   for (let round = 0; picked.length < MAX_STARTERS_SHOWN; round++) {
-    const next = [...byServer.values()].map((list) => list[round]).filter((s) => s !== undefined);
+    const next = turns.map((list) => list[round]).filter((s) => s !== undefined);
     if (next.length === 0) break;
     picked.push(...next.slice(0, MAX_STARTERS_SHOWN - picked.length));
   }
