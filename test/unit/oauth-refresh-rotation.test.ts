@@ -306,6 +306,40 @@ describe("refresh under rotation never deletes a credential that is still good",
     expect(await storedRefreshToken()).toBe("rt_2");
   });
 
+  it("test_refresh_read_during_token_delete_never_caches_the_deleted_tokens", async () => {
+    // An invalidation clears the cache and starts deleting the stored tokens.
+    // A read that runs while the delete is pending still finds rt_1 in the
+    // store. Once the delete lands, the provider must not keep serving rt_1.
+    await seedConnection();
+    const provider = makeProvider();
+    const remove = store.delete.bind(store);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let deleting!: () => void;
+    const deleteStarted = new Promise<void>((r) => {
+      deleting = r;
+    });
+    const spy = spyOn(store, "delete").mockImplementation(async (scope, key) => {
+      if (key.endsWith(".tokens")) {
+        deleting();
+        await gate;
+      }
+      await remove(scope, key);
+    });
+
+    const invalidation = provider.invalidateCredentials("all");
+    await deleteStarted;
+    expect((await provider.tokens())?.refresh_token).toBe("rt_1");
+    release();
+    await invalidation;
+    spy.mockRestore();
+
+    expect(await storedRefreshToken()).toBeUndefined();
+    expect(await provider.tokens()).toBeUndefined();
+  });
+
   it("test_refresh_unstamped_credential_never_saves_a_read_over_a_rotation", async () => {
     // Tokens stored before SEP-2352 carry no issuer. The SDK's auth() reads them,
     // and between that read and its next step a sibling rotates rt_1 → rt_2 →

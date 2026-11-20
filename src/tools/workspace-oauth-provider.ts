@@ -1707,6 +1707,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     if (scope === "all" || scope === "tokens") {
       this.setCachedTokens(null);
       await this.records.delete("tokens");
+      // A read that began during the delete may have cached the tokens it was
+      // deleting; clearing again drops that copy and sends such a read round.
+      this.setCachedTokens(null);
       // The identity record is bound 1:1 with tokens — when tokens go, the
       // captured identity is no longer meaningful (the user might
       // re-auth as someone else next time).
