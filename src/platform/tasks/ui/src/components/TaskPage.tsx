@@ -7,7 +7,6 @@ import type { TaskDetail, TaskRun, TaskRunResult, TaskStats, TaskSummary } from 
 import { useTool } from "../useTool.ts";
 import {
   asDict,
-  formatDuration,
   formatPercent,
   formatTokens,
   formatUsd,
@@ -101,12 +100,12 @@ function EnabledSwitch({
       className={`switch${enabled ? " on" : ""}`}
       disabled={busy}
       onClick={() => onChange(!enabled)}
-      title="Whether its schedule or events run it. Run now works either way."
+      title="Whether it runs on its own. Run now works either way."
     >
       <span className="switch-track" aria-hidden="true">
         <span className="switch-thumb" />
       </span>
-      Enabled
+      On
     </button>
   );
 }
@@ -270,7 +269,7 @@ function LimitsSection({ d }: { d: TaskDetail }) {
 
 function DetailsSection({ d }: { d: TaskDetail }) {
   return (
-    <Disclosure title="Details">
+    <Disclosure title="About">
       <dl className="def-list">
         <Row label="Tokens used">
           {formatTokens(d.cumulativeInputTokens)} in · {formatTokens(d.cumulativeOutputTokens)} out
@@ -286,11 +285,20 @@ function DetailsSection({ d }: { d: TaskDetail }) {
   );
 }
 
-/** The task's setup, read-only, each part behind a closed disclosure. */
-export function SetupSections({ d, onEdit }: { d: TaskDetail; onEdit?: () => void }) {
+/** The task's setup and figures, read-only, each part behind a closed disclosure. */
+export function SetupSections({
+  d,
+  onEdit,
+  figures,
+}: {
+  d: TaskDetail;
+  onEdit?: () => void;
+  /** The 30-day figures, shown as their own disclosure. */
+  figures?: ReactNode;
+}) {
   return (
     <Section
-      title="Setup"
+      title="Details"
       aside={
         onEdit && (
           <button type="button" className="btn btn-sm" onClick={onEdit}>
@@ -303,6 +311,11 @@ export function SetupSections({ d, onEdit }: { d: TaskDetail; onEdit?: () => voi
         <DoesSection d={d} />
         <GoodSection d={d} />
         <LimitsSection d={d} />
+        {figures && (
+          <Disclosure title="Last 30 days" hint="Runs, pass rate and cost">
+            {figures}
+          </Disclosure>
+        )}
         <DetailsSection d={d} />
       </div>
     </Section>
@@ -410,7 +423,7 @@ function LatestRun({
   );
 }
 
-/** The last few runs as a section, each opening its result; the full history is a link away. */
+/** The runs before the latest, each with its outcome and the start of what it made; the full history is a link away. */
 function RecentRuns({
   runs,
   runsError,
@@ -427,33 +440,32 @@ function RecentRuns({
 }) {
   return (
     <Section
-      title="Recent runs"
+      title="Earlier results"
       aside={
-        runs && runs.length > 0 ? (
+        runs && runs.length > 1 ? (
           <button type="button" className="btn btn-sm" onClick={onSeeAll}>
-            See all runs
+            Every run
           </button>
         ) : undefined
       }
     >
       {runsError && <div className="error-banner">{runsError}</div>}
       {!runs && !runsError && <div className="skel skel-row" aria-busy="true" />}
-      {runs && runs.length === 0 && <p className="muted">No runs yet.</p>}
-      {runs && runs.length > 0 && (
+      {runs && runs.length <= 1 && <p className="muted">Nothing earlier yet.</p>}
+      {runs && runs.length > 1 && (
         <ul className="task-runs">
-          {runs.slice(0, RECENT_RUNS).map((r) => {
+          {runs.slice(1, RECENT_RUNS + 1).map((r) => {
             const input = inputSummary(r.input, inputSchema);
+            const said = r.resultPreview?.trim() || r.error;
             return (
               <li key={r.id}>
                 <button type="button" className="task-run" onClick={() => onOpenRun(r)}>
                   <span className="task-run-what">
                     {r.label ? <RunBadge label={r.label} /> : <span>{r.status}</span>}
                     {input && <span className="task-run-input">{input}</span>}
+                    {said && <span className="task-run-said">{said}</span>}
                   </span>
                   <span className="muted">{runTime(r.startedAt)}</span>
-                  <span className="muted num">
-                    {r.completedAt ? formatDuration(r.startedAt, r.completedAt) : ""}
-                  </span>
                 </button>
               </li>
             );
@@ -572,7 +584,6 @@ export function TaskPageBody({
           )}
         </div>
       )}
-      <TaskSummaryStrip detail={detail} stats={stats} last={latest} />
       <LatestRun
         run={latest}
         result={latestResult}
@@ -586,7 +597,11 @@ export function TaskPageBody({
         onOpenRun={actions.onOpenRun}
         onSeeAll={() => actions.onSeeRuns(detail)}
       />
-      <SetupSections d={detail} onEdit={() => actions.onEdit(detail)} />
+      <SetupSections
+        d={detail}
+        onEdit={() => actions.onEdit(detail)}
+        figures={<TaskSummaryStrip detail={detail} stats={stats} last={latest} />}
+      />
     </Sections>
   );
 }
@@ -656,7 +671,7 @@ export function taskHealth(
     disabledReason: detail.disabledReason,
     onceDone: detail.onceDone,
   };
-  return healthOf(task, stats ?? undefined, live);
+  return healthOf(task, stats ?? undefined, live, runs ?? []);
 }
 
 /** The task page's actions: the Enabled switch for a task with a trigger, Run now or Watch, the menu. */
@@ -708,8 +723,8 @@ function TaskActions({
 }
 
 /**
- * A task's page: what needs doing, its latest result and recent runs, then
- * its setup behind disclosures.
+ * A scheduled task's page: what needs doing, then what it made (the latest
+ * result, then earlier ones), then its setup and figures behind disclosures.
  */
 export function TaskPage({
   taskId,

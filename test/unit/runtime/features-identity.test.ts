@@ -11,7 +11,7 @@ describe("identity & workspace feature flags", () => {
     });
 
     it("defaults new flags to true when other flags are provided", () => {
-      const features = resolveFeatures({ catalogSearch: false });
+      const features = resolveFeatures({ toolDiscovery: false });
       expect(features.userManagement).toBe(true);
       expect(features.workspaceManagement).toBe(true);
     });
@@ -33,7 +33,6 @@ describe("identity & workspace feature flags", () => {
       });
       expect(features.skillManagement).toBe(true);
       expect(features.toolDiscovery).toBe(true);
-      expect(features.catalogSearch).toBe(true);
       expect(features.fileContext).toBe(true);
     });
   });

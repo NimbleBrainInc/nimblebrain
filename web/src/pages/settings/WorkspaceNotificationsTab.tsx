@@ -233,7 +233,7 @@ function NotificationSettings({ wsId }: { wsId: string }) {
 
       <Section
         title="Routes"
-        description="A route matches notifications and delivers them. Match on source, on the event name the connector chose, and on a minimum level; deliver to a tool this workspace has installed, or wake one of your tasks."
+        description="A route matches notifications and delivers them. Match on source, on the event name the connector chose, and on a minimum level; deliver to a tool this workspace has installed, or wake one of your scheduled tasks."
         action={
           <Button
             variant="outline"

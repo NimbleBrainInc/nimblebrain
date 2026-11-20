@@ -2222,6 +2222,17 @@ export declare const TaskRunStats: import("@sinclair/typebox").TObject<{
         startedAt: import("@sinclair/typebox").TString;
         label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
     }>>;
+    /**
+     * The newest runs, newest first, whenever they started (batch runs left
+     * out): what a list draws as a strip, read in the same pass as `lastRun`.
+     */
+    recent: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        id: import("@sinclair/typebox").TString;
+        startedAt: import("@sinclair/typebox").TString;
+        label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
+        /** The run's error, cut to a line. */
+        error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    }>>>;
 }>;
 export type TaskRunStats = Static<typeof TaskRunStats>;
 export declare const TasksStatsOutput: import("@sinclair/typebox").TObject<{
@@ -2244,6 +2255,17 @@ export declare const TasksStatsOutput: import("@sinclair/typebox").TObject<{
             startedAt: import("@sinclair/typebox").TString;
             label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
         }>>;
+        /**
+         * The newest runs, newest first, whenever they started (batch runs left
+         * out): what a list draws as a strip, read in the same pass as `lastRun`.
+         */
+        recent: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+            id: import("@sinclair/typebox").TString;
+            startedAt: import("@sinclair/typebox").TString;
+            label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
+            /** The run's error, cut to a line. */
+            error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        }>>>;
     }>>;
 }>;
 export type TasksStatsOutput = Static<typeof TasksStatsOutput>;

@@ -153,6 +153,38 @@ describe("projectPlugins", () => {
     ]);
   });
 
+  test("a plugin carries its connector's description, and none when it has none", () => {
+    const out = projectPlugins(
+      facts({
+        workspace: [
+          {
+            serverName: "linear",
+            displayName: "Linear",
+            description: "Issues and projects",
+            status: "ready",
+          },
+          { serverName: "crm", displayName: "CRM", description: null, status: "ready" },
+        ],
+        personal: [
+          {
+            serverName: "granola",
+            displayName: "Granola",
+            description: "Meeting notes",
+            status: "ready",
+            grantedWorkspaces: [],
+          },
+        ],
+      }),
+    );
+    expectValid(out);
+    expect(out.plugins.map((p) => p.description)).toEqual([
+      "Issues and projects",
+      undefined,
+      "Meeting notes",
+    ]);
+    expect(out.plugins[1]).not.toHaveProperty("description");
+  });
+
   test("the same server installed for the workspace and the person is two plugins", () => {
     const out = projectPlugins(
       facts({

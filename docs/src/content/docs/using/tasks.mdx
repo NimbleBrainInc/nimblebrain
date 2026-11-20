@@ -1,11 +1,11 @@
 ---
-title: Tasks
+title: Scheduled tasks
 description: Schedule the agent to run on its own — cron, interval, once-at-a-time, event-triggered, and manual agent runs that produce deliverables.
 ---
 
 import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
-Tasks are unattended agent runs. Instead of you typing a prompt, NimbleBrain runs a saved prompt on a schedule — a daily digest, a recurring report, a periodic check — or when a connector reports something worth acting on, and the agent executes it unattended, with access to your tools and connectors.
+Scheduled tasks are unattended agent runs, listed under **Scheduled** in the sidebar. Instead of you typing a prompt, NimbleBrain runs a saved prompt on a schedule — a daily digest, a recurring report, a periodic check — or when a connector reports something worth acting on, and the agent executes it unattended, with access to your tools and connectors.
 
 Each task is a prompt plus an optional schedule. When it fires, or when you run it, the runtime starts an agent run framed around producing a deliverable rather than a back-and-forth conversation.
 
@@ -181,15 +181,46 @@ Browse and manage tasks from the **Tasks** panel in the sidebar, or ask the agen
 Pausing keeps the definition and its run history intact; the scheduler simply skips it. Resume re-enables it on its existing schedule. To remove a task entirely, ask the agent to delete it (run history is preserved even then).
 </Aside>
 
-## The Tasks panel
+## The Scheduled page
 
-The **Tasks** panel opens on your tasks, most urgent first. A line at the top says how many need you. Each task that does (its trigger was turned off, its runs keep failing, or its last run failed, fell short of its rules, or needs checking) is a card with the reason and a link to the run. Runs going or waiting for a slot follow, each with **Watch**; then the next few scheduled runs; then every other task with its schedule and when it runs next. Tasks whose trigger you turned off are folded under **Paused**. Colour and an icon carry each task's state.
+**Scheduled** in the sidebar lists your scheduled tasks on one board, worst first. Each row has:
 
-From there, **See everything coming up** lists your runs in the queue, the scheduled runs over the next 7 or 30 days (a frequent schedule as one row with its count, a rare one by its next run), and the tasks that run on events with their hourly ceiling. **See every run** lists every run from every source, newest first, back through the whole history, filtered by outcome, task, what started it, and date; a batch is one row you can expand.
+- a light: green when it is healthy, amber when it is flaky or a result is waiting for your check, red when it is broken or was turned off after repeated failures, and hollow when you paused it;
+- its name and its schedule in a few words ("Weekdays 7 AM", "On mail.* events", "On demand"), with when it runs next;
+- its last 14 runs as squares, oldest to newest, each colored by how it went;
+- an on/off switch for a task with a schedule or event trigger, or **Run** for an on-demand task.
 
-Every screen in the panel is a page, and the breadcrumb above it names the pages you came through (Tasks › a task › a run); picking one, or going back, returns to that page. Opening a task opens its page: the task's state, a status line (trigger, next run, last run), **Run now** (or **Watch** while it runs), an **Enabled** switch for a task with a schedule or event trigger (it gates only the trigger; Run now works either way), and a menu with Run on a list…, Edit, Duplicate, and Delete. Below are what needs doing, the latest result, the recent runs with the pass rate and 30-day cost, and the setup (prompt, input, rules and judge, limits) folded away until you open it. Run now asks for the input first when the task has an input schema. Run on a list takes a JSON array, or CSV whose header row names the input fields.
+A row that needs you says why on its second line, with the one action that clears it. The filter above the board shows all tasks, or only the scheduled, event, or on-demand ones. **Every run, newest first** at the foot lists every run from every source, filtered by outcome, task, what started it, and date; a batch is one row you can expand.
 
-Opening a run opens its page under its task's, wherever you opened it from, so the task is always one step back. A run's page shows its result: the deliverable first (structured output as values and tables), then its assessment with Accept, Reject, a note, and Re-judge, then how it ran, its steps (each tool call in plain words with how long it took, its input and output behind Show details), input, and cost. The editor covers what the task does, its input fields, its criteria, output schema and judge, when it runs, its limits, and a test run of the draft before you save it; accepting or rejecting the test run with a note adds that note as a draft criterion.
+A task is **flaky** when 2 or more of its last 10 runs didn't work, even if the latest one did.
+
+### What clears a problem
+
+A task's health is read from its runs, so only new evidence changes it:
+
+| The row says | What clears it |
+|---|---|
+| Last run failed, or Failed N times in a row | A run that works. **Try again** runs it now; fix the cause first (reconnect a connector in Plugins, for example), since fixing it alone runs nothing. |
+| Turned off after repeated failures | **Turn on and try again** turns the trigger back on and runs it. Turning it on alone resets the failure count, but the light stays red until a run works. |
+| A result is waiting for your check | Accept or Reject it on the run (**Review**). |
+| The last result fell short of its checks | Review it, then fix the task or run it again. |
+| Flaky | Failures age out: once fewer than 2 of the last 10 runs failed, it reads healthy again. |
+
+Turning a task off is a decision, so a paused task reads as paused, not as a problem, whatever its last run did. A result waiting for your check still needs you while it is paused.
+
+Outcomes read in three words wherever runs are listed: **Done**, **Needs you** (the result is waiting for your check), and **Didn't work** (the run failed, or its result fell short of its checks). A run that never started reads **Didn't run**, and one you stopped reads **Stopped**. A run's own page also names the precise label (Succeeded, Needs review, Poor result, Failed, Skipped, Cancelled); see [Judging results](#judging-results).
+
+### Setting one up
+
+Say what should run, and when, in a sentence: in the box on the Scheduled page, or in chat. From the page, the sentence goes to chat, where the agent asks anything it needs (when it should run, where the result should go), saves it, and shows a card with the schedule, what it does, when it runs first, and **Try it now**, **Pause**, and **Open in Scheduled**. Under any message you sent in chat, **Schedule this** (the calendar icon) asks the agent to turn that request into a scheduled task the same way.
+
+**Fill in a form instead** opens the form: what it should do, when it should run (on a schedule, when something happens, or only when you run it), and **Try it once**, which runs the draft before you save it. The name is made from the first words of what it does until you type one. Everything else (a description, skills, input for each run, checks on the result and the judge, an output schema, tools, model, and limits) is under **More options**, which opens on its own when a task already uses any of it. Accepting or rejecting the try with a note adds the note as a draft check.
+
+### A task's page
+
+Every screen is a page, and the breadcrumb above it names the pages you came through (Scheduled › a task › a run). A task's page has a status line (its schedule, next run, last run), **Run now** (or **Watch** while it runs), an **On** switch for a task with a schedule or event trigger (it gates only the trigger; Run now works either way), and a menu with Run on a list…, Edit, Duplicate, and Delete. Below are what needs doing, the latest result, and earlier results, each with its outcome and the start of what it made. **Details** folds away the setup (prompt, input, checks and judge, limits) and the last 30 days' runs, pass rate, and cost. Run now asks for the input first when the task has an input schema. Run on a list takes a JSON array, or CSV whose header row names the input fields.
+
+A run's page shows the deliverable first (structured output as values and tables), then its assessment with Accept, Reject, a note, and Re-judge, then how it ran: its steps (each tool call in plain words with how long it took, its input and output behind Show details), input, and cost.
 
 ## Running from an MCP client
 
@@ -228,7 +259,7 @@ Task handles are offered on the `2026-07-28` protocol only. On an earlier protoc
 
 ## Run history
 
-Every run is recorded with its status, start and completion times, iteration count, tool calls, and any error. View it in the Tasks panel or by asking the agent. If the runtime restarts while a run is in flight, the orphaned run is swept and marked failed so history stays accurate.
+Every run is recorded with its status, start and completion times, iteration count, tool calls, and any error. View it on the Scheduled page or by asking the agent. If the runtime restarts while a run is in flight, the orphaned run is swept and marked failed so history stays accurate.
 
 The most recent 1,000 runs of each task are always kept, with their full results, and are what is read by default. Older ones are kept in monthly archives for the [retention window](/config/nimblebrain-json/#run-data-retention) (180 days unless the operator changes it) and read a page at a time: `tasks__runs` filters by the label a run reads as (`label: "Needs review"` finds the runs waiting for your verdict) or by its verdict, and returns a `nextBefore` timestamp when older runs exist, and passing it back as `before` returns the next page, for one task (`taskId`) or every task. Across every task, a first page read without `before` sees only the most recent runs, so start with a `before` just ahead of now to page through everything.
 
@@ -274,7 +305,7 @@ The judge is called as the task's owner, in the task's workspace, through the sa
 
 ### How a run reads
 
-A run's assessment is `pass`, `fail`, `uncertain` (the judge's confidence was below the threshold, or the judge could not answer), or `not_assessed` (the task has no output schema and no criteria, so there was nothing to check), recorded on the run with each criterion's answer, pass or fail, confidence, and the judge's rationale, plus which judge answered and the tokens it reports. The run list, a run's result, and the Tasks panel show one label derived from how the run ended and its assessment:
+A run's assessment is `pass`, `fail`, `uncertain` (the judge's confidence was below the threshold, or the judge could not answer), or `not_assessed` (the task has no output schema and no criteria, so there was nothing to check), recorded on the run with each criterion's answer, pass or fail, confidence, and the judge's rationale, plus which judge answered and the tokens it reports. The run list, a run's result, and the Scheduled page show one label derived from how the run ended and its assessment:
 
 | Label | When |
 |---|---|
@@ -287,13 +318,13 @@ The label is computed when it is read, never stored.
 
 ### Your verdict
 
-Accept or Reject on a run in the Tasks panel, or `tasks__assess` with `{ runId, verdict: "pass" | "fail", note? }`, records your verdict beside the judge's. It replaces the judge's in the label: a rejected run reads Poor result, and an accepted one Succeeded unless it was incomplete or left a tool call failed. The record says who set it and whether it came from the Tasks panel (`ui`) or another client (`remote`). After editing a task's criteria or schema, `tasks__assess` with `{ runId, reassess: true }` judges a run again and keeps your verdict. A task's own runs cannot call `tasks__assess`.
+Accept or Reject on a run on the Scheduled page, or `tasks__assess` with `{ runId, verdict: "pass" | "fail", note? }`, records your verdict beside the judge's. It replaces the judge's in the label: a rejected run reads Poor result, and an accepted one Succeeded unless it was incomplete or left a tool call failed. The record says who set it and whether it came from the Scheduled page (`ui`) or another client (`remote`). After editing a task's criteria or schema, `tasks__assess` with `{ runId, reassess: true }` judges a run again and keeps your verdict. A task's own runs cannot call `tasks__assess`.
 
 ### After a poor result
 
 `onPoorResult` says what a `fail` does:
 
-- `notify` (the default): a notification in the workspace inbox saying a task run had a poor result, with the run's id, which the workspace's [notification routes](/using/notifications) can deliver. Every member of the workspace can read the inbox and a task is private to you, so the notification names no task, criterion, or rule and carries nothing of the deliverable; open the run in the Tasks panel (or `tasks__run_result`) for the detail.
+- `notify` (the default): a notification in the workspace inbox saying a task run had a poor result, with the run's id, which the workspace's [notification routes](/using/notifications) can deliver. Every member of the workspace can read the inbox and a task is private to you, so the notification names no task, criterion, or rule and carries nothing of the deliverable; open the run on the Scheduled page (or `tasks__run_result`) for the detail.
 - `record`: nothing beyond the assessment.
 - `retry_once`: the task runs again, once, with the same input and the failed criteria given to it as guidance. The retry is an ordinary run (it takes a run slot and counts against the token budget) and records `retryOf`. If the retry fails too, or cannot start, the same notification is written instead.
 
@@ -346,7 +377,7 @@ A batch that pauses on its own (budget or stop rule) writes a notification to th
 | `cancel` | Stops the batch for good: queued runs are taken out of the queue and runs in flight are stopped, all recorded `cancelled`, and items not yet started are cancelled. |
 | `rerun_failed` | Runs every item whose run failed, was skipped or cancelled, or was judged `fail` again, each as a new run. The item keeps its earlier run ids (`previousRunIds`) and adds the new run's cost to its own. |
 
-In the Tasks panel, each batch is one row in the list of every run, with its progress, counts, cost, and state, and its item runs are not listed separately. Open one for its results table, with the output's fields as columns, each item's verdict and cost, and its run's output; filter it to failing items, and pause, resume, cancel, or re-run failed items from its header.
+On the Scheduled page, each batch is one row in the list of every run, with its progress, counts, cost, and state, and its item runs are not listed separately. Open one for its results table, with the output's fields as columns, each item's verdict and cost, and its run's output; filter it to failing items, and pause, resume, cancel, or re-run failed items from its header.
 
 ### If the runtime restarts
 

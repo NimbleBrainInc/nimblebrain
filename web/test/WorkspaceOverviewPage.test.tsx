@@ -375,7 +375,7 @@ describe("WorkspaceOverviewPage — a busy workspace", () => {
     expect(probe.path).toBe(`/w/${SLUG}/settings/connectors/gmail`);
   });
 
-  test("runs to review open Automations", async () => {
+  test("results to review open Scheduled", async () => {
     answer({ reviewRuns: 1 });
     mounted = await mount(harness(WS, [installedConnector("crm")]));
     await choose(mounted.container, "overview-action-review");

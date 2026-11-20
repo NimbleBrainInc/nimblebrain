@@ -737,7 +737,7 @@ async function handleListPlugins(
   ]);
   const output: PluginsListOutput = projectPlugins({
     wsId,
-    workspace,
+    workspace: workspace.map((c) => ({ ...c, description: c.catalog?.description })),
     personal: personal.map((c) => ({ ...c, ...deriveConnectorStatus({ state: c.state }) })),
     overlays: ctx.runtime.listConnectorOverlays(wsId),
     published,

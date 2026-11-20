@@ -415,6 +415,14 @@ describe("Skills page", () => {
     expect(href("my-voice")).toBe(`/w/${SLUG}/skills/user/my-voice`);
   });
 
+  test("a row has no menu: its link opens the skill, and its › is decorative", async () => {
+    mounted = await mount(`/w/${SLUG}/skills`);
+    const r = rowFor(mounted.container, "house-style")!;
+    expect(r.querySelectorAll("button")).toHaveLength(0);
+    expect(r.querySelector('[aria-haspopup="menu"]')).toBeNull();
+    expect(r.querySelector("svg:last-child")?.getAttribute("aria-hidden")).toBe("true");
+  });
+
   test("a workspace skill named like one of the viewer's own is listed in each segment", async () => {
     skills = [WORKSPACE_SKILL, summary({ name: "house-style", scope: "user" })];
     mounted = await mount(`/w/${SLUG}/skills`);

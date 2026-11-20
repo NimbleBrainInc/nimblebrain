@@ -1,13 +1,11 @@
-import { Menu } from "@base-ui/react/menu";
-import { MoreHorizontal, Search } from "lucide-react";
-import { Link } from "react-router-dom";
+import { ChevronRight, Search } from "lucide-react";
 import type { Segment } from "../../lib/plugin-lists";
 import { cn } from "../../lib/utils";
-import { Tooltip } from "../ui/tooltip";
 
 /**
  * The parts the Plugins and Skills pages share: the header, the Workspace |
- * Personal control with its search, and a row's ⋯ menu.
+ * Personal control with its search, and a row's link and chevron. A row has
+ * no menu: it opens its page, where every action is.
  *
  * Both pages render in the main area beside the docked chat, so their narrow
  * layout follows the `main` container, never the viewport (`web/DESIGN.md`).
@@ -137,65 +135,12 @@ export const ROW_LINK =
 export const ROW_TEXT =
   "flex min-w-0 flex-1 flex-col @min-[40rem]/main:flex-row @min-[40rem]/main:items-baseline @min-[40rem]/main:gap-2.5";
 
-/** An item in a row's ⋯ menu: a link, or an action. */
-export type RowMenuItem =
-  | { kind: "link"; label: string; to: string }
-  | { kind: "action"; label: string; onSelect: () => void; destructive?: boolean };
-
-export function RowMenu({
-  name,
-  items,
-  testId,
-}: {
-  name: string;
-  items: RowMenuItem[];
-  /** `plugin-menu` or `skill-menu`; the popup adds `-popup`. */
-  testId: string;
-}) {
-  const itemClass =
-    "flex w-full cursor-default items-center px-3 py-1.5 text-sm outline-none data-[highlighted]:bg-foreground/5 data-[disabled]:opacity-50";
-  return (
-    <Menu.Root>
-      <Tooltip label="More actions" side="left">
-        <Menu.Trigger
-          aria-label={`${name} actions`}
-          data-testid={testId}
-          className="relative flex size-11 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-foreground/5 hover:text-foreground data-[popup-open]:bg-foreground/10 @min-[40rem]/main:size-7"
-        >
-          <MoreHorizontal className="h-4 w-4" aria-hidden />
-        </Menu.Trigger>
-      </Tooltip>
-      <Menu.Portal>
-        <Menu.Positioner align="end" sideOffset={4} className="z-50">
-          <Menu.Popup
-            data-testid={`${testId}-popup`}
-            className="min-w-44 rounded-sm border bg-popover py-1 text-popover-foreground shadow-md outline-none"
-          >
-            {items.map((item) =>
-              item.kind === "link" ? (
-                <Menu.LinkItem
-                  key={item.label}
-                  closeOnClick
-                  render={<Link to={item.to} />}
-                  className={itemClass}
-                >
-                  {item.label}
-                </Menu.LinkItem>
-              ) : (
-                <Menu.Item
-                  key={item.label}
-                  className={cn(itemClass, item.destructive && "text-destructive")}
-                  onClick={item.onSelect}
-                >
-                  {item.label}
-                </Menu.Item>
-              ),
-            )}
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
-  );
+/**
+ * The › at a row's end that says the row opens a page. Decorative: the row's
+ * link already says where it goes.
+ */
+export function RowChevron() {
+  return <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />;
 }
 
 /**

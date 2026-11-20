@@ -317,7 +317,7 @@ export function DisconnectDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={`Sign out of ${name}?`}
-      description="Signs it out for everyone in this workspace. The agent can't use it in chats and tasks until someone signs in again."
+      description="Signs it out for everyone in this workspace. Its tools stop working in chats and scheduled tasks until someone signs in again."
       confirmLabel="Sign out"
       pendingLabel="Signing out…"
       onConfirm={async () => {

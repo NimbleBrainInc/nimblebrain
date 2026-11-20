@@ -73,6 +73,8 @@ export const Plugin = Type.Object({
   /** Unique within the listing and stable across calls. Opaque: read `owner` and `servers`, never parse it. */
   id: Type.String(),
   displayName: Type.String(),
+  /** What the plugin does, in a line: its catalog entry's description, when it has one. */
+  description: Type.Optional(Type.String()),
   iconUrl: Type.Optional(Type.String()),
   owner: PluginOwner,
   /**

@@ -45,10 +45,50 @@ function Section({
   );
 }
 
-function WhatToDo({ d, set, editing }: { d: EditorDraft; set: Patch; editing: boolean }) {
+/** A name made from the first words of the prompt, for a new task whose name nobody typed. */
+export function nameFromPrompt(prompt: string): string {
+  const words = prompt
+    .replace(/\[[^\]]*\]/g, "")
+    .replace(/[^\p{L}\p{N}\s'-]/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 6);
+  if (words.length === 0) return "";
+  const text = words.join(" ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** What it should do, in the person's words, and the name it is listed under. */
+function WhatToDo({
+  d,
+  set,
+  editing,
+  onNameTyped,
+}: {
+  d: EditorDraft;
+  set: Patch;
+  editing: boolean;
+  onNameTyped: () => void;
+}) {
   const id = useId();
   return (
-    <Section title="What to do">
+    <Section title="What should it do?">
+      <div className="field">
+        <label className="sr-only" htmlFor={`${id}-prompt`}>
+          {d.doMode === "skill" ? "Instructions for the skill (optional)" : "What it should do"}
+        </label>
+        <textarea
+          id={`${id}-prompt`}
+          className="inline-edit-textarea"
+          rows={5}
+          value={d.prompt}
+          placeholder="Summarize my unread email: who wrote, what they ask, and anything due today. Post it in #team on Slack."
+          onChange={(e) => set({ prompt: e.target.value })}
+        />
+        <div className="hint">
+          Write it the way you'd ask in chat, including where the result should go.
+        </div>
+      </div>
       <div className="field">
         <label className="field-label" htmlFor={`${id}-name`}>
           Name
@@ -58,11 +98,23 @@ function WhatToDo({ d, set, editing }: { d: EditorDraft; set: Patch; editing: bo
           className="inline-edit-input"
           value={d.name}
           disabled={editing}
-          placeholder="Weekly pipeline review"
-          onChange={(e) => set({ name: e.target.value })}
+          placeholder="Morning email digest"
+          onChange={(e) => {
+            onNameTyped();
+            set({ name: e.target.value });
+          }}
         />
-        {editing && <div className="hint">A task keeps its name; its id is made from it.</div>}
+        {editing && <div className="hint">A name can't change once it's saved.</div>}
       </div>
+    </Section>
+  );
+}
+
+/** The rarer parts of what it does: a description, skills, and input for each run. */
+function Instructions({ d, set }: { d: EditorDraft; set: Patch }) {
+  const id = useId();
+  return (
+    <Section title="Instructions">
       <div className="field">
         <label className="field-label" htmlFor={`${id}-desc`}>
           Description (optional)
@@ -83,7 +135,7 @@ function WhatToDo({ d, set, editing }: { d: EditorDraft; set: Patch; editing: bo
               checked={d.doMode === m}
               onChange={() => set({ doMode: m })}
             />
-            {m === "prompt" ? "A prompt" : "A skill"}
+            {m === "prompt" ? "Follow the text above" : "Follow a skill"}
           </label>
         ))}
       </div>
@@ -99,21 +151,9 @@ function WhatToDo({ d, set, editing }: { d: EditorDraft; set: Patch; editing: bo
             placeholder="skill name (separate several with commas)"
             onChange={(e) => set({ skill: e.target.value })}
           />
+          <div className="hint">The text above becomes extra instructions for the skill.</div>
         </div>
       )}
-      <div className="field">
-        <label className="field-label" htmlFor={`${id}-prompt`}>
-          {d.doMode === "skill" ? "Instructions for the skill (optional)" : "Prompt"}
-        </label>
-        <textarea
-          id={`${id}-prompt`}
-          className="inline-edit-textarea"
-          rows={5}
-          value={d.prompt}
-          placeholder="Summarize the week's activity, key decisions, and open items."
-          onChange={(e) => set({ prompt: e.target.value })}
-        />
-      </div>
       <h3 className="sub-heading">Input for each run</h3>
       {d.inputMode === "builder" ? (
         <>
@@ -272,12 +312,12 @@ function WhatGoodLooksLike({
 function When({ d, set }: { d: EditorDraft; set: Patch }) {
   const id = useId();
   const modes = [
-    { value: "manual", text: "Manual only" },
     { value: "schedule", text: "On a schedule" },
-    { value: "event", text: "On an event" },
+    { value: "event", text: "When something happens" },
+    { value: "manual", text: "Only when I run it" },
   ] as const;
   return (
-    <Section title="When it runs">
+    <Section title="When should it run?">
       <div className="segmented" role="radiogroup" aria-label="When it runs">
         {modes.map((m) => (
           <label key={m.value} className={`seg${d.trigger === m.value ? " on" : ""}`}>
@@ -299,12 +339,11 @@ function When({ d, set }: { d: EditorDraft; set: Patch }) {
         ))}
       </div>
       {d.trigger === "manual" && (
-        <p className="hint">
-          Nothing runs it on its own: run it from Saved, from chat, or remotely.
-        </p>
+        <p className="hint">Nothing runs it on its own. Run it from here or ask for it in chat.</p>
       )}
       {d.trigger === "schedule" && (
         <SchedulePicker
+          simple
           value={d.schedule}
           onChange={(schedule) =>
             set(schedule ? { schedule } : { trigger: "manual", schedule: null })
@@ -404,7 +443,7 @@ function When({ d, set }: { d: EditorDraft; set: Patch }) {
             checked={d.enabled}
             onChange={(e) => set({ enabled: e.target.checked })}
           />
-          Trigger on (untick to save it paused)
+          On (untick to save it paused)
         </label>
       )}
     </Section>
@@ -606,10 +645,12 @@ function TestRunResult({
 /** The draft a new task starts from: empty, or a template's prompt and schedule. */
 function initialDraft(template: Template | null | undefined): EditorDraft {
   const d = emptyDraft();
-  if (!template || template.id === "custom") return d;
+  // Most of these run on a clock, so a blank one starts on a daily schedule.
+  if (!template)
+    return { ...d, trigger: "schedule", schedule: { type: "cron", expression: "0 9 * * *" } };
   return {
     ...d,
-    name: template.name,
+    name: template.name || nameFromPrompt(template.prompt),
     prompt: template.prompt,
     trigger: template.schedule ? "schedule" : "manual",
     schedule: template.schedule,
@@ -676,6 +717,9 @@ function testStartedOf(started: RunStarted): TestStarted {
     : { runId: started.runId, taskId: started.taskId, note: started.note };
 }
 
+/** A run that takes no input. */
+const NO_INPUT: InputState = { ok: true, input: undefined };
+
 /** The test run: its input, the button, and the result inline. */
 function TestRunSection({
   draft,
@@ -688,11 +732,13 @@ function TestRunSection({
 }) {
   const runTool = useTool<string>("run");
   const ref = useRef<HTMLDivElement>(null);
-  const [input, setInput] = useState<InputState>({ ok: true, input: undefined });
+  const [entered, setInput] = useState<InputState>(NO_INPUT);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [test, setTest] = useState<TestStarted | null>(null);
   const schema = draftInputSchema(draft);
+  // What the input form last reported holds only while the form is shown.
+  const input = schema ? entered : NO_INPUT;
 
   async function run() {
     if (!input.ok) return;
@@ -732,12 +778,13 @@ function TestRunSection({
   return (
     <div ref={ref}>
       <Section
-        title="Test run"
-        hint="Runs the draft once as it stands, before you save, and shows the result here. It is kept with every run as a one-off."
+        title="Try it once"
+        hint="Runs it once as written, before you save, and shows the result here."
       >
-        <InputEditor key={JSON.stringify(schema ?? null)} schema={schema} onChange={setInput} />
+        {/* Input is asked for only when the task takes some (More options). */}
+        {schema && <InputEditor key={JSON.stringify(schema)} schema={schema} onChange={setInput} />}
         <button type="button" className="btn" disabled={testing || !input.ok} onClick={run}>
-          {testing ? "Starting…" : test ? "Run the test again" : "Run a test"}
+          {testing ? "Starting…" : test ? "Try it again" : "Try it now"}
         </button>
         {error && (
           <div className="error-banner" role="alert">
@@ -754,8 +801,8 @@ function TestRunSection({
               onInfer={(schema) => set({ outputJson: JSON.stringify(schema, null, 2) })}
             />
             <p className="hint">
-              Accept or reject with a note and the note becomes a draft criterion above, ready to
-              edit.
+              Accept or reject it with a note, and the note becomes a check under More options,
+              ready to edit.
             </p>
           </>
         )}
@@ -810,6 +857,28 @@ function EditorProblems({ problems, error }: { problems: string[]; error: string
   );
 }
 
+/**
+ * Whether the draft sets anything under More options, so an edit of a task
+ * that uses them opens with them showing.
+ */
+export function hasAdvanced(d: EditorDraft): boolean {
+  return (
+    d.doMode === "skill" ||
+    !!d.description.trim() ||
+    d.inputFields.length > 0 ||
+    !!d.inputJson.trim() ||
+    d.criteria.length > 0 ||
+    !!d.outputJson.trim() ||
+    !!d.allowedTools.trim() ||
+    !!d.model.trim() ||
+    !!d.maxIterations.trim() ||
+    !!d.maxRunDurationSec.trim() ||
+    !!d.maxInputTokens.trim() ||
+    d.budgetOn ||
+    !!d.onPoorResult
+  );
+}
+
 /** The editor's form once there is a draft: every section, the test run, and saving. */
 function EditorForm({
   original,
@@ -839,9 +908,18 @@ function EditorForm({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const editing = !!original;
+  // A new task's name follows its prompt until someone types one.
+  const [nameTyped, setNameTyped] = useState(() => editing || !!copy || !!template?.name);
+  // Opens with the form when the task already uses something in it; after
+  // that it is the person's to open and close.
+  const [advancedOpen] = useState(() => hasAdvanced(draft));
 
   const set: Patch = (patch) => {
-    setDraft((d) => ({ ...d, ...patch }));
+    setDraft((d) => {
+      const next = { ...d, ...patch };
+      if (!nameTyped && patch.prompt !== undefined) next.name = nameFromPrompt(next.prompt);
+      return next;
+    });
     setProblems([]);
   };
 
@@ -876,7 +954,7 @@ function EditorForm({
               Cancel
             </button>
             <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>
-              {saving ? "Saving…" : editing ? "Save changes" : "Create task"}
+              {saving ? "Saving…" : editing ? "Save changes" : "Save"}
             </button>
           </>
         }
@@ -887,11 +965,24 @@ function EditorForm({
           <div className="note-banner">This is a one-off task made by an inline run.</div>
         )}
         <Sections>
-          <WhatToDo d={draft} set={set} editing={editing} />
-          <WhatGoodLooksLike d={draft} set={set} judges={judges} />
+          <WhatToDo d={draft} set={set} editing={editing} onNameTyped={() => setNameTyped(true)} />
           <When d={draft} set={set} />
-          <Limits d={draft} set={set} />
           <TestRunSection draft={draft} set={set} onProblems={setProblems} />
+          <details className="disclosure more-options" open={advancedOpen}>
+            <summary>
+              <span className="disclosure-title">More options</span>
+              <span className="disclosure-hint">
+                Skills, input, checks on the result, tools, model and limits
+              </span>
+            </summary>
+            <div className="disclosure-body">
+              <Sections>
+                <Instructions d={draft} set={set} />
+                <WhatGoodLooksLike d={draft} set={set} judges={judges} />
+                <Limits d={draft} set={set} />
+              </Sections>
+            </div>
+          </details>
         </Sections>
       </div>
     </div>
@@ -899,8 +990,8 @@ function EditorForm({
 }
 
 /**
- * Create or edit a task: what to do, what good looks like, when it runs,
- * its limits, and a test run of the draft before it is saved.
+ * Create or edit a scheduled task: what it should do and when, a try of the
+ * draft before it is saved, and every other setting under More options.
  */
 export function TaskEditor({
   taskId,
@@ -922,7 +1013,7 @@ export function TaskEditor({
   const loaded = useMemo(() => (detail ? draftFromDetail(detail) : null), [detail]);
   const original = taskId ? loaded : null;
   const copy = copyOf && loaded ? { ...loaded, name: `${loaded.name} (copy)` } : null;
-  const title = taskId ? `Edit ${detail?.name ?? ""}`.trim() : "New task";
+  const title = taskId ? `Edit ${detail?.name ?? ""}`.trim() : "New scheduled task";
   if (source && !detail) {
     return <EditorLoading title={title} error={loadError} onBack={onCancel} />;
   }
