@@ -2,13 +2,13 @@
 // PluginsPage and PluginsBrowsePage.
 //
 // Plugins lists what is installed, split Workspace | Personal with a search.
-// Each row is a link to the plugin's page, where every other action is: it
-// names the plugin and what it does, and offers its one control when it needs
-// the viewer, else says its state in words. A person's own plugin not on here
-// gets Use here (after a confirm). A line above the list appears only while
-// something in the segment needs the viewer. Browse plugins is its own page:
+// Each row is a link to the plugin's page, where every action is: it names the
+// plugin and what it does, and says its state in words, never a button. A
+// person's own plugin not on here says Off here; its page turns it on. A line
+// above the list appears only while something in the segment needs the viewer,
+// and carries the action when one plugin does. Browse plugins is its own page:
 // the directory, whose install actions only a member who may write the
-// workspace sees. Use here is the viewer's own grant, so any member gets it.
+// workspace sees.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";

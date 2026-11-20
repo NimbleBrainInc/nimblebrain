@@ -43,14 +43,12 @@ import { EmptyState, InlineError } from "./settings/components";
  * its own page, Browse plugins (`PluginsBrowsePage`); skills are on Skills.
  *
  * **Workspace** lists the workspace's plugins, which act for everyone here.
- * **Personal** lists the viewer's own, on here or not; one not on here offers
- * Use here. A row is one link to the plugin's page, where every action is. It
- * names the plugin and what it does, and on its right offers the next step
- * when there is one, else says the plugin's state in words. A line above the
- * list says when something in the segment needs the
- * viewer: with one, it carries that plugin's action, and the plugin's row says
- * what is wrong instead, so the action is offered once; with more, it filters
- * the list to them.
+ * **Personal** lists the viewer's own, on here or not; one not on here says
+ * Off here, and its page turns it on. A row is one link to the plugin's page,
+ * where every action is. It names the plugin and what it does, and on its
+ * right says the plugin's state in words, never a button. A line above the
+ * list says when something in the segment needs the viewer: with one, it
+ * carries that plugin's action; with more, it filters the list to them.
  *
  * One column, because this renders in the main area beside the docked chat
  * (`web/DESIGN.md`).
@@ -423,10 +421,8 @@ function NeedsYou({
 
 /**
  * One plugin, as one link to its page: its icon, its name over what it does,
- * then on the right either its one control (`action`, beside the link rather
- * than inside it, so it is its own tab stop and never navigates) or its state
- * in words, and a ›. Two lines at every width; the words truncate rather than
- * wrap.
+ * then on the right its state in words, and a ›. Two lines at every width; the
+ * words truncate rather than wrap.
  */
 function PluginRow({
   plugin,

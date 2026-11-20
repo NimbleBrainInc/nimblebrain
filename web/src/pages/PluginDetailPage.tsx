@@ -366,7 +366,7 @@ function PersonalPlugin({
   const serverNames = plugin.servers.map((s) => s.serverName);
   const mine = (connectors ?? []).filter((c) => serverNames.includes(c.serverName));
   // A plugin is used in a workspace where its servers are granted; Use here and
-  // Stop grant and revoke every one of them, as the Plugins list does.
+  // Stop grant and revoke every one of them.
   const grantedIds = [...new Set(mine.flatMap((c) => c.grantedWorkspaces))];
   const workspaceName = workspaces.find((w) => w.id === wsId)?.name ?? "this workspace";
   const here: WorkspaceRef = { id: wsId, name: workspaceName };
