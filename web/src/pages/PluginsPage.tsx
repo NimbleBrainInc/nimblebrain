@@ -2,12 +2,7 @@ import { Check, Plus } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Plugin, PluginsListOutput } from "../_generated/platform-schemas/plugins";
-import {
-  grantConnector,
-  listPersonalConnectors,
-  listPlugins,
-  type PersonalConnector,
-} from "../api/client";
+import { listPersonalConnectors, listPlugins, type PersonalConnector } from "../api/client";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { connectorStatusSummary } from "../components/connectors/ConnectorList";
 import { startPluginSignIn } from "../components/connectors/personal-connector";
@@ -25,7 +20,6 @@ import {
   RowChevron,
   SegmentBar,
 } from "../components/plugins/list-parts";
-import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
 import { Button } from "../components/ui/button";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useEvents } from "../hooks/useEvents";
@@ -114,7 +108,6 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
   const [chosenSegment, setChosenSegment] = useState<Segment | null>(null);
   const [query, setQuery] = useState("");
   const [needsOnly, setNeedsOnly] = useState(false);
-  const [confirming, setConfirming] = useState<Plugin | null>(null);
   // The viewer's connector records, which say which route each sign-in takes
   // and where each plugin is on. An action that signs in waits for them rather
   // than guess the route.
@@ -206,19 +199,6 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
     setNeedsOnly(false);
   };
 
-  // Turn it on here, then sign in when it has no account behind it. The grant
-  // needs only the install, so it stands across the sign-in's round trip. The
-  // redirect leaves the page, so the dialog stays as it is until it does.
-  const grantHere = async (plugin: Plugin) => {
-    for (const server of plugin.servers) await grantConnector(server.serverName, wsId);
-    if (!pluginConnected(plugin)) {
-      const signedIn = await startPluginSignIn(plugin, connectors ?? [], { workspaceId: wsId });
-      if (signedIn === "redirected") return;
-    }
-    await refresh();
-    setConfirming(null);
-  };
-
   const connectHere = async (plugin: Plugin) => {
     setActionError(null);
     setBusyId(plugin.id);
@@ -238,23 +218,18 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
   }
   if (!model || !plugins) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
-  // The one control a row offers: nothing for a plugin that needs nothing of the viewer.
+  // The one control the Needs-you line offers, when one plugin needs the viewer.
   const nextStep = (plugin: Plugin): React.ReactNode =>
     nextStepFor(plugin, {
       canManage,
       // Signing in follows the connector's record, so a sign-in waits for it.
       recordsLoaded: connectors !== null,
       busy: busyId === plugin.id,
-      onUseHere: () => {
-        setActionError(null);
-        setConfirming(plugin);
-      },
       onConnect: () => void connectHere(plugin),
       onOpen: () => navigate(pluginPath(slug, plugin)),
     });
 
-  // With one plugin needing the viewer, the line above the list carries its
-  // action, so its row says what is wrong instead.
+  // With one plugin needing the viewer, the line above the list carries its action.
   const [only] = model.needsYou;
   const actionInBanner = model.needsYou.length === 1 && only ? only.id : null;
 
@@ -285,40 +260,25 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
         rows={model.rows}
         empty={emptyMessage(query, segment, workspaceName)}
         segment={segment}
-        renderRow={(plugin) => {
-          // A row is itself the way to the plugin's page, so a step that only
-          // opens it ("failed to start", "needs setup") is said, not offered.
-          const saysWhatsWrong = plugin.id === actionInBanner || opensItsPage(plugin, canManage);
-          const action = saysWhatsWrong ? null : nextStep(plugin);
-          return (
-            <PluginRow
-              key={plugin.id}
-              plugin={plugin}
-              to={pluginPath(slug, plugin)}
-              action={action}
-              state={saysWhatsWrong ? attentionWords(plugin) : action ? null : stateWords(plugin)}
-              fresh={isJustConnected(justConnected, plugin)}
-            />
-          );
-        }}
-      />
-
-      <UsePluginHereDialog
-        plugin={confirming}
-        workspaceName={workspaceName}
-        onClose={() => setConfirming(null)}
-        onConfirm={grantHere}
+        renderRow={(plugin) => (
+          <PluginRow
+            key={plugin.id}
+            plugin={plugin}
+            to={pluginPath(slug, plugin)}
+            state={rowState(plugin, canManage)}
+            fresh={isJustConnected(justConnected, plugin)}
+          />
+        )}
       />
     </div>
   );
 }
 
 /**
- * The one control a plugin's row offers. A person's plugin not on here offers
- * Use here; otherwise the row offers what `pluginAttention` asks, or nothing.
- * A workspace plugin signs in on its page, where its
- * admin connects it, and a failed or unset-up one is fixed there; only a
- * person's own sign-in starts from the row.
+ * The one control the Needs-you line offers for the single plugin needing the
+ * viewer: what `pluginAttention` asks. A workspace plugin signs in on its page,
+ * where its admin connects it, and a failed or unset-up one is fixed there;
+ * only a person's own sign-in starts from the list.
  */
 function nextStepFor(
   plugin: Plugin,
@@ -326,44 +286,39 @@ function nextStepFor(
     canManage: boolean;
     recordsLoaded: boolean;
     busy: boolean;
-    onUseHere: () => void;
     onConnect: () => void;
     onOpen: () => void;
   },
 ): React.ReactNode {
-  if (plugin.owner.kind === "person" && !plugin.granted) {
-    return (
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        className="@max-[40rem]/main:h-11"
-        // Use here signs in when it is not connected, which needs the record.
-        disabled={!pluginConnected(plugin) && !opts.recordsLoaded}
-        onClick={opts.onUseHere}
-        data-testid="plugin-use-here"
-      >
-        Use here
-      </Button>
-    );
-  }
   const step = pluginAttention(plugin, opts);
   if (!step) return null;
-  const fromRow = step !== "open" && plugin.owner.kind === "person";
+  const fromList = step !== "open" && plugin.owner.kind === "person";
   return (
     <AttentionButton
       step={step}
       busy={opts.busy}
-      disabled={fromRow && (opts.busy || !opts.recordsLoaded)}
-      onClick={fromRow ? opts.onConnect : opts.onOpen}
+      disabled={fromList && (opts.busy || !opts.recordsLoaded)}
+      onClick={fromList ? opts.onConnect : opts.onOpen}
     />
   );
 }
 
-/** Whether the one thing a plugin asks of the viewer is to open its page. */
-function opensItsPage(plugin: Plugin, canManage: boolean): boolean {
-  if (plugin.owner.kind === "person" && !plugin.granted) return false;
-  return pluginAttention(plugin, { canManage }) === "open";
+/**
+ * What a row says on its right, in words: a row holds no control, since the row
+ * itself opens the plugin's page, where its actions are. A person's plugin not
+ * on here says so; one that asks something of the viewer says what is wrong;
+ * otherwise its state.
+ */
+function rowState(plugin: Plugin, canManage: boolean): React.ReactNode {
+  if (plugin.owner.kind === "person" && !plugin.granted) {
+    return (
+      <span className="truncate text-xs text-muted-foreground" data-testid="plugin-state">
+        Off here
+      </span>
+    );
+  }
+  if (pluginAttention(plugin, { canManage })) return attentionWords(plugin);
+  return stateWords(plugin);
 }
 
 /** Whether a sign-in on this page just connected this plugin, as the owner it names. */
@@ -476,13 +431,11 @@ function NeedsYou({
 function PluginRow({
   plugin,
   to,
-  action,
   state,
   fresh,
 }: {
   plugin: Plugin;
   to: string;
-  action: React.ReactNode;
   state: React.ReactNode;
   /** A sign-in on this page just connected it. */
   fresh: boolean;
@@ -534,17 +487,12 @@ function PluginRow({
       ) : (
         state && <div className="flex min-w-0 max-w-[45%] shrink justify-end">{state}</div>
       )}
-      {action && (
-        <div className="relative shrink-0" data-testid="plugin-action">
-          {action}
-        </div>
-      )}
       <RowChevron />
     </div>
   );
 }
 
-/** What is wrong, on the row whose action the Needs-you line carries. */
+/** What is wrong with a plugin that asks something of the viewer. */
 function attentionWords(plugin: Plugin): React.ReactNode {
   const label = attentionLabel(plugin);
   if (!label) return null;
@@ -556,7 +504,7 @@ function attentionWords(plugin: Plugin): React.ReactNode {
 }
 
 /**
- * A row's state in words, when it offers no control. One not ready that asks
+ * A row's state in words, when nothing is asked of the viewer. One not ready that asks
  * the viewer nothing (settling, or a workspace sign-in only its admin does)
  * reads the connector list's status words. A ready one names the account it
  * uses, else says Connected; a person's plugin adds that it is on here.
