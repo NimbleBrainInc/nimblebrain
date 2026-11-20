@@ -60,6 +60,8 @@ export declare const Plugin: import("@sinclair/typebox").TObject<{
     /** Unique within the listing and stable across calls. Opaque: read `owner` and `servers`, never parse it. */
     id: import("@sinclair/typebox").TString;
     displayName: import("@sinclair/typebox").TString;
+    /** What the plugin does, in a line: its catalog entry's description, when it has one. */
+    description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     iconUrl: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     owner: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
         kind: import("@sinclair/typebox").TLiteral<"workspace">;
@@ -109,6 +111,8 @@ export declare const PluginsListOutput: import("@sinclair/typebox").TObject<{
         /** Unique within the listing and stable across calls. Opaque: read `owner` and `servers`, never parse it. */
         id: import("@sinclair/typebox").TString;
         displayName: import("@sinclair/typebox").TString;
+        /** What the plugin does, in a line: its catalog entry's description, when it has one. */
+        description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         iconUrl: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         owner: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
             kind: import("@sinclair/typebox").TLiteral<"workspace">;

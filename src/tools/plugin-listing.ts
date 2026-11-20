@@ -25,6 +25,8 @@ import type {
 export interface ConnectorFacts {
   serverName: string;
   displayName: string;
+  /** What the connector does: its catalog entry's description. */
+  description?: string | null;
   iconUrl?: string;
   status: PluginServerStatus;
   statusReason?: string;
@@ -65,6 +67,7 @@ export function projectPlugins(facts: PluginListingFacts): PluginsListOutput {
     (c): Plugin => ({
       id: `workspace:${c.serverName}`,
       displayName: c.displayName,
+      ...(c.description ? { description: c.description } : {}),
       ...(c.iconUrl ? { iconUrl: c.iconUrl } : {}),
       owner: { kind: "workspace" },
       granted: true,
@@ -83,6 +86,7 @@ export function projectPlugins(facts: PluginListingFacts): PluginsListOutput {
     return {
       id: `person:${c.serverName}`,
       displayName: c.displayName,
+      ...(c.description ? { description: c.description } : {}),
       ...(c.iconUrl ? { iconUrl: c.iconUrl } : {}),
       owner: { kind: "person" },
       granted,

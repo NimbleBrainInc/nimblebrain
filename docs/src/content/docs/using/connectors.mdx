@@ -20,11 +20,11 @@ The plugins installed in a workspace are on its **Plugins** page, in the sidebar
 **Workspace | Personal** above the list splits it by whose a plugin is, each with its count:
 
 - **Workspace**: the workspace's own plugins. Everyone's agent here uses them, signed in with the workspace's accounts.
-- **Personal**: your own plugins (see [Personal connectors](/using/personal-connectors)), those on in this workspace first, then those that are not, each with **Use here**. Only your agent uses them.
+- **Personal**: your own plugins (see [Personal connectors](/using/personal-connectors)), those on in this workspace first, then those that are not (**Off here**). Only your agent uses them.
 
-The search beside it finds a plugin in the selected list by name or account. A plugin's row names the account it uses and offers only the next step, when there is one: **Connect** when it was never signed in, **Reconnect** when its sign-in expired, **Open** when it failed or needs setup, **Use here** for one of yours that is off here. A healthy row offers nothing; its **⋯** menu holds the rest. Click a row to open the plugin's page, where it is configured.
+The search beside it finds a plugin in the selected list by name or account. Each row opens the plugin's page, where every action is (connecting, disconnecting, removing it, its tool permissions). A row shows the plugin's name and, beneath it, what it does. On its right it says the plugin's state in words, never a button: what needs you (**Not signed in**, **Sign-in expired**, **Needs setup**, **Failed to start**), **Off here** for one of yours that is off in this workspace, or else the account it uses (with **on here** for one of yours), **Connected** when it records no account, or a status such as **Connecting…**. Connect, Use here and setup are on the plugin's page.
 
-When something in the selected list needs you, a line above it says so. With one, it names the plugin and what is wrong and carries its action, and that plugin's row says what is wrong (**Sign-in expired**, **Failed to start**) instead, so the action is offered once. With more, it counts them, and **Show them** narrows the list to just those (**Show all** brings the rest back). A plugin settling, or a workspace sign-in only an admin can do, needs nothing from a member, so it shows its status on its row and adds nothing to that line.
+When something in the selected list needs you, a line above it says so. With one, it names the plugin and what is wrong and carries its action (**Connect**, **Reconnect**, or **Open** for one that failed or needs setup). With more, it counts them, and **Show them** narrows the list to just those (**Show all** brings the rest back). A plugin settling, or a workspace sign-in only an admin can do, needs nothing from a member, so it shows its status on its row and adds nothing to that line.
 
 **Browse plugins**, the page's one action, opens the full directory of available services. It lists what the workspace already has too, in an **Installed** section below the rest, each with a link to its page; **← Plugins** returns. On a narrow screen the action is a **+** button, and the controls and rows stack.
 
@@ -45,11 +45,21 @@ Installing or connecting a service for everyone requires the **admin** role in t
 
 A service that signs in only with one account the workspace or platform holds (a **static** client the workspace sets up, **provider**, **smithery**, a service needing a stored credential) can't be installed for one person. Its card says **Uses one account for the workspace**, and **Install** adds it for everyone. A member without the admin role sees **Workspace admin required** on it.
 
-On a workspace plugin's page, the header shows the connector's name and status ("Connected as …" when there is a sign-in), that it uses the workspace's account, and the apps it places, each a link to the app. Its **⋯** menu holds **Documentation**, **Disconnect**, **Uninstall** (for a workspace admin) and the connector's version and tool count. Under the header come its connection settings, then the connector's own **Settings** section when it has one, then the **Skills** the plugin brings, then **Tool permissions**, collapsed to a summary until you choose **Show tools**. Any member can open the page; only a workspace admin can change it.
+On a workspace plugin's page, the header shows the connector's name and status ("Connected as …" when there is a sign-in), that it uses the workspace's account, and the apps it places, each a link to the app. Its **⋯** menu holds **Documentation**, **Sign out**, **Remove** (for a workspace admin) and the connector's version and tool count. Under the header come its connection settings, then the connector's own **Settings** section when it has one, then the **Skills** the plugin brings, then **Tool permissions**, collapsed to a summary until you choose **Show tools**. Any member can open the page; only a workspace admin can change it.
 
-**Disconnect** appears only for a connection someone signed in to: the **dcr** and **static** kinds, and a brokered connector whose broker can reconnect it, such as an OAuth **composio** toolkit. Disconnecting is reversible — reconnecting re-runs that sign-in. A **provider** connector (one of the platform's own services) or one with a stored credential has no sign-in, so there is nothing to disconnect and the menu does not offer it; remove it with **Uninstall**.
+### Sign out and Remove
 
-Disconnect is shared: it disconnects the connector for everyone in the workspace, and asks you to confirm first. The connector stays installed with its tool permissions and settings, and reads **Not connected** with a **Connect** action — a resting state, not an error. To remove it entirely, use **Uninstall**. A connection that stops working without anyone disconnecting it (the vendor revoked or expired its access) reads **Reconnect** in amber instead, because someone needs to act on it. **provider** and **smithery** connectors have no interactive sign-in: their credential is held by the platform or the broker, so they reconnect without prompting you.
+A plugin is three things, and each has one action that ends it. The verbs are the same for a workspace plugin and a [personal one](/using/personal-connectors#signing-out-and-removing); who owns the plugin only decides where its account and grants live.
+
+| Thing | Started by | Ended by | What stays |
+|---|---|---|---|
+| The install | **Install** | **Remove** | Nothing: its account and settings go with it |
+| The account it signs in as | **Connect** | **Sign out** | The install, its tool permissions and settings |
+| A person's plugin being on in a workspace | **Use here** | **Stop using here** | The install and the account |
+
+**Sign out** appears only for a connection someone signed in to: the **dcr** and **static** kinds, and a brokered connector whose broker can reconnect it, such as an OAuth **composio** toolkit. Signing out is reversible — **Connect** re-runs that sign-in, with the same or another account. A **provider** connector (one of the platform's own services) or one with a stored credential has no sign-in, so there is nothing to sign out of and the menu does not offer it; take it out with **Remove**.
+
+Sign out is shared: it signs the connector out for everyone in the workspace, and asks you to confirm first. The connector stays installed with its tool permissions and settings, and reads **Not signed in** with a **Connect** action — a resting state, not an error. The agent can't use it until someone signs in again. To take it out entirely, use **Remove**, which removes it for everyone in the workspace. A connection that stops working without anyone signing it out (the vendor revoked or expired its access) reads **Reconnect** in amber instead, because someone needs to act on it. **provider** and **smithery** connectors have no interactive sign-in: their credential is held by the platform or the broker, so they reconnect without prompting you.
 
 ## The auth kinds
 
@@ -58,7 +68,7 @@ Every connector declares how it authenticates. As a user you rarely need to care
 | Kind | What it means | What you do | Who sets it up |
 |------|---------------|-------------|----------------|
 | **dcr** | Dynamic Client Registration. The platform registers an OAuth client with the vendor on the fly. | Click **Install**, sign in. | None |
-| **static** | The vendor requires a pre-registered OAuth client. | An admin clicks **Set up**; after that everyone connects with **Install**. Uninstalling the last connector that uses the client removes the setup too, so a reinstall starts at **Set up**. When the operator [declares the OAuth client for the whole instance](/config/connectors-catalog/#an-oauth-client-for-the-whole-instance), there is no **Set up**: click **Install**. | Workspace admin, per workspace; or the operator, once |
+| **static** | The vendor requires a pre-registered OAuth client. | An admin clicks **Set up**; after that everyone connects with **Install**. Removing the last connector that uses the client removes the setup too, so a reinstall starts at **Set up**. When the operator [declares the OAuth client for the whole instance](/config/connectors-catalog/#an-oauth-client-for-the-whole-instance), there is no **Set up**: click **Install**. | Workspace admin, per workspace; or the operator, once |
 | **composio** | Brokered through Composio, a [managed-connector provider](/config/connector-providers/). | Click **Install**. OAuth toolkits send you through the vendor's sign-in; API-key toolkits open a short form for the service's API key. | Operator, platform-wide |
 | **smithery** | Brokered through Smithery, a [managed-connector provider](/config/connector-providers/) that also hosts the MCP session. | Click **Install**. A server needing no account connects immediately; one needing sign-in or configuration reports that on the install attempt, with a link to a Smithery-hosted setup page to complete first. | Operator, platform-wide |
 | **provider** | A connector whose credential is supplied server-side by a named credential provider — no vendor sign-in, no OAuth client, no per-user secret. Covers both the platform's own connectors, whose credential the runtime mints against the fleet authorizer, and a [hosted gateway](/config/connector-providers/#hosted-mcp-gateways) you hold one account key for. | Click **Install**. Usually there is nothing to enter; an entry marked *Needs a credential* asks for one first (see below). | Operator — the catalog entry, plus the fleet-authorizer environment or the gateway's declared key |
@@ -80,7 +90,7 @@ shown again — not in the UI, not in a log, and never in a conversation. Replac
 one later from the connector's plugin page; the next request uses it, with
 no restart. See [Secrets](/config/secrets/) for the storage model.
 
-Uninstalling takes them with it. The confirmation names each stored credential
+**Remove** takes them with it. The confirmation names each stored credential
 the connector owns before removing it — and reinstalling asks for the values
 again, so there is nothing to hold back. See
 [Uninstalling](/config/secrets/#uninstalling).
@@ -98,7 +108,7 @@ Because credentials are workspace-scoped, connecting a service in one workspace 
 Two workspace settings gate the connector catalog:
 
 - **`connectorsAllowList`** — when set, only the listed connector IDs appear in Browse and can be installed in that workspace. Leave it unset to allow the full catalog.
-- **`oauthClients`** — records the per-workspace OAuth client configuration for **static**-auth connectors (the "Set up" step writes here, and uninstalling the last connector that uses it removes it).
+- **`oauthClients`** — records the per-workspace OAuth client configuration for **static**-auth connectors (the "Set up" step writes here, and removing the last connector that uses it removes it).
 
 See [Workspace configuration](/config/workspace-json) for the field reference.
 
@@ -135,7 +145,7 @@ When you install a connector, the platform can automatically apply a short **usa
 
 ## Listing what a workspace has
 
-The connector tool's `list_plugins` action lists, for the workspace it is called in, every connector installed there and every one of your personal connectors, each as a plugin. A plugin says whose it is (`owner.kind`: `workspace` or `person`), whether it acts in this workspace (`granted`, always true for the workspace's own), each server's status and the account it is signed in as (`account`, or `null` when the connection records none, as with an API key), the skills that come with it, and the views it places in the sidebar (for a personal plugin, only where it is granted, and with no `route`, since a personal view opens from the chat). It never returns a token or other credential.
+The connector tool's `list_plugins` action lists, for the workspace it is called in, every connector installed there and every one of your personal connectors, each as a plugin. A plugin says what it does (`description`, from its catalog entry, when it has one), whose it is (`owner.kind`: `workspace` or `person`), whether it acts in this workspace (`granted`, always true for the workspace's own), each server's status and the account it is signed in as (`account`, or `null` when the connection records none, as with an API key), the skills that come with it, and the views it places in the sidebar (for a personal plugin, only where it is granted, and with no `route`, since a personal view opens from the chat). It never returns a token or other credential.
 
 ## What's next
 

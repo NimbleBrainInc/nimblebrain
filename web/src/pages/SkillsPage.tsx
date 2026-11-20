@@ -10,7 +10,7 @@ import {
   ListPageHeader,
   ROW_LINK,
   ROW_TEXT,
-  RowMenu,
+  RowChevron,
   SegmentBar,
 } from "../components/plugins/list-parts";
 import { SkillHereSwitch } from "../components/plugins/SkillHereSwitch";
@@ -251,7 +251,7 @@ function pluginSkillLine(row: PluginSkillRow, input: SkillMechanismInput | undef
 /**
  * One skill someone wrote: its name, an Org tag on the org's, when it loads
  * (unless it loads only when the agent asks, the default), the On here switch
- * on the viewer's own, and its ⋯ menu. A disabled skill reads muted and says
+ * on the viewer's own, and a ›. A disabled skill reads muted and says
  * only Disabled, with no switch: it applies nowhere, so here is moot. One off
  * here reads muted and says Off here. The whole row opens the skill's page.
  */
@@ -309,11 +309,7 @@ function SkillRow({
         </span>
       )}
       {!disabled && control && <div className="relative shrink-0">{control}</div>}
-      <RowMenu
-        name={skill.name}
-        items={[{ kind: "link", label: "Open", to }]}
-        testId="skill-menu"
-      />
+      <RowChevron />
     </div>
   );
 }
@@ -339,11 +335,7 @@ function PluginSkillRowView({ row, to, line }: { row: PluginSkillRow; to: string
           {line}
         </span>
       </div>
-      <RowMenu
-        name={skill.name}
-        items={[{ kind: "link", label: `Open ${plugin.displayName}`, to }]}
-        testId="plugin-skill-menu"
-      />
+      <RowChevron />
     </div>
   );
 }

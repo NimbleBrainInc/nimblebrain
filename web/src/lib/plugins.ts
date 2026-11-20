@@ -36,19 +36,6 @@ export function ownerLine(plugin: Plugin): string {
   return plugin.owner.kind === "person" ? "Uses your account" : "Uses the workspace's account";
 }
 
-/**
- * The account a plugin's row names. A person's plugin names the account it
- * signed in as, or says it is not signed in; a workspace plugin names its
- * account only when the sign-in recorded one. Whose plugin it is reads from the
- * segment the row is listed under, so the line never repeats it.
- */
-export function accountLine(plugin: Plugin): string | undefined {
-  const account = pluginAccount(plugin);
-  if (plugin.owner.kind === "workspace") return account;
-  if (account) return account;
-  return pluginConnected(plugin) ? undefined : "Not signed in";
-}
-
 /** A skill's scope as it appears in its page's URL: the tiers a person authors in. */
 export type AuthoredSkillScope = "workspace" | "user" | "org";
 
@@ -94,7 +81,7 @@ export function pluginConnected(plugin: Plugin): boolean {
  *   connected (`pluginConnected`), so it never lands on with no account behind it.
  * - `connect`: on here, not signed in. Connect signs in.
  * - `in_use`: on here and signed in. Nothing to do, so the row offers nothing;
- *   Stop using here is in its menu.
+ *   Stop using here is on its page.
  */
 export type PluginNextStep = "use_here" | "connect" | "in_use";
 

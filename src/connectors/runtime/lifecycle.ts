@@ -1922,25 +1922,53 @@ export class ConnectorLifecycleManager {
   }
 
   /**
-   * Full teardown of a personal (identity-plane) connector — the identity sibling
-   * of `uninstall` (workspace). Stops + drops the source from the user's registry,
-   * deletes the identity credentials (the OAuth records always; the brokered credential
-   * dir too when it's a brokered connector), and removes the install record from
-   * `IdentityConnectorStore`. Grant revocation is the caller's job (permission
-   * store), exactly as `handleUninstall` drops tool permissions after
-   * `lifecycle.uninstall`. Each teardown step is best-effort so a partial failure
-   * still reaches the install-record removal — the user-visible "it's gone".
+   * Sign a personal (identity-plane) connector out and keep it: the identity
+   * sibling of `disconnect` (workspace). Stops + drops the source from the user's
+   * registry and deletes the identity credentials (the OAuth records always; the
+   * brokered credential dir too when it's a brokered connector), then publishes
+   * `not_authenticated` to its owner. The install record, every workspace grant,
+   * and the per-tool policies stay, so the next Connect signs the same plugin
+   * back in where it was on. A credential that could not be deleted throws and
+   * publishes nothing: the sign-in is still stored, so the plugin is not signed
+   * out.
    *
    * Upstream token revocation is NOT performed here — for a DCR connector the
    * vendor's OAuth grant (RFC 7009) and for a brokered connector the broker-side
    * connection both stay live at the vendor until they expire; we only delete the
-   * LOCAL credentials, so the platform forgets them. The workspace `uninstall`
-   * DOES revoke upstream (`revokeUrlConnectorTokens` for DCR, the provider's
-   * `cleanup` arm for a brokered one) — a known asymmetry with this method, and
-   * one the seam does not block: `cleanup` takes an owner, so closing it is a
-   * call, deliberately left to the connection-state / reauth slice rather than
-   * changing teardown semantics here. A user who wants the vendor-side grant gone
-   * meanwhile can revoke it in the vendor's own authorized-apps list.
+   * LOCAL credentials, so the platform forgets them. The workspace `disconnect`
+   * and `uninstall` DO revoke upstream — a known asymmetry, and one the seam does
+   * not block: `cleanup` takes an owner, so closing it is a call. A user who wants
+   * the vendor-side grant gone meanwhile can revoke it in the vendor's own
+   * authorized-apps list.
+   */
+  async signOutIdentityConnector(
+    userId: string,
+    serverName: string,
+    opts: { workDir: string },
+  ): Promise<void> {
+    const ref = await new IdentityConnectorStore({ workDir: opts.workDir }).get(userId, serverName);
+    await this.teardownIdentityConnection(userId, serverName, opts.workDir, ref ?? undefined);
+    this.eventSink.emit({
+      type: "connection.state_changed",
+      data: {
+        userId,
+        serverName,
+        connectorName: serverName,
+        principalId: userId,
+        state: "not_authenticated",
+      },
+    });
+  }
+
+  /**
+   * Full teardown of a personal (identity-plane) connector — the identity sibling
+   * of `uninstall` (workspace): its sign-out (`teardownIdentityConnection`), then
+   * the install record removed from `IdentityConnectorStore`. Grant revocation is
+   * the caller's job (permission store), exactly as `handleUninstall` drops tool
+   * permissions after `lifecycle.uninstall`. The teardown is best-effort here, so
+   * a credential that could not be deleted is logged and the install-record
+   * removal (the user-visible "it's gone") still runs. Upstream revocation is as
+   * `signOutIdentityConnector` describes.
    */
   async uninstallIdentityConnector(
     userId: string,
@@ -1952,8 +1980,27 @@ export class ConnectorLifecycleManager {
     // Read the ref BEFORE removing it — its brokered marker decides whether
     // there is also a provider credential dir to clear.
     const ref = await store.get(userId, serverName);
+    try {
+      await this.teardownIdentityConnection(userId, serverName, workDir, ref ?? undefined);
+    } catch (err) {
+      log.warn(`[lifecycle] ${err instanceof Error ? err.message : String(err)}`);
+    }
+    await store.remove(userId, serverName);
+  }
 
-    // 1. Stop + drop the running source from the user's registry (if warm).
+  /**
+   * End a personal connector's live connection and forget its credentials:
+   * stop + drop the source from the user's registry (if warm), then delete the
+   * identity credentials. The OAuth records for every personal connector; the
+   * provider's credential dir additionally when `ref` carries a brokered marker.
+   * Throws when a credential could not be deleted.
+   */
+  private async teardownIdentityConnection(
+    userId: string,
+    serverName: string,
+    workDir: string,
+    ref: ConnectorRef | undefined,
+  ): Promise<void> {
     const registry = this.registriesByUser.get(userId);
     if (registry?.hasSource(serverName)) {
       try {
@@ -1967,19 +2014,7 @@ export class ConnectorLifecycleManager {
       }
       await registry.removeSource(serverName);
     }
-
-    // 2. Delete identity credentials. The OAuth records for every personal
-    //    connector; the provider's credential dir additionally when the ref
-    //    carries a brokered marker.
-    await clearIdentityConnectorCredentials(
-      workDir,
-      userId,
-      serverName,
-      brokeredRef(ref ?? undefined),
-    );
-
-    // 3. Remove the install record — the user-visible "disconnected" state.
-    await store.remove(userId, serverName);
+    await clearIdentityConnectorCredentials(workDir, userId, serverName, brokeredRef(ref));
   }
 
   /** The user's personal-connector registry, created on first access. */
@@ -2468,8 +2503,9 @@ export class ConnectorLifecycleManager {
 /**
  * Remove a personal connector's local credentials: the OAuth records every
  * personal connector has, plus the provider's credential dir when the ref is
- * brokered. Best-effort and independently guarded — a failure on one must not
- * skip the other, and `force` makes a never-connected connector a no-op.
+ * brokered. Both deletions are attempted even when one fails, and then any
+ * failure throws, so a caller never reports credentials gone that are still
+ * stored. `force` makes a never-connected connector a no-op.
  */
 async function clearIdentityConnectorCredentials(
   workDir: string,
@@ -2478,25 +2514,27 @@ async function clearIdentityConnectorCredentials(
   brokered: BrokeredRef | undefined,
 ): Promise<void> {
   const owner: ConnectorOwner = { type: "user", userId };
+  const failures: string[] = [];
   try {
     await new McpOAuthRecords({ owner, serverName }).deleteAll();
   } catch (err) {
-    log.warn(
-      `[lifecycle] failed to clear identity OAuth records for ${userId}|${serverName}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+    failures.push(`OAuth records: ${err instanceof Error ? err.message : String(err)}`);
   }
-  if (!brokered) return;
-  try {
-    rmSync(brokeredConnectorDir(workDir, owner, brokered.provider, brokered.connectorId), {
-      recursive: true,
-      force: true,
-    });
-  } catch (err) {
-    log.warn(
-      `[lifecycle] failed to clear the identity ${brokered.provider} dir for ` +
-        `${userId}|${serverName}: ${err instanceof Error ? err.message : String(err)}`,
+  if (brokered) {
+    try {
+      rmSync(brokeredConnectorDir(workDir, owner, brokered.provider, brokered.connectorId), {
+        recursive: true,
+        force: true,
+      });
+    } catch (err) {
+      failures.push(
+        `${brokered.provider} dir: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `failed to clear identity credentials for ${userId}|${serverName}: ${failures.join("; ")}`,
     );
   }
 }

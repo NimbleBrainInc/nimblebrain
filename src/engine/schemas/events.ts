@@ -529,19 +529,25 @@ export const ConnectorGrantChangedPayload = Type.Object({
 });
 export type ConnectorGrantChangedPayload = Static<typeof ConnectorGrantChangedPayload>;
 
-/**
- * A remote connector's connection changed state for one principal:
- * `_workspace` for a workspace-scoped connector, else a member's id.
- */
-export const ConnectionStateChangedPayload = Type.Object({
-  wsId: Type.String(),
+const ConnectionStateChangedFields = {
   serverName: Type.String(),
   connectorName: Type.String(),
   principalId: Type.String(),
   state: opaque<ConnectionState>("The connection's state (`ConnectionState`)."),
   authorizationUrl: Type.Optional(Type.String()),
   lastError: Type.Optional(Type.String()),
-});
+};
+
+/**
+ * A remote connector's connection changed state for one principal. It names
+ * exactly one owner: `wsId` for a workspace's connector (principal
+ * `_workspace`), or `userId` for a person's own plugin, whose connection is
+ * that person's business and reaches their connections alone.
+ */
+export const ConnectionStateChangedPayload = Type.Union([
+  Type.Object({ ...ConnectionStateChangedFields, wsId: Type.String() }),
+  Type.Object({ ...ConnectionStateChangedFields, userId: Type.String() }),
+]);
 export type ConnectionStateChangedPayload = Static<typeof ConnectionStateChangedPayload>;
 
 /**

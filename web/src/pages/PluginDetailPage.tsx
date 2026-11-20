@@ -2,24 +2,26 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { Plugin, PluginServer } from "../_generated/platform-schemas/plugins";
 import {
-  disconnectPersonalConnector,
   getInstalledConnector,
   grantConnector,
   type InstalledConnector,
   listPersonalConnectors,
   listPlugins,
   type PersonalConnector,
+  removePersonalConnector,
   revokeConnector,
+  signOutPersonalConnector,
 } from "../api/client";
 import { ConnectorHeader, statusLabel } from "../components/connectors/ConnectorHeader";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { ConnectorSettingsSection } from "../components/connectors/ConnectorSettingsSection";
 import { OAuthClientSection } from "../components/connectors/OAuthClientSection";
 import {
-  disconnectConsequence,
   PanelHeading,
   PersonalToolPermissionsSection,
   personalConnectUrl,
+  removeConsequence,
+  signOutConsequence,
   startPluginSignIn,
 } from "../components/connectors/personal-connector";
 import { ToolPermissionsTable } from "../components/connectors/ToolPermissionsTable";
@@ -52,10 +54,10 @@ import { InlineError } from "./settings/components";
  *
  * - **A workspace plugin** shows what configures its connection for every
  *   member: its OAuth client, secrets, its own settings, its skills, and the
- *   tools the agent may call. A workspace admin changes them and may uninstall
- *   it (`canManage`, the server's write rule).
+ *   tools the agent may call. A workspace admin changes them and may sign it
+ *   out or remove it (`canManage`, the server's write rule).
  * - **A person's plugin** shows the account it signs in as, Connect or
- *   Disconnect, the owner's own tool permissions, whether it is used here, and
+ *   Sign out, Remove, the owner's own tool permissions, whether it is used here, and
  *   every workspace the person belongs to, each on or off with the change that
  *   flips it. Use here signs in too when it is not connected, and every
  *   sign-in returns to this workspace's Plugins. Turning it on elsewhere only
@@ -193,7 +195,7 @@ function WorkspacePlugin({ plugin, slug, wsId }: { plugin: Plugin; slug: string;
 
 /**
  * One workspace connector's configuration. The header (`ConnectorHeader`) carries
- * identity, status and the ⋯ menu (docs, disconnect, uninstall, details), with a
+ * identity, status and the ⋯ menu (docs, sign out, remove, details), with a
  * status banner and its primary action only when something needs doing. Then
  * the sections in one order, one rule between each: how the connector is
  * reached (OAuth client, secrets), how it behaves (its own settings), the
@@ -347,7 +349,8 @@ function PersonalPlugin({
   // The workspace a Use or a Stop using is being confirmed for.
   const [using, setUsing] = useState<WorkspaceRef | null>(null);
   const [stopping, setStopping] = useState<WorkspaceRef | null>(null);
-  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   const loadConnectors = useCallback(async () => {
     try {
@@ -366,7 +369,7 @@ function PersonalPlugin({
   const serverNames = plugin.servers.map((s) => s.serverName);
   const mine = (connectors ?? []).filter((c) => serverNames.includes(c.serverName));
   // A plugin is used in a workspace where its servers are granted; Use here and
-  // Stop grant and revoke every one of them, as the Plugins list does.
+  // Stop grant and revoke every one of them.
   const grantedIds = [...new Set(mine.flatMap((c) => c.grantedWorkspaces))];
   const workspaceName = workspaces.find((w) => w.id === wsId)?.name ?? "this workspace";
   const here: WorkspaceRef = { id: wsId, name: workspaceName };
@@ -383,6 +386,8 @@ function PersonalPlugin({
     pending[id] ?? (id === wsId ? plugin.granted : grantedIds.includes(id));
   const name = plugin.displayName;
   const connected = pluginConnected(plugin);
+  // Sign out has something to end while any of its servers holds an account.
+  const signedIn = plugin.servers.some((s) => s.status === "ready");
 
   const setGrant = async (targetWsId: string, grant: boolean) => {
     for (const server of serverNames) {
@@ -556,18 +561,35 @@ function PersonalPlugin({
           />
         ))}
 
+        {signedIn && (
+          <section className={cn(SECTION_ROW, "@min-[40rem]/main:items-center")}>
+            <p className="text-xs text-muted-foreground">
+              Sign out of {name} to use another account. It stays on where it is on.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={SECTION_ACTION}
+              onClick={() => setConfirmingSignOut(true)}
+            >
+              Sign out
+            </Button>
+          </section>
+        )}
+
         <section className={cn(SECTION_ROW, "@min-[40rem]/main:items-center")}>
           <p className="text-xs text-muted-foreground">
-            Sign out of {name} and remove it from your account.
+            Remove {name} from your account and turn it off everywhere.
           </p>
           <Button
             type="button"
             variant="destructive"
             size="sm"
             className={SECTION_ACTION}
-            onClick={() => setConfirmingDisconnect(true)}
+            onClick={() => setConfirmingRemove(true)}
           >
-            Disconnect
+            Remove
           </Button>
         </section>
       </div>
@@ -607,16 +629,31 @@ function PersonalPlugin({
         }}
       />
       <ConfirmDialog
-        open={confirmingDisconnect}
-        onOpenChange={setConfirmingDisconnect}
-        title={`Disconnect ${name}?`}
-        description={disconnectConsequence(grantedIds.length)}
-        confirmLabel="Disconnect"
-        pendingLabel="Disconnecting…"
+        open={confirmingSignOut}
+        onOpenChange={setConfirmingSignOut}
+        title={`Sign out of ${name}?`}
+        description={signOutConsequence(name)}
+        confirmLabel="Sign out"
+        pendingLabel="Signing out…"
+        onConfirm={async () => {
+          for (const server of serverNames) await signOutPersonalConnector(server);
+          setConfirmingSignOut(false);
+          // It stays, now asking to be signed in: read the new state in place.
+          await loadConnectors();
+          onChanged();
+        }}
+      />
+      <ConfirmDialog
+        open={confirmingRemove}
+        onOpenChange={setConfirmingRemove}
+        title={`Remove ${name}?`}
+        description={removeConsequence(grantedIds.length)}
+        confirmLabel="Remove"
+        pendingLabel="Removing…"
         destructive
         onConfirm={async () => {
-          for (const server of serverNames) await disconnectPersonalConnector(server);
-          setConfirmingDisconnect(false);
+          for (const server of serverNames) await removePersonalConnector(server);
+          setConfirmingRemove(false);
           // It is gone from the account, so there is nothing left to show here.
           navigate(`/w/${slug}/plugins`);
         }}

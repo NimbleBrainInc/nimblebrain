@@ -160,7 +160,7 @@ export function ToolPermissionsTable({
   // Don't render the section when there are no tools to show. A
   // connector in `not_authenticated` (or any state without an
   // active source) returns empty tools — the hero already conveys
-  // the "Not connected / Configure" prompt; an empty Tool
+  // the "Not signed in / Configure" prompt; an empty Tool
   // permissions section adds noise. Same for genuine zero-tool
   // connectors (rare). After load, only render with content. A personal
   // connector has no hero, and its table opens on request, so it says why
@@ -171,7 +171,7 @@ export function ToolPermissionsTable({
       <section className="space-y-3">
         {header}
         <p className="text-sm text-muted-foreground">
-          No tools to show right now. If this connector should have tools, disconnect and connect it
+          No tools to show right now. If this connector should have tools, sign out and connect it
           again.
         </p>
       </section>
