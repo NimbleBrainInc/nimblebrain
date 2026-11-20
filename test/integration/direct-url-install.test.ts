@@ -46,7 +46,6 @@ const CARD = {
         },
       ],
       adminTools: ["forecast"],
-      admin_tools: ["forecast"],
     },
   },
 };
@@ -203,7 +202,6 @@ describe("direct-url install on a local install", () => {
     expect(row?.url).toBe(serverUrl);
     expect(row?.transport).toEqual({ type: "streamable-http", auth: { type: "none" } });
     expect(JSON.stringify(row)).not.toContain("adminTools");
-    expect(JSON.stringify(row)).not.toContain("admin_tools");
 
     // No credential was stored for it.
     const keys = await runtime.getCredentialStore().list({ kind: "workspace", wsId });

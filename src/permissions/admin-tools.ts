@@ -67,8 +67,20 @@ export function parseAdminToolsDeclaration(
   return names.length > 0 ? { kind: "names", names } : undefined;
 }
 
+/**
+ * The `adminTools` value the host block reader (`host-meta.ts`) hands on for a
+ * block that carries the retired `admin_tools` key, whatever that key holds.
+ * It is not a list, so it gates every tool, with a reason naming the key. A
+ * producer that still writes `admin_tools` meant to narrow access; reading the
+ * block as if the key were absent would open those tools to every member.
+ */
+export const RETIRED_ADMIN_TOOLS_KEY: unknown = Object.freeze({ retiredKey: "admin_tools" });
+
 /** Why a declared `adminTools` value gates every tool, or `null` when it is well-formed. */
 export function adminToolsMalformedReason(raw: unknown): string | null {
+  if (raw === RETIRED_ADMIN_TOOLS_KEY) {
+    return "the host block carries admin_tools, a spelling the host does not read (adminTools is the spelling)";
+  }
   if (!Array.isArray(raw)) return "adminTools is not a list";
   if (raw.length > ADMIN_TOOLS_MAX) return `adminTools names more than ${ADMIN_TOOLS_MAX} tools`;
   if (!raw.every(isBareToolName)) return "adminTools has an entry that is not a bare tool name";

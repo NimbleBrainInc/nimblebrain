@@ -11,9 +11,8 @@ everyone in the workspace, name it in `adminTools` and the host enforces the
 role for you.
 
 `adminTools` is a capability of the [`ai.nimblebrain/host`](/host/manifest/)
-block.
-
-The snake_case spelling (`admin_tools`) is still read during the migration; see [Spelling](/host/manifest/#spelling).
+block. A block that contains the snake_case `admin_tools`, with any value, gates
+every tool on the server; see [Spelling](/host/manifest/#spelling).
 
 ```json
 "_meta": {

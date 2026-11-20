@@ -135,50 +135,35 @@ describe("the catalog projection", () => {
     } as unknown as ServerDetail;
   }
 
-  // A catalog entry may spell the block either way until every producer
-  // writes camel; each case runs in both.
-  const spellings = [
-    { spelling: "camelCase", hostVersion: "hostVersion", adminTools: "adminTools" },
-    { spelling: "snake_case", hostVersion: "host_version", adminTools: "admin_tools" },
-  ] as const;
-
-  for (const k of spellings) {
-    test(`carries adminTools onto the catalog entry (${k.spelling})`, () => {
-      const entry = serverDetailToCatalogEntry(
-        detail({ [k.hostVersion]: "1.5", [k.adminTools]: ["configure"] }),
-      );
-      expect(entry?.adminTools).toEqual(names("configure"));
-    });
-
-    test(`keeps the entry, gating every tool, when adminTools is malformed (${k.spelling})`, () => {
-      // Enforcement reads the live catalog, so dropping the entry would un-gate
-      // an installed connector.
-      for (const malformed of ["configure", null, false, ["configure", 7]]) {
-        const entry = serverDetailToCatalogEntry(
-          detail({ [k.hostVersion]: "1.5", [k.adminTools]: malformed }),
-        );
-        expect(entry?.adminTools?.kind).toBe("all");
-      }
-    });
-
-    test(`omits the field when nothing is declared (${k.spelling})`, () => {
-      const entry = serverDetailToCatalogEntry(detail({ [k.hostVersion]: "1.5" }));
-      expect(entry && "adminTools" in entry).toBe(false);
-    });
-  }
-
-  test("gates the union when both spellings are present", () => {
+  test("carries adminTools onto the catalog entry", () => {
     const entry = serverDetailToCatalogEntry(
-      detail({ hostVersion: "1.5", adminTools: ["configure"], admin_tools: ["rotate"] }),
+      detail({ hostVersion: "1.5", adminTools: ["configure"] }),
     );
-    expect(entry?.adminTools).toEqual(names("configure", "rotate"));
+    expect(entry?.adminTools).toEqual(names("configure"));
   });
 
-  test("gates every tool when either of two copies is malformed", () => {
+  test("keeps the entry, gating every tool, when adminTools is malformed", () => {
+    // Enforcement reads the live catalog, so dropping the entry would un-gate
+    // an installed connector.
+    for (const malformed of ["configure", null, false, ["configure", 7]]) {
+      const entry = serverDetailToCatalogEntry(
+        detail({ hostVersion: "1.5", adminTools: malformed }),
+      );
+      expect(entry?.adminTools?.kind).toBe("all");
+    }
+  });
+
+  test("omits the field when nothing is declared", () => {
+    const entry = serverDetailToCatalogEntry(detail({ hostVersion: "1.5" }));
+    expect(entry && "adminTools" in entry).toBe(false);
+  });
+
+  test("gates every tool when the block carries admin_tools, whatever either key holds", () => {
     for (const host of [
+      { hostVersion: "1.5", admin_tools: ["configure"] },
+      { hostVersion: "1.5", adminTools: ["configure"], admin_tools: ["configure"] },
       { hostVersion: "1.5", adminTools: ["configure"], admin_tools: null },
-      { hostVersion: "1.5", adminTools: "configure", admin_tools: ["configure"] },
-      { hostVersion: "1.5", adminTools: [], admin_tools: [""] },
+      { hostVersion: "1.5", admin_tools: [] },
     ]) {
       expect(serverDetailToCatalogEntry(detail(host))?.adminTools?.kind).toBe("all");
     }

@@ -2,8 +2,8 @@
  * A connector's record-arguments grant (ADR-0058) comes from its operator-trusted
  * catalog entry, and a workspace narrows or revokes it on the connector's ref.
  *
- * One `Runtime`, a catalog with one entry declaring `record_arguments` and one
- * declaring nothing, and a workspace holding a ref to each plus a ref under the
+ * One `Runtime`, a catalog with one entry declaring `recordArguments` and others
+ * declaring it false, only in the unread snake_case spelling, or not at all, and a workspace holding a ref to each plus a ref under the
  * granted entry's name at another server's URL.
  */
 
@@ -45,11 +45,11 @@ const CATALOG_YAML = `servers:
       ai.nimblebrain/connector:
         auth: dcr
       ai.nimblebrain/host:
-        host_version: "1.5"
-        record_arguments: true
+        hostVersion: "1.5"
+        recordArguments: true
   - name: ai.acme/ledger
     title: Acme Ledger
-    description: Declares the grant in camelCase
+    description: Declares the grant false
     version: "1.0.0"
     remotes:
       - type: streamable-http
@@ -59,10 +59,10 @@ const CATALOG_YAML = `servers:
         auth: dcr
       ai.nimblebrain/host:
         hostVersion: "1.5"
-        recordArguments: true
+        recordArguments: false
   - name: ai.acme/split
     title: Acme Split
-    description: Declares the grant in both spellings, which disagree
+    description: Declares the grant only in the unread snake_case spelling
     version: "1.0.0"
     remotes:
       - type: streamable-http
@@ -72,8 +72,7 @@ const CATALOG_YAML = `servers:
         auth: dcr
       ai.nimblebrain/host:
         hostVersion: "1.5"
-        recordArguments: true
-        record_arguments: false
+        record_arguments: true
   - name: ai.acme/notes
     title: Acme Notes
     description: Declares nothing
@@ -138,15 +137,15 @@ async function setRecordSources(sources: unknown): Promise<void> {
 }
 
 describe("record-arguments grant", () => {
-  it("grants every source to a connector whose catalog entry declares record_arguments (snake_case)", async () => {
+  it("grants every source to a connector whose catalog entry declares recordArguments", async () => {
     expect(await runtime.recordArgumentsGrantFor(WS, OUTBOUND)).toEqual({ sources: "all" });
   });
 
-  it("grants the camelCase recordArguments the same way", async () => {
-    expect(await runtime.recordArgumentsGrantFor(WS, LEDGER)).toEqual({ sources: "all" });
+  it("grants nothing when recordArguments is false", async () => {
+    expect(await runtime.recordArgumentsGrantFor(WS, LEDGER)).toBeNull();
   });
 
-  it("grants nothing when the two spellings disagree", async () => {
+  it("grants nothing for record_arguments, which is not read", async () => {
     expect(await runtime.recordArgumentsGrantFor(WS, SPLIT)).toBeNull();
   });
 

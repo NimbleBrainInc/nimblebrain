@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import Ajv from "ajv";
-import {
-  DEPRECATED_HOOK_KEYS,
-  DEPRECATED_HOST_KEYS,
-} from "../../src/connectors/catalog/host-meta.ts";
+import { RETIRED_HOOK_KEYS, RETIRED_HOST_KEYS } from "../../src/connectors/catalog/host-meta.ts";
 import schema from "../../src/connectors/catalog/schemas/host-manifest.schema.json";
 import type { HostManifestMeta, PlacementDeclaration } from "../../src/connectors/runtime/types.ts";
 import type { HookDeclaration } from "../../src/hooks/types.ts";
@@ -43,74 +40,49 @@ const PLACEMENT_KEYS = {
 
 const sorted = (keys: Iterable<string>) => [...keys].sort();
 
-/** The schema's properties, split into the current spelling and the deprecated one. */
-function split(properties: object, deprecated: Readonly<Record<string, string>>) {
-  const all = Object.keys(properties);
-  return {
-    camel: all.filter((k) => !Object.hasOwn(deprecated, k)),
-    snake: all.filter((k) => Object.hasOwn(deprecated, k)),
-  };
-}
-
 describe("host-manifest.schema.json and the runtime's types", () => {
-  test("the block's camelCase properties are HostManifestMeta's keys", () => {
-    const { camel } = split(schema.properties, DEPRECATED_HOST_KEYS);
-    expect(sorted(camel)).toEqual(sorted(Object.keys(HOST_KEYS)));
+  test("the block's properties are HostManifestMeta's keys", () => {
+    expect(sorted(Object.keys(schema.properties))).toEqual(sorted(Object.keys(HOST_KEYS)));
   });
 
-  test("every deprecated block property is one the runtime reads, as a key of HostManifestMeta", () => {
-    const { snake } = split(schema.properties, DEPRECATED_HOST_KEYS);
-    expect(sorted(snake)).toEqual(sorted(Object.keys(DEPRECATED_HOST_KEYS)));
-    for (const camel of Object.values(DEPRECATED_HOST_KEYS)) {
-      expect(Object.keys(HOST_KEYS)).toContain(camel);
-    }
-  });
-
-  test("a hook's camelCase properties are HookDeclaration's keys", () => {
+  test("a hook's properties are HookDeclaration's keys", () => {
     const props = schema.$defs.HookDeclaration.properties;
-    const { camel, snake } = split(props, DEPRECATED_HOOK_KEYS);
-    expect(sorted(camel)).toEqual(sorted(Object.keys(HOOK_KEYS)));
-    expect(sorted(snake)).toEqual(sorted(Object.keys(DEPRECATED_HOOK_KEYS)));
-    for (const key of Object.values(DEPRECATED_HOOK_KEYS)) {
-      expect(Object.keys(HOOK_KEYS)).toContain(key);
-    }
+    expect(sorted(Object.keys(props))).toEqual(sorted(Object.keys(HOOK_KEYS)));
   });
 
   test("a placement's properties are PlacementDeclaration's keys", () => {
     const props = schema.$defs.PlacementDeclaration.properties;
     expect(sorted(Object.keys(props))).toEqual(sorted(Object.keys(PLACEMENT_KEYS)));
   });
-
-  test("each deprecated property says what it is deprecated for", () => {
-    const descriptionOf = (props: object, key: string): unknown =>
-      Object.entries(props).find(([k]) => k === key)?.[1]?.description;
-    for (const [snake, camel] of Object.entries(DEPRECATED_HOST_KEYS)) {
-      expect(descriptionOf(schema.properties, snake)).toStartWith(
-        `Deprecated spelling of ${camel}`,
-      );
-    }
-    for (const [snake, camel] of Object.entries(DEPRECATED_HOOK_KEYS)) {
-      expect(descriptionOf(schema.$defs.HookDeclaration.properties, snake)).toStartWith(
-        `Deprecated spelling of ${camel}`,
-      );
-    }
-  });
 });
 
-describe("the published host schema accepts either spelling", () => {
+describe("the published host schema is camelCase only", () => {
   const validate = new Ajv({ strict: false }).compile(schema);
   const hook = { vendor: "acme", route: "/ingest/acme" };
 
-  test("a block needs hostVersion in one spelling", () => {
+  test("a block needs hostVersion", () => {
     expect(validate({ hostVersion: "1.0" })).toBe(true);
-    expect(validate({ host_version: "1.0" })).toBe(true);
+    expect(validate({ host_version: "1.0" })).toBe(false);
     expect(validate({ placements: [] })).toBe(false);
   });
 
-  test("a hook needs registerTool in one spelling", () => {
+  test("a hook needs registerTool", () => {
     expect(validate({ hostVersion: "1.0", hooks: [{ ...hook, registerTool: "set" }] })).toBe(true);
-    expect(validate({ hostVersion: "1.0", hooks: [{ ...hook, register_tool: "set" }] })).toBe(true);
+    expect(validate({ hostVersion: "1.0", hooks: [{ ...hook, register_tool: "set" }] })).toBe(
+      false,
+    );
     expect(validate({ hostVersion: "1.0", hooks: [hook] })).toBe(false);
+  });
+
+  test("every retired snake_case key is refused, beside a valid camel block", () => {
+    for (const key of RETIRED_HOST_KEYS) {
+      expect(validate({ hostVersion: "1.0", [key]: true })).toBe(false);
+    }
+    for (const key of RETIRED_HOOK_KEYS) {
+      expect(
+        validate({ hostVersion: "1.0", hooks: [{ ...hook, registerTool: "set", [key]: {} }] }),
+      ).toBe(false);
+    }
   });
 
   test("a placement has no size", () => {
@@ -119,10 +91,5 @@ describe("the published host schema accepts either spelling", () => {
     expect(validate({ hostVersion: "1.0", placements: [{ ...placement, size: "full" }] })).toBe(
       false,
     );
-  });
-
-  test("the deprecated adminTools spelling is held to the same shape", () => {
-    expect(validate({ hostVersion: "1.0", admin_tools: ["configure"] })).toBe(true);
-    expect(validate({ hostVersion: "1.0", admin_tools: "configure" })).toBe(false);
   });
 });

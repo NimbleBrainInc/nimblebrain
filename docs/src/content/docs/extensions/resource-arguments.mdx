@@ -88,7 +88,7 @@ The declaration lives on the tool, not inside `inputSchema`, because the input s
 
 ## The grant
 
-The host reads URIs for your server only when your server holds a **record-arguments grant** in the workspace. The grant is the operator's: your server's catalog entry declares `recordArguments: true` (the snake_case `record_arguments` is still read during the migration; see [Spelling](/host/manifest/#spelling)) in its [host manifest](/host/manifest/), read from the catalog only, so nothing your running server sends can claim it. That grants it in every workspace that installs your server, with nothing to configure.
+The host reads URIs for your server only when your server holds a **record-arguments grant** in the workspace. The grant is the operator's: your server's catalog entry declares `recordArguments: true` in its [host manifest](/host/manifest/), read from the catalog only, so nothing your running server sends can claim it. That grants it in every workspace that installs your server, with nothing to configure.
 
 A workspace admin can narrow the grant to named source servers, or revoke it, with `manage_connectors` `set_record_sources`. Without the grant, every URI in a declared argument comes back `not_granted`, whatever schemes the argument declares. A URI served by a server outside a narrowed grant comes back `not_found`, as one no server serves.
 
