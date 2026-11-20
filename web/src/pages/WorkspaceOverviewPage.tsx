@@ -9,7 +9,7 @@
 //      side panel beside it.
 //   2. Next steps: rows ranked by `overviewActions`: what needs a member
 //      (alerts), then the workspace's next setup step, then the last
-//      conversation.
+//      conversation, then conversation starters from the installed plugins.
 // Apps, conversations, and settings are one click away in the sidebar and the
 // workspace menu, so the page does not repeat them.
 //
@@ -31,6 +31,7 @@ import { useSession } from "../context/SessionContext";
 import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useComposerModel } from "../hooks/useComposerModel";
+import { useConversationStarters } from "../hooks/useConversationStarters";
 import { useRecentConversations } from "../hooks/useRecentConversations";
 import { useRunsNeedingReview } from "../hooks/useRunsNeedingReview";
 import { canManageWorkspaceMembers, canWriteWorkspace } from "../hooks/useScopedRole";
@@ -40,7 +41,7 @@ import { toSlug } from "../lib/workspace-slug";
 export function WorkspaceOverviewPage() {
   const { slug } = useParams<{ slug: string }>();
   const wsCtx = useWorkspaceContext();
-  const { connectors } = useWorkspaceAppIcons();
+  const { connectors, iconFor } = useWorkspaceAppIcons();
   const navigate = useNavigate();
   const session = useSession();
   const chat = useChatContext();
@@ -58,6 +59,9 @@ export function WorkspaceOverviewPage() {
   } = useWorkspaceBriefing(workspace?.id);
   const recent = useRecentConversations(workspace?.id, 1);
   const reviewCount = useRunsNeedingReview(workspace?.id);
+  // Not part of `settled` below: starters come last in the list, so they can
+  // arrive after the rest without moving any row above them.
+  const conversationStarters = useConversationStarters(workspace?.id);
 
   // Connector status comes from the list the app icons already fetch. Until it
   // names this workspace (a switch in flight), the cards wait for it, so a
@@ -113,6 +117,7 @@ export function WorkspaceOverviewPage() {
             canManageWorkspaceMembers(session?.user?.orgRole, workspace.userRole),
         },
         lastConversation: recent[0] ?? null,
+        conversationStarters: conversationStarters ?? [],
       })
     : null;
 
@@ -127,6 +132,7 @@ export function WorkspaceOverviewPage() {
 
         {actions && (
           <ActionRows
+            iconFor={iconFor}
             workspaceId={workspace.id}
             actions={actions}
             error={briefingError}

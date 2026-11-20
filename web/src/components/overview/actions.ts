@@ -2,7 +2,7 @@
 // The overview's actions: everything the page may offer a member, ranked.
 //
 // Pure: it takes what the overview has already loaded and returns the actions
-// in the order the page shows them. Three groups, in this order:
+// in the order the page shows them. Four groups, in this order:
 //   1. Alerts. A connector that is not ready, automation runs waiting for a
 //      verdict, and each facet an app's server counted. Ordered by level:
 //      `critical` (something has stopped), then `warning` (someone should act),
@@ -12,17 +12,23 @@
 //      plugin, ask a first question, invite someone. Each appears only while it
 //      is undone and the member can take it.
 //   3. Resume. The workspace's most recent conversation.
+//   4. Conversation starters. What the workspace's ready plugins offer to try,
+//      from each plugin's catalog entry, taking one from each plugin in turn so
+//      one plugin does not fill the list. They come from a separate read that
+//      can arrive later, so they go last and never move a row above them.
 // The page shows the first few and folds the rest behind "Show more", so the
 // order is the whole ranking: the most urgent thing is always first.
 //
-// Alerts can be hidden until they change (`briefing-prefs.ts`); setup and
-// resume cannot, since each goes away by itself once taken.
+// Alerts can be hidden until they change (`briefing-prefs.ts`); the other
+// groups cannot, since each goes away by itself once taken or changes as the
+// workspace does.
 // ---------------------------------------------------------------------------
 
 import type {
   BriefingItem,
   BriefingLevel,
   BriefingOutput,
+  ConversationStarter,
 } from "../../_generated/platform-schemas/home";
 import type { InstalledConnector } from "../../api/client";
 import type { RecentConversation } from "../../hooks/useRecentConversations";
@@ -42,7 +48,15 @@ export type ActionTarget =
   | { type: "none" };
 
 /** What an action is about; the row's icon follows it. */
-export type ActionKind = "connector" | "review" | "facet" | "plugin" | "ask" | "invite" | "resume";
+export type ActionKind =
+  | "connector"
+  | "review"
+  | "facet"
+  | "plugin"
+  | "ask"
+  | "invite"
+  | "resume"
+  | "starter";
 
 export interface OverviewAction {
   key: string;
@@ -61,6 +75,8 @@ export interface OverviewAction {
   muted: boolean;
   target: ActionTarget;
   testId: string;
+  /** The connector whose icon the row shows, for a conversation starter. */
+  iconServer?: string;
 }
 
 export interface OverviewActionsInput {
@@ -74,7 +90,12 @@ export interface OverviewActionsInput {
   /** Which setup steps to offer; each is true only while undone and takeable. */
   setup: { connectPlugin: boolean; firstQuestion: boolean; invite: boolean };
   lastConversation: RecentConversation | null;
+  /** The workspace plugins' conversation starters (`nb__conversation_starters`), or none yet. */
+  conversationStarters?: readonly ConversationStarter[];
 }
+
+/** The most conversation starters the list offers. */
+export const MAX_STARTERS_SHOWN = 3;
 
 /** The question the "ask what it can do" step sends. */
 export const FIRST_QUESTION = "What can you help me do in this workspace?";
@@ -234,5 +255,40 @@ export function overviewActions(input: OverviewActionsInput): OverviewAction[] {
       ]
     : [];
 
-  return [...alerts, ...setupActions(input), ...resume];
+  return [...alerts, ...setupActions(input), ...resume, ...starterActions(input)];
+}
+
+/**
+ * Conversation starters of the plugins whose connector is ready, taking one
+ * from each plugin in turn, at most {@link MAX_STARTERS_SHOWN}. A starter for a
+ * connector that is not ready is left out: its alert says what to fix first.
+ */
+function starterActions(input: OverviewActionsInput): OverviewAction[] {
+  const ready = new Map(
+    input.connectors.filter((c) => c.status === "ready").map((c) => [c.serverName, c]),
+  );
+  const byServer = new Map<string, ConversationStarter[]>();
+  for (const s of input.conversationStarters ?? []) {
+    if (!ready.has(s.serverName)) continue;
+    byServer.set(s.serverName, [...(byServer.get(s.serverName) ?? []), s]);
+  }
+  const picked: ConversationStarter[] = [];
+  for (let round = 0; picked.length < MAX_STARTERS_SHOWN; round++) {
+    const next = [...byServer.values()].map((list) => list[round]).filter((s) => s !== undefined);
+    if (next.length === 0) break;
+    picked.push(...next.slice(0, MAX_STARTERS_SHOWN - picked.length));
+  }
+  return picked.map((s) => ({
+    key: `starter:${s.serverName}:${s.title}`,
+    kind: "starter",
+    signature: null,
+    level: "none",
+    count: null,
+    title: s.title,
+    detail: ready.get(s.serverName)?.displayName ?? s.plugin,
+    muted: false,
+    target: { type: "ask", prompt: s.text },
+    testId: "overview-action-starter",
+    iconServer: s.serverName,
+  }));
 }

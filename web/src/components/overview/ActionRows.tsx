@@ -30,6 +30,7 @@ import {
   saveBriefingPrefs,
 } from "../../lib/briefing-prefs";
 import { cn } from "../../lib/utils";
+import { ConnectorIcon } from "../connectors/ConnectorIcon";
 import type { ActionKind, ActionLevel, OverviewAction } from "./actions";
 
 /** How many rows show before the rest fold behind "Show more". */
@@ -60,16 +61,20 @@ interface ActionRowsProps {
   error: string | null;
   onRetry: () => void;
   onChoose: (action: OverviewAction) => void;
+  /** A connector's icon, for rows that show one (conversation starters). */
+  iconFor?: (serverName: string) => string | undefined;
 }
 
 function Row({
   action,
   onChoose,
   onHide,
+  iconUrl,
 }: {
   action: OverviewAction;
   onChoose: () => void;
   onHide?: () => void;
+  iconUrl?: string;
 }) {
   const level = action.level === "none" ? null : LEVELS[action.level];
   const Icon = level?.icon ?? KIND_ICONS[action.kind] ?? Sparkles;
@@ -93,7 +98,15 @@ function Row({
             : "cursor-default disabled:opacity-100",
         )}
       >
-        <Icon className={cn("size-[18px] shrink-0", tone)} aria-hidden />
+        {action.iconServer ? (
+          <ConnectorIcon
+            name={action.detail}
+            iconUrl={iconUrl}
+            className="size-[18px] shrink-0 rounded text-3xs"
+          />
+        ) : (
+          <Icon className={cn("size-[18px] shrink-0", tone)} aria-hidden />
+        )}
         {level && <span className="sr-only">{level.name}: </span>}
         {action.count !== null && (
           <span className={cn("shrink-0 font-bold tabular-nums", tone)}>{action.count}</span>
@@ -127,7 +140,14 @@ function Row({
   );
 }
 
-export function ActionRows({ workspaceId, actions, error, onRetry, onChoose }: ActionRowsProps) {
+export function ActionRows({
+  workspaceId,
+  actions,
+  error,
+  onRetry,
+  onChoose,
+  iconFor,
+}: ActionRowsProps) {
   const [prefs, setPrefs] = useState<BriefingPrefs>(() => loadBriefingPrefs(workspaceId));
   const [expanded, setExpanded] = useState(false);
   useEffect(() => {
@@ -176,6 +196,7 @@ export function ActionRows({ workspaceId, actions, error, onRetry, onChoose }: A
             <Row
               key={action.key}
               action={action}
+              iconUrl={action.iconServer ? iconFor?.(action.iconServer) : undefined}
               onChoose={() => onChoose(action)}
               onHide={
                 action.signature !== null

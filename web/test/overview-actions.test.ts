@@ -196,4 +196,53 @@ describe("overviewActions", () => {
       target: { type: "conversation", id: "c9" },
     });
   });
+
+  describe("conversation starters", () => {
+    const starter = (serverName: string, title: string) => ({
+      serverName,
+      plugin: serverName,
+      title,
+      text: `${title}, please.`,
+    });
+
+    test("come last, from ready connectors, one plugin at a time, at most three", () => {
+      const out = overviewActions(
+        input({
+          connectors: [connector("gmail", "ready"), connector("linear", "ready")],
+          lastConversation: { id: "c1", title: "Q3", preview: "", updatedAt: "" },
+          conversationStarters: [
+            starter("gmail", "Summarize"),
+            starter("gmail", "Draft replies"),
+            starter("gmail", "Find an email"),
+            starter("linear", "What's due?"),
+          ],
+        }),
+      );
+      expect(out.map((a) => a.key)).toEqual([
+        "resume:c1",
+        "starter:gmail:Summarize",
+        "starter:linear:What's due?",
+        "starter:gmail:Draft replies",
+      ]);
+      const [, first] = out;
+      expect(first).toMatchObject({
+        kind: "starter",
+        title: "Summarize",
+        detail: "gmail",
+        iconServer: "gmail",
+        target: { type: "ask", prompt: "Summarize, please." },
+        signature: null,
+      });
+    });
+
+    test("leave out a plugin whose connector is not ready", () => {
+      const out = overviewActions(
+        input({
+          connectors: [connector("gmail", "needs_auth")],
+          conversationStarters: [starter("gmail", "Summarize")],
+        }),
+      );
+      expect(out.map((a) => a.key)).toEqual(["connector:gmail"]);
+    });
+  });
 });
