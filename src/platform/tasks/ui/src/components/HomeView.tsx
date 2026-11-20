@@ -265,10 +265,13 @@ export function DescribeBox({
   onCreate,
   onDescribe,
   showExamples,
+  compact = false,
 }: {
   onCreate: (template?: Template) => void;
   onDescribe?: (sentence: string) => void;
   showExamples: boolean;
+  /** Above a board: no heading, and the hint folded into the input's line. */
+  compact?: boolean;
 }) {
   const id = useId();
   const canChat = !!onDescribe;
@@ -286,8 +289,8 @@ export function DescribeBox({
   }
 
   return (
-    <div className="describe">
-      <label className="describe-label" htmlFor={`${id}-say`}>
+    <div className={`describe${compact ? " compact" : ""}`}>
+      <label className={compact ? "sr-only" : "describe-label"} htmlFor={`${id}-say`}>
         What should run, and when?
       </label>
       {/* No <form>: the host's sandbox withholds allow-forms, so a submit is
@@ -297,7 +300,11 @@ export function DescribeBox({
           id={`${id}-say`}
           className="describe-input"
           value={text}
-          placeholder="Every weekday at 7am, summarize my unread email and post it in #team"
+          placeholder={
+            compact
+              ? "Schedule something new: “every Monday at 8, review the pipeline and email me”"
+              : "Every weekday at 7am, summarize my unread email and post it in #team"
+          }
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.nativeEvent.isComposing) {
@@ -321,12 +328,14 @@ export function DescribeBox({
           ))}
         </ul>
       )}
-      <p className="hint">
-        {canChat ? "The agent sets it up in chat and shows you what it saved. " : ""}
-        <button type="button" className="link-btn" onClick={() => onCreate()}>
-          Fill in a form instead
-        </button>
-      </p>
+      {!compact && (
+        <p className="hint">
+          {canChat ? "The agent sets it up in chat and shows you what it saved. " : ""}
+          <button type="button" className="link-btn" onClick={() => onCreate()}>
+            Fill in a form instead
+          </button>
+        </p>
+      )}
     </div>
   );
 }
@@ -434,6 +443,12 @@ export function HomeBody({
           {readError && (
             <div className="note-banner">Some of what's below may be missing: {readError}</div>
           )}
+          <DescribeBox
+            onCreate={actions.onCreate}
+            onDescribe={actions.onDescribe}
+            showExamples={false}
+            compact
+          />
           <div className="board-bar">
             <fieldset className="board-filters">
               <legend className="sr-only">Show</legend>
@@ -458,11 +473,6 @@ export function HomeBody({
               <BoardRow key={r.task.id} row={r} actions={actions} />
             ))}
           </ul>
-          <DescribeBox
-            onCreate={actions.onCreate}
-            onDescribe={actions.onDescribe}
-            showExamples={false}
-          />
           <div className="home-foot">
             <button type="button" className="link-btn" onClick={actions.onSeeActivity}>
               Every run, newest first

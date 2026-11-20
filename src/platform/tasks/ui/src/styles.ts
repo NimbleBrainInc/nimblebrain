@@ -95,14 +95,19 @@ code { font-family: var(--font-mono); font-size: var(--font-text-xs-size); }
 .app {
   height: 100%; display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; min-width: 0;
   container-type: inline-size; container-name: panel;
-  --page-x: 20px; --page-top: 16px; --head-gap: 16px; --section-gap: 28px;
+  --page-x: var(--nb-gutter-wide, 20px); --page-top: 16px; --head-gap: 16px; --section-gap: 28px;
   --row-y: 10px; --stack: 8px; --inline: 6px; --card-pad: 16px;
 }
-@container panel (max-width: 560px) { .app > * { --page-x: 14px; --section-gap: 16px; --card-pad: 12px; } }
+@container panel (max-width: 560px) { .app > * { --page-x: var(--nb-gutter-narrow, 14px); --section-gap: 16px; --card-pad: 12px; } }
 /* One scroll container per page: the page header scrolls with the content
    (the host's own top bar stays pinned and carries the breadcrumb). */
 .content { flex: none; }
 .view-pad, .page-body { padding: 0 var(--page-x) 32px; }
+/* The shell's content width (web/DESIGN.md: max-w-4xl, 56rem), centred, so
+   this page lines up with the shell's own pages instead of running edge to edge. */
+.page-header, .view-pad, .page-body, .editor-problems {
+  width: 100%; max-width: calc(56rem + 2 * var(--page-x)); margin-inline: auto;
+}
 .section { margin-bottom: var(--section-gap); }
 .section-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: var(--stack); }
 .section-row .section-heading { margin-bottom: 0; }
@@ -538,6 +543,7 @@ fieldset.builder-row { border: none; min-width: 0; padding: 10px 0; border-botto
   .describe-box { flex-direction: column; }
 }
 .describe { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.describe.compact { margin-top: 0; }
 .describe-label { font-weight: var(--font-weight-medium); }
 .describe-box { display: flex; gap: 8px; }
 .describe-input {
