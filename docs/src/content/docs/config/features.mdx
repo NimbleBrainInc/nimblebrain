@@ -33,7 +33,7 @@ You only need to include flags you want to change. Omitted flags use their defau
 |------|---------|----------|---------------|
 | `skillManagement` | `true` | Create, edit, delete, and activate user skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore`, `skills__set_status`, `skills__set_here` |
 | `toolDiscovery` | `true` | Search installed tools by keyword | `nb__search` (`scope: "tools"`) |
-| `catalogSearch` | `true` | The catalog scope of `nb__search` (not the catalog itself — `manage_connectors` reads it ungated) | `nb__search` (`scope: "catalog"`) |
+| `catalogSearch` | `true` | The catalog scope of `nb__search` (not the catalog itself — `manage_connectors` reads it ungated). Off, the model is not offered the scope: `nb__search` describes the tools scope only and points to **Plugins → Browse plugins**, and a call that still names `catalog` is refused with the same pointer | `nb__search` (`scope: "catalog"`) |
 | `fileContext` | `true` | File upload and context extraction | File processing pipeline |
 | `userManagement` | `true` | Create, update, and delete users | `nb__manage_users` |
 | `workspaceManagement` | `true` | CRUD workspaces and manage members | `nb__manage_workspaces` |

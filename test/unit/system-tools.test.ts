@@ -802,6 +802,12 @@ describe("status tool — scope: skills", () => {
 // search — feature flag runtime gating
 // ---------------------------------------------------------------------------
 
+/** The `scope` argument of a `search` tool's input schema. */
+function scopeProperty(schema?: Record<string, unknown>): Record<string, unknown> | undefined {
+  const properties = schema?.properties as Record<string, Record<string, unknown>> | undefined;
+  return properties?.scope;
+}
+
 describe("search — feature flag gating", () => {
   it("scope=tools returns error when toolDiscovery is disabled", async () => {
     const registry = await makeRegistry();
@@ -812,13 +818,44 @@ describe("search — feature flag gating", () => {
     expect(extractText(result.content)).toContain("disabled");
   });
 
-  it("scope=catalog returns error when catalogSearch is disabled", async () => {
+  it("scope=catalog is refused with the Browse plugins pointer when catalogSearch is off", async () => {
     const registry = await makeRegistry();
     const features = resolveFeatures({ catalogSearch: false });
     const systemTools = await createSystemTools(() => registry, { features });
     const result = await systemTools.execute("search", { scope: "catalog", query: "test" });
     expect(result.isError).toBe(true);
-    expect(extractText(result.content)).toContain("disabled");
+    expect(extractText(result.content)).toContain("Plugins → Browse plugins");
+  });
+
+  it("does not offer the catalog scope when catalogSearch is off", async () => {
+    const registry = await makeRegistry();
+    const features = resolveFeatures({ catalogSearch: false });
+    const systemTools = await createSystemTools(() => registry, { features });
+    const search = (await systemTools.tools()).find((t) => t.name === "nb__search");
+    expect(search).toBeDefined();
+    const scope = scopeProperty(search?.inputSchema);
+    expect(scope?.enum).toBeUndefined();
+    expect(JSON.stringify(search?.inputSchema)).not.toContain("catalog");
+    expect(search?.description).not.toContain("catalog");
+    expect(search?.description).toContain("Plugins → Browse plugins");
+  });
+
+  it("refuses an unknown scope when catalogSearch is off", async () => {
+    const registry = await makeRegistry();
+    const features = resolveFeatures({ catalogSearch: false });
+    const systemTools = await createSystemTools(() => registry, { features });
+    const result = await systemTools.execute("search", { scope: "skills", query: "test" });
+    expect(result.isError).toBe(true);
+    expect(extractText(result.content)).toContain("Unknown search scope");
+  });
+
+  it("offers the catalog scope when catalogSearch is on", async () => {
+    const registry = await makeRegistry();
+    const systemTools = await createSystemTools(() => registry, { features: resolveFeatures() });
+    const search = (await systemTools.tools()).find((t) => t.name === "nb__search");
+    const scope = scopeProperty(search?.inputSchema);
+    expect(scope?.enum).toEqual(["tools", "catalog"]);
+    expect(search?.description).toContain("scope: catalog");
   });
 
   it("scope=tools works when toolDiscovery is enabled", async () => {

@@ -92,43 +92,45 @@ export async function createSystemTools(
     pluginCtx ? (toolName) => ungrantedPluginGuidance(pluginCtx, toolName) : undefined,
   );
 
-  const systemToolDefs: InProcessTool[] = [
-    {
-      name: "search",
-      annotations: READ_ONLY,
-      description:
-        "Search installed tools by keyword (scope: tools) or the connector catalog for servers to install (scope: catalog). Returns matches as a list; to call a matched tool that is not already in your tool list, activate it first with nb__manage_tools.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          scope: {
-            type: "string",
-            enum: ["tools", "catalog"],
-            description: "Search installed tools or the connector catalog for new servers.",
-          },
-          query: {
-            type: "string",
-            description:
-              "Search query (natural-language terms over name + description). Optional — omit to list everything in scope.",
-          },
+  const searchTool: InProcessTool = {
+    name: "search",
+    annotations: READ_ONLY,
+    description:
+      "Search installed tools by keyword (scope: tools) or the connector catalog for servers to install (scope: catalog). Returns matches as a list; to call a matched tool that is not already in your tool list, activate it first with nb__manage_tools.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scope: {
+          type: "string",
+          enum: ["tools", "catalog"],
+          description: "Search installed tools or the connector catalog for new servers.",
         },
-        required: ["scope"],
+        query: {
+          type: "string",
+          description:
+            "Search query (natural-language terms over name + description). Optional — omit to list everything in scope.",
+        },
       },
-      handler: async (input): Promise<ToolResult> => {
-        const scope = String(input.scope ?? "tools");
-        const query = String(input.query ?? "");
-
-        // Runtime feature flag checks (tool is always registered, scope is gated)
-        const gateError = checkSearchScopeGate(scope, features);
-        if (gateError) return gateError;
-
-        if (scope === "catalog") {
-          return searchCatalog(runtime, query);
-        }
-        // scope === "tools" (default)
-        return searchTools(runtime, getRegistry, toolEligibilityCtx, query, pluginCtx);
-      },
+      required: ["scope"],
     },
+    handler: async (input): Promise<ToolResult> => {
+      const scope = String(input.scope ?? "tools");
+      const query = String(input.query ?? "");
+
+      // Runtime feature flag checks (tool is always registered, scope is gated)
+      const gateError = checkSearchScopeGate(scope, features);
+      if (gateError) return gateError;
+
+      if (scope === "catalog") {
+        return searchCatalog(runtime, query);
+      }
+      // scope === "tools" (default)
+      return searchTools(runtime, getRegistry, toolEligibilityCtx, query, pluginCtx);
+    },
+  };
+
+  const systemToolDefs: InProcessTool[] = [
+    features && !features.catalogSearch ? withoutCatalogScope(searchTool) : searchTool,
     createReadResourceTool(getRegistry),
     createStatusTool(getRegistry, getSkills, runtime, pluginCtx),
   ];
@@ -822,15 +824,49 @@ function groupToolsBySource(all: Array<{ name: string; description: string }>): 
   };
 }
 
-/** Feature-flag gate for `search`: an error result when the scope is disabled, else null. */
+/** Scope gate for `search`: an error result when the scope is disabled or unknown, else null. */
 function checkSearchScopeGate(scope: string, features?: ResolvedFeatures): ToolResult | null {
   if (scope === "tools" && features && !features.toolDiscovery) {
     return { content: textContent("Tool discovery is disabled."), isError: true };
   }
   if (scope === "catalog" && features && !features.catalogSearch) {
-    return { content: textContent("Catalog search is disabled."), isError: true };
+    return { content: textContent(CATALOG_SEARCH_OFF_REFUSAL), isError: true };
+  }
+  if (scope !== "tools" && scope !== "catalog") {
+    return { content: textContent(`Unknown search scope "${scope}". Use "tools".`), isError: true };
   }
   return null;
+}
+
+/** Where a person finds plugins to install when the agent cannot search the catalog. */
+const BROWSE_PLUGINS_POINTER =
+  "The person browses and installs plugins in the web app, under Plugins → Browse plugins.";
+
+/** The answer to a catalog search on an installation that turned `catalogSearch` off. */
+const CATALOG_SEARCH_OFF_REFUSAL = `Catalog search is off in this installation, so plugins to install cannot be searched from here. ${BROWSE_PLUGINS_POINTER}`;
+
+/**
+ * `search` as offered where `catalogSearch` is off: the description and the
+ * `scope` argument name the tools scope only, so the model is never offered a
+ * scope that refuses. `scope` carries no enum here, so a call that still names
+ * `catalog` (an external MCP client, an old schema) passes input validation and
+ * reaches the handler's refusal, which says where to browse plugins instead.
+ * Built once per source from fixed text, so the tools block stays byte-stable
+ * for an installation.
+ */
+function withoutCatalogScope(tool: InProcessTool): InProcessTool {
+  const properties = tool.inputSchema.properties as Record<string, unknown>;
+  return {
+    ...tool,
+    description: `Search installed tools by keyword (scope: tools). Returns matches as a list; to call a matched tool that is not already in your tool list, activate it first with nb__manage_tools. Plugins that are not installed cannot be searched: ${BROWSE_PLUGINS_POINTER}`,
+    inputSchema: {
+      ...tool.inputSchema,
+      properties: {
+        ...properties,
+        scope: { type: "string", description: 'Always "tools": search installed tools.' },
+      },
+    },
+  };
 }
 
 /** `search` scope=catalog — keyword-match installable entries from the connector catalog. */
