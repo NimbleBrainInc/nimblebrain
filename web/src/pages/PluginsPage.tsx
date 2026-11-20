@@ -286,20 +286,17 @@ function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
         empty={emptyMessage(query, segment, workspaceName)}
         segment={segment}
         renderRow={(plugin) => {
-          const action = plugin.id === actionInBanner ? null : nextStep(plugin);
+          // A row is itself the way to the plugin's page, so a step that only
+          // opens it ("failed to start", "needs setup") is said, not offered.
+          const saysWhatsWrong = plugin.id === actionInBanner || opensItsPage(plugin, canManage);
+          const action = saysWhatsWrong ? null : nextStep(plugin);
           return (
             <PluginRow
               key={plugin.id}
               plugin={plugin}
               to={pluginPath(slug, plugin)}
               action={action}
-              state={
-                plugin.id === actionInBanner
-                  ? attentionWords(plugin)
-                  : action
-                    ? null
-                    : stateWords(plugin)
-              }
+              state={saysWhatsWrong ? attentionWords(plugin) : action ? null : stateWords(plugin)}
               fresh={isJustConnected(justConnected, plugin)}
             />
           );
@@ -361,6 +358,12 @@ function nextStepFor(
       onClick={fromRow ? opts.onConnect : opts.onOpen}
     />
   );
+}
+
+/** Whether the one thing a plugin asks of the viewer is to open its page. */
+function opensItsPage(plugin: Plugin, canManage: boolean): boolean {
+  if (plugin.owner.kind === "person" && !plugin.granted) return false;
+  return pluginAttention(plugin, { canManage }) === "open";
 }
 
 /** Whether a sign-in on this page just connected this plugin, as the owner it names. */

@@ -411,6 +411,35 @@ describe("PluginsPage — rows", () => {
     expect(needsYou(mounted.container)).toBeNull();
   });
 
+  test("a row whose only step is its page says what is wrong, with no Open button", async () => {
+    plugins = [
+      plugin({
+        id: "workspace:crm",
+        displayName: "CRM",
+        owner: { kind: "workspace" },
+        servers: [{ serverName: "crm", status: "failed", account: null }],
+      }),
+      plugin({
+        id: "workspace:billing",
+        displayName: "Billing",
+        owner: { kind: "workspace" },
+        servers: [{ serverName: "billing", status: "needs_setup", account: null }],
+      }),
+    ];
+    mounted = await mount();
+    for (const [id, words] of [
+      ["workspace:crm", "Failed to start"],
+      ["workspace:billing", "Needs setup"],
+    ] as const) {
+      const r = row(mounted.container, id)!;
+      expect(r.querySelector('[data-testid="plugin-attention"]')?.textContent).toBe(words);
+      expect(r.querySelectorAll("button")).toHaveLength(0);
+      expect(r.querySelector("a")?.getAttribute("href")).toContain(
+        `/plugins/${encodeURIComponent(id)}`,
+      );
+    }
+  });
+
   test("a healthy row has no control and no menu: only its link and a decorative ›", async () => {
     plugins = [GITHUB];
     mounted = await mount();
