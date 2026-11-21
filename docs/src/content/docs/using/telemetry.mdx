@@ -115,6 +115,7 @@ Events then name the person instead of the install, so a person's runtime and we
 | Person properties | None | Email and display name, sent once per person per runtime start |
 | Groups | None | `tenant` (from `NB_TENANT_ID`, when set) and `workspace` (the workspace the request is bound to) |
 | Names of things used | None | Catalog names of connectors, tools, skills and models (below) |
+| Pages viewed | None | A web `$pageview` each time the page on screen changes (below) |
 
 An identified deployment also names what was used, by catalog name only. A connector added by URL, and a skill someone wrote, have names people chose, so they are sent as `custom`:
 
@@ -140,7 +141,9 @@ It also sends events for moments in a person's use of the product. None carries 
 
 On an identified deployment `automation.created` reports every automation, so the anonymous `task.created` (only automations the agent made) is not sent there.
 
-Everything else in [What is never sent](#what-is-never-sent) still holds, apart from the email address, the person's name, and the catalog names above. `identify` without `"enabled": true` does nothing: a person's yes in the CLI or the web UI never turns it on. Set it only where your terms with the people using the install allow it, and never with the key `npx nimblebrain` ships, which is the NimbleBrain project for anonymous installs.
+An identified web client sends `$pageview` when the route it shows changes, and nothing when only a value in it changes (another workspace, another conversation). The event names the route template, never the path: `/w/:slug/settings/members`, not the workspace's address. Its `$current_url` is the origin plus that template, and its `$pathname` the template. On an app's page it also carries `app`, the app's server name from the catalog. In every identified web event, a URL naming another page (the referrer, the first page of a session or of a person) keeps only its origin, and a path naming another page is dropped.
+
+Everything else in [What is never sent](#what-is-never-sent) still holds, apart from the email address, the person's name, the catalog names above, and the name of the app on screen. `identify` without `"enabled": true` does nothing: a person's yes in the CLI or the web UI never turns it on. Set it only where your terms with the people using the install allow it, and never with the key `npx nimblebrain` ships, which is the NimbleBrain project for anonymous installs.
 
 <Aside type="tip">
   A runtime with no `POSTHOG_API_KEY` has nowhere to send anything. It asks no one, creates no ID, and makes no request to PostHog.
@@ -149,7 +152,7 @@ Everything else in [What is never sent](#what-is-never-sent) still holds, apart 
 ## Technical details
 
 - **Runtime:** `posthog-node`, batched every 30 seconds or 20 events, GeoIP off.
-- **Web client:** `posthog-js` with `ip: false`, `autocapture: false`, `capture_pageview: false`, session recording off. It starts only after the runtime reports a yes.
+- **Web client:** `posthog-js` with `ip: false`, `autocapture: false`, `capture_pageview: false`, session recording off. It starts only after the runtime reports a yes. An identified client sends its own `$pageview` (above), so PostHog never reports the URL itself.
 - **CLI:** one `POST` to PostHog's batch endpoint at the end of a command, using Node's built-in `fetch`.
 - **Destination:** PostHog Cloud (`https://us.i.posthog.com`).
 - **Offline:** events are dropped by the runtime and kept by the CLI for its next command. Telemetry never fails a command.

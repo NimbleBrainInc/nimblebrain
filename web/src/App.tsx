@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, useLocation, useNavigate } from "react-router-dom";
 import {
   addWorkspaceLifecycleHandler,
   callTool,
@@ -21,6 +21,7 @@ import { NoticeProvider } from "./components/notices";
 import { CommandPalette } from "./components/palette/CommandPalette";
 import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
+import { TrackedRoutes } from "./components/TrackedRoutes";
 import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
 import { AppLocationProvider } from "./context/AppLocationContext";
 import { ArtifactPanelProvider } from "./context/ArtifactPanelContext";
@@ -55,6 +56,7 @@ import {
   resolveAppRouteIn,
 } from "./lib/open-app";
 import { routablePlacements } from "./lib/routable-placements";
+import type { RouteHandle } from "./lib/route-template";
 import {
   landingTab,
   ORG_SETTINGS_TABS,
@@ -442,7 +444,7 @@ function AuthenticatedAppContent({
       <CommandPalette onLogout={onLogout} />
       <ShellLayout forSlot={forSlot} onLogout={onLogout}>
         <ErrorBoundary resetKeys={[location.pathname]}>
-          <Routes>
+          <TrackedRoutes>
             {/* `/` is not a page: it opens the workspace this browser was
                 last in, else the first in the switcher's order (ADR-0073). */}
             <Route path="/" element={<LandingRedirect />} />
@@ -465,6 +467,7 @@ function AuthenticatedAppContent({
                 <Route
                   key={p.route}
                   path={identityAppSegment(p.serverName)}
+                  handle={{ app: p.serverName } satisfies RouteHandle}
                   element={<AppWithChat placement={p} />}
                 />
               ))}
@@ -473,6 +476,7 @@ function AuthenticatedAppContent({
                 <Route
                   key={p.route}
                   path={`app/${p.route}`}
+                  handle={{ app: p.serverName } satisfies RouteHandle}
                   element={<AppWithChat placement={p} />}
                 />
               ))}
@@ -626,7 +630,7 @@ function AuthenticatedAppContent({
                 workspace depends on shell placements, so this one is always
                 settled. */}
             <Route path="*" element={<NotFoundPage settled />} />
-          </Routes>
+          </TrackedRoutes>
         </ErrorBoundary>
       </ShellLayout>
     </ShellProvider>
