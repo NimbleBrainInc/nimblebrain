@@ -441,7 +441,10 @@ export const LlmDonePayload = Type.Object({
   model: Type.String(),
   content: opaque<LanguageModelV4Content[]>("AI SDK V4 content blocks."),
   usage: opaque<TokenUsage>("Token usage for this call (`TokenUsage`)."),
-  llmMs: Type.Number(),
+  llmMs: Type.Number({
+    description:
+      "The call's wall time; 0 when the runtime did not time it (an external agent's call, which ACP reports no timing for).",
+  }),
   ttftMs: maybe(Type.Number({ description: "Time to first token; absent with no output part." })),
   estimatedInputTokens: Type.Number(),
   finishReason: opaque<FinishReason>("AI SDK unified finish reason."),

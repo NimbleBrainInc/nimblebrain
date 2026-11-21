@@ -24,6 +24,9 @@
  *    is priced the same way from what the agent reported of the calls that
  *    finished before the cancel; an agent that never answers the cancel
  *    reports nothing, so nothing is priced.
+ *  - Every `llm.done` carries `llmMs` 0, which means untimed: ACP reports no
+ *    per-call timing, and the agent's calls run outside the runtime, so it has
+ *    no latency to record. Latency consumers skip a call with 0.
  */
 
 import type * as acp from "@agentclientprotocol/sdk/unstable";

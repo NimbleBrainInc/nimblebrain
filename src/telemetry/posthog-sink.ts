@@ -61,7 +61,13 @@ interface RunMetrics {
   iterations: number;
   toolCalls: number;
   connectorToolCalls: number;
+  /** The summed latency of the run's timed model calls. */
   llmMs: number;
+  /**
+   * Model calls recorded with no latency (`llmMs` 0): an external agent's, which
+   * ACP reports no timing for. A run with any reports no `llm_latency_ms`.
+   */
+  untimedLlmCalls: number;
   toolMs: number;
   inputTokens: number;
   outputTokens: number;
@@ -77,6 +83,7 @@ function createRunMetrics(): RunMetrics {
     toolCalls: 0,
     connectorToolCalls: 0,
     llmMs: 0,
+    untimedLlmCalls: 0,
     toolMs: 0,
     inputTokens: 0,
     outputTokens: 0,
@@ -198,7 +205,8 @@ export class PostHogEventSink implements EventSink {
     if (!metrics || data.transcriptOnly) return;
 
     metrics.iterations++;
-    metrics.llmMs += data.llmMs;
+    if (data.llmMs > 0) metrics.llmMs += data.llmMs;
+    else metrics.untimedLlmCalls++;
     metrics.cacheTokens += data.usage.cacheReadTokens ?? 0;
     metrics.inputTokens += data.usage.inputTokens;
     metrics.outputTokens += data.usage.outputTokens;
@@ -354,7 +362,8 @@ export class PostHogEventSink implements EventSink {
       tool_calls: metrics?.toolCalls ?? 0,
       connector_tool_calls: metrics?.connectorToolCalls ?? 0,
       stop_reason: data.stopReason,
-      llm_latency_ms: metrics?.llmMs ?? 0,
+      // Unknown latency is left out, never reported as 0.
+      ...(metrics?.untimedLlmCalls ? {} : { llm_latency_ms: metrics?.llmMs ?? 0 }),
       tool_latency_ms: metrics?.toolMs ?? 0,
       total_ms: totalMs,
       input_tokens: metrics?.inputTokens ?? 0,

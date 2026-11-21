@@ -249,6 +249,23 @@ describe("PostHogEventSink", () => {
     expect(doneB.properties.input_tokens).toBe(1000);
   });
 
+  it("leaves llm_latency_ms out of a run whose model calls were untimed", () => {
+    const { mock, sink } = createTestSetup();
+
+    // An external agent's calls carry tokens but `llmMs` 0: unknown, not instant.
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "acp" })));
+    sink.emit(llmDone("acp", 0, 500, 200));
+    sink.emit(llmDone("acp", 0, 600, 150));
+    sink.emit(runDone("acp"));
+
+    const done = mock.events.find((e) => e.event === "agent.chat_completed");
+    expect(done).toBeDefined();
+    expect("llm_latency_ms" in done!.properties).toBe(false);
+    expect(done!.properties.iterations).toBe(2);
+    expect(done!.properties.input_tokens).toBe(1100);
+    expect(done!.properties.output_tokens).toBe(350);
+  });
+
   it("cleans up on run.error", () => {
     const { mock, sink } = createTestSetup();
 
