@@ -320,6 +320,36 @@ describe("automation.run_completed", () => {
     expect(JSON.stringify(events)).not.toContain("acme");
   });
 
+  it("carries the run's recorded cost, and leaves out an incomplete one", async () => {
+    const costed =
+      (extra: Partial<TaskRun>): Executor =>
+      async (...args) => {
+        const out = await executor(...args);
+        return { ...out, run: { ...out.run, ...extra } };
+      };
+    const ended = async (exec: Executor) => {
+      const { events, manager } = setup(true);
+      const { workDir, task } = seeded();
+      const scheduler = new Scheduler(exec, {
+        workDir,
+        onRunEnded: (wsId, ownerId, run) =>
+          captureAutomationRunEnded(runtimeOf(manager), wsId, ownerId, run),
+      });
+      scheduler.start();
+      await scheduler.runNow(WS, OWNER, task.id);
+      scheduler.stop();
+      return events.find((e) => e.event === "automation.run_completed")?.properties;
+    };
+
+    expect((await ended(costed({ costUsd: 0.0421 })))?.cost_usd).toBe(0.0421);
+    // A call no rates were known for: the recorded cost is short, so none is sent.
+    const short = await ended(costed({ costUsd: 0.0421, unpricedCalls: 1 }));
+    expect(short && "cost_usd" in short).toBe(false);
+    // A run that never reached the model has no recorded cost.
+    const none = await ended(executor);
+    expect(none && "cost_usd" in none).toBe(false);
+  });
+
   it("keeps the recorded run when the observer throws", async () => {
     const { workDir, task } = seeded();
     const scheduler = new Scheduler(executor, {

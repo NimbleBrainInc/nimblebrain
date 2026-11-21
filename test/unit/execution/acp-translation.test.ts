@@ -11,6 +11,7 @@ import { transcriptPrompt, userMessageToPrompt } from "../../../src/execution/ac
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import { TelemetryManager } from "../../../src/telemetry/manager.ts";
 import { PostHogEventSink } from "../../../src/telemetry/posthog-sink.ts";
+import { costBreakdown } from "../../../src/usage/cost.ts";
 
 function run(messages: LanguageModelV4Message[], system = "Be helpful."): ResolvedRun {
   return {
@@ -200,6 +201,90 @@ describe("run recorder", () => {
     expect(done?.properties).toMatchObject({ iterations: 2, input_tokens: 130, output_tokens: 10 });
     // ACP reports no per-call timing, so the run's model latency is unknown, not 0.
     expect(done && "llm_latency_ms" in done.properties).toBe(false);
+  });
+
+  test("an identified deployment prices the agent's reported calls, cache tokens included", async () => {
+    const captured: { event: string; properties: Record<string, unknown> }[] = [];
+    const telemetry = TelemetryManager.create({
+      workDir: mkdtempSync(join(tmpdir(), "acp-telemetry-")),
+      enabled: true,
+      identify: true,
+      clientFactory: () => ({
+        capture: (e) => captured.push(e),
+        shutdown: async () => {},
+      }),
+      env: {},
+    });
+    telemetry.setSubjectSource(() => ({ userId: "usr_1", workspaceId: "ws_1" }));
+    const model = "anthropic:claude-sonnet-4-6";
+    const recorder = createAcpRunRecorder(
+      { ...run([ask]), config: { ...run([ask]).config, model } },
+      { events: new PostHogEventSink(telemetry), billSummary: () => {} },
+    );
+    const first = {
+      inputTokens: 5000,
+      outputTokens: 40,
+      cacheReadTokens: 3000,
+      cacheWriteTokens: 1500,
+    };
+    const second = {
+      inputTokens: 6000,
+      outputTokens: 60,
+      cacheReadTokens: 4500,
+      cacheWriteTokens: 500,
+    };
+    recorder.start();
+    recorder.callStarting({ id: "call_1", name: "lookup", input: {} });
+    recorder.finish(
+      { stopReason: "end_turn" },
+      {
+        calls: [
+          { model, purpose: "turn", usage: first },
+          // A summary is billed as a fold, not counted in the run.
+          { model, purpose: "summary", usage: usage(900, 90) },
+          { model, purpose: "turn", usage: second },
+        ],
+      },
+      [],
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const done = captured.find((e) => e.event === "agent.chat_completed");
+    const cost = (u: typeof first) => costBreakdown(model, u);
+    // The cache buckets are priced, not dropped.
+    expect(cost(first).cacheRead).toBeGreaterThan(0);
+    expect(cost(first).cacheWrite).toBeGreaterThan(0);
+    expect(done?.properties.cost_usd).toBeCloseTo(cost(first).total + cost(second).total, 12);
+  });
+
+  test("an agent's call at a model with no known rates leaves the run's cost out", async () => {
+    const captured: { event: string; properties: Record<string, unknown> }[] = [];
+    const telemetry = TelemetryManager.create({
+      workDir: mkdtempSync(join(tmpdir(), "acp-telemetry-")),
+      enabled: true,
+      identify: true,
+      clientFactory: () => ({
+        capture: (e) => captured.push(e),
+        shutdown: async () => {},
+      }),
+      env: {},
+    });
+    telemetry.setSubjectSource(() => ({ userId: "usr_1", workspaceId: "ws_1" }));
+    const recorder = createAcpRunRecorder(run([ask]), {
+      events: new PostHogEventSink(telemetry),
+      billSummary: () => {},
+    });
+    recorder.start();
+    recorder.finish(
+      { stopReason: "end_turn" },
+      { calls: [{ model: "m", purpose: "turn", usage: usage(100, 7) }] },
+      [],
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const done = captured.find((e) => e.event === "agent.chat_completed");
+    expect(done).toBeDefined();
+    expect(done && "cost_usd" in done.properties).toBe(false);
   });
 
   test("records a run's end exactly once", () => {

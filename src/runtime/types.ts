@@ -602,6 +602,8 @@ export interface TaskResult {
   usage: TurnUsage;
   /** The run's cost in USD; see `ChatResult.costUsd`. */
   costUsd: number;
+  /** See `RunHandle.unpricedCalls`. */
+  unpricedCalls?: number;
   /**
    * Every skill the run was given, or that missed it, in order: the ones it
    * declared, the ones delivered before a held call or after a promotion, and

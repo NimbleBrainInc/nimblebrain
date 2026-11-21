@@ -598,6 +598,11 @@ export interface TaskRun {
    * run that never reached the model and on records from before it was kept.
    */
   costUsd?: number;
+  /**
+   * Model calls at a model with no known rates, present only when non-zero.
+   * Their cost is not in `costUsd`, so the run's cost is incomplete, not free.
+   */
+  unpricedCalls?: number;
 }
 
 /**

@@ -601,6 +601,8 @@ export declare const TaskRunRecord: import("@sinclair/typebox").TObject<{
     batchIndex: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     /** What the run's model calls cost, in USD. */
     costUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    /** Model calls no rates were known for; their cost is not in `costUsd`. */
+    unpricedCalls: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
 }>;
 export type TaskRunRecord = Static<typeof TaskRunRecord>;
 /**
@@ -673,6 +675,7 @@ export declare const TaskRunView: import("@sinclair/typebox").TObject<{
     }>>;
     retryOf: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     batchIndex: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    unpricedCalls: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
     label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
     execution: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped">;
 }>;
@@ -802,6 +805,7 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
         } | undefined;
         retryOf?: string | undefined;
         batchIndex?: number | undefined;
+        unpricedCalls?: number | undefined;
         id: string;
         taskId: string;
         label: "Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded";
@@ -903,6 +907,7 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
         } | undefined;
         retryOf?: string | undefined;
         batchIndex?: number | undefined;
+        unpricedCalls?: number | undefined;
         id: string;
         taskId: string;
         label: "Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded";
@@ -1143,6 +1148,7 @@ export declare const TasksStatusOutput: import("@sinclair/typebox").TObject<{
         }>>;
         retryOf: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchIndex: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        unpricedCalls: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
         label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
         execution: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped">;
     }>>;
@@ -1213,6 +1219,7 @@ export declare const TasksRunsOutput: import("@sinclair/typebox").TObject<{
         }>>;
         retryOf: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchIndex: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        unpricedCalls: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
         label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
         execution: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped">;
     }>>;
@@ -1366,6 +1373,7 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
         } | undefined;
         retryOf?: string | undefined;
         batchIndex?: number | undefined;
+        unpricedCalls?: number | undefined;
         id: string;
         taskId: string;
         label: "Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded";
@@ -1470,6 +1478,7 @@ export declare const TasksAssessOutput: import("@sinclair/typebox").TObject<{
         }>>;
         retryOf: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchIndex: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        unpricedCalls: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
         label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
         execution: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped">;
     }>;

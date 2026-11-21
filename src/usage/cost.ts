@@ -187,6 +187,16 @@ export function costBreakdown(
   };
 }
 
+/**
+ * One model call's cost in USD, or `undefined` when the catalog has no rates
+ * for its model. A caller that must not report an unknown cost as free reads
+ * this instead of {@link estimateCost}.
+ */
+export function callCostUsd(modelString: string, usage: TokenUsage): number | undefined {
+  const rates = resolveRates(modelString);
+  return rates ? costBreakdown(modelString, usage, rates).total : undefined;
+}
+
 /** Estimate cost in USD from token usage. Returns 0 for unknown models. */
 export function estimateCost(modelString: string, usage: TokenUsage): number {
   return costBreakdown(modelString, usage).total;
