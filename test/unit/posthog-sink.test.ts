@@ -263,6 +263,22 @@ describe("PostHogEventSink", () => {
     expect(freshDone!.properties.iterations).toBe(1);
   });
 
+  it("does not count a held call, which ran nothing, as a call or a failure", async () => {
+    const { mock, sink } = createTestSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+    sink.emit(
+      engineEvent(
+        "tool.done",
+        toolDonePayload({ runId: "r1", name: "linear__list_issues", ms: 0, ok: false, held: true }),
+      ),
+    );
+    sink.emit(toolDoneNamed("r1", "linear__list_issues"));
+    sink.emit(runDone("r1"));
+    const done = mock.events.find((e) => e.event === "agent.chat_completed");
+    expect(done?.properties.tool_calls).toBe(1);
+    expect(done?.properties.connector_tool_calls).toBe(1);
+  });
+
   it("counts calls to connector tools apart from the kernel's own", () => {
     const { mock, sink } = createTestSetup();
     sink.addBuiltinSources(["tasks", "usage"]);
@@ -390,6 +406,39 @@ describe("PostHogEventSink on an identified deployment", () => {
       connector: "app.linear/linear",
       tool: "list_issues",
     });
+  });
+
+  it("sends no tool.called for a held call, only for the call that ran", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+    sink.emit(
+      engineEvent(
+        "tool.done",
+        toolDonePayload({
+          runId: "r1",
+          name: "linear__list_issues",
+          ms: 0,
+          ok: false,
+          held: true,
+          workspaceId: "ws_1",
+        }),
+      ),
+    );
+    sink.emit(toolDoneIn("linear__list_issues"));
+    await settle();
+
+    const calls = mock.events
+      .filter((e) => e.event === "tool.called")
+      .map((e) => own(e.properties));
+    expect(calls).toEqual([
+      {
+        ok: true,
+        duration_ms: 3,
+        source: "connector",
+        connector: "app.linear/linear",
+        tool: "list_issues",
+      },
+    ]);
   });
 
   it("names a person's own plugin by its catalog id, read from their records", async () => {
