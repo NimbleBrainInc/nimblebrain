@@ -324,6 +324,8 @@ export interface SchedulerConfig {
    * of a failing stretch), or that a run's failure auto-disabled the task.
    */
   notifyRunFailed?: (task: Task, run: TaskRun, notice: RunFailedNotice) => void;
+  /** Told of every run recorded as ended, beside the `nb_task_runs_total` count (telemetry). */
+  onRunEnded?: (wsId: string, ownerId: string, run: TaskRun) => void;
 }
 
 /** What a run-failed notice reports beyond the run: whether it disabled the task. */
@@ -1594,7 +1596,7 @@ export class Scheduler {
     };
     saveRunResult(this.config.workDir, wsId, ownerId, ticket.taskId, resultOfRecord(run));
     appendRun(this.config.workDir, wsId, ownerId, ticket.taskId, run);
-    taskRunsTotal.inc({ status: run.status });
+    this.countRun(wsId, ownerId, run);
     const settled: RunTicket = { ...ticket, run };
     saveRunTicket(this.config.workDir, wsId, ownerId, settled);
     this.config.onRunRecorded?.(ownerId);
@@ -1727,6 +1729,16 @@ export class Scheduler {
   }
 
   /** The skipped record's reason for a run admission refused. */
+  /** Count an ended run, and tell `onRunEnded`, whose failure never touches the record. */
+  private countRun(wsId: string, ownerId: string, run: TaskRun): void {
+    taskRunsTotal.inc({ status: run.status });
+    try {
+      this.config.onRunEnded?.(wsId, ownerId, run);
+    } catch {
+      // An observer never fails a recorded run.
+    }
+  }
+
   private refusalReason(reason: AdmissionRefusal, label: "runNow" | "event"): string {
     if (reason === "running") return `Already running (${label})`;
     if (reason === "queued") return `Already queued (${label})`;
@@ -2468,7 +2480,7 @@ export class Scheduler {
     if (appendRecord) {
       saveRunResult(this.config.workDir, wsId, ownerId, task.id, result ?? resultOfRecord(run));
       appendRun(this.config.workDir, wsId, ownerId, task.id, run);
-      taskRunsTotal.inc({ status: run.status });
+      this.countRun(wsId, ownerId, run);
     }
     saveTask(this.config.workDir, wsId, ownerId, auto);
     this.definitions.set(Scheduler.keyOf(auto), auto);
@@ -2572,7 +2584,7 @@ export class Scheduler {
       resultOfRecord(run),
     );
     appendRun(this.config.workDir, auto.workspaceId, auto.ownerId, auto.id, run);
-    taskRunsTotal.inc({ status: run.status });
+    this.countRun(auto.workspaceId, auto.ownerId, run);
     if (requested) this.writeTicket(auto.workspaceId, auto.ownerId, auto.id, requested, run);
     return run;
   }

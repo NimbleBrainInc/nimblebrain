@@ -135,6 +135,10 @@ export class WorkspaceStore {
   private workspacesDir: string;
   private archivedDir: string;
   private membershipChangeHandlers = new Set<MembershipChangeHandler>();
+  private readonly createdHandlers = new Set<(workspace: Workspace) => void>();
+  private readonly memberAddedHandlers = new Set<
+    (wsId: string, userId: string, role: WorkspaceRole) => void
+  >();
   private warnedNonConforming = new Set<string>();
 
   constructor(workDir: string) {
@@ -299,6 +303,8 @@ export class WorkspaceStore {
     // (the SSE manager re-queries memberships for any connected client
     // whose identity matches).
     for (const m of members) this.fireMembershipChanged(m.userId);
+    this.notify(this.createdHandlers, (h) => h(workspace));
+    for (const m of members) this.notify(this.memberAddedHandlers, (h) => h(id, m.userId, m.role));
 
     return workspace;
   }
@@ -434,6 +440,7 @@ export class WorkspaceStore {
 
     await this.atomicWrite(this.wsPath(wsId), updated);
     this.fireMembershipChanged(userId);
+    this.notify(this.memberAddedHandlers, (h) => h(wsId, userId, role));
     return updated;
   }
 
@@ -497,6 +504,31 @@ export class WorkspaceStore {
    * workspace mutation. Synchronous — handlers themselves may schedule
    * async work (e.g. the SSE manager refreshes a client's cached set).
    */
+  /** Call `handler` with each workspace this store creates. Returns its removal. */
+  onCreated(handler: (workspace: Workspace) => void): () => void {
+    this.createdHandlers.add(handler);
+    return () => this.createdHandlers.delete(handler);
+  }
+
+  /** Call `handler` for each member added, at create or later. Returns its removal. */
+  onMemberAdded(handler: (wsId: string, userId: string, role: WorkspaceRole) => void): () => void {
+    this.memberAddedHandlers.add(handler);
+    return () => this.memberAddedHandlers.delete(handler);
+  }
+
+  /** Run each handler; a listener that throws never fails the write it observed. */
+  private notify<H>(handlers: Set<H>, call: (handler: H) => void): void {
+    for (const handler of handlers) {
+      try {
+        call(handler);
+      } catch (err) {
+        log.warn("[workspace-store] listener threw", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
   private fireMembershipChanged(userId: string): void {
     for (const handler of this.membershipChangeHandlers) {
       try {

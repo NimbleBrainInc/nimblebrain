@@ -183,6 +183,38 @@ export class TelemetryManager {
   }
 
   /**
+   * An identified event about a given person or workspace, for moments that
+   * name them outside any request (a sign-up, a member added, a scheduled
+   * run): `about` fills or replaces what the request context would give.
+   * Sends nothing unless the deployment identifies.
+   */
+  captureAbout(
+    event: string,
+    properties: Record<string, unknown>,
+    about: { userId?: string; workspaceId?: string; email?: string; name?: string },
+  ): void {
+    if (!this.identified || this.consent !== "on" || !this.client) return;
+    const subject = this.subjectSource();
+    const userId = about.userId ?? subject?.userId;
+    const workspaceId = about.workspaceId ?? subject?.workspaceId;
+    const groups: Record<string, string> = {};
+    if (this.tenantId) groups.tenant = this.tenantId;
+    if (workspaceId) groups.workspace = workspaceId;
+    const person =
+      userId && (about.email || about.name)
+        ? this.describe({ userId, email: about.email, name: about.name })
+        : subject && userId === subject.userId
+          ? this.describe(subject)
+          : {};
+    this.client.capture({
+      distinctId: userId ?? this.anonymousId,
+      event,
+      properties: { ...commonProperties(), ...properties, ...person },
+      ...(Object.keys(groups).length > 0 ? { groups } : {}),
+    });
+  }
+
+  /**
    * Where identified events find their person: the runtime registers its
    * request context here. Unused unless the deployment set `telemetry.identify`.
    */
