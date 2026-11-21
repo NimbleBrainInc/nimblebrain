@@ -396,6 +396,7 @@ export async function createTasksSource(
     assess: (task, run, result) => assessRun(task, run, result, { port: judgePort }),
     notifyPoorResult: (task, run) => notifyPoorResult(runtime, task, run),
     notifyRunFailed: (task, run, notice) => notifyRunFailed(runtime, task, run, notice),
+    onRunEnded: (wsId, ownerId, run) => captureAutomationRunEnded(runtime, wsId, ownerId, run),
   });
   scheduler.start();
 
@@ -515,6 +516,7 @@ export async function createTasksSource(
         runtime.announceIdentitySourceChange("tasks", owner);
       },
       reloadScheduler: () => scheduler.reload(),
+      onCreated: (task) => captureAutomationCreated(runtime, task),
       runNow: (id, requested) => scheduler.requestRunNow(wsId, owner, id, requested),
       readRunTicket: (runId) => currentTicket(wsId, owner, runId),
       findRunByKey: (id, key) => {
@@ -593,6 +595,7 @@ export async function createTasksSource(
       save: tc.save,
       reloadScheduler: tc.reloadScheduler,
       defaultTimezone: tc.defaultTimezone,
+      onCreated: tc.onCreated,
     };
   });
 
@@ -816,4 +819,45 @@ export async function createTasksSource(
   };
 
   return source;
+}
+
+/**
+ * An automation created, on an identified deployment: how it is triggered and
+ * who made it, never its name or prompt, which are its owner's.
+ */
+export function captureAutomationCreated(
+  runtime: Pick<Runtime, "getTelemetryManager">,
+  task: Task,
+): void {
+  runtime.getTelemetryManager().captureAbout(
+    "automation.created",
+    {
+      trigger: task.schedule?.type ?? "manual",
+      created_by: task.source ?? "agent",
+      kind: task.kind ?? "saved",
+    },
+    { userId: task.ownerId, workspaceId: task.workspaceId },
+  );
+}
+
+/** An automation run that ended, on an identified deployment: its outcome and cost in steps, never its output. */
+export function captureAutomationRunEnded(
+  runtime: Pick<Runtime, "getTelemetryManager">,
+  wsId: string,
+  ownerId: string,
+  run: TaskRun,
+): void {
+  const ended = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
+  const started = Date.parse(run.startedAt);
+  runtime.getTelemetryManager().captureAbout(
+    "automation.run_completed",
+    {
+      status: run.status,
+      trigger: run.trigger ?? "none",
+      tool_calls: run.toolCalls,
+      in_batch: run.batchId !== undefined,
+      ...(Number.isFinite(ended - started) ? { duration_ms: ended - started } : {}),
+    },
+    { userId: ownerId, workspaceId: wsId },
+  );
 }

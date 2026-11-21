@@ -400,6 +400,8 @@ export interface ToolContext {
   definitions: () => Map<string, Task>;
   save: (defs: Map<string, Task>) => void;
   reloadScheduler: () => void;
+  /** Told of each task created, after it is saved (telemetry). */
+  onCreated?: (task: Task) => void;
   /**
    * Ask the scheduler to run the task now; null when it is not loaded.
    * `requested` names the run (its id, input, and idempotency key), and the

@@ -126,6 +126,20 @@ An identified deployment also names what was used, by catalog name only. A conne
 | `connector.installed` | The connector's catalog id |
 | `skill.created` | The skill's scope (`org`, `workspace` or `user`), never its name |
 
+It also sends events for moments in a person's use of the product. None carries a name someone wrote, a prompt, an output or an error message:
+
+| Event | Properties |
+|---|---|
+| `user.signed_up` | The person (their email and name, as above) |
+| `workspace.created` | The workspace |
+| `member.added` | The person added, the workspace, and their role |
+| `connector.auth_started` / `connector.auth_completed` / `connector.auth_failed` | The connector's catalog id or `custom`, `workspace` or `personal`, and for a failure the state it ended in |
+| `connector.auth_lost` | A connected connector that now needs signing in again |
+| `automation.created` | Its trigger (`cron`, `interval`, `event`, `once` or `manual`), who made it (`user` or `agent`), and `saved` or `oneoff` |
+| `automation.run_completed` | Its status, trigger, tool calls, duration, and whether it ran in a batch |
+
+On an identified deployment `automation.created` reports every automation, so the anonymous `task.created` (only automations the agent made) is not sent there.
+
 Everything else in [What is never sent](#what-is-never-sent) still holds, apart from the email address, the person's name, and the catalog names above. `identify` without `"enabled": true` does nothing: a person's yes in the CLI or the web UI never turns it on. Set it only where your terms with the people using the install allow it, and never with the key `npx nimblebrain` ships, which is the NimbleBrain project for anonymous installs.
 
 <Aside type="tip">

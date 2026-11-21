@@ -975,6 +975,21 @@ export class Runtime {
     const allowInsecureRemotes = config.allowInsecureRemotes === true || hostLoopback !== null;
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
+    // Identified telemetry (a no-op otherwise): who signed up, and the
+    // workspaces and memberships they make, from the stores that write them.
+    userStore.onCreated((user) =>
+      telemetryManager.captureAbout(
+        "user.signed_up",
+        {},
+        { userId: user.id, email: user.email, name: user.displayName },
+      ),
+    );
+    workspaceStore.onCreated((ws) =>
+      telemetryManager.captureAbout("workspace.created", {}, { workspaceId: ws.id }),
+    );
+    workspaceStore.onMemberAdded((wsId, userId, role) =>
+      telemetryManager.captureAbout("member.added", { role }, { userId, workspaceId: wsId }),
+    );
     // The runtime is the one owner of the identity provider: the server
     // authenticates with this one, and every permission check here judges the
     // identity it verified. There is no runtime without one: no `instance.json`
