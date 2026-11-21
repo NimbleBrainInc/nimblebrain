@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { MetricsEventSink } from "../../../src/adapters/metrics-events.ts";
 import { llmCallsTotal } from "../../../src/api/metrics.ts";
@@ -6,6 +9,8 @@ import type { EngineEvent } from "../../../src/engine/types.ts";
 import { createAcpRunRecorder } from "../../../src/execution/acp/run-recorder.ts";
 import { transcriptPrompt, userMessageToPrompt } from "../../../src/execution/acp/transcript.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
+import { TelemetryManager } from "../../../src/telemetry/manager.ts";
+import { PostHogEventSink } from "../../../src/telemetry/posthog-sink.ts";
 
 function run(messages: LanguageModelV4Message[], system = "Be helpful."): ResolvedRun {
   return {
@@ -161,6 +166,40 @@ describe("run recorder", () => {
     );
 
     expect((await countCalls()) - before).toBe(2);
+  });
+
+  test("a turn's model calls reach hosted analytics with their tokens and no latency", () => {
+    const captured: { event: string; properties: Record<string, unknown> }[] = [];
+    const telemetry = TelemetryManager.create({
+      workDir: mkdtempSync(join(tmpdir(), "acp-telemetry-")),
+      clientFactory: () => ({
+        capture: (e) => captured.push(e),
+        shutdown: async () => {},
+      }),
+      env: {},
+    });
+    telemetry.setConsent("on");
+    const recorder = createAcpRunRecorder(run([ask]), {
+      events: new PostHogEventSink(telemetry),
+      billSummary: () => {},
+    });
+    recorder.start();
+    recorder.callStarting({ id: "call_1", name: "lookup", input: {} });
+    recorder.finish(
+      { stopReason: "end_turn" },
+      {
+        calls: [
+          { model: "m", purpose: "turn", usage: usage(100, 7) },
+          { model: "m", purpose: "turn", usage: usage(30, 3) },
+        ],
+      },
+      [],
+    );
+
+    const done = captured.find((e) => e.event === "agent.chat_completed");
+    expect(done?.properties).toMatchObject({ iterations: 2, input_tokens: 130, output_tokens: 10 });
+    // ACP reports no per-call timing, so the run's model latency is unknown, not 0.
+    expect(done && "llm_latency_ms" in done.properties).toBe(false);
   });
 
   test("records a run's end exactly once", () => {
