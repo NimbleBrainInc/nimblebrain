@@ -39,7 +39,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
   "version": "1",
 
   "models": {
-    "default":   "anthropic:claude-sonnet-4-6",
+    "default":   "anthropic:claude-sonnet-5-5",
     "fast":      "anthropic:claude-haiku-4-5-20251001"
   },
 
@@ -199,12 +199,12 @@ rather than a flag that would be rejected or ignored:
 
 ## models
 
-The `models` object declares two role-based slots. Each value is a `provider:model-id` string (e.g. `"anthropic:claude-sonnet-4-6"`). The provider is part of the id: a value without one (`"claude-sonnet-4-6"`) is refused at startup, with an error naming the qualified form to write.
+The `models` object declares two role-based slots. Each value is a `provider:model-id` string (e.g. `"anthropic:claude-sonnet-5-5"`). The provider is part of the id: a value without one (`"claude-sonnet-5-5"`) is refused at startup, with an error naming the qualified form to write.
 
 ```json
 {
   "models": {
-    "default":   "anthropic:claude-sonnet-4-6",
+    "default":   "anthropic:claude-sonnet-5-5",
     "fast":      "anthropic:claude-haiku-4-5-20251001"
   }
 }
@@ -215,7 +215,7 @@ The `models` object declares two role-based slots. Each value is a `provider:mod
 | `default` | Chat, general requests, most tool-using turns |
 | `fast` | Conversation titles and both history folds — end-of-turn compaction and the mid-turn fold. Cheap/fast workloads, but still needs a large context window: see below |
 
-A slot left unset resolves to the built-in default model, `anthropic:claude-sonnet-4-6`. The slots are independent: an unset `fast` does not follow `default`.
+A slot left unset resolves to the built-in default model, `anthropic:claude-sonnet-5-5`. The slots are independent: an unset `fast` does not follow `default`.
 
 A workspace can override individual slots via `workspace.json → models`. When a per-request model specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots. `"alias:fast"` is the same reference written explicitly; both spellings resolve identically.
 
@@ -365,7 +365,7 @@ On `mistral-medium-3.5-128b` the platform's default `medium` is not offered, so 
     "nebius": { "apiKey": "..." }
   },
   "models": {
-    "default":   "anthropic:claude-sonnet-4-6",
+    "default":   "anthropic:claude-sonnet-5-5",
     "fast":      "nebius:openai/gpt-oss-120b"
   }
 }

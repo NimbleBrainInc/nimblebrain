@@ -368,7 +368,7 @@ import {
 } from "./workspace-runtime.ts";
 
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
-const DEFAULT_MODEL = "anthropic:claude-sonnet-4-6";
+const DEFAULT_MODEL = "anthropic:claude-sonnet-5-5";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
 import { buildMidTurnCompaction } from "./mid-turn-compaction.ts";

@@ -574,7 +574,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               default: {
                 ...nullable({ type: "string" }),
                 description:
-                  "Primary model for chat, as provider:model-id (e.g. anthropic:claude-sonnet-4-6). null clears the slot.",
+                  "Primary model for chat, as provider:model-id (e.g. anthropic:claude-sonnet-5-5). null clears the slot.",
               },
               fast: {
                 ...nullable({ type: "string" }),
