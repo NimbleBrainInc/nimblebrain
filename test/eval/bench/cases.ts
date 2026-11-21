@@ -77,7 +77,11 @@ export const CASES: BenchCase[] = [
     check: (state) => {
       const errs: string[] = [];
       const f = state.files.find((x) => x.filename.toLowerCase() === "launch.txt");
-      if (!f?.text.includes("4417")) errs.push("launch.txt missing or lacks the code");
+      if (!f) errs.push("no launch.txt");
+      else {
+        if (!f.text.includes("4417")) errs.push("launch.txt lacks the code");
+        if (!/pier\s*9/i.test(f.text)) errs.push("launch.txt lacks the venue");
+      }
       if (!/pier\s*9/i.test(lastResponse(state))) errs.push("answer does not name Pier 9");
       return errs;
     },
@@ -105,7 +109,13 @@ export const CASES: BenchCase[] = [
       const hour = weekdayHour(t.task);
       if (hour !== 9)
         errs.push(`schedule is ${t.task.schedule?.expression ?? "none"}, not weekdays at 9`);
-      if (t.runs.length < 1) errs.push("never ran");
+      // A run that was refused (budget, queue) or stopped is a record, not an execution.
+      if (!t.runs.some((r) => r.status === "success" || r.status === "degraded"))
+        errs.push(
+          t.runs.length
+            ? `no run completed (${t.runs.map((r) => r.status).join(", ")})`
+            : "never ran",
+        );
       return errs;
     },
     tools: {

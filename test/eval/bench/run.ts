@@ -1,8 +1,10 @@
 /**
  * Agent bench: each case, on each model, several times, on a fresh runtime.
  *
- * A run is graded on what it stored and how it got there, not on its reply:
- *   - goal: the case's checks against the workspace's files and tasks
+ * A run is graded on what it stored and how it got there, not on its claims:
+ *   - goal: the case's checks against the workspace's files, tasks and task runs;
+ *     a case that asks a question also checks the answer, and the app cases
+ *     check the open call in the trace
  *   - tools: required calls made, forbidden calls avoided, no duplicates past a case's limit
  *   - honest: on a missed goal, whether the last reply admitted it (a reply
  *     with no admission is a silent failure: the agent said it was done)
@@ -70,9 +72,9 @@ interface RunRecord {
   failedCalls: number;
   /** Same tool with the same input called more than once. */
   repeatedCalls: number;
-  /** Every call in order: its tool, whether it succeeded, its input, and the start of its output. */
-  /** Each turn's reply, in order. */
+  /** Each turn's reply, in order, cut to its first 300 characters. */
   replies: string[];
+  /** Every call in order: its tool, whether it succeeded, its input, and the first 300 characters of its output. */
   trace: Array<{
     turn: number;
     name: string;
@@ -139,6 +141,33 @@ async function readState(runtime: Runtime, workDir: string, wsId: string, turns:
   return { turns, files, tasks } satisfies RunState;
 }
 
+const lastResponse = (turns: ChatResult[]) => turns[turns.length - 1]?.response ?? "";
+
+/** What a run's turns record, whether or not the run reached grading. */
+export function fromTurns(turns: ChatResult[]) {
+  const calls = turns.flatMap((t) => t.toolCalls);
+  return {
+    toolCalls: calls.map((t) => (t.ok ? t.name : `${t.name}!`)),
+    failedCalls: calls.filter((t) => !t.ok).length,
+    repeatedCalls: repeated(turns),
+    replies: turns.map((t) => t.response.slice(0, 300)),
+    trace: turns.flatMap((t, i) =>
+      t.toolCalls.map((c) => ({
+        turn: i + 1,
+        name: c.name,
+        ok: c.ok,
+        input: c.input,
+        output: c.output.slice(0, 300),
+      })),
+    ),
+    inputTokens: turns.reduce((s, t) => s + t.usage.inputTokens, 0),
+    outputTokens: turns.reduce((s, t) => s + t.usage.outputTokens, 0),
+    costUsd: turns.reduce((s, t) => s + t.costUsd, 0),
+    iterations: turns.reduce((s, t) => s + t.usage.iterations, 0),
+    lastReply: lastResponse(turns).slice(0, 400),
+  } satisfies Partial<RunRecord>;
+}
+
 async function runOnce(model: string, c: BenchCase, run: number): Promise<RunRecord> {
   const workDir = join(tmpdir(), `nb-bench-${c.id}-${run}-${Date.now()}`);
   mkdirSync(workDir, { recursive: true });
@@ -170,52 +199,25 @@ async function runOnce(model: string, c: BenchCase, run: number): Promise<RunRec
     }
     const state = await readState(runtime, workDir, wsId, turns);
     const goalFailures = c.check(state);
-    const lastReply = turns[turns.length - 1]?.response ?? "";
-    const calls = turns.flatMap((t) => t.toolCalls);
     return {
       ...base,
+      ...fromTurns(turns),
       goal: goalFailures.length === 0,
       goalFailures,
       toolFailures: scoreTools(turns, c.tools),
-      silentFailure: goalFailures.length > 0 && !ADMITS.test(lastReply),
-      toolCalls: calls.map((t) => (t.ok ? t.name : `${t.name}!`)),
-      failedCalls: calls.filter((t) => !t.ok).length,
-      repeatedCalls: repeated(turns),
-      replies: turns.map((t) => t.response.slice(0, 300)),
-      trace: turns.flatMap((t, i) =>
-        t.toolCalls.map((c) => ({
-          turn: i + 1,
-          name: c.name,
-          ok: c.ok,
-          input: c.input,
-          output: c.output.slice(0, 300),
-        })),
-      ),
-      inputTokens: turns.reduce((s, t) => s + t.usage.inputTokens, 0),
-      outputTokens: turns.reduce((s, t) => s + t.usage.outputTokens, 0),
-      costUsd: turns.reduce((s, t) => s + t.costUsd, 0),
-      iterations: turns.reduce((s, t) => s + t.usage.iterations, 0),
+      silentFailure: goalFailures.length > 0 && !ADMITS.test(lastResponse(turns)),
       wallMs: Date.now() - started,
-      lastReply: lastReply.slice(0, 400),
     };
   } catch (err) {
+    // The turns that completed before the error still cost tokens and left a trace.
     return {
       ...base,
+      ...fromTurns(turns),
       goal: false,
       goalFailures: ["run errored"],
       toolFailures: [],
       silentFailure: false,
-      toolCalls: turns.flatMap((t) => t.toolCalls.map((c) => c.name)),
-      failedCalls: 0,
-      repeatedCalls: 0,
-      replies: [],
-      trace: [],
-      inputTokens: 0,
-      outputTokens: 0,
-      costUsd: 0,
-      iterations: 0,
       wallMs: Date.now() - started,
-      lastReply: "",
       error: err instanceof Error ? err.message : String(err),
     };
   } finally {
@@ -257,26 +259,29 @@ function summarize(records: RunRecord[]): string {
   return `${rows.join("\n")}\n${skipped}\nMeans per run. Silent fail: goal missed and the last reply did not admit it.\n\n## Misses\n\n${misses.join("\n") || "none"}\n`;
 }
 
-const records: RunRecord[] = [];
-for (const m of SKIPPED)
-  process.stdout.write(`${m}: skipped, no ${KEY_ENV[m.split(":")[0] ?? ""]}\n`);
-for (const model of MODELS) {
-  for (const c of CASES.filter((x) => !ONLY || ONLY.includes(x.id))) {
-    for (let i = 1; i <= RUNS; i++) {
-      const r = await runOnce(model, c, i);
-      records.push(r);
-      process.stdout.write(
-        `${model} ${c.id} #${i}: ${r.goal ? "goal" : "MISS"}${r.silentFailure ? " (silent)" : ""} ` +
-          `${(r.wallMs / 1000).toFixed(1)}s ${r.error ? `error: ${r.error}` : ""}\n`,
-      );
+// Run only as the entry point, so a test can import the record builder.
+if (import.meta.main) {
+  const records: RunRecord[] = [];
+  for (const m of SKIPPED)
+    process.stdout.write(`${m}: skipped, no ${KEY_ENV[m.split(":")[0] ?? ""]}\n`);
+  for (const model of MODELS) {
+    for (const c of CASES.filter((x) => !ONLY || ONLY.includes(x.id))) {
+      for (let i = 1; i <= RUNS; i++) {
+        const r = await runOnce(model, c, i);
+        records.push(r);
+        process.stdout.write(
+          `${model} ${c.id} #${i}: ${r.goal ? "goal" : "MISS"}${r.silentFailure ? " (silent)" : ""} ` +
+            `${(r.wallMs / 1000).toFixed(1)}s ${r.error ? `error: ${r.error}` : ""}\n`,
+        );
+      }
     }
   }
-}
 
-mkdirSync(OUT, { recursive: true });
-writeFileSync(join(OUT, "runs.json"), JSON.stringify(records, null, 2));
-const summary = summarize(records);
-writeFileSync(join(OUT, "summary.md"), summary);
-process.stdout.write(`\n${summary}\nResults: ${OUT}\n`);
-// A shut-down runtime's pollers can still hold the event loop open.
-process.exit(0);
+  mkdirSync(OUT, { recursive: true });
+  writeFileSync(join(OUT, "runs.json"), JSON.stringify(records, null, 2));
+  const summary = summarize(records);
+  writeFileSync(join(OUT, "summary.md"), summary);
+  process.stdout.write(`\n${summary}\nResults: ${OUT}\n`);
+  // A shut-down runtime's pollers can still hold the event loop open.
+  process.exit(0);
+}
