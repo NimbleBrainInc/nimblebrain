@@ -53,6 +53,23 @@ hasn't seen it before. The readability tax isn't worth the shortcut.
 **Override.** None. The rule is absolute; refactor to top-level
 `import type` before merge.
 
+### Frontmatter is parsed through one door
+
+Parse and write frontmatter with `parseFrontmatter` / `stringifyFrontmatter`
+from `src/skills/frontmatter.ts`. Never import `gray-matter` anywhere else.
+
+**Rationale.** gray-matter chooses its parser from the language named after
+the opening fence (`---<lang>`), and its built-in non-YAML engines evaluate
+the block as code. Skill documents arrive from users and from connected
+servers, so the parser must treat every one as data. The wrapper accepts YAML
+only and refuses the rest.
+
+**Detection.** The Biome plugin `biome-plugins/gray-matter-door.grit` (run by
+`bun run lint`) on `src/`, `scripts/`, `test/` and `packages/cli/`, except
+the wrapper itself. `test/unit/skills/frontmatter.test.ts` holds the refusal.
+
+**Override.** None.
+
 ---
 
 ## Source text

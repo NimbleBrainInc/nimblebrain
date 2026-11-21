@@ -9,6 +9,13 @@
 }
 
 :8080 {
+	# A deployment kept out of search indexes (NB_NOINDEX=true) says so on every
+	# response, not only in robots.txt: a crawler that ignores robots.txt, or one
+	# that reaches a page through a link, still reads noindex. Substituted at
+	# config load, so unset means the header is never sent.
+	@noindex expression `"{$NB_NOINDEX:false}" == "true"`
+	header @noindex X-Robots-Tag "noindex, nofollow"
+
 	# Status-transparent passthrough: the upstream's HTTP status must reach the
 	# browser unaltered. The web client distinguishes a 401 (log out) from a 503
 	# (`/v1/auth/refresh` transient — keep session, retry), so do NOT add

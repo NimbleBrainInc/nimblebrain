@@ -2,6 +2,7 @@ import { notify, open } from "@nimblebrain/synapse";
 import { useApp } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useEffectEvent, useState } from "react";
 import { STARTED_BY_TEXT, startedByOf } from "../lib/activity.ts";
+import { outcomeOf } from "../lib/outcome.ts";
 import { assessmentReasonText, inputSummary, runName, runTime } from "../lib/plain.ts";
 import { readResult } from "../lib/runResult.ts";
 import { effectiveVerdict } from "../lib/verdict.ts";
@@ -520,6 +521,7 @@ function ResultSub({
   return (
     <>
       <RunBadge label={label} />
+      {label && outcomeOf(label).word !== label && <span className="muted">{label}</span>}
       {taskName && <span>{taskName}</span>}
       {taskGone && <span className="tag">task deleted</span>}
     </>

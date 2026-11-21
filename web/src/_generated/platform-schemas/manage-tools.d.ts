@@ -6,6 +6,5 @@ import { type Static } from "@sinclair/typebox";
 export declare const ManageToolsInput: import("@sinclair/typebox").TObject<{
     add: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     remove: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-    request_plugin: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
 export type ManageToolsInput = Static<typeof ManageToolsInput>;

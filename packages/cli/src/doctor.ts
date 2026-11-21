@@ -1,5 +1,6 @@
+import { findCompose } from "./compose.ts";
 import type { Deps } from "./deps.ts";
-import { CliError, type ErrorCode } from "./result.ts";
+import { CliError, type ErrorCode, type FixVariant } from "./result.ts";
 
 /**
  * The CPU architectures the runtime publishes images for, as Docker reports
@@ -9,8 +10,13 @@ import { CliError, type ErrorCode } from "./result.ts";
  */
 export const SUPPORTED_ARCH = ["x86_64", "amd64", "aarch64", "arm64"];
 
-/** The runtime's working floor, in bytes of memory Docker can give it. */
-export const MIN_MEMORY = 2 * 1024 ** 3;
+/**
+ * The least memory Docker may report, in bytes. The runtime needs 2 GB, but
+ * Docker reports its VM's memory less what the VM's kernel keeps, so a VM set
+ * to 2 GB (Docker Desktop, Colima) reports about 1.9 GB. The floor sits below
+ * that, so following `LOW_MEMORY`'s fix passes.
+ */
+export const MIN_MEMORY = 1.75 * 1024 ** 3;
 
 export interface Check {
   check: string;
@@ -43,7 +49,7 @@ export async function doctor(
   const facts = await checkDaemon(deps, log);
   await checkCompose(deps, log);
   checkArch(facts.arch, log);
-  checkMemory(facts.memory, log);
+  checkMemory(facts, log);
   await checkPort(deps, port, portInUseByUs, log);
   return { ok: true, checks: log.checks, arch: facts.arch };
 }
@@ -51,7 +57,7 @@ export async function doctor(
 interface Recorder {
   checks: Check[];
   pass(check: string, detail: string): void;
-  fail(check: string, code: ErrorCode, detail: string): never;
+  fail(check: string, code: ErrorCode, detail: string, variant?: FixVariant): never;
 }
 
 function recorder(): Recorder {
@@ -61,20 +67,31 @@ function recorder(): Recorder {
     pass: (check, detail) => {
       checks.push({ check, ok: true, detail });
     },
-    fail: (check, code, detail) => {
+    fail: (check, code, detail, variant) => {
       checks.push({ check, ok: false, detail });
-      throw new CliError(code, detail, { check, checks });
+      throw new CliError(code, detail, { check, checks }, variant);
     },
   };
 }
 
 async function checkDocker(deps: Deps, log: Recorder): Promise<void> {
   const version = await deps.exec("docker", ["--version"]);
-  if (version.missing) log.fail("docker", "DOCKER_MISSING", "Docker is not installed.");
+  if (version.missing) {
+    const variant =
+      deps.platform !== "darwin" ? undefined : (await deps.which("brew")) ? "mac_brew" : "mac";
+    log.fail("docker", "DOCKER_MISSING", "Docker is not installed.", variant);
+  }
   log.pass("docker", version.stdout.trim());
 }
 
-async function checkDaemon(deps: Deps, log: Recorder): Promise<{ arch: string; memory: number }> {
+interface DaemonFacts {
+  arch: string;
+  memory: number;
+  /** Which Docker this is, when its fix differs: `docker info`'s `OperatingSystem` and `Name`. */
+  kind?: "docker_desktop" | "colima";
+}
+
+async function checkDaemon(deps: Deps, log: Recorder): Promise<DaemonFacts> {
   const info = await deps.exec("docker", ["info", "--format", "{{json .}}"]);
   if (info.code !== 0) {
     if (/permission denied/i.test(`${info.stderr}\n${info.stdout}`)) {
@@ -86,13 +103,17 @@ async function checkDaemon(deps: Deps, log: Recorder): Promise<{ arch: string; m
   return parseInfo(info.stdout);
 }
 
+/** Compose v2, as Docker's plugin or the standalone `docker-compose` (`findCompose`). */
 async function checkCompose(deps: Deps, log: Recorder): Promise<void> {
-  const compose = await deps.exec("docker", ["compose", "version", "--short"]);
-  const major = Number.parseInt(compose.stdout.trim().replace(/^v/, ""), 10);
-  if (compose.code !== 0 || !(major >= 2)) {
-    log.fail("compose", "COMPOSE_MISSING", "Docker Compose v2 is not available.");
+  const program = await findCompose(deps);
+  if (!program) {
+    const variant = deps.platform === "darwin" && (await deps.which("brew")) ? "brew" : undefined;
+    log.fail("compose", "COMPOSE_MISSING", "Docker Compose v2 is not available.", variant);
   }
-  log.pass("compose", compose.stdout.trim());
+  log.pass(
+    "compose",
+    program.cmd === "docker" ? program.version : `${program.version} (${program.cmd})`,
+  );
 }
 
 function checkArch(arch: string, log: Recorder): void {
@@ -106,12 +127,13 @@ function checkArch(arch: string, log: Recorder): void {
   log.pass("arch", arch);
 }
 
-function checkMemory(memory: number, log: Recorder): void {
+function checkMemory({ memory, kind }: DaemonFacts, log: Recorder): void {
   if (memory > 0 && memory < MIN_MEMORY) {
     log.fail(
       "memory",
       "LOW_MEMORY",
       `Docker has ${gib(memory)} of memory; NimbleBrain needs 2 GB.`,
+      kind,
     );
   }
   log.pass("memory", memory > 0 ? gib(memory) : "unknown");
@@ -123,12 +145,24 @@ async function checkPort(deps: Deps, port: number, ours: boolean, log: Recorder)
   log.pass("port", String(port));
 }
 
-function parseInfo(stdout: string): { arch: string; memory: number } {
+function parseInfo(stdout: string): DaemonFacts {
   try {
-    const info = JSON.parse(stdout) as { Architecture?: unknown; MemTotal?: unknown };
+    const info = JSON.parse(stdout) as {
+      Architecture?: unknown;
+      MemTotal?: unknown;
+      OperatingSystem?: unknown;
+      Name?: unknown;
+    };
     return {
       arch: typeof info.Architecture === "string" ? info.Architecture : "",
       memory: typeof info.MemTotal === "number" ? info.MemTotal : 0,
+      // Colima's default VM is named `colima`; another profile's fix names its profile, so it gets the general one.
+      kind:
+        info.OperatingSystem === "Docker Desktop"
+          ? "docker_desktop"
+          : info.Name === "colima"
+            ? "colima"
+            : undefined,
     };
   } catch {
     return { arch: "", memory: 0 };

@@ -43,6 +43,11 @@ interface Event {
 
 export const reportPath = (home: string) => join(home, "telemetry-report.jsonl");
 
+/** Where a home keeps its anonymous id from `init`'s first attempt on. */
+export const idPath = (home: string) => join(home, "telemetry-id");
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Set to `true` only by the release build (`build:release`, run by the CLI's
  * release workflow). The version cannot tell a release apart: it is committed
@@ -143,6 +148,29 @@ async function send(deps: Deps, home: string, batch: Event[]): Promise<void> {
   else await deps.writeText(reportPath(home), toLines(batch), 0o600);
 }
 
+/**
+ * The home's anonymous id, kept in `telemetry-id` (mode 600) so every `init`
+ * attempt on the home is one install, including attempts that stop at the
+ * checks before anything else is written; `.env` gets it as
+ * `NB_TELEMETRY_ID`, which the runtime reads. Keeping it sends nothing: what
+ * leaves the machine still waits for a yes. Taken from the file, else from a
+ * waiting report, else new. None while telemetry is locked off: nothing is
+ * written, and the install gets no id from the CLI.
+ */
+export async function installId(deps: Deps, home: string): Promise<string | undefined> {
+  if (lockedHere(deps)) return undefined;
+  try {
+    const kept = (await deps.readText(idPath(home)))?.trim();
+    if (kept && UUID.test(kept)) return kept.toLowerCase();
+    const id = (await reportId(deps, home)) ?? randomUUID();
+    await deps.writeText(idPath(home), `${id}\n`, 0o600);
+    return id;
+  } catch {
+    // Telemetry never fails a command; this run counts on its own.
+    return undefined;
+  }
+}
+
 /** The anonymous id a waiting report already uses, so an install's events stay one install. */
 export async function reportId(deps: Deps, home: string): Promise<string | undefined> {
   return (await readReport(deps, home))[0]?.distinct_id;
@@ -215,20 +243,20 @@ export async function settleWaiting(deps: Deps, home: string, version: string): 
 
 /**
  * The answer the CLI holds before the runtime runs, and the install's telemetry
- * settings, as `.env` lines. `asksFirst`: the runtime installed asks before
+ * settings, as `.env` lines, with the install's id when it has one. `asksFirst`: the runtime installed asks before
  * sending (`asksConsent` on its Compose file). Only then does it get the key;
  * an older release sends by default once it has a key.
  */
 export function envValues(
   deps: Deps,
-  id: string,
+  id: string | undefined,
   consent: Consent,
   asksFirst: boolean,
 ): Record<string, string> {
   const values: Record<string, string> = {
-    NB_TELEMETRY_ID: id,
     NB_TELEMETRY_KEY: asksFirst ? telemetryKey(deps) : "",
   };
+  if (id) values.NB_TELEMETRY_ID = id;
   if (consent !== "undecided") values.NB_TELEMETRY_CONSENT = consent;
   return values;
 }

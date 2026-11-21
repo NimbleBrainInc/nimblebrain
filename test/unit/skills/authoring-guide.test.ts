@@ -10,7 +10,7 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import matter from "gray-matter";
+import { parseFrontmatter } from "../../../src/skills/frontmatter.ts";
 import { parseSkillFile } from "../../../src/skills/loader.ts";
 import { validateFrontmatter } from "../../../src/skills/schemas/skill-manifest.ts";
 
@@ -77,7 +77,7 @@ describe("authoring-guide Layer 1 skill", () => {
     // Extract the first ```yaml fenced block (the worked example) and validate it.
     const block = skill.body.match(/```yaml\n([\s\S]*?)```/);
     if (!block) throw new Error("no ```yaml example block found in the guide body");
-    const example = matter(block[1] as string);
+    const example = parseFrontmatter(block[1] as string);
     const result = validateFrontmatter(example.data);
     if (result.ok === false) {
       throw new Error(`worked example frontmatter is invalid: ${result.errors.join("; ")}`);
@@ -103,7 +103,7 @@ describe("vendored skill bodies use the current schema (no removed fields)", () 
   for (const dir of SKILL_DIRS) {
     for (const file of readdirSync(dir).filter((n) => n.endsWith(".md"))) {
       test(`${file} body names no removed schema fields`, () => {
-        const body = matter(readFileSync(resolve(dir, file), "utf-8")).content;
+        const body = parseFrontmatter(readFileSync(resolve(dir, file), "utf-8")).content;
         for (const [label, re] of LEGACY_TOKENS) {
           if (re.test(body)) {
             throw new Error(`${file} still references removed schema field: ${label}`);

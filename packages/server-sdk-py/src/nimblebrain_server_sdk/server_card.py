@@ -34,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import warnings
 from collections.abc import Sequence
 from typing import Any, Literal, NotRequired, Required, TypedDict
 from weakref import WeakKeyDictionary
@@ -75,7 +76,6 @@ _VERSION_MAX = 255
 _VERSION_RANGE = re.compile(r"^[\^~<>=]|(^|\.)[xX*](\.|$)")
 
 _UI_URI = re.compile(r"ui://([^/]+)/(.+)")
-_SIZES = ("compact", "full", "auto")
 
 
 class Placement(TypedDict):
@@ -85,8 +85,11 @@ class Placement(TypedDict):
     shell slot (``"sidebar.apps"``, ``"main"``, ``"settings"``, ...) and ``resourceUri`` the
     ``ui://<authority>/<path>`` resource this server serves there. ``priority`` orders entries
     within a slot (lower first), ``label`` names a sidebar entry, ``icon`` is a Lucide icon name
-    for a ``sidebar.bottom`` entry, ``route`` registers the view at ``/app/<route>``, and
-    ``size`` is a hint the shell does not read.
+    for a ``sidebar.bottom`` entry, and ``route`` registers the view at ``/app/<route>``.
+
+    ``size`` is deprecated: the shell never read it and the host schema no longer has it. A
+    placement that sets it gets a :class:`DeprecationWarning` and the card leaves it out. It is
+    removed in 0.10.
     """
 
     slot: Required[str]
@@ -99,6 +102,7 @@ class Placement(TypedDict):
 
 
 _PLACEMENT_KEYS = frozenset(Placement.__annotations__)
+_SIZES = ("compact", "full", "auto")
 
 # The servers a card is registered on: a second registration would add a route FastMCP never
 # reaches, which would leave the second call's card silently unserved.
@@ -246,7 +250,7 @@ def _build_card(
     if placements:
         card["_meta"] = {
             HOST_META_KEY: {
-                "host_version": _HOST_VERSION,
+                "hostVersion": _HOST_VERSION,
                 "placements": _checked_placements(placements),
             }
         }
@@ -285,8 +289,16 @@ def _checked_placements(placements: Sequence[Placement]) -> list[dict[str, Any]]
                 f"every placement shares one ui:// authority; {uri!r} is not under "
                 f"ui://{authority}/, and a host drops it"
             )
-        size = placement.get("size")
-        if size is not None and size not in _SIZES:
-            raise ValueError(f"a placement's size is one of {_SIZES}, not {size!r}")
-        out.append(dict(placement))
+        kept = dict(placement)
+        if "size" in kept:
+            size = kept.pop("size")
+            if size not in _SIZES:
+                raise ValueError(f"a placement's size is one of {_SIZES}, not {size!r}")
+            warnings.warn(
+                "Placement 'size' is deprecated and left out of the card: the shell never read "
+                "it. Remove it; it is removed in 0.10.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        out.append(kept)
     return out

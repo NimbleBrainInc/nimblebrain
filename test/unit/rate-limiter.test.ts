@@ -29,21 +29,21 @@ describe("RequestRateLimiter", () => {
   });
 
   it("resets after window expires", () => {
-    // 50ms window — the consume() pair below must land inside the same
-    // window. A 1ms window was racy under load (loop spanned >1ms,
-    // silently resetting the count between calls).
-    const windowMs = 50;
-    const limiter = new RequestRateLimiter(2, windowMs);
-    expect(limiter.consume("user-1")).toBe(true);
-    expect(limiter.consume("user-1")).toBe(true);
-    expect(limiter.consume("user-1")).toBe(false);
+    // The clock is the test's, not the machine's: a real-time wait passes or
+    // fails by how fast the machine runs the calls between its readings.
+    const now = spyOn(Date, "now").mockReturnValue(0);
+    try {
+      const windowMs = 60_000;
+      const limiter = new RequestRateLimiter(2, windowMs);
+      expect(limiter.consume("user-1")).toBe(true);
+      expect(limiter.consume("user-1")).toBe(true);
+      expect(limiter.consume("user-1")).toBe(false);
 
-    const start = Date.now();
-    while (Date.now() - start < windowMs * 2) {
-      // busy-wait
+      now.mockReturnValue(windowMs * 2);
+      expect(limiter.consume("user-1")).toBe(true);
+    } finally {
+      now.mockRestore();
     }
-
-    expect(limiter.consume("user-1")).toBe(true);
   });
 
   it("returns the time until the next token without extending it on rejection", () => {
@@ -112,19 +112,36 @@ describe("RequestRateLimiter", () => {
     }
   });
 
-  it("removes expired entries on cleanup", () => {
-    const limiter = new RequestRateLimiter(2, 1);
-    limiter.consume("user-1");
-    limiter.consume("user-1");
-    expect(limiter.consume("user-1")).toBe(false);
-
+  it("test_earns_tokens_against_the_clock_it_is_given", () => {
+    // 600 a minute is a token every 100ms of the wall clock. On an injected
+    // clock that has not moved, a burst earns nothing however long it really
+    // takes, and moving that clock is what refills it.
+    let clockMs = 0;
+    const limiter = new RequestRateLimiter(600, 60_000, () => clockMs);
+    for (let i = 0; i < 600; i++) expect(limiter.consume("u")).toBe(true);
     const start = Date.now();
-    while (Date.now() - start < 5) {
-      // busy-wait
+    while (Date.now() - start < 150) {
+      // busy-wait past one wall-clock token
     }
+    expect(limiter.consume("u")).toBe(false);
+    clockMs += 100;
+    expect(limiter.consume("u")).toBe(true);
+  });
 
-    limiter.cleanup();
-    // After cleanup + expired window, user gets fresh budget
-    expect(limiter.consume("user-1")).toBe(true);
+  it("removes expired entries on cleanup", () => {
+    const now = spyOn(Date, "now").mockReturnValue(0);
+    try {
+      const limiter = new RequestRateLimiter(2, 60_000);
+      limiter.consume("user-1");
+      limiter.consume("user-1");
+      expect(limiter.consume("user-1")).toBe(false);
+
+      now.mockReturnValue(60_000 * 5);
+      limiter.cleanup();
+      // After cleanup + expired window, user gets fresh budget
+      expect(limiter.consume("user-1")).toBe(true);
+    } finally {
+      now.mockRestore();
+    }
   });
 });

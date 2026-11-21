@@ -441,7 +441,10 @@ export const LlmDonePayload = Type.Object({
   model: Type.String(),
   content: opaque<LanguageModelV4Content[]>("AI SDK V4 content blocks."),
   usage: opaque<TokenUsage>("Token usage for this call (`TokenUsage`)."),
-  llmMs: Type.Number(),
+  llmMs: Type.Number({
+    description:
+      "The call's wall time; 0 when the runtime did not time it (an external agent's call, which ACP reports no timing for).",
+  }),
   ttftMs: maybe(Type.Number({ description: "Time to first token; absent with no output part." })),
   estimatedInputTokens: Type.Number(),
   finishReason: opaque<FinishReason>("AI SDK unified finish reason."),
@@ -516,18 +519,38 @@ export const ConnectorUninstalledPayload = Type.Object({
 export type ConnectorUninstalledPayload = Static<typeof ConnectorUninstalledPayload>;
 
 /**
- * A remote connector's connection changed state for one principal:
- * `_workspace` for a workspace-scoped connector, else a member's id.
+ * A person turned their personal connector on or off in a workspace: the
+ * stored grant changed. The grant is that person's own, so the event names
+ * them (`userId`) and reaches their connections alone, never the workspace's
+ * other members. `wsId` says which workspace the grant is for.
  */
-export const ConnectionStateChangedPayload = Type.Object({
+export const ConnectorGrantChangedPayload = Type.Object({
+  userId: Type.String(),
+  serverName: Type.String(),
   wsId: Type.String(),
+  granted: Type.Boolean(),
+});
+export type ConnectorGrantChangedPayload = Static<typeof ConnectorGrantChangedPayload>;
+
+const ConnectionStateChangedFields = {
   serverName: Type.String(),
   connectorName: Type.String(),
   principalId: Type.String(),
   state: opaque<ConnectionState>("The connection's state (`ConnectionState`)."),
   authorizationUrl: Type.Optional(Type.String()),
   lastError: Type.Optional(Type.String()),
-});
+};
+
+/**
+ * A remote connector's connection changed state for one principal. It names
+ * exactly one owner: `wsId` for a workspace's connector (principal
+ * `_workspace`), or `userId` for a person's own plugin, whose connection is
+ * that person's business and reaches their connections alone.
+ */
+export const ConnectionStateChangedPayload = Type.Union([
+  Type.Object({ ...ConnectionStateChangedFields, wsId: Type.String() }),
+  Type.Object({ ...ConnectionStateChangedFields, userId: Type.String() }),
+]);
 export type ConnectionStateChangedPayload = Static<typeof ConnectionStateChangedPayload>;
 
 /**
@@ -750,6 +773,12 @@ export interface EngineEventPayloads {
   "connector.installed": ConnectorInstalledPayload;
   "connector.uninstalled": ConnectorUninstalledPayload;
   /**
+   * A personal connector's grant into a workspace changed (`grant_connector`,
+   * `revoke_connector`, a personal disconnect's revokes, an identity install
+   * that grants). Emitted only when the stored grants changed.
+   */
+  "connector.grant_changed": ConnectorGrantChangedPayload;
+  /**
    * Per-principal connection state change for a remote URL connector.
    * Payload: { wsId, serverName, principalId, state, authorizationUrl? }.
    * Workspace-scoped connectors emit one event stream (principalId = "_workspace");
@@ -841,7 +870,7 @@ export interface EngineEventPayloads {
    */
   "audit.unattended_dispatch": UnattendedDispatchPayload;
   /**
-   * A call to a connector tool its catalog entry declares in `admin_tools`
+   * A call to a connector tool its catalog entry declares in `adminTools`
    * reached the role gate. Emitted once per call, admitted or refused, from
    * the gate every door runs, so no door and no connector has to remember to
    * write it. The connector is never told who called; this line is the only

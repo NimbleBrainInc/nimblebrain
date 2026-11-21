@@ -154,6 +154,16 @@ function existingBatch(
   return existing;
 }
 
+/** What a batch is called and who asked for it: the inline definition's name, and the calling client's. */
+function batchLabels(
+  args: TasksRunBatchInput,
+  ctx: ToolContext,
+): { name?: string; startedVia?: string } {
+  const name = args.definition?.manifest?.name;
+  const startedVia = ctx.callerName?.();
+  return { ...(name ? { name } : {}), ...(startedVia ? { startedVia } : {}) };
+}
+
 export function handleRunBatch(args: TasksRunBatchInput, ctx: ToolContext): TasksRunBatchOutput {
   const port = portOf(ctx);
   const key = args.idempotencyKey;
@@ -189,6 +199,7 @@ export function handleRunBatch(args: TasksRunBatchInput, ctx: ToolContext): Task
     task,
     inputs: args.items,
     concurrency,
+    ...batchLabels(args, ctx),
     ...(args.budgetUsd !== undefined ? { budgetUsd: args.budgetUsd } : {}),
     ...(args.stopWhen ? { stopWhen: args.stopWhen } : {}),
     ...(key !== undefined ? { idempotencyKey: key } : {}),

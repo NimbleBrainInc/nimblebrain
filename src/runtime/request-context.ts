@@ -3,6 +3,7 @@ import type { ToolPromotionControls } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { setRequestIdentitySource } from "../observability/identity.ts";
 import { type SpanAttrs, withRootContext } from "../observability/tracing.ts";
+import type { RunTrigger } from "./run-spec.ts";
 import type { ModelSlots } from "./types.ts";
 
 /**
@@ -125,6 +126,12 @@ export interface RequestContext {
    */
   unattended?: boolean;
   /**
+   * What woke the run this context belongs to (`RunSpec.trigger`). Set once
+   * by the runtime at the run-start door; descriptive only, so nothing may
+   * branch on it (the policy axis is `unattended`). Telemetry reports it.
+   */
+  runTrigger?: RunTrigger;
+  /**
    * True when the call came from the first-party web shell: its REST
    * `tools/call`, or an app view's `/mcp` call under a first-party credential
    * (`isAppCall`). Set by those two doors only, never from caller input, and
@@ -133,6 +140,14 @@ export interface RequestContext {
    * first-party (`oidc`, `dev`) an external client can claim to be a view.
    */
   shellCall?: boolean;
+  /**
+   * The name an outside MCP client gave itself on the call
+   * (`_meta["io.modelcontextprotocol/clientInfo"].name`), capped. Set by the
+   * `/mcp` door for a call that is not the shell's own; never from a header a
+   * browser can set. Self-declared, so it is attribution shown to the owner
+   * ("via Claude Code"), never authority.
+   */
+  clientName?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

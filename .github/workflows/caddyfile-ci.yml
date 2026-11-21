@@ -134,3 +134,53 @@ jobs:
           fi
 
           docker rm -f caddy-cors
+
+      # NB_NOINDEX is substituted at config load, so only a running server shows
+      # whether the header reaches each kind of response: static, the generated
+      # config, and proxied (the matcher sits at site scope, above every handler).
+      - name: NB_NOINDEX sends X-Robots-Tag on every response, and only when true
+        run: |
+          set -euo pipefail
+          mkdir -p srv/assets
+          echo '<html></html>' > srv/index.html
+          head -c 64 /dev/urandom > srv/assets/probe.woff2
+          docker network create noindex
+          docker run -d --name upstream --network noindex "$CADDY_IMAGE" \
+            caddy respond --listen :9000 upstream
+          paths="/ /w/acme /config.js /assets/probe.woff2 /v1/probe /mcp /.well-known/probe"
+          run_with() {
+            docker rm -f caddy-noindex >/dev/null 2>&1 || true
+            docker run -d --name caddy-noindex --network noindex "$@" \
+              -e PLATFORM_URL=http://upstream:9000 \
+              -v "$PWD/web/Caddyfile:/etc/caddy/Caddyfile:ro" \
+              -v "$PWD/srv:/srv:ro" \
+              -p 8081:8080 "$CADDY_IMAGE" >/dev/null
+            for i in $(seq 1 30); do
+              curl -fsS -o /dev/null "http://localhost:8081/" && break || sleep 1
+            done
+            curl -fsS -o /dev/null "http://localhost:8081/" || {
+              echo "FAIL: caddy never became ready"; docker logs caddy-noindex; exit 1; }
+            curl -fsS http://localhost:8081/v1/probe | grep -q upstream || {
+              echo "FAIL: /v1 did not reach the upstream"; docker logs caddy-noindex; exit 1; }
+          }
+
+          echo "--- NB_NOINDEX=true: every response carries noindex ---"
+          run_with -e NB_NOINDEX=true
+          for p in $paths; do
+            curl -sI "http://localhost:8081$p" \
+              | grep -iq '^x-robots-tag: noindex, nofollow' || {
+              echo "FAIL: $p lacks X-Robots-Tag with NB_NOINDEX=true"; exit 1; }
+          done
+
+          for setting in unset false; do
+            echo "--- NB_NOINDEX $setting: no response carries it ---"
+            if [ "$setting" = unset ]; then run_with; else run_with -e NB_NOINDEX=false; fi
+            for p in $paths; do
+              if curl -sI "http://localhost:8081$p" | grep -iq '^x-robots-tag'; then
+                echo "FAIL: $p sends X-Robots-Tag with NB_NOINDEX $setting"; exit 1
+              fi
+            done
+          done
+
+          docker rm -f caddy-noindex upstream
+          docker network rm noindex

@@ -58,15 +58,24 @@ function isSystemTool(t: ToolSchema): boolean {
  * tool (`files`/`conversations`/`tasks`) is held to the same test as an `nb__`
  * one. The task tools reach a turn through the task-authoring skill's
  * `allowed-tools` when its triggers match. Every other kernel tool is proxied.
+ *
+ * `nb__request_plugin` is the one held here for when it is called rather than
+ * how often: the model asks in the message that reads an `nb__search` result
+ * naming the plugin, and proxied it would first cost a promote, a round trip,
+ * and a tools-block rewrite before the person sees the question.
  */
 const DIRECT_KERNEL_TOOLS: ReadonlySet<string> = new Set([
   "nb__use_skill",
   "nb__status",
   "nb__search",
   "nb__manage_tools",
+  "nb__request_plugin",
   "files__read",
   "files__create",
   "files__list",
+  // Showing something is the host's core verb, and a model that has not been
+  // sent this tool answers "I can't open that" instead of searching for it.
+  "nb__open_app",
 ]);
 
 /** A tool is a KERNEL tool, surfaced DIRECT, when it is in {@link DIRECT_KERNEL_TOOLS}. */

@@ -1,5 +1,8 @@
-import { useDataSync, useTrail } from "@nimblebrain/synapse/react";
+import { useApp, useDataSync, useSendMessage, useTrail } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { describeMessage } from "../lib/describe.ts";
+import { savedTaskOf, withSavedTask } from "../lib/saved-task.ts";
+import { viewerTimezone } from "../lib/schedule-zone.ts";
 import type { TaskRun, TaskSummary, TaskWarning } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, toolErrorText } from "../utils.ts";
@@ -8,13 +11,12 @@ import { BatchDialog } from "./BatchDialog.tsx";
 import { BatchScreen } from "./BatchPane.tsx";
 import { HostTrailContext, PageHeader } from "./Chrome.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
-import { type HomeActions, HomeView } from "./HomeView.tsx";
+import { type HomeActions, type HomeTab, HomeView } from "./HomeView.tsx";
 import { ResultScreen } from "./ResultView.tsx";
 import { RunDialog, type RunStarted, runStartedOf } from "./RunDialog.tsx";
 import { TaskEditor } from "./TaskEditor.tsx";
 import { TaskPage, type TaskPageActions } from "./TaskPage.tsx";
 import { type Screen, trailFor, withRun } from "./trail.ts";
-import { UpcomingView } from "./UpcomingView.tsx";
 
 /**
  * Read every task by following `nextCursor` to the end.
@@ -56,6 +58,11 @@ export function TasksUI() {
   const runTool = useTool<string>("run");
   const updateTool = useTool<string>("update");
   const deleteTool = useTool<string>("delete");
+  const app = useApp();
+  const sendMessage = useSendMessage();
+  // Describing one in a sentence hands it to the agent, which asks what it
+  // needs and saves it with tasks__create; a host without chat gets the form.
+  const canChat = !!app.hostCapabilities?.message;
 
   const [stack, setStack] = useState<Screen[]>([]);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
@@ -67,6 +74,7 @@ export function TasksUI() {
   const [runDialog, setRunDialog] = useState<TaskRef | null>(null);
   const [batchDialog, setBatchDialog] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<TaskRef | null>(null);
+  const [homeTab, setHomeTab] = useState<HomeTab>("board");
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
@@ -170,16 +178,23 @@ export function TasksUI() {
     }
   }
 
-  async function setEnabled(task: TaskRef, enabled: boolean) {
+  /** Turn a task on or off; resolves whether it saved. A failure is shown as the notice, so no caller handles it. */
+  async function setEnabled(task: TaskRef, enabled: boolean): Promise<boolean> {
     mark(task.id, enabled ? "resuming" : "pausing");
     try {
-      await updateTool.call({ taskId: task.id, manifest: { enabled } });
+      const res = await updateTool.call({ taskId: task.id, manifest: { enabled } });
+      // One task changed, so its row takes the saved state; reloading every
+      // task, the stats, and the queue here would repeat the read the server's
+      // change announcement already makes.
+      const saved = savedTaskOf(res.data);
+      if (saved) setTasks((prev) => withSavedTask(prev, saved));
+      else refresh();
+      return true;
     } catch (err) {
       setNotice(toolErrorText(err));
-      throw err;
+      return false;
     } finally {
       mark(task.id, null);
-      refresh();
     }
   }
 
@@ -200,9 +215,15 @@ export function TasksUI() {
   const homeActions: HomeActions = {
     onOpenTask: (t) => push({ kind: "task", taskId: t.id, taskName: t.name }),
     onOpenRun: (taskId, runId) => openRun(runId, taskId),
+    onRunNow: (t) => void runNow({ id: t.id, name: t.name, inputSchema: t.inputSchema }),
+    onSetEnabled: (t, enabled) => setEnabled({ id: t.id, name: t.name }, enabled),
     onCreate: (template) => push({ kind: "editor", template: template ?? null }),
-    onSeeUpcoming: () => push({ kind: "upcoming" }),
+    onDescribe: canChat
+      ? (sentence) => sendMessage(describeMessage(sentence, viewerTimezone()))
+      : undefined,
     onSeeActivity: () => push({ kind: "activity" }),
+    onOpenBatch: (batch) => push({ kind: "batch", batchId: batch.id, batch }),
+    onOpenOneoff: (taskId, name) => push({ kind: "activity", taskId, taskName: name }),
   };
 
   const taskActions: TaskPageActions = {
@@ -304,6 +325,8 @@ export function TasksUI() {
             error={error}
             refreshKey={refreshKey}
             actions={homeActions}
+            tab={homeTab}
+            onTab={setHomeTab}
           />
         </div>
       )}
@@ -381,19 +404,6 @@ function ScreenRoute({
             );
           }}
         />
-      );
-    case "upcoming":
-      return (
-        <div className="app">
-          <PageHeader title="Coming up" onBack={onBack} />
-          <main className="content">
-            <UpcomingView
-              refreshKey={refreshKey}
-              onOpenRun={(r) => r.runId && openRun(r.runId, r.taskId)}
-              onOpenTask={(t) => onPush({ kind: "task", taskId: t.id, taskName: t.name })}
-            />
-          </main>
-        </div>
       );
     case "activity":
       return (

@@ -18,7 +18,8 @@ This file holds what applies to every change. A rule tied to specific code lives
 bun install                # Install dependencies
 bun run dev                # API (:27247) + Web (:27246) with watch/HMR
 bun run dev:worktree       # Run from any worktree against an isolated workdir on alt ports — see "Worktree dev" below
-bun run dev:plugins-demo   # Seeded workdir (:27255 / :27254) with every plugin and skill state — see "Plugins demo" below
+bun run dev:plugins-demo   # Seeded workdir (:27255 / :27254, override via NB_API_PORT / NB_WEB_PORT) with every plugin and skill state — see "Plugins demo" below
+bun run dev:scheduled-demo # Seeded workdir (:27257 / :27256, override via NB_API_PORT / NB_WEB_PORT) with a full Scheduled board and run history — see "Scheduled demo" below
 bun run dev:api            # API only with auto-restart
 bun run verify             # Full CI parity — runs every subscript below
 bun run verify:static      # format:check + lint + check + the check:* scripts
@@ -44,7 +45,7 @@ bun run build:platform-apps      # Rebuild every src/platform/*/ui (vite single-
 - **A fresh checkout/worktree must install `web/` AND every `src/platform/*/ui/` before `bun run verify`**, because `verify:static` typechecks and `verify:test-unit` tests those separate packages and root `bun install` does not cover them (the symptom is a missing-module error such as `Cannot find package 'dompurify'`).
 - **`test:unit` runs on root deps alone**, and the backend unit suite imports the shared bridge protocol (`web/src/bridge/*`). So a web-only *value* import must never leak into that graph: keep such deps type-only and inject the value at the browser entry (`web/src/sentry.ts` is the pattern). The `Unit Tests (root deps only)` CI job enforces this.
 - **The dev launchers choose the dev identity provider.** `serve` refuses a workdir with no `instance.json` (ADR-0040), so every launcher goes through `scripts/dev.ts`, which writes `{"auth":{"adapter":"dev"}}` there when the file is absent. Never make the runtime or server infer dev from a missing file.
-- **The dev launchers prepare a fresh checkout.** `dev`, `dev:empty`, `dev:minimal`, `dev:docs-demo`, `dev:plugins-demo`, and `dev:worktree` install `web/` dependencies and build any platform app UI missing its `dist/index.html`; `dev:worktree` also installs root dependencies, since `scripts/dev.ts` imports from `src/`. Only what is absent is done.
+- **The dev launchers prepare a fresh checkout.** `dev`, `dev:empty`, `dev:minimal`, `dev:docs-demo`, `dev:plugins-demo`, `dev:scheduled-demo`, and `dev:worktree` install `web/` dependencies and build any platform app UI missing its `dist/index.html`; `dev:worktree` also installs root dependencies, since `scripts/dev.ts` imports from `src/`. Only what is absent is done.
 - **`bun run dev` does NOT rebuild the platform app UIs.** The API serves each app from its pre-built `src/platform/<name>/ui/dist/index.html`, read on iframe mount, not watched. After editing anything under `src/platform/*/ui/src/`, run `bun run build:platform-apps` and restart the dev server, or the iframe runs stale code.
 
 ### Worktree dev
@@ -60,17 +61,24 @@ bun run build:platform-apps      # Rebuild every src/platform/*/ui (vite single-
 | Origins | `NB_PUBLIC_ORIGIN`, `ALLOWED_ORIGINS`, `NB_WEB_URL` = `http://localhost:<web port>`, unless exported in your shell |
 | LLM keys | `ANTHROPIC_API_KEY` (and friends) from your shell, else `<worktree>/.env`, else the main repo's `.env` |
 
-**A dev launcher owns the origins built from its ports.** `scripts/dev.ts` loads `.env` itself and sets the origins above for the ports it serves, replacing a value the `.env` supplied and keeping one exported in the shell; a `.env` written for the default ports would otherwise point an OAuth callback at another dev server. The launchers on other ports (`dev:worktree`, `dev:empty`, `dev:minimal`, `dev:docs-demo`, `dev:plugins-demo`) run under `bun --no-env-file`, because under Bun's own `.env` load every key reads as the shell's. `dev` and `dev:api` keep Bun's load, so a `.env` origin applies to them as written. Under `--no-web` the origins are the API port's and `NB_WEB_URL` is left alone.
+**A dev launcher owns the origins built from its ports.** `scripts/dev.ts` loads `.env` itself and sets the origins above for the ports it serves, replacing a value the `.env` supplied and keeping one exported in the shell; a `.env` written for the default ports would otherwise point an OAuth callback at another dev server. The launchers on other ports (`dev:worktree`, `dev:empty`, `dev:minimal`, `dev:docs-demo`, `dev:plugins-demo`, `dev:scheduled-demo`) run under `bun --no-env-file`, because under Bun's own `.env` load every key reads as the shell's. `dev` and `dev:api` keep Bun's load, so a `.env` origin applies to them as written. Under `--no-web` the origins are the API port's and `NB_WEB_URL` is left alone.
 
 Reset with `rm -rf .nimblebrain-worktree && bun run dev:worktree`. Share state across worktrees with `NB_WORK_DIR=/abs/path bun run dev:worktree`. Suitable for Chrome DevTools-driven E2E tests against `/v1/*` (no login).
 
 ### Plugins demo
 
-`bun run dev:plugins-demo` (`scripts/dev-plugins-demo.ts`) starts mock MCP servers, seeds `.environments/plugins-demo/`, and runs `scripts/dev.ts` against it with the demo catalog (`.environments/plugins-demo/catalog/`), so the Plugins page, plugin and skill pages, and chat labels can be judged at scale with no sign-in. The fixtures are `scripts/lib/plugins-demo/fixtures.ts`; `test/integration/plugins-demo-seed.test.ts` boots the seed and checks every state.
+`bun run dev:plugins-demo` (`scripts/dev-plugins-demo.ts`) starts mock MCP servers, seeds `.environments/plugins-demo/`, and runs `scripts/dev.ts` against it with the demo catalog (`.environments/plugins-demo/catalog/`) on API / Web ports 27255 / 27254 (override via `NB_API_PORT` / `NB_WEB_PORT`; the origins follow them), so the Plugins page, plugin and skill pages, and chat labels can be judged at scale with no sign-in. The fixtures are `scripts/lib/plugins-demo/fixtures.ts`; `test/integration/plugins-demo-seed.test.ts` boots the seed and checks every state.
 
 - **The seed is dev tooling, not a migration.** It runs before every launch, writes only the demo workdir, and goes through the runtime's stores (`WorkspaceStore`, `IdentityConnectorStore`, `PermissionStore`, `McpOAuthRecords` over the configured `CredentialStore`, the skill writer, the conversation store), so the runtime derives each plugin's state at boot. It is idempotent: found by name, replaced by server name, written when absent.
 - **A state is produced the way the runtime records it.** Connected: a mock server added by URL. Failed: a URL that refuses, answers 503, or 404s. Needs sign-in: a catalog row with no tokens. Sign-in expired: the `auth_lost` flag with no tokens. Needs setup: a static-auth row whose client secret is absent. A connected personal plugin holds placeholder tokens, so calling it in chat fails at its `.example` host.
 - Mock ports are the OS's, so each launch rewrites those rows' URLs. Reset with `git clean -fdX .environments/plugins-demo`.
+
+### Scheduled demo
+
+`bun run dev:scheduled-demo` (`scripts/dev-scheduled-demo.ts`) seeds `.environments/scheduled-demo/` and runs `scripts/dev.ts` against it on API / Web ports 27257 / 27256 (override via `NB_API_PORT` / `NB_WEB_PORT`), so the Scheduled page (the tasks app's panel) can be judged with a full board and Runs tab, no sign-in. The fixtures are `scripts/lib/scheduled-demo/fixtures.ts`, each task naming the board word its runs earn; `test/integration/scheduled-demo-seed.test.ts` boots the seed and checks each word through `healthOf`.
+
+- **The seed writes through the tasks store** (`saveTask`, `saveRunResult` then `appendRun`, `saveBatch`, `writeBatchItems`), so the panel derives every state from runs, as it does for real ones. Every launch removes and rewrites the dev user's tasks in the demo workspace with times relative to now, so the board always reads as current; the workspace is found by name.
+- **The seed starts nothing.** Interval and cron tasks' next fires are ahead, and the batch with items left is paused. A task that comes due while the demo runs fires a real run.
 
 ## Guides
 
@@ -233,7 +241,7 @@ Do not edit these manually:
 
 `.github/workflows/schema-deploy.yml` publishes two hand-authored JSON Schemas and one generated document to `schemas.nimblebrain.ai` on push to `main`. Editing any of them ships it. Adding a file needs its object key granted to the deploy role first, or the upload is refused.
 
-- `src/connectors/catalog/schemas/host-manifest.schema.json` → `/v1/nimblebrain-host.schema.json`: the `ai.nimblebrain/host` `_meta` extension, how an MCP server declares its UI placement in the host shell. It is **published-only** — nothing here validates against it, because the runtime reads that block from a catalog entry it already trusts. No local guard holds it in step with `HostManifestMeta` (`src/connectors/runtime/types.ts`), so change both together.
+- `src/connectors/catalog/schemas/host-manifest.schema.json` → `/v1/nimblebrain-host.schema.json`: the `ai.nimblebrain/host` `_meta` extension, how an MCP server declares its UI placement in the host shell. It is **published-only** — nothing here validates against it, because the runtime reads that block from a catalog entry it already trusts. `test/unit/host-manifest-schema-drift.test.ts` holds it in step with `HostManifestMeta` (`src/connectors/runtime/types.ts`) and `HookDeclaration`, so change them together. Fields are camelCase, the only spelling read; `src/connectors/catalog/host-meta.ts` is the one reader of the raw block, and a block carrying `admin_tools` gates every tool.
 - `web/src/bridge/host-constants.json` → `/v1/nimblebrain-host-bridge.constants.json`: the app bridge's identifiers and limits, which an SDK holding copies of them tests against. Generated (`bun run gen:host-constants`); see [Auto-Generated Files](#auto-generated-files).
 - `src/config/nimblebrain-config.schema.json` is the **canonical source** for the `nimblebrain.json` config schema — edit it here; the repo is upstream of the published artifact. The runtime validates against it at startup. It must stay in lockstep with the runtime feature surface in `src/config/features.ts`; `test/unit/config-schema-drift.test.ts` fails the build on drift.
 

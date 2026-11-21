@@ -16,9 +16,9 @@
 
 import { type Dirent, existsSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import matter from "gray-matter";
 import type { ConnectorSkillCandidate } from "../engine/types.ts";
 import { connectorToolAffinity } from "./connector-skills.ts";
+import { parseFrontmatter } from "./frontmatter.ts";
 import { parseSkillFile, parseSkillParts } from "./loader.ts";
 import type { SkillManifest } from "./types.ts";
 import { writeSkill } from "./writer.ts";
@@ -68,7 +68,7 @@ export function materializeConnectorSkill(args: {
   now: string;
 }): MaterializedConnectorSkill | null {
   const serverDir = join(args.connectorSkillsDir, args.serverName);
-  const { data, content } = matter(args.overlayBody);
+  const { data, content } = parseFrontmatter(args.overlayBody);
   const parsed = parseSkillParts(
     normalizeOverlayBlock(data),
     content,

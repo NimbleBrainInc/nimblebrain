@@ -24,7 +24,7 @@ type Outcome = "redirected" | "done";
 
 /**
  * The agent asked the person to turn on one of their own plugins in the chat's
- * workspace (`nb__manage_tools` `request_plugin`, ADR-0069 "Only the owner
+ * workspace (`nb__request_plugin`, ADR-0069 "Only the owner
  * grants"). The card asks the question the Plugins page asks; "Use here" makes
  * the same first-party `grant_connector` call, and either answer goes to the
  * agent as the person's next message.

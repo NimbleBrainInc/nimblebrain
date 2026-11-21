@@ -276,7 +276,7 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   //      `proxied.length > 0`, so the trace MUST compute this correctly
   //      — the previous hard-coded `false` understated the prompt for
   //      Tier 2/3 workspaces (more than DEFAULT_MAX_DIRECT_TOOLS tools).
-  //   Connector `admin_tools` the caller is not admitted to leave the set
+  //   Connector `adminTools` the caller is not admitted to leave the set
   //   the same way they leave `runtime.chat()`'s.
   const registry = runtime.getRegistryForWorkspace(wsId);
   const admission = await runtime.connectorAdmission(wsId, identity);

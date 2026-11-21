@@ -8,8 +8,6 @@ import { ORG_ADMIN_ROLES, type OrgRole } from "../identity/types.ts";
 export interface FeatureFlags {
   skillManagement?: boolean;
   toolDiscovery?: boolean;
-  /** Catalog search via `nb__search` scope=catalog. */
-  catalogSearch?: boolean;
   fileContext?: boolean;
   userManagement?: boolean;
   workspaceManagement?: boolean;
@@ -29,7 +27,6 @@ export type ResolvedFeatures = Required<FeatureFlags>;
 const DEFAULTS: ResolvedFeatures = {
   skillManagement: true,
   toolDiscovery: true,
-  catalogSearch: true,
   fileContext: true,
   userManagement: true,
   workspaceManagement: true,
@@ -42,7 +39,6 @@ export function resolveFeatures(config?: FeatureFlags): ResolvedFeatures {
   return {
     skillManagement: config.skillManagement ?? true,
     toolDiscovery: config.toolDiscovery ?? true,
-    catalogSearch: config.catalogSearch ?? true,
     fileContext: config.fileContext ?? true,
     userManagement: config.userManagement ?? true,
     workspaceManagement: config.workspaceManagement ?? true,

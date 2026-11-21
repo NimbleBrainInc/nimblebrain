@@ -1,6 +1,7 @@
-import { AlertCircle, Check, ChevronDown, Copy, RotateCcw, Zap } from "lucide-react";
+import { AlertCircle, CalendarClock, Check, ChevronDown, Copy, RotateCcw, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
+import { useChatAnswer } from "../context/ChatAnswerContext";
 import type {
   ChatMessage,
   PreparingTool,
@@ -8,6 +9,7 @@ import type {
   StreamingState,
 } from "../hooks/chat-store";
 import { ledgerChanges } from "../lib/ledger-changes";
+import { scheduleThisMessage } from "../lib/schedule-this";
 import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
 import type { DisplayDetail } from "../lib/tool-display";
 import { BlockTimeline } from "./BlockTimeline";
@@ -137,6 +139,28 @@ function CopyButton({ content }: { content: string }) {
       ) : (
         <Copy className="w-3.5 h-3.5" />
       )}
+    </button>
+  );
+}
+
+/**
+ * Turn the person's own request into a scheduled task: sends it back to the
+ * agent as the next message, quoted. Hidden where nothing can send, and off
+ * while a turn runs.
+ */
+function ScheduleThisButton({ request }: { request: string }) {
+  const answer = useChatAnswer();
+  if (!answer || !request.trim()) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => void answer.send(scheduleThisMessage(request))}
+      disabled={!answer.canAnswer}
+      className="p-1 text-muted-foreground hover:text-foreground rounded transition-all disabled:opacity-40"
+      aria-label="Schedule this"
+      title="Schedule this: run it again on a schedule"
+    >
+      <CalendarClock className="w-3.5 h-3.5" />
     </button>
   );
 }
@@ -456,6 +480,7 @@ function MessageFooter({
       className={`absolute top-full ${msg.role === "user" ? "right-0" : "left-0"} mt-1 flex items-center gap-2 whitespace-nowrap opacity-0 group-hover:opacity-100 metadata-hover transition-opacity duration-200`}
     >
       <CopyButton content={displayContent} />
+      {msg.role === "user" && <ScheduleThisButton request={displayContent} />}
       {showTimestamp && msg.timestamp && (
         <span className="text-3xs text-muted-foreground">{formatRelativeTime(msg.timestamp)}</span>
       )}

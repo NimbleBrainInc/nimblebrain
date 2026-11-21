@@ -29,7 +29,7 @@ const CONNECTOR = "acme-billing-mcp";
 const DECL: HookDeclaration = {
   vendor: "acme",
   route: "/ingest/acme",
-  register_tool: "set_webhook_url",
+  registerTool: "set_webhook_url",
 };
 
 const REGISTER_TOOL: Tool = {
@@ -46,7 +46,7 @@ let workDir: string;
 let cleanup: () => void;
 let store: WorkspaceStore;
 let wsId: string;
-/** Every `register_tool` call the reconcile made, with the URL it handed over. */
+/** Every `registerTool` call the reconcile made, with the URL it handed over. */
 let registered: { vendor: string; url: string }[] = [];
 
 function makeDeps(over: Partial<HookReconcileDeps> = {}): HookReconcileDeps {

@@ -1645,6 +1645,57 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
     ).rejects.toThrow("not both");
   });
 
+  test("an inline definition's name labels the one-off without becoming its id", async () => {
+    const ctx = makeCtx({ callerName: () => "Claude Code" });
+    const result = await handleRun(
+      {
+        definition: { body: "Grade the account's fit.", manifest: { name: "Fit grade, arm A" } },
+        idempotencyKey: "fit-a",
+      },
+      ctx,
+    );
+    if (!("run" in result)) throw new Error(`expected a run, got ${JSON.stringify(result)}`);
+    const oneoff = loadDefs().get(result.run.taskId);
+    expect(oneoff?.id).toStartWith("oneoff-");
+    expect(oneoff?.name).toBe("Fit grade, arm A");
+    expect(oneoff?.startedVia).toBe("Claude Code");
+
+    // The list says who made it and what it does, for the Runs list.
+    const [row] = handleList({ kind: "oneoff" }, ctx).tasks;
+    expect(row).toMatchObject({
+      name: "Fit grade, arm A",
+      startedVia: "Claude Code",
+      promptPreview: "Grade the account's fit.",
+    });
+
+    // A repeat under the same key with another label is the same one-off, not a refusal:
+    // the label is display only.
+    const again = await handleRun(
+      {
+        definition: { body: "Grade the account's fit.", manifest: { name: "Renamed" } },
+        idempotencyKey: "fit-a",
+      },
+      ctx,
+    );
+    if (!("run" in again) && !("runId" in again)) {
+      throw new Error(`expected the same run, got ${JSON.stringify(again)}`);
+    }
+    expect(loadDefs().get(result.run.taskId)?.name).toBe("Fit grade, arm A");
+  });
+
+  test("a one-off with no name and no client is named by its id, with no attribution", async () => {
+    const ctx = makeCtx();
+    const result = await handleRun({ definition: { body: "p" } }, ctx);
+    if (!("run" in result)) throw new Error(`expected a run, got ${JSON.stringify(result)}`);
+    const oneoff = loadDefs().get(result.run.taskId);
+    expect(oneoff?.name).toBe(oneoff?.id);
+    expect(oneoff?.startedVia).toBeUndefined();
+    // A saved task never carries the one-off fields.
+    handleCreate(createArgs("Saved", "p", { intervalMs: 60_000 }), ctx);
+    const saved = handleList({}, ctx).tasks.find((t) => t.id === "saved");
+    expect(saved?.promptPreview).toBeUndefined();
+  });
+
   test("refuses a call with neither a task nor a definition", async () => {
     await expect(handleRun({ input: { a: 1 } }, makeCtx())).rejects.toThrow(
       "Give `taskId` (a task to run, from tasks__list) or `definition`",

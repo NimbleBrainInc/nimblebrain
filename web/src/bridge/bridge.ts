@@ -1194,16 +1194,14 @@ async function callToolViaMcp(
   //      it does for reads, so `/mcp` knows the call is this app's and holds it
   //      to the MCP Apps app scope: a tool whose `ui.visibility` lacks "app" is
   //      refused there, since only the runtime knows each tool's visibility.
-  //      A personal connector's marker needs no special handling here, and that
-  //      is a property of the code rather than an assumption. `server` is the
-  //      name the iframe was mounted under, which comes from
-  //      `appNameFromToolName` — and that KEEPS the marker. So if a connector
-  //      ever does mount an iframe, `my_gmail__send` goes out marked and lands on
-  //      the identity door. Today none can: a `ui://` read resolves through
-  //      `readIdentityAppResource` (kernel identity sources) or `readAppResource`
-  //      (the workspace registry) and a connector is in neither, so
-  //      `BlockTimeline` refuses to mount one. Both halves fail safe; neither
-  //      relies on the other.
+  //      A personal connector's marker needs no special handling here.
+  //      `server` is the name the iframe was mounted under, which comes from
+  //      `appNameFromToolName` and KEEPS the marker, so a personal app's
+  //      `my_gmail__send` goes out marked: `/mcp` routes it through the
+  //      identity door to the caller's own granted connection, and its reads
+  //      and listings resolve `my_gmail` there too. A personal app cannot name
+  //      the workspace's `gmail__*` (another server, refused above and on
+  //      `/mcp`), and a workspace app cannot name `my_gmail__*`.
   const qualifiedName = params.name.includes("__") ? params.name : `${server}__${params.name}`;
   if (!getActiveWorkspaceId()) {
     return {

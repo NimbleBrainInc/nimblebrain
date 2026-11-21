@@ -24,10 +24,11 @@ import { parseAdminToolsDeclaration } from "../../permissions/admin-tools.ts";
 import { validateAdditionalAuthorizationParams } from "../../util/oauth-params.ts";
 import { isHttpUrl } from "../../util/url.ts";
 import { parseAccountLookup } from "./account-lookup.ts";
+import { getNimbleBrainHostMeta, hostBlockViolation } from "./host-meta.ts";
 import {
   type ComposioConnectorConfig,
   getNimbleBrainConnectorMeta,
-  getNimbleBrainHostMeta,
+  NIMBLEBRAIN_HOST_META_KEY,
   type NimbleBrainConnectorMeta,
   type SecretHeaderRef,
   type ServerDetail,
@@ -148,11 +149,12 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
   if (!remote) return null;
   const iconUrl = s.icons?.[0]?.src;
   const meta = getNimbleBrainConnectorMeta(s);
-  const ui = hostMetaToUiMeta(getNimbleBrainHostMeta(s));
-  const hooks = parseHookDeclarations(getNimbleBrainHostMeta(s));
-  const notifications = parseNotificationsDeclaration(getNimbleBrainHostMeta(s));
-  const adminTools = parseAdminToolsDeclaration(getNimbleBrainHostMeta(s), s.name);
-  const recordArguments = getNimbleBrainHostMeta(s)?.record_arguments === true;
+  const host = getNimbleBrainHostMeta(s);
+  const ui = hostMetaToUiMeta(host);
+  const hooks = parseHookDeclarations(host);
+  const notifications = parseNotificationsDeclaration(host);
+  const adminTools = parseAdminToolsDeclaration(host, s.name);
+  const recordArguments = host?.recordArguments === true;
   const account = parseAccountLookup(meta?.account);
   // The "interactive" chip is cosmetic catalog metadata (no runtime behavior). Derive
   // it from whether the connector renders a VALID UI: an explicit connector flag OR a
@@ -205,8 +207,8 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
  *     catalog override OAuth-flow-critical parameters)
  *   - inBandAuthErrors that is not a list of specific-enough strings (a short
  *     fragment would read unrelated failures as a refused credential)
- *   - a host block whose host_version is not major 1 (see
- *     {@link isSupportedHostVersion})
+ *   - a host block that is not an object, or whose hostVersion is not major 1
+ *     (see {@link hostBlockViolation})
  */
 export function validateServerDetailSafety(s: ServerDetail): string | null {
   for (const icon of s.icons ?? []) {
@@ -269,18 +271,5 @@ function oauthClientSetupViolation(meta: NimbleBrainConnectorMeta | undefined): 
 }
 
 function hostVersionViolation(s: ServerDetail): string | null {
-  const host = getNimbleBrainHostMeta(s);
-  if (host === undefined || host === null || isSupportedHostVersion(host.host_version)) return null;
-  return `host_version must be major 1 ("1.0"): ${JSON.stringify(host.host_version)}`;
-}
-
-/**
- * Whether this runtime can read a host block of this `host_version`. Only the
- * major is a contract: blocks are added under major 1 without a bump and are
- * enabled by being present. A different major is a contract this runtime
- * predates, and it would otherwise parse that block as major 1 and ignore what
- * it does not know, so the entry is dropped: it cannot be installed.
- */
-function isSupportedHostVersion(v: unknown): boolean {
-  return typeof v === "string" && /^1(\.\d+)?$/.test(v);
+  return hostBlockViolation(s._meta?.[NIMBLEBRAIN_HOST_META_KEY]);
 }

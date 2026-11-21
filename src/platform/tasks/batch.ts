@@ -139,6 +139,8 @@ export interface NewBatch {
   budgetUsd?: number;
   stopWhen?: BatchStopRule;
   idempotencyKey?: string;
+  name?: string;
+  startedVia?: string;
   createdBy: string;
 }
 
@@ -391,6 +393,8 @@ export class BatchDriver {
       counts: { ...emptyCounts(), pending: items.length },
       costUsd: 0,
       ...(spec.idempotencyKey !== undefined ? { idempotencyKey: spec.idempotencyKey } : {}),
+      ...(spec.name ? { name: spec.name } : {}),
+      ...(spec.startedVia ? { startedVia: spec.startedVia } : {}),
       createdAt: now,
       updatedAt: now,
       createdBy: spec.createdBy,

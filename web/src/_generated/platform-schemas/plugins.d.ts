@@ -60,6 +60,8 @@ export declare const Plugin: import("@sinclair/typebox").TObject<{
     /** Unique within the listing and stable across calls. Opaque: read `owner` and `servers`, never parse it. */
     id: import("@sinclair/typebox").TString;
     displayName: import("@sinclair/typebox").TString;
+    /** What the plugin does, in a line: its catalog entry's description, when it has one. */
+    description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     iconUrl: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     owner: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
         kind: import("@sinclair/typebox").TLiteral<"workspace">;
@@ -109,6 +111,8 @@ export declare const PluginsListOutput: import("@sinclair/typebox").TObject<{
         /** Unique within the listing and stable across calls. Opaque: read `owner` and `servers`, never parse it. */
         id: import("@sinclair/typebox").TString;
         displayName: import("@sinclair/typebox").TString;
+        /** What the plugin does, in a line: its catalog entry's description, when it has one. */
+        description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         iconUrl: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         owner: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
             kind: import("@sinclair/typebox").TLiteral<"workspace">;
@@ -153,10 +157,20 @@ export declare const PluginsListOutput: import("@sinclair/typebox").TObject<{
 }>;
 export type PluginsListOutput = Static<typeof PluginsListOutput>;
 /**
+ * `nb__request_plugin`: a model asks the caller to turn on one of their own
+ * plugins in the workspace its run is in (ADR-0070). Its own tool, not a field
+ * of `nb__manage_tools`: promotion is the native engine's state, which an
+ * external agent runtime does not have, while a request touches none of it.
+ */
+export declare const RequestPluginInput: import("@sinclair/typebox").TObject<{
+    plugin: import("@sinclair/typebox").TString;
+}>;
+export type RequestPluginInput = Static<typeof RequestPluginInput>;
+/**
  * A model's request to use one of the caller's own plugins in the workspace
- * its run is in (`nb__manage_tools` `request_plugin`, ADR-0069 "Only the owner
- * grants"). The request writes nothing: a first-party client shows it to the
- * plugin's owner, and only their answer there writes the grant.
+ * its run is in (`nb__request_plugin`, ADR-0069 "Only the owner grants"). The
+ * request writes nothing: a first-party client shows it to the plugin's owner,
+ * and only their answer there writes the grant.
  */
 export declare const PluginRequest: import("@sinclair/typebox").TObject<{
     /** The plugin's server: the name `grant_connector` takes. */
@@ -197,6 +211,6 @@ export type PluginRequestOutput = Static<typeof PluginRequestOutput>;
 export declare const PluginRequestAnswer: import("@sinclair/typebox").TObject<{
     /** The plugin's server, as the request named it. */
     serverName: import("@sinclair/typebox").TString;
-    answer: import("@sinclair/typebox").TUnsafe<"not_now" | "use">;
+    answer: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"use">, import("@sinclair/typebox").TLiteral<"not_now">]>;
 }>;
 export type PluginRequestAnswer = Static<typeof PluginRequestAnswer>;

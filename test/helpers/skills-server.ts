@@ -11,8 +11,8 @@
 
 import { createHash } from "node:crypto";
 import type { Server } from "@modelcontextprotocol/server";
-import matter from "gray-matter";
 import { z } from "zod";
+import { parseFrontmatter } from "../../src/skills/frontmatter.ts";
 import { SKILLS_EXTENSION_ID } from "../../src/skills/skills-extension.ts";
 
 /** Spread into a fixture server's `capabilities` to declare the extension. */
@@ -56,7 +56,7 @@ export function skillEntryFor(uri: string, text: string, files: Record<string, s
   const root = `${uri.replace(/\/SKILL\.md$/, "")}/`;
   return {
     uri,
-    frontmatter: JSON.parse(JSON.stringify(matter(text).data)) as Record<string, unknown>,
+    frontmatter: JSON.parse(JSON.stringify(parseFrontmatter(text).data)) as Record<string, unknown>,
     resources: [
       fileRow(uri, text),
       ...Object.entries(files)

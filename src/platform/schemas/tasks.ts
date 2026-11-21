@@ -374,10 +374,25 @@ function inlineDefinition<T extends TProperties>(fields: T, what: string) {
   return Type.Object(
     {
       manifest: Type.Optional(
-        Type.Object(fields, {
-          additionalProperties: false,
-          description: "As tasks__create's manifest, minus name, schedule, enabled, and kind.",
-        }),
+        Type.Object(
+          {
+            ...fields,
+            name: Type.Optional(
+              Type.String({
+                minLength: 1,
+                maxLength: 120,
+                description:
+                  'What to call it in the Runs list, e.g. "Fit grade pilot, arm A". Display ' +
+                  "only: it names no task and is not part of what an idempotencyKey compares.",
+              }),
+            ),
+          },
+          {
+            additionalProperties: false,
+            description:
+              "As tasks__create's manifest, minus schedule, enabled, and kind; `name` is optional and only labels it.",
+          },
+        ),
       ),
       body: Type.Optional(
         Type.String({
@@ -982,6 +997,10 @@ export const TaskSummary = Type.Object({
   estimatedCostPerDay: Type.Number(),
   /** The task's input schema, when it has one: a caller can ask for the input before it runs. */
   inputSchema: Type.Optional(JsonObject),
+  /** A one-off's: the client that made it, by its own name. */
+  startedVia: Type.Optional(Type.String()),
+  /** A one-off's: the start of its prompt, to recognize it by. */
+  promptPreview: Type.Optional(Type.String()),
 });
 export type TaskSummary = Static<typeof TaskSummary>;
 
@@ -1142,6 +1161,8 @@ export const TaskRunRecord = Type.Object({
   batchIndex: Type.Optional(Type.Number()),
   /** What the run's model calls cost, in USD. */
   costUsd: Type.Optional(Type.Number()),
+  /** Model calls no rates were known for; their cost is not in `costUsd`. */
+  unpricedCalls: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 export type TaskRunRecord = Static<typeof TaskRunRecord>;
 
@@ -1559,6 +1580,10 @@ export const TaskBatchRecord = Type.Object({
   counts: TaskBatchCounts,
   costUsd: Type.Number(),
   idempotencyKey: Type.Optional(Type.String()),
+  /** What the caller called it. */
+  name: Type.Optional(Type.String()),
+  /** The client that asked for it, by its own name. */
+  startedVia: Type.Optional(Type.String()),
   createdAt: Type.String(),
   updatedAt: Type.String(),
   completedAt: Type.Optional(Type.String()),
@@ -1735,6 +1760,21 @@ export const TaskRunStats = Type.Object({
   /** The newest run, whenever it started. */
   lastRun: Type.Optional(
     Type.Object({ id: Type.String(), startedAt: Type.String(), label: TaskRunLabel }),
+  ),
+  /**
+   * The newest runs, newest first, whenever they started (batch runs left
+   * out): what a list draws as a strip, read in the same pass as `lastRun`.
+   */
+  recent: Type.Optional(
+    Type.Array(
+      Type.Object({
+        id: Type.String(),
+        startedAt: Type.String(),
+        label: TaskRunLabel,
+        /** The run's error, cut to a line. */
+        error: Type.Optional(Type.String()),
+      }),
+    ),
   ),
 });
 export type TaskRunStats = Static<typeof TaskRunStats>;

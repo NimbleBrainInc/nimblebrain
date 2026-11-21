@@ -183,8 +183,7 @@ export const TRANSLUCENT_TINTS: readonly [tint: ColorToken, source: ColorToken][
  * here, and recording it computes the ratio.
  */
 export const ALPHA_TEXT: readonly [token: TokenName, pct: number, grounds: TokenName[]][] = [
-  // `BriefingView` list items and the `SkillsTab` description, both on the
-  // page ground.
+  // Skill descriptions and monospace details, on the page ground or a card.
   ["foreground", 80, ["background", "card"]],
 ];
 

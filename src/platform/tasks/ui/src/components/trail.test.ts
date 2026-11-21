@@ -13,28 +13,27 @@ const DIGEST = { id: "digest", name: "Digest" };
 
 describe("trailFor", () => {
   test("the home list is the root alone", () => {
-    expect(labels([])).toEqual(["Tasks"]);
+    expect(labels([])).toEqual(["Scheduled"]);
     expect(trailFor([])[0]?.id).toBe(TRAIL_ROOT_ID);
   });
 
   test("one crumb per page", () => {
-    expect(labels([TASK])).toEqual(["Tasks", "Digest"]);
-    expect(labels([{ kind: "upcoming" }])).toEqual(["Tasks", "Coming up"]);
-    expect(labels([{ kind: "activity" }])).toEqual(["Tasks", "Every run"]);
+    expect(labels([TASK])).toEqual(["Scheduled", "Digest"]);
+    expect(labels([{ kind: "activity" }])).toEqual(["Scheduled", "Every run"]);
     expect(labels([TASK, { kind: "activity", taskId: "digest", taskName: "Digest" }])).toEqual([
-      "Tasks",
+      "Scheduled",
       "Digest",
       "All runs",
     ]);
     expect(labels([TASK, { kind: "result", runId: "run_abcdef123456", taskId: "digest" }])).toEqual(
-      ["Tasks", "Digest", "Run"],
+      ["Scheduled", "Digest", "Run"],
     );
     expect(labels([TASK, { kind: "editor", taskId: "digest" }])).toEqual([
-      "Tasks",
+      "Scheduled",
       "Digest",
       "Edit",
     ]);
-    expect(labels([{ kind: "editor" }])).toEqual(["Tasks", "New task"]);
+    expect(labels([{ kind: "editor" }])).toEqual(["Scheduled", "New"]);
   });
 
   test("each crumb leads to the stack up to its page: the task crumb to the task page", () => {

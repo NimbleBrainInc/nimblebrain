@@ -2,8 +2,8 @@ import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import matter from "gray-matter";
 import { log } from "../../src/observability/log.ts";
+import { parseFrontmatter } from "../../src/skills/frontmatter.ts";
 import { loadScopedSkills, parseSkillContent } from "../../src/skills/loader.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../src/skills/truncate.ts";
 import type { SkillManifest } from "../../src/skills/types.ts";
@@ -81,7 +81,7 @@ describe("authoring round-trip preserves the full stored body", () => {
     writeSkill(dir, "big", manifest, body);
     // Edit only the description (no new body) — the body must survive intact.
     updateSkill(dir, "big", { description: "edited" });
-    const onDisk = matter(readFileSync(join(dir, "big.md"), "utf-8")).content.trim();
+    const onDisk = parseFrontmatter(readFileSync(join(dir, "big.md"), "utf-8")).content.trim();
     expect(onDisk.length).toBe(body.length);
   });
 });

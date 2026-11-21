@@ -84,6 +84,8 @@ function uniqueTmpSuffix(): string {
 export class UserStore {
   private usersDir: string;
 
+  private readonly createdHandlers = new Set<(user: User) => void>();
+
   constructor(workDir: string) {
     this.usersDir = join(workDir, "users");
     if (!existsSync(this.usersDir)) {
@@ -132,6 +134,12 @@ export class UserStore {
     return users;
   }
 
+  /** Call `handler` with each user this store creates (a first sign-in). Returns its removal. */
+  onCreated(handler: (user: User) => void): () => void {
+    this.createdHandlers.add(handler);
+    return () => this.createdHandlers.delete(handler);
+  }
+
   async create(data: CreateUserData): Promise<User> {
     // Enforce email uniqueness
     const existing = await this.getByEmail(data.email);
@@ -157,6 +165,13 @@ export class UserStore {
     const userDir = join(this.usersDir, id);
     mkdirSync(userDir, { recursive: true });
     await this.atomicWrite(this.profilePath(id), user);
+    for (const handler of this.createdHandlers) {
+      try {
+        handler(user);
+      } catch {
+        // A listener never fails the sign-up that created the user.
+      }
+    }
 
     return user;
   }

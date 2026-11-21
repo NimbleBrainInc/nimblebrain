@@ -13,7 +13,7 @@ The shell layout has the following slots:
 
 | Slot | Where it renders | Description |
 |------|------------------|-------------|
-| `sidebar.<group>` | Left sidebar, under the focused workspace's **Apps** heading, and the workspace overview's app grid | Your app's entry in the workspace. Every `sidebar.<group>` placement renders in the one **Apps** group, whatever the group name. Give it a `route`. |
+| `sidebar.<group>` | Left sidebar, under the focused workspace's **Apps** heading | Your app's entry in the workspace. Every `sidebar.<group>` placement renders in the one **Apps** group, whatever the group name. Give it a `route`. |
 | `sidebar` | No nav entry for a connector | Reserved for the host's own views (Conversations, Tasks, Files). A connector's `sidebar` placement with a `route` still registers that route. |
 | `sidebar.bottom` | The bottom of the mobile navigation drawer | A pinned item. It does not render in the desktop sidebar. |
 | `main` | A route, with no nav entry | A full-page view. Requires a `route`. Reachable by URL or when your app navigates to it. |
@@ -29,7 +29,7 @@ Add a `placements` array to your manifest's `_meta["ai.nimblebrain/host"]`:
 {
   "_meta": {
     "ai.nimblebrain/host": {
-      "host_version": "1.0",
+      "hostVersion": "1.0",
       "placements": [
         {
           "slot": "sidebar.apps",
@@ -58,11 +58,11 @@ priority: 50  → appears second
 priority: 100 → appears third (default)
 ```
 
-The sidebar shows the first four apps under **Apps**, then a **View all** link to the workspace overview, which lists every app. There is no grouping by priority band.
+The sidebar lists every app under **Apps**, a member's pinned apps first. There is no grouping by priority band.
 
 ### An app with several views
 
-A server that declares more than one `sidebar.<group>` placement is still one app. The sidebar lists it once, under the connector's catalog `title`, and that entry opens its first placement by priority. While any of its placements is open, they list beneath the entry by `label`, so the views are the app's own navigation: give each a `label`, its own `route`, and its own `resourceUri`. The top bar names the app ahead of the view (**Outreach › Campaigns**), so a view's own trail starts at the view and never repeats the app's name. The four-app cap and the **View all** count are in apps, not in views.
+A server that declares more than one `sidebar.<group>` placement is still one app. The sidebar lists it once, under the connector's catalog `title`, and that entry opens its first placement by priority. While any of its placements is open, they list beneath the entry by `label`, so the views are the app's own navigation: give each a `label`, its own `route`, and its own `resourceUri`. The top bar names the app ahead of the view (**Outreach › Campaigns**), so a view's own trail starts at the view and never repeats the app's name.
 
 ```json
 "placements": [
@@ -100,7 +100,7 @@ The virtual `primary` resource path resolves to the **first declared placement's
 Under the focused workspace, the sidebar shows:
 
 1. **The host's views**: Conversations, Tasks, Files, and the Inbox.
-2. **Apps**: `sidebar.<group>` placements, one entry per server, sorted by the priority of its first placement and capped at four with a **View all** link. A server's other placements list beneath its entry while it is open.
+2. **Apps**: `sidebar.<group>` placements, one entry per server, sorted by the priority of its first placement, after the member's pinned apps. A server's other placements list beneath its entry while it is open.
 3. **Connectors without a sidebar placement**: one shared row after the apps, showing their icons and a count, that links to the workspace's installed connectors.
 
 The **Apps** heading carries a **+** that opens the connector catalog, shown to members who can change the workspace.
@@ -126,7 +126,7 @@ The resolver accepts kebab-case or PascalCase (`"message-square"` and `"MessageS
 
 ## Size hints
 
-The `size` field (`"compact"`, `"full"`, `"auto"`) is accepted as a hint. The shell does not read it. A `main` or `sidebar.<group>` view fills the main area; a `settings` component is sized to its content.
+A `main` or `sidebar.<group>` view fills the main area; a `settings` component is sized to its content.
 
 ## Placement registry internals
 
@@ -162,7 +162,7 @@ const items = registry.forWorkspace("ws_0030a37f450693bf");
 {
   "_meta": {
     "ai.nimblebrain/host": {
-      "host_version": "1.0",
+      "hostVersion": "1.0",
       "placements": [
         {
           "slot": "sidebar.apps",
@@ -177,7 +177,7 @@ const items = registry.forWorkspace("ws_0030a37f450693bf");
 }
 ```
 
-This adds **CRM** under the workspace's **Apps** heading and to the workspace overview, and loads `ui://dashboard` at `/w/<slug>/app/crm` when clicked.
+This adds **CRM** under the workspace's **Apps** heading, and loads `ui://dashboard` at `/w/<slug>/app/crm` when clicked.
 
 <Aside type="tip">
 One `sidebar.apps` placement with a `route` gives your app both a nav entry and a page. Add a `main` placement only for a second page you reach by navigation, not from the sidebar.

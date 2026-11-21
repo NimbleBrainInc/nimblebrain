@@ -9,19 +9,19 @@ describe("shell tour steps", () => {
     expect(steps.at(-1)?.anchor).toBe("ask");
   });
 
-  test("stay short: five stops after the welcome, the catalog and skills both on Plugins → Browse", () => {
+  test("stay short: four stops after the welcome, the catalog on Browse plugins and skills on Skills", () => {
     const steps = stepsFor(false);
-    expect(steps.length).toBe(6);
+    expect(steps.length).toBe(5);
     expect(steps.find((s) => s.anchor === "catalog")?.page).toBe("browse");
-    expect(steps.find((s) => s.anchor === "skills")?.page).toBe("browse");
+    expect(steps.find((s) => s.anchor === "skills")?.page).toBe("skills");
   });
 
   test("return to Overview before the last step", () => {
     expect(stepsFor(false).at(-1)?.page).toBe("overview");
   });
 
-  test("leave out the sidebar's stops on a phone, where it is a closed drawer", () => {
-    expect(stepsFor(true).map((s) => s.anchor)).toEqual([null, "apps", "catalog", "skills", "ask"]);
+  test("leave out the sidebar's stop on a phone, where it is a closed drawer", () => {
+    expect(stepsFor(true).map((s) => s.anchor)).toEqual([null, "catalog", "skills", "ask"]);
   });
 });
 

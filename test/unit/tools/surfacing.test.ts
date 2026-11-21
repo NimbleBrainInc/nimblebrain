@@ -363,6 +363,12 @@ describe("composeSystemPrompt — apps injection", () => {
 // the conversation's cached prefix. Keeping them direct keeps the prefix stable.
 
 describe("surfaceTools — direct kernel tools are the named hot set", () => {
+  it("Tier 2: nb__open_app is direct, so a turn can show what it is asked to", () => {
+    const all = [...makeSystemTools(4), makeTool("nb__open_app"), ...makeAppTools("todos", 46)];
+    const result = surfaceTools(all, null);
+    expect(result.direct.map((t) => t.name)).toContain("nb__open_app");
+  });
+
   it("Tier 2: the hot identity tools are direct; cold ones are proxied with the connectors", () => {
     const system = makeSystemTools(4); // all four are in the direct set
     const hot = [makeTool("files__read"), makeTool("files__create"), makeTool("files__list")];
