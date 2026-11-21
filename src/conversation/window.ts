@@ -112,16 +112,14 @@ export function applyReasoningReplayPolicy(
 /**
  * Sliding window for conversation messages.
  * Always keeps the first message (the anchor — the conversation's leading user
- * turn), the current turn's request (the latest user message), and the last
- * atomic group, so a model mid-tool-loop still sees what it was asked. The rest
- * fills the remaining budget newest first: the current turn's earlier calls,
- * then older turns. An exhausted budget therefore never collapses to the oldest
- * turn, and never drops the request being worked on.
+ * turn) and the last atomic group (the most recent assistant/tool-result unit),
+ * plus as many of the intervening recent messages as fit within the token
+ * budget. An exhausted budget therefore never collapses to just the oldest turn.
  *
  * Tool call/result pairs are kept atomic — an assistant message with tool-call
  * parts is never separated from its corresponding tool message with tool-result parts.
- * `mandatoryOverBudget` reports when the anchor, the request, and the last
- * group alone exceed the budget; those messages cannot be removed by a tighter window.
+ * `mandatoryOverBudget` reports when the anchor and last atomic group alone
+ * exceed the budget; those messages cannot be removed by a tighter window.
  */
 export interface WindowMessagesResult {
   messages: LanguageModelV4Message[];
@@ -148,53 +146,31 @@ export function windowMessages(
   const rest = messages.slice(1);
   const groups = groupMessages(rest);
 
-  // Mandatory: the anchor, the last atomic group (so a tool-result is never
-  // orphaned), and the current turn's request (the latest user message after
-  // the anchor). Mid-tool-loop, a model that loses its request redoes an older
-  // turn, so the request outranks everything but the anchor and the last group.
-  const sum = (ms: LanguageModelV4Message[]) => ms.reduce((t, m) => t + estimateTokens(m), 0);
-  const last = groups.length - 1;
-  const lastGroup = groups[last]!;
-  const req = groups.findLastIndex((g) => g[0]!.role === "user");
-  const request = req >= 0 && req < last ? groups[req]! : [];
+  // The last atomic group (the most recent assistant/tool-result unit) is always
+  // retained, so an exhausted budget never collapses to just the oldest anchor.
+  // It's atomic, so a tool-result is never orphaned. (Mid-tool-loop this group
+  // may be a tool-call/result without the originating user turn — retaining back
+  // to the last user message would be a further improvement, out of scope here.)
+  const lastGroup = groups[groups.length - 1]!;
+  const lastGroupTokens = lastGroup.reduce((sum, m) => sum + estimateTokens(m), 0);
 
   // Reserve the anchor (kept unconditionally — the leading message must be the
-  // user turn, which Anthropic requires), the request, and the last group; the
-  // remainder is for the rest. It can go negative — e.g. a single large tool
+  // user turn, which Anthropic requires) plus the last group; the remainder is
+  // for older history. The remainder can go negative — e.g. a single large tool
   // result exceeds the budget on a small-context model, an ordinary case. Keep
   // the mandatory messages intact and report that a tighter window cannot
   // shrink them, so the engine can avoid a futile provider-overflow retry.
-  const budget = maxTokens - firstTokens - sum(request) - sum(lastGroup);
+  let budget = maxTokens - firstTokens - lastGroupTokens;
   const mandatoryOverBudget = budget < 0;
 
-  // Fill newest first: the current turn's earlier calls, then older turns.
-  // Stop at the first group that does not fit, so what is kept stays contiguous.
-  const turnStart = req >= 0 && req < last ? req + 1 : last;
-  const turn = fillNewestFirst(groups.slice(turnStart, last), budget);
-  const oldEnd = req >= 0 && req < last ? req : last;
-  const old = turn.full ? [] : fillNewestFirst(groups.slice(0, oldEnd), turn.budget).kept;
-
-  return {
-    messages: [first, ...old.flat(), ...request, ...turn.kept.flat(), ...lastGroup],
-    mandatoryOverBudget,
-  };
-}
-
-/**
- * Keep the newest groups that fit in `budget`, stopping at the first that does
- * not, so what is kept is a contiguous suffix. `full` reports that one did not fit.
- */
-function fillNewestFirst(
-  groups: LanguageModelV4Message[][],
-  budget: number,
-): { kept: LanguageModelV4Message[][]; budget: number; full: boolean } {
+  // Walk backward from the second-to-last group, accumulating what still fits.
   const kept: LanguageModelV4Message[][] = [];
-  let left = budget;
-  for (let i = groups.length - 1; i >= 0; i--) {
-    const groupTokens = groups[i]!.reduce((t, m) => t + estimateTokens(m), 0);
-    if (left - groupTokens < 0) return { kept, budget: left, full: true };
-    left -= groupTokens;
+  for (let i = groups.length - 2; i >= 0; i--) {
+    const groupTokens = groups[i]!.reduce((sum, m) => sum + estimateTokens(m), 0);
+    if (budget - groupTokens < 0) break;
+    budget -= groupTokens;
     kept.unshift(groups[i]!);
   }
-  return { kept, budget: left, full: false };
+
+  return { messages: [first, ...kept.flat(), ...lastGroup], mandatoryOverBudget };
 }
