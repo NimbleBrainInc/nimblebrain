@@ -73,6 +73,8 @@ export interface TelemetrySubject {
   email?: string;
   name?: string;
   workspaceId?: string;
+  /** What woke the current run: `chat`, `schedule`, `manual`, `event` or `api`. */
+  trigger?: string;
 }
 
 export type TelemetryClientFactory = (
@@ -230,6 +232,12 @@ export class TelemetryManager {
   /** The workspace of the current request, on an identified deployment. */
   currentWorkspaceId(): string | undefined {
     return this.identified ? this.subjectSource()?.workspaceId : undefined;
+  }
+
+  /** What woke the current run (`RunTrigger`). Identified deployments only. */
+  currentTrigger(): string | undefined {
+    if (!this.identified) return undefined;
+    return this.subjectSource()?.trigger;
   }
 
   /** Whether events name the person (`telemetry.identify` with `enabled: true`). */
