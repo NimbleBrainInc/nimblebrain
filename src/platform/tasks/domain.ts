@@ -56,6 +56,8 @@ export interface TaskDomainContext {
   save: (defs: Map<string, Task>) => void;
   reloadScheduler: () => void;
   defaultTimezone: string;
+  /** Told of each task created, after it is saved (telemetry). Never fails the create. */
+  onCreated?: (task: Task) => void;
 }
 
 /**
@@ -340,6 +342,11 @@ export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): Cr
   defs.set(id, task);
   ctx.save(defs);
   ctx.reloadScheduler();
+  try {
+    ctx.onCreated?.(task);
+  } catch {
+    // An observer never fails the create it observed.
+  }
 
   return { task, message: `Task "${input.name}" created (id: ${id}).` };
 }

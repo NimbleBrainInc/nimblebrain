@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from "bun:test";
 import {
-  getNimbleBrainHostMeta,
   hostBlockViolation,
   normalizeHostMeta,
+  retiredHostKeys,
 } from "../../src/connectors/catalog/host-meta.ts";
 import { serverDetailToCatalogEntry } from "../../src/connectors/catalog/projection.ts";
 import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
@@ -11,17 +11,14 @@ import { log } from "../../src/observability/log.ts";
 import { parseAdminToolsDeclaration } from "../../src/permissions/admin-tools.ts";
 
 /**
- * The host block's read boundary: either spelling in, camelCase out, every
- * two-copy rule failing closed and keyed on presence. Each renamed field runs
- * the same matrix: snake only, camel only, both equal, both differing,
- * malformed.
+ * The host block's read boundary: camelCase is the only spelling read. A
+ * snake_case key is read as absent, except `admin_tools`, whose presence gates
+ * every tool on the server.
  */
 
-let entrySeq = 0;
-/** A fresh entry name per call, so a once-per-process warning is not swallowed by an earlier test. */
-const entry = () => `ai.acme/entry-${++entrySeq}`;
-
-const normalize = (raw: Record<string, unknown>) => normalizeHostMeta(raw, entry());
+let connectorSeq = 0;
+/** A fresh connector name per call, so a once-per-process warning is not swallowed by an earlier test. */
+const connector = () => `ai.acme/entry-${++connectorSeq}`;
 
 let warn: Mock<typeof log.warn>;
 beforeEach(() => {
@@ -32,29 +29,23 @@ afterEach(() => {
 });
 
 describe("hostVersion", () => {
-  test("snake only is read as hostVersion", () => {
-    expect(normalize({ host_version: "1.0" })?.hostVersion).toBe("1.0");
-    expect(hostBlockViolation({ host_version: "1.0" })).toBeNull();
-  });
-
-  test("camel only", () => {
-    expect(normalize({ hostVersion: "1.2" })?.hostVersion).toBe("1.2");
+  test("camelCase is read", () => {
+    expect(normalizeHostMeta({ hostVersion: "1.2" })?.hostVersion).toBe("1.2");
     expect(hostBlockViolation({ hostVersion: "1.2" })).toBeNull();
   });
 
-  test("both equal", () => {
-    expect(hostBlockViolation({ hostVersion: "1.0", host_version: "1.0" })).toBeNull();
+  test("host_version alone is no version, so the entry is dropped", () => {
+    expect(normalizeHostMeta({ host_version: "1.0" })?.hostVersion).toBeUndefined();
+    expect(hostBlockViolation({ host_version: "1.0" })).toContain("major 1");
   });
 
-  test("both differing drops the entry, even when both are major 1", () => {
-    expect(hostBlockViolation({ hostVersion: "1.0", host_version: "1.1" })).toContain("disagree");
-    expect(hostBlockViolation({ hostVersion: "1.0", host_version: null })).toContain("disagree");
+  test("host_version beside a valid hostVersion changes nothing", () => {
+    expect(hostBlockViolation({ hostVersion: "1.0", host_version: "2.0" })).toBeNull();
   });
 
   test("malformed, or another major, drops the entry", () => {
     for (const v of [null, 1, "2.0", "", "v1"]) {
       expect(hostBlockViolation({ hostVersion: v })).toContain("major 1");
-      expect(hostBlockViolation({ host_version: v })).toContain("major 1");
     }
     expect(hostBlockViolation({ placements: [] })).toContain("major 1");
     expect(hostBlockViolation("1.0")).toContain("not an object");
@@ -64,48 +55,28 @@ describe("hostVersion", () => {
 });
 
 describe("adminTools", () => {
-  const parse = (raw: Record<string, unknown>) =>
-    parseAdminToolsDeclaration(normalize({ hostVersion: "1.0", ...raw }), "ai.acme/crm");
+  const parse = (raw: Record<string, unknown>, name = connector()) =>
+    parseAdminToolsDeclaration(normalizeHostMeta({ hostVersion: "1.0", ...raw }), name);
 
-  test("snake only", () => {
-    expect(parse({ admin_tools: ["configure"] })).toEqual({ kind: "names", names: ["configure"] });
-  });
-
-  test("camel only", () => {
+  test("a well-formed list gates those names", () => {
     expect(parse({ adminTools: ["configure"] })).toEqual({ kind: "names", names: ["configure"] });
-  });
-
-  test("both equal", () => {
-    expect(parse({ adminTools: ["configure"], admin_tools: ["configure"] })).toEqual({
+    expect(parse({ adminTools: ["configure", "configure"] })).toEqual({
       kind: "names",
       names: ["configure"],
     });
   });
 
-  test("both differing gates the union", () => {
-    expect(parse({ adminTools: ["configure"], admin_tools: ["rotate", "configure"] })).toEqual({
-      kind: "names",
-      names: ["configure", "rotate"],
-    });
-    // An empty copy declares nothing, so it narrows nothing away.
-    expect(parse({ adminTools: [], admin_tools: ["rotate"] })).toEqual({
-      kind: "names",
-      names: ["rotate"],
-    });
+  test("an empty list, or no key, declares nothing", () => {
+    expect(parse({ adminTools: [] })).toBeUndefined();
+    expect(parse({})).toBeUndefined();
   });
 
-  test("a malformed copy in either spelling gates every tool", () => {
+  test("a malformed value gates every tool", () => {
     for (const bad of [null, "configure", false, 0, {}, [""], ["has space"]]) {
-      expect(parse({ admin_tools: bad })?.kind).toBe("all");
       expect(parse({ adminTools: bad })?.kind).toBe("all");
-      expect(parse({ adminTools: ["configure"], admin_tools: bad })?.kind).toBe("all");
-      expect(parse({ adminTools: bad, admin_tools: ["configure"] })?.kind).toBe("all");
     }
-  });
-
-  test("a copy over the cap gates every tool, though the other is well-formed", () => {
-    const over = Array.from({ length: 65 }, (_, i) => `tool_${i % 30}`);
-    expect(parse({ adminTools: ["configure"], admin_tools: over })?.kind).toBe("all");
+    const over = Array.from({ length: 65 }, (_, i) => `tool_${i}`);
+    expect(parse({ adminTools: over })?.kind).toBe("all");
   });
 
   test("a present key is a declaration whatever its value", () => {
@@ -113,159 +84,115 @@ describe("adminTools", () => {
   });
 });
 
-describe("the gated admin set holds every name from either spelling", () => {
-  // Every pair over these shapes: absent, empty, disjoint, overlapping, equal.
-  const shapes: (string[] | undefined)[] = [
-    undefined,
-    [],
-    ["configure"],
-    ["rotate", "export"],
-    ["configure", "purge"],
-    ["configure", "rotate", "export", "purge", "invite", "set_webhook_url"],
-  ];
+describe("the admin_tools tombstone", () => {
+  const parse = (raw: Record<string, unknown>, name = connector()) =>
+    parseAdminToolsDeclaration(normalizeHostMeta({ hostVersion: "1.0", ...raw }), name);
 
-  test("over every pair of copies", () => {
-    let differingDual = 0;
-    for (const camel of shapes) {
-      for (const snake of shapes) {
-        const raw: Record<string, unknown> = { hostVersion: "1.0" };
-        if (camel) raw.adminTools = camel;
-        if (snake) raw.admin_tools = snake;
-        if (camel?.length && snake?.length && camel !== snake) differingDual++;
-        const decl = parseAdminToolsDeclaration(normalize(raw), "ai.acme/crm");
-        const names = [...(camel ?? []), ...(snake ?? [])];
-        if (names.length === 0) {
-          expect(decl).toBeUndefined();
-          continue;
-        }
-        expect(decl?.kind).toBe("names");
-        expect(decl?.kind === "names" ? [...decl.names].sort() : []).toEqual(
-          [...new Set(names)].sort(),
-        );
-      }
-    }
-    // The matrix exercises the merge, not just one copy at a time.
-    expect(differingDual).toBe(12);
+  test("admin_tools alone gates every tool", () => {
+    const decl = parse({ admin_tools: ["configure"] });
+    expect(decl?.kind).toBe("all");
+    expect(decl?.kind === "all" ? decl.reason : "").toContain("admin_tools");
   });
 
-  test("the cap applies to the union: two copies naming over 64 distinct tools gate every tool", () => {
-    const camel = Array.from({ length: 64 }, (_, i) => `tool_${i}`);
-    const decl = parseAdminToolsDeclaration(
-      normalize({ hostVersion: "1.0", adminTools: camel, admin_tools: ["tool_64"] }),
-      "ai.acme/crm",
-    );
-    expect(decl?.kind).toBe("all");
+  test("admin_tools beside a valid adminTools gates every tool", () => {
+    expect(parse({ adminTools: ["configure"], admin_tools: ["configure"] })?.kind).toBe("all");
+    expect(parse({ adminTools: ["configure"], admin_tools: ["rotate"] })?.kind).toBe("all");
+    expect(parse({ adminTools: [], admin_tools: [] })?.kind).toBe("all");
+  });
+
+  test("a malformed admin_tools gates every tool, keyed on presence not value", () => {
+    for (const bad of [null, undefined, false, 0, "", "configure", {}, [], [""], ["has space"]]) {
+      expect(parse({ admin_tools: bad })?.kind).toBe("all");
+      expect(parse({ adminTools: ["configure"], admin_tools: bad })?.kind).toBe("all");
+    }
+  });
+
+  test("warns once per connector, naming admin_tools and adminTools as the spelling", () => {
+    const name = connector();
+    parse({ admin_tools: ["configure"] }, name);
+    parse({ admin_tools: ["configure"] }, name);
+    const lines = warn.mock.calls.map(([m]) => m).filter((m) => m.includes(name));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("admin_tools");
+    expect(lines[0]).toContain("adminTools is the spelling");
+    expect(lines[0]).toContain("every tool on it is admin-only");
+  });
+
+  test("the projected catalog entry carries the gate", () => {
+    const detail: ServerDetail = {
+      name: connector(),
+      description: "Acme",
+      version: "1.0.0",
+      remotes: [{ type: "streamable-http", url: "https://acme.test/mcp" }],
+      _meta: { "ai.nimblebrain/host": { hostVersion: "1.0", admin_tools: ["configure"] } },
+    };
+    expect(serverDetailToCatalogEntry(detail)?.adminTools?.kind).toBe("all");
   });
 });
 
 describe("recordArguments", () => {
   const granted = (raw: Record<string, unknown>) =>
-    normalize({ hostVersion: "1.0", ...raw })?.recordArguments;
+    normalizeHostMeta({ hostVersion: "1.0", ...raw })?.recordArguments;
 
-  test("snake only", () => {
-    expect(granted({ record_arguments: true })).toBe(true);
-  });
-
-  test("camel only", () => {
+  test("true grants", () => {
     expect(granted({ recordArguments: true })).toBe(true);
   });
 
-  test("both equal", () => {
-    expect(granted({ recordArguments: true, record_arguments: true })).toBe(true);
-  });
-
-  test("both differing grants nothing", () => {
-    expect(granted({ recordArguments: true, record_arguments: false })).toBe(false);
-    expect(granted({ recordArguments: false, record_arguments: true })).toBe(false);
-  });
-
-  test("a malformed copy grants nothing", () => {
-    for (const bad of ["true", 1, null, undefined, {}]) {
+  test("a malformed value grants nothing", () => {
+    for (const bad of ["true", 1, null, undefined, {}, false]) {
       expect(granted({ recordArguments: bad })).toBe(false);
-      expect(granted({ recordArguments: true, record_arguments: bad })).toBe(false);
     }
   });
 
   test("absent is not declared", () => {
     expect(granted({})).toBeUndefined();
   });
+
+  test("record_arguments is not read", () => {
+    expect(granted({ record_arguments: true })).toBeUndefined();
+    expect(granted({ recordArguments: false, record_arguments: true })).toBe(false);
+  });
 });
 
 describe("a hook's registerTool and headerRenames", () => {
   const BASE = { vendor: "acme", route: "/ingest/acme" };
   const hooks = (hook: Record<string, unknown>) =>
-    parseHookDeclarations(normalize({ hostVersion: "1.0", hooks: [hook] }));
+    parseHookDeclarations(normalizeHostMeta({ hostVersion: "1.0", hooks: [hook] }));
 
-  test("snake only", () => {
-    expect(
-      hooks({ ...BASE, register_tool: "set_url", header_renames: { Authorization: "x-sig" } }),
-    ).toEqual([{ ...BASE, registerTool: "set_url", headerRenames: { authorization: "x-sig" } }]);
-  });
-
-  test("camel only", () => {
+  test("camelCase is read", () => {
     expect(
       hooks({ ...BASE, registerTool: "set_url", headerRenames: { Authorization: "x-sig" } }),
     ).toEqual([{ ...BASE, registerTool: "set_url", headerRenames: { authorization: "x-sig" } }]);
   });
 
-  test("both equal", () => {
-    expect(
-      hooks({
-        ...BASE,
-        registerTool: "set_url",
-        register_tool: "set_url",
-        headerRenames: { a: "x-a", b: "x-b" },
-        header_renames: { b: "x-b", a: "x-a" },
-      }),
-    ).toEqual([{ ...BASE, registerTool: "set_url", headerRenames: { a: "x-a", b: "x-b" } }]);
+  test("register_tool alone is no registerTool, so the hook is dropped", () => {
+    expect(hooks({ ...BASE, register_tool: "set_url" })).toEqual([]);
   });
 
-  test("both differing drops that hook, keeps the others, and warns", () => {
-    const name = entry();
-    const meta = normalizeHostMeta(
-      {
-        hostVersion: "1.0",
-        hooks: [
-          { ...BASE, registerTool: "set_url", register_tool: "other" },
-          { vendor: "beta", route: "/in/beta", registerTool: "set_url" },
-        ],
-      },
-      name,
-    );
-    expect(parseHookDeclarations(meta).map((h) => h.vendor)).toEqual(["beta"]);
+  test("header_renames is not read", () => {
     expect(
-      hooks({
-        ...BASE,
-        registerTool: "set_url",
-        headerRenames: { a: "x-a" },
-        header_renames: { a: "x-b" },
-      }),
-    ).toEqual([]);
-    expect(hooks({ ...BASE, registerTool: "set_url", register_tool: null })).toEqual([]);
-    expect(warn.mock.calls.some(([m]) => m.includes(name) && m.includes("dropped"))).toBe(true);
+      hooks({ ...BASE, registerTool: "set_url", header_renames: { Authorization: "x-sig" } }),
+    ).toEqual([{ ...BASE, registerTool: "set_url" }]);
   });
 
-  test("malformed in either spelling drops the hook", () => {
-    expect(hooks({ ...BASE, register_tool: "" })).toEqual([]);
+  test("a malformed registerTool drops the hook", () => {
+    expect(hooks({ ...BASE, registerTool: "" })).toEqual([]);
     expect(hooks({ ...BASE, registerTool: 7 })).toEqual([]);
-    expect(hooks({ ...BASE, register_tool: "set_url", header_renames: "nope" })).toEqual([
-      { ...BASE, registerTool: "set_url" },
-    ]);
   });
 });
 
 describe("the normalized block", () => {
-  test("carries only camelCase keys and no retired field", () => {
-    const meta = normalize({
-      host_version: "1.0",
+  test("carries only the camelCase fields it knows", () => {
+    const meta = normalizeHostMeta({
+      hostVersion: "1.0",
       name: "Hello",
       icon: "hand",
       category: "ops",
       primaryView: {},
       briefing: {},
-      admin_tools: ["configure"],
-      record_arguments: true,
-      hooks: [{ vendor: "acme", route: "/in", register_tool: "set" }],
+      adminTools: ["configure"],
+      recordArguments: true,
+      hooks: [{ vendor: "acme", route: "/in", registerTool: "set" }],
       placements: [],
       notifications: { resource: "acme://n" },
     });
@@ -281,43 +208,36 @@ describe("the normalized block", () => {
 
   test("is undefined for no block or one that is not an object", () => {
     for (const raw of [undefined, null, "1.0", 7, []]) {
-      expect(normalizeHostMeta(raw, entry())).toBeUndefined();
+      expect(normalizeHostMeta(raw)).toBeUndefined();
     }
+  });
+
+  test("logs nothing for a camelCase block, nor for an ignored snake key", () => {
+    normalizeHostMeta({ hostVersion: "1.0", adminTools: ["configure"], record_arguments: true });
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 
-describe("the deprecation warning", () => {
-  function detail(name: string, host: Record<string, unknown>): ServerDetail {
-    return {
-      name,
-      description: "Acme",
-      version: "1.0.0",
-      remotes: [{ type: "streamable-http", url: "https://acme.test/mcp" }],
-      _meta: { "ai.nimblebrain/host": host },
-    };
-  }
-
-  test("names every snake key, once per entry per process", () => {
-    const name = entry();
-    const d = detail(name, {
-      host_version: "1.0",
-      admin_tools: ["configure"],
-      hooks: [{ vendor: "acme", route: "/in", register_tool: "set" }],
-    });
-    getNimbleBrainHostMeta(d);
-    serverDetailToCatalogEntry(d);
-    serverDetailToCatalogEntry(d);
-    const lines = warn.mock.calls.map(([m]) => m).filter((m) => m.includes(name));
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("deprecated host key");
-    for (const key of ["host_version", "admin_tools", "hooks[].register_tool"]) {
-      expect(lines[0]).toContain(key);
-    }
+describe("retiredHostKeys", () => {
+  test("names each snake_case key a block carries", () => {
+    expect(
+      retiredHostKeys({
+        host_version: "1.0",
+        admin_tools: [],
+        record_arguments: true,
+        hooks: [{ vendor: "acme", route: "/in", register_tool: "set", header_renames: {} }],
+      }),
+    ).toEqual([
+      "host_version",
+      "admin_tools",
+      "record_arguments",
+      "hooks[].register_tool",
+      "hooks[].header_renames",
+    ]);
   });
 
-  test("says nothing for a camelCase block", () => {
-    const name = entry();
-    serverDetailToCatalogEntry(detail(name, { hostVersion: "1.0", adminTools: ["configure"] }));
-    expect(warn.mock.calls.some(([m]) => m.includes(name))).toBe(false);
+  test("is empty for a camelCase block, or none", () => {
+    expect(retiredHostKeys({ hostVersion: "1.0", adminTools: ["configure"] })).toEqual([]);
+    expect(retiredHostKeys(undefined)).toEqual([]);
   });
 });

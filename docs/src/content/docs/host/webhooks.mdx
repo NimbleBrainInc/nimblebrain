@@ -42,8 +42,6 @@ from metadata the operator published.
 | `description` | `string` | No | What the stream carries. Shown to operators; the host never acts on it. |
 | `headerRenames` | `object` | No | `{ from: to }` header renames applied before the forward. See [signature headers](#signature-headers) below. |
 
-The snake_case spelling (`register_tool`, `header_renames`) is still read during the migration; see [Spelling](/host/manifest/#spelling).
-
 ## What happens
 
 1. **When your server comes up in a workspace**, the host mints a URL for exactly one `(workspace, connector, vendor)` and calls your `registerTool` with it. Store it, and register it with the vendor.

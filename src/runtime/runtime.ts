@@ -19,9 +19,11 @@ import { type ResolvedTasksConfig, resolveTasksConfig } from "../config/tasks.ts
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import {
   ConnectorCatalog,
+  catalogEntryForRef,
   catalogPath,
   warnIfCatalogEmpty,
 } from "../connectors/catalog/catalog.ts";
+import { getNimbleBrainHostMeta } from "../connectors/catalog/host-meta.ts";
 import type { ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
 import { registerGatewayCredentialProviders } from "../connectors/gateways/transport-credential.ts";
 import { bootAuditComposioAuthConfigs } from "../connectors/providers/composio/auth-config-audit.ts";
@@ -119,6 +121,7 @@ import {
   type RecordArgumentsGrant,
   TokenBucketRateLimit,
 } from "../host-resources/index.ts";
+import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { IdentityContext } from "../identity/context.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
 import { loadInstanceConfig, missingInstanceConfigError } from "../identity/instance.ts";
@@ -180,6 +183,7 @@ import {
   filterAdmittedTools,
   isAdminToolAllowed,
   isDeclaredAdminTool,
+  parseAdminToolsDeclaration,
 } from "../permissions/admin-tools.ts";
 import { hostOnlyToolDenial, isHostOnlyTool } from "../permissions/host-only-tools.ts";
 import {
@@ -971,6 +975,21 @@ export class Runtime {
     const allowInsecureRemotes = config.allowInsecureRemotes === true || hostLoopback !== null;
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
+    // Identified telemetry (a no-op otherwise): who signed up, and the
+    // workspaces and memberships they make, from the stores that write them.
+    userStore.onCreated((user) =>
+      telemetryManager.captureAbout(
+        "user.signed_up",
+        {},
+        { userId: user.id, email: user.email, name: user.displayName },
+      ),
+    );
+    workspaceStore.onCreated((ws) =>
+      telemetryManager.captureAbout("workspace.created", {}, { workspaceId: ws.id }),
+    );
+    workspaceStore.onMemberAdded((wsId, userId, role) =>
+      telemetryManager.captureAbout("member.added", { role }, { userId, workspaceId: wsId }),
+    );
     // The runtime is the one owner of the identity provider: the server
     // authenticates with this one, and every permission check here judges the
     // identity it verified. There is no runtime without one: no `instance.json`
@@ -1235,6 +1254,18 @@ export class Runtime {
       const platformSources = await createPlatformSources(rt, events);
       // Telemetry counts calls to connector tools apart from the kernel's own.
       telemetrySink.addBuiltinSources(platformSources.map((s) => s.name));
+      // Identified telemetry names a connector by its catalog id, never by the
+      // name it was installed under, which someone may have chosen.
+      telemetrySink.setConnectorResolver(async (owner, serverName) => {
+        const ref =
+          "workspaceId" in owner
+            ? rt.getLifecycle().getInstance(serverName, owner.workspaceId)?.ref
+            : await new IdentityConnectorStore({ workDir }).get(owner.userId, serverName);
+        if (!ref) return undefined;
+        const catalog = rt.getConnectorCatalog();
+        return catalogEntryForRef(ref, await catalog.catalogByUrl(), await catalog.catalogByIdMap())
+          ?.id;
+      });
       // Make the host-resources factory accessible on `rt` so non-lifecycle
       // install paths (connector-tools, boot reload) can pull deps directly.
       rt._connectorMcpDepsFactory = connectorMcpDepsFactory;
@@ -4996,7 +5027,11 @@ export class Runtime {
 
   /**
    * Each catalog entry's `adminTools`, under the server name its id slugifies
-   * to. A connector that declares none is absent.
+   * to. A connector that declares none is absent. Read from every entry the
+   * catalog carries, including one the safety check refused
+   * (`AggregatedServers.refused`): a refused entry leaves Browse, but a
+   * connector already installed from it stays callable, and its restriction
+   * must hold.
    *
    * By name alone, NOT held to the ref's identity as every grant is
    * ({@link boundCatalogEntries}). This is a restriction: it narrows who may
@@ -5008,8 +5043,10 @@ export class Runtime {
    */
   private async catalogAdminToolsByServer(): Promise<Map<string, ConnectorGates>> {
     const out = new Map<string, ConnectorGates>();
-    for (const e of await this.getConnectorCatalog().catalogEntries()) {
-      if (e.adminTools) out.set(slugifyServerName(e.id), { adminTools: e.adminTools });
+    const { servers, refused } = await this.getConnectorCatalog().servers();
+    for (const { detail } of [...servers, ...refused]) {
+      const adminTools = parseAdminToolsDeclaration(getNimbleBrainHostMeta(detail), detail.name);
+      if (adminTools) out.set(slugifyServerName(detail.name), { adminTools });
     }
     return out;
   }

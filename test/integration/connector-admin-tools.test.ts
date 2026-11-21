@@ -1,7 +1,7 @@
 import type { ToolCallResponse } from "../../src/api/schemas/responses.ts";
 import { readJson } from "../helpers/http.ts";
 /**
- * Connector `admin_tools`: a tool the catalog names there is listed for and
+ * Connector `adminTools`: a tool the catalog names there is listed for and
  * callable by a workspace admin only, on every door.
  *
  * One `Runtime`, one catalog entry, two workspaces holding the same connector:
@@ -70,12 +70,12 @@ const CATALOG_YAML = `servers:
       ai.nimblebrain/connector:
         auth: dcr
       ai.nimblebrain/host:
-        host_version: "1.5"
-        admin_tools: [configure, workspace_ready, set_webhook_url, ghost]
+        hostVersion: "1.5"
+        adminTools: [configure, workspace_ready, set_webhook_url, ghost]
         hooks:
           - vendor: acme
             route: /ingest/acme
-            register_tool: set_webhook_url
+            registerTool: set_webhook_url
 `;
 
 /** Per-workspace record of what the connector's server actually ran. */
@@ -88,10 +88,10 @@ async function startSource(wsId: string) {
       // catalog says. Neither claim may move the gate.
       {
         name: "configure",
-        meta: { "ai.nimblebrain/host": { admin_tools: [] } },
+        meta: { "ai.nimblebrain/host": { adminTools: [] } },
         properties: { mode: { type: "string" }, api_key: { type: "string", writeOnly: true } },
       },
-      { name: "search", meta: { "ai.nimblebrain/host": { admin_tools: ["search"] } } },
+      { name: "search", meta: { "ai.nimblebrain/host": { adminTools: ["search"] } } },
       marked("workspace_ready", "ready"),
       {
         name: "set_webhook_url",
@@ -452,7 +452,7 @@ describe("kernel-originated calls", () => {
     expect(ran(MEMBER_WS)).toEqual(["workspace_ready"]);
   });
 
-  it("hands a hook URL to a declared admin registerTool (declared as register_tool)", async () => {
+  it("hands a hook URL to a declared admin registerTool", async () => {
     resetCalls();
     await ensureHooks(
       { ...runtime.getHookReconcileDeps(), identity: { tid: "tenant-a", key: randomBytes(32) } },
@@ -686,8 +686,8 @@ describe("the installed entry's allowedTools (what a connector's apps are told)"
     writeFileSync(
       join(catalogDir, "acme.yaml"),
       CATALOG_YAML.replace(
-        "admin_tools: [configure, workspace_ready, set_webhook_url, ghost]",
-        "admin_tools: configure",
+        "adminTools: [configure, workspace_ready, set_webhook_url, ghost]",
+        "adminTools: configure",
       ),
     );
     runtime.getConnectorCatalog().resetCache();
@@ -701,15 +701,67 @@ describe("the installed entry's allowedTools (what a connector's apps are told)"
   });
 });
 
-describe("a malformed admin_tools declaration", () => {
-  // A catalog typo must not open the connector's tools to members: the entry
-  // stays in the catalog and every tool on it becomes admin-only.
-  it("refuses a member every tool on the connector and runs an admin's", async () => {
+// A catalog typo must not open the connector's tools to members: the entry
+// stays in the catalog and every tool on it becomes admin-only. Nor may a
+// producer still writing the retired `admin_tools` spelling: the host does not
+// read its names, so it gates every tool rather than none.
+for (const [title, declaration] of [
+  ["a malformed adminTools declaration", "adminTools: configure"],
+  [
+    "a catalog entry that still carries admin_tools",
+    "adminTools: [configure]\n        admin_tools: [configure]",
+  ],
+] as const) {
+  describe(title, () => {
+    it("refuses a member every tool on the connector and runs an admin's", async () => {
+      writeFileSync(
+        join(catalogDir, "acme.yaml"),
+        CATALOG_YAML.replace(
+          "adminTools: [configure, workspace_ready, set_webhook_url, ghost]",
+          declaration,
+        ),
+      );
+      runtime.getConnectorCatalog().resetCache();
+      resetCalls();
+      const member = await mcpClient(MEMBER_WS);
+      const admin = await mcpClient(ADMIN_WS);
+      try {
+        const memberNames = (await member.listTools()).tools.map((t) => t.name);
+        expect(memberNames).not.toContain(SEARCH);
+        expect(memberNames).not.toContain(CONFIGURE);
+
+        const refused = await member.callTool({ name: SEARCH, arguments: {} });
+        expect(refused.structuredContent).toMatchObject({ error: "workspace_admin_required" });
+        expect(ran(MEMBER_WS)).toEqual([]);
+
+        const allowed = await admin.callTool({ name: SEARCH, arguments: {} });
+        expect(allowed.isError).toBeFalsy();
+        expect(ran(ADMIN_WS)).toEqual(["search"]);
+
+        const warnings = await runtime.adminToolsContractWarnings(MEMBER_WS, SERVER);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain("every tool");
+      } finally {
+        await member.close();
+        await admin.close();
+        writeFileSync(join(catalogDir, "acme.yaml"), CATALOG_YAML);
+        runtime.getConnectorCatalog().resetCache();
+      }
+    });
+  });
+}
+
+// A block written entirely in the retired spelling has no `hostVersion`, so its
+// entry is dropped from Browse. Its `admin_tools` still gates the connector
+// already installed from it: dropping the entry must not drop the restriction.
+describe("a catalog entry written entirely in snake_case", () => {
+  it("leaves Browse, and still refuses a member every tool and runs an admin's", async () => {
+    const hostBlock = CATALOG_YAML.slice(CATALOG_YAML.indexOf("      ai.nimblebrain/host:"));
     writeFileSync(
       join(catalogDir, "acme.yaml"),
       CATALOG_YAML.replace(
-        "admin_tools: [configure, workspace_ready, set_webhook_url, ghost]",
-        "admin_tools: configure",
+        hostBlock,
+        `      ai.nimblebrain/host:\n        host_version: "1.5"\n        admin_tools: [configure]\n`,
       ),
     );
     runtime.getConnectorCatalog().resetCache();
@@ -717,21 +769,28 @@ describe("a malformed admin_tools declaration", () => {
     const member = await mcpClient(MEMBER_WS);
     const admin = await mcpClient(ADMIN_WS);
     try {
+      const { entries } = await runtime.getConnectorCatalog().list();
+      expect(entries.map((e) => e.id)).not.toContain("ai.acme/crm");
+
       const memberNames = (await member.listTools()).tools.map((t) => t.name);
       expect(memberNames).not.toContain(SEARCH);
       expect(memberNames).not.toContain(CONFIGURE);
 
       const refused = await member.callTool({ name: SEARCH, arguments: {} });
       expect(refused.structuredContent).toMatchObject({ error: "workspace_admin_required" });
+      const router = new IdentityToolRouter({
+        caller: "chat",
+        identityId: DEV_IDENTITY.id,
+        workspaceId: MEMBER_WS,
+        runtime,
+      });
+      const chatRefused = await router.execute({ id: "s1", name: CONFIGURE, input: {} });
+      expect(chatRefused.structuredContent).toMatchObject({ error: "workspace_admin_required" });
       expect(ran(MEMBER_WS)).toEqual([]);
 
       const allowed = await admin.callTool({ name: SEARCH, arguments: {} });
       expect(allowed.isError).toBeFalsy();
       expect(ran(ADMIN_WS)).toEqual(["search"]);
-
-      const warnings = await runtime.adminToolsContractWarnings(MEMBER_WS, SERVER);
-      expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toContain("every tool");
     } finally {
       await member.close();
       await admin.close();

@@ -598,7 +598,7 @@ describe("manage_connectors.install (composio-auth)", () => {
       [
         readFileSync(catalogFile, "utf-8").trimEnd(),
         "      ai.nimblebrain/host:",
-        '        host_version: "1.4"',
+        '        hostVersion: "1.4"',
         "        name: Gmail",
         "        placements:",
         "          - slot: settings",

@@ -300,10 +300,9 @@ export declare function isInstanceOAuthClientRef(client: OAuthClientConfig | und
 export declare function oauthClientSecretRef(client: OAuthClientConfig | undefined): CredentialRef | undefined;
 /**
  * Host manifest metadata at _meta["ai.nimblebrain/host"], as the runtime reads
- * it: camelCase, from `normalizeHostMeta` (`src/connectors/catalog/host-meta.ts`),
- * which also reads the deprecated snake spelling. Every key here is a property
- * of `host-manifest.schema.json`; `test/unit/host-manifest-schema-drift.test.ts`
- * holds the two in step.
+ * it: camelCase, from `normalizeHostMeta` (`src/connectors/catalog/host-meta.ts`).
+ * Every key here is a property of `host-manifest.schema.json`;
+ * `test/unit/host-manifest-schema-drift.test.ts` holds the two in step.
  */
 export interface HostManifestMeta {
     /**

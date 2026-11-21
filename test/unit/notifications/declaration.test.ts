@@ -137,7 +137,7 @@ describe("the catalog carries the declaration to the install path", () => {
 
   test("a declared outbox lands on the catalog entry", () => {
     const entry = serverDetailToCatalogEntry(
-      detail({ host_version: "1.3", notifications: { resource: "acme://notifications" } }),
+      detail({ hostVersion: "1.3", notifications: { resource: "acme://notifications" } }),
     );
     expect(entry?.notifications).toEqual({ resource: "acme://notifications" });
   });
@@ -150,7 +150,7 @@ describe("the catalog carries the declaration to the install path", () => {
 
   test("a malformed declaration drops the outbox, not the entry", () => {
     const entry = serverDetailToCatalogEntry(
-      detail({ host_version: "1.3", notifications: { resource: "acme://x?cursor=1" } }),
+      detail({ hostVersion: "1.3", notifications: { resource: "acme://x?cursor=1" } }),
     );
     expect(entry).not.toBeNull();
     expect(entry?.notifications).toBeUndefined();

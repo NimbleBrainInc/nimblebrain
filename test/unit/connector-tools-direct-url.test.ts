@@ -77,11 +77,9 @@ const CARD = {
         },
         { slot: "main", resourceUri: "ui://other/evil" },
       ],
-      hooks: [{ vendor: "acme", route: "/ingest/acme", register_tool: "set_webhook_url" }],
+      hooks: [{ vendor: "acme", route: "/ingest/acme", registerTool: "set_webhook_url" }],
       adminTools: ["configure"],
-      admin_tools: ["configure"],
       recordArguments: true,
-      record_arguments: true,
       notifications: { resource: "ui://weather/outbox" },
     },
   },
@@ -275,14 +273,7 @@ describe("an install with a card", () => {
       },
     });
     const raw = JSON.stringify(row);
-    for (const grant of [
-      "hooks",
-      "adminTools",
-      "admin_tools",
-      "recordArguments",
-      "record_arguments",
-      "notifications",
-    ]) {
+    for (const grant of ["hooks", "adminTools", "recordArguments", "notifications"]) {
       expect(raw).not.toContain(grant);
     }
     expect(h.lifecycle.getInstance("io-github-dev-weather", WS)?.ui?.placements).toHaveLength(1);

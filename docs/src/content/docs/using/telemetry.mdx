@@ -114,11 +114,36 @@ Events then name the person instead of the install, so a person's runtime and we
 | Who an event is about | The install's random ID | The signed-in person's user ID; the install ID for work no person asked for |
 | Person properties | None | Email and display name, sent once per person per runtime start |
 | Groups | None | `tenant` (from `NB_TENANT_ID`, when set) and `workspace` (the workspace the request is bound to) |
+| Names of things used | None | Catalog names of connectors, tools, skills and models (below) |
 | Pages viewed | None | A web `$pageview` each time the page on screen changes (below) |
+
+An identified deployment also names what was used, by catalog name only. A connector added by URL, and a skill someone wrote, have names people chose, so they are sent as `custom`:
+
+| Event | Adds |
+|---|---|
+| `tool.called` (one per tool call) | `source` (`kernel`, `app` or `connector`), the app or the connector's catalog id, the tool, whether it succeeded, and its duration |
+| `agent.chat_started` | The model |
+| `agent.chat_completed` | The model, the connectors used, and the skills used (a catalog connector's skill as `<catalog id>:<skill>`; any other as `custom`) |
+| `connector.installed` | The connector's catalog id |
+| `skill.created` | The skill's scope (`org`, `workspace` or `user`), never its name |
+
+It also sends events for moments in a person's use of the product. None carries a name someone wrote, a prompt, an output or an error message:
+
+| Event | Properties |
+|---|---|
+| `user.signed_up` | The person (their email and name, as above) |
+| `workspace.created` | The workspace |
+| `member.added` | The person added, the workspace, and their role |
+| `connector.auth_started` / `connector.auth_completed` / `connector.auth_failed` | The connector's catalog id or `custom`, `workspace` or `personal`, and for a failure the state it ended in |
+| `connector.auth_lost` | A connected connector that now needs signing in again |
+| `automation.created` | Its trigger (`cron`, `interval`, `event`, `once` or `manual`), who made it (`user` or `agent`), and `saved` or `oneoff` |
+| `automation.run_completed` | Its status, trigger, tool calls, duration, and whether it ran in a batch |
+
+On an identified deployment `automation.created` reports every automation, so the anonymous `task.created` (only automations the agent made) is not sent there.
 
 An identified web client sends `$pageview` when the route it shows changes, and nothing when only a value in it changes (another workspace, another conversation). The event names the route template, never the path: `/w/:slug/settings/members`, not the workspace's address. Its `$current_url` is the origin plus that template, and its `$pathname` the template. On an app's page it also carries `app`, the app's server name from the catalog. In every identified web event, a URL naming another page (the referrer, the first page of a session or of a person) keeps only its origin, and a path naming another page is dropped.
 
-Everything else in [What is never sent](#what-is-never-sent) still holds, apart from the email address, the person's name and the name of the app on screen. `identify` without `"enabled": true` does nothing: a person's yes in the CLI or the web UI never turns it on. Set it only where your terms with the people using the install allow it, and never with the key `npx nimblebrain` ships, which is the NimbleBrain project for anonymous installs.
+Everything else in [What is never sent](#what-is-never-sent) still holds, apart from the email address, the person's name, the catalog names above, and the name of the app on screen. `identify` without `"enabled": true` does nothing: a person's yes in the CLI or the web UI never turns it on. Set it only where your terms with the people using the install allow it, and never with the key `npx nimblebrain` ships, which is the NimbleBrain project for anonymous installs.
 
 <Aside type="tip">
   A runtime with no `POSTHOG_API_KEY` has nowhere to send anything. It asks no one, creates no ID, and makes no request to PostHog.

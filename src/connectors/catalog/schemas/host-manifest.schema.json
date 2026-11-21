@@ -2,16 +2,23 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json",
   "title": "NimbleBrain Host Extension",
-  "description": "Schema for the `ai.nimblebrain/host` MCP `_meta` extension — how an MCP server declares its UI integration (placements, hooks, notifications, lifecycle) in the NimbleBrain host shell. Carried in the server's descriptor `_meta`, which for this host is the connector catalog's ServerDetail entry. The `ui://` app resources themselves are standard MCP Apps; this extension only declares where they are placed. Every field is camelCase; the snake_case spellings marked deprecated are still read during the migration.",
+  "description": "Schema for the `ai.nimblebrain/host` MCP `_meta` extension — how an MCP server declares its UI integration (placements, hooks, notifications, lifecycle) in the NimbleBrain host shell. Carried in the server's descriptor `_meta`, which for this host is the connector catalog's ServerDetail entry. The `ui://` app resources themselves are standard MCP Apps; this extension only declares where they are placed. Every field is camelCase, the only spelling the host reads: a snake_case key is read as absent, except `admin_tools`, whose presence (any value) gates every tool on the server, so a producer still writing it can never open admin-only tools to every member.",
   "type": "object",
-  "anyOf": [
-    {
-      "required": ["hostVersion"]
-    },
-    {
-      "required": ["host_version"]
-    }
-  ],
+  "required": ["hostVersion"],
+  "not": {
+    "description": "The snake_case spellings are refused: the host reads host_version and record_arguments as absent, and a block carrying admin_tools gates every tool.",
+    "anyOf": [
+      {
+        "required": ["host_version"]
+      },
+      {
+        "required": ["admin_tools"]
+      },
+      {
+        "required": ["record_arguments"]
+      }
+    ]
+  },
   "additionalProperties": true,
   "properties": {
     "hostVersion": {
@@ -51,42 +58,13 @@
     "recordArguments": {
       "type": "boolean",
       "description": "Whether the host reads resources for this server through the ai.nimblebrain/resource-arguments extension: the URIs its tools' declared arguments name (by scheme, or any scheme for an argument declared { \"records\": true }), read from whichever connector in the calling workspace serves them and handed to the call. true grants that in every workspace that installs this server; a workspace admin can narrow it to named source connectors or revoke it. Without it the host reads nothing for this server, and every declared URI comes back refused (not_granted). READ FROM A CATALOG CONNECTOR ONLY, like hooks and adminTools: the grant is the operator's, so nothing the running server sends can claim it. The host still reads only from connectors in the calling workspace, only what the caller could read itself, so the grant adds no source the agent could not already reach."
-    },
-    "host_version": {
-      "type": "string",
-      "pattern": "^1(\\.\\d+)?$",
-      "description": "Deprecated spelling of hostVersion, still read. When both are present they must be equal, or the host drops the entry."
-    },
-    "admin_tools": {
-      "type": "array",
-      "maxItems": 64,
-      "uniqueItems": true,
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 128,
-        "pattern": "^\\S+$"
-      },
-      "description": "Deprecated spelling of adminTools, still read, with the same rules. When both are present the host gates the union of the two lists, and a malformed copy in either gates every tool."
-    },
-    "record_arguments": {
-      "type": "boolean",
-      "description": "Deprecated spelling of recordArguments, still read. When both are present the grant holds only if both are true."
     }
   },
   "$defs": {
     "HookDeclaration": {
       "type": "object",
       "description": "One inbound event stream. This is the entire vendor-specific configuration the host ever sees — a name, a route, a tool, and prose. It deliberately cannot describe payload shapes or event taxonomies.",
-      "required": ["vendor", "route"],
-      "anyOf": [
-        {
-          "required": ["registerTool"]
-        },
-        {
-          "required": ["register_tool"]
-        }
-      ],
+      "required": ["vendor", "route", "registerTool"],
       "additionalProperties": false,
       "properties": {
         "vendor": {
@@ -115,18 +93,6 @@
             "type": "string"
           },
           "description": "Rename inbound headers before the forward, as { from: to }. The forward strips the header class a caller could use to assert identity (authorization, x-api-key, x-tenant-id, x-workspace-id, …) — the same class the fleet edge strips — and the browser's session credential, cookie. A vendor that authenticates its deliveries on one of the identity headers cannot otherwise reach its own verifier, so declaring a rename moves the value to a header the strip list does not cover. cookie cannot be renamed through: no vendor signs a delivery with it, so a rename from cookie is ignored. A rename whose target is itself in the stripped class is ignored."
-        },
-        "register_tool": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Deprecated spelling of registerTool, still read. When both are present and differ, the host drops this hook."
-        },
-        "header_renames": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "Deprecated spelling of headerRenames, still read. When both are present and differ, the host drops this hook."
         }
       }
     },
