@@ -1,7 +1,8 @@
 /**
  * A switch click on the board saves one task. The panel mounts here against
  * stub tools: a save that returns the task puts it on its row with no further
- * read, and a save that returns none reloads the board.
+ * read, a save that returns none reloads the board, and a save the tool refuses
+ * leaves the switch as it was and says why.
  */
 import { beforeAll, beforeEach, expect, mock, test } from "bun:test";
 import { JSDOM } from "jsdom";
@@ -83,8 +84,9 @@ async function clickOff() {
   expect(sw()?.getAttribute("aria-checked")).toBe("true");
   await act(async () => sw()?.click());
   const after = sw()?.getAttribute("aria-checked");
+  const text = container.textContent ?? "";
   await act(async () => root.unmount());
-  return { before, after };
+  return { before, after, text };
 }
 
 test("a save that returns the task updates its row with no further read", async () => {
@@ -107,4 +109,17 @@ test("a save that returns no task reloads the board", async () => {
   expect(calls.update).toBe(1);
   expect(calls.list).toBe((before.list ?? 0) + 1);
   expect(calls.stats).toBe((before.stats ?? 0) + 1);
+});
+
+test("a save the tool refuses keeps the switch on and says why", async () => {
+  updateAnswer = {
+    data: null,
+    isError: true,
+    content: [{ type: "text", text: "Task is locked." }],
+  };
+  const { before, after, text } = await clickOff();
+  expect(calls.update).toBe(1);
+  expect(after).toBe("true");
+  expect(text).toContain("Task is locked.");
+  expect(calls.list).toBe(before.list);
 });

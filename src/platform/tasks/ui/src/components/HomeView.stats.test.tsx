@@ -34,7 +34,7 @@ const ACTIONS = {
   onOpenTask: noop,
   onOpenRun: noop,
   onRunNow: noop,
-  onSetEnabled: async () => {},
+  onSetEnabled: async () => true,
   onCreate: noop,
   onSeeActivity: noop,
   onOpenBatch: noop,

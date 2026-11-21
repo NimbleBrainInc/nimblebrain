@@ -7,6 +7,7 @@ import {
   healthOf,
   type TaskHealth,
 } from "../lib/attention.ts";
+import { stripLabel } from "../lib/describe.ts";
 import { outcomeOf } from "../lib/outcome.ts";
 import { shortSchedule } from "../lib/schedule-label.ts";
 import type {
@@ -40,7 +41,8 @@ export interface HomeActions {
   /** Run it now: the way a failure is cleared. */
   onRunNow: (task: TaskSummary) => void;
   /** Turn its trigger on or off. */
-  onSetEnabled: (task: TaskSummary, enabled: boolean) => Promise<void>;
+  /** Resolves whether it saved; a failure is already shown to the viewer. */
+  onSetEnabled: (task: TaskSummary, enabled: boolean) => Promise<boolean>;
   /** Open the form, empty or seeded from an example. */
   onCreate: (template?: Template) => void;
   /** Hand a sentence to the agent in chat; absent where the host takes no message. */
@@ -188,11 +190,7 @@ function RunCells({ runs }: { runs: TaskRun[] }) {
   const pad = Math.max(0, STRIP_RUNS - runs.length);
   const words = runs.map((r) => (r.label ? outcomeOf(r.label).word : r.status));
   return (
-    <span
-      className="run-cells"
-      role="img"
-      aria-label={runs.length ? `Last ${runs.length} runs: ${words.join(", ")}` : "No runs yet"}
-    >
+    <span className="run-cells" role="img" aria-label={stripLabel(words)}>
       {Array.from({ length: pad }, (_, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: empty slots have no identity but their place
         <i key={`pad-${i}`} className="cell empty" />
@@ -254,7 +252,7 @@ function BoardRow({ row, actions }: { row: HomeRow; actions: HomeActions }) {
   function act(action: HealthAction) {
     if (action === "retry") actions.onRunNow(task);
     else if (action === "enable-and-retry")
-      void actions.onSetEnabled(task, true).then(() => actions.onRunNow(task));
+      void actions.onSetEnabled(task, true).then((saved) => saved && actions.onRunNow(task));
     else if (action === "review" && health.runId) actions.onOpenRun(task.id, health.runId);
     else actions.onOpenTask(task);
   }

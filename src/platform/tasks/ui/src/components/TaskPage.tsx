@@ -51,7 +51,8 @@ export interface TaskPageActions {
   onEdit: (d: TaskDetail) => void;
   onDuplicate: (d: TaskDetail) => void;
   onDelete: (d: TaskDetail) => void;
-  onSetEnabled: (d: TaskDetail, enabled: boolean) => Promise<void>;
+  /** Resolves whether it saved; a failure is already shown to the viewer. */
+  onSetEnabled: (d: TaskDetail, enabled: boolean) => Promise<boolean>;
   onOpenRun: (run: TaskRun) => void;
   onSeeRuns: (d: TaskDetail) => void;
 }
@@ -829,8 +830,7 @@ export function TaskPage({
     if (!d) return;
     setToggling(true);
     try {
-      await actions.onSetEnabled(d, v);
-      setDetail({ ...d, enabled: v });
+      if (await actions.onSetEnabled(d, v)) setDetail({ ...d, enabled: v });
     } finally {
       setToggling(false);
     }
