@@ -174,7 +174,10 @@ export class PostHogEventSink implements EventSink {
         serverName: personalConnectorServerName(source),
       };
     }
-    return { owner: workspaceId ? { workspaceId } : undefined, serverName: source };
+    // A run on an external agent runtime reports its tool calls without the
+    // workspace stamp; the request is bound to that one workspace either way.
+    const ws = workspaceId ?? this.telemetry.currentWorkspaceId();
+    return { owner: ws ? { workspaceId: ws } : undefined, serverName: source };
   }
 
   addBuiltinSources(names: Iterable<string>): void {
