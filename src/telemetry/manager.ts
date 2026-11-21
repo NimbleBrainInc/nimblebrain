@@ -222,6 +222,11 @@ export class TelemetryManager {
     this.subjectSource = source;
   }
 
+  /** The signed-in person of the current request, on an identified deployment. */
+  currentUserId(): string | undefined {
+    return this.identified ? this.subjectSource()?.userId : undefined;
+  }
+
   /** Whether events name the person (`telemetry.identify` with `enabled: true`). */
   isIdentified(): boolean {
     return this.identified;

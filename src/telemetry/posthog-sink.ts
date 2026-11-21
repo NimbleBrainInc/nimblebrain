@@ -11,17 +11,24 @@ import type {
   ToolDonePayload,
 } from "../engine/schemas/events.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
-import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
+import {
+  IDENTITY_SOURCES,
+  isPersonalConnectorName,
+  personalConnectorServerName,
+} from "../tools/identity-sources.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import type { TelemetryManager } from "./manager.ts";
 
+/** Whose connector records hold a connector: a workspace's, or one person's own plugins. */
+export type ConnectorOwner = { workspaceId: string } | { userId: string };
+
 /**
- * A workspace connector's catalog id, or `undefined` when it is not from the
- * catalog (added by URL, under a name someone chose). The runtime supplies it;
- * the sink never reads connector records itself.
+ * A connector's catalog id, or `undefined` when it is not from the catalog
+ * (added by URL, under a name someone chose). The runtime supplies it; the
+ * sink never reads connector records itself.
  */
 export type ConnectorCatalogResolver = (
-  wsId: string,
+  owner: ConnectorOwner,
   serverName: string,
 ) => Promise<string | undefined>;
 
@@ -134,19 +141,40 @@ export class PostHogEventSink implements EventSink {
     return this.telemetry.isIdentified();
   }
 
-  /** A connector's catalog id, or `custom`. Never its workspace name, which someone may have chosen. */
-  private connectorId(wsId: string | undefined, serverName: string): Promise<string> {
-    if (!wsId) return Promise.resolve(CUSTOM);
-    const key = `${wsId}|${serverName}`;
+  /** A connector's catalog id, or `custom`. Never the name it was installed under, which someone may have chosen. */
+  private connectorId(owner: ConnectorOwner | undefined, serverName: string): Promise<string> {
+    if (!owner) return Promise.resolve(CUSTOM);
+    const key =
+      "workspaceId" in owner
+        ? `ws:${owner.workspaceId}|${serverName}`
+        : `user:${owner.userId}|${serverName}`;
     let id = this.connectorIds.get(key);
     if (!id) {
-      id = this.resolveConnector(wsId, serverName).then(
+      id = this.resolveConnector(owner, serverName).then(
         (found) => found ?? CUSTOM,
         () => CUSTOM,
       );
       this.connectorIds.set(key, id);
     }
     return id;
+  }
+
+  /**
+   * Whose records a run's connector source is in: a `my_` source is the
+   * signed-in person's own plugin, any other the run's workspace's.
+   */
+  private sourceOwner(
+    source: string,
+    workspaceId: string | undefined,
+  ): { owner: ConnectorOwner | undefined; serverName: string } {
+    if (isPersonalConnectorName(source)) {
+      const userId = this.telemetry.currentUserId();
+      return {
+        owner: userId ? { userId } : undefined,
+        serverName: personalConnectorServerName(source),
+      };
+    }
+    return { owner: workspaceId ? { workspaceId } : undefined, serverName: source };
   }
 
   addBuiltinSources(names: Iterable<string>): void {
@@ -208,7 +236,8 @@ export class PostHogEventSink implements EventSink {
       this.telemetry.capture("tool.called", { ...base, source: kind, app: source, tool });
       return;
     }
-    const connector = this.connectorId(data.workspaceId, source);
+    const { owner, serverName } = this.sourceOwner(source, data.workspaceId);
+    const connector = this.connectorId(owner, serverName);
     metrics.connectors.add(connector);
     void connector.then((id) =>
       this.telemetry.capture("tool.called", {
@@ -338,8 +367,8 @@ export class PostHogEventSink implements EventSink {
       return;
     }
     // A reinstall may come from a different catalog entry, so resolve afresh.
-    this.connectorIds.delete(`${data.wsId}|${data.serverName}`);
-    void this.connectorId(data.wsId, data.serverName).then((connector) =>
+    this.connectorIds.delete(`ws:${data.wsId}|${data.serverName}`);
+    void this.connectorId({ workspaceId: data.wsId }, data.serverName).then((connector) =>
       this.telemetry.capture("connector.installed", { ...base, connector }),
     );
   }

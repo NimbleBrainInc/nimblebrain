@@ -302,12 +302,16 @@ describe("PostHogEventSink on an identified deployment", () => {
       clientFactory: () => mock,
       env: {},
     });
+    mgr.setSubjectSource(() => ({ userId: "usr_1", workspaceId: "ws_1" }));
     const sink = new PostHogEventSink(mgr);
     sink.addBuiltinSources(["tasks", "crm"]);
     // `linear` is from the catalog; anything else was added by URL.
-    sink.setConnectorResolver(async (_wsId, serverName) =>
-      serverName === "linear" ? "app.linear/linear" : undefined,
-    );
+    // `linear` is the workspace's from the catalog; `gmail` is the person's own
+    // plugin from the catalog; anything else was added by URL.
+    sink.setConnectorResolver(async (owner, serverName) => {
+      if ("workspaceId" in owner) return serverName === "linear" ? "app.linear/linear" : undefined;
+      return owner.userId === "usr_1" && serverName === "gmail" ? "com.google/gmail" : undefined;
+    });
     return { mock, sink };
   }
 
@@ -362,6 +366,33 @@ describe("PostHogEventSink on an identified deployment", () => {
     });
     expect(JSON.stringify(mock.events)).not.toContain("acme-internal");
     expect(JSON.stringify(mock.events)).not.toContain("export_payroll");
+  });
+
+  it("names a person's own plugin by its catalog id, read from their records", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+    sink.emit(toolDoneIn("my_gmail__send"));
+    sink.emit(toolDoneIn("my_private-thing__go"));
+    await settle();
+
+    const calls = mock.events
+      .filter((e) => e.event === "tool.called")
+      .map((e) => own(e.properties));
+    expect(calls).toContainEqual({
+      ok: true,
+      duration_ms: 3,
+      source: "connector",
+      connector: "com.google/gmail",
+      tool: "send",
+    });
+    expect(calls).toContainEqual({
+      ok: true,
+      duration_ms: 3,
+      source: "connector",
+      connector: "custom",
+      tool: "custom",
+    });
+    expect(JSON.stringify(mock.events)).not.toContain("private-thing");
   });
 
   it("adds the model, the connectors used and the skills used to a finished chat", async () => {
