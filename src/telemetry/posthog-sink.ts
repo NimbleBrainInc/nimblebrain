@@ -238,7 +238,8 @@ export class PostHogEventSink implements EventSink {
     source: string,
     tool: string,
   ): void {
-    const base = { ok: data.ok, duration_ms: data.ms };
+    // The run's id joins a call to its run (`agent.chat_*`, `automation.run_completed`).
+    const base = { ok: data.ok, duration_ms: data.ms, run_id: data.runId };
     if (!isConnector) {
       const kind = source === "nb" || IDENTITY_SOURCES.has(source) ? "kernel" : "app";
       this.telemetry.capture("tool.called", { ...base, source: kind, app: source, tool });
@@ -267,6 +268,7 @@ export class PostHogEventSink implements EventSink {
     this.runs.set(data.runId, metrics);
     this.telemetry.capture("agent.chat_started", {
       tool_count: data.toolNames.length,
+      ...(this.named() ? { run_id: data.runId } : {}),
       ...(metrics.model ? { model: metrics.model } : {}),
       ...(metrics.trigger ? { trigger: metrics.trigger } : {}),
     });
@@ -367,6 +369,7 @@ export class PostHogEventSink implements EventSink {
         ([connectors, skills]) =>
           this.telemetry.capture("agent.chat_completed", {
             ...completed,
+            run_id: data.runId,
             model,
             ...(trigger ? { trigger } : {}),
             connectors_used: [...new Set(connectors)].sort(),

@@ -121,9 +121,9 @@ An identified deployment also names what was used, by catalog name only. A conne
 
 | Event | Adds |
 |---|---|
-| `tool.called` (one per tool call) | `source` (`kernel`, `app` or `connector`), the app or the connector's catalog id, the tool, whether it succeeded, and its duration |
-| `agent.chat_started` | The model, and what started the run (`trigger`: `chat` for a person in a chat; `schedule`, `manual` or `event` for a scheduled task's run, by what started it; `api` for a caller driving the runtime directly) |
-| `agent.chat_completed` | The model, the trigger, the connectors used, and the skills used (a catalog connector's skill as `<catalog id>:<skill>`; any other as `custom`) |
+| `tool.called` (one per tool call) | `source` (`kernel`, `app` or `connector`), the app or the connector's catalog id, the tool, whether it succeeded, its duration, and the run's id (`run_id`) |
+| `agent.chat_started` | The run's id, the model, and what started the run (`trigger`: `chat` for a person in a chat; `schedule`, `manual` or `event` for a scheduled task's run, by what started it; `api` for a caller driving the runtime directly) |
+| `agent.chat_completed` | The run's id, the model, the trigger, the connectors used, and the skills used (a catalog connector's skill as `<catalog id>:<skill>`; any other as `custom`) |
 | `connector.installed` | The connector's catalog id |
 | `skill.created` | The skill's scope (`org`, `workspace` or `user`), never its name |
 
@@ -136,8 +136,10 @@ It also sends events for moments in a person's use of the product. None carries 
 | `member.added` | The person added, the workspace, and their role |
 | `connector.auth_started` / `connector.auth_completed` / `connector.auth_failed` | The connector's catalog id or `custom`, `workspace` or `personal`, and for a failure the state it ended in |
 | `connector.auth_lost` | A connected connector that now needs signing in again |
-| `automation.created` | Its trigger (`cron`, `interval`, `event`, `once` or `manual`), who made it (`user` or `agent`), and `saved` or `oneoff` |
-| `automation.run_completed` | Its status, trigger, tool calls, duration, and whether it ran in a batch |
+| `automation.created` | Its trigger (`cron`, `interval`, `event`, `once` or `manual`), who made it (`user` or `agent`), `saved` or `oneoff`, and `automation_id` |
+| `automation.run_completed` | Its status, trigger (`schedule`, `manual` or `event`), duration, whether it ran in a batch, `run_id`, and `automation_id`. The run's steps are on its `agent.chat_*` and `tool.called` events, which carry the same `run_id`; a run that never started has only this event |
+
+`run_id` is the run's own random id. An automation's own id is its name, so `automation_id` is a hash of where it lives and that id instead: it groups an automation's runs and names nothing. The automation's name is never sent.
 
 On an identified deployment `automation.created` reports every automation, so the anonymous `task.created` (only automations the agent made) is not sent there.
 

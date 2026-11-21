@@ -341,7 +341,10 @@ describe("PostHogEventSink on an identified deployment", () => {
 
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
   /** An event's own properties, without those every event carries. */
-  const own = ({ nb_version, os, arch, bun_version, ...rest }: Record<string, unknown>) => rest;
+  // What the event says about the call itself: the common properties and the run id
+  // (tested on its own below) are left out.
+  const own = ({ nb_version, os, arch, bun_version, run_id, ...rest }: Record<string, unknown>) =>
+    rest;
   const toolDoneIn = (name: string, ok = true) =>
     engineEvent(
       "tool.done",
@@ -428,6 +431,24 @@ describe("PostHogEventSink on an identified deployment", () => {
         trigger,
       );
     }
+  });
+
+  it("stamps the run id on a run's events, so they join", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+    sink.emit(toolDoneIn("linear__list_issues"));
+    sink.emit(runDone("r1"));
+    await settle();
+    const ids = mock.events
+      .filter((e) =>
+        ["agent.chat_started", "tool.called", "agent.chat_completed"].includes(e.event),
+      )
+      .map((e) => [e.event, e.properties.run_id]);
+    expect(ids).toEqual([
+      ["agent.chat_started", "r1"],
+      ["tool.called", "r1"],
+      ["agent.chat_completed", "r1"],
+    ]);
   });
 
   it("sends no tool.called for a held call, only for the call that ran", async () => {

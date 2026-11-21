@@ -7,6 +7,7 @@ import { UserStore } from "../../src/identity/user.ts";
 import { createTask } from "../../src/platform/tasks/domain.ts";
 import { type Executor, Scheduler } from "../../src/platform/tasks/scheduler.ts";
 import {
+  automationTelemetryId,
   captureAutomationCreated,
   captureAutomationRunEnded,
 } from "../../src/platform/tasks/source.ts";
@@ -220,7 +221,11 @@ describe("automation.created", () => {
     expect(events[0]?.event).toBe("automation.created");
     expect(events[0]?.distinctId).toBe(OWNER);
     expect(events[0]?.groups).toEqual({ tenant: "tenant-a", workspace: WS });
-    expect(events[0]?.properties).toMatchObject({ trigger: "manual", kind: "saved" });
+    expect(events[0]?.properties).toMatchObject({
+      trigger: "manual",
+      kind: "saved",
+      automation_id: automationTelemetryId(WS, OWNER, "acme-board-digest"),
+    });
     expect(JSON.stringify(events)).not.toContain("acme");
   });
 
@@ -295,7 +300,7 @@ describe("automation.run_completed", () => {
         captureAutomationRunEnded(runtimeOf(manager), wsId, ownerId, run),
     });
     scheduler.start();
-    await scheduler.runNow(WS, OWNER, task.id);
+    const run = await scheduler.runNow(WS, OWNER, task.id);
     scheduler.stop();
 
     const ended = events.filter((e) => e.event === "automation.run_completed");
@@ -304,9 +309,13 @@ describe("automation.run_completed", () => {
     expect(ended[0]?.groups).toEqual({ tenant: "tenant-a", workspace: WS });
     expect(ended[0]?.properties).toMatchObject({
       status: "success",
-      tool_calls: 3,
+      trigger: "manual",
+      run_id: run?.id,
+      automation_id: automationTelemetryId(WS, OWNER, "digest"),
       in_batch: false,
     });
+    // The run's steps are on its agent events, joined by run_id.
+    expect(ended[0]?.properties.tool_calls).toBeUndefined();
     expect(typeof ended[0]?.properties.duration_ms).toBe("number");
     expect(JSON.stringify(events)).not.toContain("acme");
   });
@@ -325,5 +334,15 @@ describe("automation.run_completed", () => {
 
     expect(run?.status).toBe("success");
     expect(readRuns(workDir, WS, OWNER, task.id).map((r) => r.id)).toEqual([run!.id]);
+  });
+});
+
+describe("automationTelemetryId", () => {
+  it("is stable for one automation, differs across automations, and names nothing", () => {
+    const id = automationTelemetryId("ws_1", "usr_1", "acme-board-digest");
+    expect(id).toBe(automationTelemetryId("ws_1", "usr_1", "acme-board-digest"));
+    expect(id).not.toBe(automationTelemetryId("ws_2", "usr_1", "acme-board-digest"));
+    expect(id).not.toBe(automationTelemetryId("ws_1", "usr_2", "acme-board-digest"));
+    expect(id).toMatch(/^[0-9a-f]{16}$/);
   });
 });

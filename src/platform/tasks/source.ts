@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Static } from "@sinclair/typebox";
 import { effectiveRunLimits } from "../../config/tasks.ts";
 import { textContent } from "../../engine/content-helpers.ts";
@@ -822,6 +823,18 @@ export async function createTasksSource(
 }
 
 /**
+ * An automation's id for analytics: a task's own id is its name in kebab case,
+ * which is its owner's, so this is a hash of where it lives and that id. Stable
+ * for the automation's life, so its runs group; it names nothing.
+ */
+export function automationTelemetryId(wsId: string, ownerId: string, taskId: string): string {
+  return createHash("sha256").update(`${wsId}/${ownerId}/${taskId}`).digest("hex").slice(0, 16);
+}
+
+/** A task run's trigger in the run-start door's words (`RunTrigger`), as the agent's own events say it. */
+const RUN_TRIGGER = { scheduled: "schedule", manual: "manual", event: "event" } as const;
+
+/**
  * An automation created, on an identified deployment: how it is triggered and
  * who made it, never its name or prompt, which are its owner's.
  */
@@ -835,12 +848,19 @@ export function captureAutomationCreated(
       trigger: task.schedule?.type ?? "manual",
       created_by: task.source ?? "agent",
       kind: task.kind ?? "saved",
+      ...(task.ownerId && task.workspaceId
+        ? { automation_id: automationTelemetryId(task.workspaceId, task.ownerId, task.id) }
+        : {}),
     },
     { userId: task.ownerId, workspaceId: task.workspaceId },
   );
 }
 
-/** An automation run that ended, on an identified deployment: its outcome and cost in steps, never its output. */
+/**
+ * An automation run that ended, on an identified deployment: its outcome, never
+ * its output. `run_id` joins it to the run's `agent.chat_*` and `tool.called`,
+ * which carry its steps; a run that never started an agent has only this event.
+ */
 export function captureAutomationRunEnded(
   runtime: Pick<Runtime, "getTelemetryManager">,
   wsId: string,
@@ -853,8 +873,9 @@ export function captureAutomationRunEnded(
     "automation.run_completed",
     {
       status: run.status,
-      trigger: run.trigger ?? "none",
-      tool_calls: run.toolCalls,
+      trigger: run.trigger ? RUN_TRIGGER[run.trigger] : "none",
+      run_id: run.id,
+      automation_id: automationTelemetryId(wsId, ownerId, run.taskId),
       in_batch: run.batchId !== undefined,
       ...(Number.isFinite(ended - started) ? { duration_ms: ended - started } : {}),
     },
