@@ -52,7 +52,7 @@ const Schedule = Type.Object(
     at: Type.Optional(
       Type.String({
         description:
-          "Fires once, at a future ISO-8601 time with an offset. The task is then disabled until a new `at` re-arms it.",
+          "Fires once at this future ISO-8601 time (with an offset).",
       }),
     ),
     intervalMs: Type.Optional(
@@ -62,13 +62,13 @@ const Schedule = Type.Object(
       Type.Object(NotificationRouteMatch.properties, {
         additionalProperties: false,
         description:
-          "Fires on routed notifications that match. A workspace admin's delivery route must name this task; this narrows it, it does not open one.",
+          "Fires on matching notifications routed to this task by an admin.",
       }),
     ),
     timezone: Type.Optional(
       Type.String({
         description:
-          "IANA timezone for `cron`. Default: the instance's, returned as `timezone`. An update that omits it keeps the current one.",
+          "IANA timezone for `cron`. Default: the instance's.",
       }),
     ),
     debounceMs: Type.Optional(
@@ -85,7 +85,7 @@ const Schedule = Type.Object(
         minimum: 1,
         maximum: 60,
         description:
-          "With `match`: most runs events may fire in a rolling hour; exceeding it disables the task. Default 12.",
+          "With `match`: max runs per hour before the task disables. Default 12.",
       }),
     ),
   },
@@ -120,7 +120,7 @@ const TokenBudget = Type.Object(
   {
     additionalProperties: false,
     description:
-      "Token limit across runs (not dollars). A run with too little left stops with spend_limit, and the task stays disabled until re-enabled.",
+      "Token limit across runs. Spent, the task is disabled.",
   },
 );
 
@@ -138,11 +138,11 @@ function jsonSchemaField(description: string) {
 }
 
 const InputSchemaField = jsonSchemaField(
-  "JSON Schema each run's `input` must match, or the run is refused. Omit to take any input.",
+  "JSON Schema each run's `input` must match.",
 );
 
 const OutputSchemaField = jsonSchemaField(
-  "JSON Schema the deliverable must match. One that does not is assessed fail without a judge call.",
+  "JSON Schema the deliverable must match.",
 );
 
 // ── Acceptance criteria and the judge ────────────────────────────────────
@@ -162,7 +162,7 @@ const Criterion = Type.Object(
       minLength: 1,
       maxLength: 4000,
       description:
-        "The rule in plain language. It may name the run's `input`, `deliverable`, or `activity` (its tool calls).",
+        "The rule in plain language.",
     }),
     type: StringEnum(["boolean", "score", "choice"] as const, {
       description:
@@ -185,7 +185,7 @@ const Criterion = Type.Object(
     pass: Type.Optional(
       Type.Union([Type.Boolean(), Type.Integer(), Type.String(), Type.Array(Type.String())], {
         description:
-          "What passes. boolean: true (default) or false. score: the lowest passing level index. choice: the passing option or options (required).",
+          "What passes: true/false, the lowest passing level index, or the passing options.",
       }),
     ),
   },
@@ -196,11 +196,7 @@ const CriteriaField = Type.Array(Criterion, {
   minItems: 1,
   maxItems: 50,
   description:
-    "Acceptance criteria. After each run that leaves a deliverable, a judge server the " +
-    "workspace connected answers every criterion (the deliverable, the input, and a summary " +
-    "of the tool calls are sent to it), and the run is recorded pass, fail, or uncertain. " +
-    "Without a connected judge server every run is uncertain (Needs review); the answer's " +
-    "`warnings` say so. tasks__judges lists the judge servers.",
+    "Acceptance criteria a connected judge server answers after each run (tasks__judges).",
 });
 
 const ConfidenceThresholdField = Type.Number({
@@ -236,7 +232,7 @@ const JudgeField = Type.Object(
 
 const OnPoorResultField = StringEnum(["record", "notify", "retry_once"] as const, {
   description:
-    "What a `fail` does: record, notify (default; an inbox item), or retry_once with the failed criteria as guidance. Batch runs ignore it.",
+    "What a `fail` does: record, notify (default), or retry_once.",
 });
 
 const MaxIterationsField = Type.Integer({
@@ -249,7 +245,7 @@ const MaxInputTokensField = Type.Integer({
   minimum: 1000,
   maximum: 1000000,
   description:
-    "Input tokens one run may spend over all its model calls, cache reads included. Omit for no per-run cap.",
+    "Input tokens one run may spend. Omit for no cap.",
 });
 
 const MaxRunDurationField = Type.Integer({
@@ -261,14 +257,14 @@ const MaxRunDurationField = Type.Integer({
 const AllowedToolsField = Type.Array(Type.String({ minLength: 1 }), {
   minItems: 1,
   description:
-    "Tools its runs may use: names or globs, one `<connector>__*` per connector (`my_<connector>__*` for a personal one). A run is refused when an entry matches no tool it can reach. nb__search, nb__manage_tools and nb__use_skill always pass. Omit it for every tool; an empty list is refused. tasks__create, tasks__update and tasks__delete cannot be listed.",
+    "Tools its runs may use: one `<connector>__*` glob per connector. Omit for every tool.",
 });
 
 const SkillsField = Type.Array(Type.String({ minLength: 1 }), {
   minItems: 1,
   maxItems: 5,
   description:
-    "Skills each run is given in full, by catalog name. A run is refused when one is not available. With no body, each run carries the skills out on its input.",
+    "Skills each run is given in full, by name.",
 });
 
 const ModelField = Type.String({
@@ -302,20 +298,20 @@ const DefinitionFields = {
 
 const BodyField = Type.String({
   description:
-    "The prompt that opens every run. Describe the job, not tool names; list the tools in `manifest.allowedTools`. To post or send the deliverable, say so here. A run's `input` arrives as data beside it.",
+    "The prompt every run starts from: the job, and where to deliver its result.",
 });
 
 const CreateManifest = Type.Object(
   {
     name: Type.String({
       minLength: 1,
-      description: "Human-readable name. Becomes the kebab-case id, which must not already exist.",
+      description: "Human-readable name; becomes the id.",
     }),
     description: Type.Optional(Type.String({ description: "What this task does." })),
     schedule: Type.Optional(Schedule),
     enabled: Type.Optional(
       Type.Boolean({
-        description: "Whether its schedule fires it. Default true; tasks__run runs it either way.",
+        description: "Whether its schedule fires. Default true.",
       }),
     ),
     kind: Type.Optional(
