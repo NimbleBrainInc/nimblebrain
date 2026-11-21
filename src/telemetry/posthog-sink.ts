@@ -206,6 +206,9 @@ export class PostHogEventSink implements EventSink {
   private accumulateTool(data: ToolDonePayload): void {
     const metrics = this.runs.get(data.runId);
     if (!metrics) return;
+    // A held call ran nothing: the runtime returned its tool's guidance and the
+    // model calls again. It is neither a call nor a failure; the repeat is the call.
+    if (data.held) return;
 
     metrics.toolCalls++;
     metrics.toolMs += data.ms;
