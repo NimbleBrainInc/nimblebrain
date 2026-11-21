@@ -40,7 +40,7 @@ interface RunMetrics {
   /** Identified only: the run's model, and what it used, as catalog names or `custom`. */
   model?: string;
   connectors: Set<Promise<string>>;
-  skills: Set<string>;
+  skills: Set<Promise<string>>;
   iterations: number;
   toolCalls: number;
   connectorToolCalls: number;
@@ -241,16 +241,29 @@ export class PostHogEventSink implements EventSink {
   }
 
   /**
-   * The skills a run loaded, by name only when a plugin from the catalog
-   * provided them; a skill someone wrote (org, workspace or their own) is
-   * `custom`, since its name is theirs.
+   * The skills a run loaded. A skill a catalog connector published is named
+   * `<catalog id>:<skill>`; any other is `custom`: a custom connector's skill,
+   * and a skill someone wrote, have names people chose, and the name a
+   * connector was installed under is never sent.
    */
   private recordSkills(data: SkillsLoadedPayload): void {
     if (!this.named() || !data.runId) return;
     const metrics = this.runs.get(data.runId);
     if (!metrics) return;
     for (const skill of data.skills) {
-      metrics.skills.add(skill.scope === "provided" ? skill.name : CUSTOM);
+      if (!skill.connector) {
+        metrics.skills.add(Promise.resolve(CUSTOM));
+        continue;
+      }
+      const { owner, serverName } = this.sourceOwner(
+        skill.connector,
+        this.telemetry.currentWorkspaceId(),
+      );
+      metrics.skills.add(
+        this.connectorId(owner, serverName).then((id) =>
+          id === CUSTOM ? CUSTOM : `${id}:${skill.name}`,
+        ),
+      );
     }
   }
 
@@ -282,13 +295,15 @@ export class PostHogEventSink implements EventSink {
     if (!metrics || !this.named()) {
       this.telemetry.capture("agent.chat_completed", completed);
     } else {
-      const named = { model: metrics.model, skills_used: [...metrics.skills].sort() };
-      void Promise.all(metrics.connectors).then((ids) =>
-        this.telemetry.capture("agent.chat_completed", {
-          ...completed,
-          ...named,
-          connectors_used: [...new Set(ids)].sort(),
-        }),
+      const { model } = metrics;
+      void Promise.all([Promise.all(metrics.connectors), Promise.all(metrics.skills)]).then(
+        ([connectors, skills]) =>
+          this.telemetry.capture("agent.chat_completed", {
+            ...completed,
+            model,
+            connectors_used: [...new Set(connectors)].sort(),
+            skills_used: [...new Set(skills)].sort(),
+          }),
       );
     }
 

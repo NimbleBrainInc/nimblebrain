@@ -195,6 +195,11 @@ export class TelemetryManager {
     return this.identified ? this.subjectSource()?.userId : undefined;
   }
 
+  /** The workspace of the current request, on an identified deployment. */
+  currentWorkspaceId(): string | undefined {
+    return this.identified ? this.subjectSource()?.workspaceId : undefined;
+  }
+
   /** Whether events name the person (`telemetry.identify` with `enabled: true`). */
   isIdentified(): boolean {
     return this.identified;

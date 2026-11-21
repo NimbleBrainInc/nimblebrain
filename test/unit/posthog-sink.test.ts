@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildSkillsLoadedPayload } from "../../src/runtime/skills-loaded-payload.ts";
+import { synthesizeConnectorSkill } from "../../src/skills/connector-skills.ts";
 import type { TelemetryClient, TelemetryClientFactory } from "../../src/telemetry/manager.ts";
 import { TelemetryManager } from "../../src/telemetry/manager.ts";
 import { PostHogEventSink } from "../../src/telemetry/posthog-sink.ts";
@@ -305,7 +307,6 @@ describe("PostHogEventSink on an identified deployment", () => {
     mgr.setSubjectSource(() => ({ userId: "usr_1", workspaceId: "ws_1" }));
     const sink = new PostHogEventSink(mgr);
     sink.addBuiltinSources(["tasks", "crm"]);
-    // `linear` is from the catalog; anything else was added by URL.
     // `linear` is the workspace's from the catalog; `gmail` is the person's own
     // plugin from the catalog; anything else was added by URL.
     sink.setConnectorResolver(async (owner, serverName) => {
@@ -407,7 +408,8 @@ describe("PostHogEventSink on an identified deployment", () => {
         skills: [
           {
             id: "a",
-            name: "linear-triage",
+            name: "triage",
+            connector: "linear",
             scope: "provided",
             layer: 3,
             version: "1",
@@ -438,8 +440,37 @@ describe("PostHogEventSink on an identified deployment", () => {
     const done = mock.events.find((e) => e.event === "agent.chat_completed")?.properties;
     expect(done?.model).toBe("anthropic:claude-x");
     expect(done?.connectors_used).toEqual(["app.linear/linear", "custom"]);
-    expect(done?.skills_used).toEqual(["custom", "linear-triage"]);
+    expect(done?.skills_used).toEqual(["app.linear/linear:triage", "custom"]);
     expect(JSON.stringify(mock.events)).not.toContain("secret playbook");
+  });
+
+  it("names a custom connector's skill as custom, never its install or skill name", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+    const published = (serverName: string, skillName: string) =>
+      synthesizeConnectorSkill({
+        serverName,
+        skillName,
+        description: "",
+        uri: `skill://${serverName}/${skillName}/SKILL.md`,
+      });
+    const payload = buildSkillsLoadedPayload([
+      {
+        skill: published("private-acme-payroll", "confidential-restructuring"),
+        loadedBy: "always",
+        reason: "",
+      },
+      { skill: published("linear", "triage"), loadedBy: "always", reason: "" },
+    ]);
+    sink.emit(engineEvent("skills.loaded", { ...payload, runId: "r1" }));
+    sink.emit(runDone("r1"));
+    await settle();
+
+    const done = mock.events.find((e) => e.event === "agent.chat_completed")?.properties;
+    expect(done?.skills_used).toEqual(["app.linear/linear:triage", "custom"]);
+    const sent = JSON.stringify(mock.events);
+    expect(sent).not.toContain("acme-payroll");
+    expect(sent).not.toContain("restructuring");
   });
 
   it("names a catalog connector on install, and a skill someone wrote by its scope only", async () => {
