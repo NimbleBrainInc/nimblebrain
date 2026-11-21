@@ -2,36 +2,47 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { Plugin, PluginServer } from "../_generated/platform-schemas/plugins";
 import {
-  disconnectPersonalConnector,
   getInstalledConnector,
   grantConnector,
   type InstalledConnector,
   listPersonalConnectors,
   listPlugins,
   type PersonalConnector,
+  removePersonalConnector,
   revokeConnector,
+  signOutPersonalConnector,
 } from "../api/client";
 import { ConnectorHeader, statusLabel } from "../components/connectors/ConnectorHeader";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { ConnectorSettingsSection } from "../components/connectors/ConnectorSettingsSection";
 import { OAuthClientSection } from "../components/connectors/OAuthClientSection";
 import {
-  disconnectConsequence,
   PanelHeading,
   PersonalToolPermissionsSection,
   personalConnectUrl,
+  removeConsequence,
+  signOutConsequence,
   startPluginSignIn,
 } from "../components/connectors/personal-connector";
 import { ToolPermissionsTable } from "../components/connectors/ToolPermissionsTable";
 import { UninstallConnectorDialog } from "../components/connectors/UninstallConnectorDialog";
 import { WorkspaceSecretsSection } from "../components/connectors/WorkspaceSecretsSection";
+import { useNotice } from "../components/notices";
+import { SECTION_ACTION, SECTION_ROW } from "../components/plugins/list-parts";
+import { StopUsingDialog } from "../components/plugins/StopUsingDialog";
 import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
 import { Button } from "../components/ui/button";
 import { ConfirmDialog } from "../components/ui/confirm-dialog";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useEvents } from "../hooks/useEvents";
 import { useCanWriteActiveWorkspace } from "../hooks/useScopedRole";
-import { ownerLine, pluginAccount, pluginConnected, pluginPath } from "../lib/plugins";
+import {
+  ownerLine,
+  pluginAccount,
+  pluginConnected,
+  pluginPath,
+  workspacePluginForServer,
+} from "../lib/plugins";
 import { cn } from "../lib/utils";
 import { toSlug, toWsId } from "../lib/workspace-slug";
 import { ConnectorSkillsSection } from "./settings/ConnectorSkillsSection";
@@ -43,12 +54,14 @@ import { InlineError } from "./settings/components";
  *
  * - **A workspace plugin** shows what configures its connection for every
  *   member: its OAuth client, secrets, its own settings, its skills, and the
- *   tools the agent may call. A workspace admin changes them and may uninstall
- *   it (`canManage`, the server's write rule).
+ *   tools the agent may call. A workspace admin changes them and may sign it
+ *   out or remove it (`canManage`, the server's write rule).
  * - **A person's plugin** shows the account it signs in as, Connect or
- *   Disconnect, the owner's own tool permissions, whether it is used here, and
- *   every workspace it is used in, each revocable. Use here signs in too when
- *   it is not connected, and every sign-in returns to this workspace's Plugins.
+ *   Sign out, Remove, the owner's own tool permissions, whether it is used here, and
+ *   every workspace the person belongs to, each on or off with the change that
+ *   flips it. Use here signs in too when it is not connected, and every
+ *   sign-in returns to this workspace's Plugins. Turning it on elsewhere only
+ *   grants it: no workspace is on by default, and the owner decides each one.
  *
  * The ref is the listing's `id`, URL-encoded (`pluginPath`); the page finds the
  * plugin by comparing ids and never reads one's parts. A plugin has one server
@@ -67,7 +80,7 @@ export function PluginDetailPage() {
             an inline element ignores. */}
         <Link
           to={`/w/${slug}/plugins`}
-          className="block w-fit text-xs text-muted-foreground hover:underline"
+          className="block w-fit py-1 text-xs text-muted-foreground hover:underline"
         >
           ← Plugins
         </Link>
@@ -107,8 +120,12 @@ function PluginDetail({ slug, pluginRef }: { slug: string; pluginRef: string }) 
     };
   }, [refresh]);
 
-  // A sign-in finishing elsewhere changes the plugin's status and account.
-  useEvents({ onConnectionStateChanged: () => void refresh() });
+  // A sign-in finishing elsewhere changes the plugin's status and account; a
+  // grant changed from another tab or the chat changes whether it is on here.
+  useEvents({
+    onConnectionStateChanged: () => void refresh(),
+    onConnectorGrantChanged: () => void refresh(),
+  });
 
   if (loadError && plugin === undefined) {
     return <InlineError message={`Unable to load this plugin: ${loadError}. Reload to retry.`} />;
@@ -178,7 +195,7 @@ function WorkspacePlugin({ plugin, slug, wsId }: { plugin: Plugin; slug: string;
 
 /**
  * One workspace connector's configuration. The header (`ConnectorHeader`) carries
- * identity, status and the ⋯ menu (docs, disconnect, uninstall, details), with a
+ * identity, status and the ⋯ menu (docs, sign out, remove, details), with a
  * status banner and its primary action only when something needs doing. Then
  * the sections in one order, one rule between each: how the connector is
  * reached (OAuth client, secrets), how it behaves (its own settings), the
@@ -323,10 +340,17 @@ function PersonalPlugin({
   const { workspaces } = useWorkspaceContext();
   const [connectors, setConnectors] = useState<PersonalConnector[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // `connect:<serverName>`, or the workspace id whose grant is changing.
+  const notify = useNotice();
+  // `connect:<serverName>` while a sign-in starts.
   const [busy, setBusy] = useState<string | null>(null);
-  const [confirmingUse, setConfirmingUse] = useState(false);
-  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+  // The state each workspace whose grant is changing is moving to, shown until
+  // the change lands or fails.
+  const [pending, setPending] = useState<Record<string, boolean>>({});
+  // The workspace a Use or a Stop using is being confirmed for.
+  const [using, setUsing] = useState<WorkspaceRef | null>(null);
+  const [stopping, setStopping] = useState<WorkspaceRef | null>(null);
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   const loadConnectors = useCallback(async () => {
     try {
@@ -339,21 +363,31 @@ function PersonalPlugin({
   useEffect(() => {
     void loadConnectors();
   }, [loadConnectors]);
+  // The Workspaces list reads each grant from the connector records.
+  useEvents({ onConnectorGrantChanged: () => void loadConnectors() });
 
   const serverNames = plugin.servers.map((s) => s.serverName);
   const mine = (connectors ?? []).filter((c) => serverNames.includes(c.serverName));
   // A plugin is used in a workspace where its servers are granted; Use here and
-  // Stop grant and revoke every one of them, as the Plugins list does.
+  // Stop grant and revoke every one of them.
   const grantedIds = [...new Set(mine.flatMap((c) => c.grantedWorkspaces))];
-  const usedIn = [
-    ...workspaces.filter((w) => grantedIds.includes(w.id)),
+  const workspaceName = workspaces.find((w) => w.id === wsId)?.name ?? "this workspace";
+  const here: WorkspaceRef = { id: wsId, name: workspaceName };
+  // Every workspace the person belongs to, this one first, then any it is
+  // granted to that the list does not hold, so each grant can still be revoked.
+  const rows: WorkspaceRef[] = [
+    here,
+    ...workspaces.filter((w) => w.id !== wsId).map((w) => ({ id: w.id, name: w.name })),
     ...grantedIds
-      .filter((id) => !workspaces.some((w) => w.id === id))
+      .filter((id) => id !== wsId && !workspaces.some((w) => w.id === id))
       .map((id) => ({ id, name: id })),
   ];
-  const workspaceName = workspaces.find((w) => w.id === wsId)?.name ?? "this workspace";
+  const isOn = (id: string) =>
+    pending[id] ?? (id === wsId ? plugin.granted : grantedIds.includes(id));
   const name = plugin.displayName;
   const connected = pluginConnected(plugin);
+  // Sign out has something to end while any of its servers holds an account.
+  const signedIn = plugin.servers.some((s) => s.status === "ready");
 
   const setGrant = async (targetWsId: string, grant: boolean) => {
     for (const server of serverNames) {
@@ -363,15 +397,29 @@ function PersonalPlugin({
     onChanged();
   };
 
-  const revoke = async (targetWsId: string) => {
+  // Shows the new state at once and says when it lands; a failure puts the
+  // row back as it was and says why.
+  const change = async (ws: WorkspaceRef, on: boolean) => {
     setError(null);
-    setBusy(targetWsId);
+    setPending((p) => ({ ...p, [ws.id]: on }));
     try {
-      await setGrant(targetWsId, false);
+      await setGrant(ws.id, on);
+      notify({
+        level: "success",
+        title: `${name} is ${on ? "on" : "off"} in ${ws.name}`,
+        description:
+          on && !connected ? `Sign in to ${name} so your agent can use it there.` : undefined,
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notify({
+        level: "error",
+        title: `Couldn't turn ${name} ${on ? "on" : "off"} in ${ws.name}`,
+        description: err instanceof Error ? err.message : String(err),
+      });
+      await loadConnectors();
+      onChanged();
     } finally {
-      setBusy(null);
+      setPending(({ [ws.id]: _, ...rest }) => rest);
     }
   };
 
@@ -430,7 +478,10 @@ function PersonalPlugin({
             return (
               <div
                 key={server.serverName}
-                className="flex items-start justify-between gap-4 rounded-sm border border-border/60 bg-muted/20 px-4 py-3"
+                className={cn(
+                  SECTION_ROW,
+                  "rounded-sm border border-border/60 bg-muted/20 px-4 py-3",
+                )}
               >
                 <div className="min-w-0">
                   <div className="text-sm font-medium">{statusLabel(server.status)}</div>
@@ -443,7 +494,7 @@ function PersonalPlugin({
                 <Button
                   type="button"
                   size="sm"
-                  className="shrink-0"
+                  className={cn("shrink-0", SECTION_ACTION)}
                   disabled={!connector || busy === `connect:${server.serverName}`}
                   onClick={() => connector && void connect(connector)}
                 >
@@ -457,85 +508,45 @@ function PersonalPlugin({
       {error && <InlineError message={error} />}
 
       <div className="divide-y divide-border/60 [&>*]:py-6 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0">
-        <section className="flex items-start justify-between gap-4" data-testid="plugin-here">
-          <PanelHeading
-            title="In this workspace"
-            hint={
-              !plugin.granted
-                ? `Your agent can't use ${name} in ${workspaceName} until you turn it on.`
-                : connected
-                  ? "On here. Only you can use it; other members can't."
-                  : `On here. Connect to sign in to ${name} so your agent can use it.`
-            }
-          />
-          {plugin.granted ? (
-            <div className="flex shrink-0 items-center gap-1.5">
-              {connected && (
-                <span className="px-2 text-xs text-muted-foreground" data-testid="plugin-in-use">
-                  In use here
-                </span>
-              )}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={busy === wsId}
-                onClick={() => void revoke(wsId)}
-              >
-                {busy === wsId ? "Stopping…" : "Stop using here"}
-              </Button>
-            </div>
-          ) : (
-            <Button
-              type="button"
-              size="sm"
-              className="shrink-0"
-              // Signing in follows the connector's record, so wait for it.
-              disabled={!connected && connectors === null}
-              onClick={() => {
-                setError(null);
-                setConfirmingUse(true);
-              }}
-            >
-              Use here
-            </Button>
-          )}
-        </section>
+        <HereSection
+          name={name}
+          workspaceName={workspaceName}
+          on={isOn(wsId)}
+          changing={wsId in pending}
+          connected={connected}
+          // Signing in follows the connector's record, so Use here waits for it.
+          ready={connected || connectors !== null}
+          onUse={() => {
+            setError(null);
+            setUsing(here);
+          }}
+          onStop={() => setStopping(here)}
+        />
 
-        <section className="space-y-3" data-testid="plugin-used-in">
+        <section className="space-y-3" data-testid="plugin-workspaces">
           <PanelHeading
-            title="Used in"
-            hint={`Your agent can use ${name} only in workspaces where it is on.`}
+            title="Workspaces"
+            hint={`Your agent can use ${name} only in workspaces where you turn it on.`}
           />
           {connectors === null ? (
             <p className="text-xs text-muted-foreground">Loading…</p>
-          ) : usedIn.length === 0 ? (
-            <p className="text-xs text-muted-foreground">Not on in any workspace.</p>
           ) : (
             <ul className="border-t border-border/60">
-              {usedIn.map((ws) => (
-                <li
+              {rows.map((ws) => (
+                <WorkspaceRow
                   key={ws.id}
-                  className="flex items-center justify-between gap-4 border-b border-border/60 py-2.5 last:border-b-0 last:pb-0"
-                  data-testid="plugin-used-in-row"
-                >
-                  <Link
-                    to={`/w/${toSlug(ws.id)}/plugins`}
-                    className="truncate text-sm underline-offset-4 hover:underline"
-                  >
-                    {ws.name}
-                  </Link>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy === ws.id}
-                    onClick={() => void revoke(ws.id)}
-                    aria-label={`Stop using ${name} in ${ws.name}`}
-                  >
-                    {busy === ws.id ? "Stopping…" : "Stop using"}
-                  </Button>
-                </li>
+                  pluginName={name}
+                  workspace={ws}
+                  current={ws.id === wsId}
+                  on={isOn(ws.id)}
+                  changing={ws.id in pending}
+                  connected={connected}
+                  onUse={() => {
+                    setError(null);
+                    setUsing(ws);
+                  }}
+                  onStop={() => setStopping(ws)}
+                />
               ))}
             </ul>
           )}
@@ -550,54 +561,258 @@ function PersonalPlugin({
           />
         ))}
 
-        <section className="flex items-center justify-between gap-4">
+        {signedIn && (
+          <section className={cn(SECTION_ROW, "@min-[40rem]/main:items-center")}>
+            <p className="text-xs text-muted-foreground">
+              Sign out of {name} to use another account. It stays on where it is on.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={SECTION_ACTION}
+              onClick={() => setConfirmingSignOut(true)}
+            >
+              Sign out
+            </Button>
+          </section>
+        )}
+
+        <section className={cn(SECTION_ROW, "@min-[40rem]/main:items-center")}>
           <p className="text-xs text-muted-foreground">
-            Sign out of {name} and remove it from your account.
+            Remove {name} from your account and turn it off everywhere.
           </p>
           <Button
             type="button"
             variant="destructive"
             size="sm"
-            onClick={() => setConfirmingDisconnect(true)}
+            className={SECTION_ACTION}
+            onClick={() => setConfirmingRemove(true)}
           >
-            Disconnect
+            Remove
           </Button>
         </section>
       </div>
 
       <UsePluginHereDialog
-        plugin={confirmingUse ? plugin : null}
-        workspaceName={workspaceName}
-        onClose={() => setConfirmingUse(false)}
+        plugin={using ? plugin : null}
+        workspaceName={using?.name ?? ""}
+        here={using?.id === wsId}
+        onClose={() => setUsing(null)}
         onConfirm={async () => {
-          await setGrant(wsId, true);
-          // On here with no account behind it: sign in next. The redirect leaves
-          // the page, so the dialog stays as it is until it does.
-          if (
-            !connected &&
-            (await startPluginSignIn(plugin, mine, { workspaceId: wsId })) === "redirected"
-          ) {
+          if (!using) return;
+          // On here with no account behind it: turn it on, then sign in. The
+          // redirect leaves the page, so the dialog stays as it is until it
+          // does, and a failure stays in it.
+          if (using.id === wsId && !connected) {
+            await setGrant(wsId, true);
+            if ((await startPluginSignIn(plugin, mine, { workspaceId: wsId })) === "redirected") {
+              return;
+            }
+            setUsing(null);
             return;
           }
-          setConfirmingUse(false);
+          setUsing(null);
+          void change(using, true);
+        }}
+      />
+      <StopUsingDialog
+        open={stopping !== null}
+        onOpenChange={(open) => !open && setStopping(null)}
+        pluginName={name}
+        workspaceName={stopping?.name ?? ""}
+        here={stopping?.id === wsId}
+        onConfirm={() => {
+          if (!stopping) return;
+          setStopping(null);
+          void change(stopping, false);
         }}
       />
       <ConfirmDialog
-        open={confirmingDisconnect}
-        onOpenChange={setConfirmingDisconnect}
-        title={`Disconnect ${name}?`}
-        description={disconnectConsequence(usedIn.length)}
-        confirmLabel="Disconnect"
-        pendingLabel="Disconnecting…"
+        open={confirmingSignOut}
+        onOpenChange={setConfirmingSignOut}
+        title={`Sign out of ${name}?`}
+        description={signOutConsequence(name)}
+        confirmLabel="Sign out"
+        pendingLabel="Signing out…"
+        onConfirm={async () => {
+          for (const server of serverNames) await signOutPersonalConnector(server);
+          setConfirmingSignOut(false);
+          // It stays, now asking to be signed in: read the new state in place.
+          await loadConnectors();
+          onChanged();
+        }}
+      />
+      <ConfirmDialog
+        open={confirmingRemove}
+        onOpenChange={setConfirmingRemove}
+        title={`Remove ${name}?`}
+        description={removeConsequence(grantedIds.length)}
+        confirmLabel="Remove"
+        pendingLabel="Removing…"
         destructive
         onConfirm={async () => {
-          for (const server of serverNames) await disconnectPersonalConnector(server);
-          setConfirmingDisconnect(false);
+          for (const server of serverNames) await removePersonalConnector(server);
+          setConfirmingRemove(false);
           // It is gone from the account, so there is nothing left to show here.
           navigate(`/w/${slug}/plugins`);
         }}
       />
     </div>
+  );
+}
+
+/** Whether a person's plugin is on in the workspace the page is in, and the change that flips it. */
+function HereSection({
+  name,
+  workspaceName,
+  on,
+  changing,
+  connected,
+  ready,
+  onUse,
+  onStop,
+}: {
+  name: string;
+  workspaceName: string;
+  on: boolean;
+  /** A change to this workspace's grant is in flight; `on` is where it is going. */
+  changing: boolean;
+  connected: boolean;
+  /** Use here can start: the plugin is signed in, or its record is loaded. */
+  ready: boolean;
+  onUse: () => void;
+  onStop: () => void;
+}) {
+  return (
+    <section className={SECTION_ROW} data-testid="plugin-here">
+      <PanelHeading
+        title="In this workspace"
+        hint={
+          !on
+            ? `Your agent can't use ${name} in ${workspaceName} until you turn it on.`
+            : connected
+              ? "On here. Only you can use it; other members can't."
+              : `On here. Connect to sign in to ${name} so your agent can use it.`
+        }
+      />
+      {on ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          {connected && (
+            <span className="px-2 text-xs text-muted-foreground" data-testid="plugin-in-use">
+              In use here
+            </span>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={SECTION_ACTION}
+            disabled={changing}
+            onClick={onStop}
+          >
+            {changing ? "Turning on…" : "Stop using here"}
+          </Button>
+        </div>
+      ) : (
+        <Button
+          type="button"
+          size="sm"
+          className={cn("shrink-0", SECTION_ACTION)}
+          disabled={!ready || changing}
+          onClick={onUse}
+        >
+          {changing ? "Stopping…" : "Use here"}
+        </Button>
+      )}
+    </section>
+  );
+}
+
+interface WorkspaceRef {
+  id: string;
+  name: string;
+}
+
+/**
+ * One workspace on a person's plugin's page: whether the plugin is on there,
+ * and the change that flips it, each confirmed first. A row wraps its action
+ * beneath its name on a narrow column, where the action is 44px tall.
+ */
+function WorkspaceRow({
+  pluginName,
+  workspace,
+  current,
+  on,
+  changing,
+  connected,
+  onUse,
+  onStop,
+}: {
+  pluginName: string;
+  workspace: WorkspaceRef;
+  /** The workspace the page is in. */
+  current: boolean;
+  on: boolean;
+  /** A change to this workspace's grant is in flight. */
+  changing: boolean;
+  connected: boolean;
+  onUse: () => void;
+  onStop: () => void;
+}) {
+  // While a change is in flight the row already shows where it is going, and
+  // its disabled action says it is on the way.
+  const state = on ? (connected ? "On" : "On · Not signed in") : "Off";
+  return (
+    <li
+      className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border/60 py-2.5 last:border-b-0 last:pb-0"
+      data-testid="plugin-workspace-row"
+      data-on={on}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+          <Link
+            to={`/w/${toSlug(workspace.id)}/plugins`}
+            className="truncate text-sm underline-offset-4 hover:underline"
+          >
+            {workspace.name}
+          </Link>
+          {current && (
+            <span className="text-xs text-muted-foreground" data-testid="plugin-workspace-current">
+              This workspace
+            </span>
+          )}
+        </div>
+        <div className="mt-0.5 text-xs text-muted-foreground" data-testid="plugin-workspace-state">
+          {state}
+        </div>
+      </div>
+      {on ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="shrink-0 @max-[40rem]/main:min-h-11"
+          disabled={changing}
+          onClick={onStop}
+          aria-label={`Stop using ${pluginName} in ${workspace.name}`}
+        >
+          {changing ? "Turning on…" : "Stop using"}
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="max-w-full shrink-0 @max-[40rem]/main:min-h-11"
+          disabled={changing}
+          onClick={onUse}
+          aria-label={`Use ${pluginName} in ${workspace.name}`}
+        >
+          <span className="truncate">{changing ? "Stopping…" : `Use in ${workspace.name}`}</span>
+        </Button>
+      )}
+    </li>
   );
 }
 
@@ -646,9 +861,7 @@ export function ConnectorPageRedirect() {
     listPlugins(toWsId(slug))
       .then(({ plugins }) => {
         if (cancelled) return;
-        const plugin = plugins.find(
-          (p) => p.owner.kind === "workspace" && p.servers.some((s) => s.serverName === serverName),
-        );
+        const plugin = workspacePluginForServer(plugins, serverName);
         setTarget(plugin ? pluginPath(slug, plugin) : fallback);
       })
       .catch(() => {

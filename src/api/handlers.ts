@@ -20,6 +20,7 @@ import { RefreshTokenError } from "../identity/provider.ts";
 import { getAvailableModels } from "../model/catalog.ts";
 import { ModelNotQualifiedError } from "../model/model-id.ts";
 import { log } from "../observability/log.ts";
+import { resolveGrantedPersonalConnector } from "../orchestrator/index.ts";
 import {
   ConversationAccessDeniedError,
   ConversationCorruptedError,
@@ -31,6 +32,7 @@ import { type RequestContext, runWithRequestContext } from "../runtime/request-c
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
+import { isPersonalConnectorName, personalConnectorServerName } from "../tools/identity-sources.ts";
 import { parseNamespacedSourceName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ResourceData, ToolSource } from "../tools/types.ts";
@@ -314,12 +316,54 @@ async function serveIdentityAppResource(
   });
 }
 
+/** The one answer for an app the caller cannot reach here, whatever the reason. */
+function appUnavailable(appName: string): Response {
+  return apiError(
+    403,
+    "workspace_access_denied",
+    `App "${appName}" is not available in this workspace`,
+    { app: appName },
+  );
+}
+
+/**
+ * Serve a ui:// resource from the caller's own granted personal connector,
+ * already resolved by `resolveGrantedPersonalConnector`. "primary" resolves to
+ * the first placement the connector's source declares.
+ */
+async function servePersonalAppResource(
+  runtime: Runtime,
+  appName: string,
+  resourcePath: string,
+  source: ToolSource,
+): Promise<Response> {
+  let resolvedPath = resourcePath;
+  if (resourcePath === "primary") {
+    const primaryUri = resolveSourcePrimaryResourceUri(source);
+    if (primaryUri) resolvedPath = primaryUri.replace(/^ui:\/\//, "");
+  }
+  const resource = await runtime.readPersonalAppResource(
+    source,
+    personalConnectorServerName(appName),
+    resolvedPath,
+  );
+  if (resource === null) {
+    return apiError(404, "resource_not_found", `Resource "ui://${resourcePath}" not found`, {
+      resource: `ui://${resourcePath}`,
+    });
+  }
+  return json<ReadResourceResponse>({
+    contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)],
+  });
+}
+
 /** Handle GET /v1/workspaces/:wsId/apps/:name/resources/:path — fetch a ui:// resource. */
 export async function handleResourceProxy(
   appName: string,
   resourcePath: string,
   runtime: Runtime,
   workspaceId: string,
+  identityId?: string,
 ): Promise<Response> {
   // Dev mode: redirect to local Vite dev server when --app flag is active.
   // Applies to both identity and workspace apps, so it runs first.
@@ -340,6 +384,25 @@ export async function handleResourceProxy(
     return serveIdentityAppResource(runtime, appName, resourcePath, identitySource);
   }
 
+  // A `my_` name is the caller's own personal app, resolved through the
+  // identity door with the grant check the tool router applies, and read over
+  // that connection with its owner's credentials. It never falls through to the
+  // workspace registry, so a workspace app of the same server never answers it.
+  // Not held, not granted here, or another member's: the same answer as an app
+  // this workspace lacks, so the route reveals nothing about what exists.
+  if (isPersonalConnectorName(appName)) {
+    const personal = identityId
+      ? await resolveGrantedPersonalConnector({
+          identityId,
+          sourceName: appName,
+          workspaceId,
+          runtime,
+        })
+      : undefined;
+    if (!personal) return appUnavailable(appName);
+    return servePersonalAppResource(runtime, appName, resourcePath, personal);
+  }
+
   // Workspace apps resolve in the workspace in the URL (membership-checked by
   // `requireWorkspace`). Both platform built-ins and user-installed connectors
   // are MCP servers reachable through the workspace registry; registry
@@ -351,12 +414,7 @@ export async function handleResourceProxy(
   const sourceName = appName;
   const wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
   if (!(await workspaceSourceAvailable(runtime, wsRegistry, wsId, sourceName))) {
-    return apiError(
-      403,
-      "workspace_access_denied",
-      `App "${appName}" is not available in this workspace`,
-      { app: appName },
-    );
+    return appUnavailable(appName);
   }
 
   let resolvedPath = resourcePath;
@@ -553,6 +611,45 @@ async function readIdentitySourceResource(
 }
 
 /**
+ * POST …/resources/read for a `my_` server: the caller's own personal connector
+ * granted to the workspace in the URL, read over that connection. Not held,
+ * not granted here, or another member's: the answer a server this workspace
+ * lacks gets.
+ */
+async function readPersonalServerResource(
+  runtime: Runtime,
+  server: string,
+  uri: string,
+  options: { workspaceId: string; identity?: UserIdentity },
+): Promise<Response> {
+  const personal = options.identity?.id
+    ? await resolveGrantedPersonalConnector({
+        identityId: options.identity.id,
+        sourceName: server,
+        workspaceId: options.workspaceId,
+        runtime,
+      })
+    : undefined;
+  if (!personal) {
+    return apiError(
+      403,
+      "workspace_access_denied",
+      `Server "${server}" is not available in this workspace`,
+      { server },
+    );
+  }
+  const resource = await runtime.readPersonalAppResource(
+    personal,
+    personalConnectorServerName(server),
+    uri,
+  );
+  if (resource === null) {
+    return apiError(404, "resource_not_found", `Resource "${uri}" not found`, { server, uri });
+  }
+  return json<ReadResourceResponse>({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
+}
+
+/**
  * Handle POST /v1/workspaces/:wsId/resources/read — MCP resources/read proxy.
  *
  * Body: { server, uri }
@@ -594,6 +691,12 @@ export async function handleReadResource(
   // workspace-owned, so the read resolves in the workspace in the URL.
   if (runtime.getIdentitySource(server)) {
     return readIdentitySourceResource(runtime, server, uri, options);
+  }
+
+  // A `my_` server is the caller's own granted personal connector, read over
+  // that connection; never the workspace's server of the same name.
+  if (isPersonalConnectorName(server)) {
+    return readPersonalServerResource(runtime, server, uri, options);
   }
 
   // The source resolves in the workspace in the URL, and nowhere else.

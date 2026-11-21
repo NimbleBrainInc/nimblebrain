@@ -56,6 +56,8 @@ export interface TaskDomainContext {
   save: (defs: Map<string, Task>) => void;
   reloadScheduler: () => void;
   defaultTimezone: string;
+  /** Told of each task created, after it is saved (telemetry). Never fails the create. */
+  onCreated?: (task: Task) => void;
 }
 
 /**
@@ -114,7 +116,15 @@ function resetBudgetWindowIfChanged(
  * request context.
  */
 export interface DomainCreateInput {
+  /**
+   * The id, when the caller has one already: a one-off's comes from its
+   * idempotency key, so its display name can be anything. Otherwise the id is
+   * the name in kebab case.
+   */
+  id?: string;
   name: string;
+  /** See `Task.startedVia`. */
+  startedVia?: string;
   prompt: string;
   /** Absent: nothing fires it unattended; it runs only when someone runs it. */
   schedule?: ScheduleSpec;
@@ -253,8 +263,18 @@ function assertTaskModel(model: string | null | undefined): void {
   requireQualifiedModelId(model, "Task model");
 }
 
+/** A task's id: the one the caller derived (a one-off's), else its name in kebab case. */
+function taskIdOf(input: Pick<DomainCreateInput, "id" | "name">): string {
+  return input.id ?? toKebabCase(input.name);
+}
+
+/** Who made it, when a client said (see `Task.startedVia`). */
+function attribution(input: Pick<DomainCreateInput, "startedVia">): Pick<Task, "startedVia"> {
+  return input.startedVia ? { startedVia: input.startedVia } : {};
+}
+
 export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): CreateResult {
-  const id = toKebabCase(input.name);
+  const id = taskIdOf(input);
   const defs = ctx.definitions();
 
   // A name already taken is refused, never answered with the stored task: a
@@ -278,6 +298,7 @@ export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): Cr
     prompt: input.prompt,
     ...(input.schedule ? { schedule: input.schedule } : {}),
     ...(input.kind ? { kind: input.kind } : {}),
+    ...attribution(input),
     description: input.description,
     skills: input.skills,
     allowedTools: input.allowedTools,
@@ -321,6 +342,11 @@ export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): Cr
   defs.set(id, task);
   ctx.save(defs);
   ctx.reloadScheduler();
+  try {
+    ctx.onCreated?.(task);
+  } catch {
+    // An observer never fails the create it observed.
+  }
 
   return { task, message: `Task "${input.name}" created (id: ${id}).` };
 }

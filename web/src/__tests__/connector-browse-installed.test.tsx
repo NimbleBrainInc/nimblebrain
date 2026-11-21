@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
+import type { Plugin } from "../_generated/platform-schemas/plugins";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,9 +47,11 @@ const BROKERED = providerEntry(
 
 let installed: Array<Record<string, unknown>> = [];
 let installWarning: string | undefined;
+let plugins: Plugin[] = [];
 
 const listDirectory = mock(async () => ({ entries: [TASKS, BROKERED], errors: [] }));
 const getInstalledConnectors = mock(async () => ({ installed }));
+const listPlugins = mock(async () => ({ wsId: "ws_000f7ed6658f9d30", plugins }));
 const installConnector = mock(async () => ({
   ok: true,
   alreadyInstalled: false,
@@ -63,6 +66,7 @@ mock.module("../api/client", () => ({
   listDirectory,
   getInstalledConnectors,
   installConnector,
+  listPlugins,
 }));
 
 const ReactDOMClient = await import("react-dom/client");
@@ -95,10 +99,10 @@ const ADMIN_WORKSPACE = {
 function Page() {
   return (
     <WorkspaceProvider initialWorkspaces={[ADMIN_WORKSPACE]} initialActiveId={ADMIN_WORKSPACE.id}>
-      <MemoryRouter initialEntries={["/w/000f7ed6658f9d30/plugins?tab=browse"]}>
+      <MemoryRouter initialEntries={["/w/000f7ed6658f9d30/plugins/browse"]}>
         <LocationProbe />
         <Routes>
-          <Route path="/w/:slug/plugins" element={<ConnectorDirectory />} />
+          <Route path="/w/:slug/plugins/browse" element={<ConnectorDirectory />} />
           <Route path="*" element={null} />
         </Routes>
       </MemoryRouter>
@@ -119,6 +123,7 @@ afterEach(() => {
 
 beforeEach(() => {
   installed = [];
+  plugins = [];
   installWarning = undefined;
   installConnector.mockClear();
   lastPath = "";
@@ -182,11 +187,37 @@ describe("Browse lists installed connectors", () => {
         catalogId: "com.acme/brokered",
       },
     ];
+    plugins = [
+      {
+        id: "workspace:com-acme-brokered",
+        displayName: "Acme Brokered",
+        owner: { kind: "workspace" },
+        granted: true,
+        servers: [{ serverName: "com-acme-brokered", status: "ready", account: null }],
+        skills: [],
+        apps: [],
+      },
+    ];
     mounted = await mount(<Page />);
     expect(installedSection(mounted.container)?.textContent).toContain("Acme Brokered");
+    // Configure opens the plugin's page, by its encoded id.
     const link = card(mounted.container, "Acme Brokered").querySelector("a");
     expect(link?.getAttribute("href")).toBe(
-      "/w/000f7ed6658f9d30/settings/connectors/com-acme-brokered",
+      "/w/000f7ed6658f9d30/plugins/workspace%3Acom-acme-brokered",
+    );
+  });
+
+  test("with no plugin listing, an installed entry still links by its server name", async () => {
+    installed = [
+      { serverName: "com-acme-tasks", url: "https://tasks.acme.test/mcp", catalogId: null },
+    ];
+    listPlugins.mockImplementationOnce(async () => {
+      throw new Error("down");
+    });
+    mounted = await mount(<Page />);
+    const link = card(mounted.container, "Acme Tasks").querySelector("a");
+    expect(link?.getAttribute("href")).toBe(
+      "/w/000f7ed6658f9d30/settings/connectors/com-acme-tasks",
     );
   });
 });
@@ -207,7 +238,7 @@ describe("installing a provider connector", () => {
     const done = buttonIn(card(mounted.container, "Acme Tasks"));
     expect(done?.textContent).toContain("Installed");
     expect(done?.disabled).toBe(true);
-    expect(lastPath).toBe("/w/000f7ed6658f9d30/plugins");
+    expect(lastPath).toBe("/w/000f7ed6658f9d30/plugins/browse");
     // Stays in the grid for this visit rather than jumping to the section.
     expect(installedSection(mounted.container)).toBeNull();
   });

@@ -69,3 +69,23 @@ describe("the loading frame", () => {
     expect(sidebar(c)).toBeNull();
   });
 });
+
+describe("the loading frame, held back", () => {
+  test("draws only the page ground until the delay passes, then the frame", async () => {
+    viewport(1280);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = ReactDOMClient.createRoot(container);
+    await act(async () => root.render(<AppFrameSkeleton delayMs={30} />));
+    unmount = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+    expect(container.querySelector("[data-testid='app-frame-skeleton']")).toBeNull();
+    expect(container.querySelector("[role='status']")?.textContent).toBe("Loading…");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+    expect(sidebar(container)?.className).toContain("w-60");
+  });
+});

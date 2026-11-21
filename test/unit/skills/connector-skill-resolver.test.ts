@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   pinnedIndexUrl,
   type ResolveServerSkillsOptions,
+  resolveServerConversationStarters,
   resolveServerSkills,
 } from "../../../src/skills/connector-skill-resolver.ts";
 import { fakeFetch } from "../../helpers/fake-fetch.ts";
@@ -171,5 +172,67 @@ describe("resolveServerSkills", () => {
       pinnedIndexUrl(TEST_CATALOG_URL, next.pin),
       [...next.objects.keys()].find((u) => u.includes(next.digests.gmail!))!,
     ]);
+  });
+});
+
+describe("resolveServerConversationStarters", () => {
+  const STARTERS = [
+    { title: "Summarize my unread email", text: "Summarize my unread email from today." },
+    { title: "Draft replies", text: "Draft replies; don't send anything." },
+  ];
+
+  function starterCatalog(): FixtureCatalog {
+    return buildCatalog([
+      { name: "gmail", servers: { gmail: "com.google/gmail" }, conversationStarters: STARTERS },
+      { name: "notion", servers: { notion: "com.notion/mcp" } },
+      {
+        name: "linear",
+        servers: { linear: "app.linear/mcp" },
+        conversationStarters: [
+          { title: "  What's due?  ", text: "  List my issues by due date.  " },
+          { title: "", text: "no title" },
+          { title: "x".repeat(61), text: "too long a title" },
+          { title: "no text" },
+          "not a mapping",
+          { title: "One", text: "1" },
+          { title: "Two", text: "2" },
+          { title: "Three", text: "3" },
+          { title: "Four", text: "4" },
+        ],
+      },
+    ]);
+  }
+
+  test("returns the starters of each plugin that names an asked-for server", async () => {
+    const c = starterCatalog();
+    const out = await resolveServerConversationStarters(
+      ["com.google/gmail", "com.notion/mcp"],
+      opts(c),
+    );
+    expect(out).toEqual([
+      { server: "com.google/gmail", plugin: "gmail", conversationStarters: STARTERS },
+    ]);
+  });
+
+  test("keeps only well-formed starters, trimmed, and at most four", async () => {
+    const c = starterCatalog();
+    const [linear] = await resolveServerConversationStarters(["app.linear/mcp"], opts(c));
+    expect(linear?.conversationStarters).toEqual([
+      { title: "What's due?", text: "List my issues by due date." },
+      { title: "One", text: "1" },
+      { title: "Two", text: "2" },
+      { title: "Three", text: "3" },
+    ]);
+  });
+
+  test("asks for nothing when no server is named", async () => {
+    const c = starterCatalog();
+    expect(await resolveServerConversationStarters([], opts(c))).toEqual([]);
+    expect(c.requests).toEqual([]);
+  });
+
+  test("a server no plugin names has no starters", async () => {
+    const c = starterCatalog();
+    expect(await resolveServerConversationStarters(["com.unknown/mcp"], opts(c))).toEqual([]);
   });
 });

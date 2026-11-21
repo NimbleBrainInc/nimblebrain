@@ -27,10 +27,13 @@ once and writes nothing. The client shows the person the question; their
 answer, and any grant, come from the client; and the model learns the answer
 as the person's next message.**
 
-- The request is a model-visible action, `nb__manage_tools` with
-  `request_plugin`, naming one of the caller's own personal plugins that is
-  not granted in the conversation's workspace. It is refused in an unattended
-  run and outside a conversation, where no person can answer.
+- The request is a model-visible action, `nb__request_plugin`, naming one of
+  the caller's own personal plugins that is not granted in the conversation's
+  workspace. It is refused in an unattended run and outside a conversation,
+  where no person can answer. It is its own tool, not part of
+  `nb__manage_tools`: promotion is the native engine's state, which an
+  external agent runtime does not have (ADR-0056), while a request touches
+  none of it, so it reaches the model on every runtime.
 - The client renders the question from the caller's own plugin listing, never
   from the call's arguments, so a request cannot make the client show a plugin
   that is not the caller's.

@@ -42,7 +42,6 @@ function sanitizePlacementFields(p: PlacementDeclaration): PlacementDeclaration 
   if (typeof p.label === "string") safe.label = p.label.slice(0, DISPLAY_STRING_MAX);
   if (typeof p.icon === "string") safe.icon = p.icon.slice(0, DISPLAY_STRING_MAX);
   if (typeof p.route === "string") safe.route = p.route;
-  if (p.size === "compact" || p.size === "full" || p.size === "auto") safe.size = p.size;
   return safe;
 }
 

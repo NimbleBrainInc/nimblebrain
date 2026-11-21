@@ -81,18 +81,18 @@ async function makeRuntime(): Promise<Runtime> {
 }
 
 describe("Core Source", () => {
-  it("tools() returns 9 tools with nb__ prefix", async () => {
+  it("tools() returns the core tools with nb__ prefix", async () => {
     const runtime = await makeRuntime();
     try {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const tools = await source.tools();
-      expect(tools).toHaveLength(9);
       for (const tool of tools) {
         expect(tool.name).toMatch(/^nb__/);
       }
       const names = tools.map((t) => t.name).sort();
       expect(names).toEqual([
         "nb__briefing",
+        "nb__conversation_starters",
         "nb__get_config",
         "nb__list_artifacts",
         "nb__open_app",
@@ -164,6 +164,9 @@ describe("Core Source", () => {
       expect(result.isError).toBe(false);
       const data = result.structuredContent as Record<string, unknown>;
       expect(typeof data.version).toBe("string");
+      // A deployment that did not set telemetry.identify never names the person.
+      expect(data.telemetryIdentify).toBe(false);
+      expect(data.tenantId).toBeUndefined();
     } finally {
       await runtime.shutdown();
     }

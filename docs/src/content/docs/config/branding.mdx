@@ -19,7 +19,7 @@ This page is the reference for every key. To brand a deployment step by step (pr
 | OAuth consent screens at connector vendors (dynamic client registration) | `name`, `homepageUrl`, `logo.raster` |
 | The OAuth error pages | `name` |
 | Connector-tool error messages | `name` |
-| The logo on the sign-in page and in the expanded sidebar | `logo.light`, `logo.dark` |
+| The logo on the screen shown on the way to sign-in and in the expanded sidebar | `logo.light`, `logo.dark` |
 | The logo in the collapsed sidebar | `logo.mark` |
 | The browser tab title | `name` |
 | The favicon | `favicon` |
@@ -155,7 +155,7 @@ The runtime serves the validated block as a script at `GET /v1/brand.js`, unauth
 window.__NB_BRAND__ = {"name":"ACME","defaultTheme":"light"};
 ```
 
-The web client loads it with a plain `<script>` before its bundle, so the brand is in place before the first paint. It is public because the sign-in page shows the brand before anyone has signed in, and nothing in it is private. Without a `brand` block it assigns `{}`.
+The web client loads it with a plain `<script>` before its bundle, so the brand is in place before the first paint. It is public because the screen shown on the way to sign-in carries the brand before anyone has signed in, and nothing in it is private. Without a `brand` block it assigns `{}`.
 
 The served block is the configured one, holding only the keys on this page. A key the schema does not define is reported as an unknown key at startup and ignored; it is never served.
 

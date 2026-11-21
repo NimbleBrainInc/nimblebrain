@@ -151,10 +151,25 @@ async function resolveServer(
   const recorded = ref.skillsLock?.[0]?.server;
   if (recorded) return recorded;
   if (!(await loadCatalog(deps, catalog))) return null;
+  return registryNameFromCatalog(ref, catalog.byId, catalog.byUrl);
+}
 
+/**
+ * The registry name of the server a connector installs, from its skill lock
+ * when that records one, else from the catalog: by the stamped catalog id for a
+ * brokered connector, whose persisted url is a per-install session, and by url
+ * for any other. Null for a connector the catalog does not list.
+ */
+export function registryNameFromCatalog(
+  ref: ConnectorRef,
+  byId: ReadonlyMap<string, ConnectorCatalogEntry> | undefined,
+  byUrl: ReadonlyMap<string, ConnectorCatalogEntry> | undefined,
+): string | null {
+  const recorded = ref.skillsLock?.[0]?.server;
+  if (recorded) return recorded;
   const brokeredId = brokeredRef(ref)?.connectorId;
-  const brokered = brokeredId ? catalog.byId?.get(brokeredId) : undefined;
-  return brokered?.id ?? catalog.byUrl?.get(ref.url)?.id ?? null;
+  const brokered = brokeredId ? byId?.get(brokeredId) : undefined;
+  return brokered?.id ?? byUrl?.get(ref.url)?.id ?? null;
 }
 
 /** Populate the catalog cache once; returns false if it can't be reached. */

@@ -111,6 +111,29 @@ describe("SseEventManager — routing table", () => {
     expect(wsB.events).not.toContain("connection.state_changed");
   });
 
+  test("a person's own connection.state_changed reaches that person alone", async () => {
+    // Shared workspace: routing by a workspace the plugin is on in would tell
+    // every member which plugins this person uses.
+    const owner = collect(mgr.addIdentityClient("usr_a", new Set(["ws_00079598e311c160"])));
+    const member = collect(mgr.addIdentityClient("usr_b", new Set(["ws_00079598e311c160"])));
+    released.push(owner.release, member.release);
+
+    mgr.emit({
+      type: "connection.state_changed",
+      data: {
+        userId: "usr_a",
+        serverName: "granola",
+        connectorName: "granola",
+        principalId: "usr_a",
+        state: "not_authenticated",
+      },
+    });
+    await flush();
+
+    expect(owner.events).toContain("connection.state_changed");
+    expect(member.events).not.toContain("connection.state_changed");
+  });
+
   test("connector.* events are workspace-scoped", async () => {
     const wsA = collect(mgr.addIdentityClient("usr_a", new Set(["ws_00079598e311c160"])));
     const wsB = collect(mgr.addIdentityClient("usr_b", new Set(["ws_001c32f121060ff3"])));
@@ -537,5 +560,36 @@ describe("SseEventManager — identity-scoped clients", () => {
     await flush();
 
     expect(alice.events).toEqual(["connector.installed"]);
+  });
+});
+
+describe("SseEventManager — connector.grant_changed reaches the granter alone", () => {
+  let mgr: SseEventManager;
+  const released: Array<() => void> = [];
+
+  beforeEach(() => {
+    mgr = new SseEventManager(1_000_000);
+    mgr.start();
+  });
+
+  afterEach(() => {
+    for (const r of released.splice(0)) r();
+    mgr.stop();
+  });
+
+  test("a member of the same workspace does not learn of another's personal grant", async () => {
+    const ws = "ws_0071a5bbf40116e6";
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set([ws])));
+    const bob = collect(mgr.addIdentityClient("usr_bob", new Set([ws])));
+    released.push(alice.release, bob.release);
+
+    mgr.emit({
+      type: "connector.grant_changed",
+      data: { userId: "usr_alice", serverName: "granola", wsId: ws, granted: false },
+    });
+    await flush();
+
+    expect(alice.events).toEqual(["connector.grant_changed"]);
+    expect(bob.events).toEqual([]);
   });
 });

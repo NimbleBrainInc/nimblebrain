@@ -5,8 +5,8 @@
  *
  * The card is untrusted and advisory. It names the server and describes it for
  * display; nothing in it decides access. Of its `_meta["ai.nimblebrain/host"]`
- * block only `placements` is read: `hooks`, `notifications`, `admin_tools` and
- * `record_arguments` are operator grants, read from a catalog entry only.
+ * block only `placements` is read: `hooks`, `notifications`, `adminTools` and
+ * `recordArguments` are operator grants, read from a catalog entry only.
  * A card that is missing, slow, too large or malformed reads as no card.
  */
 

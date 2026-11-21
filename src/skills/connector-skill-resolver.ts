@@ -26,13 +26,19 @@
  * A server no plugin names, or whose plugin carries no skill bound to it, has
  * no curated skill: the answer is `[]`, read from verified bytes, so it is a
  * definite answer rather than a guess from a 404.
+ *
+ * The same verified plugins carry their conversation starters: what a host
+ * offers a person who has the plugin and does not know what to ask, under
+ * `extensions["ai.nimblebrain"].conversationStarters` in `plugin.json` as
+ * `{title, text}`. `resolveServerConversationStarters` returns them for the
+ * servers a workspace has.
  */
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import matter from "gray-matter";
 import { readZip } from "../util/zip.ts";
+import { parseFrontmatter } from "./frontmatter.ts";
 
 /** One curated skill bound to a server, as read from its plugin. */
 export interface PluginSkill {
@@ -79,11 +85,32 @@ interface CatalogIndex {
   plugins: IndexEntry[];
 }
 
-/** What the runtime keeps of one plugin: its servers and its server-bound skills. */
+/** One conversation starter from a plugin: the action a person reads, and the text sent. */
+export interface PluginConversationStarter {
+  title: string;
+  text: string;
+}
+
+/** The conversation starters of the plugin that names one server. */
+export interface ServerConversationStarters {
+  /** The server's registry name (`com.google/gmail`). */
+  server: string;
+  /** Plugin name in its catalog (`gmail`). */
+  plugin: string;
+  conversationStarters: PluginConversationStarter[];
+}
+
+/** What the runtime keeps of one plugin: its servers, server-bound skills, and starters. */
 interface PluginRecord {
   servers: Record<string, string>;
   skills: Array<{ name: string; server: string; body: string }>;
+  conversationStarters: PluginConversationStarter[];
 }
+
+/** The most starters read from one plugin; the catalog build allows no more. */
+const MAX_CONVERSATION_STARTERS = 4;
+const MAX_STARTER_TITLE = 60;
+const MAX_STARTER_TEXT = 500;
 
 /**
  * Every curated skill in the pinned catalog bound to the server with registry
@@ -114,6 +141,32 @@ export async function resolveServerSkills(
         body: skill.body,
         sha: sha256Hex(Buffer.from(skill.body, "utf8")),
       });
+    }
+  });
+  return out;
+}
+
+/**
+ * The conversation starters of each plugin that names one of `servers`
+ * (registry names), in index order. A server no plugin names, or whose plugin
+ * has none, is left out. Throws on any fetch or integrity failure, as skills do.
+ */
+export async function resolveServerConversationStarters(
+  servers: readonly string[],
+  opts: ResolveServerSkillsOptions,
+): Promise<ServerConversationStarters[]> {
+  const wanted = new Set(servers);
+  if (wanted.size === 0) return [];
+  const index = await loadIndex(opts);
+  const records = await Promise.all(index.plugins.map((entry) => loadPlugin(entry, opts)));
+  const out: ServerConversationStarters[] = [];
+  index.plugins.forEach((entry, i) => {
+    const record = records[i]!;
+    if (record.conversationStarters.length === 0) return;
+    for (const server of new Set(Object.values(record.servers))) {
+      if (wanted.has(server)) {
+        out.push({ server, plugin: entry.name, conversationStarters: record.conversationStarters });
+      }
     }
   });
   return out;
@@ -156,9 +209,9 @@ function readPlugin(name: string, archive: Uint8Array): PluginRecord {
   const manifestBytes = files.get("plugin.json") ?? files.get(".claude-plugin/plugin.json");
   if (!manifestBytes) throw new Error(`plugin ${name}: archive has no plugin.json`);
   const manifest: unknown = JSON.parse(new TextDecoder().decode(manifestBytes));
-  const servers = stringRecord(
-    field(field(field(manifest, "extensions"), "ai.nimblebrain"), "servers"),
-  );
+  const extension = field(field(manifest, "extensions"), "ai.nimblebrain");
+  const servers = stringRecord(field(extension, "servers"));
+  const conversationStarters = readConversationStarters(field(extension, "conversationStarters"));
 
   const skills: PluginRecord["skills"] = [];
   for (const [path, bytes] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
@@ -170,13 +223,35 @@ function readPlugin(name: string, archive: Uint8Array): PluginRecord {
       skills.push({ name: match[1]!, server: bound, body });
     }
   }
-  return { servers, skills };
+  return { servers, skills, conversationStarters };
+}
+
+/**
+ * A plugin's conversation starters, keeping only well-formed ones within the
+ * catalog's limits. The catalog build already refuses anything else; this keeps a
+ * malformed entry from another catalog off the page rather than failing the
+ * whole read.
+ */
+function readConversationStarters(raw: unknown): PluginConversationStarter[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PluginConversationStarter[] = [];
+  for (const item of raw) {
+    const title = field(item, "title");
+    const text = field(item, "text");
+    if (typeof title !== "string" || typeof text !== "string") continue;
+    const t = title.trim();
+    const x = text.trim();
+    if (!t || !x || t.length > MAX_STARTER_TITLE || x.length > MAX_STARTER_TEXT) continue;
+    out.push({ title: t, text: x });
+    if (out.length === MAX_CONVERSATION_STARTERS) break;
+  }
+  return out;
 }
 
 /** A skill's frontmatter, or nothing when it does not parse (the skill is then unbound). */
 function frontmatter(body: string): unknown {
   try {
-    return matter(body).data;
+    return parseFrontmatter(body).data;
   } catch {
     return undefined;
   }

@@ -34,7 +34,7 @@ export type WorkspaceForHostContext = {
  *
  * - `allowedTools`: the bare names of this connector's tools the viewer may
  *   call, from the server's installed-connector entry, decided by the same gate
- *   that refuses a call (`admin_tools` against the viewer's workspace role, and
+ *   that refuses a call (`adminTools` against the viewer's workspace role, and
  *   the host-only lifecycle handlers). An app gates a control on whether the
  *   tool behind it is listed. It names tools, never a role, so a change to who
  *   may call what changes the list and no app. Sent on both mounts once the

@@ -6,14 +6,12 @@ describe("resolveFeatures", () => {
     const features = resolveFeatures();
     expect(features.skillManagement).toBe(true);
     expect(features.toolDiscovery).toBe(true);
-    expect(features.catalogSearch).toBe(true);
     expect(features.compaction).toBe(true);
   });
 
   it("merges partial config correctly", () => {
-    const features = resolveFeatures({ catalogSearch: false });
-    expect(features.catalogSearch).toBe(false);
-    expect(features.skillManagement).toBe(true);
+    const features = resolveFeatures({ skillManagement: false });
+    expect(features.skillManagement).toBe(false);
     expect(features.toolDiscovery).toBe(true);
   });
 });

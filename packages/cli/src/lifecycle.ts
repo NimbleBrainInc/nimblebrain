@@ -9,6 +9,7 @@ import { AGENTS, type Agent, type Flags } from "./args.ts";
 import {
   asksConsent,
   compose,
+  composeExec,
   DEFAULT_PROJECT,
   fetchCompose,
   hasKey,
@@ -34,11 +35,13 @@ import {
 import { openBrowser } from "./open.ts";
 import { compareVersions, runtimeTag } from "./release.ts";
 import { CliError } from "./result.ts";
-import { type InstallState, readInstall, type StatusResult, status } from "./status.ts";
+import { hasModelIn, type InstallState, readInstall, type StatusResult, status } from "./status.ts";
 import {
   type Consent,
   envValues,
   field,
+  idPath,
+  installId,
   lockedHere,
   parseAnswer,
   QUESTION,
@@ -90,9 +93,10 @@ export function confirmOllamaStart(ctx: Pick<Ctx, "deps" | "flags">, unasked: bo
 
 /**
  * Check, write, start, wait, then connect. Safe to run again: an existing
- * install is reported, not touched. The model key is asked for only when a
- * person is at the terminal; otherwise a missing key ends `init` with
- * `MODEL_KEY_MISSING` after everything else is up, carrying the full status.
+ * install is reported, not touched. The model is asked for only when a
+ * person is at the terminal; otherwise `init` still succeeds once everything
+ * else is up, and its answer says `model_key: missing` with `local_model: null`,
+ * for the person to run `key` or `local-model`. A running install is not a failure.
  */
 export async function init(ctx: Ctx) {
   const { deps, flags, home } = ctx;
@@ -100,7 +104,10 @@ export async function init(ctx: Ctx) {
 
   // Asked before anything else, so a failed check reaches us when the person said yes.
   const consent = await chooseConsent(ctx);
-  const rec = recorder(deps, ctx.version, await reportId(deps, home));
+  // Kept before the checks, so every attempt on this home is one install. Never
+  // in a home holding files this CLI did not write; `install` refuses that home.
+  const id = (await foreignFile(deps, home)) ? undefined : await installId(deps, home);
+  const rec = recorder(deps, ctx.version, id ?? (await reportId(deps, home)));
   const begun = Date.now();
   rec.record("cli.init_started", { agent: flags.agent ?? null, interactive: deps.interactive });
   try {
@@ -120,22 +127,20 @@ export async function init(ctx: Ctx) {
  * those, and it opens the UI with `open` when the person asks. A rerun opens
  * nothing; `open` is the command for that.
  */
-async function openWhenDone<T extends { health: string; url: string }>(
-  ctx: Ctx,
-  result: T,
-): Promise<T & { opened?: boolean }> {
+async function openWhenDone<
+  T extends { health: string; url: string; model_key: string; local_model: string | null },
+>(ctx: Ctx, result: T): Promise<T & { opened?: boolean }> {
   const { deps, flags } = ctx;
   if (!deps.interactive || flags.json || flags.noOpen) return result;
-  if (result.health !== "ok") return result;
+  // With no model, chat in the browser would fail; the next step is in the terminal.
+  if (result.health !== "ok" || !hasModelIn(result)) return result;
   return { ...result, opened: await openBrowser(deps, result.url) };
 }
 
-/** Records why `init` stopped (a missing key is not a failure) and settles the run. */
+/** Records why `init` stopped and settles the run. */
 async function settleFailure(rec: Recorder, home: string, consent: Consent, err: CliError) {
-  if (err.code !== "MODEL_KEY_MISSING") {
-    const check = typeof err.detail.check === "string" ? err.detail.check : undefined;
-    rec.record(check ? "cli.doctor_failed" : "cli.init_failed", { error: err.code, check });
-  }
+  const check = typeof err.detail.check === "string" ? err.detail.check : undefined;
+  rec.record(check ? "cli.doctor_failed" : "cli.init_failed", { error: err.code, check });
   await rec.settle(home, consent);
 }
 
@@ -173,7 +178,7 @@ async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number)
     tag,
     flags.port,
     composeText,
-    envValues(deps, rec.id, consent, asksConsent(composeText)),
+    envValues(deps, lockedHere(deps) ? undefined : rec.id, consent, asksConsent(composeText)),
   );
   // Asked before the start: the runtime reads `.env` only when its container is created.
   const envText = (await deps.readText(paths(home).env)) ?? "";
@@ -213,11 +218,6 @@ async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number)
       agent: state.agent ?? null,
     });
     await rec.settle(home, consent);
-    if (result.model_key === "missing" && !result.local_model) {
-      throw new CliError("MODEL_KEY_MISSING", "NimbleBrain is running; chat needs a model key.", {
-        ...result,
-      });
-    }
     return { ...result };
   });
 }
@@ -369,7 +369,8 @@ export async function uninstall(ctx: Ctx) {
   if (install.agent === "claude-code")
     await deps.exec("claude", ["mcp", "remove", "-s", "user", SERVER_NAME]);
   if (install.agent === "codex") await deps.exec("codex", ["mcp", "remove", SERVER_NAME]);
-  for (const file of [...Object.values(paths(home)), reportPath(home)]) await deps.remove(file);
+  for (const file of [...Object.values(paths(home)), reportPath(home), idPath(home)])
+    await deps.remove(file);
   await deps.remove(home);
   return { ok: true as const, removed: true };
 }
@@ -590,15 +591,11 @@ async function requireInstall({ deps, home }: Ctx): Promise<InstallState> {
  */
 async function guardOurs(deps: Deps, home: string): Promise<string> {
   const project = projectFor(home);
-  const env = await deps.readText(paths(home).env);
-  const marked = env?.match(/^COMPOSE_PROJECT_NAME=(.*?)\r?$/m)?.[1];
-  if (marked === project || marked === DEFAULT_PROJECT) return marked;
-  for (const file of Object.values(paths(home))) {
-    if ((await deps.readText(file)) !== undefined) {
-      throw new CliError("NOT_OURS", `${file} already exists and this CLI did not write it.`);
-    }
-  }
-  const projects = await deps.exec("docker", ["compose", "ls", "-a", "--format", "json"]);
+  const marked = await markedProject(deps, home);
+  if (marked) return marked;
+  const file = await foreignFile(deps, home);
+  if (file) throw new CliError("NOT_OURS", `${file} already exists and this CLI did not write it.`);
+  const projects = await composeExec(deps, ["ls", "-a", "--format", "json"]);
   const taken = projects.code === 0 && listsProject(projects.stdout, project);
   const volumes = await deps.exec("docker", [
     "volume",
@@ -614,6 +611,22 @@ async function guardOurs(deps: Deps, home: string): Promise<string> {
     );
   }
   return project;
+}
+
+/** The project this home's `.env` marks as ours (see `guardOurs`), if it marks one. */
+async function markedProject(deps: Deps, home: string): Promise<string | undefined> {
+  const env = await deps.readText(paths(home).env);
+  const marked = env?.match(/^COMPOSE_PROJECT_NAME=(.*?)\r?$/m)?.[1];
+  return marked === projectFor(home) || marked === DEFAULT_PROJECT ? marked : undefined;
+}
+
+/** A file in the home that this CLI did not write, if there is one. */
+async function foreignFile(deps: Deps, home: string): Promise<string | undefined> {
+  if (await markedProject(deps, home)) return undefined;
+  for (const file of Object.values(paths(home))) {
+    if ((await deps.readText(file)) !== undefined) return file;
+  }
+  return undefined;
 }
 
 /** Whether `docker compose ls --format json` lists a project by exactly this name. */

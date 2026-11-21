@@ -40,10 +40,9 @@
  *   hint) than role-based skill composition.
  */
 
-import matter from "gray-matter";
-
 import { log } from "../observability/log.ts";
 import { toolNameMatchesPattern } from "../tools/tool-pattern.ts";
+import { parseFrontmatter } from "./frontmatter.ts";
 import { resolveLoadingMechanism, type SkillLoadingMechanism } from "./loading.ts";
 import type { SkillEntry } from "./skills-extension.ts";
 import type { Skill, SkillBodyLoad, SkillLoadingStrategy, SkillScope } from "./types.ts";
@@ -323,7 +322,7 @@ export function parseSkillMarkdown(
 ): { name: string; description: string; body: string } & ReturnType<typeof readDeclaredLoading> {
   const fallbackName = skillPathSegment(uri);
   try {
-    const { data, content } = matter(raw);
+    const { data, content } = parseFrontmatter(raw);
     const name = typeof data.name === "string" && data.name ? data.name : fallbackName;
     const description = typeof data.description === "string" ? data.description : "";
     return { name, description, body: content, ...readDeclaredLoading(data) };

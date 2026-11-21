@@ -10,7 +10,7 @@ import { ToolPermissionsTable } from "./ToolPermissionsTable";
 /**
  * The parts of a personal connector's page that Profile → Connectors and a
  * personal plugin's page both show: its Connect route, its tool permissions,
- * and what Disconnect says it does.
+ * and what Sign out and Remove say they do.
  */
 
 /**
@@ -83,8 +83,13 @@ export async function startPluginSignIn(
   return "connected";
 }
 
-/** What Disconnect does, for its confirm: it also ends every grant. */
-export function disconnectConsequence(grants: number): string {
+/** What Sign out does, for its confirm: the account goes, the plugin and where it is on stay. */
+export function signOutConsequence(name: string): string {
+  return `${name} stays in your account and on in every workspace it is on in. The agent can't use it until you sign in again.`;
+}
+
+/** What Remove does, for its confirm: it also ends every grant. */
+export function removeConsequence(grants: number): string {
   const base = "Signs out and removes it from your account.";
   if (grants === 0) return base;
   return `${base} It turns off in the ${grants} workspace${grants === 1 ? "" : "s"} it is on in.`;

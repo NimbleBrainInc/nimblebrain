@@ -22,6 +22,7 @@ import {
   catalogPath,
   warnIfCatalogEmpty,
 } from "../connectors/catalog/catalog.ts";
+import { getNimbleBrainHostMeta } from "../connectors/catalog/host-meta.ts";
 import type { ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
 import { registerGatewayCredentialProviders } from "../connectors/gateways/transport-credential.ts";
 import { bootAuditComposioAuthConfigs } from "../connectors/providers/composio/auth-config-audit.ts";
@@ -119,6 +120,7 @@ import {
   type RecordArgumentsGrant,
   TokenBucketRateLimit,
 } from "../host-resources/index.ts";
+import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { IdentityContext } from "../identity/context.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
 import { loadInstanceConfig, missingInstanceConfigError } from "../identity/instance.ts";
@@ -180,6 +182,7 @@ import {
   filterAdmittedTools,
   isAdminToolAllowed,
   isDeclaredAdminTool,
+  parseAdminToolsDeclaration,
 } from "../permissions/admin-tools.ts";
 import { hostOnlyToolDenial, isHostOnlyTool } from "../permissions/host-only-tools.ts";
 import {
@@ -246,6 +249,7 @@ import {
 import { approxTokens } from "../skills/tokens.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../skills/truncate.ts";
 import type { Skill, SkillBodyLoad } from "../skills/types.ts";
+import { telemetryCatalogId } from "../telemetry/catalog-id.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import {
@@ -291,7 +295,7 @@ import {
 import { isToolAllowedForRun, unmatchedAllowedTools } from "../tools/tool-pattern.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { toToolSchema } from "../tools/types.ts";
-import { estimateCost, resolveRates } from "../usage/cost.ts";
+import { callCostUsd, resolveRates } from "../usage/cost.ts";
 import { createProcessLedger, type UsageLedger } from "../usage/ledger.ts";
 import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
@@ -597,7 +601,7 @@ export interface WorkspaceDeleteResult {
 }
 
 /**
- * What narrows who may call a connector's tools: the catalog's `admin_tools`,
+ * What narrows who may call a connector's tools: the catalog's `adminTools`,
  * and the lifecycle handlers its server binds, which only the host may call.
  */
 interface ConnectorGates {
@@ -856,6 +860,20 @@ export class Runtime {
     const telemetryManager = TelemetryManager.create({
       workDir,
       enabled: declaredConfig.telemetry?.enabled,
+      identify: declaredConfig.telemetry?.identify,
+    });
+    // An identified event is about whoever made the request: the verified
+    // identity and the one workspace the request is bound to.
+    telemetryManager.setSubjectSource(() => {
+      const ctx = getRequestContext();
+      if (!ctx?.identity) return undefined;
+      return {
+        userId: ctx.identity.id,
+        email: ctx.identity.email,
+        name: ctx.identity.displayName,
+        workspaceId: ctx.workspaceId,
+        ...(ctx.runTrigger ? { trigger: ctx.runTrigger } : {}),
+      };
     });
     const telemetrySink = new PostHogEventSink(telemetryManager);
     const events = buildRuntimeEventSink(declaredConfig, telemetrySink);
@@ -958,6 +976,25 @@ export class Runtime {
     const allowInsecureRemotes = config.allowInsecureRemotes === true || hostLoopback !== null;
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
+    telemetryManager.setPersonSource(async (userId) => {
+      const user = await userStore.get(userId);
+      return user ? { email: user.email, name: user.displayName } : undefined;
+    });
+    // Identified telemetry (a no-op otherwise): who signed up, and the
+    // workspaces and memberships they make, from the stores that write them.
+    userStore.onCreated((user) =>
+      telemetryManager.captureAbout(
+        "user.signed_up",
+        {},
+        { userId: user.id, email: user.email, name: user.displayName },
+      ),
+    );
+    workspaceStore.onCreated((ws) =>
+      telemetryManager.captureAbout("workspace.created", {}, { workspaceId: ws.id }),
+    );
+    workspaceStore.onMemberAdded((wsId, userId, role) =>
+      telemetryManager.captureAbout("member.added", { role }, { userId, workspaceId: wsId }),
+    );
     // The runtime is the one owner of the identity provider: the server
     // authenticates with this one, and every permission check here judges the
     // identity it verified. There is no runtime without one: no `instance.json`
@@ -1222,6 +1259,16 @@ export class Runtime {
       const platformSources = await createPlatformSources(rt, events);
       // Telemetry counts calls to connector tools apart from the kernel's own.
       telemetrySink.addBuiltinSources(platformSources.map((s) => s.name));
+      // Identified telemetry names a connector by its catalog id, never by the
+      // name it was installed under, which someone may have chosen.
+      telemetrySink.setConnectorResolver(async (owner, serverName) => {
+        const ref =
+          "workspaceId" in owner
+            ? rt.getLifecycle().getInstance(serverName, owner.workspaceId)?.ref
+            : await new IdentityConnectorStore({ workDir }).get(owner.userId, serverName);
+        if (!ref) return undefined;
+        return telemetryCatalogId(ref, await rt.getConnectorCatalog().catalogEntries());
+      });
       // Make the host-resources factory accessible on `rt` so non-lifecycle
       // install paths (connector-tools, boot reload) can pull deps directly.
       rt._connectorMcpDepsFactory = connectorMcpDepsFactory;
@@ -1803,6 +1850,7 @@ export class Runtime {
       ...stopDetail(handle),
       usage: handle.usage,
       costUsd: handle.costUsd,
+      ...(handle.unpricedCalls ? { unpricedCalls: handle.unpricedCalls } : {}),
       skillsDelivered: handle.skillsDelivered,
     };
   }
@@ -1907,6 +1955,7 @@ export class Runtime {
       briefingWsId,
       activeWorkspace,
       carry: conversationCarry(recordedHistory),
+      promotesTools: agentRuntime.capabilities.promotesTools,
     });
     const { tools, skill, systemPrompt, stableSystem, volatileHead } = composed;
 
@@ -2155,6 +2204,7 @@ export class Runtime {
         stopReason: "aborted",
         usage: partial.usage(spec.model),
         costUsd: partial.costUsd(),
+        ...unpricedOf(partial),
         skillsDelivered: deliveries.list,
       };
     } finally {
@@ -2177,6 +2227,7 @@ export class Runtime {
         iterations: result.iterations,
       },
       costUsd: partial.costUsd(),
+      ...unpricedOf(partial),
       skillsDelivered: deliveries.list,
     };
   }
@@ -2326,6 +2377,8 @@ export class Runtime {
       activeWorkspace: Workspace | null;
       /** What the conversation already brought into context (ADR-0066). */
       carry: ConversationCarry;
+      /** Whether the run's runtime promotes tools (`RuntimeCapabilities.promotesTools`). */
+      promotesTools: boolean;
     },
   ): Promise<RunComposition> {
     const { attended, briefingWsId, activeWorkspace, carry } = ctx;
@@ -2458,6 +2511,10 @@ export class Runtime {
       ...buildSurfaceOptions(focusedServerName, spec.input.allowedTools),
       carriedTools: carry.calledTools,
     });
+    // Promotion guidance describes the native loop. A runtime served by the
+    // tool projection gets every tool from the start, so for it nothing is
+    // proxied, whatever the surfacing held back for a native run.
+    const hasProxiedTools = ctx.promotesTools && proxied.length > 0;
 
     // Per-user preferences from the authenticated identity.
     const prefs = buildPromptPrefs(identity);
@@ -2540,7 +2597,7 @@ export class Runtime {
       focusedApp,
       appState,
       prefs,
-      proxied.length > 0,
+      hasProxiedTools,
       workspaceContext,
       layer3Entries,
       attended ? "chat" : "task",
@@ -2553,7 +2610,7 @@ export class Runtime {
 
     return {
       tools,
-      hasProxiedTools: proxied.length > 0,
+      hasProxiedTools,
       skill: matchedSkill,
       skillMatch: composedMatch,
       alwaysOnSkills: requestContextSkills,
@@ -4108,7 +4165,7 @@ export class Runtime {
       identityId ? this._listGrantedPersonalConnectorTools(identityId, wsId) : Promise.resolve([]),
       this.connectorAdmission(wsId, identityId ? { id: identityId } : null),
     ]);
-    // A connector's `admin_tools` leave a non-admin's listing here, where every
+    // A connector's `adminTools` leave a non-admin's listing here, where every
     // listing that reads this method (the engine's universe, `nb__search`,
     // `/mcp` `tools/list`) picks it up. Dispatch refuses the same set.
     const wsTools = filterAdmittedTools(allWsTools, admission);
@@ -4760,7 +4817,7 @@ export class Runtime {
    * The live MCP source of a workspace connector, as the lifecycle binding
    * reads it, or `undefined` when none is registered.
    *
-   * Workspace connectors only, the scope of `admin_tools` too: a personal
+   * Workspace connectors only, the scope of `adminTools` too: a personal
    * connector is not in the workspace registry, so one that advertises the
    * extension is neither notified nor has its handlers withheld.
    */
@@ -4782,7 +4839,7 @@ export class Runtime {
 
   /**
    * `principal`'s admission to the connector tools of `wsId`: which declared
-   * `admin_tools` it may list and call, minus every declared lifecycle handler,
+   * `adminTools` it may list and call, minus every declared lifecycle handler,
    * which only the host calls (`isHostOnlyTool`) and which no principal is
    * admitted to, admins included.
    *
@@ -4916,7 +4973,7 @@ export class Runtime {
   }
 
   /**
-   * Install warnings for the `admin_tools` a connector's catalog entry declares:
+   * Install warnings for the `adminTools` a connector's catalog entry declares:
    * names that are also kernel-called handlers, and names the running server
    * does not advertise. Empty when there is nothing to say.
    */
@@ -4946,7 +5003,7 @@ export class Runtime {
 
   /**
    * The gating declarations of `wsId`'s connectors: each catalog entry's
-   * `admin_tools` ({@link catalogAdminToolsByServer}), and the lifecycle
+   * `adminTools` ({@link catalogAdminToolsByServer}), and the lifecycle
    * handlers each connection's server binds through `ai.nimblebrain/lifecycle`,
    * which are withheld. One predicate, `isHostOnlyTool`, holds the handlers.
    *
@@ -4975,8 +5032,12 @@ export class Runtime {
   }
 
   /**
-   * Each catalog entry's `admin_tools`, under the server name its id slugifies
-   * to. A connector that declares none is absent.
+   * Each catalog entry's `adminTools`, under the server name its id slugifies
+   * to. A connector that declares none is absent. Read from every entry the
+   * catalog carries, including one the safety check refused
+   * (`AggregatedServers.refused`): a refused entry leaves Browse, but a
+   * connector already installed from it stays callable, and its restriction
+   * must hold.
    *
    * By name alone, NOT held to the ref's identity as every grant is
    * ({@link boundCatalogEntries}). This is a restriction: it narrows who may
@@ -4988,8 +5049,10 @@ export class Runtime {
    */
   private async catalogAdminToolsByServer(): Promise<Map<string, ConnectorGates>> {
     const out = new Map<string, ConnectorGates>();
-    for (const e of await this.getConnectorCatalog().catalogEntries()) {
-      if (e.adminTools) out.set(slugifyServerName(e.id), { adminTools: e.adminTools });
+    const { servers, refused } = await this.getConnectorCatalog().servers();
+    for (const { detail } of [...servers, ...refused]) {
+      const adminTools = parseAdminToolsDeclaration(getNimbleBrainHostMeta(detail), detail.name);
+      if (adminTools) out.set(slugifyServerName(detail.name), { adminTools });
     }
     return out;
   }
@@ -4997,7 +5060,7 @@ export class Runtime {
   /**
    * The record-arguments grant `serverName` holds in `wsId` (ADR-0058), or null
    * when it holds none: its operator-trusted catalog entry must declare
-   * `record_arguments`, and the workspace's `recordSources` narrows it to the
+   * `recordArguments`, and the workspace's `recordSources` narrows it to the
    * named connectors, or revokes it when empty. A `recordSources` that is not a
    * list of names grants nothing.
    */
@@ -6179,6 +6242,21 @@ export class Runtime {
   }
 
   /**
+   * Read a `ui://` resource from a personal connector the caller already
+   * resolved through the identity door (`resolveGrantedPersonalConnector`). The
+   * read goes over that connection, with its owner's credentials; `serverName`
+   * is the connector's own (de-marked) name, for the `ui://<server>/<path>`
+   * fallback.
+   */
+  async readPersonalAppResource(
+    source: ToolSource,
+    serverName: string,
+    resourcePath: string,
+  ): Promise<ResourceData | null> {
+    return this.readResourceFromSource(source, serverName, resourcePath);
+  }
+
+  /**
    * Shared `ui://` read against an already-resolved MCP source — the
    * workspace and identity hosts differ only in how they resolve the source.
    * Tries the exact `ui://<path>` first, then the source-namespaced
@@ -6235,6 +6313,13 @@ export class Runtime {
       for (const name of reg.sourceNames()) {
         await reg.removeSource(name);
       }
+    }
+    // Identity sources (tasks, files, conversations) sit in no workspace
+    // registry, so the loop above never reaches them. Stop them here: the tasks
+    // source's stop is what ends its scheduler, whose timer otherwise outlives
+    // the runtime and keeps the process alive.
+    for (const source of this._platformSources) {
+      if (isIdentitySource(source.name)) await source.stop();
     }
     // Nothing drains the run queue once the sources are gone, so a run still
     // waiting for a slot is refused rather than left waiting forever.
@@ -6582,6 +6667,7 @@ function buildRunContext(
     // restamp, so the wall is enforced at the tasks source rather than
     // per-router-construction. See `createTasksSource`.
     ...(attended ? {} : { unattended: true }),
+    runTrigger: spec.trigger,
   };
 }
 
@@ -6729,8 +6815,16 @@ function createPartialRunAccumulator(): {
   toolCalls: RunHandle["toolCalls"];
   usage: (model: string) => TurnUsage;
   costUsd: () => number;
+  unpricedCalls: () => number;
 } {
-  const totals = { inputTokens: 0, outputTokens: 0, iterations: 0, llmMs: 0, costUsd: 0 };
+  const totals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    iterations: 0,
+    llmMs: 0,
+    costUsd: 0,
+    unpricedCalls: 0,
+  };
   const toolCalls: RunHandle["toolCalls"] = [];
   const sink: EventSink = {
     emit(event: EngineEvent): void {
@@ -6741,7 +6835,11 @@ function createPartialRunAccumulator(): {
         totals.llmMs += data.llmMs;
         totals.inputTokens += data.usage.inputTokens;
         totals.outputTokens += data.usage.outputTokens;
-        totals.costUsd += estimateCost(data.model, data.usage);
+        // A call at a model the catalog has no rates for adds nothing to the
+        // cost and is counted, so a reader can tell an incomplete cost from a free one.
+        const cost = callCostUsd(data.model, data.usage);
+        if (cost === undefined) totals.unpricedCalls += 1;
+        else totals.costUsd += cost;
       } else if (event.type === "tool.done") {
         const { data } = event;
         // `errorReason` is intentionally absent here: this accumulator only
@@ -6779,7 +6877,14 @@ function createPartialRunAccumulator(): {
       iterations: totals.iterations,
     }),
     costUsd: () => totals.costUsd,
+    unpricedCalls: () => totals.unpricedCalls,
   };
+}
+
+/** A run's unpriced-call count, present only when non-zero. */
+function unpricedOf(partial: { unpricedCalls: () => number }): { unpricedCalls?: number } {
+  const n = partial.unpricedCalls();
+  return n > 0 ? { unpricedCalls: n } : {};
 }
 
 /**

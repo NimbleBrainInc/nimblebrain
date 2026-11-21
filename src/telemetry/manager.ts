@@ -55,9 +55,32 @@ export class TelemetryLockedError extends Error {
 
 /** Minimal interface for PostHog client (production or mock). */
 export interface TelemetryClient {
-  capture(params: { distinctId: string; event: string; properties: Record<string, unknown> }): void;
+  capture(params: {
+    distinctId: string;
+    event: string;
+    properties: Record<string, unknown>;
+    groups?: Record<string, string>;
+  }): void;
   shutdown(): Promise<void>;
 }
+
+/**
+ * Who an event is about, read from the verified request context. Present only
+ * inside a request a person made; background work has none.
+ */
+export interface TelemetrySubject {
+  userId: string;
+  email?: string;
+  name?: string;
+  workspaceId?: string;
+  /** What woke the current run: `chat`, `schedule`, `manual`, `event` or `api`. */
+  trigger?: string;
+}
+
+/** A person's email and name, looked up by id when a request does not carry them. */
+export type TelemetryPersonSource = (
+  userId: string,
+) => Promise<{ email?: string; name?: string } | undefined>;
 
 export type TelemetryClientFactory = (
   apiKey: string,
@@ -77,6 +100,12 @@ export interface TelemetryManagerOptions {
    * answer to a person.
    */
   enabled?: boolean;
+  /**
+   * `telemetry.identify`: events name the person and the workspace instead of
+   * the install. Honored only alongside `enabled: true`, because it is an
+   * operator's decision about its own project, never a person's answer.
+   */
+  identify?: boolean;
   clientFactory?: TelemetryClientFactory;
   /** Defaults to `process.env`. */
   env?: NodeJS.ProcessEnv;
@@ -84,6 +113,12 @@ export interface TelemetryManagerOptions {
 
 export class TelemetryManager {
   private client: TelemetryClient | null = null;
+  private subjectSource: () => TelemetrySubject | undefined = () => undefined;
+  /** People whose email and name this process has already set, so each is sent once. */
+  private readonly described = new Set<string>();
+  private personSource: TelemetryPersonSource | undefined;
+  /** People this process has looked up, so a person missing from the store is looked up once. */
+  private readonly lookedUp = new Set<string>();
 
   private constructor(
     private readonly workDir: string,
@@ -92,6 +127,8 @@ export class TelemetryManager {
     private readonly anonymousId: string,
     private consent: TelemetryConsent,
     private readonly locked: TelemetryLock | undefined,
+    private readonly identified = false,
+    private readonly tenantId?: string,
   ) {
     if (consent === "on") this.client = this.connect();
   }
@@ -110,7 +147,16 @@ export class TelemetryManager {
 
     const id = installId(options.workDir, env);
     if (options.enabled === true)
-      return new TelemetryManager(options.workDir, apiKey, factory, id, "on", "operator");
+      return new TelemetryManager(
+        options.workDir,
+        apiKey,
+        factory,
+        id,
+        "on",
+        "operator",
+        options.identify === true,
+        env.NB_TENANT_ID?.trim() || undefined,
+      );
     return new TelemetryManager(
       options.workDir,
       apiKey,
@@ -123,11 +169,128 @@ export class TelemetryManager {
 
   capture(event: string, properties: Record<string, unknown> = {}): void {
     if (this.consent !== "on" || !this.client) return;
+    if (!this.identified) {
+      this.client.capture({
+        distinctId: this.anonymousId,
+        event,
+        properties: { ...commonProperties(), ...properties },
+      });
+      return;
+    }
+    // Identified: the person who made the request, in their tenant and
+    // workspace. Work no person asked for stays with the install.
+    const subject = this.subjectSource();
+    const groups: Record<string, string> = {};
+    if (this.tenantId) groups.tenant = this.tenantId;
+    if (subject?.workspaceId) groups.workspace = subject.workspaceId;
+    const person = subject ? this.describe(subject) : {};
     this.client.capture({
-      distinctId: this.anonymousId,
+      distinctId: subject?.userId ?? this.anonymousId,
       event,
-      properties: { ...commonProperties(), ...properties },
+      properties: { ...commonProperties(), ...properties, ...person },
+      ...(Object.keys(groups).length > 0 ? { groups } : {}),
     });
+  }
+
+  /**
+   * An identified event about a given person or workspace, for moments that
+   * name them outside any request (a sign-up, a member added, a scheduled
+   * run): `about` fills or replaces what the request context would give.
+   * Sends nothing unless the deployment identifies.
+   */
+  captureAbout(
+    event: string,
+    properties: Record<string, unknown>,
+    about: { userId?: string; workspaceId?: string; email?: string; name?: string },
+  ): void {
+    if (!this.identified || this.consent !== "on" || !this.client) return;
+    const subject = this.subjectSource();
+    const userId = about.userId ?? subject?.userId;
+    const workspaceId = about.workspaceId ?? subject?.workspaceId;
+    const groups: Record<string, string> = {};
+    if (this.tenantId) groups.tenant = this.tenantId;
+    if (workspaceId) groups.workspace = workspaceId;
+    const person = userId ? this.describe(personAbout(userId, about, subject)) : {};
+    this.client.capture({
+      distinctId: userId ?? this.anonymousId,
+      event,
+      properties: { ...commonProperties(), ...properties, ...person },
+      ...(Object.keys(groups).length > 0 ? { groups } : {}),
+    });
+  }
+
+  /**
+   * Where identified events find their person: the runtime registers its
+   * request context here. Unused unless the deployment set `telemetry.identify`.
+   */
+  setSubjectSource(source: () => TelemetrySubject | undefined): void {
+    this.subjectSource = source;
+  }
+
+  /**
+   * Where a person's email and name are found when the request does not carry
+   * them: a scheduled run acts as its owner's id alone. The runtime registers
+   * its user store here.
+   */
+  setPersonSource(source: TelemetryPersonSource): void {
+    this.personSource = source;
+  }
+
+  /** The signed-in person of the current request, on an identified deployment. */
+  currentUserId(): string | undefined {
+    return this.identified ? this.subjectSource()?.userId : undefined;
+  }
+
+  /** The workspace of the current request, on an identified deployment. */
+  currentWorkspaceId(): string | undefined {
+    return this.identified ? this.subjectSource()?.workspaceId : undefined;
+  }
+
+  /** What woke the current run (`RunTrigger`). Identified deployments only. */
+  currentTrigger(): string | undefined {
+    if (!this.identified) return undefined;
+    return this.subjectSource()?.trigger;
+  }
+
+  /** Whether events name the person (`telemetry.identify` with `enabled: true`). */
+  isIdentified(): boolean {
+    return this.identified;
+  }
+
+  /** The tenant identified events are grouped under, from `NB_TENANT_ID`. */
+  getTenantId(): string | undefined {
+    return this.identified ? this.tenantId : undefined;
+  }
+
+  /**
+   * The person's email and name as `$set`, the first time this process has
+   * them. A subject without them is looked up instead, and sent on its own.
+   */
+  private describe(subject: TelemetrySubject): Record<string, unknown> {
+    if (this.described.has(subject.userId)) return {};
+    const set = personSet(subject);
+    if (!set) {
+      this.lookUp(subject.userId);
+      return {};
+    }
+    this.described.add(subject.userId);
+    return { $set: set };
+  }
+
+  /** Sets a person's email and name from the person source, once per process. */
+  private lookUp(userId: string): void {
+    if (!this.personSource || this.lookedUp.has(userId)) return;
+    this.lookedUp.add(userId);
+    this.personSource(userId)
+      .then((found) => {
+        const set = found ? personSet(found) : undefined;
+        if (!set || this.described.has(userId) || !this.client) return;
+        this.described.add(userId);
+        this.client.capture({ distinctId: userId, event: "$set", properties: { $set: set } });
+      })
+      .catch(() => {
+        // Telemetry never fails the work it describes.
+      });
   }
 
   /** Records a person's answer and applies it at once. Throws `TelemetryLockedError` when the deployment owns it. */
@@ -249,4 +412,21 @@ function defaultClientFactory(
     capture: (params) => client.capture(params),
     shutdown: () => client.shutdown(),
   };
+}
+
+function personSet(person: { email?: string; name?: string }): Record<string, string> | undefined {
+  const set: Record<string, string> = {};
+  if (person.email) set.email = person.email;
+  if (person.name) set.name = person.name;
+  return Object.keys(set).length > 0 ? set : undefined;
+}
+
+/** Who `captureAbout`'s event is about: the email and name given, else the request's when it is the same person. */
+function personAbout(
+  userId: string,
+  about: { email?: string; name?: string },
+  subject: TelemetrySubject | undefined,
+): TelemetrySubject {
+  if (about.email || about.name) return { userId, email: about.email, name: about.name };
+  return subject?.userId === userId ? subject : { userId };
 }

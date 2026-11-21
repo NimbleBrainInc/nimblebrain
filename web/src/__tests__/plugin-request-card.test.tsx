@@ -356,7 +356,20 @@ describe("PluginRequestCard — a plugin that is not signed in", () => {
 });
 
 describe("requestedPluginName", () => {
-  test("reads a finished nb__manage_tools request_plugin call, and nothing else", () => {
+  test("reads a finished nb__request_plugin call, and nothing else", () => {
+    const call = {
+      id: "c1",
+      name: "nb__request_plugin",
+      status: "done" as const,
+      input: { plugin: "granola" },
+    };
+    expect(requestedPluginName(call)).toBe("granola");
+    expect(requestedPluginName({ ...call, status: "error" })).toBeNull();
+    expect(requestedPluginName({ ...call, input: {} })).toBeNull();
+    expect(requestedPluginName({ ...call, name: "crm__request_plugin" })).toBeNull();
+  });
+
+  test("reads a request recorded as nb__manage_tools request_plugin, as older conversations hold it", () => {
     const call = {
       id: "c1",
       name: "nb__manage_tools",
@@ -364,9 +377,8 @@ describe("requestedPluginName", () => {
       input: { request_plugin: "granola" },
     };
     expect(requestedPluginName(call)).toBe("granola");
-    expect(requestedPluginName({ ...call, status: "error" })).toBeNull();
     expect(requestedPluginName({ ...call, input: { add: ["x__y"] } })).toBeNull();
-    expect(requestedPluginName({ ...call, name: "crm__manage_tools" })).toBeNull();
+    expect(requestedPluginName({ ...call, input: { plugin: "granola" } })).toBeNull();
   });
 });
 

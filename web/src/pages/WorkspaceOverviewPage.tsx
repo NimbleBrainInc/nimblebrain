@@ -1,94 +1,95 @@
 // ---------------------------------------------------------------------------
 // WorkspaceOverviewPage — workspace landing at `/w/<slug>/`
 //
-// Answers "what do I do here?", most direct first:
-//   1. Ask: a composer that sends into the chat panel, opening it, the way an
-//      app's `ui/message` does (`AppWithChat`).
-//   2. What needs a member: the briefing panel (`BriefingView`), which renders
-//      nothing when nothing does.
-//   3. Pick up: the workspace's most recent conversations, each reopening in
-//      the panel.
-//   4. Apps: one card per placement, plus "Add app" for a member who may
-//      install one.
-// Workspace facts appear only as an action: a workspace of one shows an
-// invite to someone who may manage its members, and nothing otherwise.
+// A launcher: one centered column holding the composer and, under it, one list
+// of next steps.
+//   1. Ask: the chat's own composer (`MessageInput`), sending into the panel's
+//      conversation. A question sent here opens the chat over the whole main
+//      area, since a conversation started from the overview is the work, not a
+//      side panel beside it.
+//   2. Next steps: rows ranked by `overviewActions`: what needs a member
+//      (alerts), then the workspace's next setup step, then the last
+//      conversation, then conversation starters from the installed plugins.
+// Apps, conversations, and settings are one click away in the sidebar and the
+// workspace menu, so the page does not repeat them.
 //
-// Gutter: the content's edges sit on the top bar's (`pl-4 pr-3` in TopBar), so
-// the title lines up under the bar's title and Settings' edge under Chat's.
-// Nothing is centered, since centering moves content off those lines as the
-// main area widens. Every section spans the full column, so all of them end on
-// Settings' edge; the app grid adds columns as it widens instead. Widths come
-// from container queries on the main area (web/DESIGN.md), never the viewport.
-//
-// App data source: `forSlot("sidebar")` → `workspaceApps()`, the same set the
-// sidebar quick-list reads, so the grid and the count agree. Icons are the
-// apps' brand icons via `useWorkspaceAppIcons`, with a letter-avatar fallback.
+// The column is the full-screen chat's (`max-w-4xl` with `px-8`, as in
+// ChatPanel), centered, so a send reads as the page turning into the
+// conversation rather than a jump to another box. When the main area is wide,
+// the column starts far enough down that the composer sits near the optical
+// center (about 40% down a typical window), and the rows hang below it. The
+// composer is placed, not the whole group centered: the rows arrive after the
+// composer renders, and centering the group would move the composer under the
+// pointer when they do. When the docked chat narrows the main area the column
+// fills it; widths come from container queries on the main area
+// (web/DESIGN.md), never the viewport.
 // ---------------------------------------------------------------------------
 
-import { ArrowUp, MessageSquare, Plus, Settings, UserPlus } from "lucide-react";
-import { type FormEvent, useCallback, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { BriefingView } from "../components/briefing/BriefingView";
-import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
-import { relativeTime } from "../components/RecentConversationsPopover";
-import { Tooltip } from "../components/ui/tooltip";
-import { useChatContext } from "../context/ChatContext";
+import { useCallback } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { MessageInput } from "../components/MessageInput";
+import { ActionRows } from "../components/overview/ActionRows";
+import { type OverviewAction, overviewActions } from "../components/overview/actions";
+import { useChatConfigContext, useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useSession } from "../context/SessionContext";
-import { useShellContext } from "../context/ShellContext";
 import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
-import { type RecentConversation, useRecentConversations } from "../hooks/useRecentConversations";
+import { useComposerModel } from "../hooks/useComposerModel";
+import { useConversationStarters } from "../hooks/useConversationStarters";
+import { useRecentConversations } from "../hooks/useRecentConversations";
+import { useRunsNeedingReview } from "../hooks/useRunsNeedingReview";
 import { canManageWorkspaceMembers, canWriteWorkspace } from "../hooks/useScopedRole";
 import { useWorkspaceBriefing } from "../hooks/useWorkspaceBriefing";
-import { cn } from "../lib/utils";
-import { connectorSettingsPath, workspaceApps } from "../lib/workspace-apps";
 import { toSlug } from "../lib/workspace-slug";
-import type { PlacementEntry } from "../types";
 
 export function WorkspaceOverviewPage() {
   const { slug } = useParams<{ slug: string }>();
   const wsCtx = useWorkspaceContext();
-  const shell = useShellContext();
-  const { iconFor, connectors } = useWorkspaceAppIcons();
+  const { connectors, iconFor } = useWorkspaceAppIcons();
   const navigate = useNavigate();
   const session = useSession();
-  const { openPanel } = useChatPanelContext();
+  const chat = useChatContext();
+  const { openFullscreen } = useChatPanelContext();
 
   const workspace = slug ? wsCtx.workspaces.find((w) => toSlug(w.id) === slug) : undefined;
 
-  // The briefing is workspace-scoped server-side via the workspace in the
-  // request path, which the route guard projects from the slug. Key the fetch on
-  // THIS page's route workspace so the path, the fetch, and the briefing all follow the URL in
-  // lockstep — no one-frame mismatch on a switch (see useWorkspaceBriefing).
+  // Every read is keyed on THIS page's route workspace, so the reads and what
+  // they render follow the URL in lockstep: no one-frame mismatch on a switch.
   const {
     briefing,
     loading: briefingLoading,
     error: briefingError,
     refresh: refreshBriefing,
   } = useWorkspaceBriefing(workspace?.id);
-  const recent = useRecentConversations(workspace?.id, RECENT_LIMIT);
+  const recent = useRecentConversations(workspace?.id, 1);
+  const reviewCount = useRunsNeedingReview(workspace?.id);
+  // Not part of `settled` below: starters come last in the list, so they can
+  // arrive after the rest without moving any row above them.
+  const conversationStarters = useConversationStarters(workspace?.id);
 
-  // Connector status comes from the list the app icons already fetch. Until
-  // it names this workspace (a switch in flight), the briefing waits for it,
-  // so a connector needing attention never appears after "nothing needs you".
+  // Connector status comes from the list the app icons already fetch. Until it
+  // names this workspace (a switch in flight), the cards wait for it, so a
+  // connector needing attention never appears after the rest have settled.
   const connectorsReady = workspace != null && connectors?.workspaceId === workspace.id;
 
-  const handleBriefingOpen = useCallback(
-    (route: string) => {
-      // An item carries its app's placement route (e.g. "@scope/name").
-      // Absolute paths pass through; bare routes open the app in this workspace.
-      navigate(route.startsWith("/") ? route : `/w/${slug}/app/${route}`);
+  /** Send a question and open the chat over the main area. */
+  const ask = useCallback(
+    (text: string, files?: File[], model?: string) => {
+      openFullscreen();
+      void chat.sendMessage(text, undefined, files, model);
     },
-    [navigate, slug],
+    [openFullscreen, chat],
   );
 
-  const handleConnectorOpen = useCallback(
-    (serverName: string) => {
-      const path = connectorSettingsPath(slug, serverName);
-      if (path) navigate(path);
+  const choose = useCallback(
+    (action: OverviewAction) => {
+      const { target } = action;
+      if (target.type === "navigate") navigate(target.to);
+      else if (target.type === "conversation") openFullscreen(target.id);
+      else if (target.type === "ask") ask(target.prompt);
     },
-    [navigate, slug],
+    [navigate, openFullscreen, ask],
   );
 
   if (!workspace) {
@@ -102,276 +103,104 @@ export function WorkspaceOverviewPage() {
     );
   }
 
-  // Apps come from the placement registry's grouped sub-slots via the shared
-  // `workspaceApps()` helper (one card per placement) — so this grid and the
-  // sidebar quick-list agree by construction. Bare `sidebar` items (Home,
-  // Conversations, …) are core nav, not apps.
-  //
-  // Readiness — not just "is there a shell?". The shell holds ONE workspace's
-  // placements at a time and lags a switch (old data stays visible while the
-  // refetch is in flight, with no `loading` flag — see ShellContext). Compare
-  // the shell's workspace to THIS page's workspace (`workspace.id`, derived from
-  // the route slug — the stable truth). Until they match, `apps` is `null`: the
-  // shell still reflects the previous workspace, so we don't read it (that would
-  // be a false-empty / wrong-workspace grid). The route guard keeps this page
-  // mounted across a switch, so the apps section just holds its space (the
-  // `apps === null` branch below) until the array resolves — no skeleton flash.
-  const appsReady = shell != null && shell.shellWorkspaceId === workspace.id;
-  const apps = appsReady && shell ? workspaceApps(shell.forSlot("sidebar")) : null;
-
-  const slugPath = `/w/${toSlug(workspace.id)}`;
-  const canAddApps = canWriteWorkspace(workspace.userRole);
-  const canInvite =
-    workspace.memberCount === 1 &&
-    canManageWorkspaceMembers(session?.user?.orgRole, workspace.userRole);
+  // The rows render once every source has answered for this workspace, so
+  // they appear once, in their final order, instead of reshuffling as each
+  // read lands.
+  const settled = connectorsReady && !briefingLoading && recent !== null && reviewCount !== null;
+  const installed = connectorsReady ? connectors.installed : [];
+  const actions = settled
+    ? overviewActions({
+        slug: toSlug(workspace.id),
+        briefing,
+        connectors: installed,
+        reviewCount,
+        setup: {
+          connectPlugin: installed.length === 0 && canWriteWorkspace(workspace.userRole),
+          firstQuestion: recent.length === 0,
+          invite:
+            workspace.memberCount === 1 &&
+            canManageWorkspaceMembers(session?.user?.orgRole, workspace.userRole),
+        },
+        lastConversation: recent[0] ?? null,
+        conversationStarters: conversationStarters ?? [],
+        // The workspace and today's local date: the plugins whose starters
+        // show change once a day, and stay put within it.
+        starterRotation: `${workspace.id}:${localDay()}`,
+      })
+    : null;
 
   return (
     <div className="@container h-full overflow-y-auto" data-testid="workspace-overview-page">
-      <div className="px-(--page-gutter) pt-8 pb-10">
-        <header className="mb-6 flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="truncate text-3xl font-heading font-medium text-foreground">
-              {workspace.name}
-            </h1>
-            {canInvite && (
-              <Link
-                to={`${slugPath}/settings/members?add`}
-                data-testid="workspace-overview-invite"
-                className="mt-2 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <UserPlus className="size-4" aria-hidden />
-                Only you so far. Invite people
-              </Link>
-            )}
-          </div>
-          <Link
-            to={`${slugPath}/settings/general`}
-            data-testid="workspace-overview-settings"
-            className="shrink-0 inline-flex h-8 items-center gap-2 px-3 rounded-md border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
-          >
-            <Settings className="size-4" aria-hidden />
-            Settings
-          </Link>
-        </header>
+      <div className="mx-auto w-full max-w-4xl px-8 pt-10 pb-12 @3xl:pt-[28vh]">
+        <h1 className="mb-2 ml-1 truncate text-sm text-muted-foreground">
+          Working in <span className="font-semibold text-foreground">{workspace.name}</span>
+        </h1>
 
-        <AskComposer workspaceName={workspace.name} />
+        <OverviewComposer workspaceName={workspace.name} onAsk={ask} />
 
-        {/* What needs a member here: each app's open counts, and each
-            connector that needs attention. */}
-        <BriefingView
-          workspaceId={workspace.id}
-          briefing={briefing}
-          connectors={connectorsReady ? connectors.installed : []}
-          loading={briefingLoading || !connectorsReady}
-          error={briefingError}
-          onRetry={refreshBriefing}
-          onOpen={handleBriefingOpen}
-          onOpenConnector={handleConnectorOpen}
-        />
-
-        <RecentConversations
-          conversations={recent}
-          allPath={`${slugPath}/conversations`}
-          onOpen={openPanel}
-        />
-
-        <section data-tour="apps">
-          <SectionLabel className="mb-3">Apps</SectionLabel>
-          {apps === null ? (
-            // Brief shell-catch-up window after a switch — hold the space, don't
-            // flash a skeleton (the page stays mounted, so this is a sub-second gap).
-            <div
-              className="min-h-[4.5rem]"
-              aria-hidden
-              data-testid="workspace-overview-apps-pending"
-            />
-          ) : apps.length === 0 ? (
-            <div
-              className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
-              data-testid="workspace-overview-empty"
-            >
-              <p>No apps installed in this workspace yet.</p>
-              {canAddApps && (
-                <Link
-                  to={`${slugPath}/plugins?tab=browse`}
-                  className="mt-3 inline-flex h-8 items-center gap-2 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/80 transition-colors"
-                >
-                  <Plus className="size-4" aria-hidden />
-                  Add an app
-                </Link>
-              )}
-            </div>
-          ) : (
-            <div
-              className="grid grid-cols-1 gap-3 @md:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4 @7xl:grid-cols-5"
-              data-testid="workspace-overview-app-grid"
-            >
-              {apps.map((p) => (
-                <AppCard
-                  key={p.resourceUri}
-                  placement={p}
-                  iconUrl={iconFor(p.serverName)}
-                  onOpen={() => {
-                    if (!p.route) return;
-                    navigate(`${slugPath}/app/${p.route}`);
-                  }}
-                />
-              ))}
-              {canAddApps && (
-                <Link
-                  to={`${slugPath}/plugins?tab=browse`}
-                  data-testid="workspace-overview-add-app"
-                  className="flex items-center gap-2 p-4 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
-                >
-                  <Plus className="size-5" aria-hidden />
-                  Add app
-                </Link>
-              )}
-            </div>
-          )}
-        </section>
+        {actions && (
+          <ActionRows
+            iconFor={iconFor}
+            workspaceId={workspace.id}
+            actions={actions}
+            error={briefingError}
+            onRetry={refreshBriefing}
+            onChoose={choose}
+          />
+        )}
       </div>
     </div>
-  );
-}
-
-/** How many conversations the overview offers to pick back up. */
-const RECENT_LIMIT = 5;
-
-function SectionLabel({ children, className }: { children: string; className?: string }) {
-  return (
-    <div
-      className={cn(
-        "text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground",
-        className,
-      )}
-    >
-      {children}
-    </div>
-  );
-}
-
-/** The workspace's latest conversations, each reopening in the chat panel. */
-function RecentConversations({
-  conversations,
-  allPath,
-  onOpen,
-}: {
-  conversations: RecentConversation[] | null;
-  allPath: string;
-  onOpen: (id: string) => void;
-}) {
-  if (!conversations || conversations.length === 0) return null;
-  return (
-    <section className="mb-10" aria-label="Recent conversations">
-      <div className="mb-3 flex items-baseline justify-between gap-4">
-        <SectionLabel>Recent conversations</SectionLabel>
-        <Link
-          to={allPath}
-          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          View all
-        </Link>
-      </div>
-      <ul
-        className="divide-y divide-border rounded-lg border border-border"
-        data-testid="workspace-overview-recent"
-      >
-        {conversations.map((c) => (
-          <li key={c.id}>
-            <button
-              type="button"
-              onClick={() => onOpen(c.id)}
-              data-testid="workspace-overview-recent-row"
-              className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-foreground/5 transition-colors"
-            >
-              <MessageSquare className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 flex-1 truncate text-foreground">
-                {c.title || c.preview || "Untitled conversation"}
-              </span>
-              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                {relativeTime(c.updatedAt)}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </section>
   );
 }
 
 /**
- * Ask the workspace's agent. Sends into the chat panel's conversation and opens
- * the panel, as an app's message does, so the reply arrives where every other
- * chat turn does. Its own component so streaming re-renders stay out of the page.
+ * The chat's composer, on the overview. It edits and sends the panel's
+ * conversation, as the docked panel's composer does, and states the same model.
+ * Its own component so typing and streaming re-renders stay out of the page.
  */
-function AskComposer({ workspaceName }: { workspaceName: string }) {
+function OverviewComposer({
+  workspaceName,
+  onAsk,
+}: {
+  workspaceName: string;
+  onAsk: (text: string, files?: File[], model?: string) => void;
+}) {
   const chat = useChatContext();
-  const { panelState, openPanel } = useChatPanelContext();
-  const [text, setText] = useState("");
-  const ready = text.trim().length > 0 && !chat.isStreaming;
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!ready) return;
-    if (panelState === "closed") openPanel();
-    void chat.sendMessage(text.trim());
-    setText("");
-  };
-
+  const { fileLimits } = useChatConfigContext();
+  const { models, boundModel, defaultModel, pendingModel, setPendingModel } = useComposerModel();
+  // A bound conversation's menu offers a new conversation on the chosen model.
+  const { newConversation } = chat;
+  const newConversationWithModel = useCallback(
+    (model: string) => {
+      newConversation();
+      setPendingModel(model);
+    },
+    [newConversation, setPendingModel],
+  );
   return (
-    <form
-      onSubmit={submit}
-      data-testid="workspace-overview-ask"
-      data-tour="ask"
-      className="mb-10 flex items-center gap-2 rounded-lg border border-border bg-card py-1.5 pl-4 pr-1.5 focus-within:border-foreground/20 transition-colors"
-    >
-      <input
-        type="text"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        aria-label={`Ask anything in ${workspaceName}`}
-        placeholder={`Ask anything in ${workspaceName}…`}
-        data-testid="workspace-overview-ask-input"
-        className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+    <div data-testid="workspace-overview-ask" data-tour="ask">
+      <MessageInput
+        conversationKey={chat.conversationKey}
+        onSend={onAsk}
+        busy={chat.isStreaming}
+        models={models}
+        boundModel={boundModel}
+        defaultModel={defaultModel}
+        pendingModel={pendingModel}
+        onPendingModelChange={setPendingModel}
+        onNewConversationWithModel={newConversationWithModel}
+        fileLimits={fileLimits}
+        placeholder="Ask anything, or pick something below…"
+        label={`Ask anything in ${workspaceName}`}
+        hints={false}
       />
-      <Tooltip label="Send">
-        <button
-          type="submit"
-          aria-label="Send"
-          disabled={!ready}
-          className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/80 disabled:bg-foreground/10 disabled:text-muted-foreground transition-colors"
-        >
-          <ArrowUp className="size-4" aria-hidden />
-        </button>
-      </Tooltip>
-    </form>
+    </div>
   );
 }
 
-function AppCard({
-  placement,
-  iconUrl,
-  onOpen,
-}: {
-  placement: PlacementEntry;
-  iconUrl?: string;
-  onOpen: () => void;
-}) {
-  const label = placement.label ?? placement.route ?? "App";
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      data-testid="workspace-overview-app-card"
-      data-app-route={placement.route ?? ""}
-      className={cn(
-        "group flex items-center gap-2 p-4 rounded-lg border border-border bg-card text-left",
-        "hover:border-foreground/20 hover:bg-foreground/5 transition-colors",
-      )}
-    >
-      <ConnectorIcon name={label} iconUrl={iconUrl} className="h-5 w-5 rounded text-3xs" />
-      <div className="truncate text-sm font-medium text-foreground">{label}</div>
-    </button>
-  );
+/** Today's date in the viewer's own time zone, as `YYYY-MM-DD`. */
+function localDay(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }

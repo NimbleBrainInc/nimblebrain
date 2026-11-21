@@ -50,8 +50,9 @@ Until someone answers, these events wait in `telemetry-report.jsonl` in the inst
 
 | Event | Properties |
 |---|---|
+| `runtime.started` | Connector count and how long startup took |
 | `agent.chat_started` | Number of tools available |
-| `agent.chat_completed` | Iterations, tool calls, calls to connector tools, stop reason, model and tool latency, total time, token counts |
+| `agent.chat_completed` | Iterations, tool calls, calls to connector tools, stop reason, model and tool latency, total time, token counts. Model latency is left out for a run on an external agent, which reports no timing for its model calls. |
 | `agent.error` | The error's type name only (e.g. `AnthropicError`) |
 | `task.created` | Nothing beyond the event |
 | `connector.installed` | Whether the connector has a UI |
@@ -74,7 +75,7 @@ Runtime events also carry the NimbleBrain version, OS, CPU architecture and Bun 
 
 ## Identity
 
-Each install has one random ID, and nothing else identifies it. `npx nimblebrain` creates it and passes it to the runtime as `NB_TELEMETRY_ID`, so the CLI's events and the runtime's count as one install. An install started another way keeps its ID in `.telemetry-id` in the work directory. The web client tags its events with the same ID.
+Each install has one random ID, and nothing else identifies it. `npx nimblebrain init` creates it on its first attempt in an install folder, before checking the machine, and keeps it in `telemetry-id` there, so a retry after a failed check counts as the same install. Making the ID sends nothing; events still wait for your yes. With `DO_NOT_TRACK=1` or `NB_TELEMETRY_DISABLED=1` set, no ID is written. The CLI passes the ID to the runtime as `NB_TELEMETRY_ID` in the install's `.env`, so the CLI's events and the runtime's count as one install. An install started another way keeps its ID in `.telemetry-id` in the work directory. The web client tags its events with the same ID.
 
 To unlink future events from past ones, delete `NB_TELEMETRY_ID` from the install's `.env` (or `.telemetry-id` from the work directory). A new ID is made at the next start.
 
@@ -98,6 +99,54 @@ Any one of these turns telemetry off and stops anyone from being asked:
 
 `"telemetry": { "enabled": true }` turns it on without asking anyone. Set it only where you, as the operator, have the right to decide for the people using the install.
 
+## Identified deployments
+
+An operator running NimbleBrain for others, sending to its own PostHog project, can set `identify` beside `enabled: true`:
+
+```json
+{ "telemetry": { "enabled": true, "identify": true } }
+```
+
+Events then name the person instead of the install, so a person's runtime and web events are one person in that project:
+
+| | Anonymous (default) | Identified |
+|---|---|---|
+| Who an event is about | The install's random ID | The signed-in person's user ID; the install ID for work no person asked for |
+| Person properties | None | Email and display name, sent once per person per runtime start |
+| Groups | None | `tenant` (from `NB_TENANT_ID`, when set) and `workspace` (the workspace the request is bound to) |
+| Names of things used | None | Catalog names of connectors, tools, skills and models (below) |
+| Pages viewed | None | A web `$pageview` each time the page on screen changes (below) |
+
+An identified deployment also names what was used, by catalog name only. A connector added by URL, and a skill someone wrote, have names people chose, so they are sent as `custom`:
+
+| Event | Adds |
+|---|---|
+| `tool.called` (one per tool call) | `source` (`kernel`, `app` or `connector`), the app or the connector's catalog id, the tool, whether it succeeded, its duration, and the run's id (`run_id`) |
+| `agent.chat_started` | The run's id, the model, and what started the run (`trigger`: `chat` for a person in a chat; `schedule`, `manual` or `event` for a scheduled task's run, by what started it; `api` for a caller driving the runtime directly) |
+| `agent.chat_completed` | The run's id, the model, the trigger, the connectors used, the skills used (a catalog connector's skill as `<catalog id>:<skill>`; any other as `custom`), and `cost_usd`: what the run's model calls cost in USD, each priced at its model's rates from the model catalog. A run with any call at a model the catalog has no rates for has no `cost_usd`, since its cost is unknown, not zero |
+| `connector.installed` | The connector's catalog id |
+| `skill.created` | The skill's scope (`org`, `workspace` or `user`), never its name |
+
+It also sends events for moments in a person's use of the product. None carries a name someone wrote, a prompt, an output or an error message:
+
+| Event | Properties |
+|---|---|
+| `user.signed_up` | The person (their email and name, as above) |
+| `workspace.created` | The workspace |
+| `member.added` | The person added, the workspace, and their role |
+| `connector.auth_started` / `connector.auth_completed` / `connector.auth_failed` | The connector's catalog id or `custom`, `workspace` or `personal`, and for a failure the state it ended in |
+| `connector.auth_lost` | A connected connector that now needs signing in again |
+| `automation.created` | Its trigger (`cron`, `interval`, `event`, `once` or `manual`), who made it (`user` or `agent`), `saved` or `oneoff`, and `automation_id` |
+| `automation.run_completed` | Its status, trigger (`schedule`, `manual` or `event`), duration, whether it ran in a batch, `run_id`, `automation_id`, and `cost_usd` (the run's recorded cost, priced as on `agent.chat_completed`; left out when any call could not be priced, and for a run that never reached a model). The run's steps are on its `agent.chat_*` and `tool.called` events, which carry the same `run_id`; a run that never started has only this event |
+
+`run_id` is the run's own random id. An automation's own id is its name, so `automation_id` is a hash of where it lives and that id instead: it groups an automation's runs and names nothing. The automation's name is never sent.
+
+On an identified deployment `automation.created` reports every automation, so the anonymous `task.created` (only automations the agent made) is not sent there.
+
+An identified web client sends `$pageview` when the route it shows changes, and nothing when only a value in it changes (another workspace, another conversation). The event names the route template, never the path: `/w/:slug/settings/members`, not the workspace's address. Its `$current_url` is the origin plus that template, and its `$pathname` the template. On an app's page it also carries `app`, the app's server name from the catalog. In every identified web event, a URL naming another page (the referrer, the first page of a session or of a person) keeps only its origin, and a path naming another page is dropped.
+
+Everything else in [What is never sent](#what-is-never-sent) still holds, apart from the email address, the person's name, the catalog names above, and the name of the app on screen. `identify` without `"enabled": true` does nothing: a person's yes in the CLI or the web UI never turns it on. Set it only where your terms with the people using the install allow it, and never with the key `npx nimblebrain` ships, which is the NimbleBrain project for anonymous installs.
+
 <Aside type="tip">
   A runtime with no `POSTHOG_API_KEY` has nowhere to send anything. It asks no one, creates no ID, and makes no request to PostHog.
 </Aside>
@@ -105,7 +154,7 @@ Any one of these turns telemetry off and stops anyone from being asked:
 ## Technical details
 
 - **Runtime:** `posthog-node`, batched every 30 seconds or 20 events, GeoIP off.
-- **Web client:** `posthog-js` with `ip: false`, `autocapture: false`, `capture_pageview: false`, session recording off. It starts only after the runtime reports a yes.
+- **Web client:** `posthog-js` with `ip: false`, `autocapture: false`, `capture_pageview: false`, session recording off. It starts only after the runtime reports a yes. An identified client sends its own `$pageview` (above), so PostHog never reports the URL itself.
 - **CLI:** one `POST` to PostHog's batch endpoint at the end of a command, using Node's built-in `fetch`.
 - **Destination:** PostHog Cloud (`https://us.i.posthog.com`).
 - **Offline:** events are dropped by the runtime and kept by the CLI for its next command. Telemetry never fails a command.

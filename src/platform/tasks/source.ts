@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Static } from "@sinclair/typebox";
 import { effectiveRunLimits } from "../../config/tasks.ts";
 import { textContent } from "../../engine/content-helpers.ts";
@@ -72,7 +73,12 @@ import {
 } from "./store.ts";
 import { createTaskRunSource } from "./task-source.ts";
 import type { Batch, RunTicket, Task, TaskRun } from "./types.ts";
-import { TASKS_PANEL_HTML } from "./ui-resource.ts";
+import {
+  TASKS_CARD_HTML,
+  TASKS_CARD_URI,
+  TASKS_PANEL_HTML,
+  TASKS_PANEL_URI,
+} from "./ui-resource.ts";
 
 /** What a tool's handler answers: the static type of its output schema. */
 type ToolOutput<K extends TaskToolName> = Static<(typeof TOOL_SCHEMAS)[K]["outputSchema"]>;
@@ -189,11 +195,11 @@ function createJudgePort(runtime: Runtime): JudgePort {
  * while a task is private to its owner (ADR-0004). So the item is generic: it
  * names no task, no criterion or rule, and nothing of the deliverable, only
  * the run's id and its owner's id. The detail stays on the run, which only the
- * owner can open (`tasks__run_result`, the Tasks panel).
+ * owner can open (`tasks__run_result`, the Scheduled panel).
  */
 export function poorResultEnvelope(task: Task, run: TaskRun): NotificationEnvelope {
   const body = [
-    `The task's owner can read run ${run.id} in Tasks.`,
+    `The task's owner can read run ${run.id} in Scheduled.`,
     run.retryOf ? `It retried run ${run.retryOf}.` : "",
   ]
     .filter(Boolean)
@@ -210,7 +216,7 @@ export function poorResultEnvelope(task: Task, run: TaskRun): NotificationEnvelo
     _meta: {
       "ai.nimblebrain/notification": {
         level: "attention",
-        title: "A task run had a poor result",
+        title: "A scheduled task's result needs a look",
         body,
       },
     },
@@ -237,10 +243,12 @@ export function runFailedEnvelope(
     _meta: {
       "ai.nimblebrain/notification": {
         level: "attention",
-        title: disabled ? "A task was turned off after repeated failures" : "A task run failed",
+        title: disabled
+          ? "A scheduled task was turned off after repeated failures"
+          : "A scheduled task didn't work",
         body: disabled
-          ? `Its schedule is off until its owner turns it back on. The owner can read run ${run.id} in Tasks.`
-          : `It ended without a result. The owner can read run ${run.id} in Tasks.`,
+          ? `Its schedule is off until its owner turns it back on. The owner can read run ${run.id} in Scheduled.`
+          : `It ended without a result. The owner can read run ${run.id} in Scheduled.`,
       },
     },
   };
@@ -301,11 +309,11 @@ export function batchPausedEnvelope(batch: Batch): NotificationEnvelope {
     _meta: {
       "ai.nimblebrain/notification": {
         level: "attention",
-        title: "A task batch paused",
+        title: "A batch of scheduled task runs paused",
         body:
           `Batch ${batch.id} paused because ${why} (${done} of ${batch.items} done: ` +
           `${pass} pass, ${fail} fail, ${uncertain} uncertain). Its owner can resume or ` +
-          "cancel it in Tasks.",
+          "cancel it in Scheduled.",
       },
     },
   };
@@ -341,6 +349,13 @@ function notifyPoorResult(runtime: Runtime, task: Task, run: TaskRun): void {
     });
   }
 }
+
+/**
+ * The view a host that renders MCP Apps shows under a tool's call. Only a save
+ * gets one: chat reads the saved task back as a card, so a person sees what the
+ * agent set up without opening the panel.
+ */
+export const TOOL_VIEWS: Partial<Record<TaskToolName, string>> = { create: TASKS_CARD_URI };
 
 /**
  * Create the "tasks" platform source — an in-process MCP server.
@@ -382,6 +397,7 @@ export async function createTasksSource(
     assess: (task, run, result) => assessRun(task, run, result, { port: judgePort }),
     notifyPoorResult: (task, run) => notifyPoorResult(runtime, task, run),
     notifyRunFailed: (task, run, notice) => notifyRunFailed(runtime, task, run, notice),
+    onRunEnded: (wsId, ownerId, run) => captureAutomationRunEnded(runtime, wsId, ownerId, run),
   });
   scheduler.start();
 
@@ -501,6 +517,7 @@ export async function createTasksSource(
         runtime.announceIdentitySourceChange("tasks", owner);
       },
       reloadScheduler: () => scheduler.reload(),
+      onCreated: (task) => captureAutomationCreated(runtime, task),
       runNow: (id, requested) => scheduler.requestRunNow(wsId, owner, id, requested),
       readRunTicket: (runId) => currentTicket(wsId, owner, runId),
       findRunByKey: (id, key) => {
@@ -545,6 +562,7 @@ export async function createTasksSource(
         return updated;
       },
       callerVia: () => (getRequestContext()?.shellCall ? "ui" : "remote"),
+      callerName: () => getRequestContext()?.clientName,
       defaultTimezone,
       runLimitsOf,
       defaultModel: runtime.getDefaultModel(),
@@ -578,6 +596,7 @@ export async function createTasksSource(
       save: tc.save,
       reloadScheduler: tc.reloadScheduler,
       defaultTimezone: tc.defaultTimezone,
+      onCreated: tc.onCreated,
     };
   });
 
@@ -723,12 +742,16 @@ export async function createTasksSource(
     // the general `OutputSchema` it publishes.
     const { description, inputSchema, annotations } = TOOL_SCHEMAS[name];
     const outputSchema: OutputSchema = TOOL_SCHEMAS[name].outputSchema;
+    const view = TOOL_VIEWS[name];
     return typedTool({
       name,
       description,
       inputSchema,
       outputSchema,
       annotations,
+      // MCP Apps: a host that renders views shows this one under the call,
+      // fed the call's result. The model still reads the text result.
+      ...(view ? { meta: { ui: { resourceUri: view } } } : {}),
       handler: withErrorHandling((input) => {
         // Unattended-run wall. A task must not reach the
         // task-authoring surface (create/update/delete/run, and any authoring
@@ -747,7 +770,10 @@ export async function createTasksSource(
 
   const tools: InProcessTool[] = (Object.keys(TOOL_SCHEMAS) as TaskToolName[]).map(registerTool);
 
-  const resources = new Map([["ui://tasks/panel", TASKS_PANEL_HTML]]);
+  const resources = new Map([
+    [TASKS_PANEL_URI, TASKS_PANEL_HTML],
+    [TASKS_CARD_URI, TASKS_CARD_HTML],
+  ]);
 
   const source = defineInProcessApp(
     {
@@ -761,9 +787,9 @@ export async function createTasksSource(
       placements: [
         {
           slot: "sidebar",
-          resourceUri: "ui://tasks/panel",
+          resourceUri: TASKS_PANEL_URI,
           route: "@nimblebraininc/tasks",
-          label: "Tasks",
+          label: "Scheduled",
           icon: "clock",
           priority: 3,
         },
@@ -794,4 +820,68 @@ export async function createTasksSource(
   };
 
   return source;
+}
+
+/**
+ * An automation's id for analytics: a task's own id is its name in kebab case,
+ * which is its owner's, so this is a hash of where it lives and that id. Stable
+ * for the automation's life, so its runs group; it names nothing.
+ */
+export function automationTelemetryId(wsId: string, ownerId: string, taskId: string): string {
+  return createHash("sha256").update(`${wsId}/${ownerId}/${taskId}`).digest("hex").slice(0, 16);
+}
+
+/** A task run's trigger in the run-start door's words (`RunTrigger`), as the agent's own events say it. */
+const RUN_TRIGGER = { scheduled: "schedule", manual: "manual", event: "event" } as const;
+
+/**
+ * An automation created, on an identified deployment: how it is triggered and
+ * who made it, never its name or prompt, which are its owner's.
+ */
+export function captureAutomationCreated(
+  runtime: Pick<Runtime, "getTelemetryManager">,
+  task: Task,
+): void {
+  runtime.getTelemetryManager().captureAbout(
+    "automation.created",
+    {
+      trigger: task.schedule?.type ?? "manual",
+      created_by: task.source ?? "agent",
+      kind: task.kind ?? "saved",
+      ...(task.ownerId && task.workspaceId
+        ? { automation_id: automationTelemetryId(task.workspaceId, task.ownerId, task.id) }
+        : {}),
+    },
+    { userId: task.ownerId, workspaceId: task.workspaceId },
+  );
+}
+
+/**
+ * An automation run that ended, on an identified deployment: its outcome, never
+ * its output. `run_id` joins it to the run's `agent.chat_*` and `tool.called`,
+ * which carry its steps; a run that never started an agent has only this event.
+ */
+export function captureAutomationRunEnded(
+  runtime: Pick<Runtime, "getTelemetryManager">,
+  wsId: string,
+  ownerId: string,
+  run: TaskRun,
+): void {
+  const ended = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
+  const started = Date.parse(run.startedAt);
+  runtime.getTelemetryManager().captureAbout(
+    "automation.run_completed",
+    {
+      status: run.status,
+      trigger: run.trigger ? RUN_TRIGGER[run.trigger] : "none",
+      run_id: run.id,
+      automation_id: automationTelemetryId(wsId, ownerId, run.taskId),
+      in_batch: run.batchId !== undefined,
+      ...(Number.isFinite(ended - started) ? { duration_ms: ended - started } : {}),
+      // The run's recorded cost. An incomplete one (a call no rates were known
+      // for) is left out, never reported as a lower figure.
+      ...(run.costUsd !== undefined && !run.unpricedCalls ? { cost_usd: run.costUsd } : {}),
+    },
+    { userId: ownerId, workspaceId: wsId },
+  );
 }

@@ -36,7 +36,7 @@ const CATALOG = `servers:
       ai.nimblebrain/connector:
         auth: dcr
       ai.nimblebrain/host:
-        host_version: "1.4"
+        hostVersion: "1.4"
         name: Outbound
         icon: crosshair
         placements:
