@@ -369,6 +369,29 @@ describe("PostHogEventSink on an identified deployment", () => {
     expect(JSON.stringify(mock.events)).not.toContain("export_payroll");
   });
 
+  it("names a catalog connector when the tool event lacks its workspace stamp (an agent runtime's run)", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+    sink.emit(
+      engineEvent(
+        "tool.done",
+        toolDonePayload({ runId: "r1", name: "linear__list_issues", ms: 3 }),
+      ),
+    );
+    await settle();
+
+    const calls = mock.events
+      .filter((e) => e.event === "tool.called")
+      .map((e) => own(e.properties));
+    expect(calls).toContainEqual({
+      ok: true,
+      duration_ms: 3,
+      source: "connector",
+      connector: "app.linear/linear",
+      tool: "list_issues",
+    });
+  });
+
   it("names a person's own plugin by its catalog id, read from their records", async () => {
     const { mock, sink } = identifiedSetup();
     sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));

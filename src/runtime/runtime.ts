@@ -19,7 +19,6 @@ import { type ResolvedTasksConfig, resolveTasksConfig } from "../config/tasks.ts
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import {
   ConnectorCatalog,
-  catalogEntryForRef,
   catalogPath,
   warnIfCatalogEmpty,
 } from "../connectors/catalog/catalog.ts";
@@ -250,6 +249,7 @@ import {
 import { approxTokens } from "../skills/tokens.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../skills/truncate.ts";
 import type { Skill, SkillBodyLoad } from "../skills/types.ts";
+import { telemetryCatalogId } from "../telemetry/catalog-id.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import {
@@ -1262,9 +1262,7 @@ export class Runtime {
             ? rt.getLifecycle().getInstance(serverName, owner.workspaceId)?.ref
             : await new IdentityConnectorStore({ workDir }).get(owner.userId, serverName);
         if (!ref) return undefined;
-        const catalog = rt.getConnectorCatalog();
-        return catalogEntryForRef(ref, await catalog.catalogByUrl(), await catalog.catalogByIdMap())
-          ?.id;
+        return telemetryCatalogId(ref, await rt.getConnectorCatalog().catalogEntries());
       });
       // Make the host-resources factory accessible on `rt` so non-lifecycle
       // install paths (connector-tools, boot reload) can pull deps directly.
