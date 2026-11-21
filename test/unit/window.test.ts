@@ -300,6 +300,43 @@ describe("windowMessages", () => {
     expect(mandatoryOverBudget).toBe(true);
   });
 
+  it("keeps a later turn's request through its tool loop at a tight budget", () => {
+    // Turn 2 asks for a change; the loop has made two calls on it. A large
+    // request (it carries injected context) must not be windowed away, or the
+    // model sees only turn 1's request and redoes it.
+    const request = textMsg("user", `move it to 9am ${"x".repeat(400)}`);
+    const msgs: LanguageModelV4Message[] = [
+      textMsg("user", "set up a task at 8am"),
+      textMsg("assistant", `done ${"y".repeat(400)}`),
+      request,
+      toolCallMsg("c1"),
+      toolResultMsg("c1", "status"),
+      toolCallMsg("c2"),
+      toolResultMsg("c2", "updated"),
+    ];
+    const { messages: result } = windowMessages(msgs, 150);
+    expect(result[0]).toEqual(msgs[0]!);
+    expect(result).toContain(request);
+    expect(result.slice(-2)).toEqual(msgs.slice(5));
+    // The older turn's reply is what goes.
+    expect(result).not.toContain(msgs[1]);
+    assertNoOrphanedToolResults(result);
+  });
+
+  it("drops older turns before any part of the current one", () => {
+    const msgs: LanguageModelV4Message[] = [
+      textMsg("user", "first"),
+      textMsg("assistant", "a".repeat(200)),
+      textMsg("user", "second"),
+      textMsg("assistant", "b".repeat(200)),
+      textMsg("user", "third"),
+      toolCallMsg("c1"),
+      toolResultMsg("c1", "ok"),
+    ];
+    const { messages: result } = windowMessages(msgs, 40);
+    expect(result).toEqual([msgs[0]!, ...msgs.slice(4)]);
+  });
+
   it("reports an oversized mandatory anchor and parallel tool-result group", () => {
     const msgs: LanguageModelV4Message[] = [
       textMsg("user", "start"),
