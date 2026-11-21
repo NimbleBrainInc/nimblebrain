@@ -1,5 +1,6 @@
 import { dispatchEngineEvent, type EngineEventHandlers } from "../engine/event-dispatch.ts";
 import type {
+  ConnectionStateChangedPayload,
   ConnectorInstalledPayload,
   LlmDonePayload,
   RunDonePayload,
@@ -23,6 +24,20 @@ export type ConnectorCatalogResolver = (
   wsId: string,
   serverName: string,
 ) => Promise<string | undefined>;
+
+/**
+ * The sign-in event a connection's state change means: entering `pending_auth`
+ * starts one, leaving it for `running` completes it, leaving it any other way
+ * fails it, and `running` falling to `reauth_required` loses it.
+ */
+function authEventFor(previous: string | undefined, state: string): string | undefined {
+  if (state === "pending_auth")
+    return previous === "pending_auth" ? undefined : "connector.auth_started";
+  if (previous === "pending_auth")
+    return state === "running" ? "connector.auth_completed" : "connector.auth_failed";
+  if (previous === "running" && state === "reauth_required") return "connector.auth_lost";
+  return undefined;
+}
 
 /** What an identified event names in place of a connector or skill not from the catalog. */
 const CUSTOM = "custom";
@@ -88,6 +103,7 @@ export class PostHogEventSink implements EventSink {
     "connector.uninstalled": () => this.captureConnectorUninstalled(),
     "skills.loaded": (data) => this.recordSkills(data),
     "skill.created": (data) => this.captureSkillCreated(data),
+    "connection.state_changed": (data) => this.captureConnectionChange(data),
   };
 
   /**
@@ -100,6 +116,8 @@ export class PostHogEventSink implements EventSink {
   private resolveConnector: ConnectorCatalogResolver = async () => undefined;
   /** `<wsId>|<serverName>` → its catalog id or `custom`, resolved once. */
   private readonly connectorIds = new Map<string, Promise<string>>();
+  /** Each connection's last state, `<owner>|<serverName>|<principal>`, to read a sign-in's outcome from its transition. */
+  private readonly connectionStates = new Map<string, string>();
 
   constructor(telemetry: TelemetryManager) {
     this.telemetry = telemetry;
@@ -167,7 +185,9 @@ export class PostHogEventSink implements EventSink {
     if (this.named())
       this.captureToolCalled(data, metrics, isConnector, sourcePrefix, bareToolName);
     // The agent made an automation: a kernel tool, so naming it reveals nothing.
-    if (data.ok && data.name === "tasks__create") this.telemetry.capture("task.created");
+    // On an identified deployment, `automation.created` reports every create, from any door.
+    if (data.ok && data.name === "tasks__create" && !this.named())
+      this.telemetry.capture("task.created");
   }
 
   /**
@@ -223,6 +243,41 @@ export class PostHogEventSink implements EventSink {
     for (const skill of data.skills) {
       metrics.skills.add(skill.scope === "provided" ? skill.name : CUSTOM);
     }
+  }
+
+  /**
+   * A connector sign-in, read from its connection's transitions: entering
+   * `pending_auth` starts one, leaving it for `running` completes it, leaving
+   * it any other way fails it, and `running` falling to `reauth_required` is a
+   * sign-in lost. Never the error text or the authorization URL.
+   */
+  private captureConnectionChange(data: ConnectionStateChangedPayload): void {
+    if (!this.named()) return;
+    const owner = "wsId" in data ? data.wsId : data.userId;
+    const key = `${owner}|${data.serverName}|${data.principalId}`;
+    const previous = this.connectionStates.get(key);
+    this.connectionStates.set(key, data.state);
+    const event = authEventFor(previous, data.state);
+    if (!event) return;
+    const workspace = "wsId" in data ? data.wsId : undefined;
+    // A person's own plugin lives outside any workspace's connector records.
+    const connector = workspace
+      ? this.connectorId(workspace, data.serverName)
+      : Promise.resolve(CUSTOM);
+    void connector.then((id) =>
+      this.telemetry.captureAbout(
+        event,
+        {
+          connector: id,
+          scope: workspace ? "workspace" : "personal",
+          ...(event === "connector.auth_failed" ? { state: data.state } : {}),
+        },
+        {
+          ...(workspace ? { workspaceId: workspace } : {}),
+          ...("userId" in data ? { userId: data.userId } : {}),
+        },
+      ),
+    );
   }
 
   /** A skill someone created: its scope only, since its name is theirs. */
