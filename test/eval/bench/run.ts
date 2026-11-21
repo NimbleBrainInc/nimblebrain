@@ -37,7 +37,8 @@ import { KEY_ENV, PRESETS } from "./models.ts";
 const env = process.env;
 const PRESET = env.NB_BENCH_PRESET ?? "quick";
 const LISTED = env.NB_BENCH_MODELS?.split(",").map((m) => m.trim());
-if (!LISTED && !PRESETS[PRESET]) throw new Error(`unknown NB_BENCH_PRESET ${PRESET}: use quick or full`);
+if (!LISTED && !PRESETS[PRESET])
+  throw new Error(`unknown NB_BENCH_PRESET ${PRESET}: use quick or full`);
 const REQUESTED = LISTED ?? PRESETS[PRESET] ?? [];
 /** A model runs when its provider's key is set; local needs none. */
 const hasKey = (m: string) => {
@@ -72,7 +73,13 @@ interface RunRecord {
   /** Every call in order: its tool, whether it succeeded, its input, and the start of its output. */
   /** Each turn's reply, in order. */
   replies: string[];
-  trace: Array<{ turn: number; name: string; ok: boolean; input: Record<string, unknown>; output: string }>;
+  trace: Array<{
+    turn: number;
+    name: string;
+    ok: boolean;
+    input: Record<string, unknown>;
+    output: string;
+  }>;
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
@@ -176,7 +183,13 @@ async function runOnce(model: string, c: BenchCase, run: number): Promise<RunRec
       repeatedCalls: repeated(turns),
       replies: turns.map((t) => t.response.slice(0, 300)),
       trace: turns.flatMap((t, i) =>
-        t.toolCalls.map((c) => ({ turn: i + 1, name: c.name, ok: c.ok, input: c.input, output: c.output.slice(0, 300) })),
+        t.toolCalls.map((c) => ({
+          turn: i + 1,
+          name: c.name,
+          ok: c.ok,
+          input: c.input,
+          output: c.output.slice(0, 300),
+        })),
       ),
       inputTokens: turns.reduce((s, t) => s + t.usage.inputTokens, 0),
       outputTokens: turns.reduce((s, t) => s + t.usage.outputTokens, 0),
@@ -245,7 +258,8 @@ function summarize(records: RunRecord[]): string {
 }
 
 const records: RunRecord[] = [];
-for (const m of SKIPPED) process.stdout.write(`${m}: skipped, no ${KEY_ENV[m.split(":")[0] ?? ""]}\n`);
+for (const m of SKIPPED)
+  process.stdout.write(`${m}: skipped, no ${KEY_ENV[m.split(":")[0] ?? ""]}\n`);
 for (const model of MODELS) {
   for (const c of CASES.filter((x) => !ONLY || ONLY.includes(x.id))) {
     for (let i = 1; i <= RUNS; i++) {
