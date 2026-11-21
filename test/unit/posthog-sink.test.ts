@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSkillsLoadedPayload } from "../../src/runtime/skills-loaded-payload.ts";
 import { synthesizeConnectorSkill } from "../../src/skills/connector-skills.ts";
-import type { TelemetryClient, TelemetryClientFactory } from "../../src/telemetry/manager.ts";
+import type {
+  TelemetryClient,
+  TelemetryClientFactory,
+  TelemetrySubject,
+} from "../../src/telemetry/manager.ts";
 import { TelemetryManager } from "../../src/telemetry/manager.ts";
 import { PostHogEventSink } from "../../src/telemetry/posthog-sink.ts";
 import {
@@ -311,7 +315,10 @@ describe("PostHogEventSink", () => {
 
 describe("PostHogEventSink on an identified deployment", () => {
   /** A sink whose manager the operator set to identify, with a catalog of one connector. */
-  function identifiedSetup(): { mock: MockTelemetryClient; sink: PostHogEventSink } {
+  function identifiedSetup(subject: TelemetrySubject = { userId: "usr_1", workspaceId: "ws_1" }): {
+    mock: MockTelemetryClient;
+    sink: PostHogEventSink;
+  } {
     const mock = new MockTelemetryClient();
     const mgr = TelemetryManager.create({
       workDir: makeTmpDir(),
@@ -320,7 +327,7 @@ describe("PostHogEventSink on an identified deployment", () => {
       clientFactory: () => mock,
       env: {},
     });
-    mgr.setSubjectSource(() => ({ userId: "usr_1", workspaceId: "ws_1" }));
+    mgr.setSubjectSource(() => subject);
     const sink = new PostHogEventSink(mgr);
     sink.addBuiltinSources(["tasks", "crm"]);
     // `linear` is the workspace's from the catalog; `gmail` is the person's own
@@ -406,6 +413,24 @@ describe("PostHogEventSink on an identified deployment", () => {
       connector: "app.linear/linear",
       tool: "list_issues",
     });
+  });
+
+  it("says whether a person's chat or an automation started the run", async () => {
+    for (const [subject, trigger] of [
+      [{ userId: "usr_1", workspaceId: "ws_1" }, "chat"],
+      [{ userId: "usr_1", workspaceId: "ws_1", unattended: true }, "automation"],
+    ] as const) {
+      const { mock, sink } = identifiedSetup(subject);
+      sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+      sink.emit(runDone("r1"));
+      await settle();
+      expect(mock.events.find((e) => e.event === "agent.chat_started")?.properties.trigger).toBe(
+        trigger,
+      );
+      expect(mock.events.find((e) => e.event === "agent.chat_completed")?.properties.trigger).toBe(
+        trigger,
+      );
+    }
   });
 
   it("sends no tool.called for a held call, only for the call that ran", async () => {

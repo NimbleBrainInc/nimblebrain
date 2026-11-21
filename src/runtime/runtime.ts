@@ -872,6 +872,7 @@ export class Runtime {
         email: ctx.identity.email,
         name: ctx.identity.displayName,
         workspaceId: ctx.workspaceId,
+        ...(ctx.unattended ? { unattended: true } : {}),
       };
     });
     const telemetrySink = new PostHogEventSink(telemetryManager);
