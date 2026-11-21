@@ -477,6 +477,25 @@ describe("tasks__run_batch validation", () => {
     ).toThrow(/no criteria and no outputSchema/);
   });
 
+  it("an inline batch keeps its definition's name and the client that asked for it", async () => {
+    const h = harness();
+    const ctx = { ...h.ctx, callerName: () => "Claude Code" };
+    const out = handleRunBatch(
+      {
+        definition: { body: "Do it", manifest: { name: "Fit pilot, arm A" } },
+        items: items("a"),
+      },
+      ctx,
+    );
+    expect(out.batch).toMatchObject({ name: "Fit pilot, arm A", startedVia: "Claude Code" });
+    // Read back from disk, as tasks__batches serves it.
+    expect(listBatches(workDir, WS, OWNER)[0]).toMatchObject({
+      name: "Fit pilot, arm A",
+      startedVia: "Claude Code",
+    });
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+  });
+
   it("holds concurrency to the runtime's concurrent-run limit", async () => {
     const h = harness({ maxConcurrentRuns: 2 });
     makeTask();

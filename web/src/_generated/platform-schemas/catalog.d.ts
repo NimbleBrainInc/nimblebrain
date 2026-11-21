@@ -9,7 +9,6 @@ export declare const PlatformToolCatalog: {
             readonly input: import("@sinclair/typebox").TObject<{
                 add: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                 remove: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-                request_plugin: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;
         };
         readonly use_skill: {
@@ -300,6 +299,8 @@ export declare const PlatformToolCatalog: {
                             options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
                         }>>;
                         onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"notify" | "record" | "retry_once">>;
+                    } & {
+                        name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     }>>;
                     body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 }>>;

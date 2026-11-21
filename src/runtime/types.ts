@@ -229,10 +229,16 @@ export interface RuntimeConfig {
    */
   brand?: Brand;
 
-  /** Anonymous telemetry configuration. */
+  /** Usage telemetry configuration. Anonymous unless the operator sets `identify`. */
   telemetry?: {
     /** The operator's decision: `false` off, `true` on, both without asking anyone. Unset, a person decides. */
     enabled?: boolean;
+    /**
+     * Events name the person (id, email, name) and are grouped by tenant and
+     * workspace, for a deployment sending to its own analytics project.
+     * Honored only with `enabled: true`.
+     */
+    identify?: boolean;
   };
 
   /**
@@ -596,6 +602,8 @@ export interface TaskResult {
   usage: TurnUsage;
   /** The run's cost in USD; see `ChatResult.costUsd`. */
   costUsd: number;
+  /** See `RunHandle.unpricedCalls`. */
+  unpricedCalls?: number;
   /**
    * Every skill the run was given, or that missed it, in order: the ones it
    * declared, the ones delivered before a held call or after a promotion, and

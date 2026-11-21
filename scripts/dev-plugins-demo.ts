@@ -31,21 +31,30 @@ const ROOT = dirname(import.meta.dir);
 const ENV_DIR = join(ROOT, ".environments", "plugins-demo");
 const CONFIG_PATH = join(ENV_DIR, "nimblebrain.json");
 const CATALOG_DIR = join(ENV_DIR, "catalog");
-const API_PORT = process.env.NB_API_PORT || "27255";
-const WEB_PORT = process.env.NB_WEB_PORT || "27254";
 
-/** The environment the seed and the runtime both run under: `base` with the demo's workdir, ports, and catalog. */
+/** The demo's ports: `NB_API_PORT` / `NB_WEB_PORT` from `env`, else 27255 / 27254. */
+export function demoPorts(env: NodeJS.ProcessEnv): { api: string; web: string } {
+  return { api: env.NB_API_PORT || "27255", web: env.NB_WEB_PORT || "27254" };
+}
+
+/**
+ * The environment the seed and the runtime both run under: `base` with the
+ * demo's workdir, ports, and catalog. `scripts/dev.ts` builds the origins from
+ * these ports.
+ */
 export function demoEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const ports = demoPorts(base);
   return {
     ...base,
     NB_WORK_DIR: ENV_DIR,
-    NB_API_PORT: API_PORT,
-    NB_WEB_PORT: WEB_PORT,
+    NB_API_PORT: ports.api,
+    NB_WEB_PORT: ports.web,
     NB_CURATED_CATALOG_DIR: CATALOG_DIR,
   };
 }
 
 async function main(): Promise<void> {
+  const ports = demoPorts(process.env);
   const env = demoEnv(process.env);
   process.env.NB_WORK_DIR = env.NB_WORK_DIR;
   const { workDir, secrets } = loadConfig({ config: CONFIG_PATH });
@@ -60,11 +69,18 @@ async function main(): Promise<void> {
   log.info(
     `[plugins-demo]   ${summary.personal} personal plugins; skills ${JSON.stringify(summary.skills)}`,
   );
-  log.info(`[plugins-demo]   Web: http://localhost:${WEB_PORT}`);
+  log.info(`[plugins-demo]   Web: http://localhost:${ports.web}`);
 
   const child = spawn(
     "bun",
-    ["--no-env-file", join(ROOT, "scripts", "dev.ts"), "--port", API_PORT, "--config", CONFIG_PATH],
+    [
+      "--no-env-file",
+      join(ROOT, "scripts", "dev.ts"),
+      "--port",
+      ports.api,
+      "--config",
+      CONFIG_PATH,
+    ],
     {
       cwd: ROOT,
       stdio: "inherit",

@@ -176,8 +176,20 @@ describe("Telemetry Privacy", () => {
           "cache_tokens",
           ...COMMON_KEYS,
         ]),
-        // run.start first, so the run's metrics exist.
-        events: [runStart("r1"), leaky(runDone("r1"))],
+        // run.start first, so the run's metrics exist. The model call is at a
+        // priced model: an anonymous payload still carries no cost.
+        events: [
+          runStart("r1"),
+          engineEvent(
+            "llm.done",
+            llmDonePayload({
+              runId: "r1",
+              model: "anthropic:claude-sonnet-4-6",
+              usage: { inputTokens: 1000, outputTokens: 100 },
+            }),
+          ),
+          leaky(runDone("r1")),
+        ],
       },
       "agent.error": {
         telemetryEvent: "agent.error",

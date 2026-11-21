@@ -2,9 +2,10 @@
 // PluginDetailPage — one plugin, by whose it is.
 //
 // A workspace plugin shows the connector's configuration sections, its skills
-// and its apps, with Uninstall for a workspace admin only. A person's plugin
+// and its apps, with Sign out and Remove for a workspace admin only. A person's plugin
 // shows the account it signs in as, Use here or Stop using here for this
-// workspace, and every workspace it is used in, each revocable. The settings
+// workspace, and every workspace the person belongs to, each on or off with
+// the change that flips it. The settings
 // page's old address sends a bookmark on to the plugin's page.
 // ---------------------------------------------------------------------------
 
@@ -14,6 +15,8 @@ import { realClient } from "../../test/setup";
 import type { Plugin } from "../_generated/platform-schemas/plugins";
 import type * as ApiClient from "../api/client";
 import type { InstalledConnector, PersonalConnector } from "../api/client";
+import { __internal__ as eventsClient } from "../api/events-client";
+import type { ConnectEventsOptions, EventConnection } from "../api/sse";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -21,6 +24,7 @@ defineHappyDomErrorClasses();
 
 const WS_ID = "ws_003eba8844413cd9";
 const OTHER_WS_ID = "ws_0071a5bbf40116e6";
+const THIRD_WS_ID = "ws_00c1d2e3f4a5b6c7";
 
 let plugins: Plugin[] = [];
 let personal: PersonalConnector[] = [];
@@ -66,8 +70,11 @@ const initiateIdentityConnect = mock<typeof ApiClient.initiateIdentityConnect>(
 const initiateComposioIdentityConnect = mock<typeof ApiClient.initiateComposioIdentityConnect>(
   async () => ({}) as Awaited<ReturnType<typeof ApiClient.initiateComposioIdentityConnect>>,
 );
-const disconnectPersonalConnector = mock<typeof ApiClient.disconnectPersonalConnector>(
-  async () => ({}) as Awaited<ReturnType<typeof ApiClient.disconnectPersonalConnector>>,
+const signOutPersonalConnector = mock<typeof ApiClient.signOutPersonalConnector>(
+  async () => ({}) as Awaited<ReturnType<typeof ApiClient.signOutPersonalConnector>>,
+);
+const removePersonalConnector = mock<typeof ApiClient.removePersonalConnector>(
+  async () => ({}) as Awaited<ReturnType<typeof ApiClient.removePersonalConnector>>,
 );
 
 mock.module("../api/client", () => ({
@@ -80,7 +87,8 @@ mock.module("../api/client", () => ({
   listConnectorSkills,
   initiateIdentityConnect,
   initiateComposioIdentityConnect,
-  disconnectPersonalConnector,
+  signOutPersonalConnector,
+  removePersonalConnector,
   listConnectorToolsWithPermissions: async () => ({
     scope: "workspace",
     serverName: "github",
@@ -94,7 +102,7 @@ const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
-const { NoticeProvider } = await import("../components/notices");
+const { NoticeProvider, NoticeViewport } = await import("../components/notices");
 const { toSlug } = await import("../lib/workspace-slug");
 const { ConnectorPageRedirect, PluginDetailPage } = await import("../pages/PluginDetailPage");
 
@@ -159,13 +167,17 @@ beforeEach(() => {
     revokeConnector,
     initiateIdentityConnect,
     initiateComposioIdentityConnect,
-    disconnectPersonalConnector,
+    signOutPersonalConnector,
+    removePersonalConnector,
   ]) {
     m.mockClear();
   }
   listPersonalConnectors.mockImplementation(async () => ({ connectors: personal }));
-  disconnectPersonalConnector.mockImplementation(
-    async () => ({}) as Awaited<ReturnType<typeof ApiClient.disconnectPersonalConnector>>,
+  signOutPersonalConnector.mockImplementation(
+    async () => ({}) as Awaited<ReturnType<typeof ApiClient.signOutPersonalConnector>>,
+  );
+  removePersonalConnector.mockImplementation(
+    async () => ({}) as Awaited<ReturnType<typeof ApiClient.removePersonalConnector>>,
   );
 });
 
@@ -186,6 +198,7 @@ async function mount(path: string, role: "admin" | "member" = "admin"): Promise<
   const workspaces = [
     { id: WS_ID, name: "Helix", memberCount: 2, connectorCount: 0, userRole: role },
     { id: OTHER_WS_ID, name: "Orbit", memberCount: 2, connectorCount: 0, userRole: role },
+    { id: THIRD_WS_ID, name: "Quarry", memberCount: 1, connectorCount: 0, userRole: role },
   ];
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -206,6 +219,7 @@ async function mount(path: string, role: "admin" | "member" = "admin"): Promise<
             </Routes>
           </MemoryRouter>
         </WorkspaceProvider>
+        <NoticeViewport />
       </NoticeProvider>,
     );
   });
@@ -219,10 +233,15 @@ async function mount(path: string, role: "admin" | "member" = "admin"): Promise<
   };
 }
 
-const pagePath = (id: string) => `/w/${SLUG}/plugins/${encodeURIComponent(id)}`;
+const pagePath = (id: string, slug = SLUG) => `/w/${slug}/plugins/${encodeURIComponent(id)}`;
 
 function button(scope: ParentNode, text: string): HTMLButtonElement | undefined {
   return [...scope.querySelectorAll("button")].find((b) => b.textContent?.trim() === text);
+}
+
+/** Every button's label on the page, trimmed. */
+function buttonLabels(scope: ParentNode): string[] {
+  return [...scope.querySelectorAll("button")].map((b) => b.textContent?.trim() ?? "");
 }
 
 async function click(el: Element | null | undefined): Promise<void> {
@@ -236,6 +255,25 @@ async function click(el: Element | null | undefined): Promise<void> {
 function testId(scope: ParentNode, id: string): HTMLElement | null {
   return scope.querySelector(`[data-testid="${id}"]`);
 }
+
+/** Each workspace row's name, whether it is marked as this one, and its state. */
+function workspaceRows(scope: ParentNode): { name: string; current: boolean; state: string }[] {
+  return [...scope.querySelectorAll('[data-testid="plugin-workspace-row"]')].map((r) => ({
+    name: r.querySelector("a")?.textContent ?? "",
+    current: testId(r, "plugin-workspace-current") !== null,
+    state: testId(r, "plugin-workspace-state")?.textContent ?? "",
+  }));
+}
+
+function row(scope: ParentNode, name: string): HTMLElement {
+  const found = [
+    ...scope.querySelectorAll<HTMLElement>('[data-testid="plugin-workspace-row"]'),
+  ].find((r) => r.querySelector("a")?.textContent === name);
+  if (!found) throw new Error(`no row for ${name}`);
+  return found;
+}
+
+const dialog = () => document.body.querySelector<HTMLElement>('[role="dialog"]');
 
 /** Open the connector's ⋯ menu and read what it offers. */
 async function menuItems(container: HTMLElement): Promise<string[]> {
@@ -266,17 +304,17 @@ describe("PluginDetailPage — a workspace plugin", () => {
     expect(text).toContain("Tool permissions");
   });
 
-  test("a workspace admin may uninstall it", async () => {
+  test("a workspace admin may remove it", async () => {
     plugins = [GITHUB];
     mounted = await mount(pagePath(GITHUB.id), "admin");
-    expect(await menuItems(mounted.container)).toContain("Uninstall…");
+    expect(await menuItems(mounted.container)).toContain("Remove…");
   });
 
-  test("a member sees it without Uninstall", async () => {
+  test("a member sees it without Remove", async () => {
     plugins = [GITHUB];
     mounted = await mount(pagePath(GITHUB.id), "member");
     expect(mounted.container.textContent).toContain("Tool permissions");
-    expect(await menuItems(mounted.container)).not.toContain("Uninstall…");
+    expect(await menuItems(mounted.container)).not.toContain("Remove…");
   });
 
   test("an id the listing does not hold says so", async () => {
@@ -317,32 +355,139 @@ describe("PluginDetailPage — a person's plugin", () => {
     expect(button(testId(mounted.container, "plugin-here")!, "Stop using here")).toBeDefined();
   });
 
-  test("Stop using here revokes it in this workspace", async () => {
+  test("Stop using here revokes it in this workspace after the same confirm as the row menu's", async () => {
     plugins = [granola(true)];
     personal = [granolaConnector([WS_ID])];
     mounted = await mount(pagePath("person:granola"));
     await click(button(testId(mounted.container, "plugin-here")!, "Stop using here"));
+    expect(revokeConnector).not.toHaveBeenCalled();
+    const confirm = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(confirm.textContent).toContain("Stop using Granola here?");
+    expect(confirm.textContent).toContain(
+      "Your agent can't use it in Helix until you turn it back on. It stays connected to your account.",
+    );
+    await click(button(confirm, "Stop using here"));
     expect(revokeConnector).toHaveBeenCalledWith("granola", WS_ID);
   });
 
-  test("Used in lists every workspace it is granted to, each revocable", async () => {
+  test("cancelling the Stop using confirm changes nothing", async () => {
+    plugins = [granola(true)];
+    personal = [granolaConnector([WS_ID])];
+    mounted = await mount(pagePath("person:granola"));
+    await click(button(testId(mounted.container, "plugin-here")!, "Stop using here"));
+    await click(button(document.body.querySelector('[role="dialog"]')!, "Cancel"));
+    expect(revokeConnector).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  test("Workspaces lists every workspace the person belongs to, each with its state", async () => {
+    plugins = [granola(true)];
+    personal = [granolaConnector([WS_ID, THIRD_WS_ID])];
+    mounted = await mount(pagePath("person:granola"));
+    expect(workspaceRows(mounted.container)).toEqual([
+      { name: "Helix", current: true, state: "On" },
+      { name: "Orbit", current: false, state: "Off" },
+      { name: "Quarry", current: false, state: "On" },
+    ]);
+    const orbit = row(mounted.container, "Orbit");
+    expect(button(orbit, "Use in Orbit")?.getAttribute("aria-label")).toBe("Use Granola in Orbit");
+    expect(orbit.querySelector('[aria-label="Stop using Granola in Orbit"]')).toBeNull();
+    expect(
+      row(mounted.container, "Quarry").querySelector('[aria-label="Stop using Granola in Quarry"]'),
+    ).not.toBeNull();
+  });
+
+  test("the workspace the page is in comes first", async () => {
+    plugins = [granola(false)];
+    personal = [granolaConnector([])];
+    mounted = await mount(pagePath("person:granola", toSlug(THIRD_WS_ID)));
+    expect(workspaceRows(mounted.container).map((r) => [r.name, r.current])).toEqual([
+      ["Quarry", true],
+      ["Helix", false],
+      ["Orbit", false],
+    ]);
+  });
+
+  test("Use in grants that workspace only after the confirm, and says so", async () => {
+    plugins = [granola(true)];
+    personal = [granolaConnector([WS_ID])];
+    mounted = await mount(pagePath("person:granola"));
+
+    await click(button(row(mounted.container, "Orbit"), "Use in Orbit"));
+    expect(grantConnector).not.toHaveBeenCalled();
+    const confirm = dialog()!;
+    expect(confirm.textContent).toContain("Use Granola (pat@acme.test) in Orbit?");
+    expect(confirm.textContent).toContain(
+      "Only you can use it in Orbit; other members can't. What your agent does with it is saved in Orbit",
+    );
+
+    personal = [granolaConnector([WS_ID, OTHER_WS_ID])];
+    await click(button(confirm, "Use in Orbit"));
+    expect(grantConnector).toHaveBeenCalledTimes(1);
+    expect(grantConnector).toHaveBeenCalledWith("granola", OTHER_WS_ID);
+    expect(initiateIdentityConnect).not.toHaveBeenCalled();
+    expect(row(mounted.container, "Orbit").dataset.on).toBe("true");
+    expect(document.body.textContent).toContain("Granola is on in Orbit");
+  });
+
+  test("Stop using revokes that workspace only after the confirm", async () => {
     plugins = [granola(true)];
     personal = [granolaConnector([WS_ID, OTHER_WS_ID])];
     mounted = await mount(pagePath("person:granola"));
-    const rows = [...mounted.container.querySelectorAll('[data-testid="plugin-used-in-row"]')];
-    expect(rows.map((r) => r.querySelector("a")?.textContent)).toEqual(["Helix", "Orbit"]);
 
-    await click(rows[1]?.querySelector('[aria-label="Stop using Granola in Orbit"]'));
+    await click(
+      row(mounted.container, "Orbit").querySelector('[aria-label="Stop using Granola in Orbit"]'),
+    );
+    expect(revokeConnector).not.toHaveBeenCalled();
+    const confirm = dialog()!;
+    expect(confirm.textContent).toContain("Stop using Granola in Orbit?");
+
+    personal = [granolaConnector([WS_ID])];
+    await click(button(confirm, "Stop using"));
+    expect(revokeConnector).toHaveBeenCalledTimes(1);
     expect(revokeConnector).toHaveBeenCalledWith("granola", OTHER_WS_ID);
-    expect(revokeConnector).not.toHaveBeenCalledWith("granola", WS_ID);
+    expect(row(mounted.container, "Orbit").dataset.on).toBe("false");
+    expect(document.body.textContent).toContain("Granola is off in Orbit");
   });
 
-  test("Used in says so when it is on nowhere", async () => {
-    plugins = [granola(false)];
-    personal = [granolaConnector([])];
+  test("a change that fails puts the row back and says why", async () => {
+    plugins = [granola(true)];
+    personal = [granolaConnector([WS_ID])];
+    grantConnector.mockImplementationOnce(async () => {
+      throw new Error("Grant refused");
+    });
     mounted = await mount(pagePath("person:granola"));
-    expect(testId(mounted.container, "plugin-used-in")?.textContent).toContain(
-      "Not on in any workspace.",
+
+    await click(button(row(mounted.container, "Orbit"), "Use in Orbit"));
+    await click(button(dialog()!, "Use in Orbit"));
+    expect(grantConnector).toHaveBeenCalledWith("granola", OTHER_WS_ID);
+    expect(row(mounted.container, "Orbit").dataset.on).toBe("false");
+    expect(button(row(mounted.container, "Orbit"), "Use in Orbit")?.disabled).toBe(false);
+    expect(document.body.textContent).toContain("Couldn't turn Granola on in Orbit");
+    expect(document.body.textContent).toContain("Grant refused");
+  });
+
+  test("a plugin that is not signed in still turns on elsewhere, and the row says so", async () => {
+    plugins = [
+      {
+        ...granola(false),
+        servers: [{ serverName: "granola", status: "not_connected", account: null }],
+      },
+    ];
+    personal = [{ ...granolaConnector([]), state: "not_authenticated", identity: undefined }];
+    mounted = await mount(pagePath("person:granola"));
+
+    await click(button(row(mounted.container, "Orbit"), "Use in Orbit"));
+    expect(dialog()?.textContent).toContain("It won't work there until you sign in to Granola.");
+    personal = [
+      { ...granolaConnector([OTHER_WS_ID]), state: "not_authenticated", identity: undefined },
+    ];
+    await click(button(dialog()!, "Use in Orbit"));
+    expect(grantConnector).toHaveBeenCalledWith("granola", OTHER_WS_ID);
+    // Only the grant: signing in stays a step the person takes.
+    expect(initiateIdentityConnect).not.toHaveBeenCalled();
+    expect(testId(row(mounted.container, "Orbit"), "plugin-workspace-state")?.textContent).toBe(
+      "On · Not signed in",
     );
   });
 
@@ -355,7 +500,7 @@ describe("PluginDetailPage — a person's plugin", () => {
     ];
     personal = [{ ...granolaConnector([]), state: "not_authenticated", identity: undefined }];
     mounted = await mount(pagePath("person:granola"));
-    expect(testId(mounted.container, "plugin-status")?.textContent).toBe("Not connected");
+    expect(testId(mounted.container, "plugin-status")?.textContent).toBe("Not signed in");
     expect(button(mounted.container, "Connect")).toBeDefined();
   });
 
@@ -462,43 +607,131 @@ describe("PluginDetailPage — a person's plugin", () => {
     );
   });
 
-  test("Disconnect asks first, and Cancel leaves it connected", async () => {
+  test("Sign out asks first, says the plugin stays, and Cancel leaves it signed in", async () => {
     plugins = [granola(true)];
     personal = [granolaConnector([WS_ID])];
     mounted = await mount(pagePath("person:granola"));
-    await click(button(mounted.container, "Disconnect"));
+    await click(button(mounted.container, "Sign out"));
     const dialog = document.body.querySelector('[role="dialog"]')!;
-    expect(dialog.textContent).toContain("Disconnect Granola?");
+    expect(dialog.textContent).toContain("Sign out of Granola?");
+    expect(dialog.textContent).toContain(
+      "Granola stays in your account and on in every workspace it is on in. The agent can't use it until you sign in again.",
+    );
+
+    await click(button(dialog, "Cancel"));
+    expect(signOutPersonalConnector).not.toHaveBeenCalled();
+    expect(removePersonalConnector).not.toHaveBeenCalled();
+  });
+
+  test("Sign out keeps it on the page, reading Not signed in with Connect", async () => {
+    plugins = [granola(true)];
+    personal = [granolaConnector([WS_ID])];
+    signOutPersonalConnector.mockImplementation(async (serverName) => {
+      plugins = [
+        {
+          ...granola(true),
+          servers: [{ serverName: "granola", status: "not_connected", account: null }],
+        },
+      ];
+      personal = [
+        { ...granolaConnector([WS_ID]), state: "not_authenticated", identity: undefined },
+      ];
+      return { ok: true, scope: "identity", serverName };
+    });
+    mounted = await mount(pagePath("person:granola"));
+    await click(button(mounted.container, "Sign out"));
+    await click(button(document.body.querySelector('[role="dialog"]')!, "Sign out"));
+    await settle();
+
+    expect(signOutPersonalConnector).toHaveBeenCalledWith("granola");
+    expect(removePersonalConnector).not.toHaveBeenCalled();
+    expect(location).toBe(pagePath("person:granola"));
+    expect(testId(mounted.container, "plugin-status")?.textContent).toBe("Not signed in");
+    expect(buttonLabels(mounted.container)).toContain("Connect");
+    // Nothing left to sign out of; Remove still is.
+    expect(buttonLabels(mounted.container)).not.toContain("Sign out");
+    expect(buttonLabels(mounted.container)).toContain("Remove");
+  });
+
+  test("Remove asks first, naming the workspaces it turns off in, and Cancel leaves it", async () => {
+    plugins = [granola(true)];
+    personal = [granolaConnector([WS_ID])];
+    mounted = await mount(pagePath("person:granola"));
+    await click(button(mounted.container, "Remove"));
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("Remove Granola?");
     expect(dialog.textContent).toContain("It turns off in the 1 workspace it is on in.");
 
     await click(button(dialog, "Cancel"));
-    expect(disconnectPersonalConnector).not.toHaveBeenCalled();
+    expect(removePersonalConnector).not.toHaveBeenCalled();
     expect(location).toBe(pagePath("person:granola"));
   });
 
-  test("Disconnect removes it and returns to Plugins", async () => {
+  test("Remove removes it and returns to Plugins", async () => {
     plugins = [granola(true)];
     personal = [granolaConnector([WS_ID])];
     mounted = await mount(pagePath("person:granola"));
-    await click(button(mounted.container, "Disconnect"));
-    await click(button(document.body.querySelector('[role="dialog"]')!, "Disconnect"));
-    expect(disconnectPersonalConnector).toHaveBeenCalledWith("granola");
+    await click(button(mounted.container, "Remove"));
+    await click(button(document.body.querySelector('[role="dialog"]')!, "Remove"));
+    expect(removePersonalConnector).toHaveBeenCalledWith("granola");
+    expect(signOutPersonalConnector).not.toHaveBeenCalled();
     expect(location).toBe(`/w/${SLUG}/plugins`);
   });
 
-  test("a failed Disconnect stays on the page and says why", async () => {
+  test("a failed Remove stays on the page and says why", async () => {
     plugins = [granola(true)];
     personal = [granolaConnector([WS_ID])];
-    disconnectPersonalConnector.mockImplementation(async () => {
-      throw new Error("Sign-out failed");
+    removePersonalConnector.mockImplementation(async () => {
+      throw new Error("Remove failed");
     });
     mounted = await mount(pagePath("person:granola"));
-    await click(button(mounted.container, "Disconnect"));
-    await click(button(document.body.querySelector('[role="dialog"]')!, "Disconnect"));
-    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain(
-      "Sign-out failed",
-    );
+    await click(button(mounted.container, "Remove"));
+    await click(button(document.body.querySelector('[role="dialog"]')!, "Remove"));
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain("Remove failed");
     expect(location).toBe(pagePath("person:granola"));
+  });
+});
+
+describe("PluginDetailPage — a grant changed elsewhere", () => {
+  // The events stream is driven through the real events-client singleton's
+  // `setConnectorForTest` seam, as chat-plugins-provider.test.tsx does.
+  let events: ConnectEventsOptions | null = null;
+  beforeEach(() => {
+    events = null;
+    eventsClient.resetForTest();
+    eventsClient.setConnectorForTest((options) => {
+      events = options;
+      return { close() {} } satisfies EventConnection;
+    });
+  });
+  afterEach(() => {
+    eventsClient.resetForTest();
+    eventsClient.setConnectorForTest(null);
+  });
+
+  test("re-reads the plugin and its connector record, so here and Workspaces both update", async () => {
+    plugins = [granola(false)];
+    personal = [granolaConnector([])];
+    mounted = await mount(pagePath("person:granola"));
+    expect(workspaceRows(mounted.container).map((r) => r.state)).toEqual(["Off", "Off", "Off"]);
+    const listings = listPlugins.mock.calls.length;
+    const records = listPersonalConnectors.mock.calls.length;
+
+    plugins = [granola(true)];
+    personal = [granolaConnector([WS_ID, OTHER_WS_ID])];
+    await act(async () => {
+      events?.onEvent("connector.grant_changed", {
+        userId: "usr_pat",
+        serverName: "granola",
+        wsId: OTHER_WS_ID,
+        granted: true,
+      });
+    });
+    await settle();
+
+    expect(listPlugins.mock.calls.length).toBe(listings + 1);
+    expect(listPersonalConnectors.mock.calls.length).toBe(records + 1);
+    expect(workspaceRows(mounted.container).map((r) => r.state)).toEqual(["On", "On", "Off"]);
   });
 });
 

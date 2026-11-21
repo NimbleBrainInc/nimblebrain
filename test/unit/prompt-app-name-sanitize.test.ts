@@ -98,14 +98,14 @@ describe("hostMetaToUiMeta guards placements", () => {
   test("a non-array with a length projects no UI and does not throw", () => {
     const run = () =>
       // biome-ignore lint/plugin/never-cast: a non-array `placements` with a length, which is the input under test
-      hostMetaToUiMeta({ host_version: "1.0", placements: { length: 1 } } as never);
+      hostMetaToUiMeta({ hostVersion: "1.0", placements: { length: 1 } } as never);
     expect(run).not.toThrow();
     expect(run()).toBeNull();
   });
 
   test("a real placements array still passes through", () => {
     const ui = hostMetaToUiMeta({
-      host_version: "1.0",
+      hostVersion: "1.0",
       placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main" }],
     });
     expect(ui?.placements).toHaveLength(1);

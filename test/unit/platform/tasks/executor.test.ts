@@ -265,6 +265,16 @@ describe("createDirectExecutor — the run's cost", () => {
     );
     const { run } = await executor(makeTask());
     expect(run.costUsd).toBe(1.2345);
+    expect(run.unpricedCalls).toBeUndefined();
+  });
+
+  test("records how many calls no rates were known for, so the cost reads as incomplete", async () => {
+    const executor = createDirectExecutor(
+      async (req) => ({ ...(await makeDirectTaskFn()(req)), costUsd: 0.5, unpricedCalls: 2 }),
+      () => ({}),
+    );
+    const { run } = await executor(makeTask());
+    expect(run.unpricedCalls).toBe(2);
   });
 });
 

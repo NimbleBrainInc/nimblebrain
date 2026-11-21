@@ -14,13 +14,13 @@ import { useChatConfigContext, useChatContext } from "../context/ChatContext";
 import { ChatPluginsProvider } from "../context/ChatPluginsProvider";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import type { ChatMessage } from "../hooks/chat-store";
+import { useComposerModel } from "../hooks/useComposerModel";
 import { ariaKeyShortcuts, SHORTCUTS } from "../lib/shortcuts";
 import type { DisplayDetail } from "../lib/tool-display";
 import { InContextPopover } from "./InContextPopover";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
-import { toPickerModels } from "./ModelPicker";
 import { RecentConversationsPopover } from "./RecentConversationsPopover";
 import { Tooltip, TooltipProvider } from "./ui/tooltip";
 
@@ -234,13 +234,12 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
     conversationMeta,
     conversationKey,
   } = useChatContext();
-  const { availableModels, newConversationModel, fileLimits } = useChatConfigContext();
+  const { fileLimits } = useChatConfigContext();
   const { activeWorkspace, workspaces } = useWorkspaceContext();
   // The workspace the conversation's tool calls ran in: its own once loaded,
   // else the one on screen, which is where an unsent chat's first turn runs.
   // Display only — the panel's focus decision is ChatProvider's.
   const chatWorkspaceId = (conversationId && conversationMeta?.workspaceId) || activeWorkspace?.id;
-  const models = useMemo(() => toPickerModels(availableModels), [availableModels]);
   const chatWorkspaceName = workspaces.find((w) => w.id === chatWorkspaceId)?.name;
   // A card in the transcript (a plugin request) answers as the person's next message.
   const chatAnswer = useMemo<ChatAnswer>(
@@ -288,33 +287,15 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
     }
   }, [newConversation]);
 
-  const [pendingModel, setPendingModel] = useState<string | undefined>(undefined);
-
-  // Cleared once a conversation exists, because the binding is then what the
-  // control states and a leftover choice would contradict it. Deliberately not
-  // cleared when the id goes null: that is a fresh conversation, and the
-  // bound-state menu starts one precisely so a chosen model can carry into it.
-  useEffect(() => {
-    if (conversationId) setPendingModel(undefined);
-  }, [conversationId]);
+  const { models, boundModel, defaultModel, pendingModel, setPendingModel } = useComposerModel();
 
   const handleNewChatWithModel = useCallback(
     (model: string) => {
       handleNewChat();
       setPendingModel(model);
     },
-    [handleNewChat],
+    [handleNewChat, setPendingModel],
   );
-
-  const boundModel = conversationId ? conversationMeta?.model : undefined;
-  /**
-   * A conversation created before the binding existed carries no model, and
-   * the runtime resolves its turns from current config instead — which means a
-   * model named here would actually take effect on it, mid-conversation. There
-   * is nothing true for the control to state and nothing safe for it to offer,
-   * so it shows nothing.
-   */
-  const bindingUnknown = Boolean(conversationId) && !boundModel;
 
   // ? key opens shortcuts modal (only when not typing in textarea)
   useEffect(() => {
@@ -376,9 +357,9 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
           onNewConversation={handleNewChat}
           onShowShortcuts={() => setShowShortcuts(true)}
           onStop={stop}
-          models={bindingUnknown ? [] : models}
+          models={models}
           boundModel={boundModel}
-          defaultModel={newConversationModel}
+          defaultModel={defaultModel}
           pendingModel={pendingModel}
           onPendingModelChange={setPendingModel}
           onNewConversationWithModel={handleNewChatWithModel}

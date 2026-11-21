@@ -2,15 +2,29 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json",
   "title": "NimbleBrain Host Extension",
-  "description": "Schema for the `ai.nimblebrain/host` MCP `_meta` extension — how an MCP server declares its UI integration (placements, hooks, notifications, lifecycle) in the NimbleBrain host shell. Carried in the server's descriptor `_meta`, which for this host is the connector catalog's ServerDetail entry. The `ui://` app resources themselves are standard MCP Apps; this extension only declares where they are placed.",
+  "description": "Schema for the `ai.nimblebrain/host` MCP `_meta` extension — how an MCP server declares its UI integration (placements, hooks, notifications, lifecycle) in the NimbleBrain host shell. Carried in the server's descriptor `_meta`, which for this host is the connector catalog's ServerDetail entry. The `ui://` app resources themselves are standard MCP Apps; this extension only declares where they are placed. Every field is camelCase, the only spelling the host reads: a snake_case key is read as absent, except `admin_tools`, whose presence (any value) gates every tool on the server, so a producer still writing it can never open admin-only tools to every member.",
   "type": "object",
-  "required": ["host_version"],
+  "required": ["hostVersion"],
+  "not": {
+    "description": "The snake_case spellings are refused: the host reads host_version and record_arguments as absent, and a block carrying admin_tools gates every tool.",
+    "anyOf": [
+      {
+        "required": ["host_version"]
+      },
+      {
+        "required": ["admin_tools"]
+      },
+      {
+        "required": ["record_arguments"]
+      }
+    ]
+  },
   "additionalProperties": true,
   "properties": {
-    "host_version": {
+    "hostVersion": {
       "type": "string",
       "pattern": "^1(\\.\\d+)?$",
-      "description": "Host extension contract major version. Write \"1.0\". It changes only on a breaking change; adding a block does not bump it, and a block is enabled by being present, never by this value. Any \"1.x\" (and \"1\") is major 1. The host drops a catalog entry whose host_version is not major 1, since that is a contract it predates. Within major 1 the host is FORWARD-COMPATIBLE, and this tolerance is part of the contract: it parses the fields it understands and ignores the rest; unknown top-level keys validate and are ignored; an unknown or malformed placement slot drops only that placement, never the whole declaration."
+      "description": "Host extension contract major version. Write \"1.0\". It changes only on a breaking change; adding a block does not bump it, and a block is enabled by being present, never by this value. Any \"1.x\" (and \"1\") is major 1. The host drops a catalog entry whose hostVersion is not major 1, since that is a contract it predates. Within major 1 the host is FORWARD-COMPATIBLE, and this tolerance is part of the contract: it parses the fields it understands and ignores the rest; unknown top-level keys validate and are ignored; an unknown or malformed placement slot drops only that placement, never the whole declaration."
     },
     "placements": {
       "type": "array",
@@ -24,28 +38,33 @@
       "items": {
         "$ref": "#/$defs/HookDeclaration"
       },
-      "description": "Inbound event streams this server accepts, one entry per vendor. READ FROM A CATALOG CONNECTOR ONLY — the host resolves hooks from the operator-published connector catalog, never from an MCPB bundle manifest, because the route and registration tool decide where a delivery is sent and must come from operator-trusted metadata. Declaring hooks in an MCPB manifest has no effect. The host mints a capability URL per (workspace, connector, vendor) when the server is installed, hands it to the declared register_tool, and forwards deliveries to that URL verbatim to the declared route on this same server — body bytes unchanged, the vendor's own headers passed through. The host never parses a delivery body: signature verification, parsing, idempotency and state are entirely the server's."
+      "description": "Inbound event streams this server accepts, one entry per vendor. READ FROM A CATALOG CONNECTOR ONLY — the host resolves hooks from the operator-published connector catalog, never from an MCPB bundle manifest, because the route and registration tool decide where a delivery is sent and must come from operator-trusted metadata. Declaring hooks in an MCPB manifest has no effect. The host mints a capability URL per (workspace, connector, vendor) when the server is installed, hands it to the declared registerTool, and forwards deliveries to that URL verbatim to the declared route on this same server — body bytes unchanged, the vendor's own headers passed through. The host never parses a delivery body: signature verification, parsing, idempotency and state are entirely the server's."
     },
     "notifications": {
       "$ref": "#/$defs/NotificationsDeclaration"
     },
-    "admin_tools": {
+    "adminTools": {
       "type": "array",
       "maxItems": 64,
       "uniqueItems": true,
-      "items": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^\\S+$" },
-      "description": "Bare names of tools on THIS server that only a workspace admin may call. READ FROM A CATALOG CONNECTOR ONLY, like hooks: never from an MCPB bundle manifest and never from a tool's own _meta or anything else the running server sends, so a later build cannot widen access by dropping it. It only narrows: on every door (chat, the MCP endpoint, the app bridge, REST, tasks and other unattended runs) the host removes these tools from the listings of anyone who is not a workspace admin and refuses them at dispatch with the structured error workspace_admin_required. Workspace admin means a member of the bound workspace whose membership role is admin; an org admin who is not that gets no bypass, and a caller with no identity is refused. Enforced by name whether or not the server advertises the tool; an unadvertised name is an install warning. A present value that is not a list of at most 64 such names (null included) gates EVERY tool on this server, since dropping any part of a narrowing list would widen access; duplicate names only collapse. The host's own calls to this server's lifecycle handlers and hooks register_tool are not checked; naming one of those here is an install warning. Personal (identity-plane) connectors are not gated: they act on their owner's own account. This gates WHO calls, not whether a human is present: an admin's own agent passes, so an admin-only tool must still be safe for that agent to call."
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^\\S+$"
+      },
+      "description": "Bare names of tools on THIS server that only a workspace admin may call. READ FROM A CATALOG CONNECTOR ONLY, like hooks: never from an MCPB bundle manifest and never from a tool's own _meta or anything else the running server sends, so a later build cannot widen access by dropping it. It only narrows: on every door (chat, the MCP endpoint, the app bridge, REST, tasks and other unattended runs) the host removes these tools from the listings of anyone who is not a workspace admin and refuses them at dispatch with the structured error workspace_admin_required. Workspace admin means a member of the bound workspace whose membership role is admin; an org admin who is not that gets no bypass, and a caller with no identity is refused. Enforced by name whether or not the server advertises the tool; an unadvertised name is an install warning. A present value that is not a list of at most 64 such names (null included) gates EVERY tool on this server, since dropping any part of a narrowing list would widen access; duplicate names only collapse. The host's own calls to this server's lifecycle handlers and hooks registerTool are not checked; naming one of those here is an install warning. Personal (identity-plane) connectors are not gated: they act on their owner's own account. This gates WHO calls, not whether a human is present: an admin's own agent passes, so an admin-only tool must still be safe for that agent to call."
     },
-    "record_arguments": {
+    "recordArguments": {
       "type": "boolean",
-      "description": "Whether the host reads resources for this server through the ai.nimblebrain/resource-arguments extension: the URIs its tools' declared arguments name (by scheme, or any scheme for an argument declared { \"records\": true }), read from whichever connector in the calling workspace serves them and handed to the call. true grants that in every workspace that installs this server; a workspace admin can narrow it to named source connectors or revoke it. Without it the host reads nothing for this server, and every declared URI comes back refused (not_granted). READ FROM A CATALOG CONNECTOR ONLY, like hooks and admin_tools: the grant is the operator's, so nothing the running server sends can claim it. The host still reads only from connectors in the calling workspace, only what the caller could read itself, so the grant adds no source the agent could not already reach."
+      "description": "Whether the host reads resources for this server through the ai.nimblebrain/resource-arguments extension: the URIs its tools' declared arguments name (by scheme, or any scheme for an argument declared { \"records\": true }), read from whichever connector in the calling workspace serves them and handed to the call. true grants that in every workspace that installs this server; a workspace admin can narrow it to named source connectors or revoke it. Without it the host reads nothing for this server, and every declared URI comes back refused (not_granted). READ FROM A CATALOG CONNECTOR ONLY, like hooks and adminTools: the grant is the operator's, so nothing the running server sends can claim it. The host still reads only from connectors in the calling workspace, only what the caller could read itself, so the grant adds no source the agent could not already reach."
     }
   },
   "$defs": {
     "HookDeclaration": {
       "type": "object",
       "description": "One inbound event stream. This is the entire vendor-specific configuration the host ever sees — a name, a route, a tool, and prose. It deliberately cannot describe payload shapes or event taxonomies.",
-      "required": ["vendor", "route", "register_tool"],
+      "required": ["vendor", "route", "registerTool"],
       "additionalProperties": false,
       "properties": {
         "vendor": {
@@ -59,7 +78,7 @@
           "maxLength": 512,
           "description": "Absolute path ON THIS SERVER that a delivery is forwarded to, e.g. \"/ingest/acme\". Resolved against this server's own base URL and refused if it resolves to a different origin, so it may not be protocol-relative (\"//host\"), contain \"..\", a backslash, a fragment, or control characters. It may not be this server's MCP endpoint path or a path under it; such a hook is refused at install and at delivery."
         },
-        "register_tool": {
+        "registerTool": {
           "type": "string",
           "minLength": 1,
           "description": "Name of a tool on THIS server that the host calls with { vendor, url } — both strings — to hand over the minted URL. The tool must exist on the server's tools/list at install time AND accept those two arguments. If it does not, no URL is minted for any of this server's streams and the operator is shown a warning naming the declaration — the connector still installs and its tools still work. The check re-runs whenever the connection is re-established, so fixing the manifest and reconnecting provisions the streams without a reinstall. Typically the server stores the URL in its own operator-writable config and registers it with the vendor."
@@ -68,7 +87,7 @@
           "type": "string",
           "description": "Human-readable summary of what this stream carries. Operator-facing only — the host never acts on it."
         },
-        "header_renames": {
+        "headerRenames": {
           "type": "object",
           "additionalProperties": {
             "type": "string"
@@ -87,7 +106,9 @@
           "type": "string",
           "maxLength": 512,
           "pattern": "^[a-zA-Z][a-zA-Z0-9+.\\-]*:[^\\s?#]*$",
-          "not": { "pattern": "^(?:skill|ui|artifact|files|conversation):" },
+          "not": {
+            "pattern": "^(?:skill|ui|artifact|files|conversation):"
+          },
           "description": "The outbox resource URI, e.g. \"acme://notifications\". Scheme and path are both the server's own. Three rules bind. It must carry a scheme. It must NOT carry a query string or a fragment, because the host appends {?cursor,maxEvents,maxAgeMs} itself and a server-supplied query would either be overwritten or produce two. And its scheme must not be one the host resolves itself — skill://, ui://, artifact://, files://, conversation:// — because a single resource cannot mean two things to the same reader; such a declaration is refused and the outbox is never polled."
         },
         "description": {
@@ -124,11 +145,6 @@
         "route": {
           "type": "string",
           "description": "Route path. Registers as /app/<path>. A route belongs to one server, compared ignoring case, percent-encoding and repeated, leading or trailing slashes: a placement whose route is one of the host's own views, or one another connector in the workspace registered first, is dropped with a logged warning."
-        },
-        "size": {
-          "type": "string",
-          "enum": ["compact", "full", "auto"],
-          "description": "Size hint for the slot renderer."
         }
       }
     }

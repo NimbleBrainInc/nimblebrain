@@ -39,8 +39,8 @@ const isOrgAdmin = (ctx: CommandSourceContext): boolean =>
 export const ACTIONS: ActionDef[] = [
   {
     id: "go-home",
-    title: "Go to Home",
-    keywords: ["home", "dashboard"],
+    title: "Go to overview",
+    keywords: ["home", "overview", "dashboard"],
     icon: "Home",
     run: (run) => {
       run.navigate("/");
@@ -113,7 +113,7 @@ export const ACTIONS: ActionDef[] = [
   {
     id: "plugins",
     title: "Plugins",
-    keywords: ["plugins", "connectors", "skills", "integrations", "mcp", "tools"],
+    keywords: ["plugins", "connectors", "integrations", "mcp", "tools"],
     icon: "Puzzle",
     available: hasWorkspace,
     run: (run, ctx) => {
@@ -128,7 +128,29 @@ export const ACTIONS: ActionDef[] = [
     icon: "Plus",
     available: hasWorkspace,
     run: (run, ctx) => {
-      run.navigate(`/w/${ctx.activeWorkspaceSlug}/plugins?tab=browse`);
+      run.navigate(`/w/${ctx.activeWorkspaceSlug}/plugins/browse`);
+      run.closePalette();
+    },
+  },
+  {
+    id: "skills",
+    title: "Skills",
+    keywords: ["skills", "instructions", "guidance", "teach", "prompts"],
+    icon: "GraduationCap",
+    available: hasWorkspace,
+    run: (run, ctx) => {
+      run.navigate(`/w/${ctx.activeWorkspaceSlug}/skills`);
+      run.closePalette();
+    },
+  },
+  {
+    id: "new-skill",
+    title: "New skill",
+    keywords: ["new", "write", "create", "add", "skill", "teach"],
+    icon: "Plus",
+    available: hasWorkspace,
+    run: (run, ctx) => {
+      run.navigate(`/w/${ctx.activeWorkspaceSlug}/skills/new`);
       run.closePalette();
     },
   },

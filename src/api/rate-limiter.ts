@@ -14,9 +14,14 @@ export class RequestRateLimiter {
   private buckets = new Map<string, { tokens: number; updatedAt: number }>();
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
+  /**
+   * `now` is the clock the bucket earns tokens against. It defaults to the wall
+   * clock; a test passes its own so a burst's real duration earns nothing.
+   */
   constructor(
     private readonly maxRequests: number,
     private readonly windowMs: number,
+    private readonly now: () => number = () => Date.now(),
   ) {}
 
   /** Start periodic cleanup of full buckets. */
@@ -43,7 +48,7 @@ export class RequestRateLimiter {
 
   /** Consume a request, or return the whole seconds until the key earns its next token. */
   consumeWithRetryAfter(key: string): number | null {
-    const now = Date.now();
+    const now = this.now();
     const tokens = this.tokensAt(key, now);
     if (tokens >= 1) {
       this.buckets.set(key, { tokens: tokens - 1, updatedAt: now });
@@ -56,7 +61,7 @@ export class RequestRateLimiter {
 
   /** Remove every key whose bucket has refilled: it holds nothing a fresh one would not. */
   cleanup(): void {
-    const now = Date.now();
+    const now = this.now();
     for (const key of this.buckets.keys()) {
       if (this.tokensAt(key, now) >= this.maxRequests) this.buckets.delete(key);
     }

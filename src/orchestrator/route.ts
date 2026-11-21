@@ -257,7 +257,7 @@ export interface OrchestratorRuntime {
    * server binds `toolName` as a lifecycle handler, whoever calls; the
    * `workspace_admin_required` refusal when `principal` is not a workspace
    * admin of `wsId` and the connector declares `toolName` in its catalog
-   * `admin_tools`; else `null`. Callers run it beside
+   * `adminTools`; else `null`. Callers run it beside
    * `assertToolAllowed` for a workspace-routed tool. Optional on the same terms
    * as {@link getPermissionStore}: the production `Runtime` always provides it.
    */
@@ -505,25 +505,16 @@ async function routeIdentityCall(
     : wireSource;
   const canonicalToolName = sourceName === wireSource ? toolName : `${sourceName}__${bareToolName}`;
 
-  const connector = await runtime.getIdentityConnectorSource?.(identityId, sourceName);
+  const connector = await lookupPersonalConnector(identityId, sourceName, workspaceId, runtime);
   if (connector) {
-    // A personal connector is the user's own; reaching it inside a workspace
-    // requires an active grant to THAT workspace — uniformly, with no "free at
-    // home" workspace. Fail closed. The
-    // connector runs as the caller with its own identity-scoped credentials.
-    const granted =
-      workspaceId !== undefined &&
-      (await runtime
-        .getPermissionStore?.()
-        ?.isConnectorGranted(identityId, sourceName, workspaceId)) === true;
-    if (!granted) {
+    if (!connector.granted) {
       throw new ConnectorGrantDenied(identityId, sourceName, workspaceId);
     }
     return {
       kind: "identity",
       context: runtime.getIdentityContext(identityId),
       toolName: canonicalToolName,
-      source: connector,
+      source: connector.source,
       // The dispatch doors apply the owner's per-tool `disallow` from here — the
       // owner's identity-scoped `{scope:"user"}` policy.
       policyOwner: { scope: "user", userId: identityId },
@@ -534,6 +525,62 @@ async function routeIdentityCall(
   // de-marked `sourceName` is an internal detail and naming it in the error
   // would send the caller looking for a tool they never asked for.
   throw new UnknownIdentitySource(toolName, wireSource);
+}
+
+/**
+ * The caller's own personal connector `serverName` (de-marked), and whether its
+ * owner granted it to `workspaceId`; undefined when the caller holds no such
+ * connector. A personal connector is the user's own; reaching it inside a
+ * workspace requires an active grant to THAT workspace, uniformly, with no
+ * "free at home" workspace. It runs as the caller with its own identity-scoped
+ * credentials. Resolved by `identityId` alone, so another member's connector of
+ * the same name is never reached.
+ */
+async function lookupPersonalConnector(
+  identityId: string,
+  serverName: string,
+  workspaceId: string | undefined,
+  runtime: OrchestratorRuntime,
+): Promise<{ source: ToolSource; granted: boolean } | undefined> {
+  const source = await runtime.getIdentityConnectorSource?.(identityId, serverName);
+  if (!source) return undefined;
+  const granted =
+    workspaceId !== undefined &&
+    (await runtime
+      .getPermissionStore?.()
+      ?.isConnectorGranted(identityId, serverName, workspaceId)) === true;
+  return { source, granted };
+}
+
+/**
+ * Resolve a `my_`-marked SOURCE name (an app's name, as a resource or an app
+ * view names its server) to the caller's own personal connector granted to the
+ * session's workspace, by the same lookup and grant check `routeToolCall` applies
+ * to its tools. Undefined when the name is not marked, the caller holds no such
+ * connector, or it is not granted here; callers answer all three alike, so a
+ * probe learns nothing about what another member, or the caller elsewhere, holds.
+ *
+ * The resource doors call this for a marked name and the workspace registry for
+ * a bare one, so a workspace app is never reached by a `my_` name and a personal
+ * app never by a bare one.
+ */
+export async function resolveGrantedPersonalConnector(opts: {
+  identityId: string;
+  sourceName: string;
+  workspaceId: string;
+  runtime: OrchestratorRuntime;
+}): Promise<ToolSource | undefined> {
+  const { identityId, sourceName, workspaceId, runtime } = opts;
+  if (!identityId || !isPersonalConnectorName(sourceName)) return undefined;
+  const serverName = personalConnectorServerName(sourceName);
+  if (serverName.length === 0) return undefined;
+  // The grant first: a connector not granted here is never started for it.
+  const granted =
+    (await runtime
+      .getPermissionStore?.()
+      ?.isConnectorGranted(identityId, serverName, workspaceId)) === true;
+  if (!granted) return undefined;
+  return runtime.getIdentityConnectorSource?.(identityId, serverName);
 }
 
 /** Resolve a workspace tool name's `<source>__` prefix to its registered `ToolSource`, self-healing a transiently absent source once. */

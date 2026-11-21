@@ -18,7 +18,7 @@ function ws(id: string, opts: Partial<WorkspaceInfo> = {}): WorkspaceInfo {
 function spies() {
   return {
     setActive: mock((_ws: WorkspaceInfo) => {}),
-    goHome: mock(() => {}),
+    open: mock((_ws: WorkspaceInfo) => {}),
     restart: mock(() => {}),
   };
 }
@@ -30,12 +30,14 @@ describe("recoverFromWorkspaceError", () => {
       [ws("ws_00079598e311c160"), ws("ws_001c32f121060ff3")],
       "ws_00079598e311c160",
       s.setActive,
-      s.goHome,
+      s.open,
       s.restart,
     );
 
     expect(s.setActive.mock.calls[0][0].id).toBe("ws_001c32f121060ff3");
-    expect(s.goHome).toHaveBeenCalledTimes(1);
+    // Opened by its own address: `/` would reopen the last workspace, which may
+    // be the rejected one.
+    expect(s.open.mock.calls[0][0].id).toBe("ws_001c32f121060ff3");
     expect(s.restart).toHaveBeenCalledTimes(0);
   });
 
@@ -48,12 +50,12 @@ describe("recoverFromWorkspaceError", () => {
       [ws("ws_0066a7e81df7145c"), ws("ws_005820c54ca342ad")],
       "ws_0066a7e81df7145c",
       s.setActive,
-      s.goHome,
+      s.open,
       s.restart,
     );
 
     expect(s.setActive.mock.calls[0][0].id).toBe("ws_005820c54ca342ad");
-    expect(s.goHome).toHaveBeenCalledTimes(1);
+    expect(s.open.mock.calls[0][0].id).toBe("ws_005820c54ca342ad");
   });
 
   test("restarts the shell — no select, no navigate — when the rejected workspace is the only one", () => {
@@ -62,21 +64,21 @@ describe("recoverFromWorkspaceError", () => {
       [ws("ws_0066a7e81df7145c")],
       "ws_0066a7e81df7145c",
       s.setActive,
-      s.goHome,
+      s.open,
       s.restart,
     );
 
     expect(s.setActive).toHaveBeenCalledTimes(0);
-    expect(s.goHome).toHaveBeenCalledTimes(0);
+    expect(s.open).toHaveBeenCalledTimes(0);
     expect(s.restart).toHaveBeenCalledTimes(1);
   });
 
   test("restarts the shell on an empty workspace list", () => {
     const s = spies();
-    recoverFromWorkspaceError([], "ws_0087195c2f920b3c", s.setActive, s.goHome, s.restart);
+    recoverFromWorkspaceError([], "ws_0087195c2f920b3c", s.setActive, s.open, s.restart);
 
     expect(s.setActive).toHaveBeenCalledTimes(0);
-    expect(s.goHome).toHaveBeenCalledTimes(0);
+    expect(s.open).toHaveBeenCalledTimes(0);
     expect(s.restart).toHaveBeenCalledTimes(1);
   });
 });

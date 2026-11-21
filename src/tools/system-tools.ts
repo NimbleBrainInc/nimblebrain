@@ -18,9 +18,9 @@ import { defineInProcessApp, type InProcessTool, READ_ONLY } from "./in-process-
 import { createManageToolsToolDefs } from "./manage-tools.ts";
 import { McpSource } from "./mcp-source.ts";
 import {
+  createRequestPluginToolDef,
   describeUngrantedPlugins,
   discoverUngrantedPlugins,
-  requestPlugin,
   ungrantedPluginGuidance,
 } from "./plugin-request.ts";
 import type { ToolRegistry } from "./registry.ts";
@@ -89,7 +89,6 @@ export async function createSystemTools(
     : undefined;
   const manageToolsToolDefs: InProcessTool[] = createManageToolsToolDefs(
     toolPromotionCtx,
-    pluginCtx ? (serverName) => requestPlugin(pluginCtx, serverName) : undefined,
     pluginCtx ? (toolName) => ungrantedPluginGuidance(pluginCtx, toolName) : undefined,
   );
 
@@ -140,6 +139,12 @@ export async function createSystemTools(
   // act on it has to as well. See `createUseSkillToolDef`.
   if (runtime) {
     systemToolDefs.push(createUseSkillToolDef(runtime));
+  }
+
+  // Asking the person for one of their own plugins (ADR-0070). Its own tool so
+  // that a runtime holding back `nb__manage_tools` still serves it.
+  if (pluginCtx) {
+    systemToolDefs.push(createRequestPluginToolDef(pluginCtx));
   }
 
   if (manageUsersCtx) {
@@ -817,13 +822,10 @@ function groupToolsBySource(all: Array<{ name: string; description: string }>): 
   };
 }
 
-/** Feature-flag gate for `search`: an error result when the scope is disabled, else null. */
+/** Feature-flag gate for `search`: an error result when tool discovery is disabled, else null. */
 function checkSearchScopeGate(scope: string, features?: ResolvedFeatures): ToolResult | null {
   if (scope === "tools" && features && !features.toolDiscovery) {
     return { content: textContent("Tool discovery is disabled."), isError: true };
-  }
-  if (scope === "catalog" && features && !features.catalogSearch) {
-    return { content: textContent("Catalog search is disabled."), isError: true };
   }
   return null;
 }
@@ -906,6 +908,21 @@ async function searchTools(
   };
 }
 
+/**
+ * How to call a match, told for the loop the search runs in. The native engine
+ * installs its promotion controls on the request context for the length of its
+ * run (`EngineConfig.toolPromotion`), and only there can `nb__manage_tools`
+ * promote. Without them (an external runtime's tool projection, which offers
+ * every tool from the start, or a client outside a run) a match is called
+ * directly.
+ */
+function callGuidance(): string {
+  if (getRequestContext()?.toolPromotion === undefined) {
+    return "\nCall a match directly by its name: every tool you may use is already offered to you.";
+  }
+  return "\nA match already in your tool list can be called directly. To call one that is not, activate it with nb__manage_tools first. Its schema reaches you on your next message, so promote and call in separate messages, never in the same one.";
+}
+
 /** The installed tools matching `query`, as `search` scope=tools reports them. */
 async function rankInstalledTools(
   runtime: Runtime | undefined,
@@ -963,9 +980,7 @@ async function rankInstalledTools(
     const desc = ((t.description ?? "").split("\n").find((l) => l.trim()) ?? "").trim();
     lines.push(`- **${t.name}**: ${desc.length > 100 ? `${desc.slice(0, 100)}…` : desc}`);
   }
-  lines.push(
-    "\nA match already in your tool list can be called directly. To call one that is not, activate it with nb__manage_tools first. Its schema reaches you on your next message, so promote and call in separate messages, never in the same one.",
-  );
+  lines.push(callGuidance());
   return {
     content: textContent(lines.join("\n")),
     structuredContent: { tools: shown.map((t) => ({ name: t.name })) },

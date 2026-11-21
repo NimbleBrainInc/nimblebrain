@@ -66,7 +66,7 @@ Every member can see who else is in a workspace. Workspace admins and org admins
 
 Apps and connectors are installed at the workspace level. When a connector is installed in a workspace, only members of that workspace can use its tools.
 
-A workspace admin installs a connector from the workspace's connectors catalog (**Plugins → Browse**). Its tools join that workspace's tool registry; other workspaces are unaffected. The agent can search the catalog with `nb__search` and suggest a connector, but it cannot install one.
+A workspace admin installs a connector from the workspace's connectors catalog (**Plugins → Browse plugins**). Its tools join that workspace's tool registry; other workspaces are unaffected. The agent can search the catalog with `nb__search` and suggest a connector, but it cannot install one.
 
 ## Deleting a workspace
 
@@ -90,15 +90,13 @@ In the web UI, switch workspaces from the workspace navigator at the top of the 
 
 Each workspace has a stable URL of the form `/w/<id>/...`. The agent's active tools follow your focused workspace; the full set of tools across every workspace you belong to is reachable on demand through `nb__search`.
 
-Switching lands on the workspace's **Overview**. It starts with a box for asking the agent, which sends into the chat panel. Below that are anything that [needs attention](/extensions/facets/), your recent conversations in the workspace, and its apps. If you are the only member and can manage members, it also offers to invite people. Workspace admins also get **Add app**.
+Switching lands on the workspace's **Overview**. It starts with the chat's own box for asking the agent, where you can attach files and pick a model; sending opens the chat full screen. Below it is a list of your next steps in the workspace, most urgent first: anything that [needs you](/extensions/facets/) (a connector that needs attention, automation runs to review, counts from your apps), then setup still to do (connect a plugin, ask what the agent can do, invite people, each shown only while undone and only if you can do it), then your last conversation, then a few things to try with the plugins installed here, such as "Summarize my unread email" for Gmail, which send that question when you select them. The first five show; **Show more** reveals the rest. The workspace's apps are in the sidebar.
 
-### Opening into one workspace
+### Where NimbleBrain opens
 
-If you belong to one workspace, opening NimbleBrain takes you straight into it. Otherwise it opens on **Home**, which lists your workspaces, each marked when it has unread notifications.
+Opening NimbleBrain at its root address takes you to the workspace you were last in on that browser. On a browser you have not used before, or if you have left that workspace, it opens the first workspace in the switcher's list. The logo at the top of the sidebar takes you to the overview of the workspace you are in.
 
-To open into one workspace instead, hover its tile on **Home** and select the house icon (**Open by default**), or, from inside the workspace, open the workspace switcher and select **Open by default**. From then on, loading NimbleBrain at its root address opens that workspace. Select it again in either place to clear it. Only one workspace can be the default, and the choice is kept in your browser, so set it again on each browser you use. If you leave that workspace, NimbleBrain opens on **Home** again.
-
-To get back to every workspace, select **All workspaces** at the bottom of the workspace switcher, or the logo at the top of the sidebar. The switcher also marks any workspace with unread notifications. The pin icon on a tile is separate: it keeps a workspace at the top of the list and does not change where NimbleBrain opens.
+The workspace switcher lists every workspace you belong to, with a filter, and marks any workspace with unread notifications, on its row and on the switcher itself. If you open a link to a workspace you can't reach, NimbleBrain opens one you can and says so.
 
 ## Your first workspace
 

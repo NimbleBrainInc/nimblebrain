@@ -3,7 +3,7 @@
  *
  * The person has Linear as a personal plugin, not turned on in the workspace
  * the chat is in. Asked to use Linear, the model should find it with
- * nb__search and call nb__manage_tools `request_plugin` with its name, which
+ * nb__search and call nb__request_plugin with its name, which
  * shows the person a one-click "Use here", rather than send them to the
  * Plugins page in prose (ADR-0070). The card is the question, so the reply
  * after the call should not ask it again.
@@ -53,7 +53,7 @@ afterAll(async () => {
 
 function requested(result: ChatResult): boolean {
   return result.toolCalls.some(
-    (tc) => tc.name === "nb__manage_tools" && tc.input.request_plugin === LINEAR && tc.ok,
+    (tc) => tc.name === "nb__request_plugin" && tc.input.plugin === LINEAR && tc.ok,
   );
 }
 
@@ -77,7 +77,7 @@ async function pool<T>(jobs: (() => Promise<T>)[], limit: number): Promise<T[]> 
 }
 
 describe("the person's own plugin, off in this workspace", () => {
-  it("asks with request_plugin instead of pointing to Plugins", async () => {
+  it("asks with nb__request_plugin instead of pointing to Plugins", async () => {
     const jobs = PROMPTS.flatMap((prompt) =>
       Array.from({ length: TRIALS }, () => async () => {
         const result = await runEval(prompt);
@@ -100,7 +100,7 @@ describe("the person's own plugin, off in this workspace", () => {
     }
     const asked = outcomes.filter((o) => o.ok);
     const restated = asked.filter((o) => o.restated).length;
-    console.log(`request_plugin call rate: ${asked.length}/${outcomes.length}`);
+    console.log(`nb__request_plugin call rate: ${asked.length}/${outcomes.length}`);
     console.log(`replies restating the card's question: ${restated}/${asked.length}`);
     expect(asked.length / outcomes.length).toBeGreaterThanOrEqual(0.9);
     expect(restated / Math.max(asked.length, 1)).toBeLessThanOrEqual(0.1);

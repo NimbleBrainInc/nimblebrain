@@ -224,7 +224,7 @@ A fully specified example:
   "store":     { "type": "jsonl", "dir": "~/.nimblebrain/conversations" },
   "telemetry": { "enabled": false },
   "files":     { "maxFileSize": 26214400, "maxFilesPerMessage": 10 },
-  "features":  { "catalogSearch": true },
+  "features":  { "toolDiscovery": true },
   "maxIterations": 25,
   "maxInputTokens": 500000,
   "workDir": "~/.nimblebrain"
@@ -489,6 +489,7 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 | `nb__set_model_config` | Update model selection and runtime limits (admin only) |
 | `nb__workspace_info` | Workspace metadata, telemetry status |
 | `nb__briefing` | Generate personalized activity briefing (workspace overview) |
+| `nb__conversation_starters` | Conversation starters from the workspace's installed plugins (workspace overview) |
 | `nb__manage_users` | Create, update, delete, or list users (admin only) |
 | `nb__manage_workspaces` | Workspace CRUD + member management (admin only) |
 | `nb__manage_connectors` | Browse, install, configure, and disconnect connectors |
@@ -557,7 +558,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 ### SSE Event Streams
 
-**Workspace-level** (`GET /v1/events`): Events: `connector.installed`, `connector.uninstalled`, `connection.state_changed`, `server.notification`, `conversation.title`, `config.changed`, `skill.created`, `skill.updated`, `skill.deleted`, `bridge.tool.call`, `bridge.tool.done`, `notification.created`, `notification.delivered`, `notification.delivery_failed`, `heartbeat` (30s).
+**Workspace-level** (`GET /v1/events`): Events: `connector.installed`, `connector.uninstalled`, `connector.grant_changed` (to the person whose plugin it is only), `connection.state_changed`, `server.notification`, `conversation.title`, `config.changed`, `skill.created`, `skill.updated`, `skill.deleted`, `bridge.tool.call`, `bridge.tool.done`, `notification.created`, `notification.delivered`, `notification.delivery_failed`, `heartbeat` (30s).
 
 **Per-conversation** (`GET /v1/conversations/:id/events`): For multi-participant chat. Security: `requireAuth` → ownership of the conversation (no workspace). Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`.
 
@@ -609,19 +610,18 @@ Each entry in `workspace.json → connectors[]` is one remote MCP server:
 
 #### Feature Flags
 
-All default to `true`. What `false` does depends on the flag: most withhold a tool, two narrow one tool's behavior, and one gates no tool at all.
+All default to `true`. What `false` does depends on the flag: most withhold a tool, one narrows a tool's behavior, and one gates no tool at all.
 
 | Flag | Controls | Effect when `false` |
 |------|----------|---------------------|
 | `skillManagement` | Create, edit, delete, and activate skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore`, `skills__set_status` are never built |
 | `toolDiscovery` | Tool search | `nb__search` stays; `scope: "tools"` returns an error |
-| `catalogSearch` | Catalog search | `nb__search` stays; `scope: "catalog"` returns an error |
 | `fileContext` | File upload, serving, and context extraction | The file endpoints refuse (404, or 415 on a multipart upload) |
 | `userManagement` | Create, update, and delete users | `nb__manage_users` is not registered |
 | `workspaceManagement` | Workspaces and members | `nb__manage_workspaces` is not registered |
 | `compaction` | Folding the oldest turns of a long conversation into a summary at run start | Full history replays every turn (event-sourced stores only) |
 
-**Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/workspaces/:wsId/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery`, `catalogSearch`, and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
+**Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/workspaces/:wsId/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery` and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
 
 Full reference: [Feature flags](https://docs.nimblebrain.ai/config/features/) on docs.nimblebrain.ai.
 

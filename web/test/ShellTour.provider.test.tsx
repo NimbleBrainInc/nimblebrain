@@ -5,8 +5,8 @@
 //   1. A first visit to a workspace's Overview offers the tour; a browser that
 //      has seen it is not offered it again.
 //   2. Skip and Done remember the tour as seen and end it.
-//   3. Next opens the page the coming step belongs on (Plugins → Browse),
-//      and Done returns to Overview.
+//   3. Next opens the page the coming step belongs on (Browse plugins, then
+//      Skills), and Done returns to Overview.
 //   4. Help's replay starts it from any page, and on a phone closes the
 //      sidebar drawer, which would otherwise cover the page the tour points at.
 //   5. `useTourRunning` is true only while the tour is on screen, so the
@@ -77,22 +77,14 @@ function Pages() {
         element={
           <>
             <div data-tour="nav">nav</div>
-            <div data-tour="apps">apps</div>
             <div data-tour="ask">
               <input aria-label="Ask" />
             </div>
           </>
         }
       />
-      <Route
-        path="/w/:slug/plugins"
-        element={
-          <>
-            <div data-tour="catalog" />
-            <div data-tour="skills" />
-          </>
-        }
-      />
+      <Route path="/w/:slug/plugins/browse" element={<div data-tour="catalog" />} />
+      <Route path="/w/:slug/skills" element={<div data-tour="skills" />} />
       <Route path="*" element={<div>elsewhere</div>} />
     </Routes>
   );
@@ -202,19 +194,18 @@ describe("ending the tour", () => {
     expect(captured).toContain("web.tour_skipped");
   });
 
-  test("Next walks Plugins → Browse for the catalog and skills, and Done returns to Overview", async () => {
+  test("Next walks Browse plugins for the catalog and Skills for skills, and Done returns to Overview", async () => {
     await mount(`${BASE}/`);
 
     const visited: Array<[string | null, string]> = [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 4; i++) {
       await press("tour-next");
       visited.push([cardTitle(), probe.path]);
     }
     expect(visited).toEqual([
       ["Your workspace", `${BASE}/`],
-      ["Install apps here", `${BASE}/`],
-      ["The app catalog", `${BASE}/plugins?tab=browse`],
-      ["Teach it with skills", `${BASE}/plugins?tab=browse`],
+      ["Browse plugins", `${BASE}/plugins/browse`],
+      ["Teach it with skills", `${BASE}/skills`],
       ["Ask your first question", `${BASE}/`],
     ]);
 
@@ -249,9 +240,9 @@ describe("replaying from Help", () => {
     await settle();
     expect(probe.drawerOpen).toBe(false);
 
-    // The first stop on a phone is Apps, on the Overview already open.
+    // A phone skips the sidebar's stop, so the first is Browse plugins.
     await press("tour-next");
-    expect(cardTitle()).toBe("Install apps here");
+    expect(cardTitle()).toBe("Browse plugins");
     expect(probe.drawerOpen).toBe(false);
   });
 });

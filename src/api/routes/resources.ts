@@ -92,7 +92,13 @@ export function resourceRoutes(ctx: AppContext) {
           const url = new URL(c.req.url);
           const prefix = `/v1/workspaces/${c.req.param("wsId")}/apps/${c.req.param("name")}/resources/`;
           const resourcePath = decodeURIComponent(url.pathname.slice(prefix.length));
-          return handleResourceProxy(name, resourcePath, ctx.runtime, c.var.workspaceId);
+          return handleResourceProxy(
+            name,
+            resourcePath,
+            ctx.runtime,
+            c.var.workspaceId,
+            c.var.identity?.id,
+          );
         },
       )
   );

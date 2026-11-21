@@ -5,10 +5,12 @@ import { join } from "node:path";
 import type { TelemetryClient, TelemetryClientFactory } from "../../src/telemetry/manager.ts";
 import { TelemetryLockedError, TelemetryManager } from "../../src/telemetry/manager.ts";
 
+type CapturedEvent = Parameters<TelemetryClient["capture"]>[0];
+
 class MockTelemetryClient implements TelemetryClient {
-  events: Array<{ distinctId: string; event: string; properties: Record<string, unknown> }> = [];
+  events: CapturedEvent[] = [];
   shutdownCalled = false;
-  capture(params: { distinctId: string; event: string; properties: Record<string, unknown> }) {
+  capture(params: CapturedEvent) {
     this.events.push(params);
   }
   async shutdown() {
@@ -264,5 +266,71 @@ describe("TelemetryManager", () => {
 
     await mgr.shutdown();
     expect(mock.shutdownCalled).toBe(true);
+  });
+});
+
+describe("TelemetryManager identified events", () => {
+  const person = { userId: "usr_1", email: "a@example.com", name: "Ada", workspaceId: "ws_1" };
+
+  it("stay anonymous when a person, not the operator, turned telemetry on", () => {
+    const mock = new MockTelemetryClient();
+    const mgr = TelemetryManager.create({
+      workDir: makeTmpDir(),
+      identify: true,
+      clientFactory: mockFactory(mock),
+      env: { NB_TELEMETRY_CONSENT: "on", NB_TENANT_ID: "tenant-a" },
+    });
+    mgr.setSubjectSource(() => person);
+
+    mgr.capture("test.event");
+
+    expect(mgr.isIdentified()).toBe(false);
+    expect(mgr.getTenantId()).toBeUndefined();
+    const [event] = mock.events;
+    expect(event?.distinctId).toBe(mgr.getAnonymousId());
+    expect(event?.groups).toBeUndefined();
+    expect(JSON.stringify(event)).not.toContain("a@example.com");
+  });
+
+  it("name the person, group by tenant and workspace, and set email and name once", () => {
+    const mock = new MockTelemetryClient();
+    const mgr = TelemetryManager.create({
+      workDir: makeTmpDir(),
+      enabled: true,
+      identify: true,
+      clientFactory: mockFactory(mock),
+      env: { NB_TENANT_ID: "tenant-a" },
+    });
+    mgr.setSubjectSource(() => person);
+
+    mgr.capture("first");
+    mgr.capture("second");
+
+    const [first, second] = mock.events;
+    expect(first?.distinctId).toBe("usr_1");
+    expect(first?.groups).toEqual({ tenant: "tenant-a", workspace: "ws_1" });
+    expect(first?.properties.$set).toEqual({ email: "a@example.com", name: "Ada" });
+    expect(second?.distinctId).toBe("usr_1");
+    expect(second?.properties.$set).toBeUndefined();
+    expect(mgr.getTenantId()).toBe("tenant-a");
+  });
+
+  it("keep work no person asked for on the install, in its tenant", () => {
+    const mock = new MockTelemetryClient();
+    const mgr = TelemetryManager.create({
+      workDir: makeTmpDir(),
+      enabled: true,
+      identify: true,
+      clientFactory: mockFactory(mock),
+      env: { NB_TENANT_ID: "tenant-a" },
+    });
+    mgr.setSubjectSource(() => undefined);
+
+    mgr.capture("background");
+
+    const [event] = mock.events;
+    expect(event?.distinctId).toBe(mgr.getAnonymousId());
+    expect(event?.groups).toEqual({ tenant: "tenant-a" });
+    expect(event?.properties.$set).toBeUndefined();
   });
 });

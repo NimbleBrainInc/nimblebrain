@@ -21,12 +21,12 @@ from metadata the operator published.
 ```json
 "_meta": {
   "ai.nimblebrain/host": {
-    "host_version": "1.0",
+    "hostVersion": "1.0",
     "hooks": [
       {
         "vendor": "acme",
         "route": "/ingest/acme",
-        "register_tool": "set_webhook_url",
+        "registerTool": "set_webhook_url",
         "description": "Order events: created, paid, refunded"
       }
     ]
@@ -38,13 +38,13 @@ from metadata the operator published.
 |-------|------|----------|-------------|
 | `vendor` | `string` | Yes | Slug for the vendor, lowercase alphanumeric with internal hyphens. One entry per vendor; a duplicate is dropped. |
 | `route` | `string` | Yes | Absolute path **on your own server** that deliveries are forwarded to. Must stay on your origin: no `//host`, no `..`, no backslash, no fragment, no scheme. May not be your MCP endpoint's path or a path under it: the forward carries the workspace's credential, so a route there would let anyone holding the URL call your tools. |
-| `register_tool` | `string` | Yes | A tool on your server that the host calls with `{ vendor, url }`, both strings, to hand you the minted URL. |
+| `registerTool` | `string` | Yes | A tool on your server that the host calls with `{ vendor, url }`, both strings, to hand you the minted URL. |
 | `description` | `string` | No | What the stream carries. Shown to operators; the host never acts on it. |
-| `header_renames` | `object` | No | `{ from: to }` header renames applied before the forward. See [signature headers](#signature-headers) below. |
+| `headerRenames` | `object` | No | `{ from: to }` header renames applied before the forward. See [signature headers](#signature-headers) below. |
 
 ## What happens
 
-1. **When your server comes up in a workspace**, the host mints a URL for exactly one `(workspace, connector, vendor)` and calls your `register_tool` with it. Store it, and register it with the vendor.
+1. **When your server comes up in a workspace**, the host mints a URL for exactly one `(workspace, connector, vendor)` and calls your `registerTool` with it. Store it, and register it with the vendor.
 2. **On delivery**, the host checks the URL, then forwards the request to your `route`, **body bytes unchanged** and the vendor's own headers passed through. It arrives with the same `x-tenant-id` / `x-workspace-id` identity headers a tool call gets.
 3. **Your server answers**, and the host returns your status code to the vendor unchanged. Answer `2xx` once you have durably recorded the delivery; answer `5xx` only when you want the vendor to retry.
 
@@ -55,10 +55,10 @@ delivery under the vendor's own event id and treat a repeat as a no-op.
 Provisioning runs every time your connector's connection comes up, not once at
 install. That covers a fresh install, a host restart, and an interactive OAuth
 flow that finishes long after the install returned. It mints only what is
-missing. If your `register_tool` call itself errors, the host keeps the
+missing. If your `registerTool` call itself errors, the host keeps the
 registration; a rotation or a reinstall hands you the URL again.
 
-## Your `register_tool` must accept `{ vendor, url }`
+## Your `registerTool` must accept `{ vendor, url }`
 
 The host checks this against your advertised `tools/list` when the connection
 comes up. If the tool is missing, or does not accept both arguments as strings,
@@ -83,8 +83,8 @@ def set_webhook_url(vendor: str, url: str) -> dict:
     ...
 ```
 
-The host calls `register_tool` itself. That call is not subject to
-[`admin_tools`](/host/admin-tools/), so you do not need to, and should not,
+The host calls `registerTool` itself. That call is not subject to
+[`adminTools`](/host/admin-tools/), so you do not need to, and should not,
 name it there.
 
 ## Signature headers
@@ -106,8 +106,8 @@ cookie, and no vendor signs with it. A rename whose target is itself a stripped
 header is ignored.
 
 ```json
-{ "vendor": "acme", "route": "/ingest/acme", "register_tool": "set_webhook_url",
-  "header_renames": { "authorization": "x-acme-signature" } }
+{ "vendor": "acme", "route": "/ingest/acme", "registerTool": "set_webhook_url",
+  "headerRenames": { "authorization": "x-acme-signature" } }
 ```
 
 ## Rotation
@@ -116,8 +116,8 @@ A workspace admin sees each URL, the connector and route it feeds, and when it
 was last rotated, under **Settings → Webhooks**. The URL's delivery id is masked
 on that page until the admin reveals it; copying it copies the whole URL either
 way. Rotating mints a new URL and
-calls your `register_tool` with it. The previous URL keeps working for 24 hours
-so in-flight redeliveries land. Your `register_tool` should therefore replace the
+calls your `registerTool` with it. The previous URL keeps working for 24 hours
+so in-flight redeliveries land. Your `registerTool` should therefore replace the
 URL it holds and re-register with the vendor, not assume it is called once.
 
 A URL does not expire on its own. It stops working when it is rotated out, or

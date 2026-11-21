@@ -9,7 +9,8 @@
  * parsed, shares its server name with another entry (both are refused),
  * is scrubbed at the directory boundary for an unsafe URL or a
  * reserved OAuth param, or resolves to nothing installable — and every
- * entry whose malformed `admin_tools` makes all its tools admin-only.
+ * entry whose malformed `adminTools` makes all its tools admin-only, or
+ * whose host block carries a snake_case key the runtime does not read.
  * Exit 1 if there is any, 0 if every entry reaches Browse as written.
  *
  * **Why this exists.** A catalog entry is validated at load, and an
@@ -67,9 +68,10 @@ function main(): void {
         "Field rules: `description` is capped at 100 characters by the upstream MCP\n" +
         "registry schema (src/connectors/catalog/schemas/server.schema.json); icon, docs, and\n" +
         "portal URLs must be http(s); OAuth params may not use reserved keys; and an\n" +
-        "entry needs `packages` or a `remotes` entry the installer supports; `admin_tools`\n" +
-        "must be a list of at most 64 tool names with no whitespace; and no two names may\n" +
-        "slugify to one server name (`a.b/c` and `a/b.c` are both `a-b-c`).",
+        "entry needs `packages` or a `remotes` entry the installer supports; `adminTools`\n" +
+        "must be a list of at most 64 tool names with no whitespace; the host block is\n" +
+        "camelCase only (`hostVersion`, `adminTools`, a hook's `registerTool`); and no two\n" +
+        "names may slugify to one server name (`a.b/c` and `a/b.c` are both `a-b-c`).",
     );
   }
   process.exit(1);

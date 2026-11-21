@@ -8,6 +8,7 @@ import type { PluginRequestAnswer } from "./_generated/platform-schemas/plugins"
 export type {
   ConfigChangedEvent,
   ConnectionStateChangedEvent,
+  ConnectorGrantChangedEvent,
   ConversationStreamEvents,
   ConversationTitleEvent,
   LlmDoneEvent,

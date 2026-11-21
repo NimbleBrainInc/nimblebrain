@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, useLocation, useNavigate } from "react-router-dom";
 import {
+  addWorkspaceLifecycleHandler,
   callTool,
   callToolWithoutWorkspace,
+  getActiveWorkspaceId,
   logout,
+  probeBootstrap,
   setAuthToken,
   setOnAuthError,
   setOnWorkspaceError,
   setPlatformVersion,
-  tryBootstrap,
 } from "./api/client";
 import { closeEventsClient } from "./api/events-client";
 import { AppFrameSkeleton } from "./components/AppFrameSkeleton";
@@ -19,6 +21,7 @@ import { NoticeProvider } from "./components/notices";
 import { CommandPalette } from "./components/palette/CommandPalette";
 import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
+import { TrackedRoutes } from "./components/TrackedRoutes";
 import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
 import { AppLocationProvider } from "./context/AppLocationContext";
 import { ArtifactPanelProvider } from "./context/ArtifactPanelContext";
@@ -53,6 +56,7 @@ import {
   resolveAppRouteIn,
 } from "./lib/open-app";
 import { routablePlacements } from "./lib/routable-placements";
+import type { RouteHandle } from "./lib/route-template";
 import {
   landingTab,
   ORG_SETTINGS_TABS,
@@ -64,14 +68,21 @@ import { connectorSettingsPath } from "./lib/workspace-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
 import { ContextInspectorPage } from "./pages/ContextInspectorPage";
-import { GlobalHomePage } from "./pages/GlobalHomePage";
+import { LandingRedirect } from "./pages/LandingRedirect";
 import { NotFoundPage, WorkspaceNotFoundPage } from "./pages/NotFoundPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
 import { ConnectorPageRedirect, PluginDetailPage } from "./pages/PluginDetailPage";
+import { PluginsBrowsePage } from "./pages/PluginsBrowsePage";
 import { PluginsPage } from "./pages/PluginsPage";
-import { ProfilePluginsRedirect, WorkspacePluginsRedirect } from "./pages/PluginsRedirects";
+import {
+  OldSkillAddressRedirect,
+  ProfilePluginsRedirect,
+  WorkspacePluginsRedirect,
+  WorkspaceSkillsRedirect,
+} from "./pages/PluginsRedirects";
 import { ProfilePage } from "./pages/ProfilePage";
 import { NewSkillPage, SkillPage } from "./pages/SkillPage";
+import { SkillsPage } from "./pages/SkillsPage";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { OrgAboutTab } from "./pages/settings/OrgAboutTab";
 import { OrgArchivesTab } from "./pages/settings/OrgArchivesTab";
@@ -90,9 +101,50 @@ import { WorkspacesTab } from "./pages/settings/WorkspacesTab";
 import { WorkspaceWebhooksTab } from "./pages/settings/WorkspaceWebhooksTab";
 import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { clearSentryContext, setSentryUser } from "./sentry";
-import { initTelemetry } from "./telemetry";
-import type { BootstrapResponse, ConfigInfo, FileLimits, PlacementEntry } from "./types";
+import {
+  initTelemetry,
+  resetTelemetry,
+  setTelemetryWorkspace,
+  type TelemetryPerson,
+} from "./telemetry";
+import type {
+  BootstrapResponse,
+  ConfigInfo,
+  FileLimits,
+  PlacementEntry,
+  ToolCallResponse,
+} from "./types";
 import "./index.css";
+
+/** The signed-in person for telemetry, only when the deployment identifies (`workspace_info`). */
+function telemetryPerson(
+  ws: Record<string, unknown>,
+  user: BootstrapResponse["user"],
+): TelemetryPerson | undefined {
+  if (ws.telemetryIdentify !== true) return undefined;
+  return {
+    userId: user.id,
+    email: user.email,
+    name: user.displayName,
+    tenantId: typeof ws.tenantId === "string" ? ws.tenantId : undefined,
+  };
+}
+
+/** Starts telemetry from a `workspace_info` answer, when the deployment has it on. */
+function startTelemetry(res: ToolCallResponse, user: BootstrapResponse["user"]): void {
+  let raw: unknown = res.structuredContent;
+  if (!raw && res.content?.[0]?.text) {
+    try {
+      raw = JSON.parse(res.content[0].text);
+    } catch {
+      raw = {};
+    }
+  }
+  const ws = (raw ?? {}) as Record<string, unknown>;
+  if (ws.telemetryEnabled && ws.installId) {
+    initTelemetry(ws.installId as string, telemetryPerson(ws, user));
+  }
+}
 
 /** Stores a theme toggled from the palette or shortcut as the person's preference. */
 async function saveThemePreference(theme: ThemePreference): Promise<void> {
@@ -115,24 +167,25 @@ function AuthenticatedApp({
     setSentryUser(bootstrap.user.id);
   }, [bootstrap.user.id]);
 
-  // Fire-and-forget telemetry init (non-blocking)
+  // Fire-and-forget telemetry init (non-blocking). An answer that arrives after
+  // sign-out (or another person's sign-in) is dropped, so it cannot name a
+  // person the shell no longer holds.
   useEffect(() => {
+    let stale = false;
     callToolWithoutWorkspace("nb", "workspace_info", {})
       .then((res) => {
-        let raw: unknown = res.structuredContent;
-        if (!raw && res.content?.[0]?.text) {
-          try {
-            raw = JSON.parse(res.content[0].text);
-          } catch {
-            raw = {};
-          }
-        }
-        const ws = (raw ?? {}) as Record<string, unknown>;
-        if (ws.telemetryEnabled && ws.installId) {
-          initTelemetry(ws.installId as string);
-        }
+        if (!stale) startTelemetry(res, bootstrap.user);
       })
       .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [bootstrap.user]);
+
+  // The focused workspace is the `workspace` group of identified events.
+  useEffect(() => {
+    setTelemetryWorkspace(getActiveWorkspaceId());
+    return addWorkspaceLifecycleHandler(() => setTelemetryWorkspace(getActiveWorkspaceId()));
   }, []);
 
   const initialWorkspaces: WorkspaceInfo[] = bootstrapWorkspacesToInfo(bootstrap.workspaces);
@@ -315,15 +368,15 @@ function AuthenticatedAppContent({
   // membership, or a dynamic /w/:slug deep-link the user can't see) returns
   // `workspace_error`. Bootstrap validates the active workspace on load, so
   // this is the mid-session net: drop the bad selection (excluding the
-  // rejected id), fall back to a valid workspace, and route home rather than
-  // surface raw error JSON. See recoverFromWorkspaceError for the contract.
+  // rejected id), and open a valid workspace rather than surface raw error
+  // JSON. See recoverFromWorkspaceError for the contract.
   useEffect(() => {
     setOnWorkspaceError(() => {
       recoverFromWorkspaceError(
         wsCtx.workspaces,
         wsCtx.activeWorkspace?.id,
         wsCtx.setActiveWorkspace,
-        () => navigate("/", { replace: true }),
+        (ws) => navigate(`/w/${toSlug(ws.id)}/`, { replace: true }),
         () => window.location.assign("/"),
       );
     });
@@ -364,8 +417,8 @@ function AuthenticatedAppContent({
   const allRoutable = routablePlacements(forSlot("sidebar"), mainRoutes());
 
   // App placements: everything routable except route "/", which is the shell's
-  // own: `/` is `GlobalHomePage` (workspace-agnostic) and `/w/<slug>/` is
-  // `WorkspaceOverviewPage` (app grid).
+  // own: `/` opens a workspace (`LandingRedirect`) and `/w/<slug>/` is its
+  // `WorkspaceOverviewPage`.
   // Identity apps (conversations, …) are also excluded from the app grid set —
   // they render at their own segment under `/w/<slug>` (see
   // `identityAppPlacements`), not as `app/<route>`.
@@ -391,12 +444,10 @@ function AuthenticatedAppContent({
       <CommandPalette onLogout={onLogout} />
       <ShellLayout forSlot={forSlot} onLogout={onLogout}>
         <ErrorBoundary resetKeys={[location.pathname]}>
-          <Routes>
-            {/* Global Home — workspace-agnostic landing (greeting +
-                workspaces grid). Chat, Conversations, Tasks, Files
-                are all identity-bound now, so the root URL is the
-                user's cross-workspace home. */}
-            <Route path="/" element={<GlobalHomePage />} />
+          <TrackedRoutes>
+            {/* `/` is not a page: it opens the workspace this browser was
+                last in, else the first in the switcher's order (ADR-0073). */}
+            <Route path="/" element={<LandingRedirect />} />
 
             {/* Workspace-scoped routes: /w/:slug/... — the slug is the single
                 source of truth for the focused workspace. WorkspaceRouteGuard
@@ -416,6 +467,7 @@ function AuthenticatedAppContent({
                 <Route
                   key={p.route}
                   path={identityAppSegment(p.serverName)}
+                  handle={{ app: p.serverName } satisfies RouteHandle}
                   element={<AppWithChat placement={p} />}
                 />
               ))}
@@ -424,6 +476,7 @@ function AuthenticatedAppContent({
                 <Route
                   key={p.route}
                   path={`app/${p.route}`}
+                  handle={{ app: p.serverName } satisfies RouteHandle}
                   element={<AppWithChat placement={p} />}
                 />
               ))}
@@ -435,14 +488,18 @@ function AuthenticatedAppContent({
                   workspace rather than to any connector, and no connector may
                   claim, reorder, or replace it. */}
               <Route path="notifications" element={<NotificationsPage />} />
-              {/* What the agent can do here: the workspace's plugins, the
-                  viewer's own, and the directory to add more. */}
+              {/* The plugins installed here (the workspace's and the viewer's
+                  own), and the directory to add more. */}
               <Route path="plugins" element={<PluginsPage />} />
+              <Route path="plugins/browse" element={<PluginsBrowsePage />} />
               {/* One plugin: how it is configured, whose account it uses, where it is used. */}
               <Route path="plugins/:pluginRef" element={<PluginDetailPage />} />
-              {/* A skill someone wrote, and a new one, beside the plugins. */}
-              <Route path="plugins/skills/new" element={<NewSkillPage />} />
-              <Route path="plugins/skills/:scope/:name" element={<SkillPage />} />
+              {/* What the agent is taught here, a skill someone wrote, and a new one. */}
+              <Route path="skills" element={<SkillsPage />} />
+              <Route path="skills/new" element={<NewSkillPage />} />
+              <Route path="skills/:scope/:name" element={<SkillPage />} />
+              {/* Skills were under Plugins; their old addresses land on Skills. */}
+              <Route path="plugins/skills/*" element={<OldSkillAddressRedirect />} />
               {/* Workspace settings — General/Members/MCP/Notifications/Webhooks. */}
               <Route path="settings" element={<WorkspaceSettingsPage />}>
                 <Route
@@ -451,7 +508,7 @@ function AuthenticatedAppContent({
                 />
                 <Route path="general" element={<WorkspaceGeneralTab />} />
                 <Route path="members" element={<WorkspaceMembersTab />} />
-                {/* Connectors and skills are managed on Plugins; these keep old
+                {/* Connectors are managed on Plugins and skills on Skills; these keep old
                     links, bookmarks and sign-in callbacks working. The
                     connector address also resolves a server name to its
                     plugin's page (`connectorSettingsPath`). */}
@@ -461,7 +518,7 @@ function AuthenticatedAppContent({
                   element={<WorkspacePluginsRedirect tab="browse" />}
                 />
                 <Route path="connectors/:serverName" element={<ConnectorPageRedirect />} />
-                <Route path="skills" element={<WorkspacePluginsRedirect />} />
+                <Route path="skills" element={<WorkspaceSkillsRedirect />} />
                 <Route path="mcp" element={<WorkspaceMcpTab />} />
                 <Route path="notifications" element={<WorkspaceNotificationsTab />} />
                 <Route path="webhooks" element={<WorkspaceWebhooksTab />} />
@@ -484,9 +541,9 @@ function AuthenticatedAppContent({
 
             {/* Profile — top-level, identity-bound. Tabbed surface
                 following the /org/* pattern. A person's own plugins and
-                skills are on each workspace's Plugins page; the old
-                addresses go there, and a sign-in callback that returns to
-                one keeps its query. */}
+                skills are on each workspace's Plugins and Skills pages; the
+                old addresses go there, and a sign-in callback that returns
+                to one keeps its query. */}
             <Route path="/profile" element={<ProfilePage />}>
               <Route
                 index
@@ -494,7 +551,7 @@ function AuthenticatedAppContent({
               />
               <Route path="general" element={<ProfileTab />} />
               <Route path="connectors" element={<ProfilePluginsRedirect />} />
-              <Route path="skills" element={<ProfilePluginsRedirect />} />
+              <Route path="skills" element={<ProfilePluginsRedirect page="skills" />} />
             </Route>
 
             {/* Organization settings — dedicated top-level home, org-admin
@@ -573,7 +630,7 @@ function AuthenticatedAppContent({
                 workspace depends on shell placements, so this one is always
                 settled. */}
             <Route path="*" element={<NotFoundPage settled />} />
-          </Routes>
+          </TrackedRoutes>
         </ErrorBoundary>
       </ShellLayout>
     </ShellProvider>
@@ -676,10 +733,20 @@ function OpenBridge({
   return null;
 }
 
+/**
+ * How long the first sign-in check may take before the app frame is drawn. A
+ * check that answers sooner (most do) goes straight to the app or to sign-in.
+ */
+const SKELETON_DELAY_MS = 300;
+
 export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
+  // What the first check said when it found no session, handed to the login
+  // screen so it acts on that answer instead of asking again. Cleared on sign-in,
+  // so the login screen a sign-out shows probes for itself.
+  const [firstAnswer, setFirstAnswer] = useState<"signedOut" | "unavailable" | null>(null);
 
   // Tab-lifetime cleanup. `pagehide` fires on tab close, navigation away,
   // and bfcache enter — earlier and more reliable than `beforeunload`,
@@ -718,6 +785,7 @@ export function App() {
     setBootstrap(null);
     setAuthenticated(false);
     clearSentryContext();
+    resetTelemetry();
   }, []);
 
   const initFromBootstrap = useCallback(
@@ -730,6 +798,7 @@ export function App() {
       // lands whenever bootstrap resolves, which can be after the guard's.
 
       setPlatformVersion(data.version, data.buildSha);
+      setFirstAnswer(null);
       setBootstrap(data);
       setAuthenticated(true);
     },
@@ -738,12 +807,13 @@ export function App() {
 
   // Single auth check: try bootstrap. Authenticated → render app. Not → show login.
   // Bootstrap carries no workspace hint — the focused workspace is owned by
-  // the URL (`/w/:slug`), and login lands on `/` (the workspace-agnostic home).
+  // the URL (`/w/:slug`), and login lands on `/`, which opens a workspace.
   useEffect(() => {
     let cancelled = false;
-    tryBootstrap().then((data) => {
+    probeBootstrap().then((result) => {
       if (cancelled) return;
-      if (data) initFromBootstrap(data);
+      if (result.kind === "signedIn") initFromBootstrap(result.data);
+      else setFirstAnswer(result.kind);
       setChecking(false);
     });
     return () => {
@@ -753,8 +823,9 @@ export function App() {
 
   const signedIn = authenticated && bootstrap !== null;
   let screen: React.ReactNode;
-  if (checking) screen = <AppFrameSkeleton />;
-  else if (!signedIn) screen = <Login onLogin={initFromBootstrap} />;
+  if (checking) screen = <AppFrameSkeleton delayMs={SKELETON_DELAY_MS} />;
+  else if (!signedIn)
+    screen = <Login onLogin={initFromBootstrap} firstAnswer={firstAnswer ?? undefined} />;
   else
     screen = (
       <BrowserRouter>

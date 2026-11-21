@@ -23,7 +23,7 @@ import type { HookDeclaration, HookRegistration } from "./types.ts";
  * severity, and the lines between them are the one thing to preserve if this
  * file is ever refactored:
  *
- *   - A **contract violation** — a declared `register_tool` that does not exist
+ *   - A **contract violation** — a declared `registerTool` that does not exist
  *     on the server, or does not accept `{vendor, url}` — throws
  *     {@link HookContractError} and provisions nothing. The runtime would
  *     otherwise mint a capability it has no way to deliver, and the symptom
@@ -66,7 +66,7 @@ export class HookContractError extends Error {
 }
 
 /**
- * Check a declaration's `register_tool` against the server's advertised tool
+ * Check a declaration's `registerTool` against the server's advertised tool
  * list — that it exists, and that its input schema accepts the two string
  * properties the runtime will send.
  *
@@ -88,11 +88,11 @@ export class HookContractError extends Error {
  * {@link provisionHooks}).
  */
 export function verifyRegisterTool(tools: Tool[], decl: HookDeclaration, connector: string): void {
-  const tool = tools.find((t) => t.name === decl.register_tool);
+  const tool = tools.find((t) => t.name === decl.registerTool);
   if (!tool) {
     throw new HookContractError(
-      `Connector "${connector}" declares hook "${decl.vendor}" with register_tool ` +
-        `"${decl.register_tool}", which is not among the ${tools.length} tools its server ` +
+      `Connector "${connector}" declares hook "${decl.vendor}" with registerTool ` +
+        `"${decl.registerTool}", which is not among the ${tools.length} tools its server ` +
         `advertises (${summarizeToolNames(tools)}). A hook whose registration tool is ` +
         `missing can never be handed its URL.`,
     );
@@ -102,15 +102,15 @@ export function verifyRegisterTool(tools: Tool[], decl: HookDeclaration, connect
     const prop = props[required] as { type?: unknown } | undefined;
     if (!prop) {
       throw new HookContractError(
-        `Connector "${connector}" declares hook "${decl.vendor}" with register_tool ` +
-          `"${decl.register_tool}", which does not accept a "${required}" argument. ` +
+        `Connector "${connector}" declares hook "${decl.vendor}" with registerTool ` +
+          `"${decl.registerTool}", which does not accept a "${required}" argument. ` +
           `The runtime calls it with { vendor, url }.`,
       );
     }
     if (prop.type !== undefined && prop.type !== "string") {
       throw new HookContractError(
-        `Connector "${connector}" declares hook "${decl.vendor}" with register_tool ` +
-          `"${decl.register_tool}", whose "${required}" argument is typed ` +
+        `Connector "${connector}" declares hook "${decl.vendor}" with registerTool ` +
+          `"${decl.registerTool}", whose "${required}" argument is typed ` +
           `"${String(prop.type)}"; the runtime sends a string.`,
       );
     }
@@ -120,7 +120,7 @@ export function verifyRegisterTool(tools: Tool[], decl: HookDeclaration, connect
 /**
  * Refuse a declaration whose route names the connector's MCP endpoint.
  *
- * A contract violation like a missing `register_tool`, and reported the same
+ * A contract violation like a missing `registerTool`, and reported the same
  * way: nothing is minted, so no URL exists that could reach the endpoint. The
  * door refuses the same route again at delivery (`resolveForwardUrl`), which is
  * what holds for a registration already on disk.
@@ -152,7 +152,7 @@ export interface ProvisionHooksOptions {
 export interface ProvisionedHook {
   vendor: string;
   kid: string;
-  /** Whether the server's `register_tool` accepted the URL. A `false` here is
+  /** Whether the server's `registerTool` accepted the URL. A `false` here is
    *  the transient case: the registration is recorded, the vendor does not have
    *  the URL yet, and a retry is a rotation away. */
   registered: boolean;
@@ -202,7 +202,7 @@ function nextRegistration(
         ...existing,
         deliveryId: existing.deliveryId,
         route: decl.route,
-        headerRenames: decl.header_renames,
+        headerRenames: decl.headerRenames,
       },
     };
   }
@@ -213,7 +213,7 @@ function nextRegistration(
       kid,
       deliveryId: newDeliveryId(),
       route: decl.route,
-      headerRenames: decl.header_renames,
+      headerRenames: decl.headerRenames,
     }),
   };
 }
@@ -299,7 +299,7 @@ async function handOverUrl(
 ): Promise<ProvisionedHook> {
   let error: string | undefined;
   try {
-    const result = await opts.port.execute(decl.register_tool, { vendor, url });
+    const result = await opts.port.execute(decl.registerTool, { vendor, url });
     if (!result.isError) return { vendor, kid: reg.kid, registered: true };
     error = summarizeToolError(result);
   } catch (err) {
@@ -309,7 +309,7 @@ async function handOverUrl(
     connector: opts.connector,
     vendor,
     kid: reg.kid,
-    tool: decl.register_tool,
+    tool: decl.registerTool,
     reason: error,
   });
   return { vendor, kid: reg.kid, registered: false, error };

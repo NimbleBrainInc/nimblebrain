@@ -196,6 +196,16 @@
       }
     },
     {
+      "includes": [
+        "src/**/*.ts",
+        "scripts/**/*.ts",
+        "test/**/*.ts",
+        "packages/cli/**/*.ts",
+        "!src/skills/frontmatter.ts"
+      ],
+      "plugins": ["./biome-plugins/gray-matter-door.grit"]
+    },
+    {
       "includes": ["src/execution/**/*.ts"],
       "plugins": ["./biome-plugins/no-agent-process.grit"],
       "linter": {

@@ -31,6 +31,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { log } from "../../observability/log.ts";
 import { slugifyServerName } from "../runtime/paths.ts";
+import { retiredHostKeys } from "./host-meta.ts";
 import {
   projectServerDetailToCatalogListing,
   serverDetailToCatalogEntry,
@@ -99,8 +100,10 @@ export function readCatalogServers(path: string): ServerDetail[] {
 
 /**
  * Report the entries at `path` that would not reach Browse, or would reach it
- * with every tool admin-only (a malformed `admin_tools`, which the runtime
- * keeps and fails closed on), without loading them into a registry.
+ * with every tool admin-only (a malformed `adminTools`, which the runtime
+ * keeps and fails closed on), without loading them into a registry. An entry
+ * whose host block carries a snake_case key is reported first and alone: the
+ * runtime reads that field as absent, or for `admin_tools` gates every tool.
  *
  * An entry is removed silently at three points, and all three show the
  * operator the same nothing — the connector is absent, no error anywhere:
@@ -137,6 +140,16 @@ export function validateCatalog(path: string): CatalogDiagnostic[] {
   const { entries, diagnostics } = readCatalogEntries(path);
   for (const { detail, source, index } of entries) {
     const tag = `${source}[${index}:${detail.name}]`;
+    const retired = retiredHostKeys(detail._meta?.["ai.nimblebrain/host"]);
+    if (retired.length > 0) {
+      diagnostics.push({
+        source,
+        index,
+        name: detail.name,
+        message: `${tag} host block uses snake_case key ${retired.join(", ")}, which the runtime does not read (admin_tools gates every tool); write the camelCase spelling`,
+      });
+      continue;
+    }
     const safetyError = validateServerDetailSafety(detail);
     if (safetyError) {
       diagnostics.push({

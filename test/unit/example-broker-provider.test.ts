@@ -168,7 +168,7 @@ function buildHarness(provider: ManagedConnectorProvider): Harness {
         deleteConnector: async () => {},
         listConnectorGrants: async () => ({}),
         getConnectorGrants: async () => [],
-        revokeConnector: async () => {},
+        revokeConnector: async () => false,
       }),
     getUserStore: () => stub<UserStore>({ get: async () => null }),
     getConnectorInstancesForWorkspace: () => lifecycle.getInstances(),

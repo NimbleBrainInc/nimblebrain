@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { auth } from "@modelcontextprotocol/client";
 import type { FetchLike } from "@modelcontextprotocol/server";
 import { log } from "../../src/observability/log.ts";
+import type { CredentialStore } from "../../src/tools/credential-store.ts";
 import {
   createOAuthRefreshFetch,
   resetRefreshExchanges,
@@ -127,15 +128,50 @@ function refreshVia(provider: WorkspaceOAuthProvider, fetchFn: FetchLike) {
 
 const fast = { sleep: (_ms: number) => Promise.resolve(), rng: () => 0 } as const;
 
-async function seedConnection(): Promise<void> {
+/** Seed a connected credential. `stamped: false` stores it as saved before SEP-2352 stamps. */
+async function seedConnection({ stamped = true } = {}): Promise<void> {
   const p = makeProvider();
   await p.saveClientInformation({ client_id: "client-1", redirect_uris: [CALLBACK] });
   await p.saveTokens({
     access_token: "at_1",
     token_type: "Bearer",
     refresh_token: "rt_1",
-    issuer: ISSUER,
-  } as Parameters<WorkspaceOAuthProvider["saveTokens"]>[0]);
+    ...(stamped ? { issuer: ISSUER } : {}),
+  });
+}
+
+/** Spend `refreshToken` through `fetchFn` directly, as the SDK's refresh does, and return the result. */
+async function exchangeVia(fetchFn: FetchLike, refreshToken: string) {
+  const body = new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken });
+  const res = await fetchFn(TOKEN_URL, { method: "POST", body });
+  const issued = (await res.json()) as { access_token: string; refresh_token: string };
+  return { ...issued, token_type: "Bearer" };
+}
+
+/**
+ * Hold the next store read made for `purpose` after it has read its value and
+ * before it returns, until the returned release runs: a read that a write
+ * overtakes.
+ */
+function holdNextStoreRead(store: CredentialStore, purpose: string): () => void {
+  const read = store.get.bind(store);
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  let held = false;
+  const spy = spyOn(store, "get").mockImplementation(async (scope, key, opts) => {
+    const value = await read(scope, key, opts);
+    if (!held && opts?.purpose?.startsWith(purpose)) {
+      held = true;
+      await gate;
+    }
+    return value;
+  });
+  return () => {
+    release();
+    spy.mockRestore();
+  };
 }
 
 async function storedRefreshToken(): Promise<string | undefined> {
@@ -174,10 +210,11 @@ function tag(refreshToken: string): string {
 }
 
 describe("refresh under rotation never deletes a credential that is still good", () => {
+  let store: CredentialStore;
   beforeEach(() => {
     const workDir = mkdtempSync(join(tmpdir(), "nb-oauth-rotation-"));
     seedWorkspaceRoot(workDir, WS);
-    installTestCredentialStore(workDir);
+    store = installTestCredentialStore(workDir);
     resetRefreshExchanges();
   });
   afterEach(() => {
@@ -236,22 +273,99 @@ describe("refresh under rotation never deletes a credential that is still good",
     const vendor = rotatingServer();
     await seedConnection();
     const fetchFn = createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast });
-    const exchange = async (refreshToken: string) => {
-      const body = new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-      });
-      const res = await fetchFn(TOKEN_URL, { method: "POST", body });
-      const issued = (await res.json()) as { access_token: string; refresh_token: string };
-      return { ...issued, token_type: "Bearer" };
-    };
-    const second = await exchange("rt_1");
-    const third = await exchange("rt_2");
+    const second = await exchangeVia(fetchFn, "rt_1");
+    const third = await exchangeVia(fetchFn, "rt_2");
     const provider = makeProvider();
 
     await Promise.all([provider.saveTokens(second), provider.saveTokens(third)]);
 
     expect(vendor.current()).toBe("rt_3");
+    expect(await storedRefreshToken()).toBe("rt_3");
+  });
+
+  it("test_refresh_token_read_overtaken_by_save_never_caches_the_older_tokens", async () => {
+    // A provider with an empty cache starts a store read, which reads rt_1. Before
+    // it returns, a save on the same provider caches and writes rt_2. The read
+    // must not then cache rt_1 over rt_2: the next request would carry the
+    // superseded access token, and its refresh would spend a revoked token.
+    const vendor = rotatingServer();
+    await seedConnection();
+    const rotated = await exchangeVia(
+      createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast }),
+      "rt_1",
+    );
+    const provider = makeProvider();
+
+    const release = holdNextStoreRead(store, "transport");
+    const read = provider.tokens();
+    await provider.saveTokens(rotated);
+    release();
+
+    expect((await read)?.refresh_token).toBe("rt_2");
+    expect((await provider.tokens())?.access_token).toBe("at_2");
+    expect(await storedRefreshToken()).toBe("rt_2");
+  });
+
+  it("test_refresh_read_during_token_delete_never_caches_the_deleted_tokens", async () => {
+    // An invalidation clears the cache and starts deleting the stored tokens.
+    // A read that runs while the delete is pending still finds rt_1 in the
+    // store. Once the delete lands, the provider must not keep serving rt_1.
+    await seedConnection();
+    const provider = makeProvider();
+    const remove = store.delete.bind(store);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let deleting!: () => void;
+    const deleteStarted = new Promise<void>((r) => {
+      deleting = r;
+    });
+    const spy = spyOn(store, "delete").mockImplementation(async (scope, key) => {
+      if (key.endsWith(".tokens")) {
+        deleting();
+        await gate;
+      }
+      await remove(scope, key);
+    });
+
+    const invalidation = provider.invalidateCredentials("all");
+    await deleteStarted;
+    expect((await provider.tokens())?.refresh_token).toBe("rt_1");
+    release();
+    await invalidation;
+    spy.mockRestore();
+
+    expect(await storedRefreshToken()).toBeUndefined();
+    expect(await provider.tokens()).toBeUndefined();
+  });
+
+  it("test_refresh_unstamped_credential_never_saves_a_read_over_a_rotation", async () => {
+    // Tokens stored before SEP-2352 carry no issuer. The SDK's auth() reads them,
+    // and between that read and its next step a sibling rotates rt_1 → rt_2 →
+    // rt_3. The SDK binds an unstamped credential by saving its read back with
+    // the issuer stamped; that copy carries rt_1 and must not land over rt_3.
+    const vendor = rotatingServer();
+    await seedConnection({ stamped: false });
+    const fetchFn = createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast });
+    const sibling = makeProvider();
+    const stale = makeProvider();
+    const read = stale.tokens.bind(stale);
+    let rotated = false;
+    spyOn(stale, "tokens").mockImplementation(async (ctx) => {
+      const tokens = await read(ctx);
+      if (ctx && !rotated) {
+        rotated = true;
+        expect(await refreshVia(sibling, fetchFn)).toBe("AUTHORIZED");
+        expect(await refreshVia(sibling, fetchFn)).toBe("AUTHORIZED");
+      }
+      return tokens;
+    });
+
+    const result = await refreshVia(stale, fetchFn).catch((err: unknown) => err);
+    expect(rotated).toBe(true);
+    expect(vendor.current()).toBe("rt_3");
+    expect(result).toBe("AUTHORIZED");
     expect(await storedRefreshToken()).toBe("rt_3");
   });
 

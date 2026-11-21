@@ -4,7 +4,6 @@ import { startServerWithShutdown } from "../api/server.ts";
 import { defaultWorkDir } from "../connectors/runtime/paths.ts";
 import { log } from "../observability/log.ts";
 import { Runtime } from "../runtime/runtime.ts";
-import type { TelemetryManager } from "../telemetry/manager.ts";
 import { loadConfig } from "./config.ts";
 
 export interface ServeOptions {
@@ -14,7 +13,7 @@ export interface ServeOptions {
 }
 
 /** Start the HTTP API server. This is the managed-services entry point. */
-export async function runServe(opts: ServeOptions, telemetry: TelemetryManager): Promise<void> {
+export async function runServe(opts: ServeOptions): Promise<void> {
   const config = loadConfig({
     config: opts.config,
     defaultWorkDir: defaultWorkDir(),
@@ -26,7 +25,8 @@ export async function runServe(opts: ServeOptions, telemetry: TelemetryManager):
   const startupTime = performance.now();
   const runtime = await Runtime.start(config);
   const startupMs = Math.round(performance.now() - startupTime);
-  telemetry.capture("cli.startup", {
+  // The runtime's own manager, so the deployment's telemetry settings apply.
+  runtime.getTelemetryManager().capture("runtime.started", {
     mode: "serve",
     connector_count: runtime.connectorNames().length,
     startup_ms: startupMs,

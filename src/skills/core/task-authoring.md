@@ -29,6 +29,11 @@ schedule or events). Each run leaves a deliverable, judged against the task's
 criteria when it has any. Tasks are yours, in the workspace you are in, and run
 as you.
 
+**Say "scheduled task" to the person, never a bare "task".** To a person, "task"
+means a to-do. The page that lists them is **Scheduled**: point there ("it's in
+Scheduled"), not to "Tasks". Say "run" for one execution and "result" for what it
+made. The tool names stay `tasks__*`.
+
 ## The tools
 
 | Tool | Use it to |
@@ -96,10 +101,14 @@ A run reads as one `label`:
 4. Pick the schedule (see Schedules). Give `schedule.timezone` when the person
    names a timezone or theirs is known; otherwise the instance timezone applies,
    and `tasks__create` returns it as `timezone`.
-5. If the person has not said what the task does, when it runs, or what to call
-   it, ask for that. When they have, create it without asking again, then show
-   the name, the schedule in words, the prompt, and the tools.
-6. `tasks__create`, then offer a test: `tasks__run {taskId}` and follow it.
+5. If the person has not said what the task does or when it runs, ask for that.
+   Name it yourself from what it does when they have not; do not ask for a name.
+   When you have what you need, create it without asking again.
+6. `tasks__create`. Where the host renders views, chat shows the saved task as
+   a card with its schedule and a Try it now button, so do not restate every
+   field: say in a sentence what it will do and when, and offer a test run.
+   Elsewhere, show the name, the schedule in words, the prompt, and the tools.
+   A test is `tasks__run {taskId}`, followed to its end.
 7. Say when it runs next (`nextRunAt` from `tasks__status`).
 
 If the name is taken, `tasks__create` refuses: change that task with
@@ -120,7 +129,9 @@ If the name is taken, `tasks__create` refuses: change that task with
    before spending on the rest.
 4. `tasks__run_batch {taskId, items, budgetUsd, stopWhen, idempotencyKey}`.
    `budgetUsd` caps the whole batch; `stopWhen {minPassRate, afterItems}` pauses
-   it when the judged pass rate collapses.
+   it when the judged pass rate collapses. A batch over an inline `definition`
+   takes `manifest.name` as its name in the Runs list; one over a saved task is
+   listed under the task's name.
 5. Follow with `tasks__batch {batchId}`. Page item results with `results: true`,
    or a `filter` (`failing`, `uncertain`, ...).
 6. Control with `tasks__batch_control`:
@@ -146,11 +157,14 @@ If the name is taken, `tasks__create` refuses: change that task with
 
 Run a single job without saving a task to keep:
 
-`tasks__run {definition: {body, manifest}, input, idempotencyKey}`
+`tasks__run {definition: {body, manifest: {name, ...}}, input, idempotencyKey}`
 
-`definition` has the shape of `tasks__create`'s arguments, without a name or
-schedule. It is saved as a `oneoff` task (left out of `tasks__list`) and run
-once. Follow it as in "Running and following a run". A client on the
+`definition` has the shape of `tasks__create`'s arguments, without a schedule.
+Give `manifest.name`: a few words a person would recognize ("Fit grade, arm
+A"). It is how the run reads in the panel's Runs list, which otherwise names it
+from the prompt's first words; it only labels the run and is not part of what
+the `idempotencyKey` compares. It is saved as a `oneoff` task (left out of
+`tasks__list`) and run once. Follow it as in "Running and following a run". A client on the
 2026-07-28 MCP tasks extension gets a task handle instead and polls that.
 The same `idempotencyKey` with the same definition returns the same run.
 

@@ -11,13 +11,13 @@ import {
 
 function meta(hooks: unknown): HostManifestMeta {
   // biome-ignore lint/plugin/double-cast: a manifest `hooks` value of any shape, non-arrays and malformed entries included, where the type promises HookDeclaration[]
-  return { host_version: "1.2", hooks } as unknown as HostManifestMeta;
+  return { hostVersion: "1.2", hooks } as unknown as HostManifestMeta;
 }
 
 const GOOD = {
   vendor: "acme",
   route: "/ingest/acme",
-  register_tool: "set_webhook_url",
+  registerTool: "set_webhook_url",
   description: "Campaign events",
 };
 
@@ -34,7 +34,7 @@ describe("parseHookDeclarations", () => {
 
   test.each([
     ["a vendor that is not a slug", { ...GOOD, vendor: "Acme Corp" }],
-    ["a missing register_tool", { ...GOOD, register_tool: "" }],
+    ["a missing registerTool", { ...GOOD, registerTool: "" }],
     ["a relative route", { ...GOOD, route: "ingest/acme" }],
     ["a protocol-relative route", { ...GOOD, route: "//evil.test/x" }],
     ["a traversing route", { ...GOOD, route: "/ingest/../../admin" }],
@@ -52,33 +52,33 @@ describe("parseHookDeclarations", () => {
 
   test("normalizes header renames to lowercase", () => {
     const decl = parseHookDeclarations(
-      meta([{ ...GOOD, header_renames: { Authorization: "X-Acme-Signature" } }]),
+      meta([{ ...GOOD, headerRenames: { Authorization: "X-Acme-Signature" } }]),
     )[0];
-    expect(decl?.header_renames).toEqual({ authorization: "x-acme-signature" });
+    expect(decl?.headerRenames).toEqual({ authorization: "x-acme-signature" });
   });
 
   test("refuses a rename INTO the stripped identity class", () => {
     // Otherwise a rename would re-open the hole the strip exists to close.
     const decl = parseHookDeclarations(
-      meta([{ ...GOOD, header_renames: { "x-acme-sig": "x-workspace-id" } }]),
+      meta([{ ...GOOD, headerRenames: { "x-acme-sig": "x-workspace-id" } }]),
     )[0];
-    expect(decl?.header_renames).toBeUndefined();
+    expect(decl?.headerRenames).toBeUndefined();
   });
 
   test("refuses a rename FROM the browser's cookie", () => {
     // A rename out of the stripped class exists for vendor signatures; no vendor
     // signs with the cookie, and the connector must not be able to ask for it.
     const decl = parseHookDeclarations(
-      meta([{ ...GOOD, header_renames: { Cookie: "x-acme-cookie" } }]),
+      meta([{ ...GOOD, headerRenames: { Cookie: "x-acme-cookie" } }]),
     )[0];
-    expect(decl?.header_renames).toBeUndefined();
+    expect(decl?.headerRenames).toBeUndefined();
   });
 
   test("refuses a rename whose name is not an HTTP token", () => {
     const decl = parseHookDeclarations(
-      meta([{ ...GOOD, header_renames: { "bad header": "x-ok", "x-ok": "also bad" } }]),
+      meta([{ ...GOOD, headerRenames: { "bad header": "x-ok", "x-ok": "also bad" } }]),
     )[0];
-    expect(decl?.header_renames).toBeUndefined();
+    expect(decl?.headerRenames).toBeUndefined();
   });
 });
 

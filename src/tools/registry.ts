@@ -108,7 +108,7 @@ export class ToolRegistry implements ToolRouter {
    */
   private invalidationListener: (() => void) | null = null;
   /**
-   * The connector gate (`lifecycle` handlers, `admin_tools`), run beside
+   * The connector gate (`lifecycle` handlers, `adminTools`), run beside
    * `assertToolAllowed`.
    * The Runtime binds it to this workspace and the ambient caller; null for
    * registries built outside it.

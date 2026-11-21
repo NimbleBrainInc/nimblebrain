@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// workspaceApps — the shared app-set projection used by both the sidebar
-// quick-list and the workspace overview grid. Pins three contracts:
+// workspaceApps — the app-set projection the sidebar's app list uses.
+// Pins three contracts:
 //   1. Only grouped sidebar slots (`sidebar.<group>`) count as apps —
 //      bare `sidebar` (core nav), `sidebar.bottom` (utility tray), and
 //      `main` are excluded.
@@ -16,7 +16,6 @@ import {
   appsByConnector,
   connectorSettingsPath,
   iconMapFromInstalled,
-  MAX_INLINE_APPS,
   orderApps,
   workspaceApps,
 } from "../lib/workspace-apps";
@@ -69,11 +68,6 @@ describe("workspaceApps", () => {
   test("returns [] when there are no app placements", () => {
     expect(workspaceApps([p({ serverName: "core-nav", slot: "sidebar" })])).toEqual([]);
     expect(workspaceApps([])).toEqual([]);
-  });
-
-  test("MAX_INLINE_APPS is a small positive cap", () => {
-    expect(MAX_INLINE_APPS).toBeGreaterThan(0);
-    expect(MAX_INLINE_APPS).toBeLessThanOrEqual(10);
   });
 });
 
