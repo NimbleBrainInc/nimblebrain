@@ -11,6 +11,7 @@ import type {
 } from "../../src/telemetry/manager.ts";
 import { TelemetryManager } from "../../src/telemetry/manager.ts";
 import { PostHogEventSink } from "../../src/telemetry/posthog-sink.ts";
+import { costBreakdown } from "../../src/usage/cost.ts";
 import {
   engineEvent,
   llmDonePayload,
@@ -63,6 +64,28 @@ function llmDone(runId: string, llmMs: number, input: number, output: number, ca
       runId,
       llmMs,
       usage: { inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead },
+    }),
+  );
+}
+
+/** A model the catalog prices, and one it does not. */
+const PRICED = "anthropic:claude-sonnet-4-6";
+const UNPRICED = "acme:unlisted-model";
+
+/** One model call at a named model, with cache reads and writes. */
+function llmDoneAt(runId: string, model: string, input: number, output: number) {
+  return engineEvent(
+    "llm.done",
+    llmDonePayload({
+      runId,
+      model,
+      llmMs: 5,
+      usage: {
+        inputTokens: input,
+        outputTokens: output,
+        cacheReadTokens: input / 2,
+        cacheWriteTokens: input / 4,
+      },
     }),
   );
 }
@@ -317,6 +340,16 @@ describe("PostHogEventSink", () => {
     const done = mock.events.find((e) => e.event === "agent.chat_completed");
     expect(done?.properties.tool_calls).toBe(5);
     expect(done?.properties.connector_tool_calls).toBe(2);
+  });
+
+  it("sends no cost when the deployment does not identify", () => {
+    const { mock, sink } = createTestSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1", model: PRICED })));
+    sink.emit(llmDoneAt("r1", PRICED, 1000, 100));
+    sink.emit(runDone("r1"));
+
+    const done = mock.events.find((e) => e.event === "agent.chat_completed");
+    expect(done && "cost_usd" in done.properties).toBe(false);
   });
 
   it("reports an automation the agent created, by event alone", () => {
@@ -574,6 +607,68 @@ describe("PostHogEventSink on an identified deployment", () => {
     expect(done?.connectors_used).toEqual(["app.linear/linear", "custom"]);
     expect(done?.skills_used).toEqual(["app.linear/linear:triage", "custom"]);
     expect(JSON.stringify(mock.events)).not.toContain("secret playbook");
+  });
+
+  it("reports a run's cost, each model call priced on its own card", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1", model: PRICED })));
+    sink.emit(llmDoneAt("r1", PRICED, 4000, 200));
+    sink.emit(llmDoneAt("r1", PRICED, 8000, 300));
+    // A replayed segment is not a model call: neither counted nor priced.
+    sink.emit(
+      engineEvent(
+        "llm.done",
+        llmDonePayload({
+          runId: "r1",
+          model: PRICED,
+          transcriptOnly: true,
+          usage: { inputTokens: 99_999, outputTokens: 9_999 },
+        }),
+      ),
+    );
+    sink.emit(runDone("r1"));
+    await settle();
+
+    const expected =
+      costBreakdown(PRICED, {
+        inputTokens: 4000,
+        outputTokens: 200,
+        cacheReadTokens: 2000,
+        cacheWriteTokens: 1000,
+      }).total +
+      costBreakdown(PRICED, {
+        inputTokens: 8000,
+        outputTokens: 300,
+        cacheReadTokens: 4000,
+        cacheWriteTokens: 2000,
+      }).total;
+    const done = mock.events.find((e) => e.event === "agent.chat_completed")?.properties;
+    expect(expected).toBeGreaterThan(0);
+    expect(done?.cost_usd).toBeCloseTo(expected, 12);
+  });
+
+  it("reports no cost for a run with a call no rates are known for, never 0 or a partial sum", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1", model: PRICED })));
+    sink.emit(llmDoneAt("r1", PRICED, 4000, 200));
+    sink.emit(llmDoneAt("r1", UNPRICED, 4000, 200));
+    sink.emit(runDone("r1"));
+    await settle();
+
+    const done = mock.events.find((e) => e.event === "agent.chat_completed")?.properties;
+    expect(done && "cost_usd" in done).toBe(false);
+    // The run's tokens are still reported.
+    expect(done?.input_tokens).toBe(8000);
+  });
+
+  it("reports a cost of 0 for a run that made no model call", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1", model: PRICED })));
+    sink.emit(runDone("r1"));
+    await settle();
+
+    const done = mock.events.find((e) => e.event === "agent.chat_completed")?.properties;
+    expect(done?.cost_usd).toBe(0);
   });
 
   it("names a custom connector's skill as custom, never its install or skill name", async () => {

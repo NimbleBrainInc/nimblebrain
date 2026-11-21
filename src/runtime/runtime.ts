@@ -295,7 +295,7 @@ import {
 import { isToolAllowedForRun, unmatchedAllowedTools } from "../tools/tool-pattern.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { toToolSchema } from "../tools/types.ts";
-import { estimateCost, resolveRates } from "../usage/cost.ts";
+import { callCostUsd, resolveRates } from "../usage/cost.ts";
 import { createProcessLedger, type UsageLedger } from "../usage/ledger.ts";
 import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
@@ -1846,6 +1846,7 @@ export class Runtime {
       ...stopDetail(handle),
       usage: handle.usage,
       costUsd: handle.costUsd,
+      ...(handle.unpricedCalls ? { unpricedCalls: handle.unpricedCalls } : {}),
       skillsDelivered: handle.skillsDelivered,
     };
   }
@@ -2199,6 +2200,7 @@ export class Runtime {
         stopReason: "aborted",
         usage: partial.usage(spec.model),
         costUsd: partial.costUsd(),
+        ...unpricedOf(partial),
         skillsDelivered: deliveries.list,
       };
     } finally {
@@ -2221,6 +2223,7 @@ export class Runtime {
         iterations: result.iterations,
       },
       costUsd: partial.costUsd(),
+      ...unpricedOf(partial),
       skillsDelivered: deliveries.list,
     };
   }
@@ -6801,8 +6804,16 @@ function createPartialRunAccumulator(): {
   toolCalls: RunHandle["toolCalls"];
   usage: (model: string) => TurnUsage;
   costUsd: () => number;
+  unpricedCalls: () => number;
 } {
-  const totals = { inputTokens: 0, outputTokens: 0, iterations: 0, llmMs: 0, costUsd: 0 };
+  const totals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    iterations: 0,
+    llmMs: 0,
+    costUsd: 0,
+    unpricedCalls: 0,
+  };
   const toolCalls: RunHandle["toolCalls"] = [];
   const sink: EventSink = {
     emit(event: EngineEvent): void {
@@ -6813,7 +6824,11 @@ function createPartialRunAccumulator(): {
         totals.llmMs += data.llmMs;
         totals.inputTokens += data.usage.inputTokens;
         totals.outputTokens += data.usage.outputTokens;
-        totals.costUsd += estimateCost(data.model, data.usage);
+        // A call at a model the catalog has no rates for adds nothing to the
+        // cost and is counted, so a reader can tell an incomplete cost from a free one.
+        const cost = callCostUsd(data.model, data.usage);
+        if (cost === undefined) totals.unpricedCalls += 1;
+        else totals.costUsd += cost;
       } else if (event.type === "tool.done") {
         const { data } = event;
         // `errorReason` is intentionally absent here: this accumulator only
@@ -6851,7 +6866,14 @@ function createPartialRunAccumulator(): {
       iterations: totals.iterations,
     }),
     costUsd: () => totals.costUsd,
+    unpricedCalls: () => totals.unpricedCalls,
   };
+}
+
+/** A run's unpriced-call count, present only when non-zero. */
+function unpricedOf(partial: { unpricedCalls: () => number }): { unpricedCalls?: number } {
+  const n = partial.unpricedCalls();
+  return n > 0 ? { unpricedCalls: n } : {};
 }
 
 /**

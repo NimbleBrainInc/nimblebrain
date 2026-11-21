@@ -262,6 +262,11 @@ export interface RunHandle {
   usage: TurnUsage;
   /** The run's cost in USD; see `ChatResult.costUsd`. */
   costUsd: number;
+  /**
+   * Model calls at a model the catalog has no rates for, present only when
+   * non-zero. Their cost is not in `costUsd`, so the cost is incomplete.
+   */
+  unpricedCalls?: number;
   /** Every skill the run was given, or that missed it, in order. */
   skillsDelivered: SkillDelivery[];
 }

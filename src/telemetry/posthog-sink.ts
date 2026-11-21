@@ -16,6 +16,7 @@ import {
   isPersonalConnectorName,
   personalConnectorServerName,
 } from "../tools/identity-sources.ts";
+import { callCostUsd } from "../usage/cost.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import type { TelemetryManager } from "./manager.ts";
 
@@ -72,6 +73,13 @@ interface RunMetrics {
   inputTokens: number;
   outputTokens: number;
   cacheTokens: number;
+  /** Identified only: the summed cost of the run's priced model calls, each on its own rate card. */
+  costUsd: number;
+  /**
+   * Identified only: model calls at a model the catalog has no rates for. A run
+   * with any reports no `cost_usd`, since its cost is unknown, not zero.
+   */
+  unpricedLlmCalls: number;
 }
 
 function createRunMetrics(): RunMetrics {
@@ -88,6 +96,8 @@ function createRunMetrics(): RunMetrics {
     inputTokens: 0,
     outputTokens: 0,
     cacheTokens: 0,
+    costUsd: 0,
+    unpricedLlmCalls: 0,
   };
 }
 
@@ -210,6 +220,12 @@ export class PostHogEventSink implements EventSink {
     metrics.cacheTokens += data.usage.cacheReadTokens ?? 0;
     metrics.inputTokens += data.usage.inputTokens;
     metrics.outputTokens += data.usage.outputTokens;
+    if (this.named()) {
+      // Priced as the run-start door prices the run: each call on its own card.
+      const cost = callCostUsd(data.model, data.usage);
+      if (cost === undefined) metrics.unpricedLlmCalls++;
+      else metrics.costUsd += cost;
+    }
   }
 
   /** Fold a tool.done event's call count and latency into the run's metrics. */
@@ -373,7 +389,7 @@ export class PostHogEventSink implements EventSink {
     if (!metrics || !this.named()) {
       this.telemetry.capture("agent.chat_completed", completed);
     } else {
-      const { model, trigger } = metrics;
+      const { model, trigger, costUsd, unpricedLlmCalls } = metrics;
       void Promise.all([Promise.all(metrics.connectors), Promise.all(metrics.skills)]).then(
         ([connectors, skills]) =>
           this.telemetry.capture("agent.chat_completed", {
@@ -381,6 +397,8 @@ export class PostHogEventSink implements EventSink {
             run_id: data.runId,
             model,
             ...(trigger ? { trigger } : {}),
+            // Unknown cost is left out, never reported as 0 or as a partial sum.
+            ...(unpricedLlmCalls ? {} : { cost_usd: costUsd }),
             connectors_used: [...new Set(connectors)].sort(),
             skills_used: [...new Set(skills)].sort(),
           }),

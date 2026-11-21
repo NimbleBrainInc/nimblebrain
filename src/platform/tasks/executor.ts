@@ -153,6 +153,8 @@ export interface TaskFnResult {
   wrapUpLimit?: WrapUpLimit;
   /** The run's cost in USD, each call priced on its own card (runtime `TaskResult.costUsd`). */
   costUsd?: number;
+  /** Model calls no rates were known for, so not in `costUsd` (runtime `TaskResult.unpricedCalls`). */
+  unpricedCalls?: number;
   /** Every skill the run was given, or that missed it (runtime `TaskResult`). */
   skillsDelivered?: RunSkillDelivery[];
   /** The run's usage (runtime `TurnUsage`). */
@@ -882,9 +884,6 @@ function mapResultToRun(
   // Recorded whatever the status, and read without any criteria: the derived
   // label never reads Succeeded while part of the work did not happen.
   const unrecovered = unresolvedFailures(accounted).map((u) => u.name);
-  // Priced as the door debits a `usd` spend account: each call on its own card.
-  const costUsd = data.costUsd;
-
   return {
     // Adopt the runtime's runId verbatim — the run, its index summary, and its
     // result sidecar all key off the same id (no second uuid generated here).
@@ -905,7 +904,20 @@ function mapResultToRun(
     trigger,
     ...(error ? { error } : {}),
     ...(unrecovered.length > 0 ? { unrecoveredToolFailures: unrecovered } : {}),
-    ...(costUsd !== undefined ? { costUsd } : {}),
+    ...runCost(data),
+  };
+}
+
+/**
+ * The run's cost, priced as the door debits a `usd` spend account (each call on
+ * its own card), and how many calls no rates were known for.
+ */
+function runCost(
+  data: Pick<TaskFnResult, "costUsd" | "unpricedCalls">,
+): Pick<TaskRun, "costUsd" | "unpricedCalls"> {
+  return {
+    ...(data.costUsd !== undefined ? { costUsd: data.costUsd } : {}),
+    ...(data.unpricedCalls ? { unpricedCalls: data.unpricedCalls } : {}),
   };
 }
 
