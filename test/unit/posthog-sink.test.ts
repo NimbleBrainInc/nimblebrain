@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSkillsLoadedPayload } from "../../src/runtime/skills-loaded-payload.ts";
 import { synthesizeConnectorSkill } from "../../src/skills/connector-skills.ts";
-import type { TelemetryClient, TelemetryClientFactory } from "../../src/telemetry/manager.ts";
+import type {
+  TelemetryClient,
+  TelemetryClientFactory,
+  TelemetrySubject,
+} from "../../src/telemetry/manager.ts";
 import { TelemetryManager } from "../../src/telemetry/manager.ts";
 import { PostHogEventSink } from "../../src/telemetry/posthog-sink.ts";
 import {
@@ -311,7 +315,10 @@ describe("PostHogEventSink", () => {
 
 describe("PostHogEventSink on an identified deployment", () => {
   /** A sink whose manager the operator set to identify, with a catalog of one connector. */
-  function identifiedSetup(): { mock: MockTelemetryClient; sink: PostHogEventSink } {
+  function identifiedSetup(subject: TelemetrySubject = { userId: "usr_1", workspaceId: "ws_1" }): {
+    mock: MockTelemetryClient;
+    sink: PostHogEventSink;
+  } {
     const mock = new MockTelemetryClient();
     const mgr = TelemetryManager.create({
       workDir: makeTmpDir(),
@@ -320,7 +327,7 @@ describe("PostHogEventSink on an identified deployment", () => {
       clientFactory: () => mock,
       env: {},
     });
-    mgr.setSubjectSource(() => ({ userId: "usr_1", workspaceId: "ws_1" }));
+    mgr.setSubjectSource(() => subject);
     const sink = new PostHogEventSink(mgr);
     sink.addBuiltinSources(["tasks", "crm"]);
     // `linear` is the workspace's from the catalog; `gmail` is the person's own
@@ -334,7 +341,10 @@ describe("PostHogEventSink on an identified deployment", () => {
 
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
   /** An event's own properties, without those every event carries. */
-  const own = ({ nb_version, os, arch, bun_version, ...rest }: Record<string, unknown>) => rest;
+  // What the event says about the call itself: the common properties and the run id
+  // (tested on its own below) are left out.
+  const own = ({ nb_version, os, arch, bun_version, run_id, ...rest }: Record<string, unknown>) =>
+    rest;
   const toolDoneIn = (name: string, ok = true) =>
     engineEvent(
       "tool.done",
@@ -406,6 +416,39 @@ describe("PostHogEventSink on an identified deployment", () => {
       connector: "app.linear/linear",
       tool: "list_issues",
     });
+  });
+
+  it("says what woke the run, as the run-start door recorded it", async () => {
+    for (const trigger of ["chat", "schedule"]) {
+      const { mock, sink } = identifiedSetup({ userId: "usr_1", workspaceId: "ws_1", trigger });
+      sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+      sink.emit(runDone("r1"));
+      await settle();
+      expect(mock.events.find((e) => e.event === "agent.chat_started")?.properties.trigger).toBe(
+        trigger,
+      );
+      expect(mock.events.find((e) => e.event === "agent.chat_completed")?.properties.trigger).toBe(
+        trigger,
+      );
+    }
+  });
+
+  it("stamps the run id on a run's events, so they join", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+    sink.emit(toolDoneIn("linear__list_issues"));
+    sink.emit(runDone("r1"));
+    await settle();
+    const ids = mock.events
+      .filter((e) =>
+        ["agent.chat_started", "tool.called", "agent.chat_completed"].includes(e.event),
+      )
+      .map((e) => [e.event, e.properties.run_id]);
+    expect(ids).toEqual([
+      ["agent.chat_started", "r1"],
+      ["tool.called", "r1"],
+      ["agent.chat_completed", "r1"],
+    ]);
   });
 
   it("sends no tool.called for a held call, only for the call that ran", async () => {

@@ -3,6 +3,7 @@ import type { ToolPromotionControls } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { setRequestIdentitySource } from "../observability/identity.ts";
 import { type SpanAttrs, withRootContext } from "../observability/tracing.ts";
+import type { RunTrigger } from "./run-spec.ts";
 import type { ModelSlots } from "./types.ts";
 
 /**
@@ -124,6 +125,12 @@ export interface RequestContext {
    * is not (see that module's trust-boundary note).
    */
   unattended?: boolean;
+  /**
+   * What woke the run this context belongs to (`RunSpec.trigger`). Set once
+   * by the runtime at the run-start door; descriptive only, so nothing may
+   * branch on it (the policy axis is `unattended`). Telemetry reports it.
+   */
+  runTrigger?: RunTrigger;
   /**
    * True when the call came from the first-party web shell: its REST
    * `tools/call`, or an app view's `/mcp` call under a first-party credential

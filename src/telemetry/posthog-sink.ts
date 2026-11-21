@@ -54,6 +54,8 @@ interface RunMetrics {
   startedAt: number;
   /** Identified only: the run's model, and what it used, as catalog names or `custom`. */
   model?: string;
+  /** Identified only: what woke the run (`chat`, `schedule`, `manual`, `event`, `api`). */
+  trigger?: string;
   connectors: Set<Promise<string>>;
   skills: Set<Promise<string>>;
   iterations: number;
@@ -236,7 +238,8 @@ export class PostHogEventSink implements EventSink {
     source: string,
     tool: string,
   ): void {
-    const base = { ok: data.ok, duration_ms: data.ms };
+    // The run's id joins a call to its run (`agent.chat_*`, `automation.run_completed`).
+    const base = { ok: data.ok, duration_ms: data.ms, run_id: data.runId };
     if (!isConnector) {
       const kind = source === "nb" || IDENTITY_SOURCES.has(source) ? "kernel" : "app";
       this.telemetry.capture("tool.called", { ...base, source: kind, app: source, tool });
@@ -258,11 +261,16 @@ export class PostHogEventSink implements EventSink {
   /** Start a per-run metrics accumulator and capture the chat-started event. */
   private captureRunStart(data: RunStartPayload): void {
     const metrics = createRunMetrics();
-    if (this.named()) metrics.model = data.model;
+    if (this.named()) {
+      metrics.model = data.model;
+      metrics.trigger = this.telemetry.currentTrigger();
+    }
     this.runs.set(data.runId, metrics);
     this.telemetry.capture("agent.chat_started", {
       tool_count: data.toolNames.length,
+      ...(this.named() ? { run_id: data.runId } : {}),
       ...(metrics.model ? { model: metrics.model } : {}),
+      ...(metrics.trigger ? { trigger: metrics.trigger } : {}),
     });
   }
 
@@ -356,12 +364,14 @@ export class PostHogEventSink implements EventSink {
     if (!metrics || !this.named()) {
       this.telemetry.capture("agent.chat_completed", completed);
     } else {
-      const { model } = metrics;
+      const { model, trigger } = metrics;
       void Promise.all([Promise.all(metrics.connectors), Promise.all(metrics.skills)]).then(
         ([connectors, skills]) =>
           this.telemetry.capture("agent.chat_completed", {
             ...completed,
+            run_id: data.runId,
             model,
+            ...(trigger ? { trigger } : {}),
             connectors_used: [...new Set(connectors)].sort(),
             skills_used: [...new Set(skills)].sort(),
           }),

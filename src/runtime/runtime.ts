@@ -872,6 +872,7 @@ export class Runtime {
         email: ctx.identity.email,
         name: ctx.identity.displayName,
         workspaceId: ctx.workspaceId,
+        ...(ctx.runTrigger ? { trigger: ctx.runTrigger } : {}),
       };
     });
     const telemetrySink = new PostHogEventSink(telemetryManager);
@@ -6652,6 +6653,7 @@ function buildRunContext(
     // restamp, so the wall is enforced at the tasks source rather than
     // per-router-construction. See `createTasksSource`.
     ...(attended ? {} : { unattended: true }),
+    runTrigger: spec.trigger,
   };
 }
 
