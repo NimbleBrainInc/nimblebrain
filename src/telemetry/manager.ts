@@ -77,6 +77,11 @@ export interface TelemetrySubject {
   trigger?: string;
 }
 
+/** A person's email and name, looked up by id when a request does not carry them. */
+export type TelemetryPersonSource = (
+  userId: string,
+) => Promise<{ email?: string; name?: string } | undefined>;
+
 export type TelemetryClientFactory = (
   apiKey: string,
   options: {
@@ -111,6 +116,9 @@ export class TelemetryManager {
   private subjectSource: () => TelemetrySubject | undefined = () => undefined;
   /** People whose email and name this process has already set, so each is sent once. */
   private readonly described = new Set<string>();
+  private personSource: TelemetryPersonSource | undefined;
+  /** People this process has looked up, so a person missing from the store is looked up once. */
+  private readonly lookedUp = new Set<string>();
 
   private constructor(
     private readonly workDir: string,
@@ -202,12 +210,7 @@ export class TelemetryManager {
     const groups: Record<string, string> = {};
     if (this.tenantId) groups.tenant = this.tenantId;
     if (workspaceId) groups.workspace = workspaceId;
-    const person =
-      userId && (about.email || about.name)
-        ? this.describe({ userId, email: about.email, name: about.name })
-        : subject && userId === subject.userId
-          ? this.describe(subject)
-          : {};
+    const person = userId ? this.describe(personAbout(userId, about, subject)) : {};
     this.client.capture({
       distinctId: userId ?? this.anonymousId,
       event,
@@ -222,6 +225,15 @@ export class TelemetryManager {
    */
   setSubjectSource(source: () => TelemetrySubject | undefined): void {
     this.subjectSource = source;
+  }
+
+  /**
+   * Where a person's email and name are found when the request does not carry
+   * them: a scheduled run acts as its owner's id alone. The runtime registers
+   * its user store here.
+   */
+  setPersonSource(source: TelemetryPersonSource): void {
+    this.personSource = source;
   }
 
   /** The signed-in person of the current request, on an identified deployment. */
@@ -250,14 +262,35 @@ export class TelemetryManager {
     return this.identified ? this.tenantId : undefined;
   }
 
-  /** The person's email and name as `$set`, the first time this process sees them. */
+  /**
+   * The person's email and name as `$set`, the first time this process has
+   * them. A subject without them is looked up instead, and sent on its own.
+   */
   private describe(subject: TelemetrySubject): Record<string, unknown> {
     if (this.described.has(subject.userId)) return {};
+    const set = personSet(subject);
+    if (!set) {
+      this.lookUp(subject.userId);
+      return {};
+    }
     this.described.add(subject.userId);
-    const set: Record<string, string> = {};
-    if (subject.email) set.email = subject.email;
-    if (subject.name) set.name = subject.name;
-    return Object.keys(set).length > 0 ? { $set: set } : {};
+    return { $set: set };
+  }
+
+  /** Sets a person's email and name from the person source, once per process. */
+  private lookUp(userId: string): void {
+    if (!this.personSource || this.lookedUp.has(userId)) return;
+    this.lookedUp.add(userId);
+    this.personSource(userId)
+      .then((found) => {
+        const set = found ? personSet(found) : undefined;
+        if (!set || this.described.has(userId) || !this.client) return;
+        this.described.add(userId);
+        this.client.capture({ distinctId: userId, event: "$set", properties: { $set: set } });
+      })
+      .catch(() => {
+        // Telemetry never fails the work it describes.
+      });
   }
 
   /** Records a person's answer and applies it at once. Throws `TelemetryLockedError` when the deployment owns it. */
@@ -379,4 +412,21 @@ function defaultClientFactory(
     capture: (params) => client.capture(params),
     shutdown: () => client.shutdown(),
   };
+}
+
+function personSet(person: { email?: string; name?: string }): Record<string, string> | undefined {
+  const set: Record<string, string> = {};
+  if (person.email) set.email = person.email;
+  if (person.name) set.name = person.name;
+  return Object.keys(set).length > 0 ? set : undefined;
+}
+
+/** Who `captureAbout`'s event is about: the email and name given, else the request's when it is the same person. */
+function personAbout(
+  userId: string,
+  about: { email?: string; name?: string },
+  subject: TelemetrySubject | undefined,
+): TelemetrySubject {
+  if (about.email || about.name) return { userId, email: about.email, name: about.name };
+  return subject?.userId === userId ? subject : { userId };
 }
