@@ -19,6 +19,7 @@ import { type ResolvedTasksConfig, resolveTasksConfig } from "../config/tasks.ts
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import {
   ConnectorCatalog,
+  catalogEntryForRef,
   catalogPath,
   warnIfCatalogEmpty,
 } from "../connectors/catalog/catalog.ts";
@@ -1235,6 +1236,15 @@ export class Runtime {
       const platformSources = await createPlatformSources(rt, events);
       // Telemetry counts calls to connector tools apart from the kernel's own.
       telemetrySink.addBuiltinSources(platformSources.map((s) => s.name));
+      // Identified telemetry names a connector by its catalog id, never by the
+      // name it was installed under, which someone may have chosen.
+      telemetrySink.setConnectorResolver(async (wsId, serverName) => {
+        const ref = rt.getLifecycle().getInstance(serverName, wsId)?.ref;
+        if (!ref) return undefined;
+        const catalog = rt.getConnectorCatalog();
+        return catalogEntryForRef(ref, await catalog.catalogByUrl(), await catalog.catalogByIdMap())
+          ?.id;
+      });
       // Make the host-resources factory accessible on `rt` so non-lifecycle
       // install paths (connector-tools, boot reload) can pull deps directly.
       rt._connectorMcpDepsFactory = connectorMcpDepsFactory;
