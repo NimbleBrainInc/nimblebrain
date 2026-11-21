@@ -15,3 +15,12 @@ export function withoutQuery(url: string): string {
 export function isHttpUrl(value: unknown): value is string {
   return typeof value === "string" && /^https?:\/\//i.test(value);
 }
+
+/** `url`'s origin alone (`https://host`), or `""` for a value that does not parse. */
+export function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+}

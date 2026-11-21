@@ -1,7 +1,7 @@
 import posthog, { type CaptureResult, type PostHogConfig } from "posthog-js";
 import { getConfig } from "./config";
-import { type RouteView, templatedPath, templatedUrl } from "./lib/route-template";
-import { isHttpUrl, withoutQuery } from "./lib/url-scrub";
+import type { RouteView } from "./lib/route-template";
+import { isHttpUrl, originOf, withoutQuery } from "./lib/url-scrub";
 
 // Write-only PostHog project API key, from runtime config (NB_POSTHOG_KEY via
 // window.__NB_CONFIG__). Disabled when unset or explicitly turned off
@@ -97,11 +97,8 @@ export function setTelemetryRoute(view: RouteView | null): void {
 function sendPageview(): void {
   if (!initialized || !identified || !route || route.template === sentTemplate) return;
   sentTemplate = route.template;
-  posthog.capture("$pageview", {
-    $current_url: window.location.origin + route.template,
-    $pathname: route.template,
-    ...(route.app ? { app: route.app } : {}),
-  });
+  // `scrubUrls` sets `$current_url` and `$pathname` to the template.
+  posthog.capture("$pageview", route.app ? { app: route.app } : {});
 }
 
 /**
@@ -132,10 +129,10 @@ export function captureEvent(name: string, properties?: Record<string, unknown>)
  * The shell's URL can name what the person is looking at (`?chat=`, a workspace's
  * slug, an app's record), and none of that is product analytics.
  *
- * Anonymous, a URL loses its query and fragment. Identified, a URL or path naming the
- * page on screen becomes its route template (`templatedUrl`, `templatedPath`), any
- * other URL keeps only its origin and any other path is dropped, and a `$pageview`
- * loses the document title. Exported for tests.
+ * Anonymous, a URL loses its query and fragment. Identified, by key: PostHog takes
+ * `$current_url` and `$pathname` from the page on screen, so they become its origin
+ * plus template and its template; any other URL keeps only its origin, any other
+ * path is dropped, and a `$pageview` loses the document title. Exported for tests.
  */
 export function scrubUrls(event: CaptureResult | null): CaptureResult | null {
   if (!event) return event;
@@ -154,7 +151,10 @@ export function scrubUrls(event: CaptureResult | null): CaptureResult | null {
 /** One property as `scrubUrls` sends it, or `undefined` to drop it. */
 function scrubValue(key: string, value: unknown): unknown {
   if (!identified) return isHttpUrl(value) ? withoutQuery(value) : value;
-  if (isHttpUrl(value)) return templatedUrl(value, route);
-  if (typeof value === "string" && /pathname$/i.test(key)) return templatedPath(value, route);
+  if (key === "$current_url" && isHttpUrl(value))
+    return route ? originOf(value) + route.template : originOf(value);
+  if (key === "$pathname") return route?.template;
+  if (isHttpUrl(value)) return originOf(value);
+  if (/pathname$/i.test(key)) return undefined;
   return value;
 }

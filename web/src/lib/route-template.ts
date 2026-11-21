@@ -19,10 +19,8 @@ export interface RouteHandle {
   app?: string;
 }
 
-/** The page on screen: its real path, which never leaves the browser, and its template. */
+/** The page on screen, as its template. */
 export interface RouteView {
-  /** The pathname the router matched. Kept only to recognise this page in a URL. */
-  path: string;
   /** The matched route patterns joined, e.g. `/w/:slug/app/crm`. */
   template: string;
   /** The app the page renders, from the matched route's `handle`. */
@@ -45,33 +43,5 @@ export function routeViewOf(routes: RouteObject[], pathname: string): RouteView 
     const handle = route.handle as RouteHandle | undefined;
     if (handle?.app) app = handle.app;
   }
-  return { path: pathname, template: template || "/", ...(app ? { app } : {}) };
-}
-
-/**
- * A URL property of an identified event: the page on screen becomes its origin
- * plus template, and any other URL its origin alone, since its path cannot be
- * templated here. A value that does not parse is dropped to an empty string.
- */
-export function templatedUrl(url: string, view: RouteView | null): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return "";
-  }
-  return isOnScreen(parsed.pathname, view) ? parsed.origin + view.template : parsed.origin;
-}
-
-/**
- * A path property (`$pathname`, `$initial_pathname`, …) of an identified event:
- * the page on screen becomes its template, and any other path is dropped (`undefined`).
- */
-export function templatedPath(path: string, view: RouteView | null): string | undefined {
-  return isOnScreen(path, view) ? view.template : undefined;
-}
-
-/** Whether `path` is the page on screen, as its real path or as the template already. */
-function isOnScreen(path: string, view: RouteView | null): view is RouteView {
-  return view !== null && (path === view.path || path === view.template);
+  return { template: template || "/", ...(app ? { app } : {}) };
 }
