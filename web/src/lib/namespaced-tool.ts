@@ -12,10 +12,10 @@ import { PERSONAL_CONNECTOR_PREFIX } from "../_generated/personal-connector-pref
 /**
  * Whether an app/source name is a personal connector's marked wire name.
  *
- * Mirrors `isPersonalConnectorName` in `src/tools/identity-sources.ts`. Callers
- * that would RESOLVE the name against an app surface use this to bail: a
- * personal connector has no such surface, and the same bare name may well
- * belong to a workspace app that does.
+ * Mirrors `isPersonalConnectorName` in `src/tools/identity-sources.ts`. The
+ * marked name resolves on the server to the caller's own granted connection;
+ * the bare name may belong to a workspace app, so never strip the marker from a
+ * name that will be resolved (see `appNameFromToolName`).
  */
 export function isPersonalConnectorAppName(name: string): boolean {
   return name.startsWith(PERSONAL_CONNECTOR_PREFIX);
@@ -42,14 +42,14 @@ export function personalConnectorServerName(source: string): string {
  *
  * **The personal-connector marker is KEPT.** Every consumer of this value
  * re-resolves it — `getResources(appName, …)`, `readResource(appName, …)`,
- * `openArtifact({ appName, … })` — and none renders it as text, so it is an
- * identity, not a label. De-marking it would hand those callers `gmail` for a
- * `my_gmail__send` call, and `GET /v1/workspaces/:wsId/apps/gmail/resources/*` resolves through
- * the WORKSPACE registry: a same-named workspace app would serve its UI, mount
- * in the transcript, and its bridge would then dispatch bare `gmail__*` — the
- * workspace source, on the workspace's credentials, for a call the user made
- * against their own account. Strip the marker only where a human reads the
- * string.
+ * `openArtifact({ appName, … })`, and the bridge's `/mcp` calls — and none
+ * renders it as text, so it is an identity, not a label. The marked name
+ * resolves to the caller's own granted connection; de-marking it would hand
+ * those callers `gmail` for a `my_gmail__send` call, which resolves through the
+ * WORKSPACE registry: a same-named workspace app would serve its UI, and its
+ * bridge would dispatch bare `gmail__*` on the workspace's credentials for a
+ * call the user made against their own account. Strip the marker only where a
+ * human reads the string.
  */
 export function appNameFromToolName(wireName: string): string | undefined {
   const sep = wireName.indexOf("__");

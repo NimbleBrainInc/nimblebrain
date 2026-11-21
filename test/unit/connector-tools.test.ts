@@ -204,7 +204,7 @@ function buildHarness(): Harness {
         get: async (_id: string) => null,
       }),
     getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
-    // No connector here declares `admin_tools`; the gate itself is covered in
+    // No connector here declares `adminTools`; the gate itself is covered in
     // test/integration/connector-admin-tools.test.ts.
     connectorAdmission: async () => ADMIT_ALL,
     getAllowInsecureRemotes: () => false,
@@ -1265,7 +1265,7 @@ describe("manage_connectors.install", () => {
             description: "App",
             version: "1.0.0",
             remotes: [{ type: "streamable-http", url: "https://app.example.test/mcp" }],
-            _meta: { "ai.nimblebrain/host": { host_version: "1.0", ...entryUi } },
+            _meta: { "ai.nimblebrain/host": { hostVersion: "1.0", ...entryUi } },
           },
         ],
       }),
@@ -1687,7 +1687,7 @@ describe("manage_connectors — disconnect applies only to a sign-in", () => {
     });
     expect(result.isError).toBe(true);
     expect((result.content?.[0] as { text?: string } | undefined)?.text).toContain(
-      "no sign-in to disconnect",
+      "no sign-in to sign out of",
     );
   });
 
@@ -1702,7 +1702,7 @@ describe("manage_connectors — disconnect applies only to a sign-in", () => {
       serverName: STUB_SERVER_NAME,
     });
     expect((result.content?.[0] as { text?: string } | undefined)?.text ?? "").not.toContain(
-      "no sign-in to disconnect",
+      "no sign-in to sign out of",
     );
   });
 

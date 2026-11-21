@@ -39,3 +39,26 @@ export interface BriefingOutput {
     items: BriefingItem[];
     generated_at: string;
 }
+/**
+ * One conversation starter the workspace's plugins offer: a short action a
+ * member reads, and the text the shell sends when they choose it. From the
+ * plugin's entry in the pinned catalog
+ * (`extensions["ai.nimblebrain"].conversationStarters`).
+ */
+export interface ConversationStarter {
+    /** The connector's server name in this workspace, which joins it to its status and icon. */
+    serverName: string;
+    /** Plugin name in its catalog (`gmail`). */
+    plugin: string;
+    title: string;
+    text: string;
+}
+/**
+ * Returned by `nb__conversation_starters`: the conversation starters of every
+ * plugin the workspace has installed, in the catalog's order. The same for
+ * every member. Empty when no installed plugin has any, or when the catalog
+ * cannot be read.
+ */
+export interface ConversationStartersOutput {
+    conversationStarters: ConversationStarter[];
+}

@@ -14,6 +14,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { inZone, scheduleZone } from "../lib/schedule-zone.ts";
 import {
   cronFor,
   defaultOnceLocal,
@@ -176,5 +177,34 @@ describe("once and manual-only modes", () => {
         { type: "once", at: "2099-07-02T20:12:00.000Z" },
       ),
     ).toBe(false);
+  });
+});
+
+describe("the timezone a schedule is read in", () => {
+  test("an edit keeps the schedule's own timezone, whoever's browser it is", () => {
+    expect(
+      scheduleZone({ ...cron("0 9 * * *"), timezone: "Europe/Berlin" }, "America/Denver"),
+    ).toBe("Europe/Berlin");
+  });
+  test("a new schedule, or one stored without a timezone, is on the viewer's clock", () => {
+    expect(scheduleZone(null, "America/Denver")).toBe("America/Denver");
+    expect(scheduleZone(cron("0 9 * * *"), "America/Denver")).toBe("America/Denver");
+  });
+  test("with neither, no timezone is sent, and the server uses the instance's", () => {
+    expect(scheduleZone(null, undefined)).toBeUndefined();
+  });
+  test("only a clock schedule takes a timezone", () => {
+    expect(inZone({ type: "interval", intervalMs: 60_000 }, "America/Denver")).toEqual({
+      type: "interval",
+      intervalMs: 60_000,
+    });
+    expect(inZone(cron("0 9 * * *"), "America/Denver")).toEqual({
+      ...cron("0 9 * * *"),
+      timezone: "America/Denver",
+    });
+  });
+  test("nothing names a fixed timezone as a default", () => {
+    // The form once read every new schedule in one hard-coded zone.
+    expect(scheduleZone(null, "Asia/Tokyo")).not.toBe("Pacific/Honolulu");
   });
 });

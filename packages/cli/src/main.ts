@@ -20,7 +20,7 @@ import { checkLocalModel, localModelOf } from "./local-model.ts";
 import { mcp } from "./mcp.ts";
 import { open } from "./open.ts";
 import { CliError, exitCodeFor, type Failure, failure, type Ok } from "./result.ts";
-import { readInstall, type StatusResult, status } from "./status.ts";
+import { hasModelIn, readInstall, type StatusResult, status } from "./status.ts";
 import { settleWaiting } from "./telemetry.ts";
 import {
   NOTICE_WAIT_MS,
@@ -259,7 +259,12 @@ function statusLines(r: StatusLike, cli: string, command?: string): string[] {
   if (!r.host_loopback) lines.push(`  servers on this machine: not reachable until ${cli} update`);
   lines.push(telemetryLine(r.telemetry));
   lines.push(`  CLI ${r.cli_version}`);
-  if (command === "init" && !r.already && r.health === "ok") {
+  if (command === "init" && !r.already && r.health === "ok" && !hasModelIn(r)) {
+    lines.push(
+      "",
+      `Next: give NimbleBrain a model so it can chat. Run ${cli} key in your own terminal to enter a model key, or ${cli} local-model to run one on this machine with Ollama.`,
+    );
+  } else if (command === "init" && !r.already && r.health === "ok") {
     const ask = agent ? `, or ask ${AGENT_NAMES[agent] ?? agent} what NimbleBrain can do` : "";
     const use = r.opened ? `use NimbleBrain in your browser at ${r.url}` : `open ${r.url}`;
     lines.push("", `Next: ${use}${ask}. Stop it with ${cli} down.`);

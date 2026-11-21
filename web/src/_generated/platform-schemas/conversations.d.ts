@@ -325,7 +325,7 @@ export declare const DisplayMessage: import("@sinclair/typebox").TObject<{
     /** On a user message: the plugin request card it answers, so a client shows it as that answer. */
     pluginRequestAnswer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         serverName: import("@sinclair/typebox").TString;
-        answer: import("@sinclair/typebox").TUnsafe<"not_now" | "use">;
+        answer: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"use">, import("@sinclair/typebox").TLiteral<"not_now">]>;
     }>>;
     /**
      * Non-"complete" run terminations bubble up here: a `run.done` stopReason
@@ -482,7 +482,7 @@ export declare const ConversationsGetOutput: import("@sinclair/typebox").TObject
         /** On a user message: the plugin request card it answers, so a client shows it as that answer. */
         pluginRequestAnswer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             serverName: import("@sinclair/typebox").TString;
-            answer: import("@sinclair/typebox").TUnsafe<"not_now" | "use">;
+            answer: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"use">, import("@sinclair/typebox").TLiteral<"not_now">]>;
         }>>;
         /**
          * Non-"complete" run terminations bubble up here: a `run.done` stopReason

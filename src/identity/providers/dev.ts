@@ -1,6 +1,3 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { log } from "../../observability/log.ts";
 import {
   type CreateUserInput,
@@ -45,14 +42,13 @@ export class DevIdentityProvider implements IdentityProvider {
     authorizationServer: false,
   };
 
-  private initialized = false;
-  private usersDir: string;
+  /** The profile seed, shared by every request that arrives while it runs. */
+  private seeded: Promise<void> | null = null;
 
   constructor(
-    workDir: string,
+    _workDir: string,
     private userStore: UserStore,
   ) {
-    this.usersDir = join(workDir, "users");
     log.warn(
       "instance.json selects the dev identity provider: every request is the local developer, with no login",
     );
@@ -91,7 +87,7 @@ export class DevIdentityProvider implements IdentityProvider {
   /**
    * The stored dev profile, or null when it is missing or unreadable. Once the
    * provider has initialized, a corrupt `profile.json` falls back to the
-   * defaults rather than failing every request; `ensureUserProfile` still reads
+   * defaults rather than failing every request; `seedUserProfile` still reads
    * it unguarded on the first request.
    */
   private async readProfile(): Promise<User | null> {
@@ -106,33 +102,27 @@ export class DevIdentityProvider implements IdentityProvider {
   }
 
   /**
-   * Seed the dev user profile on first call. Seeding doesn't need to repeat
-   * per request, so the `initialized` gate stays here; `readProfile` reads the
-   * stored record on every request.
+   * Seed the dev user profile once per provider. Concurrent first requests
+   * share one seed, and the seed goes through `UserStore.create`, which writes
+   * by temp file and rename, so a request reading `profile.json` meanwhile
+   * sees no file or the whole record, never a truncated one. A failed seed is
+   * forgotten, so the next request tries again.
    */
-  private async ensureUserProfile(): Promise<void> {
-    if (this.initialized) return;
+  private ensureUserProfile(): Promise<void> {
+    this.seeded ??= this.seedUserProfile().catch((err: unknown) => {
+      this.seeded = null;
+      throw err;
+    });
+    return this.seeded;
+  }
 
-    const existingUser = await this.userStore.get(DEV_IDENTITY.id);
-    if (!existingUser) {
-      const now = new Date().toISOString();
-      const user: User = {
-        id: DEV_IDENTITY.id,
-        email: DEV_IDENTITY.email,
-        displayName: DEV_IDENTITY.displayName,
-        orgRole: DEV_IDENTITY.orgRole,
-        preferences: {},
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      const userDir = join(this.usersDir, DEV_IDENTITY.id);
-      if (!existsSync(userDir)) {
-        mkdirSync(userDir, { recursive: true });
-      }
-      await writeFile(join(userDir, "profile.json"), `${JSON.stringify(user, null, 2)}\n`, "utf-8");
-    }
-
-    this.initialized = true;
+  private async seedUserProfile(): Promise<void> {
+    if (await this.userStore.get(DEV_IDENTITY.id)) return;
+    await this.userStore.create({
+      id: DEV_IDENTITY.id,
+      email: DEV_IDENTITY.email,
+      displayName: DEV_IDENTITY.displayName,
+      orgRole: DEV_IDENTITY.orgRole,
+    });
   }
 }

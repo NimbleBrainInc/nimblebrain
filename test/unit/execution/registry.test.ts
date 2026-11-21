@@ -19,7 +19,7 @@ const deps = (over: Partial<AgentRuntimeDeps> = {}): AgentRuntimeDeps => ({
 function stubRuntime(id: string): AgentRuntime {
   return {
     id,
-    capabilities: { spendGate: false, usage: "reported" },
+    capabilities: { spendGate: false, usage: "reported", promotesTools: false },
     execute: () => Promise.reject(new Error("not run")),
   };
 }

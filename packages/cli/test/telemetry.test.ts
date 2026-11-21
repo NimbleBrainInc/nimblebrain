@@ -7,6 +7,7 @@ import { fail, type Machine, machine, REPO_COMPOSE } from "./fake.ts";
 const HOME = "/home/dana/.nimblebrain-local";
 const ENV = `${HOME}/.env`;
 const REPORT = `${HOME}/telemetry-report.jsonl`;
+const ID = `${HOME}/telemetry-id`;
 /**
  * A runtime that asks before sending (the repo's Compose file passes the
  * answer through), and a destination to send to: without a key no one is asked.
@@ -179,6 +180,65 @@ describe("telemetry consent at init", () => {
     expect(body.telemetry.state).toBe("undecided");
     expect(sent(m)).toHaveLength(0);
     expect(reportEvents(m)).toEqual(["cli.init_started", "cli.doctor_failed"]);
+  });
+
+  test("failed inits on one home count as one install, and .env gets that id", async () => {
+    const dockerMissing = { "docker --version": { ...fail(), missing: true } };
+    const m = machine({ env, exec: dockerMissing });
+    await json(["--yes", "--telemetry", "on"], m);
+    await json(["--yes", "--telemetry", "on"], m);
+    const ids = new Set(sent(m).map((e) => e.distinct_id));
+    expect(sent(m).map((e) => e.event)).toEqual([
+      "cli.init_started",
+      "cli.doctor_failed",
+      "cli.init_started",
+      "cli.doctor_failed",
+    ]);
+    expect(ids.size).toBe(1);
+    const [id] = ids;
+    expect(m.files.get(ID)).toEqual({ text: `${id}\n`, mode: 0o600 });
+
+    // The same home, now with Docker: the install takes the id the failures used.
+    const files = Object.fromEntries([...m.files].map(([p, f]) => [p, f.text]));
+    const fixed = machine({ env, files });
+    await json(["--yes", "--telemetry", "on"], fixed);
+    expect(fixed.files.get(ENV)?.text).toContain(`NB_TELEMETRY_ID=${id}\n`);
+    expect(sent(fixed).every((e) => e.distinct_id === id)).toBe(true);
+    await json(["uninstall", "--yes"], fixed);
+    expect(fixed.files.has(ID)).toBe(false);
+  });
+
+  test("another home is another install, with its own id", async () => {
+    const m = machine({ env, exec: { "docker --version": { ...fail(), missing: true } } });
+    await json(["--yes", "--telemetry", "on"], m);
+    await json(["--yes", "--telemetry", "on", "--home", "/home/dana/other"], m);
+    const [a, b] = sent(m)
+      .filter((e) => e.event === "cli.init_started")
+      .map((e) => e.distinct_id);
+    expect(a).not.toBe(b);
+    expect(m.files.get("/home/dana/other/telemetry-id")?.text).toBe(`${b}\n`);
+  });
+
+  test("locked off, no id is written anywhere", async () => {
+    for (const lock of [{ DO_NOT_TRACK: "1" }, { NB_TELEMETRY_DISABLED: "1" }]) {
+      const failing = machine({
+        env: { ...env, ...lock },
+        exec: { "docker --version": { ...fail(), missing: true } },
+      });
+      await json(["--yes", "--telemetry", "on"], failing);
+      expect(failing.files.has(ID)).toBe(false);
+      const m = machine({ env: { ...env, ...lock } });
+      await json(["--yes", "--telemetry", "on"], m);
+      expect(m.files.has(ID)).toBe(false);
+      expect(m.files.get(ENV)?.text).not.toContain("NB_TELEMETRY_ID");
+    }
+  });
+
+  test("no id is written into a home holding files this CLI did not write", async () => {
+    const m = machine({ env, files: { [`${HOME}/docker-compose.yml`]: "services: {}\n" } });
+    const { body } = await json(["--yes", "--telemetry", "on"], m);
+    expect(body.error).toBe("NOT_OURS");
+    expect(m.files.has(ID)).toBe(false);
   });
 
   test("a runtime that does not ask before sending gets no key, since it would send without asking", async () => {

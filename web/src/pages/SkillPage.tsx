@@ -2,13 +2,17 @@ import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Streamdown } from "streamdown";
+import type { Plugin } from "../_generated/platform-schemas/plugins";
 import type { SkillDetail } from "../_generated/platform-schemas/skills";
-import { callTool } from "../api/client";
+import { callTool, listPlugins } from "../api/client";
 import {
   AudienceOption,
   type InstallAudience,
 } from "../components/connectors/InstallAudienceDialog";
+import { PanelHeading } from "../components/connectors/personal-connector";
 import { useNotice } from "../components/notices";
+import { SECTION_ROW } from "../components/plugins/list-parts";
+import { SkillHereSwitch } from "../components/plugins/SkillHereSwitch";
 import { SkillScopeBadge } from "../components/plugins/SkillScopeBadge";
 import { Button } from "../components/ui/button";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
@@ -20,10 +24,11 @@ import {
   listAuthoredSkills,
   writeResult,
 } from "../lib/authored-skills";
-import { type AuthoredSkillScope, skillPath } from "../lib/plugins";
-import { skillMechanismLabel } from "../lib/skill-display";
+import { type AuthoredSkillScope, skillPath, skillsPath } from "../lib/plugins";
+import { skillLoadsText } from "../lib/skill-display";
 import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
 import { parseToolResponse } from "../lib/tool-response";
+import { cn } from "../lib/utils";
 import { toWsId } from "../lib/workspace-slug";
 import { InlineError } from "./settings/components";
 import {
@@ -37,8 +42,8 @@ import {
 import type { SkillUpdateArgs } from "./settings/skill-edit-patch";
 
 /**
- * One skill someone wrote, at `/w/:slug/plugins/skills/:scope/:name`, opened
- * from the Skills group on Plugins. Who may change it follows the server's
+ * One skill someone wrote, at `/w/:slug/skills/:scope/:name`, opened from
+ * Skills. Who may change it follows the server's
  * write rules: a workspace skill needs workspace write, the viewer's own skill
  * is theirs, and an org skill is read here and changed in org settings.
  *
@@ -56,7 +61,7 @@ export function SkillPage() {
     name: string;
   }>();
   return (
-    <PluginsColumn slug={slug}>
+    <SkillsColumn slug={slug}>
       {/* Keyed by the route: a param-only change reuses the element, and one
           skill's state and open form must not carry over to the next. */}
       {isAuthoredScope(scope) ? (
@@ -64,15 +69,15 @@ export function SkillPage() {
       ) : (
         <NotHere />
       )}
-    </PluginsColumn>
+    </SkillsColumn>
   );
 }
 
 /**
- * The Plugins column, with its link back to Plugins unless the page brings its
+ * The Skills column, with its link back to Skills unless the page brings its
  * own (the new skill form's header has a back button that cancels it).
  */
-function PluginsColumn({
+function SkillsColumn({
   slug,
   backLink = true,
   children,
@@ -87,10 +92,10 @@ function PluginsColumn({
         {/* A block, not inline: the column's spacing is a margin on each child. */}
         {backLink && (
           <Link
-            to={`/w/${slug}/plugins`}
-            className="block w-fit text-xs text-muted-foreground hover:underline"
+            to={skillsPath(slug)}
+            className="block w-fit py-1 text-xs text-muted-foreground hover:underline"
           >
-            ← Plugins
+            ← Skills
           </Link>
         )}
         {children}
@@ -118,6 +123,8 @@ function SkillDetailView({
   const editable = scope === "user" || (scope === "workspace" && canWriteWorkspace);
   const [skill, setSkill] = useState<AuthoredSkill | null | undefined>(undefined);
   const [detail, setDetail] = useState<SkillDetail | null>(null);
+  // Names the plugins a tool pattern reaches; until it answers, "a matching tool".
+  const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -139,6 +146,10 @@ function SkillDetailView({
     })().catch((err: unknown) => {
       if (!cancelled) setError(err instanceof Error ? err.message : String(err));
     });
+    listPlugins(wsId).then(
+      (next) => !cancelled && setPlugins(next.plugins),
+      () => {},
+    );
     return () => {
       cancelled = true;
     };
@@ -185,7 +196,7 @@ function SkillDetailView({
     if (!window.confirm("Delete this skill? It will be snapshotted to _versions/ first.")) return;
     void run(async () => {
       writeResult(await callSkillsTool(scope, wsId, "delete", { id: current.id }));
-      navigate(`/w/${slug}/plugins`);
+      navigate(skillsPath(slug));
     });
   };
 
@@ -195,7 +206,9 @@ function SkillDetailView({
   if (skill === undefined) return <p className="text-sm text-muted-foreground">Loading…</p>;
   if (skill === null) return <NotHere />;
 
-  const mechanism = skillMechanismLabel(skill);
+  // The full answer, the default included; the raw patterns are in the
+  // loading details below.
+  const loads = skillLoadsText(skill, plugins, { includeDefault: true });
   return (
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-4">
@@ -209,10 +222,9 @@ function SkillDetailView({
           {skill.description && (
             <p className="mt-1 text-sm text-muted-foreground">{skill.description}</p>
           )}
-          {mechanism && (
+          {loads && (
             <p className="mt-0.5 text-xs text-muted-foreground" data-testid="skill-mechanism">
-              {mechanism.text}
-              {mechanism.mono && <span className="font-mono"> {mechanism.mono}</span>}
+              {loads}
             </p>
           )}
         </div>
@@ -223,6 +235,14 @@ function SkillDetailView({
           label={skill.name}
         />
       </header>
+
+      {skill.scope === "user" && (
+        <HereSection
+          skill={skill}
+          workspaceId={wsId}
+          onChange={(onHere) => setSkill((prev) => (prev ? { ...prev, onHere } : prev))}
+        />
+      )}
 
       {error && <InlineError message={error} />}
 
@@ -248,6 +268,46 @@ function SkillDetailView({
         <ReadOnlySkill detail={detail} scope={scope} />
       )}
     </div>
+  );
+}
+
+/**
+ * Whether the viewer's own skill applies in this workspace. A disabled skill
+ * applies nowhere, so here is moot: it says Disabled where the switch would be.
+ */
+function HereSection({
+  skill,
+  workspaceId,
+  onChange,
+}: {
+  skill: AuthoredSkill;
+  workspaceId: string;
+  onChange: (onHere: boolean) => void;
+}) {
+  const disabled = skill.status !== "active";
+  return (
+    <section className={cn(SECTION_ROW, "border-y border-border/60 py-4")} data-testid="skill-here">
+      <PanelHeading
+        title="In this workspace"
+        hint={
+          disabled
+            ? "Turn the skill on first. Then it applies in every workspace unless you turn it off here."
+            : "Your skills apply in every workspace unless you turn one off here."
+        }
+      />
+      {disabled ? (
+        <span className="shrink-0 text-xs text-muted-foreground" data-testid="skill-state">
+          Disabled
+        </span>
+      ) : (
+        <SkillHereSwitch
+          skill={skill}
+          workspaceId={workspaceId}
+          className="shrink-0"
+          onChange={onChange}
+        />
+      )}
+    </section>
   );
 }
 
@@ -281,7 +341,7 @@ function ReadOnlySkill({ detail, scope }: { detail: SkillDetail; scope: Authored
 }
 
 /**
- * A new skill, at `/w/:slug/plugins/skills/new`, opened from Browse. It asks
+ * A new skill, at `/w/:slug/skills/new`, opened from Skills' New skill. It asks
  * whom the skill is for in the install dialog's words: "Just me" writes it to
  * the viewer's own skills, which follow them into every workspace; "Everyone in
  * <workspace>" writes it to the workspace, offered only to a member who may
@@ -290,9 +350,9 @@ function ReadOnlySkill({ detail, scope }: { detail: SkillDetail; scope: Authored
 export function NewSkillPage() {
   const { slug = "" } = useParams<{ slug: string }>();
   return (
-    <PluginsColumn slug={slug} backLink={false}>
+    <SkillsColumn slug={slug} backLink={false}>
       <NewSkill key={slug} slug={slug} />
-    </PluginsColumn>
+    </SkillsColumn>
   );
 }
 
@@ -334,8 +394,7 @@ function NewSkill({ slug }: { slug: string }) {
     <CreateSkillView
       pending={pending}
       error={error}
-      backLabel="Back to plugins"
-      onCancel={() => navigate(`/w/${slug}/plugins?tab=browse`)}
+      onCancel={() => navigate(skillsPath(slug))}
       onCreate={(draft) => void create(draft)}
       audience={
         <fieldset className="space-y-2">

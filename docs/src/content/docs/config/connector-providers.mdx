@@ -7,7 +7,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 Connectors reach outside services in two different ways, and the difference decides who configures what.
 
-- A **connector** is a catalog entry a workspace installs — Notion, Linear, Gmail. Installing is a workspace-admin action, done from the workspace's **Plugins → Browse**.
+- A **connector** is a catalog entry a workspace installs — Notion, Linear, Gmail. Installing is a workspace-admin action, done from the workspace's **Plugins → Browse plugins**.
 - A **managed-connector provider** is a third party that brokers auth *and* hosts the MCP session on your tenant's behalf. You configure one **once, platform-wide**, with a credential. That's an operator action, not a workspace one.
 
 They are different layers. A connector *declares which auth kind it uses*, and two of those kinds — `composio` and `smithery` — delegate to a configured provider:

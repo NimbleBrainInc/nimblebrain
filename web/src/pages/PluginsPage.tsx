@@ -1,60 +1,54 @@
-import { Menu } from "@base-ui/react/menu";
-import { ChevronDown } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Check, Plus } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Plugin, PluginsListOutput } from "../_generated/platform-schemas/plugins";
-import {
-  disconnectPersonalConnector,
-  grantConnector,
-  listPersonalConnectors,
-  listPlugins,
-  type PersonalConnector,
-  revokeConnector,
-} from "../api/client";
+import { listPersonalConnectors, listPlugins, type PersonalConnector } from "../api/client";
+import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { connectorStatusSummary } from "../components/connectors/ConnectorList";
+import { startPluginSignIn } from "../components/connectors/personal-connector";
 import {
-  disconnectConsequence,
-  startPluginSignIn,
-} from "../components/connectors/personal-connector";
-import {
+  type ConnectedTarget,
   type ReturnedConnector,
   useConnectedNotice,
 } from "../components/connectors/useConnectedNotice";
-import { InstalledView, type RowMenuItem } from "../components/plugins/InstalledView";
-import { UsePluginHereDialog } from "../components/plugins/UsePluginHereDialog";
+import {
+  HEADER_ACTION,
+  HEADER_ACTION_LABEL,
+  ListEmpty,
+  ListPageHeader,
+  ROW_LINK,
+  RowChevron,
+  SegmentBar,
+} from "../components/plugins/list-parts";
 import { Button } from "../components/ui/button";
-import { ConfirmDialog } from "../components/ui/confirm-dialog";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useEvents } from "../hooks/useEvents";
 import { useCanWriteActiveWorkspace } from "../hooks/useScopedRole";
-import { type AuthoredSkill, listAuthoredSkills } from "../lib/authored-skills";
 import {
   type AttentionStep,
-  buildInstalledModel,
-  type InstalledFilters,
+  attentionLabel,
+  attentionReason,
+  buildPluginsModel,
+  defaultSegment,
   pluginAttention,
-} from "../lib/installed-view";
-import { newSkillPath, pluginConnected, pluginPath, skillPath } from "../lib/plugins";
+  type Segment,
+} from "../lib/plugin-lists";
+import { browsePluginsPath, pluginAccount, pluginConnected, pluginPath } from "../lib/plugins";
 import { cn } from "../lib/utils";
 import { toWsId } from "../lib/workspace-slug";
-import { ConnectorDirectory } from "./settings/ConnectorBrowsePage";
 import { EmptyState, InlineError } from "./settings/components";
 
 /**
- * Plugins — what the agent can do in this workspace, in one place.
+ * Plugins — the plugins installed for this workspace's agent. Adding one is
+ * its own page, Browse plugins (`PluginsBrowsePage`); skills are on Skills.
  *
- * Installed arranges, for a listing of any length (`InstalledView`), what the
- * agent can use here by who it acts for: **Shared** (the workspace's plugins,
- * its skills, and the org's), **Just you** (the viewer's plugins granted here
- * and their own skills), and **Yours, not on here**. Plugins whose next step is
- * an action are also gathered at the top under **Needs you**. A row names the
- * plugin and the account it uses, offers only what needs the viewer, and opens
- * the plugin's page; the rest is in its ⋯ menu. Whose a plugin is reads from
- * the facts the listing carries (ADR-0069).
- *
- * Browse offers writing a skill above the connector directory, which asks
- * whom an install is for: the viewer alone (granted here in the same act) or
- * everyone in the workspace.
+ * **Workspace** lists the workspace's plugins, which act for everyone here.
+ * **Personal** lists the viewer's own, on here or not; one not on here says
+ * Off here, and its page turns it on. A row is one link to the plugin's page,
+ * where every action is. It names the plugin and what it does, and on its
+ * right says the plugin's state in words, never a button. A line above the
+ * list says when something in the segment needs the viewer: with one, it
+ * carries that plugin's action; with more, it filters the list to them.
  *
  * One column, because this renders in the main area beside the docked chat
  * (`web/DESIGN.md`).
@@ -63,183 +57,55 @@ export function PluginsPage() {
   const { slug = "" } = useParams<{ slug: string }>();
   const wsId = toWsId(slug);
   const navigate = useNavigate();
-  const { workspaces } = useWorkspaceContext();
-  const workspaceName = workspaces.find((w) => w.id === wsId)?.name ?? "this workspace";
-  const [params, setParams] = useSearchParams();
-  const tab: PluginsTab = params.get("tab") === "browse" ? "browse" : "installed";
-  const showTab = (next: PluginsTab) =>
-    setParams(next === "browse" ? { tab: "browse" } : {}, { replace: true });
+  const [params] = useSearchParams();
+
+  // Browse was a tab of this page; its address still lands there.
+  if (params.get("tab") === "browse") {
+    const rest = new URLSearchParams(params);
+    rest.delete("tab");
+    const query = rest.toString();
+    return <Navigate to={`${browsePluginsPath(slug)}${query ? `?${query}` : ""}`} replace />;
+  }
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-4xl mx-auto px-(--page-gutter) py-6 space-y-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="text-xl font-semibold tracking-tight">Plugins</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              What your agent can do in {workspaceName}.
-            </p>
-          </div>
-          {tab === "installed" && (
-            <div className="flex shrink-0 gap-2" data-testid="plugins-header-actions">
-              <Button type="button" variant="outline" size="sm" onClick={() => showTab("browse")}>
-                Browse directory
-              </Button>
-              <AddMenu
-                onPlugin={() => showTab("browse")}
-                onSkill={() => navigate(newSkillPath(slug))}
-              />
-            </div>
-          )}
-        </div>
-
-        <div role="tablist" aria-label="Plugins" className="flex gap-4 border-b border-border">
-          <TabButton selected={tab === "installed"} onSelect={() => showTab("installed")}>
-            Installed
-          </TabButton>
-          <TabButton selected={tab === "browse"} onSelect={() => showTab("browse")}>
-            Browse
-          </TabButton>
-        </div>
-
-        {tab === "installed" ? (
-          <InstalledPlugins
-            key={wsId}
-            wsId={wsId}
-            slug={slug}
-            workspaceName={workspaceName}
-            onBrowse={() => showTab("browse")}
-          />
-        ) : (
-          <Browse slug={slug} />
-        )}
+      <div className="max-w-4xl mx-auto px-(--page-gutter) py-6 space-y-5">
+        <ListPageHeader
+          title="Plugins"
+          action={
+            <Button
+              type="button"
+              size="sm"
+              className={HEADER_ACTION}
+              aria-label="Browse plugins"
+              onClick={() => navigate(browsePluginsPath(slug))}
+              data-testid="plugins-browse"
+            >
+              <Plus aria-hidden />
+              <span className={HEADER_ACTION_LABEL}>Browse plugins</span>
+            </Button>
+          }
+        />
+        <InstalledPlugins key={wsId} wsId={wsId} slug={slug} />
       </div>
     </div>
   );
 }
 
-type PluginsTab = "installed" | "browse";
-
-/** Add ▾: a plugin from the directory, or a skill written here. */
-function AddMenu({ onPlugin, onSkill }: { onPlugin: () => void; onSkill: () => void }) {
-  const itemClass =
-    "flex w-full cursor-default items-center px-3 py-1.5 text-sm outline-none data-[highlighted]:bg-foreground/5";
-  return (
-    <Menu.Root>
-      <Menu.Trigger
-        render={<Button type="button" size="sm" data-testid="plugins-add" />}
-        className="gap-1"
-      >
-        Add
-        <ChevronDown className="h-3.5 w-3.5" aria-hidden />
-      </Menu.Trigger>
-      <Menu.Portal>
-        <Menu.Positioner align="end" sideOffset={4} className="z-50">
-          <Menu.Popup
-            data-testid="plugins-add-popup"
-            className="min-w-48 rounded-sm border bg-popover py-1 text-popover-foreground shadow-md outline-none"
-          >
-            <Menu.Item className={itemClass} onClick={onPlugin}>
-              Plugin from the directory
-            </Menu.Item>
-            <Menu.Item className={itemClass} onClick={onSkill}>
-              Write a skill
-            </Menu.Item>
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
-  );
-}
-
-/**
- * Browse: writing a skill, then the plugin directory. A skill written here is
- * not a plugin (ADR-0068), so it is its own entry above the directory rather
- * than a card in it. Room is left below it for a skills registry to browse.
- */
-function Browse({ slug }: { slug: string }) {
+function InstalledPlugins({ wsId, slug }: { wsId: string; slug: string }) {
   const navigate = useNavigate();
-  return (
-    <div className="space-y-6">
-      <div
-        className="flex items-center justify-between gap-4 rounded-md border border-border px-4 py-3"
-        data-testid="write-skill"
-        data-tour="skills"
-      >
-        <div className="min-w-0">
-          <p className="text-sm font-medium">Skills</p>
-          <p className="text-xs text-muted-foreground">
-            Teach the agent how you work, in your own words, for just you or everyone here.
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => navigate(newSkillPath(slug))}
-        >
-          Write a skill
-        </Button>
-      </div>
-      <ConnectorDirectory offerPersonal />
-    </div>
-  );
-}
-
-function TabButton({
-  selected,
-  onSelect,
-  children,
-}: {
-  selected: boolean;
-  onSelect: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={selected}
-      onClick={onSelect}
-      className={cn(
-        "-mb-px border-b-2 px-1 pb-2 text-sm transition-colors",
-        selected
-          ? "border-foreground font-medium text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-const NO_FILTERS: InstalledFilters = { query: "", kind: "all", owner: "everyone" };
-
-function InstalledPlugins({
-  wsId,
-  slug,
-  workspaceName,
-  onBrowse,
-}: {
-  wsId: string;
-  slug: string;
-  workspaceName: string;
-  onBrowse: () => void;
-}) {
-  const navigate = useNavigate();
-  // Installing and signing in a workspace plugin write the workspace; granting
-  // your own plugin does not, so only those affordances are gated.
+  const { workspaces } = useWorkspaceContext();
+  const workspaceName = workspaces.find((w) => w.id === wsId)?.name ?? "this workspace";
+  // Signing in a workspace plugin writes the workspace; granting your own
+  // plugin does not, so only that affordance is gated.
   const canManage = useCanWriteActiveWorkspace();
   const [listing, setListing] = useState<PluginsListOutput | null>(null);
-  const [skills, setSkills] = useState<AuthoredSkill[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [skillsError, setSkillsError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [filters, setFilters] = useState<InstalledFilters>(NO_FILTERS);
-  const [confirming, setConfirming] = useState<Plugin | null>(null);
-  const [stopping, setStopping] = useState<Plugin | null>(null);
-  const [disconnecting, setDisconnecting] = useState<Plugin | null>(null);
+  const [chosenSegment, setChosenSegment] = useState<Segment | null>(null);
+  const [query, setQuery] = useState("");
+  const [needsOnly, setNeedsOnly] = useState(false);
   // The viewer's connector records, which say which route each sign-in takes
   // and where each plugin is on. An action that signs in waits for them rather
   // than guess the route.
@@ -263,20 +129,10 @@ function InstalledPlugins({
   useEffect(() => {
     const signal = { cancelled: false };
     void refresh(signal);
-    listAuthoredSkills(wsId).then(
-      (next) => {
-        if (!signal.cancelled) setSkills(next);
-      },
-      (err: unknown) => {
-        if (signal.cancelled) return;
-        setSkillsError(err instanceof Error ? err.message : String(err));
-        setSkills([]);
-      },
-    );
     return () => {
       signal.cancelled = true;
     };
-  }, [refresh, wsId]);
+  }, [refresh]);
 
   const loadConnectors = useCallback(async (signal?: { cancelled: boolean }) => {
     try {
@@ -295,8 +151,15 @@ function InstalledPlugins({
     };
   }, [loadConnectors]);
 
-  // A sign-in finishing elsewhere changes a row's status and account.
-  useEvents({ onConnectionStateChanged: () => void refresh() });
+  // A sign-in finishing elsewhere changes a row's status and account; a plugin
+  // turned on or off from another tab or the chat changes where it is on.
+  useEvents({
+    onConnectionStateChanged: () => void refresh(),
+    onConnectorGrantChanged: () => {
+      void refresh();
+      void loadConnectors();
+    },
+  });
 
   const plugins = listing && listing.wsId === wsId ? listing.plugins : null;
 
@@ -306,22 +169,32 @@ function InstalledPlugins({
   const returned = useMemo(() => plugins?.flatMap(toReturnedConnectors) ?? null, [plugins]);
   const justConnected = useConnectedNotice(returned, rereadSilently);
 
+  // Until the viewer picks one, the segment is Workspace, unless only Personal
+  // has anything or a sign-in just returned to one of the viewer's own.
+  const counts = useMemo(
+    () =>
+      plugins
+        ? buildPluginsModel(plugins, { segment: "workspace", query: "", canManage }).counts
+        : null,
+    [plugins, canManage],
+  );
+  const segment: Segment =
+    chosenSegment ?? defaultSegment(counts, justConnected?.owner === "person");
+
   const model = useMemo(
-    () => (plugins && skills ? buildInstalledModel(plugins, skills, filters, { canManage }) : null),
-    [plugins, skills, filters, canManage],
+    () => (plugins ? buildPluginsModel(plugins, { segment, query, needsOnly, canManage }) : null),
+    [plugins, segment, query, needsOnly, canManage],
   );
 
-  // Turn it on here, then sign in when it has no account behind it. The grant
-  // needs only the install, so it stands across the sign-in's round trip. The
-  // redirect leaves the page, so the dialog stays as it is until it does.
-  const grantHere = async (plugin: Plugin) => {
-    for (const server of plugin.servers) await grantConnector(server.serverName, wsId);
-    if (!pluginConnected(plugin)) {
-      const signedIn = await startPluginSignIn(plugin, connectors ?? [], { workspaceId: wsId });
-      if (signedIn === "redirected") return;
-    }
-    await refresh();
-    setConfirming(null);
+  // A filter to what needs the viewer ends once nothing does.
+  const needsCount = model?.needsYou.length ?? 0;
+  useEffect(() => {
+    if (needsOnly && needsCount === 0) setNeedsOnly(false);
+  }, [needsOnly, needsCount]);
+
+  const chooseSegment = (next: Segment) => {
+    setChosenSegment(next);
+    setNeedsOnly(false);
   };
 
   const connectHere = async (plugin: Plugin) => {
@@ -338,185 +211,328 @@ function InstalledPlugins({
     setBusyId(null);
   };
 
-  // Both throw on failure, so the confirm stays open with the error shown.
-  const stopHere = async (plugin: Plugin) => {
-    for (const server of plugin.servers) await revokeConnector(server.serverName, wsId);
-    await refresh();
-    setStopping(null);
-  };
-
-  const disconnect = async (plugin: Plugin) => {
-    for (const server of plugin.servers) await disconnectPersonalConnector(server.serverName);
-    await Promise.all([refresh(), loadConnectors()]);
-    setDisconnecting(null);
-  };
-
-  // The workspaces a person's plugin is on in, which Disconnect turns it off in.
-  const grantCount = (plugin: Plugin) => {
-    const names = plugin.servers.map((s) => s.serverName);
-    const ids = (connectors ?? [])
-      .filter((c) => names.includes(c.serverName))
-      .flatMap((c) => c.grantedWorkspaces);
-    return new Set(ids).size;
-  };
-
   if (loadError && !plugins) {
     return <InlineError message={`Unable to load plugins: ${loadError}. Reload to retry.`} />;
   }
-  if (!model) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (!model || !plugins) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
-  // Only what needs the viewer: nothing for a healthy plugin.
-  const rowAction = (plugin: Plugin): React.ReactNode => {
-    if (plugin.owner.kind === "person" && !plugin.granted) {
-      return (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          // Use here signs in when it is not connected, which needs the
-          // connector's record to pick the route.
-          disabled={!pluginConnected(plugin) && connectors === null}
-          onClick={() => {
-            setActionError(null);
-            setConfirming(plugin);
-          }}
-          data-testid="plugin-use-here"
-        >
-          Use here
-        </Button>
-      );
-    }
-    const step = pluginAttention(plugin, { canManage });
-    if (!step) return statusWords(plugin);
-    // A workspace plugin signs in on its page, where its admin connects it, and
-    // a failed or unset-up one is fixed there; only a person's own sign-in
-    // starts from the row.
-    const fromRow = step !== "open" && plugin.owner.kind === "person";
-    const busy = busyId === plugin.id;
-    return (
-      <AttentionButton
-        step={step}
-        busy={busy}
-        disabled={fromRow && (busy || connectors === null)}
-        onClick={() => (fromRow ? void connectHere(plugin) : navigate(pluginPath(slug, plugin)))}
-      />
-    );
-  };
+  // The one control the Needs-you line offers, when one plugin needs the viewer.
+  const nextStep = (plugin: Plugin): React.ReactNode =>
+    nextStepFor(plugin, {
+      canManage,
+      // Signing in follows the connector's record, so a sign-in waits for it.
+      recordsLoaded: connectors !== null,
+      busy: busyId === plugin.id,
+      onConnect: () => void connectHere(plugin),
+      onOpen: () => navigate(pluginPath(slug, plugin)),
+    });
 
-  const rowMenu = (plugin: Plugin): RowMenuItem[] => {
-    const items: RowMenuItem[] = [{ kind: "link", label: "Open", to: pluginPath(slug, plugin) }];
-    if (plugin.owner.kind !== "person") return items;
-    if (plugin.granted) {
-      items.push({ kind: "action", label: "Stop using here", onSelect: () => setStopping(plugin) });
-    }
-    if (pluginConnected(plugin)) {
-      items.push({
-        kind: "action",
-        label: "Disconnect",
-        destructive: true,
-        onSelect: () => setDisconnecting(plugin),
-      });
-    }
-    return items;
-  };
-
-  const total = (plugins?.length ?? 0) + (skills?.length ?? 0);
+  // With one plugin needing the viewer, the line above the list carries its action.
+  const [only] = model.needsYou;
+  const actionInBanner = model.needsYou.length === 1 && only ? only.id : null;
 
   return (
     <div className="space-y-4">
+      <SegmentBar
+        segment={segment}
+        onSegment={chooseSegment}
+        counts={model.counts}
+        query={query}
+        onQuery={setQuery}
+        searchLabel="Search plugins"
+      />
+
       {actionError && <InlineError message={actionError} />}
-      {skillsError && <InlineError message={`Unable to load skills: ${skillsError}`} />}
 
-      <InstalledView
-        model={model}
-        filters={filters}
-        onFiltersChange={setFilters}
-        workspaceName={workspaceName}
-        total={total}
-        pluginTo={(plugin) => pluginPath(slug, plugin)}
-        skillTo={(skill) => skillPath(slug, skill.scope, skill.name)}
-        rowAction={rowAction}
-        rowMenu={rowMenu}
-        justConnected={(plugin) =>
-          justConnected !== null &&
-          pluginConnected(plugin) &&
-          justConnected.owner === plugin.owner.kind &&
-          plugin.servers.some((s) => s.serverName === justConnected.serverName)
-        }
-        emptyState={
-          <EmptyState
-            message="Nothing is installed here yet. Add a plugin to give your agent tools, or write a skill to teach it how you work."
-            action={
-              <div className="flex gap-2">
-                {canManage && (
-                  <Button type="button" variant="outline" size="sm" onClick={onBrowse}>
-                    Browse plugins
-                  </Button>
-                )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => navigate(newSkillPath(slug))}
-                >
-                  Write a skill
-                </Button>
-              </div>
-            }
+      {model.needsYou.length > 0 && (
+        <NeedsYou
+          plugins={model.needsYou}
+          action={only && actionInBanner ? nextStep(only) : null}
+          filtered={needsOnly}
+          onFilter={setNeedsOnly}
+        />
+      )}
+
+      <PluginListBody
+        installed={plugins.length}
+        rows={model.rows}
+        empty={emptyMessage(query, segment, workspaceName)}
+        segment={segment}
+        renderRow={(plugin) => (
+          <PluginRow
+            key={plugin.id}
+            plugin={plugin}
+            to={pluginPath(slug, plugin)}
+            state={rowState(plugin, canManage)}
+            fresh={isJustConnected(justConnected, plugin)}
           />
-        }
-      />
-
-      <UsePluginHereDialog
-        plugin={confirming}
-        workspaceName={workspaceName}
-        onClose={() => setConfirming(null)}
-        onConfirm={grantHere}
-      />
-      <ConfirmDialog
-        open={stopping !== null}
-        onOpenChange={(open) => !open && setStopping(null)}
-        title={`Stop using ${stopping?.displayName ?? ""} here?`}
-        description={`Your agent can't use it in ${workspaceName} until you turn it back on. It stays connected to your account.`}
-        confirmLabel="Stop using here"
-        pendingLabel="Stopping…"
-        onConfirm={() => (stopping ? stopHere(stopping) : undefined)}
-      />
-      <ConfirmDialog
-        open={disconnecting !== null}
-        onOpenChange={(open) => !open && setDisconnecting(null)}
-        title={`Disconnect ${disconnecting?.displayName ?? ""}?`}
-        description={disconnectConsequence(disconnecting ? grantCount(disconnecting) : 0)}
-        confirmLabel="Disconnect"
-        pendingLabel="Disconnecting…"
-        destructive
-        onConfirm={() => (disconnecting ? disconnect(disconnecting) : undefined)}
+        )}
       />
     </div>
   );
 }
 
 /**
- * A plugin that is not ready but asks the viewer nothing (settling, or a
- * workspace sign-in only its admin does) reads the connector list's status
- * words; a ready one shows nothing.
+ * The one control the Needs-you line offers for the single plugin needing the
+ * viewer: what `pluginAttention` asks. A workspace plugin signs in on its page,
+ * where its admin connects it, and a failed or unset-up one is fixed there;
+ * only a person's own sign-in starts from the list.
  */
-function statusWords(plugin: Plugin): React.ReactNode {
-  const notReady = plugin.servers.find((s) => s.status !== "ready");
-  const status = notReady ? connectorStatusSummary(notReady.status) : null;
-  if (!status) return null;
+function nextStepFor(
+  plugin: Plugin,
+  opts: {
+    canManage: boolean;
+    recordsLoaded: boolean;
+    busy: boolean;
+    onConnect: () => void;
+    onOpen: () => void;
+  },
+): React.ReactNode {
+  const step = pluginAttention(plugin, opts);
+  if (!step) return null;
+  const fromList = step !== "open" && plugin.owner.kind === "person";
   return (
-    <span
-      className={cn("flex items-center gap-1.5 px-2 text-xs", status.tone)}
-      data-testid="plugin-status"
+    <AttentionButton
+      step={step}
+      busy={opts.busy}
+      disabled={fromList && (opts.busy || !opts.recordsLoaded)}
+      onClick={fromList ? opts.onConnect : opts.onOpen}
+    />
+  );
+}
+
+/**
+ * What a row says on its right, in words: a row holds no control, since the row
+ * itself opens the plugin's page, where its actions are. A person's plugin not
+ * on here says so; one that asks something of the viewer says what is wrong;
+ * otherwise its state.
+ */
+function rowState(plugin: Plugin, canManage: boolean): React.ReactNode {
+  if (plugin.owner.kind === "person" && !plugin.granted) {
+    return (
+      <span className="truncate text-xs text-muted-foreground" data-testid="plugin-state">
+        Off here
+      </span>
+    );
+  }
+  if (pluginAttention(plugin, { canManage })) return attentionWords(plugin);
+  return stateWords(plugin);
+}
+
+/** Whether a sign-in on this page just connected this plugin, as the owner it names. */
+function isJustConnected(target: ConnectedTarget | null, plugin: Plugin): boolean {
+  return (
+    target !== null &&
+    pluginConnected(plugin) &&
+    target.owner === plugin.owner.kind &&
+    plugin.servers.some((s) => s.serverName === target.serverName)
+  );
+}
+
+/** The list: rows, or what to say when there are none. */
+function PluginListBody({
+  installed,
+  rows,
+  empty,
+  segment,
+  renderRow,
+}: {
+  /** How many plugins are installed at all. */
+  installed: number;
+  rows: Plugin[];
+  /** What to say when the segment or search leaves none. */
+  empty: string;
+  segment: Segment;
+  renderRow: (plugin: Plugin) => React.ReactNode;
+}) {
+  if (installed === 0) {
+    return <EmptyState message="No plugins here yet. Browse plugins to give your agent tools." />;
+  }
+  if (rows.length === 0) return <ListEmpty>{empty}</ListEmpty>;
+  return (
+    <div data-testid="plugin-list" data-segment={segment}>
+      {rows.map(renderRow)}
+    </div>
+  );
+}
+
+/** What the list says when the segment or the search leaves nothing. */
+function emptyMessage(query: string, segment: Segment, workspaceName: string): string {
+  const q = query.trim();
+  if (q) return `No plugins match "${q}".`;
+  return segment === "workspace"
+    ? `${workspaceName} has no plugins for everyone yet.`
+    : "You have no plugins of your own yet. Browse plugins and choose Just me to add one.";
+}
+
+/**
+ * One line above the list, only while something in the segment needs the
+ * viewer. One plugin: what is wrong and its action. More: how many, and a
+ * filter to just them.
+ */
+function NeedsYou({
+  plugins,
+  action,
+  filtered,
+  onFilter,
+}: {
+  plugins: Plugin[];
+  action: React.ReactNode;
+  filtered: boolean;
+  onFilter: (next: boolean) => void;
+}) {
+  const [first] = plugins;
+  const count = plugins.length;
+  return (
+    <section
+      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-warning/20 bg-warning/5 px-3 py-2 text-sm"
+      data-testid="needs-you"
+      aria-label="Needs you"
     >
-      {status.dot && <span className={cn("h-1.5 w-1.5 rounded-full", status.dotColor)} />}
-      <span>{status.label}</span>
+      <span className="font-medium text-warning">
+        {count} {count === 1 ? "needs" : "need"} you
+      </span>
+      {count === 1 && first ? (
+        <>
+          <span className="min-w-0 flex-1 text-muted-foreground" data-testid="needs-you-reason">
+            {first.displayName} {attentionReason(first)}.
+          </span>
+          {action && <div className="shrink-0">{action}</div>}
+        </>
+      ) : (
+        <>
+          <span className="min-w-0 flex-1" />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="@max-[40rem]/main:h-11"
+            aria-pressed={filtered}
+            onClick={() => onFilter(!filtered)}
+            data-testid="needs-you-filter"
+          >
+            {filtered ? "Show all" : "Show them"}
+          </Button>
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
+ * One plugin, as one link to its page: its icon, its name over what it does,
+ * then on the right its state in words, and a ›. Two lines at every width; the
+ * words truncate rather than wrap.
+ */
+function PluginRow({
+  plugin,
+  to,
+  state,
+  fresh,
+}: {
+  plugin: Plugin;
+  to: string;
+  state: React.ReactNode;
+  /** A sign-in on this page just connected it. */
+  fresh: boolean;
+}) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const descriptionId = useId();
+  // A long list may hold the plugin below the fold.
+  useEffect(() => {
+    if (fresh) rowRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [fresh]);
+  const muted = plugin.owner.kind === "person" && !plugin.granted;
+
+  return (
+    <div
+      ref={rowRef}
+      className="relative flex min-h-11 items-center gap-3 border-b border-border/60 py-2 last:border-b-0"
+      data-testid="plugin-row"
+      data-plugin-id={plugin.id}
+    >
+      <ConnectorIcon
+        name={plugin.displayName}
+        iconUrl={plugin.iconUrl}
+        className={cn("h-6 w-6 shrink-0 rounded text-[11px]", muted && "opacity-60")}
+      />
+      <div className="flex min-w-0 flex-1 flex-col" data-testid="row-text">
+        <Link
+          to={to}
+          data-row-link
+          aria-describedby={plugin.description ? descriptionId : undefined}
+          className={cn("min-w-0 truncate text-sm font-medium", ROW_LINK)}
+        >
+          {plugin.displayName}
+        </Link>
+        {plugin.description && (
+          <span
+            id={descriptionId}
+            className="truncate text-xs text-muted-foreground"
+            data-testid="plugin-description"
+          >
+            {plugin.description}
+          </span>
+        )}
+      </div>
+      {fresh ? (
+        <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-success">
+          <Check className="h-3.5 w-3.5" aria-hidden />
+          <span>Connected just now</span>
+        </span>
+      ) : (
+        state && <div className="flex min-w-0 max-w-[45%] shrink justify-end">{state}</div>
+      )}
+      <RowChevron />
+    </div>
+  );
+}
+
+/** What is wrong with a plugin that asks something of the viewer. */
+function attentionWords(plugin: Plugin): React.ReactNode {
+  const label = attentionLabel(plugin);
+  if (!label) return null;
+  return (
+    <span className="truncate text-xs text-warning" data-testid="plugin-attention">
+      {label}
     </span>
   );
 }
 
-/** The button for what a plugin's row asks of the viewer (`pluginAttention`). */
+/**
+ * A row's state in words, when nothing is asked of the viewer. One not ready that asks
+ * the viewer nothing (settling, or a workspace sign-in only its admin does)
+ * reads the connector list's status words. A ready one names the account it
+ * uses, else says Connected; a person's plugin adds that it is on here.
+ */
+function stateWords(plugin: Plugin): React.ReactNode {
+  const notReady = plugin.servers.find((s) => s.status !== "ready");
+  const status = notReady ? connectorStatusSummary(notReady.status) : null;
+  if (status) {
+    return (
+      <span
+        className={cn("flex min-w-0 items-center gap-1.5 text-xs", status.tone)}
+        data-testid="plugin-status"
+      >
+        {status.dot && (
+          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dotColor)} />
+        )}
+        <span className="truncate">{status.label}</span>
+      </span>
+    );
+  }
+  if (notReady) return null;
+  const account = pluginAccount(plugin);
+  const person = plugin.owner.kind === "person";
+  return (
+    <span className="truncate text-xs text-muted-foreground" data-testid="plugin-state">
+      {account ? <span data-testid="plugin-account">{account}</span> : !person && "Connected"}
+      {person && (account ? " · on here" : "On here")}
+    </span>
+  );
+}
+
+/** The button for what a plugin asks of the viewer (`pluginAttention`). */
 function AttentionButton({
   step,
   busy,
@@ -534,6 +550,7 @@ function AttentionButton({
       type="button"
       size="sm"
       variant={step === "connect" ? "default" : "secondary"}
+      className="@max-[40rem]/main:h-11"
       disabled={disabled}
       onClick={onClick}
       data-testid={`plugin-${step}`}

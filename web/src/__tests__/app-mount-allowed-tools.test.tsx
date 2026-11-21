@@ -237,7 +237,7 @@ describe("AppWithChat — the tools of the app's connector the viewer may call",
   });
 
   test("a connector the server allows nothing on is sent an empty list", async () => {
-    // A malformed `admin_tools` gates every tool: for a member the server lists none.
+    // A malformed `adminTools` gates every tool: for a member the server lists none.
     serverAllowed = { crm: [] };
     const el = await mountApp(workspace("member"), appPlacement("crm"));
     expect((await handshake(appSide(el))).connector).toEqual({ allowedTools: [] });

@@ -11,7 +11,6 @@ import type { Template } from "./templates.ts";
 /** A page over the home list. The stack is the trail: one page, one crumb. */
 export type Screen =
   | { kind: "task"; taskId: string; taskName: string }
-  | { kind: "upcoming" }
   | { kind: "activity"; taskId?: string; taskName?: string }
   | { kind: "result"; runId: string; taskId?: string; run?: TaskRun }
   | { kind: "batch"; batchId: string; batch?: TaskBatch }
@@ -43,8 +42,6 @@ function stepFor(screen: Screen, stack: Screen[]): TrailStep {
   switch (screen.kind) {
     case "task":
       return { id: `task/${screen.taskId}`, label: screen.taskName, stack };
-    case "upcoming":
-      return { id: "upcoming", label: "Coming up", stack };
     case "activity":
       return screen.taskId
         ? { id: `runs/${screen.taskId}`, label: "All runs", stack }
@@ -60,7 +57,7 @@ function stepFor(screen: Screen, stack: Screen[]): TrailStep {
     case "editor":
       return screen.taskId
         ? { id: `edit/${screen.taskId}`, label: "Edit", stack }
-        : { id: "new", label: "New task", stack };
+        : { id: "new", label: "New", stack };
   }
 }
 
@@ -84,7 +81,7 @@ export function withRun(
 
 /** The whole trail for the screens open over the home list. */
 export function trailFor(stack: Screen[]): TrailStep[] {
-  const root: TrailStep = { id: TRAIL_ROOT_ID, label: "Tasks", stack: [] };
+  const root: TrailStep = { id: TRAIL_ROOT_ID, label: "Scheduled", stack: [] };
   // Ids are made unique by position, so the same page twice is two crumbs.
   return [
     root,

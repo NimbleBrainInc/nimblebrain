@@ -8,6 +8,7 @@
 // renders as it did before attribution existed: unlabeled.
 // ---------------------------------------------------------------------------
 
+import { PERSONAL_CONNECTOR_PREFIX } from "../_generated/personal-connector-prefix.ts";
 import type { Plugin } from "../_generated/platform-schemas/plugins";
 import {
   appNameFromToolName,
@@ -117,4 +118,28 @@ export function sharedPlugin(
     shared = plugin;
   }
   return shared;
+}
+
+/**
+ * The plugins whose tools a `toolAffinity` pattern can match, in listing order.
+ *
+ * A pattern is a wire tool name in which `*` matches anything (the runtime's
+ * `toolNameMatchesPattern`). Its source segment (before `__`, or the whole
+ * pattern when it has none and carries a `*`) is matched against each plugin's
+ * wire sources: a workspace plugin's server name, a personal plugin's `my_`
+ * marked one. A source of only `*` reaches every connector and the kernel's
+ * tools alike, so it names no plugin; nor does a bare tool name with no source.
+ */
+export function pluginsForToolPattern(pattern: string, plugins: readonly Plugin[]): Plugin[] {
+  const sep = pattern.indexOf("__");
+  const source = sep >= 0 ? pattern.slice(0, sep) : pattern.includes("*") ? pattern : "";
+  if (!source || /^\*+$/.test(source)) return [];
+  const regex = new RegExp(`^${source.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
+  return plugins.filter((p) =>
+    p.servers.some((s) =>
+      regex.test(
+        p.owner.kind === "person" ? `${PERSONAL_CONNECTOR_PREFIX}${s.serverName}` : s.serverName,
+      ),
+    ),
+  );
 }

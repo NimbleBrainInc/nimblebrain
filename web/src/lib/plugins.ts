@@ -9,6 +9,19 @@ export function pluginPath(slug: string, plugin: Pick<Plugin, "id">): string {
   return `/w/${slug}/plugins/${encodeURIComponent(plugin.id)}`;
 }
 
+/**
+ * The workspace plugin that holds a workspace connector, by its server name: a
+ * server name does not name its plugin, so it is found in the listing.
+ */
+export function workspacePluginForServer(
+  plugins: readonly Plugin[],
+  serverName: string,
+): Plugin | undefined {
+  return plugins.find(
+    (p) => p.owner.kind === "workspace" && p.servers.some((s) => s.serverName === serverName),
+  );
+}
+
 /** The account the plugin signs in as: the first of its servers that records one. */
 export function pluginAccount(plugin: Plugin): string | undefined {
   for (const server of plugin.servers) {
@@ -23,36 +36,36 @@ export function ownerLine(plugin: Plugin): string {
   return plugin.owner.kind === "person" ? "Uses your account" : "Uses the workspace's account";
 }
 
-/**
- * The account a plugin's row names. A person's plugin names the account it
- * signed in as, or says it is not signed in; a workspace plugin says it uses
- * the workspace's account, and which one when the sign-in recorded it. Whose
- * plugin it is reads from the row's badge, so the line does not repeat it.
- */
-export function accountLine(plugin: Plugin): string | undefined {
-  const account = pluginAccount(plugin);
-  if (plugin.owner.kind === "workspace") {
-    return account ? `Workspace account · ${account}` : "Workspace account";
-  }
-  if (account) return account;
-  return pluginConnected(plugin) ? undefined : "Not signed in";
-}
-
 /** A skill's scope as it appears in its page's URL: the tiers a person authors in. */
 export type AuthoredSkillScope = "workspace" | "user" | "org";
 
-/**
- * A skill's page under Plugins, `/w/<slug>/plugins/skills/<scope>/<name>`. A
- * scope and a name address one authored skill: names are unique within a tier,
- * and the same name in two tiers is two skills.
- */
-export function skillPath(slug: string, scope: AuthoredSkillScope, name: string): string {
-  return `/w/${slug}/plugins/skills/${scope}/${encodeURIComponent(name)}`;
+/** The workspace's Plugins page, `/w/<slug>/plugins`. */
+export function pluginsPath(slug: string): string {
+  return `/w/${slug}/plugins`;
 }
 
-/** Where a new skill is written, `/w/<slug>/plugins/skills/new`. */
+/** The plugin directory, `/w/<slug>/plugins/browse`. */
+export function browsePluginsPath(slug: string): string {
+  return `/w/${slug}/plugins/browse`;
+}
+
+/** The workspace's Skills page, `/w/<slug>/skills`. */
+export function skillsPath(slug: string): string {
+  return `/w/${slug}/skills`;
+}
+
+/**
+ * A skill's page, `/w/<slug>/skills/<scope>/<name>`. A scope and a name address
+ * one authored skill: names are unique within a tier, and the same name in two
+ * tiers is two skills.
+ */
+export function skillPath(slug: string, scope: AuthoredSkillScope, name: string): string {
+  return `/w/${slug}/skills/${scope}/${encodeURIComponent(name)}`;
+}
+
+/** Where a new skill is written, `/w/<slug>/skills/new`. */
 export function newSkillPath(slug: string): string {
-  return `/w/${slug}/plugins/skills/new`;
+  return `/w/${slug}/skills/new`;
 }
 
 /** Whether every server of the plugin is signed in and running. */
@@ -68,7 +81,7 @@ export function pluginConnected(plugin: Plugin): boolean {
  *   connected (`pluginConnected`), so it never lands on with no account behind it.
  * - `connect`: on here, not signed in. Connect signs in.
  * - `in_use`: on here and signed in. Nothing to do, so the row offers nothing;
- *   Stop using here is in its menu.
+ *   Stop using here is on its page.
  */
 export type PluginNextStep = "use_here" | "connect" | "in_use";
 

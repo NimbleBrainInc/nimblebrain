@@ -17,6 +17,8 @@ export interface FixturePlugin {
   servers: Record<string, string>;
   /** Skill folder → SKILL.md text. */
   skills?: Record<string, string>;
+  /** `extensions["ai.nimblebrain"].conversationStarters`, as written (unvalidated). */
+  conversationStarters?: unknown[];
 }
 
 export interface FixtureCatalog {
@@ -60,7 +62,14 @@ export function buildCatalog(
     const files: Record<string, string> = {
       "plugin.json": JSON.stringify({
         name: plugin.name,
-        extensions: { "ai.nimblebrain": { servers: plugin.servers } },
+        extensions: {
+          "ai.nimblebrain": {
+            servers: plugin.servers,
+            ...(plugin.conversationStarters
+              ? { conversationStarters: plugin.conversationStarters }
+              : {}),
+          },
+        },
       }),
     };
     for (const [skill, text] of Object.entries(plugin.skills ?? {})) {

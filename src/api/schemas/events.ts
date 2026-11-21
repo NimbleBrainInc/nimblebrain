@@ -98,9 +98,15 @@ export interface ConnectorUninstalledEvent {
   wsId: string;
 }
 
-/** A remote connector's connection changed state for one principal. */
-export interface ConnectionStateChangedEvent {
+/** A person's personal connector was turned on or off in a workspace. Sent to that person only. */
+export interface ConnectorGrantChangedEvent {
+  userId: string;
+  serverName: string;
   wsId: string;
+  granted: boolean;
+}
+
+interface ConnectionStateChangedFields {
   serverName: string;
   connectorName: string;
   principalId: string;
@@ -108,6 +114,15 @@ export interface ConnectionStateChangedEvent {
   authorizationUrl?: string;
   lastError?: string;
 }
+
+/**
+ * A remote connector's connection changed state for one principal. Names exactly
+ * one owner: a workspace (`wsId`), or a person (`userId`) for their own plugin,
+ * sent to that person only.
+ */
+export type ConnectionStateChangedEvent =
+  | (ConnectionStateChangedFields & { wsId: string })
+  | (ConnectionStateChangedFields & { userId: string });
 
 interface ServerNotificationFields {
   /** The bare server name, an iframe's `data-app`. */
@@ -182,6 +197,7 @@ export interface WorkspaceStreamEvents {
   heartbeat: HeartbeatEvent;
   "connector.installed": ConnectorInstalledEvent;
   "connector.uninstalled": ConnectorUninstalledEvent;
+  "connector.grant_changed": ConnectorGrantChangedEvent;
   "connection.state_changed": ConnectionStateChangedEvent;
   "server.notification": ServerNotificationEvent;
   "conversation.title": ConversationTitleEvent;

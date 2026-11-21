@@ -961,21 +961,37 @@ export async function revokeConnector(serverName: string, wsId: string): Promise
 }
 
 /**
- * Fully remove a PERSONAL connector from the caller's identity: revokes every
- * workspace grant, deletes the identity credentials, and drops the install
- * record. The inverse of {@link installPersonalConnector} + Connect + grant; the
- * connector returns to the "Add a connector" picker. `revokedWorkspaces` is how
- * many grants were cleared.
+ * Sign a PERSONAL connector out and keep it: deletes the identity credentials
+ * and ends its live connection. The install, every workspace it is on in, and
+ * its tool permissions stay, so Connect signs it back in.
  */
-export async function disconnectPersonalConnector(
+export async function signOutPersonalConnector(
   serverName: string,
-): Promise<{ ok: boolean; scope: "identity"; serverName: string; revokedWorkspaces: number }> {
+): Promise<{ ok: boolean; scope: "identity"; serverName: string }> {
   const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "disconnect",
     scope: "identity",
     serverName,
   });
   return unwrapStructured(result, "disconnect");
+}
+
+/**
+ * Fully remove a PERSONAL connector from the caller's identity: revokes every
+ * workspace grant, deletes the identity credentials, and drops the install
+ * record. The inverse of {@link installPersonalConnector} + Connect + grant; the
+ * connector returns to the "Add a connector" picker. `revokedWorkspaces` is how
+ * many grants were cleared.
+ */
+export async function removePersonalConnector(
+  serverName: string,
+): Promise<{ ok: boolean; scope: "identity"; serverName: string; revokedWorkspaces: number }> {
+  const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
+    action: "uninstall",
+    scope: "identity",
+    serverName,
+  });
+  return unwrapStructured(result, "uninstall");
 }
 
 export async function disconnectConnector(
@@ -997,9 +1013,9 @@ export async function disconnectConnector(
 }
 
 /**
- * Full uninstall — works for any connector type. For OAuth connectors,
- * revokes tokens upstream first; for local connectors, just removes from
- * workspace.json. Drops tool permissions associated with the connector.
+ * Remove a workspace connector (the `uninstall` action) — works for any
+ * connector type. For OAuth connectors, revokes tokens upstream first; for local
+ * connectors, just removes from workspace.json. Drops tool permissions associated with the connector.
  *
  * The workspace secrets the connector's catalog entry declares go with it.
  * Which keys those are is the server's decision, read from the connector's own
@@ -1304,14 +1320,30 @@ export async function logout(): Promise<void> {
  * workspace on its own.
  */
 export async function tryBootstrap(): Promise<BootstrapResponse | null> {
+  const probe = await probeBootstrap();
+  return probe.kind === "signedIn" ? probe.data : null;
+}
+
+/**
+ * What one bootstrap call says about the session. `signedOut` is only the
+ * server refusing it (401, after the silent refresh); a network error or any
+ * other status is `unavailable`, since a server that is starting or failing has
+ * said nothing about whether anyone is signed in.
+ */
+export type BootstrapProbe =
+  | { kind: "signedIn"; data: BootstrapResponse }
+  | { kind: "signedOut" }
+  | { kind: "unavailable" };
+
+export async function probeBootstrap(): Promise<BootstrapProbe> {
   try {
     const res = await fetchWithRefresh(`${API_BASE}/v1/bootstrap`, {
       credentials: "include",
       headers: headers(),
     });
-    if (!res.ok) return null;
-    return (await res.json()) as BootstrapResponse;
+    if (res.ok) return { kind: "signedIn", data: (await res.json()) as BootstrapResponse };
+    return res.status === 401 ? { kind: "signedOut" } : { kind: "unavailable" };
   } catch {
-    return null;
+    return { kind: "unavailable" };
   }
 }

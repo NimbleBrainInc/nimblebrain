@@ -16,8 +16,8 @@
  */
 
 import { createHash } from "node:crypto";
-import matter from "gray-matter";
 import { z } from "zod";
+import { parseFrontmatter } from "./frontmatter.ts";
 
 /** Extension identifier, the key in `capabilities.extensions` on both sides of the handshake. */
 export const SKILLS_EXTENSION_ID = "io.modelcontextprotocol/skills" as const;
@@ -109,7 +109,7 @@ export function verifySkillEntrypoint(
   }
   let fetched: unknown;
   try {
-    fetched = matter(text).data;
+    fetched = parseFrontmatter(text).data;
   } catch {
     return { ok: false, reason: "frontmatter_mismatch" };
   }

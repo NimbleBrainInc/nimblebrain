@@ -156,6 +156,7 @@ The web UI is a static build, so it cannot read pod env from JS. Instead Caddy s
 | `NB_SENTRY_TRACES_SAMPLE_RATE` | No | `0` | Performance-trace sample rate, `0`–`1`. |
 | `NB_POSTHOG_KEY` | No | — | PostHog write-only key for web analytics. |
 | `NB_POSTHOG_ENABLED` | No | `false` | Set `true` to allow web analytics (also requires a key). The client still sends nothing until the runtime reports a yes. |
+| `NB_NOINDEX` | No | `false` | Set `true` to send `X-Robots-Tag: noindex, nofollow` on every response, so a private deployment stays out of search and AI crawler indexes even for a crawler that ignores `robots.txt`. Serve a `Disallow: /` `robots.txt` in front of it as well. |
 
 Sentry tags every event with `tenant_id` (from `NB_TENANT_ID`), `workspace_id`, and an opaque `user.id` — never email, display name, prompts, or tool content. For local development, the same values can be supplied to `bun run dev` as `VITE_*` fallbacks (see `.env.example`).
 

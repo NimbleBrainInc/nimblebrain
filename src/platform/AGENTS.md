@@ -43,9 +43,9 @@ libs, no Bun types, tests excluded) and `tsconfig.test.json` extending it with
 existing app; `scripts/check-platform-apps.ts` says why each exists.
 
 An app's placements are the `placements:` array passed to `defineInProcessApp`,
-and that is the only copy the runtime reads. Two apps also carry a
-`manifest.json` restating them in `ai.nimblebrain/host` form; nothing loads it.
-Do not add one to a new app, and do not treat the pair as a contract.
+and that is the only copy the runtime reads. Do not add a `manifest.json`
+restating them in `ai.nimblebrain/host` form: nothing loads one, so it only
+drifts.
 
 **A built-in app serves its `ui://` resource as `text/html;profile=mcp-app`**, the MCP Apps MIME type. Use `MCP_APP_MIME_TYPE` (`src/tools/apps-extension.ts`), never a literal or plain `text/html`.
 

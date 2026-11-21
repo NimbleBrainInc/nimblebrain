@@ -34,11 +34,11 @@ function workspace(members: Array<{ userId: string; role: WorkspaceRole }>): Wor
 }
 
 function hostMeta(adminTools: unknown): HostManifestMeta {
-  return { host_version: "1.5", admin_tools: adminTools } as HostManifestMeta;
+  return { hostVersion: "1.5", adminTools: adminTools } as HostManifestMeta;
 }
 
 const DECLARED: AdminToolsDeclaration = { kind: "names", names: ["configure"] };
-const ALL: AdminToolsDeclaration = { kind: "all", reason: "admin_tools is not a list" };
+const ALL: AdminToolsDeclaration = { kind: "all", reason: "adminTools is not a list" };
 const names = (...n: string[]): AdminToolsDeclaration => ({ kind: "names", names: n });
 const WS = workspace([
   { userId: "u_admin", role: "admin" },
@@ -85,7 +85,7 @@ describe("parseAdminToolsDeclaration", () => {
 
   test("declares nothing when absent or empty", () => {
     expect(parseAdminToolsDeclaration(undefined, "ai.acme/crm")).toBeUndefined();
-    expect(parseAdminToolsDeclaration({ host_version: "1.5" }, "ai.acme/crm")).toBeUndefined();
+    expect(parseAdminToolsDeclaration({ hostVersion: "1.5" }, "ai.acme/crm")).toBeUndefined();
     expect(parse([])).toBeUndefined();
   });
 
@@ -135,25 +135,38 @@ describe("the catalog projection", () => {
     } as unknown as ServerDetail;
   }
 
-  test("carries admin_tools onto the catalog entry", () => {
+  test("carries adminTools onto the catalog entry", () => {
     const entry = serverDetailToCatalogEntry(
-      detail({ host_version: "1.5", admin_tools: ["configure"] }),
+      detail({ hostVersion: "1.5", adminTools: ["configure"] }),
     );
     expect(entry?.adminTools).toEqual(names("configure"));
   });
 
-  test("keeps the entry, gating every tool, when admin_tools is malformed", () => {
+  test("keeps the entry, gating every tool, when adminTools is malformed", () => {
     // Enforcement reads the live catalog, so dropping the entry would un-gate
     // an installed connector.
-    const entry = serverDetailToCatalogEntry(
-      detail({ host_version: "1.5", admin_tools: "configure" }),
-    );
-    expect(entry?.adminTools?.kind).toBe("all");
+    for (const malformed of ["configure", null, false, ["configure", 7]]) {
+      const entry = serverDetailToCatalogEntry(
+        detail({ hostVersion: "1.5", adminTools: malformed }),
+      );
+      expect(entry?.adminTools?.kind).toBe("all");
+    }
   });
 
   test("omits the field when nothing is declared", () => {
-    const entry = serverDetailToCatalogEntry(detail({ host_version: "1.5" }));
+    const entry = serverDetailToCatalogEntry(detail({ hostVersion: "1.5" }));
     expect(entry && "adminTools" in entry).toBe(false);
+  });
+
+  test("gates every tool when the block carries admin_tools, whatever either key holds", () => {
+    for (const host of [
+      { hostVersion: "1.5", admin_tools: ["configure"] },
+      { hostVersion: "1.5", adminTools: ["configure"], admin_tools: ["configure"] },
+      { hostVersion: "1.5", adminTools: ["configure"], admin_tools: null },
+      { hostVersion: "1.5", admin_tools: [] },
+    ]) {
+      expect(serverDetailToCatalogEntry(detail(host))?.adminTools?.kind).toBe("all");
+    }
   });
 });
 
@@ -203,11 +216,11 @@ describe("adminToolsContractWarnings", () => {
       connector: "acme",
       adminTools: names("workspace_ready", "set_url"),
       lifecycle: { on_ready: "workspace_ready" },
-      hooks: [{ vendor: "acme", route: "/in", register_tool: "set_url" }],
+      hooks: [{ vendor: "acme", route: "/in", registerTool: "set_url" }],
     });
     expect(warnings).toHaveLength(2);
     expect(warnings[0]).toContain('lifecycle "on_ready"');
-    expect(warnings[1]).toContain('hook "acme" register_tool');
+    expect(warnings[1]).toContain('hook "acme" registerTool');
   });
 
   test("warns about an unadvertised name only when the tool list is known", () => {
@@ -238,7 +251,7 @@ describe("adminToolsContractWarnings", () => {
     });
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('"acme"');
-    expect(warnings[0]).toContain("admin_tools is not a list");
+    expect(warnings[0]).toContain("adminTools is not a list");
     expect(warnings[0]).toContain("every tool");
   });
 });

@@ -44,7 +44,6 @@ import type {
 import { useMinDisplayTime, type VisualStatus } from "../hooks/useMinDisplayTime";
 import { isDocumentArtifact } from "../lib/artifact-kind";
 import { formatDuration, stripServerPrefix } from "../lib/format";
-import { isPersonalConnectorAppName } from "../lib/namespaced-tool";
 import { pluginForCall, sharedPlugin } from "../lib/plugin-attribution";
 import { requestedPluginName } from "../lib/plugin-request";
 import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
@@ -763,31 +762,13 @@ function ToolWidgets({
     const serverName = requestedPluginName(tc);
     return serverName ? [{ id: tc.id, serverName }] : [];
   });
-  // A personal connector mounts no iframe. Its `ui://` read would resolve
-  // through the WORKSPACE registry (`GET /v1/workspaces/:wsId/apps/:name/resources/*` tries the
-  // kernel identity sources, then that registry — a connector is in neither), so
-  // a same-named workspace app would answer and its bridge would dispatch on the
-  // workspace's credentials. Excluded here rather than left to 404: the marked
-  // name is unresolvable by construction, so there is nothing to render.
-  const widgets = calls.filter(
-    (tc) =>
-      tc.resourceUri &&
-      tc.status === "done" &&
-      tc.appName &&
-      !isPersonalConnectorAppName(tc.appName),
-  );
-  // Same marker exclusion as `widgets` above. A personal connector has no app
-  // surface to resolve against — `/v1/workspaces/:wsId/apps/<name>/resources/*` searches the
-  // workspace registry, which a `my_`-marked name can never match — so a link
-  // rendered here previews a 404. Fail-closed either way, but a broken tile is
-  // worse than no tile.
+  // A personal connector's view mounts under its marked name (`my_<server>`):
+  // the resource routes and the bridge's `/mcp` calls resolve that name to the
+  // caller's own granted connection, never the workspace's server of the same
+  // name, so it renders like any other app.
+  const widgets = calls.filter((tc) => tc.resourceUri && tc.status === "done" && tc.appName);
   const resourceLinkCalls = calls.filter(
-    (tc) =>
-      tc.status === "done" &&
-      tc.appName &&
-      !isPersonalConnectorAppName(tc.appName) &&
-      tc.resourceLinks &&
-      tc.resourceLinks.length > 0,
+    (tc) => tc.status === "done" && tc.appName && tc.resourceLinks && tc.resourceLinks.length > 0,
   );
   if (widgets.length === 0 && resourceLinkCalls.length === 0 && pluginRequests.length === 0)
     return null;

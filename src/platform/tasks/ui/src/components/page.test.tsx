@@ -89,7 +89,7 @@ const SHEET_ACTIONS = {
   onEdit: () => {},
   onDuplicate: () => {},
   onDelete: () => {},
-  onSetEnabled: async () => {},
+  onSetEnabled: async () => true,
   onOpenRun: () => {},
   onSeeRuns: () => {},
 };
@@ -105,7 +105,7 @@ const STATS = {
 };
 
 describe("TaskPageBody", () => {
-  test("a run needing review: the callout, the latest result, recent runs, setup", () => {
+  test("a run needing review: the callout, the latest result, earlier results, details", () => {
     const review = {
       ...run("r2", "Needs review", new Date().toISOString()),
       resultPreview: "Three prospects found.",
@@ -145,13 +145,18 @@ describe("TaskPageBody", () => {
       }),
     );
     expect(html).toContain("callout tone-warning");
-    expect(html).toContain("Check the latest result and accept or reject it.");
+    expect(html).toContain("A result is waiting for your check.");
     expect(html).toContain("Latest result");
     expect(html).toContain("<dt>note</dt>");
     expect(html).toContain("Three prospects found.");
     expect(html).toContain("Show raw");
-    expect(html.match(/class="task-run"/g)).toHaveLength(2);
-    expect(html).toContain("75%");
+    // The latest run is shown above, so earlier results list the one before it, plainly.
+    expect(html).toContain("Earlier results");
+    expect(html.match(/class="task-run"/g)).toHaveLength(1);
+    expect(html).toContain("<span>Done</span>");
+    // The 30-day figures sit folded under Details, below what the task made.
+    expect(html.indexOf("75%")).toBeGreaterThan(html.indexOf("Earlier results"));
+    expect(html).toContain("Last 30 days");
     expect(html).toContain("What it does");
   });
 

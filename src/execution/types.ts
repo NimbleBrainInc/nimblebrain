@@ -51,6 +51,13 @@ export interface RuntimeCapabilities {
    * (ADR-0056).
    */
   usage: "measured" | "reported";
+  /**
+   * The runtime starts a run with the door's surfaced tools (`ResolvedRun.tools`)
+   * and lets the model add a proxied one with `nb__manage_tools`. Without it,
+   * the run is offered every tool it may call from the start (the tool
+   * projection), so the door composes no guidance about promoting one.
+   */
+  promotesTools: boolean;
 }
 
 /**

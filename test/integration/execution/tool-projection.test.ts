@@ -9,7 +9,11 @@ import {
 import { openToolProjection } from "../../../src/execution/tool-projection.ts";
 import { createDirectExecutor } from "../../../src/platform/tasks/executor.ts";
 import type { Task } from "../../../src/platform/tasks/types.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
+import { ToolRegistry } from "../../../src/tools/registry.ts";
+import { createSystemTools } from "../../../src/tools/system-tools.ts";
 import { channelMcpServer, connectMcpToolRouter } from "../../helpers/acp/mcp-tool-router.ts";
+import { stub } from "../../helpers/stub.ts";
 
 const router = new StaticToolRouter(
   [
@@ -37,6 +41,37 @@ describe("tool projection", () => {
     ]);
     try {
       expect((await client.availableTools()).map((t) => t.name)).toEqual(["echo"]);
+    } finally {
+      await client.close();
+      await projection.close();
+    }
+  });
+
+  test("an external agent can ask for a plugin: it is served nb__request_plugin, not nb__manage_tools", async () => {
+    // The kernel's own `nb` source, as the run's router holds it.
+    const registry = new ToolRegistry();
+    registry.addSource(await createSystemTools(() => registry, { runtime: stub<Runtime>({}) }));
+    const projection = await openToolProjection({
+      runId: "r",
+      router: registry,
+      events: { emit() {} },
+    });
+    const client = await connectMcpToolRouter([
+      channelMcpServer("nimblebrain", projection.channel()),
+    ]);
+    try {
+      const names = (await client.availableTools()).map((t) => t.name);
+      expect(names).toContain("nb__request_plugin");
+      expect(names).not.toContain("nb__manage_tools");
+      // It reaches the request's own handler, which refuses a call with no
+      // conversation to ask in.
+      const result = await client.execute({
+        id: "c1",
+        name: "nb__request_plugin",
+        input: { plugin: "granola" },
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain("asks the person in a conversation");
     } finally {
       await client.close();
       await projection.close();

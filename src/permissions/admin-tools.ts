@@ -13,7 +13,7 @@ import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { Workspace } from "../workspace/types.ts";
 
 /**
- * Connector tools that need a workspace admin: the `admin_tools` list a server
+ * Connector tools that need a workspace admin: the `adminTools` list a server
  * declares in `_meta["ai.nimblebrain/host"]`.
  *
  * The role gate for connector tools. A fleet bundle is told the tenant and the
@@ -43,7 +43,7 @@ const TOOL_NAME_MAX = 128;
  * Strict where the rest of the host extension is tolerant, because this field
  * only narrows: dropping a bad part of it would widen access. A present
  * declaration that is not a list of at most {@link ADMIN_TOOLS_MAX} bare tool
- * names (`null` included — a bare `admin_tools:` in YAML) gates EVERY tool on
+ * names (`null` included — a bare `adminTools:` in YAML) gates EVERY tool on
  * the connector, with a warning naming it. An empty list declares nothing.
  * Duplicates collapse.
  */
@@ -51,11 +51,14 @@ export function parseAdminToolsDeclaration(
   meta: HostManifestMeta | undefined,
   connector: string,
 ): AdminToolsDeclaration | undefined {
-  // `meta` is an unchecked cast over manifest / registry JSON, so the declared
-  // type is a claim about intent, not a guarantee about bytes.
-  const raw = meta?.admin_tools as unknown;
-  if (raw === undefined) return undefined;
-  const reason = malformedReason(raw);
+  // `meta` is normalized but unchecked below the top level, so the declared
+  // type is a claim about intent, not a guarantee about bytes. A present key is
+  // a declaration whatever its value.
+  if (typeof meta !== "object" || meta === null || !Object.hasOwn(meta, "adminTools")) {
+    return undefined;
+  }
+  const raw = meta.adminTools as unknown;
+  const reason = adminToolsMalformedReason(raw);
   if (reason !== null) {
     warnOnce(connector, reason);
     return { kind: "all", reason };
@@ -64,10 +67,23 @@ export function parseAdminToolsDeclaration(
   return names.length > 0 ? { kind: "names", names } : undefined;
 }
 
-function malformedReason(raw: unknown): string | null {
-  if (!Array.isArray(raw)) return "admin_tools is not a list";
-  if (raw.length > ADMIN_TOOLS_MAX) return `admin_tools names more than ${ADMIN_TOOLS_MAX} tools`;
-  if (!raw.every(isBareToolName)) return "admin_tools has an entry that is not a bare tool name";
+/**
+ * The `adminTools` value the host block reader (`host-meta.ts`) hands on for a
+ * block that carries the retired `admin_tools` key, whatever that key holds.
+ * It is not a list, so it gates every tool, with a reason naming the key. A
+ * producer that still writes `admin_tools` meant to narrow access; reading the
+ * block as if the key were absent would open those tools to every member.
+ */
+export const RETIRED_ADMIN_TOOLS_KEY: unknown = Object.freeze({ retiredKey: "admin_tools" });
+
+/** Why a declared `adminTools` value gates every tool, or `null` when it is well-formed. */
+export function adminToolsMalformedReason(raw: unknown): string | null {
+  if (raw === RETIRED_ADMIN_TOOLS_KEY) {
+    return "the host block carries admin_tools, a spelling the host does not read (adminTools is the spelling)";
+  }
+  if (!Array.isArray(raw)) return "adminTools is not a list";
+  if (raw.length > ADMIN_TOOLS_MAX) return `adminTools names more than ${ADMIN_TOOLS_MAX} tools`;
+  if (!raw.every(isBareToolName)) return "adminTools has an entry that is not a bare tool name";
   return null;
 }
 
@@ -240,18 +256,18 @@ export function adminToolDenial(serverName: string, toolName: string): ToolResul
 }
 
 /**
- * Install warnings for an `admin_tools` declaration, empty when there is
+ * Install warnings for an `adminTools` declaration, empty when there is
  * nothing to say. Never a reason to stop enforcing: every name is enforced
  * whether or not the server advertises it today.
  *
  * - A malformed declaration gates every tool; that is the one warning.
  * - A name the server does not advertise is probably a typo or a tool behind a
  *   flag; the gate holds for it anyway.
- * - A name that is also a lifecycle handler or a hooks `register_tool` is one
+ * - A name that is also a lifecycle handler or a hooks `registerTool` is one
  *   the kernel calls itself. Those calls reach the source directly and are not
  *   checked, so the kernel's call still works, but the declaration mixes two
  *   contracts and is worth a look. A lifecycle handler is host-only
- *   (`./host-only-tools.ts`) and refused to everyone, so `admin_tools` adds
+ *   (`./host-only-tools.ts`) and refused to everyone, so `adminTools` adds
  *   nothing to it.
  *
  * `tools` is the source's advertised list, or `undefined` when the source is
@@ -269,7 +285,7 @@ export function adminToolsContractWarnings(opts: {
   if (opts.adminTools?.kind === "all") {
     return [
       `Connector "${connector}": ${opts.adminTools.reason}, so every tool on it is refused to ` +
-        `non-admins until the catalog entry's admin_tools is fixed.`,
+        `non-admins until the catalog entry's adminTools is fixed.`,
     ];
   }
   const adminTools = opts.adminTools?.names;
@@ -280,7 +296,7 @@ export function adminToolsContractWarnings(opts: {
     const called = kernelCalled.get(name);
     if (!called) continue;
     warnings.push(
-      `Connector "${connector}" declares "${name}" in admin_tools and as its ${called.role}. ` +
+      `Connector "${connector}" declares "${name}" in adminTools and as its ${called.role}. ` +
         `The runtime's own call is not checked; ${called.direct}`,
     );
   }
@@ -289,7 +305,7 @@ export function adminToolsContractWarnings(opts: {
   for (const name of adminTools) {
     if (advertised.has(name)) continue;
     warnings.push(
-      `Connector "${connector}" declares "${name}" in admin_tools, which is not among the ` +
+      `Connector "${connector}" declares "${name}" in adminTools, which is not among the ` +
         `${tools.length} tools its server advertises (${summarizeToolNames(tools)}). ` +
         `It is refused to non-admins by name regardless.`,
     );
@@ -305,8 +321,8 @@ function kernelCalledTools(
 ): Map<string, { role: string; direct: string }> {
   const out = new Map<string, { role: string; direct: string }>();
   for (const decl of hooks ?? []) {
-    out.set(decl.register_tool, {
-      role: `hook "${decl.vendor}" register_tool`,
+    out.set(decl.registerTool, {
+      role: `hook "${decl.vendor}" registerTool`,
       direct: "a member calling it directly is refused.",
     });
   }
@@ -317,7 +333,7 @@ function kernelCalledTools(
       out.set(name, {
         role: `lifecycle "${event}"`,
         direct:
-          "a lifecycle handler is refused to every direct caller, so admin_tools adds nothing.",
+          "a lifecycle handler is refused to every direct caller, so adminTools adds nothing.",
       });
     }
   }

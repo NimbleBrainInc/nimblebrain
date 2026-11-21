@@ -158,11 +158,12 @@ describe("init opens the browser", () => {
     await run([], m.deps);
     expect(m.launched).toHaveLength(1);
 
-    // `--yes` at a terminal skips the key prompt, so init ends on MODEL_KEY_MISSING.
+    // `--yes` at a terminal skips the key prompt: init succeeds, and names the model step instead of opening chat.
     const noKey = machine({ env, interactive: true });
     const { stdout, code } = await run(["--yes", "--agent", "none"], noKey.deps);
-    expect(code).toBe(1);
-    expect(stdout).toContain("chat needs a model key");
+    expect(code).toBe(0);
+    expect(stdout).not.toContain("error:");
+    expect(stdout).toContain("Next: give NimbleBrain a model so it can chat.");
     expect(noKey.launched).toEqual([]);
   });
 });

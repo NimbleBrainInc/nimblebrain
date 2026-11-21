@@ -142,9 +142,11 @@ export function machine(opts: MachineOptions = {}): Machine {
     async exec(cmd, args, o = {}) {
       const line = [cmd, ...args].join(" ");
       m.calls.push(`${o.cwd ?? ""}$ ${line}`);
-      if (cmd === "docker" && args[0] === "compose" && o.env) m.composeEnvs.push(o.env);
+      // The standalone `docker-compose` is the same program as the plugin; it drives the same instance.
+      const composeLine = line.replace(/^docker-compose /, "docker compose ");
+      if (composeLine.startsWith("docker compose ") && o.env) m.composeEnvs.push(o.env);
       const res = exec[line] ?? ok();
-      if (res.code === 0 && line.startsWith("docker compose up")) {
+      if (res.code === 0 && composeLine.startsWith("docker compose up")) {
         m.healthy = true;
         if (m.runtimeConsent === "undecided") {
           const env = m.files.get(`${o.cwd}/.env`)?.text ?? "";
@@ -152,7 +154,7 @@ export function machine(opts: MachineOptions = {}): Machine {
           if (seed === "on" || seed === "off") m.runtimeConsent = seed;
         }
       }
-      if (res.code === 0 && line.startsWith("docker compose down")) m.healthy = false;
+      if (res.code === 0 && composeLine.startsWith("docker compose down")) m.healthy = false;
       if (
         res.code === 0 &&
         OLLAMA_STARTS.includes(line) &&

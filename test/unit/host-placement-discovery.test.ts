@@ -25,7 +25,7 @@ describe("serverDetailToCatalogEntry — host UI from ServerDetail._meta", () =>
   test("a fleet ServerDetail._meta host block surfaces ui.placements", () => {
     const entry = serverDetailToCatalogEntry(
       fleetDetail({
-        host_version: "1.1",
+        hostVersion: "1.1",
         name: "People",
         icon: "users",
         placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" }],
@@ -46,7 +46,7 @@ describe("serverDetailToCatalogEntry — host UI from ServerDetail._meta", () =>
 
   test("host block without a name still projects its placements", () => {
     const entry = serverDetailToCatalogEntry(
-      fleetDetail({ host_version: "1.0", placements: [{ slot: "main", resourceUri: "ui://x/y" }] }),
+      fleetDetail({ hostVersion: "1.0", placements: [{ slot: "main", resourceUri: "ui://x/y" }] }),
     );
     expect(entry?.ui).toEqual({ placements: [{ slot: "main", resourceUri: "ui://x/y" }] });
   });
@@ -54,7 +54,7 @@ describe("serverDetailToCatalogEntry — host UI from ServerDetail._meta", () =>
   test("a host block name does not rename the connector", () => {
     const entry = serverDetailToCatalogEntry(
       fleetDetail({
-        host_version: "1.0",
+        hostVersion: "1.0",
         name: "Spoofed",
         placements: [{ slot: "main", resourceUri: "ui://x/y" }],
       }),
@@ -83,7 +83,7 @@ describe("serverDetailToCatalogEntry — interactive badge is derived, not trust
     } as ServerDetail;
   }
   const withApp = {
-    host_version: "1.1",
+    hostVersion: "1.1",
     name: "People",
     placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" }],
   };

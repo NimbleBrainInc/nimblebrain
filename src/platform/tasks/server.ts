@@ -400,6 +400,8 @@ export interface ToolContext {
   definitions: () => Map<string, Task>;
   save: (defs: Map<string, Task>) => void;
   reloadScheduler: () => void;
+  /** Told of each task created, after it is saved (telemetry). */
+  onCreated?: (task: Task) => void;
   /**
    * Ask the scheduler to run the task now; null when it is not loaded.
    * `requested` names the run (its id, input, and idempotency key), and the
@@ -445,6 +447,11 @@ export interface ToolContext {
    * caller. Attribution only.
    */
   callerVia?: () => "ui" | "remote";
+  /**
+   * The name the calling client gave itself (an MCP client's `clientInfo.name`),
+   * when it gave one. Attribution only, like `callerVia`.
+   */
+  callerName?: () => string | undefined;
   defaultTimezone: string;
   /**
    * The caps a run of a task executes under, for create and update to
@@ -879,6 +886,7 @@ export function handleList(args: TasksListInput, ctx: ToolContext): TasksListOut
     disabledReason: a.disabledReason ?? null,
     estimatedCostPerDay: estimateCost(a, ctx.defaultModel).perDayUsd,
     ...(a.inputSchema ? { inputSchema: a.inputSchema } : {}),
+    ...oneoffSummary(a),
   }));
 
   const hasMore = remaining > 0;
@@ -1240,6 +1248,11 @@ export function handleStats(args: TasksStatsInput, ctx: ToolContext): TasksStats
   return { since, tasks: tasks.map((t) => statsOf(t.id, since, ctx)) };
 }
 
+/** Runs `tasks__stats` returns per task as `recent`: what the board's strip draws. */
+export const STATS_RECENT_RUNS = 14;
+/** How much of a recent run's error `tasks__stats` returns. */
+const STATS_ERROR_CHARS = 240;
+
 /** One task's figures since `since`. */
 function statsOf(taskId: string, since: string, ctx: ToolContext): TaskRunStats {
   const stats: TaskRunStats = {
@@ -1254,8 +1267,18 @@ function statsOf(taskId: string, since: string, ctx: ToolContext): TaskRunStats 
   for (const run of ctx.readRunsSince(taskId, since)) countRun(stats, run);
   const decided = stats.pass + stats.fail;
   stats.passRate = decided > 0 ? stats.pass / decided : null;
+  // One read of the hot index serves the newest run and the strip.
+  const newest = ctx.readRuns(taskId, { limit: STATS_RECENT_RUNS, excludeBatch: true });
   const last = ctx.readRuns(taskId, { limit: 1 })[0];
   if (last) stats.lastRun = { id: last.id, startedAt: last.startedAt, label: labelOf(last) };
+  if (newest.length > 0) {
+    stats.recent = newest.map((r) => ({
+      id: r.id,
+      startedAt: r.startedAt,
+      label: labelOf(r),
+      ...(r.error ? { error: r.error.slice(0, STATS_ERROR_CHARS) } : {}),
+    }));
+  }
   return stats;
 }
 
@@ -1405,9 +1428,11 @@ export const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
 
 /**
  * An inline one-off's manifest: create's definition fields, without identity
- * (name, kind) or trigger (schedule, enabled).
+ * (kind) or trigger (schedule, enabled). `name` only labels it in lists: the
+ * one-off's id comes from its idempotency key.
  */
 export interface InlineManifest {
+  name?: string;
   skills?: string[];
   model?: string;
   thinkingEffort?: ThinkingEffort;
@@ -1497,6 +1522,18 @@ function oneoffDefinition(
   return canonicalJson(Object.fromEntries(ONEOFF_DEFINITION_FIELDS.map((f) => [f, source[f]])));
 }
 
+/** How much of a one-off's prompt `tasks__list` returns, to recognize it by. */
+export const PROMPT_PREVIEW_CHARS = 140;
+
+/** What `tasks__list` adds for a one-off: who made it, and the start of its prompt. Nothing for a saved task. */
+function oneoffSummary(task: Task): Pick<TaskSummary, "startedVia" | "promptPreview"> {
+  if (kindOf(task) !== "oneoff") return {};
+  return {
+    ...(task.startedVia ? { startedVia: task.startedVia } : {}),
+    promptPreview: task.prompt.slice(0, PROMPT_PREVIEW_CHARS),
+  };
+}
+
 /**
  * Find or create the `oneoff` task an inline `definition` names
  * (`tasks__run`, `tasks__run_batch`). The definition and the input(s) are
@@ -1516,9 +1553,10 @@ export function ensureOneoff(
   if (!def.body && !manifest.skills?.length) {
     throw new Error("A `definition` needs a `body` (the prompt), or `manifest.skills`.");
   }
-  validateTaskFields(manifest);
+  const { name: label, ...fields } = manifest;
+  validateTaskFields(fields);
   const id = oneoffId(idSeed);
-  const definition = { prompt: def.body ?? "", ...manifest };
+  const definition = { prompt: def.body ?? "", ...fields };
 
   checkInput(id, manifest.inputSchema);
 
@@ -1534,11 +1572,15 @@ export function ensureOneoff(
     return existing;
   }
 
+  const startedVia = ctx.callerName?.();
   const { task } = createTask(
     {
-      name: id,
+      id,
+      // A label is display only; without one the panel names it from its prompt.
+      name: label ?? id,
       kind: "oneoff",
       ...definition,
+      ...(startedVia ? { startedVia } : {}),
       source: "agent",
       ownerId: ctx.currentUserId,
       workspaceId: ctx.currentWorkspaceId,

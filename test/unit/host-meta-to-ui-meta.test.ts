@@ -10,6 +10,7 @@ const REMOVED_KEYS = {
   icon: "hand",
   category: "operations",
   primaryView: { resourceUri: "ui://hello/main" },
+  briefing: { resource: "hello://briefing" },
 };
 
 const PLACEMENT = {
@@ -22,7 +23,7 @@ const PLACEMENT = {
 
 describe("hostMetaToUiMeta", () => {
   it("maps placements from host metadata", () => {
-    const ui = hostMetaToUiMeta({ host_version: "1.0", placements: [PLACEMENT] });
+    const ui = hostMetaToUiMeta({ hostVersion: "1.0", placements: [PLACEMENT] });
 
     expect(ui).not.toBeNull();
     expect(ui!.placements).toHaveLength(1);
@@ -31,12 +32,12 @@ describe("hostMetaToUiMeta", () => {
   });
 
   it("projects a valid placement whether or not the block sets a name", () => {
-    expect(hostMetaToUiMeta({ host_version: "1.0", placements: [PLACEMENT] })).not.toBeNull();
+    expect(hostMetaToUiMeta({ hostVersion: "1.0", placements: [PLACEMENT] })).not.toBeNull();
   });
 
   it("does not read name, icon, category or primaryView", () => {
     const ui = hostMetaToUiMeta({
-      host_version: "1.0",
+      hostVersion: "1.0",
       ...REMOVED_KEYS,
       placements: [PLACEMENT],
     });
@@ -49,14 +50,14 @@ describe("hostMetaToUiMeta", () => {
 
   it("returns null when the block declares no placement", () => {
     // biome-ignore lint/plugin/never-cast: a `name` `HostManifestMeta` no longer has, which the projection must not read
-    expect(hostMetaToUiMeta({ host_version: "1.0", name: "Hello" } as never)).toBeNull();
-    expect(hostMetaToUiMeta({ host_version: "1.0", placements: [] })).toBeNull();
+    expect(hostMetaToUiMeta({ hostVersion: "1.0", name: "Hello" } as never)).toBeNull();
+    expect(hostMetaToUiMeta({ hostVersion: "1.0", placements: [] })).toBeNull();
   });
 
   it("returns null when no declared placement is valid", () => {
     expect(
       hostMetaToUiMeta({
-        host_version: "1.0",
+        hostVersion: "1.0",
         placements: [{ slot: "sidebar.apps", resourceUri: "https://evil.example/x" }],
       }),
     ).toBeNull();
@@ -66,7 +67,7 @@ describe("hostMetaToUiMeta", () => {
 describe("the published host schema", () => {
   it("accepts a block that still carries the removed keys", () => {
     const validate = new Ajv({ strict: false }).compile(schema);
-    const block = { host_version: "1.0", ...REMOVED_KEYS, placements: [PLACEMENT] };
+    const block = { hostVersion: "1.0", ...REMOVED_KEYS, placements: [PLACEMENT] };
     expect(validate(block)).toBe(true);
   });
 });

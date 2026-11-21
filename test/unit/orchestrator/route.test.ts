@@ -23,6 +23,7 @@ import { IdentityContext } from "../../../src/identity/context.ts";
 import {
   ConnectorGrantDenied,
   type OrchestratorRuntime,
+  resolveGrantedPersonalConnector,
   routeToolCall,
   UnknownIdentitySource,
   UnknownNamespacedToolName,
@@ -798,6 +799,85 @@ describe("routeToolCall — a bare name that resolves in the workspace IS the wo
           runtime: runtimeWith(hasConnector, ["crm"]),
         }),
       ).rejects.toBeInstanceOf(UnknownToolSource);
+    }
+  });
+});
+
+describe("resolveGrantedPersonalConnector — an app's `my_` name, by the tool router's lookup", () => {
+  // The resource doors and `/mcp`'s scoped reads resolve an app named `my_<server>`
+  // through this. It reaches the caller's own connector, granted to the session's
+  // workspace, and nothing else: never a workspace source, never another member's.
+  const OTHER_USER = "u2";
+
+  function runtimeFor(store: PermissionStore): OrchestratorRuntime {
+    const own = makeStubSource("fixture");
+    return {
+      ...makeStubRuntime({
+        // The workspace has its own `fixture`: a `my_` name must never reach it.
+        registries: new Map([[SHARED_WS, [makeStubSource("fixture")]]]),
+        workDir,
+        permissionStore: store,
+      }),
+      // Keyed by user: only USER_ID holds a personal `fixture`.
+      getIdentityConnectorSource(userId: string, name: string) {
+        return Promise.resolve(userId === USER_ID && name === "fixture" ? own : undefined);
+      },
+    };
+  }
+
+  test("the caller's own connector granted here resolves", async () => {
+    const store = new PermissionStore(workDir);
+    await store.grantConnector(USER_ID, "fixture", SHARED_WS);
+    const runtime = runtimeFor(store);
+    const source = await resolveGrantedPersonalConnector({
+      identityId: USER_ID,
+      sourceName: "my_fixture",
+      workspaceId: SHARED_WS,
+      runtime,
+    });
+    expect(source?.name).toBe("fixture");
+    // The personal connector, not the workspace's source of the same server.
+    expect(source).not.toBe(runtime.getRegistryForWorkspace(SHARED_WS).getSource("fixture"));
+  });
+
+  test("not granted in this workspace → undefined", async () => {
+    const store = new PermissionStore(workDir);
+    await store.grantConnector(USER_ID, "fixture", OTHER_WS);
+    expect(
+      await resolveGrantedPersonalConnector({
+        identityId: USER_ID,
+        sourceName: "my_fixture",
+        workspaceId: SHARED_WS,
+        runtime: runtimeFor(store),
+      }),
+    ).toBeUndefined();
+  });
+
+  test("another member's connector is never reached, granted or not", async () => {
+    const store = new PermissionStore(workDir);
+    await store.grantConnector(USER_ID, "fixture", SHARED_WS);
+    expect(
+      await resolveGrantedPersonalConnector({
+        identityId: OTHER_USER,
+        sourceName: "my_fixture",
+        workspaceId: SHARED_WS,
+        runtime: runtimeFor(store),
+      }),
+    ).toBeUndefined();
+  });
+
+  test("a bare name never resolves to a personal connector", async () => {
+    const store = new PermissionStore(workDir);
+    await store.grantConnector(USER_ID, "fixture", SHARED_WS);
+    for (const sourceName of ["fixture", "my_"]) {
+      expect(
+        await resolveGrantedPersonalConnector({
+          identityId: USER_ID,
+          sourceName,
+          workspaceId: SHARED_WS,
+          runtime: runtimeFor(store),
+        }),
+      ).toBeUndefined();
     }
   });
 });

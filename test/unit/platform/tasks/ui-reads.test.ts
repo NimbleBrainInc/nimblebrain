@@ -420,6 +420,30 @@ describe("tasks__stats", () => {
     ]);
   });
 
+  test("carries each task's newest runs, newest first, whenever they ran, for a list's strip", () => {
+    seed(makeTask({ id: "a" }));
+    for (let i = 0; i < 16; i++) {
+      appendRun(
+        TMP_DIR,
+        WS,
+        OWNER,
+        "a",
+        makeRun({
+          id: `run_s${String(i).padStart(10, "0")}`,
+          taskId: "a",
+          // Older than the figures' window: the strip is the newest runs, not the window's.
+          startedAt: new Date(Date.UTC(2025, 0, 1 + i)).toISOString(),
+          ...(i === 15 ? { status: "failure" as const, error: `x${"y".repeat(400)}` } : {}),
+        }),
+      );
+    }
+    const [a] = handleStats({ since: "2026-01-01T00:00:00.000Z" }, makeCtx()).tasks;
+    expect(a?.runs).toBe(0);
+    expect(a?.recent).toHaveLength(14);
+    expect(a?.recent?.[0]).toMatchObject({ id: "run_s0000000015", label: "Failed" });
+    expect(a?.recent?.[0]?.error?.length).toBe(240);
+  });
+
   test("refuses an unknown task and a bad since", () => {
     expect(() => handleStats({ taskId: "nope" }, makeCtx())).toThrow("No task with id");
     expect(() => handleStats({ since: "yesterday" }, makeCtx())).toThrow("Invalid since");
@@ -531,9 +555,10 @@ describe("tasks__stats reads each run index once", () => {
   test("the figures are those of counting the paged read", () => {
     seedHistory();
     const out = handleStats({ since: SINCE, taskId: "a" }, makeCtx());
-    const { lastRun, taskId, ...figures } = out.tasks[0] ?? { taskId: "" };
+    const { lastRun, recent, taskId, ...figures } = out.tasks[0] ?? { taskId: "" };
     expect(taskId).toBe("a");
     expect(lastRun?.id).toBe("run_newest");
+    expect(recent?.[0]?.id).toBe("run_newest");
     for (const limit of [1, 3, 5000]) expect(figures).toEqual(figuresOf(pagedRuns(limit)));
     expect(figures).toMatchObject({ runs: 12, pass: 5, fail: 3, uncertain: 2, passRate: 5 / 8 });
   });

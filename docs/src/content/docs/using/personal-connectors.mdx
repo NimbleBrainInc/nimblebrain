@@ -11,7 +11,7 @@ This is the counterpart to a workspace [Connector](/using/connectors), which is 
 
 ## Where personal connectors live
 
-In any workspace, open **Plugins**: your connectors are listed there under **Just you** when they are on in that workspace and under **Yours, not on here** otherwise. Every workspace lists all of them, so you can manage them from whichever one you are in. Clicking one opens its page (see [A personal plugin's page](#a-personal-plugins-page)). An old link to Profile → Connectors opens Plugins.
+In any workspace, open **Plugins** and choose **Personal**: your connectors are listed there, those on in that workspace first, then those that are not. Every workspace lists all of them, so you can manage them from whichever one you are in. Clicking one opens its page (see [A personal plugin's page](#a-personal-plugins-page)). An old link to Profile → Connectors opens Plugins.
 
 A service can be yours when its sign-in can hold a credential that is yours: standard OAuth (**dcr**), a broker such as **Composio** that runs an interactive sign-in, or a pre-registered OAuth client (**static**) when the operator has [declared that client for the whole instance](/config/connectors-catalog/#an-oauth-client-for-the-whole-instance). A service that signs in only with a credential the workspace or operator holds (an API key, a workspace's own OAuth client) installs into a workspace instead.
 
@@ -20,19 +20,19 @@ A service can be yours when its sign-in can hold a credential that is yours: sta
 The quickest way to add a personal connector is from the workspace you want to use it in:
 
 <Steps>
-1. Open **Plugins** and choose the **Browse** tab.
+1. Open **Plugins** and choose **Browse plugins**.
 2. Click **Install** on the service. You're asked who it is for; **Just me** is selected.
 3. Click **Install**. The connector is added to your identity and turned on in this workspace in the same step, then you're sent to the vendor's sign-in.
 4. Sign in and approve access. You're returned to this workspace's **Plugins**, where a notice confirms the connection and the plugin's row reads **Connected just now**.
 </Steps>
 
-The grant is made before the sign-in, so it holds even if you don't finish signing in; the connector then reads **Not signed in** under **Just you**, with **Connect**. Installing the same service from another workspace turns it on there too, and if it is already connected there is no second sign-in.
+The grant is made before the sign-in, so it holds even if you don't finish signing in; the connector then reads **Not signed in** under **Personal**, with **Connect**. Installing the same service from another workspace turns it on there too, and if it is already connected there is no second sign-in.
 
 **Just me** is offered only for a service that can sign in with your own account, and any member can choose it. The other choice, **Everyone in** the workspace, installs it as a [workspace connector](/using/connectors) and is shown only to the workspace's admins. A service that signs in only with one account for the workspace has no **Just me**; its card says **Uses one account for the workspace**. A service the workspace already has sits under **Installed** with **Install for me**, which adds your own beside the workspace's.
 
 ## The account it signs in as
 
-For a Composio connector, the sign-in goes through Composio's hosted flow. When the service reports which account you signed in with, its page reads **Connected as** that account (for example, an email address). A service whose sign-in supports OpenID Connect reports it, since the platform asks it for your email address, and so does a Composio connection. A service without OpenID Connect has no standard way to report the account, so its page reads **Connected**. So does a service that supports OpenID Connect but won't share your email address with the platform: the sign-in goes ahead without it. To switch accounts, **Disconnect** and connect again with the other account.
+For a Composio connector, the sign-in goes through Composio's hosted flow. When the service reports which account you signed in with, its page reads **Connected as** that account (for example, an email address). A service whose sign-in supports OpenID Connect reports it, since the platform asks it for your email address, and so does a Composio connection. A service without OpenID Connect has no standard way to report the account, so its page reads **Connected**. So does a service that supports OpenID Connect but won't share your email address with the platform: the sign-in goes ahead without it. To switch accounts, **Sign out** and **Connect** again with the other account; the connector stays on wherever it was on.
 
 Connecting installs the connector on your identity and runs the sign-in in one step. Nothing runs on the platform host except the connection itself; your tokens are stored against your identity, outside any workspace.
 
@@ -42,16 +42,17 @@ A personal connector is yours, so **you** decide which of your workspaces may us
 
 The rule has **no exception for a workspace only you belong to** — you grant the connector there too before your agent can use it. There is no "free at home".
 
-The quickest place to grant is the workspace itself. Its **Plugins** page lists your connectors granted there under **Just you**, and the rest under **Yours, not on here**, each with **Use here**. Use here asks you to confirm, naming the account and the workspace, then grants it. When the connector is not signed in, the confirm says you'll sign in next: Use here grants it and then sends you to the vendor's sign-in, and you come back to this workspace's **Plugins**, where the row reads **Connected just now**. Any member can do this for their own connectors. The plugin's own page offers the same, and lists every workspace it is used in.
+The quickest place to grant is the workspace itself. Its **Plugins** page lists your connectors under **Personal**: those granted there, then the rest, which read **Off here**. Click one to open its page, where **Use here** asks you to confirm, naming the account and the workspace, then grants it. When the connector is not signed in, the confirm says you'll sign in next: Use here grants it and then sends you to the vendor's sign-in, and you come back to this workspace. Any member can do this for their own connectors. The plugin's page turns it on or off in any of your other workspaces too.
 
-A row shows only what needs you:
+A row says the connector's state in words, never a button:
 
-- **Connect** when it is on here but not signed in. Connect runs the sign-in and brings you back to **Plugins**.
-- Nothing when it is on and signed in. Its subtitle names the account it uses.
+- **Not signed in** when it is on here but not signed in. While it is the only plugin that needs you, the line above the list carries **Connect**, which runs the sign-in and brings you back to **Plugins**; otherwise Connect is on its page.
+- **Off here** when it is not on in this workspace.
+- The account it uses, and **on here**, when it is on and signed in.
 
-Each row's **⋯** menu holds **Open**, and for your own connectors **Stop using here** (which revokes the grant) and **Disconnect**, each confirmed first.
+A row has no menu and no button: click it to open the plugin's page, which holds **Stop using** (which revokes the grant), **Sign out** and **Remove**, each confirmed first.
 
-To turn it on in another workspace, open that workspace's **Plugins**. To see every workspace it is on in, open the plugin's page.
+To turn it on in another workspace, use the plugin's page, or open that workspace's **Plugins**.
 
 Granting into a workspace makes that connector's tools appear to the agent there on its next turn. Revoking removes them just as immediately. Grants are per-workspace and independent — granting into one never affects another.
 
@@ -61,14 +62,21 @@ You can also answer from **chat**. The agent knows which of your connectors are 
 
 In a workspace, **Plugins** → your connector opens its page. The header shows the account it is signed in as and that it uses your account; when the sign-in is not ready, it offers **Connect**, which brings you back to this workspace's **Plugins**. Below it:
 
-- **In this workspace** — **Use here** (after the same confirm as on Plugins, signing you in when it needs to), or **In use here** with **Stop using here**.
-- **Used in** — every workspace it is granted to, each with **Stop using**, which revokes that grant.
+- **In this workspace** — **Use here** (after a confirm naming the account and the workspace, signing you in when it needs to), or **In use here** with **Stop using here**, confirmed first.
+- **Workspaces** — every workspace you belong to, this one first and marked **This workspace**, each reading **On** or **Off** (see below).
 - **Tool permissions** — your own policy for its tools (see below).
-- **Disconnect** — signs out and removes it from your account, ending every grant.
+- **Sign out** — while it is signed in: ends the sign-in and keeps the connector (see [below](#signing-out-and-removing)).
+- **Remove** — removes it from your account, ending every grant.
+
+Under **Workspaces**, a workspace where it is off offers **Use in** that workspace: the confirm names the account and the workspace, and says only you can use it there. Confirming grants it there and nowhere else. A workspace where it is on offers **Stop using**, confirmed first. The row shows the new state at once, and a notice says when the change lands; if it fails, the row goes back to how it was and a notice says why.
+
+Turning it on elsewhere needs no sign-in. When the connector is not signed in, the grant is still made, the confirm says it won't work there until you sign in, and the row reads **On · Not signed in**. Sign in with **Connect** at the top of the page; one sign-in serves every workspace it is on in.
 
 ## Using it in a workspace
 
 Once a personal connector is **granted into the workspace you're chatting in**, its tools are available to the agent there, namespaced to that workspace. Ask the agent to use the service ("summarize my last three Granola meetings") and it will call the connector's tools. In a workspace where you haven't granted it, those tools simply aren't present.
+
+When a tool returns an app view (a `ui://` resource), the view renders in the chat as a workspace connector's does. It reaches only your own connection: its calls run with your account, and it cannot call the workspace's connector of the same service, nor can that connector's view call yours. A granted personal plugin's page and its row on **Plugins** list the sidebar views its service declares; they open from the chat, not the sidebar.
 
 ## Tool permissions
 
@@ -90,22 +98,31 @@ new:
 - **The connector has to be granted into that workspace.** Same grant as for
   chat; without it the tool is not present there for anyone, including a route.
 
-Revoking the grant, or disconnecting the connector, stops the route the same
+Revoking the grant, or signing the connector out or removing it, stops the route the same
 way it stops the agent — immediately, and visibly in the item's delivery ledger.
 
-## Disconnecting
+## Signing out and removing
 
-**Disconnect**, at the bottom of the connector's plugin page, fully removes it from your identity in one step:
+A personal connector has the same three verbs as a [workspace one](/using/connectors#sign-out-and-remove): **Stop using here** ends a grant, **Sign out** ends the sign-in, and **Remove** ends the connector. Each asks you to confirm first.
+
+**Sign out**, on the connector's plugin page (and in its row's **⋯** menu on **Plugins**), ends the sign-in and keeps everything else:
+
+- deletes the connection's stored credentials, and
+- stops the running connection.
+
+The connector stays in your account and on in every workspace it was on in, with your tool permissions. It reads **Not signed in** there, and the agent can't use it until you sign in again. **Connect** signs it back in, with the same account or another one, and nothing else needs redoing. Use it to switch accounts or to recover a sign-in that went wrong.
+
+**Remove**, at the bottom of the connector's plugin page, removes it from your identity in one step:
 
 - revokes **every** workspace grant,
-- deletes the connection's stored credentials,
+- deletes the connection's stored credentials and your tool permissions for it,
 - stops and removes the running connection, and
 - drops the install record.
 
-The connector leaves Plugins in every workspace, and **Browse** offers it again. There is no "de-authenticate but keep it" half-state — disconnect is a clean removal. To use the service again later, connect it again and re-grant it where you want it. Disconnecting asks you to confirm first, and tells you how many workspaces will lose access.
+The connector leaves Plugins in every workspace, and **Browse** offers it again. To use the service again later, add it again and turn it on where you want it. The confirm tells you how many workspaces it turns off in.
 
 <Aside type="note" title="The vendor-side grant">
-Disconnect removes NimbleBrain's copy of your credentials. It does **not yet revoke the grant at the vendor** — the service may still list NimbleBrain among its authorized apps until the token expires. To remove that too, revoke access in the vendor's own account settings.
+Sign out and Remove delete NimbleBrain's copy of your credentials. It does **not yet revoke the grant at the vendor** — the service may still list NimbleBrain among its authorized apps until the token expires. To remove that too, revoke access in the vendor's own account settings.
 </Aside>
 
 ## Where your credentials live

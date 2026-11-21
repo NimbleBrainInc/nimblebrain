@@ -6,7 +6,9 @@
 //   2. On a workspace switch, a slow read for the old workspace that lands
 //      after the new one's never replaces it, and the old listing is not
 //      served while the new read is in flight.
-//   3. A connector install or uninstall re-reads the listing.
+//   3. A connector install or uninstall re-reads the listing, and so does the
+//      viewer turning a personal plugin on or off in the chat's workspace (a
+//      grant change for another workspace does not).
 //   4. A failed read labels nothing at first, and keeps the last listing
 //      after a later failure.
 //
@@ -178,6 +180,31 @@ describe("ChatPluginsProvider", () => {
     expect(reads.map((r) => r.wsId)).toEqual([WS_A, WS_A, WS_A]);
     await settle(reads[2], ["Slack"]);
     expect(seen).toEqual(["Slack"]);
+  });
+
+  test("a personal plugin turned on or off here re-reads the listing; elsewhere does not", async () => {
+    await render(WS_A);
+    await settle(reads[0], ["Granola"]);
+
+    await act(async () => {
+      lastOptions?.onEvent("connector.grant_changed", {
+        userId: "usr_alice",
+        serverName: "granola",
+        wsId: WS_A,
+        granted: false,
+      });
+    });
+    expect(reads.map((r) => r.wsId)).toEqual([WS_A, WS_A]);
+
+    await act(async () => {
+      lastOptions?.onEvent("connector.grant_changed", {
+        userId: "usr_alice",
+        serverName: "granola",
+        wsId: WS_B,
+        granted: true,
+      });
+    });
+    expect(reads.map((r) => r.wsId)).toEqual([WS_A, WS_A]);
   });
 
   test("a failed read labels nothing, and a later failure keeps the last listing", async () => {

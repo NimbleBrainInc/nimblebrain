@@ -1,6 +1,6 @@
 /**
- * Per-browser view preferences for a workspace's summary panel: which rows the
- * member hid, and whether the panel is collapsed.
+ * Per-browser view preferences for a workspace's overview: which alerts the
+ * member hid.
  *
  * Stored in `localStorage` because they are a viewer's convenience, not
  * workspace state: they are never sent to the server, differ per browser, and
@@ -15,10 +15,9 @@
 export interface BriefingPrefs {
   /** Row key → what the row said when it was hidden. */
   hidden: Record<string, string>;
-  collapsed: boolean;
 }
 
-const EMPTY: BriefingPrefs = { hidden: {}, collapsed: false };
+const EMPTY: BriefingPrefs = { hidden: {} };
 
 function key(workspaceId: string): string {
   return `nb:briefing:${workspaceId}`;
@@ -30,12 +29,12 @@ export function loadBriefingPrefs(workspaceId: string): BriefingPrefs {
     if (!raw) return EMPTY;
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return EMPTY;
-    const { hidden, collapsed } = parsed as Partial<BriefingPrefs>;
+    const { hidden } = parsed as Partial<BriefingPrefs>;
     const clean: Record<string, string> = {};
     if (typeof hidden === "object" && hidden !== null) {
       for (const [k, v] of Object.entries(hidden)) if (typeof v === "string") clean[k] = v;
     }
-    return { hidden: clean, collapsed: collapsed === true };
+    return { hidden: clean };
   } catch {
     // localStorage can throw in private-mode / sandboxed contexts, or hold junk.
     return EMPTY;
@@ -44,7 +43,7 @@ export function loadBriefingPrefs(workspaceId: string): BriefingPrefs {
 
 export function saveBriefingPrefs(workspaceId: string, prefs: BriefingPrefs): void {
   try {
-    if (Object.keys(prefs.hidden).length === 0 && !prefs.collapsed) {
+    if (Object.keys(prefs.hidden).length === 0) {
       localStorage.removeItem(key(workspaceId));
     } else {
       localStorage.setItem(key(workspaceId), JSON.stringify(prefs));

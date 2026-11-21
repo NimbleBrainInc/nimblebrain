@@ -23,14 +23,14 @@ import type { HookDeclaration } from "./types.ts";
  * documents for placements, and it is the right default for a field a server
  * author is adding for the first time: a typo costs one stream, not the install.
  *
- * What is NOT tolerated is a well-formed declaration whose `register_tool` is
+ * What is NOT tolerated is a well-formed declaration whose `registerTool` is
  * missing or mis-shaped — that check is `verifyRegisterTool` and it refuses the
  * install, because a stream the runtime will happily mint a URL for but can
  * never hand that URL to is a failure that only surfaces months later at a
  * vendor nobody is watching.
  */
 export function parseHookDeclarations(meta: HostManifestMeta | undefined): HookDeclaration[] {
-  // `meta` is an unchecked cast over manifest / registry JSON, so the declared
+  // `meta` is normalized to camel but unchecked below the top level, so the declared
   // `HookDeclaration[]` type is a claim about intent, not a guarantee about
   // bytes. Everything below re-derives the shape from `unknown`.
   const raw = meta?.hooks as unknown;
@@ -54,16 +54,16 @@ function parseOneDeclaration(entry: unknown): HookDeclaration | null {
   if (!entry || typeof entry !== "object") return null;
   const e = entry as Record<string, unknown>;
   if (typeof e.vendor !== "string" || !HOOK_SLUG_RE.test(e.vendor)) return null;
-  if (typeof e.register_tool !== "string" || e.register_tool.length === 0) return null;
+  if (typeof e.registerTool !== "string" || e.registerTool.length === 0) return null;
   if (typeof e.route !== "string" || !isForwardablePath(e.route)) return null;
   const decl: HookDeclaration = {
     vendor: e.vendor,
     route: e.route,
-    register_tool: e.register_tool,
+    registerTool: e.registerTool,
   };
   if (typeof e.description === "string") decl.description = e.description;
-  const renames = parseHeaderRenames(e.header_renames);
-  if (renames) decl.header_renames = renames;
+  const renames = parseHeaderRenames(e.headerRenames);
+  if (renames) decl.headerRenames = renames;
   return decl;
 }
 

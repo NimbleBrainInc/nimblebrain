@@ -269,3 +269,15 @@ def test_a_server_serves_one_card() -> None:
     sdk.add_server_card(mcp, description="ok")
     with pytest.raises(ValueError, match="already serves"):
         sdk.add_server_card(mcp, description="again")
+
+
+def test_a_placement_size_is_deprecated_and_left_out_of_the_card() -> None:
+    mcp = FastMCP("com.example/sized", version="1.0.0")
+    with pytest.warns(DeprecationWarning, match="size"):
+        card = sdk.add_server_card(
+            mcp,
+            description="ok",
+            placements=[{"slot": "main", "resourceUri": "ui://a/b", "size": "full"}],
+        )
+    placements = card["_meta"][sdk.HOST_META_KEY]["placements"]
+    assert placements == [{"slot": "main", "resourceUri": "ui://a/b"}]

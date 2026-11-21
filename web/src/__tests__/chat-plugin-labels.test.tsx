@@ -8,8 +8,9 @@
 //      same-named plugin.
 //   3. A kernel tool (`nb__search`) and a server the listing lacks render with
 //      no label, as they did before attribution.
-//   4. A plugin request (`nb__manage_tools` `request_plugin`) reads "Asked to
-//      use" with the requested plugin's label, not the tool or server name.
+//   4. A plugin request (`nb__request_plugin`, or `nb__manage_tools`
+//      `request_plugin` in an older conversation) reads "Asked to use" with
+//      the requested plugin's label, not the tool or server name.
 //   5. A loaded skill that comes with a plugin is labeled with it: in the
 //      ledger line, and on the `nb__use_skill` / `skills__activate` call that
 //      loads or un-mutes it. An authored skill is not.
@@ -172,8 +173,13 @@ describe("plugin labels on tool calls", () => {
   });
 
   test("a plugin request reads as asking to use the plugin, labeled with it, never by server name", async () => {
-    const blocks = [call("t1", "nb__manage_tools", { request_plugin: "gmail" })];
+    const blocks = [call("t1", "nb__request_plugin", { plugin: "gmail" })];
     expect(await labelsIn(timeline(blocks))).toEqual([
+      { name: "My Gmail", owner: "person", yoursTitle: "Yours" },
+    ]);
+    // A request an older conversation recorded on nb__manage_tools reads the same.
+    const recorded = [call("t1", "nb__manage_tools", { request_plugin: "gmail" })];
+    expect(await labelsIn(timeline(recorded))).toEqual([
       { name: "My Gmail", owner: "person", yoursTitle: "Yours" },
     ]);
     const container = document.createElement("div");
@@ -194,7 +200,7 @@ describe("plugin labels on tool calls", () => {
     });
     container.remove();
     expect(head).toContain("Asked to use");
-    expect(head).not.toContain("manage tools");
+    expect(head).not.toContain("request plugin");
     expect(head).not.toContain("· gmail");
   });
 

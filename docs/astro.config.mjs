@@ -146,7 +146,7 @@ export default defineConfig({
                   { label: 'Files', slug: 'using/files' },
                   { label: 'File Context', slug: 'using/file-context' },
                   { label: 'Skills', slug: 'using/skills' },
-                  { label: 'Tasks', slug: 'using/tasks' },
+                  { label: 'Scheduled tasks', slug: 'using/tasks' },
                   {
                     label: 'Notifications',
                     items: [

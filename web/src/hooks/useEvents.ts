@@ -3,6 +3,7 @@ import { onReconnect, subscribe } from "../api/events-client";
 import type {
   ConfigChangedEvent,
   ConnectionStateChangedEvent,
+  ConnectorGrantChangedEvent,
   ConversationTitleEvent,
   NotificationCreatedEvent,
   NotificationDeliveredEvent,
@@ -27,6 +28,14 @@ export interface UseEventsOptions {
    * downstream action is the same.
    */
   onConnectorLifecycleChanged?: () => void;
+  /**
+   * Called when this identity turned one of its personal plugins on or off in
+   * a workspace (from any tab). The plugin set is unchanged, only whether the
+   * person's plugin is on in `wsId`, so it is its own signal: consumers that
+   * show grant state (plugin lists, request cards) refetch; the shell's
+   * placements, which are the workspace's alone, do not depend on it.
+   */
+  onConnectorGrantChanged?: (event: ConnectorGrantChangedEvent) => void;
   /**
    * Called when a connector's notification lands in a workspace inbox this
    * identity can see. The frame is a summary; consumers refetch the list
@@ -83,6 +92,8 @@ export function useEvents(options?: UseEventsOptions): void {
   onConnectionStateChangedRef.current = options?.onConnectionStateChanged;
   const onConnectorLifecycleChangedRef = useRef(options?.onConnectorLifecycleChanged);
   onConnectorLifecycleChangedRef.current = options?.onConnectorLifecycleChanged;
+  const onConnectorGrantChangedRef = useRef(options?.onConnectorGrantChanged);
+  onConnectorGrantChangedRef.current = options?.onConnectorGrantChanged;
   const onNotificationCreatedRef = useRef(options?.onNotificationCreated);
   onNotificationCreatedRef.current = options?.onNotificationCreated;
   const onNotificationReadRef = useRef(options?.onNotificationRead);
@@ -126,6 +137,11 @@ export function useEvents(options?: UseEventsOptions): void {
     unsubs.push(
       subscribe("connector.uninstalled", () => {
         onConnectorLifecycleChangedRef.current?.();
+      }),
+    );
+    unsubs.push(
+      subscribe("connector.grant_changed", (data) => {
+        onConnectorGrantChangedRef.current?.(data);
       }),
     );
     unsubs.push(

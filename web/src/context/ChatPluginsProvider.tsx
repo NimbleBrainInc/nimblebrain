@@ -11,8 +11,10 @@ const NO_PLUGINS: PluginsListOutput["plugins"] = [];
  * Reads `listPlugins` once for the chat's workspace and shares it with every
  * row of the timeline. Refetched on a workspace change, on the
  * connector-lifecycle SSE signal (install, uninstall), which is what changes
- * the set of plugins, and on a connection's state change, which is what a
- * plugin request card waits on after a sign-in.
+ * the set of plugins, on a connection's state change, which is what a
+ * plugin request card waits on after a sign-in, and on the viewer turning a
+ * personal plugin on or off here, from any tab, which is what a request card's
+ * "Turned on here." reads.
  *
  * The listing is tagged with the workspace it was read for and served only
  * while that is still the chat's workspace, so a switch never labels one
@@ -53,6 +55,9 @@ export function ChatPluginsProvider({
     },
     onConnectionStateChanged: () => {
       if (workspaceRef.current) void refresh(workspaceRef.current);
+    },
+    onConnectorGrantChanged: ({ wsId }) => {
+      if (wsId === workspaceRef.current) void refresh(wsId);
     },
   });
 

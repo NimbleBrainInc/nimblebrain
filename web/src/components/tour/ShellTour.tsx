@@ -4,9 +4,8 @@
 // The first time a person lands on a workspace's Overview, a centred card asks
 // whether they want a quick look around; "Skip" ends it there. The tour then
 // walks the real screens rather than describing them: the sidebar, the
-// Overview's Apps section, the app catalog on Plugins → Browse, writing a skill
-// beside it, and back
-// to the Ask box, where it leaves the cursor so it ends on something to do.
+// Overview's Apps section, the plugin catalog on Browse plugins, New skill on
+// Skills, and back to the Ask box, where it leaves the cursor so it ends on something to do.
 // Help → "Take the tour" replays it from any workspace page.
 //
 // It lives in the shell (`TourProvider` wraps `ShellLayout`) so it survives the
@@ -83,15 +82,16 @@ export function useTourRunning(): boolean {
 }
 
 /** The anchor each step points at, as `[data-tour="<name>"]`. */
-export type TourAnchor = "nav" | "apps" | "catalog" | "skills" | "ask";
+export type TourAnchor = "nav" | "catalog" | "skills" | "ask";
 
 /** The workspace page a step belongs on, under `/w/<slug>/`. */
-export type TourPage = "overview" | "browse";
+export type TourPage = "overview" | "browse" | "skills";
 
-/** Each page's address under the workspace, with its query: Browse is a tab of Plugins. */
+/** Each page's address under the workspace. */
 const PAGE_PATH: Record<TourPage, string> = {
   overview: "",
-  browse: "plugins?tab=browse",
+  browse: "plugins/browse",
+  skills: "skills",
 };
 
 const anchor = (name: TourAnchor) => `[data-tour="${name}"]`;
@@ -110,34 +110,28 @@ const STEPS: TourStep[] = [
     anchor: null,
     page: "overview",
     title: "Welcome to NimbleBrain",
-    body: "Your agent works inside this workspace, with the apps installed here. Want a one-minute look around?",
+    body: "Your agent works inside this workspace, with the plugins and skills added here. Want a one-minute look around?",
     next: "Show me around",
   },
   {
     anchor: "nav",
     page: "overview",
     title: "Your workspace",
-    body: "Overview, Conversations, Files and Tasks live here. The apps installed in this workspace appear below them.",
-  },
-  {
-    anchor: "apps",
-    page: "overview",
-    title: "Install apps here",
-    body: "Apps and connectors give your agent its tools: your CRM, docs, tickets and more. They come from the catalog.",
-    next: "Show me the catalog",
+    body: "Overview, Conversations, Files and Scheduled live here. Plugins and Skills hold what your agent can do, and the apps you can open are listed below them.",
+    next: "Browse plugins",
   },
   {
     anchor: "catalog",
     page: "browse",
-    title: "The app catalog",
-    body: "Search for a tool, then press Install on its card. Some connect right away; others ask you to sign in to the service first. If you can't install, a workspace admin can.",
+    title: "Browse plugins",
+    body: "Plugins give your agent its tools: your CRM, docs, tickets and more. Search for one, then press Install on its card. Some connect right away; others ask you to sign in to the service first. If you can't install, a workspace admin can.",
     next: "Next: skills",
   },
   {
     anchor: "skills",
-    page: "browse",
+    page: "skills",
     title: "Teach it with skills",
-    body: "Skills tell your agent how your team works: a process, a tone, a checklist. Press Write a skill to write one.",
+    body: "Skills tell your agent how your team works: a process, a tone, a checklist. Press New skill to write one.",
     next: "Back to Overview",
   },
   {

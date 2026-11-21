@@ -5,7 +5,7 @@ import type { InstalledConnector } from "../../api/client";
  * a clean row stays clean. Action verbs lead the user to the right next step:
  *
  *   needs_setup + missingOAuthClient → "Set up"
- *   not_connected → "Not connected" (neutral — at rest, nothing is broken)
+ *   not_connected → "Not signed in" (neutral — at rest, nothing is broken)
  *   needs_auth → "Reconnect" (a working connection broke)
  *   failed → "Failed" (no verb — admin investigates on the detail page)
  *   connecting / starting → "Connecting…" (no verb, no chevron action)
@@ -34,7 +34,7 @@ export function connectorStatusSummary(
     }
     case "not_connected":
       return {
-        label: "Not connected",
+        label: "Not signed in",
         tone: "text-muted-foreground",
         dot: true,
         dotColor: "bg-muted-foreground/50",

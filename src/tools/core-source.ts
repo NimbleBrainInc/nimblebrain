@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { artifactResolutionsTotal } from "../api/metrics.ts";
 import { OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
 import { structuredContent, textContent } from "../engine/content-helpers.ts";
@@ -29,8 +29,15 @@ const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
 // Prefer the build-time-injected git tag; fall back to package.json for local dev.
 const VERSION = process.env.NB_VERSION || pkg.version;
 
-import type { BriefingItem, BriefingOutput } from "../platform/schemas/home.ts";
+import { resolvePluginCatalogConfig } from "../config/plugin-catalog.ts";
+import type {
+  BriefingItem,
+  BriefingOutput,
+  ConversationStartersOutput,
+} from "../platform/schemas/home.ts";
 import { createBriefingCollector } from "../services/briefing-collector.ts";
+import { workspaceConversationStarters } from "../services/workspace-conversation-starters.ts";
+import { resolveServerConversationStarters } from "../skills/connector-skill-resolver.ts";
 import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
 
 // --- set_model_config helpers -------------------------------------------------
@@ -784,6 +791,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             telemetryEnabled: tm.isEnabled(),
             installId: tm.getAnonymousId(),
             telemetry: tm.status(),
+            // The web client names the signed-in person only when the
+            // deployment identifies; the tenant is the group it joins.
+            telemetryIdentify: tm.isEnabled() && tm.isIdentified(),
+            ...(tm.getTenantId() ? { tenantId: tm.getTenantId() } : {}),
           },
           isError: false,
         };
@@ -945,6 +956,42 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             isError: true,
           };
         }
+      },
+    },
+    // --- Conversation starters: what the workspace's plugins offer to try ---
+    {
+      name: "conversation_starters",
+      description:
+        "List conversation starters for this workspace: a few for each installed plugin, from its entry in the plugin catalog, each a short title and the text to send. The same for every member. Empty when no installed plugin has any.",
+      meta: { ui: { visibility: ["app"] } },
+      annotations: READ_ONLY,
+      inputSchema: { type: "object", properties: {} },
+      handler: async (): Promise<ToolResult> => {
+        const wsId = runtime.requireWorkspaceId();
+        const catalog = runtime.getConnectorCatalog();
+        const conversationStarters = await workspaceConversationStarters(wsId, {
+          connectors: async (id) => (await runtime.getWorkspaceStore().get(id))?.connectors ?? [],
+          catalogByIdMap: () => catalog.catalogByIdMap(),
+          catalogByUrl: () => catalog.catalogByUrl(),
+          resolveConversationStarters: (servers) => {
+            const config = resolvePluginCatalogConfig();
+            return resolveServerConversationStarters(servers, {
+              cacheDir: join(runtime.getWorkDir(), "cache", "plugin-catalog"),
+              catalogUrl: config.url,
+              pin: config.sha256,
+            });
+          },
+        });
+        const output: ConversationStartersOutput = { conversationStarters };
+        return {
+          content: textContent(
+            conversationStarters.length === 0
+              ? "No conversation starters for this workspace's plugins."
+              : conversationStarters.map((s) => `${s.title} (${s.plugin})`).join("\n"),
+          ),
+          structuredContent: structuredContent(output),
+          isError: false,
+        };
       },
     },
     createOpenAppTool(runtime),

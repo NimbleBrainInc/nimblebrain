@@ -73,6 +73,15 @@ router.get("/b", (c) => c.text("b"));
 const use = (x: unknown) => x;
 use(router);
 `,
+  "gray-matter-door.grit": `
+import matter from "gray-matter"; // flagged
+import * as gm from "gray-matter"; // flagged
+import { stringify } from "gray-matter"; // flagged
+const r = require("gray-matter"); // flagged
+const d = import("gray-matter"); // flagged
+import { parse } from "yaml";
+export { matter, gm, stringify, r, d, parse };
+`,
   "no-agent-process.grit": `
 export const a = Bun.spawn(["goose", "acp"]); // flagged
 export const b = Bun.spawnSync(["true"]); // flagged

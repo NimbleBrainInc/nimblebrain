@@ -44,6 +44,7 @@ import type {
 } from "@modelcontextprotocol/server";
 import {
   CLIENT_CAPABILITIES_META_KEY,
+  CLIENT_INFO_META_KEY,
   createMcpHandler,
   createRequestStateCodec,
   isInputRequiredResult,
@@ -62,6 +63,7 @@ import type { TokenGrant, UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import {
   ConnectorGrantDenied,
+  resolveGrantedPersonalConnector,
   routeToolCall,
   UnknownIdentitySource,
   UnknownNamespacedToolName,
@@ -77,7 +79,7 @@ import {
   SKILLS_EXTENSION_ID,
   type SkillEntry,
 } from "../skills/skills-extension.ts";
-import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
+import { IDENTITY_SOURCES, isPersonalConnectorName } from "../tools/identity-sources.ts";
 import type { IdentityTaskSource } from "../tools/identity-task-source.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -400,6 +402,7 @@ function createHandlers(
     // Identity request (bare `<source>__<tool>`): dispatch against the caller's
     // identity, no workspace. See `executeIdentityToolCall` for the rationale.
     if (routed.kind === "identity") {
+      const appCall = isAppCall(appSource, requestCtx);
       return executeIdentityToolCall(
         routed,
         name,
@@ -408,7 +411,8 @@ function createHandlers(
         features,
         requestCtx,
         runtime,
-        isAppCall(appSource, requestCtx),
+        appCall,
+        outsideClientName(appCall, request.params._meta),
       );
     }
     return executeWorkspaceToolCall(
@@ -1127,6 +1131,8 @@ async function executeIdentityToolCall(
   runtime: Runtime,
   /** Whether an app view in the first-party shell made the call (`isAppCall`). */
   appCall = false,
+  /** The outside client's own name for itself, when it gave one (`clientNameOf`). */
+  clientName?: string,
 ): Promise<ToolCallAnswer> {
   const fullName = routed.toolName;
   if (!isToolEnabled(fullName, features)) {
@@ -1169,6 +1175,7 @@ async function executeIdentityToolCall(
     // consistent with the resources wall.
     workspaceId: requestCtx.workspaceId,
     ...(appCall ? { shellCall: true } : {}),
+    ...(clientName ? { clientName } : {}),
   };
 
   if (!routed.policyOwner) {
@@ -1345,7 +1352,7 @@ async function executeWorkspaceToolCall(
 /**
  * The connector gates a workspace tool call passes before it runs: the
  * operator's permission policy, then the connector gate (`lifecycle` handlers,
- * `admin_tools`) against the workspace this URL is bound to and the request's
+ * `adminTools`) against the workspace this URL is bound to and the request's
  * identity.
  */
 async function connectorGateDenial(
@@ -1429,7 +1436,7 @@ export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
  * demand), so letting it through would skip the check rather than the call.
  *
  * Returns the connector gate's refusal when a tool is unlisted because the
- * caller is not admitted to it (a `lifecycle` handler, or `admin_tools`), so an
+ * caller is not admitted to it (a `lifecycle` handler, or `adminTools`), so an
  * app's call is refused with the same `host_only_tool` or
  * `workspace_admin_required` every other door returns.
  */
@@ -1538,6 +1545,34 @@ async function assertAgentMayCall(
 }
 
 /** The source a resource or task request is scoped to, or undefined for none. */
+/** The longest client name kept: it is shown in lists, and it is the client's own string. */
+export const MAX_CLIENT_NAME_CHARS = 80;
+
+/**
+ * The name the client gave itself on this request
+ * (`_meta["io.modelcontextprotocol/clientInfo"].name`), trimmed and capped, or
+ * undefined. Self-declared: attribution only, never authority.
+ */
+export function clientNameOf(meta: Record<string, unknown> | undefined): string | undefined {
+  const info = meta?.[CLIENT_INFO_META_KEY];
+  const name = info && typeof info === "object" ? (info as { name?: unknown }).name : undefined;
+  if (typeof name !== "string") return undefined;
+  const printable = [...name].filter((ch) => {
+    const code = ch.codePointAt(0) ?? 0;
+    return code >= 0x20 && code !== 0x7f;
+  });
+  const trimmed = printable.join("").trim().slice(0, MAX_CLIENT_NAME_CHARS);
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** The outside client's name for a call that is not the shell's own; the shell's calls carry none. */
+function outsideClientName(
+  appCall: boolean,
+  meta: Record<string, unknown> | undefined,
+): string | undefined {
+  return appCall ? undefined : clientNameOf(meta);
+}
+
 function scopedSourceName(meta: Record<string, unknown> | undefined): string | undefined {
   const name = meta?.[RESOURCE_SOURCE_META_KEY];
   return typeof name === "string" && name.length > 0 ? name : undefined;
@@ -1560,11 +1595,9 @@ function cursorParams(cursor: unknown): { cursor: string } | undefined {
 
 /**
  * Run one resource request — a read or a listing — against the one source a
- * scoped request names: a kernel identity source by that name (under the
- * caller's identity context), otherwise that name in the request's workspace.
- * Reads and listings share this resolver so the source a listing shows is
- * exactly the source a read reaches. Returns the source's result as it
- * answered, pagination included.
+ * scoped request names (`scopedSource`). Reads and listings share this resolver
+ * so the source a listing shows is exactly the source a read reaches. Returns
+ * the source's result as it answered, pagination included.
  *
  * `absent` when there is no such source, it is not MCP-backed, or the request
  * fails (a server that serves no resources answers `Method not found`). A
@@ -1579,32 +1612,55 @@ async function fromOneSource<T>(
   run: (client: NonNullable<ReturnType<McpSource["getClient"]>>) => Promise<T>,
 ): Promise<T> {
   if (!runtime || !requestCtx.identity?.id) return absent;
-  const wsId = requestCtx.workspaceId;
+  try {
+    const scoped = await scopedSource(
+      runtime,
+      requestCtx.identity,
+      requestCtx.workspaceId,
+      sourceName,
+    );
+    const client = mcpClientOf(scoped?.source);
+    if (!scoped || !client) return absent;
+    return scoped.reqCtx
+      ? await runWithRequestContext(scoped.reqCtx, () => run(client))
+      : await run(client);
+  } catch {
+    return absent;
+  }
+}
 
+/**
+ * The one source a scoped request names, by the door its name takes: a kernel
+ * identity source (run under the caller's identity context); a `my_` name, the
+ * caller's own personal connector granted to this workspace, reached over its
+ * own connection (`resolveGrantedPersonalConnector`, the tool router's lookup
+ * and grant check); otherwise that name in the request's workspace. A `my_`
+ * name never resolves in the workspace registry, and a bare name never reaches
+ * a personal connector.
+ */
+async function scopedSource(
+  runtime: Runtime,
+  identity: UserIdentity,
+  wsId: string,
+  sourceName: string,
+): Promise<{ source: ToolSource | undefined; reqCtx?: RequestContext } | undefined> {
   if (IDENTITY_SOURCES.has(sourceName)) {
-    const client = mcpClientOf(runtime.getIdentitySource(sourceName));
-    if (!client) return absent;
-    const identityReqCtx: RequestContext = { identity: requestCtx.identity, workspaceId: wsId };
-    try {
-      return await runWithRequestContext(identityReqCtx, () => run(client));
-    } catch {
-      return absent;
-    }
+    return {
+      source: runtime.getIdentitySource(sourceName),
+      reqCtx: { identity, workspaceId: wsId },
+    };
   }
-
-  let wsRegistry: ToolRegistry;
-  try {
-    wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
-  } catch {
-    return absent;
+  if (isPersonalConnectorName(sourceName)) {
+    const source = await resolveGrantedPersonalConnector({
+      identityId: identity.id,
+      sourceName,
+      workspaceId: wsId,
+      runtime,
+    });
+    return { source };
   }
-  const client = mcpClientOf(wsRegistry.getSources().find((src) => src.name === sourceName));
-  if (!client) return absent;
-  try {
-    return await run(client);
-  } catch {
-    return absent;
-  }
+  const wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
+  return { source: wsRegistry.getSources().find((src) => src.name === sourceName) };
 }
 
 /**

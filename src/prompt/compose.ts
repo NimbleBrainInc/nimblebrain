@@ -789,7 +789,7 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
   if (hasProxiedTools) {
     lines.push(
       "",
-      '**Important:** These apps have tools that are not in your direct tool list. Call `nb__search` with `scope: "tools"` and a keyword (e.g., "contact", "invoice", "document") to discover them — the top matches are **activated automatically** and callable on the next turn. Use `nb__manage_tools` only to activate a different match from the results, or to remove tools when switching domains (`{ "add": [...], "remove": [...] }`). Tool names use the format `source__tool` (e.g., `synapse-crm__create_contact`). Never guess tool names — always discover them first.',
+      '**Important:** These apps have tools that are not in your direct tool list. Call `nb__search` with `scope: "tools"` and a keyword (e.g., "contact", "invoice", "document") to discover them. Search only lists matches: promote the ones you will call with `nb__manage_tools` (`{ "add": [...] }`), and call them in your next message, once their schemas arrive. Remove tools in the same call when switching domains (`{ "add": [...], "remove": [...] }`). Tool names use the format `source__tool` (e.g., `synapse-crm__create_contact`). Never guess tool names — always discover them first.',
     );
   }
   return lines.join("\n");
@@ -814,10 +814,10 @@ const INTERACTION_RULES = `### Interaction Rules
 
 - When the user describes a change, identify which tool achieves it and call it directly. Do not ask for confirmation unless the action is destructive or ambiguous.
 - After making changes, briefly confirm what you did. The app view refreshes automatically — do not describe the UI.
-- If unsure which tool to use, call \`nb__search\` with \`scope: "tools"\` and a keyword. Its top matches are activated automatically — call them directly. Only use \`nb__manage_tools\` to activate a different match from the results, or to remove tools when clearly switching domains (batch removes with the next adds).
+- If unsure which tool to use, call \`nb__search\` with \`scope: "tools"\` and a keyword. Call a match that is in your tool list directly. To call one that is not, promote it with \`nb__manage_tools\` first and call it in your next message.
 - When the user says "undo" or "go back," check if the app has undo, snapshot, or history tools. If not, say undo is not available for this app.
 - When the user gives vague feedback ("I don't like it," "make it better"), ask ONE clarifying question about what specifically to change.
-- Other apps are still available via \`nb__search\` (scope: "tools") if the user's request spans apps; its top matches are auto-activated, so you can usually call them directly.`;
+- Other apps are still available via \`nb__search\` (scope: "tools") if the user's request spans apps; call their tools the same way.`;
 
 function formatFocusedAppSection(focusedApp: FocusedAppInfo): string {
   const safeName = sanitizeLineField(focusedApp.name);
@@ -957,7 +957,7 @@ function formatWorkspaceContext(ws: WorkspaceContext): string {
   if (ws.name) lines.push(`- Name: ${sanitizeLineField(ws.name)}`);
   lines.push("");
   lines.push(
-    "Your active tools are this workspace's — its apps plus the platform tools. This session reaches **only this workspace**: the user's OTHER workspaces, and their personal tools (e.g. email), are not reachable from here. If this workspace has more tools than are active right now, find them with `nb__search` — it searches THIS workspace and activates matches on demand, so search before assuming a tool is missing. If the user needs a tool that lives in a different workspace, tell them to switch to that workspace.",
+    "Your active tools are this workspace's — its apps plus the platform tools. This session reaches **only this workspace**: the user's OTHER workspaces, and their personal tools (e.g. email), are not reachable from here. If this workspace has more tools than are active right now, find them with `nb__search` — it searches THIS workspace, so search before assuming a tool is missing. If the user needs a tool that lives in a different workspace, tell them to switch to that workspace.",
   );
   lines.push("");
   lines.push(IDENTITY_SCOPE_NOTE);
