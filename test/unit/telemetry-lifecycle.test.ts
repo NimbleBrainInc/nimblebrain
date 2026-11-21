@@ -56,6 +56,36 @@ describe("captureAbout", () => {
     expect(events[1]?.properties.$set).toBeUndefined();
   });
 
+  it("looks up a person the event names without their email, once, and sets it", async () => {
+    const { events, manager } = setup(true);
+    const asked: string[] = [];
+    manager.setPersonSource(async (userId) => {
+      asked.push(userId);
+      return userId === "usr_1" ? { email: "a@example.com", name: "Ada" } : undefined;
+    });
+    // A scheduled run acts as its owner's id alone.
+    manager.captureAbout("automation.run_completed", {}, { userId: "usr_1", workspaceId: "ws_1" });
+    manager.captureAbout("automation.run_completed", {}, { userId: "usr_1", workspaceId: "ws_1" });
+    manager.captureAbout("automation.run_completed", {}, { userId: "usr_gone" });
+    await settle();
+
+    expect(asked).toEqual(["usr_1", "usr_gone"]);
+    expect(events.filter((e) => e.event === "$set")).toEqual([
+      {
+        distinctId: "usr_1",
+        event: "$set",
+        properties: { $set: { email: "a@example.com", name: "Ada" } },
+      },
+    ]);
+  });
+
+  it("still sets the email from a later event after one that lacked it", () => {
+    const { events, manager } = setup(true);
+    manager.captureAbout("automation.run_completed", {}, { userId: "usr_1" });
+    manager.captureAbout("member.added", {}, { userId: "usr_1", email: "a@example.com" });
+    expect(events[1]?.properties.$set).toEqual({ email: "a@example.com" });
+  });
+
   it("sends nothing when the deployment does not identify", () => {
     const { events, manager } = setup(false);
     manager.captureAbout("user.signed_up", {}, { userId: "usr_1", email: "a@example.com" });

@@ -975,6 +975,10 @@ export class Runtime {
     const allowInsecureRemotes = config.allowInsecureRemotes === true || hostLoopback !== null;
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
+    telemetryManager.setPersonSource(async (userId) => {
+      const user = await userStore.get(userId);
+      return user ? { email: user.email, name: user.displayName } : undefined;
+    });
     // Identified telemetry (a no-op otherwise): who signed up, and the
     // workspaces and memberships they make, from the stores that write them.
     userStore.onCreated((user) =>
