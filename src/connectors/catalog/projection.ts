@@ -208,7 +208,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
  *   - inBandAuthErrors that is not a list of specific-enough strings (a short
  *     fragment would read unrelated failures as a refused credential)
  *   - a host block that is not an object, or whose hostVersion is not major 1
- *     or disagrees with its host_version copy (see {@link hostBlockViolation})
+ *     (see {@link hostBlockViolation})
  */
 export function validateServerDetailSafety(s: ServerDetail): string | null {
   for (const icon of s.icons ?? []) {

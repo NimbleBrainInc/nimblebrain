@@ -23,6 +23,7 @@ import {
   catalogPath,
   warnIfCatalogEmpty,
 } from "../connectors/catalog/catalog.ts";
+import { getNimbleBrainHostMeta } from "../connectors/catalog/host-meta.ts";
 import type { ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
 import { registerGatewayCredentialProviders } from "../connectors/gateways/transport-credential.ts";
 import { bootAuditComposioAuthConfigs } from "../connectors/providers/composio/auth-config-audit.ts";
@@ -182,6 +183,7 @@ import {
   filterAdmittedTools,
   isAdminToolAllowed,
   isDeclaredAdminTool,
+  parseAdminToolsDeclaration,
 } from "../permissions/admin-tools.ts";
 import { hostOnlyToolDenial, isHostOnlyTool } from "../permissions/host-only-tools.ts";
 import {
@@ -5010,7 +5012,11 @@ export class Runtime {
 
   /**
    * Each catalog entry's `adminTools`, under the server name its id slugifies
-   * to. A connector that declares none is absent.
+   * to. A connector that declares none is absent. Read from every entry the
+   * catalog carries, including one the safety check refused
+   * (`AggregatedServers.refused`): a refused entry leaves Browse, but a
+   * connector already installed from it stays callable, and its restriction
+   * must hold.
    *
    * By name alone, NOT held to the ref's identity as every grant is
    * ({@link boundCatalogEntries}). This is a restriction: it narrows who may
@@ -5022,8 +5028,10 @@ export class Runtime {
    */
   private async catalogAdminToolsByServer(): Promise<Map<string, ConnectorGates>> {
     const out = new Map<string, ConnectorGates>();
-    for (const e of await this.getConnectorCatalog().catalogEntries()) {
-      if (e.adminTools) out.set(slugifyServerName(e.id), { adminTools: e.adminTools });
+    const { servers, refused } = await this.getConnectorCatalog().servers();
+    for (const { detail } of [...servers, ...refused]) {
+      const adminTools = parseAdminToolsDeclaration(getNimbleBrainHostMeta(detail), detail.name);
+      if (adminTools) out.set(slugifyServerName(detail.name), { adminTools });
     }
     return out;
   }

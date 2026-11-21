@@ -55,6 +55,14 @@ export interface AggregatedServers {
    * without re-reading the directory.
    */
   servers: Array<{ file: string; detail: ServerDetail }>;
+  /**
+   * The servers `validateServerDetailSafety` refused. They never reach Browse
+   * and grant nothing. They are kept for one reader, the runtime's `adminTools`
+   * gate: a restriction only narrows, and a connector installed before its
+   * entry was refused is still callable, so dropping the restriction with the
+   * entry would open its admin-only tools to every member.
+   */
+  refused: Array<{ file: string; detail: ServerDetail }>;
   errors: CatalogError[];
 }
 
@@ -233,7 +241,7 @@ export class ConnectorCatalog {
     // file that could not be read or parsed at all — that is the case
     // where "the catalog looks empty" needs a cause attached to it, so it
     // reaches callers as an error keyed on the file.
-    const out: AggregatedServers = { servers: [], errors: [] };
+    const out: AggregatedServers = { servers: [], refused: [], errors: [] };
     for (const d of diagnostics) {
       if (d.index === undefined) out.errors.push({ file: d.source, message: d.message });
       else if (d.collision) log.error(`[catalog] ${d.message}`);
@@ -249,6 +257,7 @@ export class ConnectorCatalog {
       const safetyError = validateServerDetailSafety(detail);
       if (safetyError) {
         log.warn(`[catalog] [${source}] entry "${detail.name}" dropped — ${safetyError}`);
+        out.refused.push({ file: source, detail });
         continue;
       }
       out.servers.push({ file: source, detail });

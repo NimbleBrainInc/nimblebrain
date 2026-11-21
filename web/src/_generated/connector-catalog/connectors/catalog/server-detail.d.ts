@@ -313,7 +313,7 @@ export interface ServerDetail {
     remotes?: RemoteTransport[];
     _meta?: Record<string, unknown> & {
         "ai.nimblebrain/connector"?: NimbleBrainConnectorMeta;
-        /** Raw catalog JSON in either spelling; read it through `getNimbleBrainHostMeta` (`host-meta.ts`). */
+        /** Raw catalog JSON; read it through `getNimbleBrainHostMeta` (`host-meta.ts`). */
         "ai.nimblebrain/host"?: unknown;
     };
 }
@@ -326,7 +326,7 @@ export declare function getNimbleBrainConnectorMeta(s: ServerDetail): NimbleBrai
  * how a server declares its UI placement in the NimbleBrain host shell.
  * See schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json. Read through
  * `getNimbleBrainHostMeta` (`host-meta.ts`), never directly: the block is raw
- * catalog JSON in either spelling.
+ * catalog JSON.
  */
 export declare const NIMBLEBRAIN_HOST_META_KEY = "ai.nimblebrain/host";
 /** Result of validating a candidate against the upstream schema. */

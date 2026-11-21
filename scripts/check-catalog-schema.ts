@@ -9,10 +9,9 @@
  * parsed, shares its server name with another entry (both are refused),
  * is scrubbed at the directory boundary for an unsafe URL or a
  * reserved OAuth param, or resolves to nothing installable — and every
- * entry whose malformed `adminTools` makes all its tools admin-only.
+ * entry whose malformed `adminTools` makes all its tools admin-only, or
+ * whose host block carries a snake_case key the runtime does not read.
  * Exit 1 if there is any, 0 if every entry reaches Browse as written.
- * An entry whose host block uses a deprecated snake_case key is a
- * warning on stderr, never a failure: the runtime still reads it.
  *
  * **Why this exists.** A catalog entry is validated at load, and an
  * invalid one is dropped with a warn log while its siblings load fine
@@ -35,7 +34,7 @@
  *   bun run check:catalog-schema          # the in-repo example catalog
  */
 
-import { catalogDeprecations, validateCatalog } from "../src/connectors/catalog/read.ts";
+import { validateCatalog } from "../src/connectors/catalog/read.ts";
 
 function main(): void {
   const path = process.argv[2];
@@ -44,7 +43,6 @@ function main(): void {
     process.exit(2);
   }
 
-  for (const w of catalogDeprecations(path)) console.error(`  warning: ${w.message}`);
   const diagnostics = validateCatalog(path);
   if (diagnostics.length === 0) {
     console.log(`✓ ${path}: every entry reaches Browse (schema, safety, installable)`);
@@ -71,8 +69,9 @@ function main(): void {
         "registry schema (src/connectors/catalog/schemas/server.schema.json); icon, docs, and\n" +
         "portal URLs must be http(s); OAuth params may not use reserved keys; and an\n" +
         "entry needs `packages` or a `remotes` entry the installer supports; `adminTools`\n" +
-        "must be a list of at most 64 tool names with no whitespace; and no two names may\n" +
-        "slugify to one server name (`a.b/c` and `a/b.c` are both `a-b-c`).",
+        "must be a list of at most 64 tool names with no whitespace; the host block is\n" +
+        "camelCase only (`hostVersion`, `adminTools`, a hook's `registerTool`); and no two\n" +
+        "names may slugify to one server name (`a.b/c` and `a/b.c` are both `a-b-c`).",
     );
   }
   process.exit(1);
