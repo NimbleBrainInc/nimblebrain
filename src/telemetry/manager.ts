@@ -73,8 +73,8 @@ export interface TelemetrySubject {
   email?: string;
   name?: string;
   workspaceId?: string;
-  /** The request is an unattended run (an automation), not a person in a chat. */
-  unattended?: boolean;
+  /** What woke the current run: `chat`, `schedule`, `manual`, `event` or `api`. */
+  trigger?: string;
 }
 
 export type TelemetryClientFactory = (
@@ -234,12 +234,10 @@ export class TelemetryManager {
     return this.identified ? this.subjectSource()?.workspaceId : undefined;
   }
 
-  /** What started the current run: a person's chat or an automation. Identified deployments only. */
-  currentTrigger(): "chat" | "automation" | undefined {
+  /** What woke the current run (`RunTrigger`). Identified deployments only. */
+  currentTrigger(): string | undefined {
     if (!this.identified) return undefined;
-    const subject = this.subjectSource();
-    if (!subject) return undefined;
-    return subject.unattended ? "automation" : "chat";
+    return this.subjectSource()?.trigger;
   }
 
   /** Whether events name the person (`telemetry.identify` with `enabled: true`). */

@@ -122,7 +122,7 @@ An identified deployment also names what was used, by catalog name only. A conne
 | Event | Adds |
 |---|---|
 | `tool.called` (one per tool call) | `source` (`kernel`, `app` or `connector`), the app or the connector's catalog id, the tool, whether it succeeded, and its duration |
-| `agent.chat_started` | The model, and what started the run (`trigger`: `chat` for a person in a chat, `automation` for a scheduled task's run) |
+| `agent.chat_started` | The model, and what started the run (`trigger`: `chat` for a person in a chat; `schedule`, `manual` or `event` for a scheduled task's run, by what started it; `api` for a caller driving the runtime directly) |
 | `agent.chat_completed` | The model, the trigger, the connectors used, and the skills used (a catalog connector's skill as `<catalog id>:<skill>`; any other as `custom`) |
 | `connector.installed` | The connector's catalog id |
 | `skill.created` | The skill's scope (`org`, `workspace` or `user`), never its name |

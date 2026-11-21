@@ -415,12 +415,9 @@ describe("PostHogEventSink on an identified deployment", () => {
     });
   });
 
-  it("says whether a person's chat or an automation started the run", async () => {
-    for (const [subject, trigger] of [
-      [{ userId: "usr_1", workspaceId: "ws_1" }, "chat"],
-      [{ userId: "usr_1", workspaceId: "ws_1", unattended: true }, "automation"],
-    ] as const) {
-      const { mock, sink } = identifiedSetup(subject);
+  it("says what woke the run, as the run-start door recorded it", async () => {
+    for (const trigger of ["chat", "schedule"]) {
+      const { mock, sink } = identifiedSetup({ userId: "usr_1", workspaceId: "ws_1", trigger });
       sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
       sink.emit(runDone("r1"));
       await settle();

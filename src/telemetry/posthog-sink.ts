@@ -54,8 +54,8 @@ interface RunMetrics {
   startedAt: number;
   /** Identified only: the run's model, and what it used, as catalog names or `custom`. */
   model?: string;
-  /** Identified only: what started the run, `chat` or `automation`. */
-  trigger?: "chat" | "automation";
+  /** Identified only: what woke the run (`chat`, `schedule`, `manual`, `event`, `api`). */
+  trigger?: string;
   connectors: Set<Promise<string>>;
   skills: Set<Promise<string>>;
   iterations: number;
