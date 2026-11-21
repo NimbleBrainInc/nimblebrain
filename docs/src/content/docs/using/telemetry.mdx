@@ -75,7 +75,7 @@ Runtime events also carry the NimbleBrain version, OS, CPU architecture and Bun 
 
 ## Identity
 
-Each install has one random ID, and nothing else identifies it. `npx nimblebrain` creates it and passes it to the runtime as `NB_TELEMETRY_ID`, so the CLI's events and the runtime's count as one install. An install started another way keeps its ID in `.telemetry-id` in the work directory. The web client tags its events with the same ID.
+Each install has one random ID, and nothing else identifies it. `npx nimblebrain init` creates it on its first attempt in an install folder, before checking the machine, and keeps it in `telemetry-id` there, so a retry after a failed check counts as the same install. Making the ID sends nothing; events still wait for your yes. With `DO_NOT_TRACK=1` or `NB_TELEMETRY_DISABLED=1` set, no ID is written. The CLI passes the ID to the runtime as `NB_TELEMETRY_ID` in the install's `.env`, so the CLI's events and the runtime's count as one install. An install started another way keeps its ID in `.telemetry-id` in the work directory. The web client tags its events with the same ID.
 
 To unlink future events from past ones, delete `NB_TELEMETRY_ID` from the install's `.env` (or `.telemetry-id` from the work directory). A new ID is made at the next start.
 

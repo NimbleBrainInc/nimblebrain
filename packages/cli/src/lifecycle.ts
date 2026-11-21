@@ -40,6 +40,8 @@ import {
   type Consent,
   envValues,
   field,
+  idPath,
+  installId,
   lockedHere,
   parseAnswer,
   QUESTION,
@@ -102,7 +104,10 @@ export async function init(ctx: Ctx) {
 
   // Asked before anything else, so a failed check reaches us when the person said yes.
   const consent = await chooseConsent(ctx);
-  const rec = recorder(deps, ctx.version, await reportId(deps, home));
+  // Kept before the checks, so every attempt on this home is one install. Never
+  // in a home holding files this CLI did not write; `install` refuses that home.
+  const id = (await foreignFile(deps, home)) ? undefined : await installId(deps, home);
+  const rec = recorder(deps, ctx.version, id ?? (await reportId(deps, home)));
   const begun = Date.now();
   rec.record("cli.init_started", { agent: flags.agent ?? null, interactive: deps.interactive });
   try {
@@ -173,7 +178,7 @@ async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number)
     tag,
     flags.port,
     composeText,
-    envValues(deps, rec.id, consent, asksConsent(composeText)),
+    envValues(deps, lockedHere(deps) ? undefined : rec.id, consent, asksConsent(composeText)),
   );
   // Asked before the start: the runtime reads `.env` only when its container is created.
   const envText = (await deps.readText(paths(home).env)) ?? "";
@@ -364,7 +369,8 @@ export async function uninstall(ctx: Ctx) {
   if (install.agent === "claude-code")
     await deps.exec("claude", ["mcp", "remove", "-s", "user", SERVER_NAME]);
   if (install.agent === "codex") await deps.exec("codex", ["mcp", "remove", SERVER_NAME]);
-  for (const file of [...Object.values(paths(home)), reportPath(home)]) await deps.remove(file);
+  for (const file of [...Object.values(paths(home)), reportPath(home), idPath(home)])
+    await deps.remove(file);
   await deps.remove(home);
   return { ok: true as const, removed: true };
 }
@@ -585,14 +591,10 @@ async function requireInstall({ deps, home }: Ctx): Promise<InstallState> {
  */
 async function guardOurs(deps: Deps, home: string): Promise<string> {
   const project = projectFor(home);
-  const env = await deps.readText(paths(home).env);
-  const marked = env?.match(/^COMPOSE_PROJECT_NAME=(.*?)\r?$/m)?.[1];
-  if (marked === project || marked === DEFAULT_PROJECT) return marked;
-  for (const file of Object.values(paths(home))) {
-    if ((await deps.readText(file)) !== undefined) {
-      throw new CliError("NOT_OURS", `${file} already exists and this CLI did not write it.`);
-    }
-  }
+  const marked = await markedProject(deps, home);
+  if (marked) return marked;
+  const file = await foreignFile(deps, home);
+  if (file) throw new CliError("NOT_OURS", `${file} already exists and this CLI did not write it.`);
   const projects = await composeExec(deps, ["ls", "-a", "--format", "json"]);
   const taken = projects.code === 0 && listsProject(projects.stdout, project);
   const volumes = await deps.exec("docker", [
@@ -609,6 +611,22 @@ async function guardOurs(deps: Deps, home: string): Promise<string> {
     );
   }
   return project;
+}
+
+/** The project this home's `.env` marks as ours (see `guardOurs`), if it marks one. */
+async function markedProject(deps: Deps, home: string): Promise<string | undefined> {
+  const env = await deps.readText(paths(home).env);
+  const marked = env?.match(/^COMPOSE_PROJECT_NAME=(.*?)\r?$/m)?.[1];
+  return marked === projectFor(home) || marked === DEFAULT_PROJECT ? marked : undefined;
+}
+
+/** A file in the home that this CLI did not write, if there is one. */
+async function foreignFile(deps: Deps, home: string): Promise<string | undefined> {
+  if (await markedProject(deps, home)) return undefined;
+  for (const file of Object.values(paths(home))) {
+    if ((await deps.readText(file)) !== undefined) return file;
+  }
+  return undefined;
 }
 
 /** Whether `docker compose ls --format json` lists a project by exactly this name. */

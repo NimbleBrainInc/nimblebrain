@@ -1,6 +1,6 @@
 {
   "name": "nimblebrain",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Install, run and connect NimbleBrain, the open-source runtime for agents and MCP apps, on this machine.",
   "license": "Apache-2.0",
   "type": "module",
