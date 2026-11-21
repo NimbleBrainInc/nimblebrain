@@ -120,6 +120,7 @@ import {
   type RecordArgumentsGrant,
   TokenBucketRateLimit,
 } from "../host-resources/index.ts";
+import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { IdentityContext } from "../identity/context.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
 import { loadInstanceConfig, missingInstanceConfigError } from "../identity/instance.ts";
@@ -1238,8 +1239,11 @@ export class Runtime {
       telemetrySink.addBuiltinSources(platformSources.map((s) => s.name));
       // Identified telemetry names a connector by its catalog id, never by the
       // name it was installed under, which someone may have chosen.
-      telemetrySink.setConnectorResolver(async (wsId, serverName) => {
-        const ref = rt.getLifecycle().getInstance(serverName, wsId)?.ref;
+      telemetrySink.setConnectorResolver(async (owner, serverName) => {
+        const ref =
+          "workspaceId" in owner
+            ? rt.getLifecycle().getInstance(serverName, owner.workspaceId)?.ref
+            : await new IdentityConnectorStore({ workDir }).get(owner.userId, serverName);
         if (!ref) return undefined;
         const catalog = rt.getConnectorCatalog();
         return catalogEntryForRef(ref, await catalog.catalogByUrl(), await catalog.catalogByIdMap())
