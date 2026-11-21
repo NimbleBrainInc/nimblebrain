@@ -6306,6 +6306,13 @@ export class Runtime {
         await reg.removeSource(name);
       }
     }
+    // Identity sources (tasks, files, conversations) sit in no workspace
+    // registry, so the loop above never reaches them. Stop them here: the tasks
+    // source's stop is what ends its scheduler, whose timer otherwise outlives
+    // the runtime and keeps the process alive.
+    for (const source of this._platformSources) {
+      if (isIdentitySource(source.name)) await source.stop();
+    }
     // Nothing drains the run queue once the sources are gone, so a run still
     // waiting for a slot is refused rather than left waiting forever.
     this._runAdmission?.stop();
