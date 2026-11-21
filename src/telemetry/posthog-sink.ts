@@ -289,10 +289,10 @@ export class PostHogEventSink implements EventSink {
     const event = authEventFor(previous, data.state);
     if (!event) return;
     const workspace = "wsId" in data ? data.wsId : undefined;
-    // A person's own plugin lives outside any workspace's connector records.
-    const connector = workspace
-      ? this.connectorId(workspace, data.serverName)
-      : Promise.resolve(CUSTOM);
+    // A person's own plugin is resolved from their records, a workspace's from its own.
+    const records: ConnectorOwner =
+      "wsId" in data ? { workspaceId: data.wsId } : { userId: data.userId };
+    const connector = this.connectorId(records, data.serverName);
     void connector.then((id) =>
       this.telemetry.captureAbout(
         event,

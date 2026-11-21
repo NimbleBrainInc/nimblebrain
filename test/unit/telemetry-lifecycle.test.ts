@@ -71,9 +71,10 @@ describe("connector sign-in, from connection transitions", () => {
   it("reads started, completed, failed and lost, naming the catalog connector only", async () => {
     const { events, manager } = setup(true);
     const sink = new PostHogEventSink(manager);
-    sink.setConnectorResolver(async (_ws, name) =>
-      name === "linear" ? "app.linear/linear" : undefined,
-    );
+    sink.setConnectorResolver(async (owner, name) => {
+      if ("workspaceId" in owner) return name === "linear" ? "app.linear/linear" : undefined;
+      return name === "gmail" ? "com.google/gmail" : undefined;
+    });
     for (const [name, state] of [
       ["linear", "not_authenticated"],
       ["linear", "pending_auth"],
@@ -84,6 +85,18 @@ describe("connector sign-in, from connection transitions", () => {
     ] as const) {
       sink.emit(changed(name, state));
     }
+    // A person's own plugin, signing in.
+    for (const state of ["pending_auth", "running"] as const) {
+      sink.emit(
+        engineEvent("connection.state_changed", {
+          userId: "usr_1",
+          serverName: "gmail",
+          connectorName: "gmail",
+          principalId: "usr_1",
+          state,
+        }),
+      );
+    }
     await settle();
 
     expect(events.map((e) => [e.event, e.properties.connector])).toEqual([
@@ -92,6 +105,8 @@ describe("connector sign-in, from connection transitions", () => {
       ["connector.auth_lost", "app.linear/linear"],
       ["connector.auth_started", "custom"],
       ["connector.auth_failed", "custom"],
+      ["connector.auth_started", "com.google/gmail"],
+      ["connector.auth_completed", "com.google/gmail"],
     ]);
     const text = JSON.stringify(events);
     for (const secret of ["acme-internal", "a@example.com", "state=secret"]) {
