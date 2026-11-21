@@ -498,12 +498,6 @@ export class WorkspaceStore {
     };
   }
 
-  /**
-   * Fire all registered membership-change handlers for a userId. Handler
-   * errors are caught and logged so a buggy subscriber can't break a
-   * workspace mutation. Synchronous — handlers themselves may schedule
-   * async work (e.g. the SSE manager refreshes a client's cached set).
-   */
   /** Call `handler` with each workspace this store creates. Returns its removal. */
   onCreated(handler: (workspace: Workspace) => void): () => void {
     this.createdHandlers.add(handler);
@@ -529,6 +523,12 @@ export class WorkspaceStore {
     }
   }
 
+  /**
+   * Fire all registered membership-change handlers for a userId. Handler
+   * errors are caught and logged so a buggy subscriber can't break a
+   * workspace mutation. Synchronous — handlers themselves may schedule
+   * async work (e.g. the SSE manager refreshes a client's cached set).
+   */
   private fireMembershipChanged(userId: string): void {
     for (const handler of this.membershipChangeHandlers) {
       try {

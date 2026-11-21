@@ -1728,7 +1728,6 @@ export class Scheduler {
     return { state: "queued", position: ticket.position, outcome };
   }
 
-  /** The skipped record's reason for a run admission refused. */
   /** Count an ended run, and tell `onRunEnded`, whose failure never touches the record. */
   private countRun(wsId: string, ownerId: string, run: TaskRun): void {
     taskRunsTotal.inc({ status: run.status });
@@ -1739,6 +1738,7 @@ export class Scheduler {
     }
   }
 
+  /** The skipped record's reason for a run admission refused. */
   private refusalReason(reason: AdmissionRefusal, label: "runNow" | "event"): string {
     if (reason === "running") return `Already running (${label})`;
     if (reason === "queued") return `Already queued (${label})`;

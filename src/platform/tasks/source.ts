@@ -825,7 +825,10 @@ export async function createTasksSource(
  * An automation created, on an identified deployment: how it is triggered and
  * who made it, never its name or prompt, which are its owner's.
  */
-function captureAutomationCreated(runtime: Runtime, task: Task): void {
+export function captureAutomationCreated(
+  runtime: Pick<Runtime, "getTelemetryManager">,
+  task: Task,
+): void {
   runtime.getTelemetryManager().captureAbout(
     "automation.created",
     {
@@ -838,8 +841,8 @@ function captureAutomationCreated(runtime: Runtime, task: Task): void {
 }
 
 /** An automation run that ended, on an identified deployment: its outcome and cost in steps, never its output. */
-function captureAutomationRunEnded(
-  runtime: Runtime,
+export function captureAutomationRunEnded(
+  runtime: Pick<Runtime, "getTelemetryManager">,
   wsId: string,
   ownerId: string,
   run: TaskRun,
