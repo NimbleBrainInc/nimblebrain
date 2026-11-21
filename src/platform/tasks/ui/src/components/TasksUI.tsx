@@ -1,6 +1,8 @@
 import { useApp, useDataSync, useSendMessage, useTrail } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { describeMessage } from "../lib/describe.ts";
 import { savedTaskOf, withSavedTask } from "../lib/saved-task.ts";
+import { viewerTimezone } from "../lib/schedule-zone.ts";
 import type { TaskRun, TaskSummary, TaskWarning } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, toolErrorText } from "../utils.ts";
@@ -176,7 +178,8 @@ export function TasksUI() {
     }
   }
 
-  async function setEnabled(task: TaskRef, enabled: boolean) {
+  /** Turn a task on or off; resolves whether it saved. A failure is shown as the notice, so no caller handles it. */
+  async function setEnabled(task: TaskRef, enabled: boolean): Promise<boolean> {
     mark(task.id, enabled ? "resuming" : "pausing");
     try {
       const res = await updateTool.call({ taskId: task.id, manifest: { enabled } });
@@ -186,9 +189,10 @@ export function TasksUI() {
       const saved = savedTaskOf(res.data);
       if (saved) setTasks((prev) => withSavedTask(prev, saved));
       else refresh();
+      return true;
     } catch (err) {
       setNotice(toolErrorText(err));
-      throw err;
+      return false;
     } finally {
       mark(task.id, null);
     }
@@ -215,10 +219,7 @@ export function TasksUI() {
     onSetEnabled: (t, enabled) => setEnabled({ id: t.id, name: t.name }, enabled),
     onCreate: (template) => push({ kind: "editor", template: template ?? null }),
     onDescribe: canChat
-      ? (sentence) =>
-          sendMessage(
-            `Set up a scheduled task: ${sentence}\n\nAsk me anything you need to know, then show me what you set up.`,
-          )
+      ? (sentence) => sendMessage(describeMessage(sentence, viewerTimezone()))
       : undefined,
     onSeeActivity: () => push({ kind: "activity" }),
     onOpenBatch: (batch) => push({ kind: "batch", batchId: batch.id, batch }),

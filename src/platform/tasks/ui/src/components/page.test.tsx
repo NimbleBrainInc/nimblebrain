@@ -89,7 +89,7 @@ const SHEET_ACTIONS = {
   onEdit: () => {},
   onDuplicate: () => {},
   onDelete: () => {},
-  onSetEnabled: async () => {},
+  onSetEnabled: async () => true,
   onOpenRun: () => {},
   onSeeRuns: () => {},
 };
