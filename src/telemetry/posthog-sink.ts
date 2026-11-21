@@ -5,16 +5,42 @@ import type {
   RunDonePayload,
   RunErrorPayload,
   RunStartPayload,
+  SkillCreatedPayload,
+  SkillsLoadedPayload,
   ToolDonePayload,
 } from "../engine/schemas/events.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
-import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
+import {
+  IDENTITY_SOURCES,
+  isPersonalConnectorName,
+  personalConnectorServerName,
+} from "../tools/identity-sources.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import type { TelemetryManager } from "./manager.ts";
+
+/** Whose connector records hold a connector: a workspace's, or one person's own plugins. */
+export type ConnectorOwner = { workspaceId: string } | { userId: string };
+
+/**
+ * A connector's catalog id, or `undefined` when it is not from the catalog
+ * (added by URL, under a name someone chose). The runtime supplies it; the
+ * sink never reads connector records itself.
+ */
+export type ConnectorCatalogResolver = (
+  owner: ConnectorOwner,
+  serverName: string,
+) => Promise<string | undefined>;
+
+/** What an identified event names in place of a connector or skill not from the catalog. */
+const CUSTOM = "custom";
 
 /** Per-run metric accumulator. */
 interface RunMetrics {
   startedAt: number;
+  /** Identified only: the run's model, and what it used, as catalog names or `custom`. */
+  model?: string;
+  connectors: Set<Promise<string>>;
+  skills: Set<Promise<string>>;
   iterations: number;
   toolCalls: number;
   connectorToolCalls: number;
@@ -28,6 +54,8 @@ interface RunMetrics {
 function createRunMetrics(): RunMetrics {
   return {
     startedAt: Date.now(),
+    connectors: new Set(),
+    skills: new Set(),
     iterations: 0,
     toolCalls: 0,
     connectorToolCalls: 0,
@@ -65,6 +93,8 @@ export class PostHogEventSink implements EventSink {
     "run.error": (data) => this.captureRunError(data),
     "connector.installed": (data) => this.captureConnectorInstalled(data),
     "connector.uninstalled": () => this.captureConnectorUninstalled(),
+    "skills.loaded": (data) => this.recordSkills(data),
+    "skill.created": (data) => this.captureSkillCreated(data),
   };
 
   /**
@@ -74,8 +104,59 @@ export class PostHogEventSink implements EventSink {
    */
   private readonly builtinSources = new Set<string>(["nb", ...IDENTITY_SOURCES]);
 
+  private resolveConnector: ConnectorCatalogResolver = async () => undefined;
+  /** `<wsId>|<serverName>` → its catalog id or `custom`, resolved once. */
+  private readonly connectorIds = new Map<string, Promise<string>>();
+
   constructor(telemetry: TelemetryManager) {
     this.telemetry = telemetry;
+  }
+
+  /** How a workspace connector maps to its catalog id. Set by the runtime. */
+  setConnectorResolver(resolver: ConnectorCatalogResolver): void {
+    this.resolveConnector = resolver;
+    this.connectorIds.clear();
+  }
+
+  /** Whether events may name connectors, tools, skills and models (hosted, identified deployments only). */
+  private named(): boolean {
+    return this.telemetry.isIdentified();
+  }
+
+  /** A connector's catalog id, or `custom`. Never the name it was installed under, which someone may have chosen. */
+  private connectorId(owner: ConnectorOwner | undefined, serverName: string): Promise<string> {
+    if (!owner) return Promise.resolve(CUSTOM);
+    const key =
+      "workspaceId" in owner
+        ? `ws:${owner.workspaceId}|${serverName}`
+        : `user:${owner.userId}|${serverName}`;
+    let id = this.connectorIds.get(key);
+    if (!id) {
+      id = this.resolveConnector(owner, serverName).then(
+        (found) => found ?? CUSTOM,
+        () => CUSTOM,
+      );
+      this.connectorIds.set(key, id);
+    }
+    return id;
+  }
+
+  /**
+   * Whose records a run's connector source is in: a `my_` source is the
+   * signed-in person's own plugin, any other the run's workspace's.
+   */
+  private sourceOwner(
+    source: string,
+    workspaceId: string | undefined,
+  ): { owner: ConnectorOwner | undefined; serverName: string } {
+    if (isPersonalConnectorName(source)) {
+      const userId = this.telemetry.currentUserId();
+      return {
+        owner: userId ? { userId } : undefined,
+        serverName: personalConnectorServerName(source),
+      };
+    }
+    return { owner: workspaceId ? { workspaceId } : undefined, serverName: source };
   }
 
   addBuiltinSources(names: Iterable<string>): void {
@@ -107,17 +188,89 @@ export class PostHogEventSink implements EventSink {
 
     metrics.toolCalls++;
     metrics.toolMs += data.ms;
-    const { sourcePrefix, hasSeparator } = splitInnerToolName(data.name);
-    if (hasSeparator && sourcePrefix.length > 0 && !this.builtinSources.has(sourcePrefix))
-      metrics.connectorToolCalls++;
+    const { sourcePrefix, bareToolName, hasSeparator } = splitInnerToolName(data.name);
+    const isConnector =
+      hasSeparator && sourcePrefix.length > 0 && !this.builtinSources.has(sourcePrefix);
+    if (isConnector) metrics.connectorToolCalls++;
+    if (this.named())
+      this.captureToolCalled(data, metrics, isConnector, sourcePrefix, bareToolName);
     // The agent made an automation: a kernel tool, so naming it reveals nothing.
     if (data.ok && data.name === "tasks__create") this.telemetry.capture("task.created");
   }
 
+  /**
+   * One tool call, named: the kernel's and platform apps' tools by their own
+   * names, a catalog connector's by its catalog id and tool, anything else as
+   * `custom`. Never arguments, results or error text.
+   */
+  private captureToolCalled(
+    data: ToolDonePayload,
+    metrics: RunMetrics,
+    isConnector: boolean,
+    source: string,
+    tool: string,
+  ): void {
+    const base = { ok: data.ok, duration_ms: data.ms };
+    if (!isConnector) {
+      const kind = source === "nb" || IDENTITY_SOURCES.has(source) ? "kernel" : "app";
+      this.telemetry.capture("tool.called", { ...base, source: kind, app: source, tool });
+      return;
+    }
+    const { owner, serverName } = this.sourceOwner(source, data.workspaceId);
+    const connector = this.connectorId(owner, serverName);
+    metrics.connectors.add(connector);
+    void connector.then((id) =>
+      this.telemetry.capture("tool.called", {
+        ...base,
+        source: "connector",
+        connector: id,
+        tool: id === CUSTOM ? CUSTOM : tool,
+      }),
+    );
+  }
+
   /** Start a per-run metrics accumulator and capture the chat-started event. */
   private captureRunStart(data: RunStartPayload): void {
-    this.runs.set(data.runId, createRunMetrics());
-    this.telemetry.capture("agent.chat_started", { tool_count: data.toolNames.length });
+    const metrics = createRunMetrics();
+    if (this.named()) metrics.model = data.model;
+    this.runs.set(data.runId, metrics);
+    this.telemetry.capture("agent.chat_started", {
+      tool_count: data.toolNames.length,
+      ...(metrics.model ? { model: metrics.model } : {}),
+    });
+  }
+
+  /**
+   * The skills a run loaded. A skill a catalog connector published is named
+   * `<catalog id>:<skill>`; any other is `custom`: a custom connector's skill,
+   * and a skill someone wrote, have names people chose, and the name a
+   * connector was installed under is never sent.
+   */
+  private recordSkills(data: SkillsLoadedPayload): void {
+    if (!this.named() || !data.runId) return;
+    const metrics = this.runs.get(data.runId);
+    if (!metrics) return;
+    for (const skill of data.skills) {
+      if (!skill.connector) {
+        metrics.skills.add(Promise.resolve(CUSTOM));
+        continue;
+      }
+      const { owner, serverName } = this.sourceOwner(
+        skill.connector,
+        this.telemetry.currentWorkspaceId(),
+      );
+      metrics.skills.add(
+        this.connectorId(owner, serverName).then((id) =>
+          id === CUSTOM ? CUSTOM : `${id}:${skill.name}`,
+        ),
+      );
+    }
+  }
+
+  /** A skill someone created: its scope only, since its name is theirs. */
+  private captureSkillCreated(data: SkillCreatedPayload): void {
+    if (!this.named()) return;
+    this.telemetry.capture("skill.created", { scope: data.scope });
   }
 
   /** Capture the chat-completed event from the accumulated run metrics, then drop the accumulator. */
@@ -127,7 +280,7 @@ export class PostHogEventSink implements EventSink {
 
     // run.done event carries no token counts (it never has) — read the
     // run-level totals from the per-run metrics accumulator.
-    this.telemetry.capture("agent.chat_completed", {
+    const completed: Record<string, unknown> = {
       iterations: metrics?.iterations ?? 0,
       tool_calls: metrics?.toolCalls ?? 0,
       connector_tool_calls: metrics?.connectorToolCalls ?? 0,
@@ -138,7 +291,21 @@ export class PostHogEventSink implements EventSink {
       input_tokens: metrics?.inputTokens ?? 0,
       output_tokens: metrics?.outputTokens ?? 0,
       cache_tokens: metrics?.cacheTokens ?? 0,
-    });
+    };
+    if (!metrics || !this.named()) {
+      this.telemetry.capture("agent.chat_completed", completed);
+    } else {
+      const { model } = metrics;
+      void Promise.all([Promise.all(metrics.connectors), Promise.all(metrics.skills)]).then(
+        ([connectors, skills]) =>
+          this.telemetry.capture("agent.chat_completed", {
+            ...completed,
+            model,
+            connectors_used: [...new Set(connectors)].sort(),
+            skills_used: [...new Set(skills)].sort(),
+          }),
+      );
+    }
 
     this.runs.delete(data.runId);
   }
@@ -152,12 +319,18 @@ export class PostHogEventSink implements EventSink {
     this.runs.delete(data.runId);
   }
 
-  /** Capture connector.installed with UI presence. Every connector is remote. */
+  /** Capture connector.installed with UI presence, and on identified deployments its catalog id. Every connector is remote. */
   private captureConnectorInstalled(data: ConnectorInstalledPayload): void {
-    this.telemetry.capture("connector.installed", {
-      source: "remote",
-      has_ui: Boolean(data.ui),
-    });
+    const base = { source: "remote", has_ui: Boolean(data.ui) };
+    if (!this.named()) {
+      this.telemetry.capture("connector.installed", base);
+      return;
+    }
+    // A reinstall may come from a different catalog entry, so resolve afresh.
+    this.connectorIds.delete(`ws:${data.wsId}|${data.serverName}`);
+    void this.connectorId({ workspaceId: data.wsId }, data.serverName).then((connector) =>
+      this.telemetry.capture("connector.installed", { ...base, connector }),
+    );
   }
 
   /** Capture connector.uninstalled. */

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildSkillsLoadedPayload } from "../../src/runtime/skills-loaded-payload.ts";
+import { synthesizeConnectorSkill } from "../../src/skills/connector-skills.ts";
 import type { TelemetryClient, TelemetryClientFactory } from "../../src/telemetry/manager.ts";
 import { TelemetryManager } from "../../src/telemetry/manager.ts";
 import { PostHogEventSink } from "../../src/telemetry/posthog-sink.ts";
@@ -288,5 +290,232 @@ describe("PostHogEventSink", () => {
     const created = mock.events.filter((e) => e.event === "task.created");
     expect(created).toHaveLength(1);
     expect(Object.keys(created[0]?.properties ?? {})).not.toContain("name");
+  });
+});
+
+describe("PostHogEventSink on an identified deployment", () => {
+  /** A sink whose manager the operator set to identify, with a catalog of one connector. */
+  function identifiedSetup(): { mock: MockTelemetryClient; sink: PostHogEventSink } {
+    const mock = new MockTelemetryClient();
+    const mgr = TelemetryManager.create({
+      workDir: makeTmpDir(),
+      enabled: true,
+      identify: true,
+      clientFactory: () => mock,
+      env: {},
+    });
+    mgr.setSubjectSource(() => ({ userId: "usr_1", workspaceId: "ws_1" }));
+    const sink = new PostHogEventSink(mgr);
+    sink.addBuiltinSources(["tasks", "crm"]);
+    // `linear` is the workspace's from the catalog; `gmail` is the person's own
+    // plugin from the catalog; anything else was added by URL.
+    sink.setConnectorResolver(async (owner, serverName) => {
+      if ("workspaceId" in owner) return serverName === "linear" ? "app.linear/linear" : undefined;
+      return owner.userId === "usr_1" && serverName === "gmail" ? "com.google/gmail" : undefined;
+    });
+    return { mock, sink };
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  /** An event's own properties, without those every event carries. */
+  const own = ({ nb_version, os, arch, bun_version, ...rest }: Record<string, unknown>) => rest;
+  const toolDoneIn = (name: string, ok = true) =>
+    engineEvent(
+      "tool.done",
+      toolDonePayload({ runId: "r1", name, ms: 3, ok, workspaceId: "ws_1" }),
+    );
+
+  it("names each tool call by its kernel, app or catalog name, and never a custom connector's", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+    sink.emit(toolDoneIn("nb__search"));
+    sink.emit(toolDoneIn("crm__list_contacts"));
+    sink.emit(toolDoneIn("linear__list_issues", false));
+    sink.emit(toolDoneIn("acme-internal__export_payroll"));
+    await settle();
+
+    const calls = mock.events
+      .filter((e) => e.event === "tool.called")
+      .map((e) => own(e.properties));
+    expect(calls).toContainEqual({
+      ok: true,
+      duration_ms: 3,
+      source: "kernel",
+      app: "nb",
+      tool: "search",
+    });
+    expect(calls).toContainEqual({
+      ok: true,
+      duration_ms: 3,
+      source: "app",
+      app: "crm",
+      tool: "list_contacts",
+    });
+    expect(calls).toContainEqual({
+      ok: false,
+      duration_ms: 3,
+      source: "connector",
+      connector: "app.linear/linear",
+      tool: "list_issues",
+    });
+    expect(calls).toContainEqual({
+      ok: true,
+      duration_ms: 3,
+      source: "connector",
+      connector: "custom",
+      tool: "custom",
+    });
+    expect(JSON.stringify(mock.events)).not.toContain("acme-internal");
+    expect(JSON.stringify(mock.events)).not.toContain("export_payroll");
+  });
+
+  it("names a person's own plugin by its catalog id, read from their records", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+    sink.emit(toolDoneIn("my_gmail__send"));
+    sink.emit(toolDoneIn("my_private-thing__go"));
+    await settle();
+
+    const calls = mock.events
+      .filter((e) => e.event === "tool.called")
+      .map((e) => own(e.properties));
+    expect(calls).toContainEqual({
+      ok: true,
+      duration_ms: 3,
+      source: "connector",
+      connector: "com.google/gmail",
+      tool: "send",
+    });
+    expect(calls).toContainEqual({
+      ok: true,
+      duration_ms: 3,
+      source: "connector",
+      connector: "custom",
+      tool: "custom",
+    });
+    expect(JSON.stringify(mock.events)).not.toContain("private-thing");
+  });
+
+  it("adds the model, the connectors used and the skills used to a finished chat", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(
+      engineEvent("run.start", runStartPayload({ runId: "r1", model: "anthropic:claude-x" })),
+    );
+    sink.emit(
+      engineEvent("skills.loaded", {
+        runId: "r1",
+        totalTokens: 0,
+        skills: [
+          {
+            id: "a",
+            name: "triage",
+            connector: "linear",
+            scope: "provided",
+            layer: 3,
+            version: "1",
+            tokens: 0,
+            contentHash: "h",
+            loadedBy: "tool_affinity",
+            reason: "",
+          },
+          {
+            id: "b",
+            name: "Our secret playbook",
+            scope: "workspace",
+            layer: 4,
+            version: "1",
+            tokens: 0,
+            contentHash: "h",
+            loadedBy: "trigger",
+            reason: "",
+          },
+        ],
+      }),
+    );
+    sink.emit(toolDoneIn("linear__list_issues"));
+    sink.emit(toolDoneIn("acme-internal__export_payroll"));
+    sink.emit(runDone("r1"));
+    await settle();
+
+    const done = mock.events.find((e) => e.event === "agent.chat_completed")?.properties;
+    expect(done?.model).toBe("anthropic:claude-x");
+    expect(done?.connectors_used).toEqual(["app.linear/linear", "custom"]);
+    expect(done?.skills_used).toEqual(["app.linear/linear:triage", "custom"]);
+    expect(JSON.stringify(mock.events)).not.toContain("secret playbook");
+  });
+
+  it("names a custom connector's skill as custom, never its install or skill name", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+    const published = (serverName: string, skillName: string) =>
+      synthesizeConnectorSkill({
+        serverName,
+        skillName,
+        description: "",
+        uri: `skill://${serverName}/${skillName}/SKILL.md`,
+      });
+    const payload = buildSkillsLoadedPayload([
+      {
+        skill: published("private-acme-payroll", "confidential-restructuring"),
+        loadedBy: "always",
+        reason: "",
+      },
+      { skill: published("linear", "triage"), loadedBy: "always", reason: "" },
+    ]);
+    sink.emit(engineEvent("skills.loaded", { ...payload, runId: "r1" }));
+    sink.emit(runDone("r1"));
+    await settle();
+
+    const done = mock.events.find((e) => e.event === "agent.chat_completed")?.properties;
+    expect(done?.skills_used).toEqual(["app.linear/linear:triage", "custom"]);
+    const sent = JSON.stringify(mock.events);
+    expect(sent).not.toContain("acme-payroll");
+    expect(sent).not.toContain("restructuring");
+  });
+
+  it("names a catalog connector on install, and a skill someone wrote by its scope only", async () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(
+      engineEvent("connector.installed", {
+        wsId: "ws_1",
+        serverName: "linear",
+        connectorName: "linear",
+        version: "1",
+        ui: null,
+        placements: null,
+      }),
+    );
+    sink.emit(
+      engineEvent("skill.created", { id: "/x", name: "Q3 pricing secrets", scope: "workspace" }),
+    );
+    await settle();
+
+    expect(
+      own(mock.events.find((e) => e.event === "connector.installed")?.properties ?? {}),
+    ).toEqual({
+      source: "remote",
+      has_ui: false,
+      connector: "app.linear/linear",
+    });
+    expect(mock.events.find((e) => e.event === "skill.created")?.properties).toMatchObject({
+      scope: "workspace",
+    });
+    expect(JSON.stringify(mock.events)).not.toContain("pricing secrets");
+  });
+
+  it("sends no names at all when the deployment does not identify", async () => {
+    const { mock, sink } = createTestSetup();
+    sink.setConnectorResolver(async () => "app.linear/linear");
+    sink.emit(
+      engineEvent("run.start", runStartPayload({ runId: "r1", model: "anthropic:claude-x" })),
+    );
+    sink.emit(toolDoneIn("linear__list_issues"));
+    sink.emit(engineEvent("skill.created", { id: "/x", name: "n", scope: "workspace" }));
+    sink.emit(runDone("r1"));
+    await settle();
+
+    expect(mock.events.map((e) => e.event)).toEqual(["agent.chat_started", "agent.chat_completed"]);
+    expect(JSON.stringify(mock.events)).not.toContain("linear");
+    expect(JSON.stringify(mock.events)).not.toContain("claude-x");
   });
 });

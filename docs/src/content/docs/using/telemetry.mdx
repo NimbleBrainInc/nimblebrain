@@ -114,8 +114,19 @@ Events then name the person instead of the install, so a person's runtime and we
 | Who an event is about | The install's random ID | The signed-in person's user ID; the install ID for work no person asked for |
 | Person properties | None | Email and display name, sent once per person per runtime start |
 | Groups | None | `tenant` (from `NB_TENANT_ID`, when set) and `workspace` (the workspace the request is bound to) |
+| Names of things used | None | Catalog names of connectors, tools, skills and models (below) |
 
-Everything else in [What is never sent](#what-is-never-sent) still holds, apart from the email address and the person's name. `identify` without `"enabled": true` does nothing: a person's yes in the CLI or the web UI never turns it on. Set it only where your terms with the people using the install allow it, and never with the key `npx nimblebrain` ships, which is the NimbleBrain project for anonymous installs.
+An identified deployment also names what was used, by catalog name only. A connector added by URL, and a skill someone wrote, have names people chose, so they are sent as `custom`:
+
+| Event | Adds |
+|---|---|
+| `tool.called` (one per tool call) | `source` (`kernel`, `app` or `connector`), the app or the connector's catalog id, the tool, whether it succeeded, and its duration |
+| `agent.chat_started` | The model |
+| `agent.chat_completed` | The model, the connectors used, and the skills used (a catalog connector's skill as `<catalog id>:<skill>`; any other as `custom`) |
+| `connector.installed` | The connector's catalog id |
+| `skill.created` | The skill's scope (`org`, `workspace` or `user`), never its name |
+
+Everything else in [What is never sent](#what-is-never-sent) still holds, apart from the email address, the person's name, and the catalog names above. `identify` without `"enabled": true` does nothing: a person's yes in the CLI or the web UI never turns it on. Set it only where your terms with the people using the install allow it, and never with the key `npx nimblebrain` ships, which is the NimbleBrain project for anonymous installs.
 
 <Aside type="tip">
   A runtime with no `POSTHOG_API_KEY` has nowhere to send anything. It asks no one, creates no ID, and makes no request to PostHog.
