@@ -1,5 +1,6 @@
 import posthog, { type CaptureResult, type PostHogConfig } from "posthog-js";
 import { getConfig } from "./config";
+import { type RouteView, templatedPath, templatedUrl } from "./lib/route-template";
 import { isHttpUrl, withoutQuery } from "./lib/url-scrub";
 
 // Write-only PostHog project API key, from runtime config (NB_POSTHOG_KEY via
@@ -52,6 +53,9 @@ export interface TelemetryPerson {
 
 let workspaceId: string | null = null;
 let identified = false;
+// The page on screen, from the router, and the template last sent as a pageview.
+let route: RouteView | null = null;
+let sentTemplate: string | null = null;
 
 export function initTelemetry(installId?: string, person?: TelemetryPerson): void {
   if (!installId || !POSTHOG_KEY) return;
@@ -75,6 +79,29 @@ export function initTelemetry(installId?: string, person?: TelemetryPerson): voi
   });
   if (person.tenantId) posthog.group("tenant", person.tenantId);
   if (workspaceId) posthog.group("workspace", workspaceId);
+  // The page the person was on before workspace_info answered.
+  sendPageview();
+}
+
+/**
+ * The page on screen, set by the router on every navigation (`TrackedRoutes`).
+ * An identified deployment sends it as a `$pageview` when its template changes;
+ * an anonymous one sends no pageviews.
+ */
+export function setTelemetryRoute(view: RouteView | null): void {
+  route = view;
+  sendPageview();
+}
+
+/** A `$pageview` naming the route template, never the path, once per template change. */
+function sendPageview(): void {
+  if (!initialized || !identified || !route || route.template === sentTemplate) return;
+  sentTemplate = route.template;
+  posthog.capture("$pageview", {
+    $current_url: window.location.origin + route.template,
+    $pathname: route.template,
+    ...(route.app ? { app: route.app } : {}),
+  });
 }
 
 /**
@@ -90,6 +117,7 @@ export function setTelemetryWorkspace(id: string | null): void {
 export function resetTelemetry(): void {
   if (!initialized) return;
   identified = false;
+  sentTemplate = null;
   posthog.reset();
 }
 
@@ -99,18 +127,34 @@ export function captureEvent(name: string, properties?: Record<string, unknown>)
 }
 
 /**
- * Strip the query and fragment from every URL-valued property before an event leaves
- * the browser: `$current_url`, `$referrer`, the `$initial_*` pair PostHog sets once,
- * and any other. The shell's URL can name what the person is looking at (`?chat=`, an
- * app's record), and none of that is product analytics. Exported for tests.
+ * Scrub every URL-valued property before an event leaves the browser: `$current_url`,
+ * `$referrer`, the `$initial_*` and `$session_entry_*` sets PostHog adds, and any other.
+ * The shell's URL can name what the person is looking at (`?chat=`, a workspace's
+ * slug, an app's record), and none of that is product analytics.
+ *
+ * Anonymous, a URL loses its query and fragment. Identified, a URL or path naming the
+ * page on screen becomes its route template (`templatedUrl`, `templatedPath`), any
+ * other URL keeps only its origin and any other path is dropped, and a `$pageview`
+ * loses the document title. Exported for tests.
  */
 export function scrubUrls(event: CaptureResult | null): CaptureResult | null {
   if (!event) return event;
   for (const bag of [event.properties, event.$set, event.$set_once]) {
     if (!bag) continue;
     for (const [key, value] of Object.entries(bag)) {
-      if (isHttpUrl(value)) bag[key] = withoutQuery(value);
+      const scrubbed = scrubValue(key, value);
+      if (scrubbed === undefined) delete bag[key];
+      else bag[key] = scrubbed;
     }
   }
+  if (identified && event.event === "$pageview") delete event.properties.title;
   return event;
+}
+
+/** One property as `scrubUrls` sends it, or `undefined` to drop it. */
+function scrubValue(key: string, value: unknown): unknown {
+  if (!identified) return isHttpUrl(value) ? withoutQuery(value) : value;
+  if (isHttpUrl(value)) return templatedUrl(value, route);
+  if (typeof value === "string" && /pathname$/i.test(key)) return templatedPath(value, route);
+  return value;
 }

@@ -114,8 +114,11 @@ Events then name the person instead of the install, so a person's runtime and we
 | Who an event is about | The install's random ID | The signed-in person's user ID; the install ID for work no person asked for |
 | Person properties | None | Email and display name, sent once per person per runtime start |
 | Groups | None | `tenant` (from `NB_TENANT_ID`, when set) and `workspace` (the workspace the request is bound to) |
+| Pages viewed | None | A web `$pageview` each time the page on screen changes (below) |
 
-Everything else in [What is never sent](#what-is-never-sent) still holds, apart from the email address and the person's name. `identify` without `"enabled": true` does nothing: a person's yes in the CLI or the web UI never turns it on. Set it only where your terms with the people using the install allow it, and never with the key `npx nimblebrain` ships, which is the NimbleBrain project for anonymous installs.
+An identified web client sends `$pageview` when the route it shows changes, and nothing when only a value in it changes (another workspace, another conversation). The event names the route template, never the path: `/w/:slug/settings/members`, not the workspace's address. Its `$current_url` is the origin plus that template, and its `$pathname` the template. On an app's page it also carries `app`, the app's server name from the catalog. In every identified web event, a URL naming another page (the referrer, the first page of a session or of a person) keeps only its origin, and a path naming another page is dropped.
+
+Everything else in [What is never sent](#what-is-never-sent) still holds, apart from the email address, the person's name and the name of the app on screen. `identify` without `"enabled": true` does nothing: a person's yes in the CLI or the web UI never turns it on. Set it only where your terms with the people using the install allow it, and never with the key `npx nimblebrain` ships, which is the NimbleBrain project for anonymous installs.
 
 <Aside type="tip">
   A runtime with no `POSTHOG_API_KEY` has nowhere to send anything. It asks no one, creates no ID, and makes no request to PostHog.
@@ -124,7 +127,7 @@ Everything else in [What is never sent](#what-is-never-sent) still holds, apart 
 ## Technical details
 
 - **Runtime:** `posthog-node`, batched every 30 seconds or 20 events, GeoIP off.
-- **Web client:** `posthog-js` with `ip: false`, `autocapture: false`, `capture_pageview: false`, session recording off. It starts only after the runtime reports a yes.
+- **Web client:** `posthog-js` with `ip: false`, `autocapture: false`, `capture_pageview: false`, session recording off. It starts only after the runtime reports a yes. An identified client sends its own `$pageview` (above), so PostHog never reports the URL itself.
 - **CLI:** one `POST` to PostHog's batch endpoint at the end of a command, using Node's built-in `fetch`.
 - **Destination:** PostHog Cloud (`https://us.i.posthog.com`).
 - **Offline:** events are dropped by the runtime and kept by the CLI for its next command. Telemetry never fails a command.

@@ -21,6 +21,7 @@ mock.module("../telemetry", () => ({
     telemetryCalls.push("reset");
   },
   setTelemetryWorkspace: () => {},
+  setTelemetryRoute: () => {},
   captureEvent: () => {},
 }));
 
