@@ -315,6 +315,48 @@ describe("Ollama after a reboot", () => {
     expect(body.fix).toBe(FIX.systemd);
   });
 
+  /** A local-model install whose first start failed, then Ollama stopped before the rerun. */
+  async function unfinished(opts: MachineOptions) {
+    const m = machine({
+      env,
+      compose,
+      ...opts,
+      ollama: { models: { "gemma4:e4b": GEMMA }, ...opts.ollama },
+    });
+    const exec = m.deps.exec;
+    m.deps.exec = async (cmd, args, o) =>
+      args.join(" ") === "compose up -d --no-build"
+        ? fail("Error response from daemon: boom")
+        : exec(cmd, args, o);
+    const first = await run(["--yes", "--json", "--local-model", "gemma4:e4b"], m.deps);
+    expect(JSON.parse(first.stdout).error).toBe("START_FAILED");
+    m.deps.exec = exec;
+    m.ollamaUp = false;
+    m.calls.length = 0;
+    return m;
+  }
+
+  test("init resuming a saved local model starts Ollama before NimbleBrain", async () => {
+    const m = await unfinished({ platform: "darwin", exec: BREW });
+    const body = JSON.parse((await run(["--yes", "--json"], m.deps)).stdout);
+    expect(body).toMatchObject({ ok: true, phase: "ready", local_model: "nimblebrain-gemma4-e4b" });
+    expect(body.ollama_started).toBe("brew services start ollama");
+    const at = (s: string) => m.calls.findIndex((c) => c.includes(s));
+    expect(at("brew services start ollama")).toBeLessThan(at("docker compose up"));
+  });
+
+  test("init resuming with Ollama still down is LOCAL_MODEL_UNREACHABLE and stays resumable", async () => {
+    const m = await unfinished({
+      files: UNIT,
+      exec: { "systemctl start --no-ask-password ollama": fail("Access denied") },
+    });
+    const body = JSON.parse((await run(["--yes", "--json"], m.deps)).stdout);
+    expect(body.error).toBe("LOCAL_MODEL_UNREACHABLE");
+    expect(body.fix).toBe(FIX.systemd);
+    expect(m.calls.some((c) => c.includes("docker compose up"))).toBe(false);
+    expect(JSON.parse(m.files.get(`${HOME}/install.json`)?.text ?? "").phase).toBe("starting");
+  });
+
   test("up on a hosted key never looks for Ollama", async () => {
     const m = machine({ env, compose, files: UNIT });
     await run(["--yes", "--json"], m.deps);

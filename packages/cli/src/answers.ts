@@ -27,6 +27,8 @@ import type { status } from "./status.ts";
 /** The fields of every answer that carries an install's state (`status`, `init`, `up`, `update`). */
 const STATE = {
   version: "The NimbleBrain runtime release installed, without the leading v",
+  phase:
+    "starting until the install's first start answers health, else ready; npx nimblebrain finishes a starting install, and only down, logs, uninstall, status and doctor act on one",
   cli_version: "This CLI's version; it moves independently of the runtime",
   health: "ok when NimbleBrain answers, else down",
   url: "Where the web UI and API answer, on 127.0.0.1",

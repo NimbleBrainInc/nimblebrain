@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type { Deps } from "../src/deps.ts";
 import { run as runOnly, VERSION } from "../src/main.ts";
 import { cachePath, noticeLines } from "../src/updates.ts";
-import { type MachineOptions, machine } from "./fake.ts";
+import { type MachineOptions, machine, record } from "./fake.ts";
 
 const HOME = "/home/dana/.nimblebrain-local";
 const CACHE = "/home/dana/.cache/nimblebrain/update-check.json";
-const INSTALL = JSON.stringify({ version: "0.73.0", port: 27246, project: "nimblebrain-local" });
+const INSTALL = record({ version: "0.73.0" });
 const HOUR = 60 * 60_000;
 /** Newer than any CLI this repo will release soon. */
 const LATEST_CLI = "99.0.0";

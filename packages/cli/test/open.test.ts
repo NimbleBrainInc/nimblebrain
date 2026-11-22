@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_PROJECT } from "../src/compose.ts";
 import { run } from "../src/main.ts";
 import { browserCommand } from "../src/open.ts";
-import { machine } from "./fake.ts";
+import { machine, record } from "./fake.ts";
 
 const HOME = "/home/dana/.nimblebrain-local";
 const ENV = `${HOME}/.env`;
-const MARK = `COMPOSE_PROJECT_NAME=${DEFAULT_PROJECT}\n`;
+/** A home whose first start did not finish, with a key entered since: `init` resumes it. */
+const STARTING = { [`${HOME}/install.json`]: record({ phase: "starting" }) };
 const URL = "http://127.0.0.1:27246";
 const env = { NIMBLEBRAIN_TAG: "v0.73.0" };
 
@@ -17,7 +17,7 @@ async function json(argv: string[], m: ReturnType<typeof machine>) {
 
 /** A machine with a running install made by an agent's `init`, which opens nothing. */
 async function running(opts: Parameters<typeof machine>[0] = {}) {
-  const m = machine({ env, files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk-test\n` }, ...opts });
+  const m = machine({ env, files: { ...STARTING, [ENV]: "ANTHROPIC_API_KEY=sk-test\n" }, ...opts });
   m.deps.env = { ...m.deps.env, ...env, ...opts.env };
   await json(["--yes", "--agent", "none"], m);
   expect(m.launched).toEqual([]);
@@ -106,7 +106,8 @@ describe("open", () => {
     const m = machine({
       env,
       files: {
-        [`${other}/.env`]: "COMPOSE_PROJECT_NAME=nimblebrain-nb-rc\nANTHROPIC_API_KEY=sk\n",
+        [`${other}/install.json`]: record({ phase: "starting", port: 27300 }),
+        [`${other}/.env`]: "ANTHROPIC_API_KEY=sk\n",
       },
     });
     await json(["--yes", "--agent", "none", "--home", other, "--port", "27300"], m);
@@ -141,13 +142,13 @@ describe("init opens the browser", () => {
     expect((await run(["--no-open"], noOpen.deps)).stdout).toContain(`Next: open ${URL}.`);
     expect(noOpen.launched).toEqual([]);
 
-    const asJson = person({ files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk\n` } });
+    const asJson = person({ files: { ...STARTING, [ENV]: "ANTHROPIC_API_KEY=sk\n" } });
     const { body } = await json(["--agent", "none"], asJson);
     expect(body.ok).toBe(true);
     expect(body.opened).toBeUndefined();
     expect(asJson.launched).toEqual([]);
 
-    const agent = machine({ env, files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk\n` } });
+    const agent = machine({ env, files: { ...STARTING, [ENV]: "ANTHROPIC_API_KEY=sk\n" } });
     await run(["--agent", "none"], agent.deps);
     expect(agent.launched).toEqual([]);
   });

@@ -1,15 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_PROJECT, keyVars, projectFor, providers } from "../src/compose.ts";
+import { keyVars, newProject, providers } from "../src/compose.ts";
 import { run } from "../src/main.ts";
 import { compareVersions, MIN_RUNTIME, newestRelease, runtimeTag } from "../src/release.ts";
 import { VERSION } from "../src/version.ts";
-import { fail, machine, ok, REPO_COMPOSE } from "./fake.ts";
+import { fail, machine, ok, PROJECT, REPO_COMPOSE, record } from "./fake.ts";
 
 const HOME = "/home/dana/.nimblebrain-local";
 const INSTALL = `${HOME}/install.json`;
 const ENV = `${HOME}/.env`;
-/** What an earlier, unfinished `init` leaves in `.env`: the mark that the home is the CLI's. */
-const MARK = `COMPOSE_PROJECT_NAME=${DEFAULT_PROJECT}\n`;
+/** A home whose first start did not finish: `init` resumes it, keeping the `.env` beside it. */
+const STARTING = { [INSTALL]: record({ phase: "starting" }) };
 /** Pins the runtime, so a test does not depend on which release is newest. */
 const env = { NIMBLEBRAIN_TAG: "v0.73.0" };
 
@@ -70,7 +70,6 @@ describe("init", () => {
     });
     const { body } = await json(["--yes"], m);
     expect(body).toMatchObject({ ok: true, health: "ok" });
-    expect(m.calls).toContain("$ docker-compose ls -a --format json");
     expect(m.calls).toContain(`${HOME}$ docker-compose up -d --no-build`);
     expect(m.calls.filter((c) => c.includes("docker compose ") && !c.includes("version"))).toEqual(
       [],
@@ -114,7 +113,10 @@ describe("init", () => {
     });
     const dotenv = m.files.get(ENV);
     expect(dotenv?.mode).toBe(0o600);
-    expect(dotenv?.text).toContain(`COMPOSE_PROJECT_NAME=${DEFAULT_PROJECT}`);
+    const state = JSON.parse(m.files.get(INSTALL)?.text ?? "");
+    expect(state).toMatchObject({ port: 27246, version: "0.73.0", phase: "ready" });
+    expect(state.project).toMatch(/^nimblebrain-local-[0-9a-f]{6}$/);
+    expect(dotenv?.text).toContain(`COMPOSE_PROJECT_NAME=${state.project}\n`);
     expect(dotenv?.text).toContain("NIMBLEBRAIN_TAG=v0.73.0");
     expect(dotenv?.text).toContain("NIMBLEBRAIN_WEB_PORT=27246");
   });
@@ -139,7 +141,7 @@ describe("init", () => {
   });
 
   test("with a key in .env it ends ok", async () => {
-    const m = machine({ env, files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk-test\n` } });
+    const m = machine({ env, files: { ...STARTING, [ENV]: "ANTHROPIC_API_KEY=sk-test\n" } });
     const { body, code } = await json(["--yes"], m);
     expect(code).toBe(0);
     expect(body).toMatchObject({ ok: true, model_key: "set" });
@@ -147,7 +149,7 @@ describe("init", () => {
   });
 
   test("the key never appears in the output", async () => {
-    const m = machine({ env, files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk-secret-123\n` } });
+    const m = machine({ env, files: { ...STARTING, [ENV]: "ANTHROPIC_API_KEY=sk-secret-123\n" } });
     const { stdout } = await run(["--yes", "--json"], m.deps);
     expect(stdout).not.toContain("sk-secret-123");
   });
@@ -252,20 +254,6 @@ describe("init", () => {
     expect(m.files.size).toBe(0);
   });
 
-  test("another install's project refuses with NOT_OURS before writing anything", async () => {
-    const m = machine({
-      env,
-      exec: {
-        "docker compose ls -a --format json": ok(
-          '[{"Name":"nimblebrain-local","ConfigFiles":"/srv/x/docker-compose.yml"}]',
-        ),
-      },
-    });
-    const { body } = await json(["--yes"], m);
-    expect(body.error).toBe("NOT_OURS");
-    expect(m.files.size).toBe(0);
-  });
-
   test("a --home holding files this CLI did not write refuses with NOT_OURS and keeps them", async () => {
     const compose = "/home/dana/project/docker-compose.yml";
     const m = machine({ env, files: { [compose]: "services: {}\n" } });
@@ -313,91 +301,289 @@ describe("init", () => {
 
 describe("another home", () => {
   const RC = "/home/dana/nb-rc";
-  /** Docker as it is with the default install present: its project and its data volume. */
-  const defaultInstalled = {
-    "docker compose ls -a --format json": ok(
-      '[{"Name":"nimblebrain-local","ConfigFiles":"/home/dana/.nimblebrain-local/docker-compose.yml"}]',
-    ),
-    "docker volume ls -q --filter name=^nimblebrain-local_workspace$": ok(
-      "nimblebrain-local_workspace",
-    ),
-  };
+  const project = (m: ReturnType<typeof machine>, home = HOME) =>
+    JSON.parse(m.files.get(`${home}/install.json`)?.text ?? "{}").project as string;
 
-  test("the project follows the home folder's name, and the default home keeps nimblebrain-local", () => {
-    expect(projectFor("/home/dana/.nimblebrain-local")).toBe("nimblebrain-local");
-    expect(projectFor("/tmp/tmp.x1/nimblebrain-local")).toBe("nimblebrain-local");
-    expect(projectFor("/home/dana/nb-rc")).toBe("nimblebrain-nb-rc");
-    expect(projectFor("/home/dana/nb-rc/")).toBe("nimblebrain-nb-rc");
-    expect(projectFor("/home/dana/.nimblebrain-local-rc")).toBe("nimblebrain-local-rc");
-    expect(projectFor("/home/dana/RC 0.80.0")).toBe("nimblebrain-rc-0-80-0");
-    expect(projectFor("/")).toBe("nimblebrain");
+  test("a new project is the folder's name and six random hex digits, always a valid Compose name", () => {
+    expect(newProject("/home/dana/.nimblebrain-local")).toMatch(/^nimblebrain-local-[0-9a-f]{6}$/);
+    expect(newProject("/home/dana/nb-rc")).toMatch(/^nimblebrain-nb-rc-[0-9a-f]{6}$/);
+    expect(newProject("/home/dana/nb-rc/")).toMatch(/^nimblebrain-nb-rc-[0-9a-f]{6}$/);
+    expect(newProject("/home/dana/RC 0.80.0")).toMatch(/^nimblebrain-rc-0-80-0-[0-9a-f]{6}$/);
+    expect(newProject("/")).toMatch(/^nimblebrain-[0-9a-f]{6}$/);
+    expect(newProject("/home/dana/...")).toMatch(/^nimblebrain-[0-9a-f]{6}$/);
+    for (const home of ["/a/x", "/", "/home/dana/Ünïcode", "/home/dana/-_-"])
+      expect(newProject(home)).toMatch(/^[a-z0-9][a-z0-9_-]*$/);
+  });
+
+  test("two homes whose folders share a name get different projects", async () => {
+    const m = machine({ env });
+    await json(["--yes", "--home", "/srv/a/nimblebrain-local", "--port", "27300"], m);
+    await json(["--yes", "--home", "/srv/b/nimblebrain-local", "--port", "27301"], m);
+    const a = project(m, "/srv/a/nimblebrain-local");
+    const b = project(m, "/srv/b/nimblebrain-local");
+    expect(a).toMatch(PROJECT);
+    expect(b).toMatch(PROJECT);
+    expect(a).not.toBe(b);
   });
 
   test("installs beside the default install as its own project, port and data", async () => {
-    const m = machine({ env, exec: defaultInstalled });
+    const m = machine({ env });
+    await json(["--yes"], m);
     const { body } = await json(["--yes", "--home", RC, "--port", "27300"], m);
-    expect(body).toMatchObject({ ok: true, model_key: "missing", url: "http://127.0.0.1:27300" });
-    expect(m.files.get(`${RC}/.env`)?.text).toContain("COMPOSE_PROJECT_NAME=nimblebrain-nb-rc\n");
+    expect(body).toMatchObject({ ok: true, phase: "ready", url: "http://127.0.0.1:27300" });
+    expect(project(m, RC)).toMatch(/^nimblebrain-nb-rc-[0-9a-f]{6}$/);
+    expect(project(m, RC)).not.toBe(project(m));
+    expect(m.files.get(`${RC}/.env`)?.text).toContain(`COMPOSE_PROJECT_NAME=${project(m, RC)}\n`);
     expect(JSON.parse(m.files.get(`${RC}/install.json`)?.text ?? "")).toMatchObject({
-      project: "nimblebrain-nb-rc",
       port: 27300,
     });
     expect(m.calls).toContain(`${RC}$ docker compose up -d --no-build`);
   });
 
   test("a relative --home is taken from the working directory", async () => {
-    const m = machine({ env, exec: defaultInstalled });
+    const m = machine({ env });
     await json(["--yes", "--home", "../nb-rc", "--port", "27300"], m);
-    expect(m.files.get(`${RC}/.env`)?.text).toContain("COMPOSE_PROJECT_NAME=nimblebrain-nb-rc\n");
+    expect(project(m, RC)).toMatch(/^nimblebrain-nb-rc-/);
   });
 
-  test("a home whose own project is taken refuses with NOT_OURS, naming it", async () => {
-    const m = machine({
-      env,
-      exec: { "docker compose ls -a --format json": ok('[{"Name":"nimblebrain-nb-rc"}]') },
-    });
-    const { body } = await json(["--yes", "--home", RC], m);
-    expect(body.error).toBe("NOT_OURS");
-    expect(body.message).toContain('"nimblebrain-nb-rc"');
-    expect(m.files.size).toBe(0);
-  });
-
-  test("a project whose name only starts with this one is not this one", async () => {
-    const m = machine({
-      env,
-      exec: { "docker compose ls -a --format json": ok('[{"Name":"nimblebrain-local-rc"}]') },
-    });
-    expect((await json(["--yes"], m)).body).toMatchObject({ ok: true, model_key: "missing" });
-  });
-
-  test("a .env naming another project is not this home's mark", async () => {
-    const m = machine({ env, files: { [ENV]: "COMPOSE_PROJECT_NAME=nimblebrain-local-rc\n" } });
+  test("a .env with no record is not this CLI's, whatever project it names", async () => {
+    const m = machine({ env, files: { [ENV]: "COMPOSE_PROJECT_NAME=nimblebrain-local\n" } });
     const { body } = await json(["--yes"], m);
     expect(body.error).toBe("NOT_OURS");
-    expect(m.files.get(ENV)?.text).toBe("COMPOSE_PROJECT_NAME=nimblebrain-local-rc\n");
+    expect(m.files.get(ENV)?.text).toBe("COMPOSE_PROJECT_NAME=nimblebrain-local\n");
+    expect(m.files.has(INSTALL)).toBe(false);
   });
 
-  test("an older CLI's unfinished init in another home resumes on the project it chose", async () => {
-    const m = machine({ env, files: { [`${RC}/.env`]: MARK } });
-    await json(["--yes", "--home", RC, "--port", "27300"], m);
-    expect(m.files.get(`${RC}/.env`)?.text).toContain(`COMPOSE_PROJECT_NAME=${DEFAULT_PROJECT}\n`);
-    expect(JSON.parse(m.files.get(`${RC}/install.json`)?.text ?? "").project).toBe(DEFAULT_PROJECT);
+  test("a moved home keeps the project its record names", async () => {
+    const m = machine({ env, files: { [`${RC}/install.json`]: record() } });
+    expect((await json(["down", "--home", RC], m)).body.ok).toBe(true);
+    await json(["update", "--home", RC, "--runtime", "v0.74.0"], m);
+    expect(m.files.get(`${RC}/.env`)?.text).toContain(
+      "COMPOSE_PROJECT_NAME=nimblebrain-local-0a1b2c\n",
+    );
   });
 
   test("update keeps the project the install recorded", async () => {
-    const m = machine({ env, exec: defaultInstalled });
+    const m = machine({ env });
     await json(["--yes", "--home", RC, "--port", "27300"], m);
+    const chosen = project(m, RC);
     await json(["update", "--home", RC, "--runtime", "v0.74.0"], m);
     const dotenv = m.files.get(`${RC}/.env`)?.text ?? "";
     expect(dotenv).toContain("NIMBLEBRAIN_TAG=v0.74.0");
-    expect(dotenv).toContain("COMPOSE_PROJECT_NAME=nimblebrain-nb-rc\n");
-    expect(dotenv).not.toContain(`COMPOSE_PROJECT_NAME=${DEFAULT_PROJECT}\n`);
+    expect(dotenv).toContain(`COMPOSE_PROJECT_NAME=${chosen}\n`);
+    expect(project(m, RC)).toBe(chosen);
+  });
+});
+
+describe("a first start that did not finish", () => {
+  /** A home whose first start failed (START_FAILED) or never answered health (HEALTH_TIMEOUT). */
+  async function unfinished(how: "START_FAILED" | "HEALTH_TIMEOUT") {
+    const m =
+      how === "START_FAILED"
+        ? machine({
+            env,
+            exec: { "docker compose up -d --no-build": fail("Error response from daemon: boom") },
+          })
+        : machine({ env });
+    const getJson = m.deps.getJson;
+    if (how === "HEALTH_TIMEOUT") m.deps.getJson = async () => undefined;
+    const { body } = await json(["--yes"], m);
+    expect(body.error).toBe(how);
+    m.deps.getJson = getJson;
+    return m;
+  }
+
+  test("leaves a starting record, written before every other file", async () => {
+    for (const how of ["START_FAILED", "HEALTH_TIMEOUT"] as const) {
+      const m = await unfinished(how);
+      const state = JSON.parse(m.files.get(INSTALL)?.text ?? "");
+      expect(state).toMatchObject({ phase: "starting", port: 27246, version: "0.73.0" });
+      expect(state.project).toMatch(/^nimblebrain-local-[0-9a-f]{6}$/);
+      expect(m.files.get(ENV)?.text).toContain(`COMPOSE_PROJECT_NAME=${state.project}\n`);
+      expect([...m.files.keys()][0]).toBe(INSTALL);
+    }
+  });
+
+  test("its fix points at logs, then at running init again", async () => {
+    const m = machine({
+      env,
+      exec: { "docker compose up -d --no-build": fail("Error response from daemon: boom") },
+    });
+    const { body } = await json(["--yes"], m);
+    expect(body.fix).toContain("npx nimblebrain logs");
+    expect(body.fix).toContain("`npx nimblebrain` finishes");
+  });
+
+  test("down, logs, status and uninstall act on it", async () => {
+    for (const how of ["START_FAILED", "HEALTH_TIMEOUT"] as const) {
+      const m = await unfinished(how);
+      expect((await json(["down"], m)).body).toEqual({ ok: true, health: "down" });
+      expect((await json(["logs"], m)).body.ok).toBe(true);
+      expect(m.calls).toContain(`${HOME}$ docker compose logs --no-color --tail 100 platform`);
+      expect((await json(["status"], m)).body).toMatchObject({
+        ok: true,
+        phase: "starting",
+        health: "down",
+        workspaces: [],
+      });
+      expect((await json(["uninstall", "--yes"], m)).body).toEqual({ ok: true, removed: true });
+      expect(m.calls).toContain(`${HOME}$ docker compose down -v --rmi all`);
+      expect(m.files.has(INSTALL)).toBe(false);
+      expect(m.files.has(ENV)).toBe(false);
+    }
+  });
+
+  test("status on a starting install that answers health still lists no workspace", async () => {
+    const m = await unfinished("HEALTH_TIMEOUT");
+    m.healthy = true;
+    expect((await json(["status"], m)).body).toMatchObject({
+      phase: "starting",
+      health: "ok",
+      workspaces: [],
+    });
+  });
+
+  test("the commands that use an install answer INSTALL_INCOMPLETE", async () => {
+    for (const how of ["START_FAILED", "HEALTH_TIMEOUT"] as const) {
+      const m = await unfinished(how);
+      m.deps.interactive = true;
+      for (const argv of [
+        ["up"],
+        ["update"],
+        ["key"],
+        ["local-model"],
+        ["telemetry"],
+        ["telemetry", "on"],
+        ["open"],
+        ["mcp", "list"],
+        ["mcp", "add", "http://127.0.0.1:8000/mcp"],
+        ["mcp", "remove", "notes"],
+      ]) {
+        const { body } = await json(argv, m);
+        expect({ argv, error: body.error }).toEqual({ argv, error: "INSTALL_INCOMPLETE" });
+        expect(body.fix).toBe(
+          "Run `npx nimblebrain` to finish installing it, or `npx nimblebrain uninstall` to remove it.",
+        );
+      }
+    }
+  });
+
+  test("INSTALL_INCOMPLETE's fix names another home in both commands", async () => {
+    const other = "/home/dana/nb-rc";
+    const m = machine({ env, files: { [`${other}/install.json`]: record({ phase: "starting" }) } });
+    const { body } = await json(["up", "--home", other], m);
+    expect(body.error).toBe("INSTALL_INCOMPLETE");
+    expect(body.fix).toBe(
+      `Run \`npx nimblebrain --home ${other}\` to finish installing it, or \`npx nimblebrain --home ${other} uninstall\` to remove it.`,
+    );
+  });
+
+  test("init again, with its own containers holding the port, resumes and ends ready", async () => {
+    const m = await unfinished("HEALTH_TIMEOUT");
+    const first = JSON.parse(m.files.get(INSTALL)?.text ?? "");
+    m.deps.portFree = async () => false;
+    const exec = m.deps.exec;
+    m.deps.exec = async (cmd, args, o) =>
+      args.join(" ") === "compose ps -q" ? ok("4f1c2a9e\n") : exec(cmd, args, o);
+    const { body } = await json(["--yes"], m);
+    expect(body).toMatchObject({ ok: true, phase: "ready", health: "ok", version: "0.73.0" });
+    expect(body.already).toBeUndefined();
+    expect(JSON.parse(m.files.get(INSTALL)?.text ?? "")).toEqual({ ...first, phase: "ready" });
+    expect((await json(["--yes"], m)).body.already).toBe(true);
+  });
+
+  test("init again with the port held by something else is PORT_IN_USE", async () => {
+    const m = await unfinished("HEALTH_TIMEOUT");
+    m.deps.portFree = async () => false;
+    expect((await json(["--yes"], m)).body.error).toBe("PORT_IN_USE");
+  });
+
+  test("init again takes the record's release with no lookup, and --port moves the install", async () => {
+    const m = await unfinished("HEALTH_TIMEOUT");
+    const project = JSON.parse(m.files.get(INSTALL)?.text ?? "").project;
+    m.deps.env = { NIMBLEBRAIN_NO_UPDATE_CHECK: "1" };
+    const seen: string[] = [];
+    const getText = m.deps.getText;
+    m.deps.getText = async (url, t) => {
+      seen.push(url);
+      return getText(url, t);
+    };
+    const { body } = await json(["--yes", "--port", "28000"], m);
+    expect(body).toMatchObject({ ok: true, phase: "ready", url: "http://127.0.0.1:28000" });
+    expect(seen.some((u) => u.includes("info/refs"))).toBe(false);
+    expect(seen).toContain(
+      "https://raw.githubusercontent.com/NimbleBrainInc/nimblebrain/v0.73.0/docker-compose.yml",
+    );
+    expect(JSON.parse(m.files.get(INSTALL)?.text ?? "")).toEqual({
+      project,
+      port: 28000,
+      version: "0.73.0",
+      phase: "ready",
+    });
+    expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_WEB_PORT=28000");
+  });
+
+  test("--runtime on resume installs the release it names", async () => {
+    const m = await unfinished("HEALTH_TIMEOUT");
+    const { body } = await json(["--yes", "--runtime", "v0.74.0"], m);
+    expect(body).toMatchObject({ ok: true, version: "0.74.0", phase: "ready" });
+    expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_TAG=v0.74.0");
+  });
+
+  test("an interrupted claim (record written, nothing else) resumes rather than NOT_OURS", async () => {
+    const m = machine({ env, files: { [INSTALL]: record({ phase: "starting" }) } });
+    const { body } = await json(["--yes"], m);
+    expect(body).toMatchObject({ ok: true, phase: "ready" });
+    expect(m.files.get(`${HOME}/docker-compose.yml`)?.text).toBe(REPO_COMPOSE);
+    expect(m.files.get(ENV)?.text).toContain("COMPOSE_PROJECT_NAME=nimblebrain-local-0a1b2c\n");
+    expect(m.files.has(`${HOME}/instance.json`)).toBe(true);
+  });
+
+  test("a claim cut short before .env runs no Compose: down, logs and uninstall act on the files alone", async () => {
+    const files = {
+      [INSTALL]: record({ phase: "starting" }),
+      [`${HOME}/docker-compose.yml`]: REPO_COMPOSE,
+    };
+    const composeCalls = (m: ReturnType<typeof machine>) =>
+      m.calls.filter((c) => / compose (down|logs|ps)| docker-compose (down|logs|ps)/.test(c));
+    const m = machine({ env, files });
+    expect((await json(["down"], m)).body).toMatchObject({ ok: true, health: "down" });
+    expect((await json(["logs"], m)).body).toMatchObject({ ok: true, lines: [] });
+    expect((await json(["doctor"], m)).body.error).not.toBe("NOT_INSTALLED");
+    expect((await json(["uninstall", "--yes"], m)).body).toMatchObject({ ok: true, removed: true });
+    expect(composeCalls(m)).toEqual([]);
+    expect(m.files.has(INSTALL)).toBe(false);
+    expect(m.files.has(`${HOME}/docker-compose.yml`)).toBe(false);
+  });
+
+  test("a key entered before the rerun is kept, and no model is asked for", async () => {
+    const m = machine({
+      env,
+      interactive: true,
+      answers: ["", "", "none"],
+      files: { [INSTALL]: record({ phase: "starting" }), [ENV]: "ANTHROPIC_API_KEY=sk-test\n" },
+    });
+    const { stdout, code } = await run([], m.deps);
+    expect(code).toBe(0);
+    expect(stdout).toContain("model key: set");
+    expect(m.asked.some((q) => q.startsWith("Model ("))).toBe(false);
+    expect(m.files.get(ENV)?.text).toContain("ANTHROPIC_API_KEY=sk-test");
+  });
+
+  test("a corrupt install.json is NOT_OURS for init and NOT_INSTALLED for the other commands", async () => {
+    for (const text of ["{not json", JSON.stringify({ project: "x", port: 1, version: "1" })]) {
+      const m = machine({ env, files: { [INSTALL]: text } });
+      expect((await json(["--yes"], m)).body.error).toBe("NOT_OURS");
+      expect(m.files.get(INSTALL)?.text).toBe(text);
+      for (const cmd of ["status", "down", "logs", "uninstall", "up"])
+        expect((await json([cmd, "--yes"], m)).body.error).toBe("NOT_INSTALLED");
+    }
   });
 });
 
 describe("after install", () => {
   async function installed() {
-    const m = machine({ env, files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk-test\n` } });
+    const m = machine({ env, files: { ...STARTING, [ENV]: "ANTHROPIC_API_KEY=sk-test\n" } });
     await json(["--yes", "--agent", "claude-code"], m);
     return m;
   }
@@ -412,7 +598,7 @@ describe("after install", () => {
   test("logs returns the runtime's lines", async () => {
     const m = machine({
       env,
-      files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk\n` },
+      files: { ...STARTING, [ENV]: "ANTHROPIC_API_KEY=sk\n" },
       exec: { "docker compose logs --no-color --tail 100 platform": ok("a\nb\n") },
     });
     await json(["--yes"], m);
@@ -453,7 +639,11 @@ describe("after install", () => {
   describe("update refreshes the agent's skill", () => {
     const REFRESH = "$ npx -y skills update nimblebrain -g -y";
     async function withAgent(exec: Record<string, ReturnType<typeof ok>> = {}) {
-      const m = machine({ env, files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk-test\n` }, exec });
+      const m = machine({
+        env,
+        files: { ...STARTING, [ENV]: "ANTHROPIC_API_KEY=sk-test\n" },
+        exec,
+      });
       await json(["--yes", "--agent", "claude-code"], m);
       m.deps.env = { NIMBLEBRAIN_NO_UPDATE_CHECK: "1" };
       return m;
@@ -493,7 +683,7 @@ describe("after install", () => {
       expect(body.skill_update).toBe("not_installed");
       expect(m.calls).not.toContain(REFRESH);
 
-      const none = machine({ env, files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk-test\n` } });
+      const none = machine({ env, files: { ...STARTING, [ENV]: "ANTHROPIC_API_KEY=sk-test\n" } });
       await json(["--yes"], none);
       none.deps.env = { NIMBLEBRAIN_NO_UPDATE_CHECK: "1" };
       const plain = await json(["update", "--runtime", "v0.74.0"], none);
@@ -527,21 +717,6 @@ describe("after install", () => {
     );
   });
 
-  test("logs reads a home whose first start failed or never came up healthy", async () => {
-    const failed = machine({
-      env,
-      exec: { "docker compose up -d --no-build": fail("Error response from daemon: boom") },
-    });
-    expect((await json(["--yes"], failed)).body.error).toBe("START_FAILED");
-    const slow = machine({ env });
-    slow.deps.getJson = async () => undefined;
-    expect((await json(["--yes"], slow)).body.error).toBe("HEALTH_TIMEOUT");
-    for (const m of [failed, slow]) {
-      expect((await json(["logs"], m)).body.ok).toBe(true);
-      expect(m.calls).toContain(`${HOME}$ docker compose logs --no-color --tail 100 platform`);
-    }
-  });
-
   test("a stopped Docker is DOCKER_NOT_RUNNING for up, down, logs, update and uninstall", async () => {
     const stopped = [
       "failed to connect to the docker API at unix:///home/dana/.colima/default/docker.sock; check if the path is correct and if the daemon is running: dial unix /home/dana/.colima/default/docker.sock: connect: no such file or directory",
@@ -572,7 +747,7 @@ describe("after install", () => {
   });
 
   test("commands on a machine with no install say NOT_INSTALLED", async () => {
-    for (const cmd of ["up", "down", "logs", "update"]) {
+    for (const cmd of ["up", "down", "logs", "update", "uninstall", "key"]) {
       expect((await json([cmd])).body.error).toBe("NOT_INSTALLED");
     }
   });
@@ -635,7 +810,8 @@ describe("details that are easy to get wrong", () => {
     const m = machine({
       env,
       files: {
-        [ENV]: `${MARK}ANTHROPIC_API_KEY=sk\n`,
+        ...STARTING,
+        [ENV]: "ANTHROPIC_API_KEY=sk\n",
         [cursor]: '{"mcpServers":{"github":{"url":"https://x"}}}',
       },
     });
@@ -651,7 +827,7 @@ describe("details that are easy to get wrong", () => {
   test("an agent whose CLI is missing still gets a working install and the settings to add by hand", async () => {
     const m = machine({
       env,
-      files: { [ENV]: `${MARK}ANTHROPIC_API_KEY=sk\n` },
+      files: { ...STARTING, [ENV]: "ANTHROPIC_API_KEY=sk\n" },
       exec: {
         "claude mcp add --transport http -s user nimblebrain http://127.0.0.1:27246/mcp/ws_1": fail(
           "",

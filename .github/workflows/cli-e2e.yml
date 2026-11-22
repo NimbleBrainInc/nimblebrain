@@ -65,4 +65,4 @@ jobs:
 
       - name: Runtime logs on failure
         if: failure()
-        run: docker compose --project-name nimblebrain-local logs --no-color --tail 200 || true
+        run: docker compose --project-name "$(jq -r .project "$NIMBLEBRAIN_HOME/install.json")" logs --no-color --tail 200 || true

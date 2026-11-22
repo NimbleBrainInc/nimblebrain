@@ -8,20 +8,19 @@ import {
 import { AGENTS, type Agent, DEFAULT_PORT, type Flags } from "./args.ts";
 import {
   asksConsent,
+  claimWritten,
   compose,
-  composeExec,
-  DEFAULT_PROJECT,
   fetchCompose,
   hasKey,
   INSTANCE_JSON,
   keyProvider,
   keyVars,
+  newProject,
   paths,
-  projectFor,
   providers,
+  runningHere,
   setEnvLines,
   startError,
-  volumeOf,
 } from "./compose.ts";
 import { type Deps, invocation } from "./deps.ts";
 import { doctor } from "./doctor.ts";
@@ -35,7 +34,15 @@ import {
 import { openBrowser } from "./open.ts";
 import { compareVersions, runtimeTag } from "./release.ts";
 import { CliError } from "./result.ts";
-import { hasModelIn, type InstallState, readInstall, type StatusResult, status } from "./status.ts";
+import {
+  hasModelIn,
+  type InstallState,
+  readInstall,
+  requireInstall,
+  requireReady,
+  type StatusResult,
+  status,
+} from "./status.ts";
 import {
   type Consent,
   envValues,
@@ -92,18 +99,21 @@ export function confirmOllamaStart(ctx: Pick<Ctx, "deps" | "flags">, unasked: bo
 }
 
 /**
- * Check, write, start, wait, then connect. Safe to run again: an existing
- * install is reported, not touched. The model is asked for only when a
- * person is at the terminal; otherwise `init` still succeeds once everything
- * else is up, and its answer says `model_key: missing` with `local_model: null`,
- * for the person to run `key` or `local-model`. A running install is not a failure.
+ * Check, claim, write, start, wait, then connect. Safe to run again: a ready
+ * install is reported, not touched, and a starting one (its first start failed
+ * or was cut short) is finished on the project it recorded. The model is asked
+ * for only when a person is at the terminal; otherwise `init` still succeeds
+ * once everything else is up, and its answer says `model_key: missing` with
+ * `local_model: null`, for the person to run `key` or `local-model`. A running
+ * install is not a failure.
  */
 export async function init(ctx: Ctx) {
   const { deps, flags, home } = ctx;
-  if (await readInstall(deps, home)) return { ...(await status(deps, home)), already: true };
+  const record = await readInstall(deps, home);
+  if (record?.phase === "ready") return { ...(await status(deps, home)), already: true };
 
   // Asked before anything else, so a failed check reaches us when the person said yes.
-  const consent = await chooseConsent(ctx);
+  const consent = await chooseConsent(ctx, record);
   // Kept before the checks, so every attempt on this home is one install. Never
   // in a home holding files this CLI did not write; `install` refuses that home.
   const id = (await foreignFile(deps, home)) ? undefined : await installId(deps, home);
@@ -111,7 +121,7 @@ export async function init(ctx: Ctx) {
   const begun = Date.now();
   rec.record("cli.init_started", { agent: flags.agent ?? null, interactive: deps.interactive });
   try {
-    return await openWhenDone(ctx, await install(ctx, consent, rec, begun));
+    return await openWhenDone(ctx, await install(ctx, record, consent, rec, begun));
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
     // Declining the start with no answer given changed nothing, so it leaves no report either.
@@ -145,13 +155,19 @@ async function settleFailure(rec: Recorder, home: string, consent: Consent, err:
 }
 
 /**
- * The answer, in order: `--telemetry`, then the person at the terminal, else
+ * The answer, in order: `--telemetry`, then the answer an unfinished `init` of
+ * this install already wrote to `.env`, then the person at the terminal, else
  * undecided. Never asked when `DO_NOT_TRACK` is set or there is nowhere to send,
  * and never answered by `--yes`: no person saw the question.
  */
-async function chooseConsent(ctx: Ctx): Promise<Consent> {
+async function chooseConsent(ctx: Ctx, record: InstallState | undefined): Promise<Consent> {
   if (lockedHere(ctx.deps)) return "off";
   if (ctx.flags.telemetry) return ctx.flags.telemetry;
+  if (record) {
+    const env = (await ctx.deps.readText(paths(ctx.home).env)) ?? "";
+    const held = env.match(/^NB_TELEMETRY_CONSENT=(on|off)\r?$/m)?.[1];
+    if (held === "on" || held === "off") return held;
+  }
   if (!asks(ctx)) return "undecided";
   const consent = parseAnswer(await ctx.deps.prompt(`${QUESTION} [Y/n] `));
   const cli = invocation(ctx.deps, ctx.home);
@@ -163,44 +179,54 @@ async function chooseConsent(ctx: Ctx): Promise<Consent> {
   return consent;
 }
 
-async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number) {
+/**
+ * A fresh install, or the rest of one a `starting` record names. A resumed one
+ * keeps its project and takes its port and release from the record unless
+ * `--port` or `--runtime` names others; its own running containers hold its
+ * port, which the check then passes. Every install file is written again from
+ * the record, so a resume never depends on what the stopped run left behind.
+ */
+async function install(
+  ctx: Ctx,
+  record: InstallState | undefined,
+  consent: Consent,
+  rec: Recorder,
+  begun: number,
+) {
   const { deps, flags, home } = ctx;
-  const port = flags.port ?? DEFAULT_PORT;
-  await doctor(deps, port);
-  const project = await guardOurs(deps, home);
-  const tag = await runtimeTag(deps, flags.runtime);
+  const port = flags.port ?? record?.port ?? DEFAULT_PORT;
+  const ours = record?.port === port && (await runningHere(deps, home));
+  await doctor(deps, port, ours);
+  if (!record) await refuseForeign(deps, home);
+  const tag =
+    record && !flags.runtime ? `v${record.version}` : await runtimeTag(deps, flags.runtime);
   const composeText = await fetchCompose(deps, tag);
   await confirmStart(ctx, tag, port);
 
+  // The claim: the record first, so every file after it has an owner.
+  const state: InstallState = {
+    project: record?.project ?? newProject(home),
+    port,
+    version: tag.replace(/^v/, ""),
+    phase: "starting",
+  };
+  await writeState(deps, home, state);
   await writeInstallFiles(
     deps,
     home,
-    project,
+    state.project,
     tag,
     port,
     composeText,
     envValues(deps, lockedHere(deps) ? undefined : rec.id, consent, asksConsent(composeText)),
   );
   // Asked before the start: the runtime reads `.env` only when its container is created.
-  const envText = (await deps.readText(paths(home).env)) ?? "";
-  const hasModel = hasKey(envText, keyVars(composeText)) || localModelOf(envText) !== undefined;
-  const local =
-    flags.localModel ??
-    (!hasModel && asks(ctx) && takesLocalModel(composeText)
-      ? await chooseModelSource(deps)
-      : undefined);
-  let ollamaStarted: string | undefined;
-  if (local) ollamaStarted = (await useLocalModel(ctx, composeText, local)).started;
-  else if (!hasModel && asks(ctx)) await enterKey(ctx, false);
+  const ollamaStarted = await prepareModel(ctx, composeText);
   return carryingStarted(ollamaStarted, async () => {
     deps.say(`Starting NimbleBrain ${tag}. The first start downloads about 2 GB of images.`);
     await start(deps, home, port);
 
-    const state: InstallState = {
-      version: tag.replace(/^v/, ""),
-      port,
-      project,
-    };
+    state.phase = "ready";
     await writeState(deps, home, state);
     const manual = await connectChosenAgent(ctx, state);
     if (state.agent) rec.record("cli.agent_connected", { agent: state.agent });
@@ -259,7 +285,7 @@ async function connectChosenAgent(ctx: Ctx, state: InstallState): Promise<string
  */
 export async function up(ctx: Ctx) {
   const { deps, home } = ctx;
-  const install = await requireInstall(ctx);
+  const install = await requireReady(ctx.deps, home);
   const local = localModelOf((await deps.readText(paths(home).env)) ?? "");
   const ollama = local
     ? await ensureOllama(deps, confirmOllamaStart(ctx, true)).catch((err: unknown) => {
@@ -284,15 +310,16 @@ export async function up(ctx: Ctx) {
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 export async function down(ctx: Ctx) {
-  await requireInstall(ctx);
+  await requireInstall(ctx.deps, ctx.home);
+  if (!(await claimWritten(ctx.deps, ctx.home))) return { ok: true as const, health: "down" };
   const res = await compose(ctx.deps, ctx.home, ["down"]);
   if (res.code !== 0) throw startError(res);
   return { ok: true as const, health: "down" };
 }
 
 export async function logs(ctx: Ctx) {
-  // A start that failed leaves no install.json, and its error's fix names this command.
-  if (!(await markedProject(ctx.deps, ctx.home))) await requireInstall(ctx);
+  await requireInstall(ctx.deps, ctx.home);
+  if (!(await claimWritten(ctx.deps, ctx.home))) return { ok: true as const, lines: [] };
   const res = await compose(ctx.deps, ctx.home, [
     "logs",
     "--no-color",
@@ -314,7 +341,7 @@ export async function logs(ctx: Ctx) {
  */
 export async function update(ctx: Ctx) {
   const { deps, home } = ctx;
-  const install = await requireInstall(ctx);
+  const install = await requireReady(deps, home);
   const tag = await runtimeTag(deps, ctx.flags.runtime);
   const from = `v${install.version}`;
   const order = compareVersions(tag, from);
@@ -355,7 +382,7 @@ async function refreshAgentSkill(
  */
 export async function uninstall(ctx: Ctx) {
   const { deps, flags, home } = ctx;
-  const install = await requireInstall(ctx);
+  const install = await requireInstall(deps, home);
   if (!flags.yes) {
     if (!deps.interactive || flags.json) {
       throw new CliError(
@@ -366,8 +393,10 @@ export async function uninstall(ctx: Ctx) {
     const answer = await deps.prompt("Remove NimbleBrain and every conversation in it? [y/N] ");
     if (!/^y/i.test(answer)) throw new CliError("CANCELLED", "Nothing was removed.");
   }
-  const res = await compose(deps, home, ["down", "-v", "--rmi", "all"], START_TIMEOUT_MS);
-  if (res.code !== 0) throw startError(res);
+  if (await claimWritten(deps, home)) {
+    const res = await compose(deps, home, ["down", "-v", "--rmi", "all"], START_TIMEOUT_MS);
+    if (res.code !== 0) throw startError(res);
+  }
   if (install.agent === "claude-code")
     await deps.exec("claude", ["mcp", "remove", "-s", "user", SERVER_NAME]);
   if (install.agent === "codex") await deps.exec("codex", ["mcp", "remove", SERVER_NAME]);
@@ -385,7 +414,7 @@ export async function uninstall(ctx: Ctx) {
  */
 export async function telemetry(ctx: Ctx) {
   const { deps, home } = ctx;
-  const install = await requireInstall(ctx);
+  const install = await requireReady(deps, home);
   const url = `http://127.0.0.1:${install.port}`;
   if (ctx.arg !== "on" && ctx.arg !== "off") {
     return { ok: true as const, telemetry: (await status(deps, home)).telemetry };
@@ -420,10 +449,10 @@ export async function telemetry(ctx: Ctx) {
 
 /** Takes the model key at a hidden prompt. A person runs this; an agent never handles the key. */
 export async function key(ctx: Ctx) {
+  await requireReady(ctx.deps, ctx.home);
   if (!ctx.deps.interactive) {
     throw new CliError("NEEDS_TERMINAL", "`key` asks for a model key at a hidden prompt.");
   }
-  await requireInstall(ctx);
   return enterKey(ctx, true);
 }
 
@@ -462,7 +491,7 @@ async function enterKey(ctx: Ctx, restart: boolean) {
  * `.env` at it, then starts the runtime again so its container reads it.
  */
 export async function localModel(ctx: Ctx) {
-  const install = await requireInstall(ctx);
+  const install = await requireReady(ctx.deps, ctx.home);
   const composeText = (await ctx.deps.readText(paths(ctx.home).compose)) ?? "";
   const model = ctx.arg ?? ctx.flags.localModel ?? DEFAULT_LOCAL_MODEL;
   const { name, started } = await useLocalModel(ctx, composeText, model);
@@ -548,7 +577,8 @@ async function waitHealthy(deps: Deps, port: number): Promise<void> {
 
 /**
  * The chosen release's Compose file, the `dev` adapter, and `.env` with the
- * pinned release and port. `.env` keeps any key already in it; `instance.json` is
+ * pinned release and port, and the recorded project, which Compose reads from
+ * there (no command passes `-p`); the CLI itself reads it only from the record. `.env` keeps any key already in it; `instance.json` is
  * never overwritten, so a person who chose another adapter keeps it.
  */
 async function writeInstallFiles(
@@ -573,70 +603,45 @@ async function writeInstallFiles(
   await deps.writeText(p.env, env, 0o600);
 }
 
+/**
+ * Sets up the model before the first start, asking only when `.env` has none
+ * (a resume keeps the one chosen before). A saved local model still needs
+ * Ollama answering, as `up` does. Returns the Ollama start command it ran.
+ */
+async function prepareModel(ctx: Ctx, composeText: string): Promise<string | undefined> {
+  const { deps, flags, home } = ctx;
+  const envText = (await deps.readText(paths(home).env)) ?? "";
+  const saved = localModelOf(envText) !== undefined;
+  const hasModel = saved || hasKey(envText, keyVars(composeText));
+  const local =
+    flags.localModel ??
+    (!hasModel && asks(ctx) && takesLocalModel(composeText)
+      ? await chooseModelSource(deps)
+      : undefined);
+  if (local) return (await useLocalModel(ctx, composeText, local)).started;
+  if (saved) return (await ensureOllama(deps, confirmOllamaStart(ctx, true))).started;
+  if (!hasModel && asks(ctx)) await enterKey(ctx, false);
+  return undefined;
+}
+
 async function writeState(deps: Deps, home: string, state: InstallState): Promise<void> {
   await deps.writeText(paths(home).install, `${JSON.stringify(state, null, 2)}\n`);
 }
 
-async function requireInstall({ deps, home }: Ctx): Promise<InstallState> {
-  const install = await readInstall(deps, home);
-  if (!install) throw new CliError("NOT_INSTALLED", `No NimbleBrain install in ${home}.`);
-  return install;
-}
-
 /**
- * Refuses to start over another install's containers or data, or over files
- * in the home that the CLI did not write (`uninstall` deletes them). A home,
- * project or volume counts as ours only when this home's `.env` names the
- * project, which is the mark a previous, unfinished `init` leaves: the project
- * this home gets, or the one an older CLI gave every home. Answers the project
- * the install uses.
+ * Refuses a home with no record that holds any file `init` writes: someone
+ * else's, which `uninstall` would delete. A home with a record is this CLI's.
  */
-async function guardOurs(deps: Deps, home: string): Promise<string> {
-  const project = projectFor(home);
-  const marked = await markedProject(deps, home);
-  if (marked) return marked;
+async function refuseForeign(deps: Deps, home: string): Promise<void> {
   const file = await foreignFile(deps, home);
   if (file) throw new CliError("NOT_OURS", `${file} already exists and this CLI did not write it.`);
-  const projects = await composeExec(deps, ["ls", "-a", "--format", "json"]);
-  const taken = projects.code === 0 && listsProject(projects.stdout, project);
-  const volumes = await deps.exec("docker", [
-    "volume",
-    "ls",
-    "-q",
-    "--filter",
-    `name=^${volumeOf(project)}$`,
-  ]);
-  if (taken || volumes.stdout.trim() !== "") {
-    throw new CliError(
-      "NOT_OURS",
-      `Docker already has a "${project}" project or volume that this install did not make.`,
-    );
-  }
-  return project;
 }
 
-/** The project this home's `.env` marks as ours (see `guardOurs`), if it marks one. */
-async function markedProject(deps: Deps, home: string): Promise<string | undefined> {
-  const env = await deps.readText(paths(home).env);
-  const marked = env?.match(/^COMPOSE_PROJECT_NAME=(.*?)\r?$/m)?.[1];
-  return marked === projectFor(home) || marked === DEFAULT_PROJECT ? marked : undefined;
-}
-
-/** A file in the home that this CLI did not write, if there is one. */
+/** A file in a home with no record (or an unreadable one) that this CLI would write, if there is one. */
 async function foreignFile(deps: Deps, home: string): Promise<string | undefined> {
-  if (await markedProject(deps, home)) return undefined;
+  if (await readInstall(deps, home)) return undefined;
   for (const file of Object.values(paths(home))) {
     if ((await deps.readText(file)) !== undefined) return file;
   }
   return undefined;
-}
-
-/** Whether `docker compose ls --format json` lists a project by exactly this name. */
-function listsProject(stdout: string, project: string): boolean {
-  try {
-    const list = JSON.parse(stdout) as unknown;
-    return Array.isArray(list) && list.some((p) => (p as { Name?: unknown })?.Name === project);
-  } catch {
-    return false;
-  }
 }

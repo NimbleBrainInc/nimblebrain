@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { keyVars, providers } from "../src/compose.ts";
 import { run } from "../src/main.ts";
 import { QUESTION } from "../src/telemetry.ts";
-import { fail, type Machine, machine, REPO_COMPOSE } from "./fake.ts";
+import { fail, type Machine, machine, REPO_COMPOSE, record } from "./fake.ts";
 
 const HOME = "/home/dana/.nimblebrain-local";
 const ENV = `${HOME}/.env`;
@@ -42,6 +42,23 @@ const reportEvents = (m: Machine) =>
     .map((l) => (JSON.parse(l) as { event: string }).event);
 
 describe("telemetry consent at init", () => {
+  test("a rerun that finishes an unfinished install reuses the answer given, never asking again", async () => {
+    // No to telemetry, yes to the start, a hosted model, the default provider, a key.
+    const m = machine({ env, interactive: true, answers: ["n", "", "", "", "sk-typed"] });
+    m.deps.getJson = async () => undefined;
+    const first = await run([], m.deps);
+    expect(first.stdout).toContain("did not report healthy");
+    expect(m.asked[0]).toStartWith(QUESTION);
+    expect(m.files.get(ENV)?.text).toContain("NB_TELEMETRY_CONSENT=off");
+    // A person at the terminal again, who would be asked if the answer were not kept.
+    const again = machine({ env, interactive: true });
+    for (const [path, file] of m.files) again.files.set(path, file);
+    const { stdout } = await run(["--no-open"], again.deps);
+    expect(stdout).toContain("running at http://127.0.0.1:27246");
+    expect(stdout).toContain("telemetry: off");
+    expect(again.asked.some((q) => q.startsWith(QUESTION))).toBe(false);
+  });
+
   test("an unattended run sends nothing, keeps its events waiting, and hands the agent the question", async () => {
     const m = machine({ env });
     const { body } = await json(["--yes", "--agent", "none"], m);
@@ -74,7 +91,8 @@ describe("telemetry consent at init", () => {
 
   test("init_completed names the provider and the connected agent, never the key", async () => {
     const files = {
-      [ENV]: `COMPOSE_PROJECT_NAME=nimblebrain-local\nANTHROPIC_API_KEY=sk-secret\n`,
+      [`${HOME}/install.json`]: record({ phase: "starting", version: "0.74.0" }),
+      [ENV]: "ANTHROPIC_API_KEY=sk-secret\n",
     };
     const m = machine({ env, files });
     await json(["--yes", "--telemetry", "on", "--agent", "claude-code"], m);
