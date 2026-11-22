@@ -113,7 +113,7 @@ export const FLAG_SPECS = {
   port: {
     type: "string",
     takes: "n",
-    description: `Local port (default ${DEFAULT_PORT})`,
+    description: `Local port (default ${DEFAULT_PORT}; for doctor, the install's own port)`,
     commands: ["init", "doctor"],
   },
   home: {
