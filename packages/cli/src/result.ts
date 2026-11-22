@@ -22,11 +22,15 @@ export const ERRORS = {
   PORT_IN_USE: "Stop whatever holds the port, or pass --port with a free one.",
   NOT_INSTALLED: "Run `npx nimblebrain` to install it.",
   NOT_OURS:
-    "Another install holds this name or its data. Remove it yourself, or choose a --home whose folder has another name.",
+    "This folder holds files the CLI did not write. Remove them yourself, or choose another --home.",
+  INSTALL_INCOMPLETE:
+    "Run `npx nimblebrain` to finish installing it, or `npx nimblebrain uninstall` to remove it.",
   NETWORK: "Check the network connection, then run the same command again.",
-  HEALTH_TIMEOUT: "Run `npx nimblebrain logs` and look at the last error line.",
+  HEALTH_TIMEOUT:
+    "Run `npx nimblebrain logs` and look at the last error line, then run the command again; `npx nimblebrain` finishes an install whose first start did not.",
   AGENT_UNSUPPORTED: "Pass --agent claude-code, cursor, codex or none.",
-  START_FAILED: "Run `npx nimblebrain logs` and look at the last error line, then run this again.",
+  START_FAILED:
+    "Run `npx nimblebrain logs` and look at the last error line, then run the command again; `npx nimblebrain` finishes an install whose first start did not.",
   NEEDS_TERMINAL:
     "A person runs this in their own terminal; it asks for input no agent should give.",
   CANCELLED: "Nothing was changed. Run the command again to go ahead.",

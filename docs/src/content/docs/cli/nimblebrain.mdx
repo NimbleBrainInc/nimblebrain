@@ -11,7 +11,7 @@ import { Aside } from '@astrojs/starlight/components';
 npx nimblebrain
 ```
 
-It checks your machine, starts NimbleBrain in Docker at `http://127.0.0.1:27246`, asks whether NimbleBrain's agents run on a hosted model (your API key) or a local one (see [On a local model](#on-a-local-model)), connects the coding agent you choose to a workspace over MCP, and opens NimbleBrain in your browser (`--no-open` skips that; it never opens one for a coding agent's run). Run it again any time: on a machine that already has NimbleBrain it reports what is there and changes nothing.
+It checks your machine, starts NimbleBrain in Docker at `http://127.0.0.1:27246`, asks whether NimbleBrain's agents run on a hosted model (your API key) or a local one (see [On a local model](#on-a-local-model)), connects the coding agent you choose to a workspace over MCP, and opens NimbleBrain in your browser (`--no-open` skips that; it never opens one for a coding agent's run). Run it again any time: on a machine that already has NimbleBrain it reports what is there and changes nothing, and after a first start that failed it picks up where that one stopped (see [When the first start fails](#when-the-first-start-fails)).
 
 You need Docker with Compose v2 (Docker's `docker compose` plugin, or the standalone `docker-compose` v2 that Homebrew installs), about 2 GB of memory for Docker, and Node.js 20 or later. It runs on `x86_64` and `arm64`, Apple Silicon included.
 
@@ -35,14 +35,14 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 |---|---|
 | `init` (the default) | Checks the machine, starts NimbleBrain, connects the agent named by `--agent`, and installs the `nimblebrain` skill for it. |
 | `doctor` | Checks Docker, Compose v2, CPU architecture, memory and the port. Installs nothing. |
-| `status` | Version, health, URL, each workspace's MCP URL, the connected agent, whether a model key is set, and whether this release can reach a server on your machine (`host_loopback`). |
+| `status` | Version, `phase` (`starting` until the first start comes up, then `ready`), health, URL, each workspace's MCP URL, the connected agent, whether a model key is set, and whether this release can reach a server on your machine (`host_loopback`). |
 | `open` | Opens NimbleBrain's web UI (the `url` in `status`) in your default browser. Answers `{"ok": true, "url": "...", "opened": true}`; where no browser can be started (no display, an SSH session, or the opener failed), `opened` is `false` and the URL is there to open by hand. A coding agent runs it when you ask it to open NimbleBrain. It never starts NimbleBrain: when it is stopped, it answers `NOT_RUNNING`. |
 | `key` | Takes the model key at a hidden prompt and restarts NimbleBrain so it takes effect. A person runs this. |
 | `local-model [model]` | Runs NimbleBrain's agents on a model served by Ollama instead of a hosted key: prepares the model (default `gemma4:e4b`) and restarts NimbleBrain. See [On a local model](#on-a-local-model). |
-| `up` / `down` | Starts or stops NimbleBrain. Your data survives `down`. |
-| `logs` | Recent log lines from the runtime. |
+| `up` / `down` | Starts or stops NimbleBrain. Your data survives `down`. `down` also stops an install whose first start failed. |
+| `logs` | Recent log lines from the runtime, also after a first start that failed. |
 | `update` | Moves to the newest NimbleBrain release, or the one `--runtime` names, keeping your data, then refreshes the connected agent's `nimblebrain` skill. It never moves backwards. |
-| `uninstall` | Removes the containers, the images, every conversation, and the files `init` wrote. Asks first. |
+| `uninstall` | Removes the containers, the images, every conversation, and the files `init` wrote. Asks first. Also removes an install whose first start failed. |
 | `telemetry [on\|off\|status]` | Whether this install sends anonymous usage data. Changing it needs NimbleBrain running. See [Telemetry](/using/telemetry/). |
 | `mcp add <url>` | Adds an MCP server you run on this machine to a workspace, by its loopback URL. See [Developing a server](#developing-a-server). |
 | `mcp list` | The servers in a workspace: name, URL and status. |
@@ -59,7 +59,7 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `--port <n>` | The local port (default `27246`; for `doctor`, the install's own port). |
 | `--provider <name>` | For `key`: `anthropic` (default), `openai`, `google`, `greenpt`, `nebius` or `xai`. The installed release decides which it takes, and `key` lists them. |
 | `--local-model <model>` | For `init`: run on this Ollama model instead of a hosted key, without asking. |
-| `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). A home whose folder has another name is a separate install. See [A second install](#a-second-install). |
+| `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). Each home is a separate install. See [A second install](#a-second-install). |
 | `--runtime <tag>` | For `init` and `update`: the NimbleBrain release to install, such as `v0.74.0`. Default: the newest release. |
 | `--no-open` | For `init`: do not open the web UI in your browser when it finishes. `init` opens it only for a person at a terminal, after a new install comes up, and never with `--json` or no terminal. |
 | `--telemetry <on\|off>` | For `init`: your answer to sending anonymous usage data. Without it, `init` asks you, or, with no one at the terminal, leaves it undecided and sends nothing. |
@@ -130,8 +130,9 @@ Every command answers `{"ok": true, ...}` or `{"ok": false, "error": "<CODE>", "
 |---|---|
 | `DOCKER_MISSING`, `DOCKER_NOT_RUNNING`, `DOCKER_PERMISSION`, `COMPOSE_MISSING` | Docker is missing, stopped, not usable by this user, or lacks Compose v2. On a Mac, `fix` names Docker Desktop (through Homebrew when it is there), or `brew install docker-compose` when only Compose is missing, or `colima start` when Colima's default VM is stopped. |
 | `ARCH_UNSUPPORTED`, `LOW_MEMORY`, `PORT_IN_USE` | No image for this CPU, less memory than a Docker VM set to 2 GB reports, or the port is taken. `LOW_MEMORY`'s `fix` names Colima's or Docker Desktop's own setting when it is one of those. |
-| `NOT_INSTALLED`, `NOT_OURS` | No install here, or files, containers or data this CLI did not make are in the way. |
-| `NETWORK`, `START_FAILED`, `HEALTH_TIMEOUT` | A download failed, Compose could not start it, or it did not become healthy in time. |
+| `NOT_INSTALLED`, `NOT_OURS` | No install here, or the home holds files this CLI did not write (`init` never writes over them). |
+| `INSTALL_INCOMPLETE` | The install's first start did not finish, so only `down`, `logs`, `status`, `doctor` and `uninstall` act on it. Run `npx nimblebrain` to finish it, or `uninstall` to remove it. |
+| `NETWORK`, `START_FAILED`, `HEALTH_TIMEOUT` | A download failed, Compose could not start it, or it did not become healthy in time. On a first install, read `logs`, then run `npx nimblebrain` again: it finishes the install. |
 | `NEEDS_TERMINAL`, `CANCELLED`, `AGENT_UNSUPPORTED`, `USAGE` | `key` needs a person, the action was declined, an unknown agent, or a bad command or flag. |
 | `RUNTIME_UNSUPPORTED` | The release `--runtime` names is older than this CLI supports, or its Compose file cannot be driven. |
 | `LOCAL_MODEL_UNREACHABLE`, `LOCAL_MODEL_MISSING`, `LOCAL_MODEL_NO_TOOLS`, `LOCAL_CONTEXT_SMALL` | Ollama does not answer (it is not installed, starting it was declined, or it did not answer after a start; `fix` names the step for this machine), the model is not on it (or its download was declined or failed), the model cannot call tools, or its context window is below the 32k NimbleBrain needs. |
@@ -173,9 +174,15 @@ The CLI checks that Ollama answers on `127.0.0.1:11434`. When Ollama is installe
 
 Gemma 4 E4B is the smallest model run end to end on NimbleBrain's tasks (reliable on everyday ones, partial on scheduled tasks); [Local Models](/config/local-models/) lists what has been tested, what failed, and what has not been tried. It needs about 7 GB of memory beside NimbleBrain's 2 GB. On Linux, Ollama listens on `127.0.0.1` by default, which a container cannot reach: set `OLLAMA_HOST=0.0.0.0`. This needs a NimbleBrain release that takes a local model; an older one answers `RUNTIME_UNSUPPORTED`.
 
+## When the first start fails
+
+`init` records the install in `install.json` before it writes anything else, with `phase: "starting"`, and sets it to `ready` once NimbleBrain first answers. When the first start fails (`START_FAILED`, `HEALTH_TIMEOUT`, or the run is cut short), the install stays `starting`: `down` stops what was started, `logs` shows why, `status` reports it with `phase: "starting"`, and `uninstall` removes it. The commands that use NimbleBrain (`up`, `update`, `key`, `local-model`, `telemetry`, `open`, every `mcp` command) answer `INSTALL_INCOMPLETE` until it is finished.
+
+Run `npx nimblebrain` again to finish it. It keeps the install's project, and its port and release unless you pass `--port` or `--runtime`; writes the install's files again; passes the port check when the port is held by this install's own containers; asks for a model only when none is set, and for telemetry only when you have not answered; then starts NimbleBrain and connects your agent, as a new install does.
+
 ## A second install
 
-Each home is its own install: its own containers, data volume and port. The Compose project takes the home folder's name, so `~/.nimblebrain-local` stays `nimblebrain-local` and `~/nb-rc` becomes `nimblebrain-nb-rc`. To try a release candidate beside the NimbleBrain you use every day:
+Each home is its own install: its own containers, data volume and port. `init` names the install's Compose project after the home folder plus six random characters, so `~/nb-rc` becomes something like `nimblebrain-nb-rc-3f9a1c`, and no two homes share one, whatever their folders are called. To try a release candidate beside the NimbleBrain you use every day:
 
 ```bash
 npx nimblebrain init --home ~/nb-rc --port 27300 --runtime vX.Y.Z-rc.N --agent none
@@ -183,8 +190,8 @@ npx nimblebrain status --home ~/nb-rc
 npx nimblebrain uninstall --home ~/nb-rc --yes
 ```
 
-Pass the same `--home` to every command for that install. Every command the CLI prints for it, in its text and in `fix` and `telemetry.set`, already carries that `--home`, as it does for a home chosen with `NIMBLEBRAIN_HOME`; the default home's commands carry none. The name is chosen once, at `init`, so moving the folder later changes nothing. Two homes whose folders share a name would share a project; the second `init` refuses with `NOT_OURS`. An agent has one `nimblebrain` server, so `--agent` on the second install points that agent at it instead of the first, and that install's `uninstall` removes the registration; `--agent none` leaves your agent on the first.
+Pass the same `--home` to every command for that install. Every command the CLI prints for it, in its text and in `fix` and `telemetry.set`, already carries that `--home`, as it does for a home chosen with `NIMBLEBRAIN_HOME`; the default home's commands carry none. The project is chosen once, at `init`, and kept in `install.json`, so moving the folder later changes nothing. An agent has one `nimblebrain` server, so `--agent` on the second install points that agent at it instead of the first, and that install's `uninstall` removes the registration; `--agent none` leaves your agent on the first.
 
 ## What it writes
 
-Everything lives in `~/.nimblebrain-local`: the installed release's `docker-compose.yml`, downloaded from that release, an `instance.json` naming the `dev` sign-in, a `.env` that only your user can read (the release, the port, and your model key or local model), and `install.json`. Your conversations live in the Docker volume `nimblebrain-local_workspace`, named after the install's Compose project, which `install.json` and `.env` record. A key exported in your shell is not used: `.env` is the only source, so the key you entered with `key` is the one that runs.
+Everything lives in `~/.nimblebrain-local`: the installed release's `docker-compose.yml`, downloaded from that release, an `instance.json` naming the `dev` sign-in, a `.env` that only your user can read (the release, the port, and your model key or local model), and `install.json`, the install's record: its Compose project, port, release and phase. Your conversations live in the Docker volume `<project>_workspace`, named after that project. `init` never writes into a home that holds any of these files without a readable `install.json`: that is `NOT_OURS`. A key exported in your shell is not used: `.env` is the only source, so the key you entered with `key` is the one that runs.

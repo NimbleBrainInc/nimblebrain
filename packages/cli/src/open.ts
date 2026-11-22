@@ -1,7 +1,7 @@
 import type { Deps } from "./deps.ts";
 import type { Ctx } from "./lifecycle.ts";
 import { CliError } from "./result.ts";
-import { installUrl, isUp, readInstall } from "./status.ts";
+import { installUrl, isUp, requireReady } from "./status.ts";
 
 /**
  * The program that opens a URL in this machine's default browser, with the URL
@@ -39,8 +39,7 @@ export async function openBrowser(deps: Deps, url: string): Promise<boolean> {
  */
 export async function open(ctx: Ctx) {
   const { deps, home } = ctx;
-  const install = await readInstall(deps, home);
-  if (!install) throw new CliError("NOT_INSTALLED", `No NimbleBrain install in ${home}.`);
+  const install = await requireReady(deps, home);
   const url = installUrl(install);
   if (!(await isUp(deps, url)))
     throw new CliError("NOT_RUNNING", "NimbleBrain is not running.", { url });

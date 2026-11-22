@@ -281,8 +281,9 @@ export function typeHidden(
 /**
  * Where an install keeps its Compose file, `.env` and state. Separate from
  * `~/.nimblebrain`, the work directory a source checkout's `bun run dev` uses,
- * so the two never read each other's files. Always absolute: the Compose
- * project follows the folder's name (`projectFor`), which `.` would not give.
+ * so the two never read each other's files. Always absolute: a new install's
+ * project starts with the folder's name (`newProject`), which `.` would not
+ * give, and a printed `--home` must work from any folder.
  */
 export function installHome(deps: Deps, flag?: string): string {
   return resolve(

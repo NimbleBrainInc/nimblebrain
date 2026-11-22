@@ -119,7 +119,7 @@ export const FLAG_SPECS = {
     type: "string",
     takes: "dir",
     description:
-      "Where the install lives (default ~/.nimblebrain-local, or NIMBLEBRAIN_HOME); a home with another folder name is a separate install",
+      "Where the install lives (default ~/.nimblebrain-local, or NIMBLEBRAIN_HOME); each home is a separate install",
   },
   provider: {
     type: "string",

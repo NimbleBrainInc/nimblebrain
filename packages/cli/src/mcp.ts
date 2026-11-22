@@ -2,7 +2,7 @@ import type { McpSubcommand } from "./args.ts";
 import { hostLoopback, paths } from "./compose.ts";
 import type { Ctx } from "./lifecycle.ts";
 import { CliError, type ErrorCode, type Ok } from "./result.ts";
-import { isUp, readInstall, readWorkspaces } from "./status.ts";
+import { isUp, readWorkspaces, requireReady } from "./status.ts";
 
 /**
  * `mcp add | list | remove`: a thin client of the local instance's API, for
@@ -56,8 +56,7 @@ interface Target {
  */
 async function reach(ctx: Ctx, adding: boolean): Promise<Target> {
   const { deps, home, flags } = ctx;
-  const install = await readInstall(deps, home);
-  if (!install) throw new CliError("NOT_INSTALLED", `No NimbleBrain install in ${home}.`);
+  const install = await requireReady(deps, home);
   if (adding && !hostLoopback((await deps.readText(paths(home).compose)) ?? "")) {
     throw new CliError(
       "UPDATE_REQUIRED",

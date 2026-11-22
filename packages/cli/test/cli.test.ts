@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Deps, ExecResult } from "../src/deps.ts";
 import { interrupted, run, VERSION } from "../src/main.ts";
-import { fail, GB, machine, missing, ok } from "./fake.ts";
+import { fail, GB, machine, missing, ok, record } from "./fake.ts";
 
 /** A machine where everything passes unless a test overrides one answer. */
 function fakeDeps(over: Partial<Deps> & { execMap?: Record<string, ExecResult> } = {}): Deps {
@@ -241,25 +241,37 @@ describe("doctor", () => {
     expect(body.checks.filter((c: { ok: boolean }) => c.ok)).toHaveLength(5);
   });
 
-  test("the port held by this CLI's own running install passes", async () => {
+  /** The install's own containers are running: `compose ps -q` lists them. */
+  const running = { "docker compose ps -q": ok("4f1c2a9e\n") };
+
+  test("the port held by this CLI's own running install passes, healthy or not", async () => {
+    for (const phase of ["ready", "starting"] as const) {
+      const deps = fakeDeps({
+        execMap: running,
+        portFree: async () => false,
+        readText: async (p) =>
+          p.endsWith("install.json") ? record({ phase }) : p.endsWith(".env") ? "" : undefined,
+      });
+      const { body } = await json(["doctor"], deps);
+      expect(body.ok).toBe(true);
+      expect(body.checks.at(-1)).toMatchObject({ check: "port", detail: "27246 (this install)" });
+    }
+  });
+
+  test("a port held by something else is PORT_IN_USE, even with an install recorded", async () => {
     const deps = fakeDeps({
       portFree: async () => false,
-      readText: async () =>
-        JSON.stringify({ version: "0.70.0", port: 27246, project: "nimblebrain-local" }),
-      getJson: async () => ({ status: 200, body: { status: "ok" } }),
+      readText: async (p) => (p.endsWith("install.json") ? record() : undefined),
     });
-    expect((await json(["doctor"], deps)).body.ok).toBe(true);
+    expect((await json(["doctor"], deps)).body.error).toBe("PORT_IN_USE");
   });
 
   test("an install on another port is checked on its own port, unless --port names one", async () => {
     const deps = fakeDeps({
+      execMap: running,
       portFree: async () => false,
-      readText: async () =>
-        JSON.stringify({ version: "0.70.0", port: 27300, project: "nimblebrain-local" }),
-      getJson: async (url) =>
-        url === "http://127.0.0.1:27300/v1/health"
-          ? { status: 200, body: { status: "ok" } }
-          : undefined,
+      readText: async (p) =>
+        p.endsWith("install.json") ? record({ port: 27300 }) : p.endsWith(".env") ? "" : undefined,
     });
     const { body } = await json(["doctor"], deps);
     expect(body.ok).toBe(true);
@@ -272,9 +284,7 @@ describe("doctor", () => {
 
 describe("status", () => {
   const install = JSON.stringify({
-    version: "0.70.0",
-    port: 27246,
-    project: "nimblebrain-local",
+    ...JSON.parse(record({ version: "0.70.0" })),
     agent: "claude-code",
   });
 
@@ -316,6 +326,15 @@ describe("status", () => {
     const { body, code } = await json(["status"], deps);
     expect(code).toBe(0);
     expect(body).toMatchObject({ health: "down", workspaces: [], model_key: "missing" });
+  });
+
+  test("a corrupt or incomplete install.json is no install", async () => {
+    for (const text of ["{", "null", "", JSON.stringify({ version: "0.70.0", port: 27246 })]) {
+      const deps = fakeDeps({
+        readText: async (p) => (p.endsWith("install.json") ? text : undefined),
+      });
+      expect((await json(["status"], deps)).body.error).toBe("NOT_INSTALLED");
+    }
   });
 
   test("NIMBLEBRAIN_HOME moves the install", async () => {
