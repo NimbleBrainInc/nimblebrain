@@ -138,8 +138,7 @@ Release is taken from the runtime's existing `NB_VERSION` → `NB_BUILD_SHA` (no
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `NB_TELEMETRY_DISABLED` | No | — | Set to `1` to turn anonymous usage telemetry off. No one is asked. |
-| `DO_NOT_TRACK` | No | — | Standard opt-out signal. Equivalent to `NB_TELEMETRY_DISABLED=1`. |
+| `DO_NOT_TRACK` | No | — | Set to `1` to turn anonymous usage telemetry off. No one is asked. |
 | `POSTHOG_API_KEY` | No | — | Where telemetry goes. Unset ⇒ nowhere, so no one is asked and nothing is sent. |
 | `NB_TELEMETRY_ID` | No | — | The install's anonymous ID (a UUID). `npx nimblebrain` sets it so its own events and the runtime's count as one install. Unset ⇒ a random ID kept in `.telemetry-id`. |
 | `NB_TELEMETRY_CONSENT` | No | — | `on` or `off`: an answer a person gave an installer before the runtime first ran. An answer recorded in the runtime wins over it. |
@@ -208,17 +207,16 @@ The same list decides which browser origins may call `/mcp/<workspaceId>` and th
 
 ## Telemetry variables
 
-Either variable turns anonymous telemetry off and stops anyone from being asked (see [Telemetry](/using/telemetry/) for who decides otherwise):
+`DO_NOT_TRACK=1` turns anonymous telemetry off and stops anyone from being asked (see [Telemetry](/using/telemetry/) for who decides otherwise):
 
 ```bash
-export NB_TELEMETRY_DISABLED=1
 export DO_NOT_TRACK=1
 ```
 
 `DO_NOT_TRACK` follows the [Console Do Not Track](https://consoledonottrack.com/) standard. You can also disable telemetry via `telemetry.enabled: false` in `nimblebrain.json`.
 
 <Aside type="tip">
-  Environment variables are checked before the config file, so `NB_TELEMETRY_DISABLED` or `DO_NOT_TRACK` turn telemetry off regardless of what `nimblebrain.json` says.
+  Environment variables are checked before the config file, so `DO_NOT_TRACK` turns telemetry off regardless of what `nimblebrain.json` says.
 </Aside>
 
 ## Precedence summary
@@ -232,7 +230,7 @@ When the same setting can be configured in multiple places, this is the resoluti
 | Listen address | `NB_HOST` | — | `http.host` | `127.0.0.1` |
 | Public origin | `NB_PUBLIC_ORIGIN` | — | derived from host facts | `http://localhost:27247` |
 | Anthropic key | `ANTHROPIC_API_KEY` | — | `providers.anthropic.apiKey` | — |
-| Telemetry | `NB_TELEMETRY_DISABLED` / `DO_NOT_TRACK` | — | `telemetry.enabled` | Enabled |
+| Telemetry | `DO_NOT_TRACK` | — | `telemetry.enabled` | Enabled |
 
 ## Example: production environment
 
@@ -245,7 +243,7 @@ export NB_WORK_DIR=/data/nimblebrain
 # Outside the Docker image, when a proxy on another host connects
 # (the default 127.0.0.1 accepts this machine only).
 # export NB_HOST=0.0.0.0
-export NB_TELEMETRY_DISABLED=1
+export DO_NOT_TRACK=1
 # Composio connectors (only if the catalog uses auth: composio).
 # Per-toolkit ac_… ids are not env vars — declare them in nimblebrain.json
 # under connectors.providers.composio.authConfigs.
