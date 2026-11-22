@@ -290,7 +290,9 @@ list falls back to the configured default on their next turn.
 
 ## providers
 
-Per-provider API keys. With no `providers` block, the runtime uses Anthropic, keyed from `ANTHROPIC_API_KEY`.
+The model providers the runtime builds. A `providers` block is the whole set: the runtime calls no provider it does not name, whatever keys the environment holds.
+
+With no `providers` block, each provider whose key variable is set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `GREENPT_API_KEY`, `NEBIUS_API_KEY`, `XAI_API_KEY`) is configured from the environment; this is how an install made with `npx nimblebrain` is configured. When neither names a provider, none is assumed: the runtime starts, logs that no model provider is configured, and each chat fails with a message saying how to configure one.
 
 ```json
 {
@@ -406,6 +408,8 @@ The exact model lineup is account- and tier-specific and changes over time. The 
 A local model needs tool calling. Gemma 4 and Qwen 3 serve it on Ollama; Gemma 3 does not. A turn sends about 5k tokens of system prompt and tool schemas before the person's message, more on a turn about tasks, so 16k is the least workable window and 32k is comfortable. `local` is not offered through `execution.modelGateway`, which reaches hosted providers only.
 
 A Docker install can name the server in its `.env` instead; see [`NB_LOCAL_MODEL_URL`](/config/environment/#local-model-server).
+
+To keep every model call on your own network, name only `local` under `providers`. A cloud provider's key in the environment then configures nothing, and no model call leaves for a hosted provider. Narrow [`modelPolicy.allowed`](#modelpolicy) to the local models as well if people can choose a model.
 
 Which servers and models have been run with NimbleBrain, and how they did: [Local Models](/config/local-models/).
 

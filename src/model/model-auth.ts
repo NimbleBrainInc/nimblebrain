@@ -27,9 +27,12 @@ export class ModelAuthError extends Error {
   override readonly name = "ModelAuthError";
   readonly code = "model_auth_failed";
 
-  constructor(provider: string, options?: ErrorOptions) {
+  /** `provider` is the provider whose key failed, or `undefined` when no provider is configured. */
+  constructor(provider: string | undefined, options?: ErrorOptions) {
     super(
-      `The model provider has no valid API key. Set one for ${provider} and restart NimbleBrain.`,
+      provider === undefined
+        ? "No model provider is configured. Set a provider's API key, or providers.local for a model server you run, and restart NimbleBrain."
+        : `The model provider has no valid API key. Set one for ${provider} and restart NimbleBrain.`,
       options,
     );
   }

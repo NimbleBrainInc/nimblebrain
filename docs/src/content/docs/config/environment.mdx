@@ -15,7 +15,7 @@ NimbleBrain reads environment variables for model provider keys, server binding,
 
 ### Model providers
 
-A provider's API key can be supplied here or in `nimblebrain.json` under `providers.<name>.apiKey`. When the config field is omitted, the AI SDK falls back to the standard provider env var below.
+A provider's API key can be supplied here or in `nimblebrain.json` under `providers.<name>.apiKey`. When the config field is omitted, the AI SDK falls back to the standard provider env var below. With no `providers` block in `nimblebrain.json`, each variable that is set configures its provider; with one, a variable configures nothing for a provider the block does not name ([`providers`](/config/nimblebrain-json/#providers)).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
@@ -28,7 +28,7 @@ A provider's API key can be supplied here or in `nimblebrain.json` under `provid
 
 ### Local model server
 
-Set by `npx nimblebrain` when you choose a local model, and passed through by the release's `docker-compose.yml`. With `NB_LOCAL_MODEL_URL` set, the runtime builds [`providers.local`](/config/nimblebrain-json/#a-local-model-server) and points the `default` and `fast` slots at the model, unless `nimblebrain.json` sets them itself. Anthropic stays configured beside it only when `ANTHROPIC_API_KEY` is set.
+Set by `npx nimblebrain` when you choose a local model, and passed through by the release's `docker-compose.yml`. With `NB_LOCAL_MODEL_URL` set, the runtime builds [`providers.local`](/config/nimblebrain-json/#a-local-model-server) and points the `default` and `fast` slots at the model, unless `nimblebrain.json` sets them itself. A hosted provider stays configured beside it only when its key is set.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|

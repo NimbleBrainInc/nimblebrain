@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { loadBrand, resolvedBrand } from "../../src/brand/index.ts";
 import { loadConfig } from "../../src/cli/config.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
+import { providersFromEnv } from "../../src/config/model-providers.ts";
 import { ACME_BRAND } from "../helpers/acme-brand.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-cli-unit-${Date.now()}`);
@@ -25,7 +26,8 @@ describe("loadConfig", () => {
     // Create an empty config to verify default values are applied
     const configPath = writeTestConfig("empty-defaults.json", {});
     const config = loadConfig({ config: configPath });
-    expect(config.providers).toBeUndefined();
+    // No provider is assumed: only the keys the environment holds configure one.
+    expect(config.providers).toEqual(providersFromEnv({}, process.env));
     expect(config.models).toBeUndefined();
     expect(config.connectors).toBeUndefined();
     expect(config.skillDirs).toBeUndefined();
