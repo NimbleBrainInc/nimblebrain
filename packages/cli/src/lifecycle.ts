@@ -5,7 +5,7 @@ import {
   SERVER_NAME,
   type SkillRefresh,
 } from "./agents.ts";
-import { AGENTS, type Agent, type Flags } from "./args.ts";
+import { AGENTS, type Agent, DEFAULT_PORT, type Flags } from "./args.ts";
 import {
   asksConsent,
   compose,
@@ -165,18 +165,19 @@ async function chooseConsent(ctx: Ctx): Promise<Consent> {
 
 async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number) {
   const { deps, flags, home } = ctx;
-  await doctor(deps, flags.port);
+  const port = flags.port ?? DEFAULT_PORT;
+  await doctor(deps, port);
   const project = await guardOurs(deps, home);
   const tag = await runtimeTag(deps, flags.runtime);
   const composeText = await fetchCompose(deps, tag);
-  await confirmStart(ctx, tag);
+  await confirmStart(ctx, tag, port);
 
   await writeInstallFiles(
     deps,
     home,
     project,
     tag,
-    flags.port,
+    port,
     composeText,
     envValues(deps, lockedHere(deps) ? undefined : rec.id, consent, asksConsent(composeText)),
   );
@@ -193,11 +194,11 @@ async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number)
   else if (!hasModel && asks(ctx)) await enterKey(ctx, false);
   return carryingStarted(ollamaStarted, async () => {
     deps.say(`Starting NimbleBrain ${tag}. The first start downloads about 2 GB of images.`);
-    await start(deps, home, flags.port);
+    await start(deps, home, port);
 
     const state: InstallState = {
       version: tag.replace(/^v/, ""),
-      port: flags.port,
+      port,
       project,
     };
     await writeState(deps, home, state);
@@ -222,10 +223,10 @@ async function install(ctx: Ctx, consent: Consent, rec: Recorder, begun: number)
   });
 }
 
-async function confirmStart(ctx: Ctx, tag: string): Promise<void> {
+async function confirmStart(ctx: Ctx, tag: string, port: number): Promise<void> {
   if (!asks(ctx)) return;
   const answer = await ctx.deps.prompt(
-    `Start NimbleBrain ${tag} at http://127.0.0.1:${ctx.flags.port}? [Y/n] `,
+    `Start NimbleBrain ${tag} at http://127.0.0.1:${port}? [Y/n] `,
   );
   if (/^n/i.test(answer)) throw new CliError("CANCELLED", "Nothing was installed.");
 }
@@ -451,7 +452,7 @@ async function enterKey(ctx: Ctx, restart: boolean) {
   // `up` recreates the runtime container, which is what makes it read `.env` again; a restart does not.
   if (restart) {
     const install = await readInstall(deps, home);
-    await start(deps, home, install?.port ?? flags.port);
+    await start(deps, home, install?.port ?? DEFAULT_PORT);
   }
   return { ok: true as const, provider, model_key: "set" };
 }

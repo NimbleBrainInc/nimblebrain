@@ -1,5 +1,5 @@
 import type { SkillRefresh } from "./agents.ts";
-import { type Parsed, parse, wantsJson } from "./args.ts";
+import { DEFAULT_PORT, type Parsed, parse, wantsJson } from "./args.ts";
 import { paths } from "./compose.ts";
 import { BARE_CLI, type Deps, forInstall, installHome, invocation } from "./deps.ts";
 import { doctor } from "./doctor.ts";
@@ -81,7 +81,7 @@ export async function run(argv: string[], deps: Deps): Promise<Answer> {
     switch (command) {
       case "doctor": {
         const install = await readInstall(deps, home);
-        const port = flags.portGiven ? flags.port : (install?.port ?? flags.port);
+        const port = flags.port ?? install?.port ?? DEFAULT_PORT;
         const ours = install?.port === port && (await isHealthy(deps, port));
         // Doctor starts Ollama only when a person at the terminal says yes, never by default.
         const startOllama = confirmOllamaStart({ deps, flags }, false);
