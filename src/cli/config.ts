@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { loadBrand } from "../brand/index.ts";
 import { getValidator } from "../config/index.ts";
 import { localModelFromEnv } from "../config/local-model.ts";
+import { providersFromEnv } from "../config/model-providers.ts";
 import { deriveOverridePath, mergeConfigs, OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
 import { log } from "../observability/log.ts";
 import type { RuntimeConfig } from "../runtime/types.ts";
@@ -231,8 +232,12 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     brand: fileConfig.brand as RuntimeConfig["brand"],
   };
 
-  // A local model server the environment names (a Docker install's `.env`).
-  // The file wins wherever it speaks; see `src/config/local-model.ts`.
+  // The hosted providers whose keys the environment holds, when the file names
+  // none, then a local model server the environment names (a Docker install's
+  // `.env`). The file wins wherever it speaks; see `src/config/model-providers.ts`
+  // and `src/config/local-model.ts`.
+  const fromEnv = providersFromEnv(config, process.env);
+  if (fromEnv) config.providers = fromEnv as RuntimeConfig["providers"];
   const local = localModelFromEnv(config, process.env);
   if (local.providers) config.providers = local.providers as RuntimeConfig["providers"];
   if (local.models) config.models = local.models;

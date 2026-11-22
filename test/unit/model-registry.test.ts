@@ -19,13 +19,33 @@ describe("buildRegistry", () => {
     expect(model.modelId).toContain("claude-sonnet");
   });
 
-  it("defaults to anthropic when no providers configured", () => {
-    const registry = buildRegistry({});
-    const model = registry.languageModel("anthropic:claude-sonnet-4-6") as LanguageModelV4;
-    expect(model).toBeDefined();
-    expect(model.provider).toContain("anthropic");
-    // Verify it has the same spec version as explicit config
-    expect(model.specificationVersion).toBe("v4");
+  it("builds no provider when none is configured, whatever keys the environment holds", () => {
+    const prev = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-stray";
+    try {
+      const registry = buildRegistry({});
+      expect(() => registry.languageModel("anthropic:claude-sonnet-4-6")).toThrow();
+    } finally {
+      if (prev === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prev;
+    }
+  });
+
+  it("builds only the local provider a local-only config names, beside a stray cloud key", () => {
+    const prev = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-stray";
+    try {
+      const registry = buildRegistry({
+        providers: { local: { baseURL: "http://127.0.0.1:11434/v1", models: ["qwen3:8b"] } },
+      });
+      expect((registry.languageModel("local:qwen3:8b") as LanguageModelV4).provider).toContain(
+        "local",
+      );
+      expect(() => registry.languageModel("anthropic:claude-sonnet-4-6")).toThrow();
+    } finally {
+      if (prev === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prev;
+    }
   });
 
   it("throws for unregistered provider prefix", () => {
@@ -110,6 +130,17 @@ describe("buildRegistry", () => {
 });
 
 describe("buildModelResolver", () => {
+  it("fails every model as ModelAuthError naming the settings when no provider is configured", () => {
+    for (const config of [{}, { providers: {} }] as ProvidersConfig[]) {
+      const resolver = buildModelResolver(config);
+      expect(() => resolver("anthropic:claude-sonnet-4-6")).toThrow(ModelAuthError);
+      expect(() => resolver("anthropic:claude-sonnet-4-6")).toThrow(
+        "No model provider is configured",
+      );
+      expect(() => resolver("anthropic:claude-sonnet-4-6")).toThrow("providers.local");
+    }
+  });
+
   it("returns a function", () => {
     const resolver = buildModelResolver({ providers: { anthropic: {} } });
     expect(typeof resolver).toBe("function");

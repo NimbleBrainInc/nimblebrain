@@ -159,6 +159,7 @@ import { ModelAuthError } from "../model/model-auth.ts";
 import { isQualifiedModelId, requireQualifiedModelId } from "../model/model-id.ts";
 import {
   buildModelResolver,
+  MODEL_PROVIDER_KEY_ENV,
   MODEL_PROVIDERS,
   type ModelGatewayAccess,
   providerModelAllowlists,
@@ -5436,10 +5437,10 @@ export class Runtime {
    * Whether a model a *caller* named is permitted here.
    *
    * False only where a policy exists and excludes it. Absence of policy is not
-   * denial: with no `providers` block, or behind an injected `languageModel`
-   * that serves every string, `getProviderConfigs()` reports a display default
-   * (`{anthropic:{}}`) rather than a reachability claim, so consulting it would
-   * refuse every non-Anthropic model on a deployment that can serve them.
+   * denial: with no provider configured, `getProviderConfigs()` is empty, and
+   * consulting it would refuse every model on a deployment that serves them
+   * through an injected `languageModel`, and turn a missing provider into "not
+   * permitted" where the resolver says how to configure one.
    *
    * Operator config is not a caller's choice and never passes through here —
    * a configured slot value is governed where it is written.
@@ -5450,12 +5451,14 @@ export class Runtime {
     // pin every future conversation to a model that names no provider.
     if (!isQualifiedModelId(modelString)) return false;
     // Policy is checked before the provider guard and independently of it. The
-    // guard below tolerates absent provider config because `getProviderConfigs`
-    // reports a display default rather than a reachability claim — but an
+    // guard below tolerates absent provider config, as above — but an
     // allowlist is an explicit operator statement, so when one exists it binds
     // whether or not providers are configured.
     if (!isModelInPolicy(modelString, this.config.modelPolicy?.allowed)) return false;
-    if (!this.config.providers && !this._gatewayProviders) return true;
+    // With no provider configured the model is let through, so the turn fails
+    // as the resolver fails it: naming how to configure one.
+    if (Object.keys(this.config.providers ?? {}).length === 0 && !this._gatewayProviders)
+      return true;
     return isModelAllowed(modelString, this.getProviderConfigs());
   }
 
@@ -5612,10 +5615,7 @@ export class Runtime {
     if (this._gatewayProviders) {
       return [...(this._gatewayProviders.served() ?? MODEL_PROVIDERS)];
     }
-    if (this.config.providers) {
-      return Object.keys(this.config.providers);
-    }
-    return ["anthropic"];
+    return Object.keys(this.config.providers ?? {});
   }
 
   /**
@@ -6483,8 +6483,16 @@ function resolveModel(
   setConfiguredModels("local", "Local", localCatalogModels(config.providers?.local ?? {}));
   const adapter = config.languageModel;
   if (adapter) return () => adapter;
-  // No providers configured means Anthropic, keyed from the environment.
-  return buildModelResolver({ providers: config.providers ?? { anthropic: {} } }, gateway);
+  // Only the providers the config names are built; with none, every model
+  // fails naming the settings that configure one. The runtime still starts, so
+  // an install can come up first and be given its key afterwards.
+  if (!gateway && Object.keys(config.providers ?? {}).length === 0) {
+    log.warn(
+      "[runtime] No model provider is configured: chat fails until nimblebrain.json sets providers " +
+        `(providers.local for a model server you run) or the environment holds a provider key (${Object.values(MODEL_PROVIDER_KEY_ENV).join(", ")}).`,
+    );
+  }
+  return buildModelResolver({ providers: config.providers }, gateway);
 }
 
 /** Initialize work directory env vars and sync core skills. */
