@@ -590,11 +590,13 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 - `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `connectors`, `skillDirs`, and optional `models` overrides.
 - `<workDir>/instance.json` — the identity provider (`dev`, `oidc`, or `workos` adapter). Required: `serve` refuses to start without it.
 
-**Config resolution** for `nimblebrain.json` (when no `--config` flag):
-1. `--workdir <dir>` → `<dir>/nimblebrain.json`
-2. Otherwise → `./nimblebrain.json` (CWD)
+**Config resolution** for `nimblebrain.json` (`resolveConfigPath` in `src/cli/config.ts`), the first that applies:
+1. `--config` / `-c <path>`
+2. `./.nimblebrain/nimblebrain.json`, when it exists
+3. `<NB_WORK_DIR or ~/.nimblebrain>/nimblebrain.json`
+4. `./nimblebrain.json` (CWD), when the caller passes no default workdir
 
-`NB_WORK_DIR` overrides `workDir` from either the config file or `--workdir`.
+`NB_WORK_DIR` overrides `workDir` from the config file.
 
 #### Connector Entry Fields (in `workspace.json`)
 

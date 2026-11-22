@@ -39,6 +39,8 @@ services:
       - GREENPT_API_KEY=${GREENPT_API_KEY:-}
       - NEBIUS_API_KEY=${NEBIUS_API_KEY:-}
       - XAI_API_KEY=${XAI_API_KEY:-}
+      # Where the browser reaches this install. OAuth callbacks are built on it.
+      - NB_PUBLIC_ORIGIN=${NB_PUBLIC_ORIGIN:-http://localhost:27246}
     networks:
       - internal
 

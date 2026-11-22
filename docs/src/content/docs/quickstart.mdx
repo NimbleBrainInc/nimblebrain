@@ -53,6 +53,8 @@ One command does all of this: `npx nimblebrain` checks your machine, starts Nimb
          - ./instance.json:/data/instance.json:ro
        environment:
          - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+         # Where the browser reaches this install. OAuth callbacks are built on it.
+         - NB_PUBLIC_ORIGIN=${NB_PUBLIC_ORIGIN:-http://localhost:27246}
        networks:
          - internal
 
