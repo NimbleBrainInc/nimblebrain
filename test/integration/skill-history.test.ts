@@ -50,7 +50,7 @@ async function callTool(name: string, input: Record<string, unknown>): Promise<C
 async function createSkill(name: string): Promise<string> {
   const res = await callTool("skills__create", {
     scope: "workspace",
-    manifest: { name, description: "House rules", loadingStrategy: "always" },
+    manifest: { name, description: "House rules" },
     body: ORIGINAL,
   });
   expect(res.isError).toBe(false);

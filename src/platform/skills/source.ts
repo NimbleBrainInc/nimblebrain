@@ -162,7 +162,8 @@ const SKILLS_CREATE_DESCRIPTION =
   "Create a Layer 3 skill at the given scope (`org`, `workspace`, or `user`). Writes a " +
   "markdown file with YAML frontmatter — `manifest` becomes the frontmatter, `body` is the " +
   "markdown below it. **Confirm with the user before creating org- or workspace-scope " +
-  "skills** — they affect every conversation in that scope. Returns the new skill's id " +
+  "skills** — they affect every conversation in that scope. `loadingStrategy: always` is " +
+  "refused here: the user sets always-on skills in Skills settings. Returns the new skill's id " +
   "(filesystem path).";
 
 const SKILLS_UPDATE_DESCRIPTION =
@@ -173,7 +174,9 @@ const SKILLS_UPDATE_DESCRIPTION =
   "`body` you MUST also pass `body_mode`: `append` adds it to the skill (use this to add a " +
   "rule — it keeps everything already there), `replace` overwrites the whole body. Snapshots " +
   "the current version to `_versions/` first; `skills__history` lists those snapshots and " +
-  "`skills__restore` puts one back. Connector (Layer 1) skills are not editable.";
+  "`skills__restore` puts one back. Connector (Layer 1) skills are not editable. A change that " +
+  "leaves a skill `always` (setting it, or editing one that already is) is refused: the user " +
+  "makes it in Skills settings.";
 
 // Tool input schemas live in `./schemas/skills.ts` — see the catalog at
 // `./schemas/catalog.ts`. The LLM-facing create/update input is a SUBSET of the
@@ -192,7 +195,8 @@ const SKILLS_HISTORY_DESCRIPTION =
 const SKILLS_RESTORE_DESCRIPTION =
   "Restore a skill's body and manifest from a snapshot listed by `skills__history`. The current " +
   "version is snapshotted first, so a restore is itself undoable. Use this to recover content " +
-  'an over-broad `body_mode: "replace"` discarded.';
+  'an over-broad `body_mode: "replace"` discarded. Restoring an `always` version is refused, as ' +
+  "on `skills__update`.";
 
 const SKILLS_DELETE_DESCRIPTION =
   "Delete a Layer 3 skill. The `id` is the filesystem path returned by `skills__list`. " +
@@ -2058,6 +2062,8 @@ async function createSkill(
     ...buildCreateManifest(manifest, ctx, createdBy, now),
     ...pasted.fields,
   };
+  const alwaysOn = alwaysOnWriteRefusal(fullManifest.loadingStrategy, false);
+  if (alwaysOn) return alwaysOn;
 
   // A `dynamic` skill with neither tool-affinity nor triggers is catalog-only:
   // it won't auto-load until the catalog ships (P3). We honor that rather than
@@ -2127,6 +2133,47 @@ function buildUpdatePatch(
     if (patch[key] !== undefined) out[key] = patch[key] ?? undefined;
   }
   return out;
+}
+
+/**
+ * Refuse a write that leaves a skill always-on unless the person made it from
+ * the web shell.
+ *
+ * An always-on skill is composed into every later conversation in its scope:
+ * a user skill into every workspace that user is in, an org skill into every
+ * workspace. That standing guidance is the person's to write (the core skill
+ * says so), so a write from the agent — a chat turn, a task run, an MCP client
+ * — that would leave the skill always-on is refused, whether it sets the
+ * strategy (manifest or pasted frontmatter) or edits a skill that already has
+ * it. A write that leaves the skill `dynamic` is unaffected.
+ *
+ * `shellCall` is the signal: only the shell's REST door and an app view's
+ * `/mcp` call set it, and a run's context never carries it, so the rule fails
+ * closed for any door that does not. It is the same line app-only visibility
+ * draws for `set_status`.
+ *
+ * `wasAlways` picks the message: the agent cannot make a skill always-on, nor
+ * change one that already is.
+ */
+function alwaysOnWriteRefusal(
+  resulting: string | undefined,
+  wasAlways: boolean,
+): ToolErrorResult | null {
+  if (resulting !== "always") return null;
+  if (getRequestContext()?.shellCall) return null;
+  const message = wasAlways
+    ? "Not saved: this skill is always-on, so it loads into every conversation in its scope, " +
+      "and changes to it are made by the user in Skills settings. Give the user the exact change " +
+      "and ask them to make it there."
+    : "Not saved: `loading-strategy: always` loads a skill into every conversation in its scope, " +
+      "so only the user sets it, in Skills settings. Save the skill as `dynamic` (add " +
+      "`tool-affinity` or `triggers` if it should load on its own), or give the user the text " +
+      "and ask them to add it as an always-on skill there.";
+  return {
+    content: textContent(message),
+    structuredContent: { error: message, code: "always_on_set_by_user" },
+    isError: true,
+  };
 }
 
 // Input shape for `skills__update`. `manifest` is a partial of the
@@ -2284,6 +2331,31 @@ function absorbForUpdate(
 }
 
 /**
+ * An update's body ({@link prepareUpdateBody}), then the always-on rule
+ * ({@link alwaysOnWriteRefusal}) against the strategy the skill would have
+ * after the write: the pasted document's, else the patch's, else the stored
+ * one. `set_status` passes `allowStatus` and is exempt: it is app-only and
+ * changes only `status`.
+ */
+function prepareUpdateWrite(
+  dir: string,
+  name: string,
+  input: SkillsUpdateInput,
+  mode: SkillBodyMode,
+  allowStatus: boolean,
+): ReturnType<typeof prepareUpdateBody> {
+  const prepared = prepareUpdateBody(dir, name, input.body, mode, input.frontmatter);
+  if ("error" in prepared || allowStatus) return prepared;
+  const stored = readSkill(dir, name)?.manifest.loadingStrategy;
+  const resulting =
+    prepared.pasted?.fields.loadingStrategy ??
+    buildUpdatePatch(input.manifest)?.loadingStrategy ??
+    stored;
+  const refusal = alwaysOnWriteRefusal(resulting, stored === "always");
+  return refusal ? { error: refusal } : prepared;
+}
+
+/**
  * `skills__update`'s input, plus the `manifest.status` that only `set_status`
  * passes (and only with `opts.allowStatus`).
  */
@@ -2305,7 +2377,7 @@ async function updateSkillHandler(
    */
   opts: { allowStatus?: boolean } = {},
 ): Promise<TypedToolResult<typeof SkillsWriteOutput>> {
-  const { id, manifest: patch, body, body_mode: bodyMode, frontmatter } = input;
+  const { id, manifest: patch, body, body_mode: bodyMode } = input;
 
   // Same gate the history/restore pair runs: scope, existence-before-permission,
   // write authority, and the symlink-boundary check that stops a link from
@@ -2322,9 +2394,9 @@ async function updateSkillHandler(
   if (refusal) return refusal;
 
   const effectiveMode = bodyMode ?? "replace";
-  // The body is sized before the snapshot, so a refused update leaves neither a
-  // changed file nor a history entry.
-  const prepared = prepareUpdateBody(dir, name, body, effectiveMode, frontmatter);
+  // The body is sized, and the always-on rule checked, before the snapshot, so
+  // a refused update leaves neither a changed file nor a history entry.
+  const prepared = prepareUpdateWrite(dir, name, input, effectiveMode, opts.allowStatus === true);
   if ("error" in prepared) return prepared.error;
   const { pasted, nextBody } = prepared;
 
@@ -2483,13 +2555,19 @@ async function restoreSkillHandler(
     return errorResult(new Error(`Snapshot "${version}" of "${path}" could not be parsed.`));
   }
 
+  const dir = dirname(path);
+  const name = (path.split("/").pop() ?? "").replace(/\.md$/, "");
+  const alwaysOn = alwaysOnWriteRefusal(
+    parsed.manifest.loadingStrategy,
+    readSkill(dir, name)?.manifest.loadingStrategy === "always",
+  );
+  if (alwaysOn) return alwaysOn;
+
   // Snapshot the CURRENT file before overwriting it, so restoring to the
   // wrong version is itself recoverable — the property whose absence made
   // the original loss permanent.
   snapshotSkillVersion(path);
 
-  const dir = dirname(path);
-  const name = (path.split("/").pop() ?? "").replace(/\.md$/, "");
   // A restore recovers CONTENT, never the durable on/off state. A snapshot is
   // taken before every write, including the one that re-enables a skill — so
   // any skill toggled off and back on leaves a `status: disabled` snapshot

@@ -17,7 +17,7 @@ const SkillStatus = StringEnum(["active", "disabled"] as const, {
 
 const LoadingStrategy = StringEnum(["always", "dynamic"] as const, {
   description:
-    "`always` = always-on context (Layer 0/1); `dynamic` = on-demand (loads via tool-affinity, triggers, or the catalog). Default `dynamic`.",
+    "`always` = always-on context (Layer 0/1), set only by the user in Skills settings; `dynamic` = on-demand (loads via tool-affinity, triggers, or the catalog). Default `dynamic`.",
 });
 
 // How a `---` block at the head of `body` is treated. The canonical skill
