@@ -97,6 +97,8 @@ Docker Compose runs the platform and web UI as two containers. This is the recom
 
    The platform API runs on port 27247 (internal). The web UI is published on port 27246 of this machine only (`127.0.0.1`). Health is checked internally at `http://localhost:27247/v1/health`.
 
+   Go to [http://localhost:27246](http://localhost:27246). Use this address, not `http://127.0.0.1:27246`: connector sign-ins return to `NB_PUBLIC_ORIGIN`, and the sign-in cookie is set only on the host you opened.
+
 </Steps>
 
 #### Build from local source
