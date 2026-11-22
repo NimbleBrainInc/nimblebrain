@@ -39,7 +39,6 @@ function createTestSetup(): { mock: MockTelemetryClient; sink: PostHogEventSink 
   const factory: TelemetryClientFactory = (_apiKey, _options) => mock;
 
   // Clear env vars that would disable telemetry
-  delete process.env.NB_TELEMETRY_DISABLED;
   delete process.env.DO_NOT_TRACK;
 
   const mgr = TelemetryManager.create({
@@ -104,9 +103,7 @@ describe("PostHogEventSink", () => {
   const savedEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    savedEnv.NB_TELEMETRY_DISABLED = process.env.NB_TELEMETRY_DISABLED;
     savedEnv.DO_NOT_TRACK = process.env.DO_NOT_TRACK;
-    delete process.env.NB_TELEMETRY_DISABLED;
     delete process.env.DO_NOT_TRACK;
   });
 
