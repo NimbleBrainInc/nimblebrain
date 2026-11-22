@@ -78,7 +78,9 @@ describe("the /v1 tool-call doors and the request's Origin", () => {
         Host: `${REBOUND}:${port}`,
       });
       expect(res.status).toBe(403);
-      expect((await readJson<ApiErrorBody>(res)).error).toBe("untrusted_origin");
+      // Under `dev` the app-wide host allowlist answers before the door's own
+      // Origin check (test/integration/local-host-allowlist.test.ts).
+      expect((await readJson<ApiErrorBody>(res)).error).toBe("untrusted_host");
     }
   });
 
@@ -86,6 +88,7 @@ describe("the /v1 tool-call doors and the request's Origin", () => {
     for (const path of doors()) {
       const res = await call(path, { Origin: "https://attacker.example" });
       expect(res.status).toBe(403);
+      expect((await readJson<ApiErrorBody>(res)).error).toBe("untrusted_origin");
     }
   });
 
