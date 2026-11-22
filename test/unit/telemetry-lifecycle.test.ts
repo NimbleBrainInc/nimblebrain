@@ -110,9 +110,39 @@ describe("captureAbout", () => {
     ]);
   });
 
+  it("names the workspace of the request an event comes from", async () => {
+    const { events, manager } = setup(true);
+    manager.setSubjectSource(() => ({ userId: "usr_1", workspaceId: "ws_1" }));
+    manager.setWorkspaceSource(async () => "Acme ops");
+    manager.capture("agent.chat_started", {});
+    await settle();
+    expect(events.filter((e) => e.event === "$groupidentify")).toEqual([
+      {
+        distinctId: "$workspace_ws_1",
+        event: "$groupidentify",
+        properties: {
+          $group_type: "workspace",
+          $group_key: "ws_1",
+          $group_set: { name: "Acme ops" },
+        },
+      },
+    ]);
+  });
+
+  it("keeps the event when the workspace lookup fails", async () => {
+    const { events, manager } = setup(true);
+    manager.setWorkspaceSource(async () => {
+      throw new Error("store down");
+    });
+    manager.captureAbout("automation.run_completed", {}, { userId: "usr_1", workspaceId: "ws_1" });
+    await settle();
+    expect(events.map((e) => e.event)).toEqual(["automation.run_completed"]);
+  });
+
   it("names no workspace when the deployment does not identify", async () => {
     const { events, manager } = setup(false);
     const asked: string[] = [];
+    manager.setSubjectSource(() => ({ userId: "usr_1", workspaceId: "ws_1" }));
     manager.setWorkspaceSource(async (wsId) => {
       asked.push(wsId);
       return "Acme ops";
