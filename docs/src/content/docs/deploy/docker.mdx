@@ -40,7 +40,7 @@ services:
       - NEBIUS_API_KEY=${NEBIUS_API_KEY:-}
       - XAI_API_KEY=${XAI_API_KEY:-}
       # Where the browser reaches this install. OAuth callbacks are built on it.
-      - NB_PUBLIC_ORIGIN=${NB_PUBLIC_ORIGIN:-http://localhost:27246}
+      - NB_PUBLIC_ORIGIN=${NB_PUBLIC_ORIGIN:-http://127.0.0.1:27246}
     networks:
       - internal
 
@@ -166,7 +166,7 @@ The `web` service uses `depends_on` with `condition: service_healthy`, so it onl
    Check the health endpoint directly (proxied through the web container):
 
    ```bash
-   curl http://localhost:27246/v1/health
+   curl http://127.0.0.1:27246/v1/health
    ```
 
    ```json
@@ -175,7 +175,7 @@ The `web` service uses `depends_on` with `condition: service_healthy`, so it onl
 
 4. **Open the UI**
 
-   Go to [http://localhost:27246](http://localhost:27246). With the `dev` adapter the UI opens straight to the agent. With a real adapter, you sign in through that adapter's flow (for example the OIDC provider's hosted login).
+   Go to [http://127.0.0.1:27246](http://127.0.0.1:27246), the address connector sign-ins return to and the sign-in cookie is set on. With the `dev` adapter the UI opens straight to the agent. With a real adapter, you sign in through that adapter's flow (for example the OIDC provider's hosted login).
 
 </Steps>
 
