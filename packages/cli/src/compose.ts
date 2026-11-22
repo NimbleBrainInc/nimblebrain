@@ -1,6 +1,6 @@
 import { basename, join } from "node:path";
 import type { Deps, ExecOptions, ExecResult } from "./deps.ts";
-import { CliError } from "./result.ts";
+import { CliError, type FixVariant } from "./result.ts";
 
 /**
  * The Compose project of the default home, and of every install an older CLI
@@ -197,6 +197,15 @@ export async function compose(
   });
 }
 
+/**
+ * The fix for a stopped Docker, by the socket Docker names: Colima's default VM
+ * starts with `colima start`; another profile starts by its own name, so it
+ * keeps the general fix.
+ */
+export function daemonVariant(text: string): FixVariant | undefined {
+  return /\/\.colima\/default\//.test(text) ? "colima" : undefined;
+}
+
 /** Turns a failed Compose call into the error a person can act on. */
 export function startError(res: ExecResult): CliError {
   const text = `${res.stderr}\n${res.stdout}`;
@@ -206,6 +215,15 @@ export function startError(res: ExecResult): CliError {
       .split("\n")
       .filter((l) => l.trim())
       .pop() ?? "Compose failed.";
+  // Before the network check: a stale socket answers "connection refused".
+  if (/cannot connect to the docker daemon|failed to connect to the docker api/i.test(text)) {
+    return new CliError(
+      "DOCKER_NOT_RUNNING",
+      "Docker is installed but not running.",
+      {},
+      daemonVariant(text),
+    );
+  }
   if (/no such host|timeout|TLS handshake|connection refused|network is unreachable/i.test(text)) {
     return new CliError("NETWORK", last);
   }

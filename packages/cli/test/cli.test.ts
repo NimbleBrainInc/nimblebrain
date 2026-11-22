@@ -83,6 +83,23 @@ describe("doctor", () => {
     expect((await json(["doctor"], deps)).body.error).toBe("DOCKER_NOT_RUNNING");
   });
 
+  test("DOCKER_NOT_RUNNING names `colima start` when Colima's default VM is stopped", async () => {
+    const cases: Array<[string, string]> = [
+      ["unix:///home/dana/.colima/default/docker.sock", "colima start"],
+      ["unix:///home/dana/.colima/work/docker.sock", "Start Docker Desktop"],
+      ["unix:///var/run/docker.sock", "Start Docker Desktop"],
+    ];
+    for (const [socket, fix] of cases) {
+      const stderr = `failed to connect to the docker API at ${socket}; check if the path is correct and if the daemon is running`;
+      const deps = fakeDeps({
+        execMap: {
+          "docker info --format {{json .}}": { code: 1, stdout: "", stderr, missing: false },
+        },
+      });
+      expect((await json(["doctor"], deps)).body.fix).toContain(fix);
+    }
+  });
+
   test("a socket permission error is DOCKER_PERMISSION", async () => {
     const deps = fakeDeps({
       execMap: {
