@@ -75,6 +75,9 @@ export const FIX_VARIANTS = {
       "Install Docker Desktop with `brew install --cask docker`, open it once from Applications, then run this again.",
     mac: "Install Docker Desktop (https://docs.docker.com/desktop/setup/install/mac-install/), open it once, then run this again.",
   },
+  DOCKER_NOT_RUNNING: {
+    colima: "Start Colima with `colima start`, then run this again.",
+  },
   COMPOSE_MISSING: {
     brew: "Install Compose with `brew install docker-compose`, then run this again.",
   },
