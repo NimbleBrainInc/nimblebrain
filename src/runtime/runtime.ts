@@ -44,7 +44,11 @@ import { resolveHostLoopback, setHostLoopbackAlias } from "../connectors/runtime
 import { setInBandAuthErrorsCatalog } from "../connectors/runtime/in-band-auth-errors.ts";
 import { bindInstanceOAuthClients } from "../connectors/runtime/instance-oauth-clients.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
-import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
+import {
+  assertRuntimeSourceNamesReserved,
+  serverNameFromRef,
+  slugifyServerName,
+} from "../connectors/runtime/paths.ts";
 import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
 import type { ConnectorInstance, PlacementDeclaration } from "../connectors/runtime/types.ts";
@@ -1261,6 +1265,9 @@ export class Runtime {
       // `createPlatformSources` returns sources already started.
       const { createPlatformSources } = await import("../platform/index.ts");
       const platformSources = await createPlatformSources(rt, events);
+      // A connector may never take the name of a source the runtime registers
+      // itself; install and boot both read that from the reserved set.
+      assertRuntimeSourceNamesReserved([systemTools.name, ...platformSources.map((s) => s.name)]);
       // Telemetry counts calls to connector tools apart from the kernel's own.
       telemetrySink.addBuiltinSources(platformSources.map((s) => s.name));
       // Identified telemetry names a connector by its catalog id, never by the
@@ -6312,18 +6319,21 @@ export class Runtime {
     // cooperatively) and clears the run map. Order matters: stop the
     // producers first, then dismantle their dependencies.
     this.runBus.reset();
-    // Stop all sources across all workspace registries
+    // Stop all sources across all workspace registries. A shared source (the
+    // system source, the platform apps) is not stopped by a registry; the
+    // runtime created them, so it stops them here, each once.
     for (const [_wsId, reg] of this._workspaceRegistries) {
       for (const name of reg.sourceNames()) {
         await reg.removeSource(name);
       }
     }
-    // Identity sources (tasks, files, conversations) sit in no workspace
-    // registry, so the loop above never reaches them. Stop them here: the tasks
-    // source's stop is what ends its scheduler, whose timer otherwise outlives
-    // the runtime and keeps the process alive.
-    for (const source of this._platformSources) {
-      if (isIdentitySource(source.name)) await source.stop();
+    // Every platform source and the system source, workspace-scoped and identity
+    // alike, stopped once each. Identity sources (tasks, files, conversations) sit
+    // in no workspace registry at all, and the tasks source's stop is what ends its
+    // scheduler, whose timer otherwise outlives the runtime and keeps the process
+    // alive.
+    for (const source of [...this._platformSources, this._systemSource]) {
+      await source?.stop();
     }
     // Nothing drains the run queue once the sources are gone, so a run still
     // waiting for a slot is refused rather than left waiting forever.
