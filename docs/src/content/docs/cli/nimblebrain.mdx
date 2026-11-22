@@ -137,6 +137,7 @@ Every command answers `{"ok": true, ...}` or `{"ok": false, "error": "<CODE>", "
 | `LOCAL_MODEL_UNREACHABLE`, `LOCAL_MODEL_MISSING`, `LOCAL_MODEL_NO_TOOLS`, `LOCAL_CONTEXT_SMALL` | Ollama does not answer (it is not installed, starting it was declined, or it did not answer after a start; `fix` names the step for this machine), the model is not on it (or its download was declined or failed), the model cannot call tools, or its context window is below the 32k NimbleBrain needs. |
 | `INTERRUPTED` | The CLI was stopped (a signal, Ctrl-C) before it finished; `exit_code` says how. Check `status`, then run the command again. |
 | `NOT_RUNNING` | The command needs NimbleBrain running (`open`, `telemetry on`/`off`, every `mcp` command); run `npx nimblebrain up`. |
+| `TELEMETRY_LOCKED` | `telemetry on` or `off` cannot change the answer here: `DO_NOT_TRACK` or `NB_TELEMETRY_DISABLED` is set, this CLI build has nowhere to send, or the running install's configuration decides it (`message` carries its text). |
 | `UPDATE_REQUIRED` | `mcp add` on a release that cannot reach your machine; run `npx nimblebrain update`. |
 | `WORKSPACE_NOT_FOUND`, `SERVER_NOT_FOUND` | No such workspace (the answer lists the ones there are in `workspaces`), or no server by that name in it. |
 | `URL_INVALID`, `URL_NOT_LOOPBACK` | The URL is not an `http`/`https` URL NimbleBrain accepts, or is not on this machine. |
