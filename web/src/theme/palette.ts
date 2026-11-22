@@ -27,7 +27,8 @@ export function pick(pair: Pair, mode: Mode): string {
  * weight and size, not from a display/text style split. `reading` is the
  * exception and is scoped to agent prose in chat, the only surface where
  * reading beats scanning; it is a screen-text serif, never a display serif.
- * `sans`/`heading`/`reading` are served via Google Fonts, `mono` via Fontsource.
+ * All are served from the web build: `sans`/`heading`/`reading` declared in
+ * `src/fonts.css`, `mono` via Fontsource.
  */
 export const fonts = {
   sans: "'Hanken Grotesk', system-ui, sans-serif",
