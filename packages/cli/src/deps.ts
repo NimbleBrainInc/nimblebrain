@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, chmod, mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -35,7 +35,10 @@ export interface Deps {
     timeoutMs?: number,
   ): Promise<{ status: number; body: unknown } | undefined>;
   readText(path: string): Promise<string | undefined>;
-  /** Write a file, creating its folder (mode 700). `mode` applies to a new file and to an existing one. */
+  /**
+   * Write a file, creating its folder (mode 700). `mode` applies to a new file and to an existing one.
+   * The file is replaced whole or not at all, so a run cut short never leaves a record half written.
+   */
   writeText(path: string, text: string, mode?: number): Promise<void>;
   /** Remove a file, or a folder only when it is empty. Never recursive; a missing path or a non-empty folder is left as it is. */
   remove(path: string): Promise<void>;
@@ -167,9 +170,17 @@ export function realDeps(): Deps {
     },
     async writeText(path, text, mode = 0o644) {
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-      await writeFile(path, text, { mode });
-      // `mode` on writeFile only applies when it creates the file.
-      await chmod(path, mode);
+      // A sibling renamed into place: the old file stays whole until the new one is.
+      const tmp = `${path}.${process.pid}.tmp`;
+      try {
+        await writeFile(tmp, text, { mode });
+        // `mode` on writeFile only applies when it creates the file.
+        await chmod(tmp, mode);
+        await rename(tmp, path);
+      } catch (err) {
+        await rm(tmp, { force: true }).catch(() => undefined);
+        throw err;
+      }
     },
     async remove(path) {
       try {

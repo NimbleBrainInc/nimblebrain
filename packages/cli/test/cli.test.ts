@@ -1,8 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Deps, ExecResult } from "../src/deps.ts";
+import { type Deps, type ExecResult, realDeps } from "../src/deps.ts";
 import { interrupted, run, VERSION } from "../src/main.ts";
 import { fail, GB, machine, missing, ok, record } from "./fake.ts";
 
@@ -403,5 +412,27 @@ describe("the entry point", () => {
     expect(out.trim().split("\n")).toHaveLength(1);
     expect(JSON.parse(out)).toMatchObject({ ok: false, error: "INTERRUPTED", exit_code: 143 });
     expect(err).toContain("stopped before answering (exit code 143)");
+  });
+});
+
+describe("writing a file", () => {
+  test("replaces it whole, with its mode, and leaves nothing beside it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nb-write-"));
+    const path = join(dir, "install.json");
+    writeFileSync(path, "old\n");
+    await realDeps().writeText(path, "new\n", 0o600);
+    expect(readFileSync(path, "utf8")).toBe("new\n");
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(readdirSync(dir)).toEqual(["install.json"]);
+  });
+
+  test("a write that fails leaves the old file whole", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nb-write-"));
+    const path = join(dir, "install.json");
+    writeFileSync(path, "old\n");
+    // The sibling it writes first cannot be a file, so the write fails before the rename.
+    mkdirSync(`${path}.${process.pid}.tmp`);
+    await expect(realDeps().writeText(path, "new\n")).rejects.toThrow();
+    expect(readFileSync(path, "utf8")).toBe("old\n");
   });
 });

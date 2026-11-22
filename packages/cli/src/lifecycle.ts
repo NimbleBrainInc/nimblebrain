@@ -221,16 +221,7 @@ async function install(
     envValues(deps, lockedHere(deps) ? undefined : rec.id, consent, asksConsent(composeText)),
   );
   // Asked before the start: the runtime reads `.env` only when its container is created.
-  const envText = (await deps.readText(paths(home).env)) ?? "";
-  const hasModel = hasKey(envText, keyVars(composeText)) || localModelOf(envText) !== undefined;
-  const local =
-    flags.localModel ??
-    (!hasModel && asks(ctx) && takesLocalModel(composeText)
-      ? await chooseModelSource(deps)
-      : undefined);
-  let ollamaStarted: string | undefined;
-  if (local) ollamaStarted = (await useLocalModel(ctx, composeText, local)).started;
-  else if (!hasModel && asks(ctx)) await enterKey(ctx, false);
+  const ollamaStarted = await prepareModel(ctx, composeText);
   return carryingStarted(ollamaStarted, async () => {
     deps.say(`Starting NimbleBrain ${tag}. The first start downloads about 2 GB of images.`);
     await start(deps, home, port);
@@ -610,6 +601,27 @@ async function writeInstallFiles(
     ...extra,
   });
   await deps.writeText(p.env, env, 0o600);
+}
+
+/**
+ * Sets up the model before the first start, asking only when `.env` has none
+ * (a resume keeps the one chosen before). A saved local model still needs
+ * Ollama answering, as `up` does. Returns the Ollama start command it ran.
+ */
+async function prepareModel(ctx: Ctx, composeText: string): Promise<string | undefined> {
+  const { deps, flags, home } = ctx;
+  const envText = (await deps.readText(paths(home).env)) ?? "";
+  const saved = localModelOf(envText) !== undefined;
+  const hasModel = saved || hasKey(envText, keyVars(composeText));
+  const local =
+    flags.localModel ??
+    (!hasModel && asks(ctx) && takesLocalModel(composeText)
+      ? await chooseModelSource(deps)
+      : undefined);
+  if (local) return (await useLocalModel(ctx, composeText, local)).started;
+  if (saved) return (await ensureOllama(deps, confirmOllamaStart(ctx, true))).started;
+  if (!hasModel && asks(ctx)) await enterKey(ctx, false);
+  return undefined;
 }
 
 async function writeState(deps: Deps, home: string, state: InstallState): Promise<void> {
