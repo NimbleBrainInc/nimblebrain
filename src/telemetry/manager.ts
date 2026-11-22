@@ -82,6 +82,9 @@ export type TelemetryPersonSource = (
   userId: string,
 ) => Promise<{ email?: string; name?: string } | undefined>;
 
+/** A workspace's name, looked up by id the first time an event is grouped under it. */
+export type TelemetryWorkspaceSource = (workspaceId: string) => Promise<string | undefined>;
+
 export type TelemetryClientFactory = (
   apiKey: string,
   options: {
@@ -119,6 +122,9 @@ export class TelemetryManager {
   private personSource: TelemetryPersonSource | undefined;
   /** People this process has looked up, so a person missing from the store is looked up once. */
   private readonly lookedUp = new Set<string>();
+  private workspaceSource: TelemetryWorkspaceSource | undefined;
+  /** Workspaces this process has named in analytics, so each is looked up once. */
+  private readonly namedWorkspaces = new Set<string>();
 
   private constructor(
     private readonly workDir: string,
@@ -183,6 +189,7 @@ export class TelemetryManager {
     const groups: Record<string, string> = {};
     if (this.tenantId) groups.tenant = this.tenantId;
     if (subject?.workspaceId) groups.workspace = subject.workspaceId;
+    if (subject?.workspaceId) this.nameWorkspace(subject.workspaceId);
     const person = subject ? this.describe(subject) : {};
     this.client.capture({
       distinctId: subject?.userId ?? this.anonymousId,
@@ -210,6 +217,7 @@ export class TelemetryManager {
     const groups: Record<string, string> = {};
     if (this.tenantId) groups.tenant = this.tenantId;
     if (workspaceId) groups.workspace = workspaceId;
+    if (workspaceId) this.nameWorkspace(workspaceId);
     const person = userId ? this.describe(personAbout(userId, about, subject)) : {};
     this.client.capture({
       distinctId: userId ?? this.anonymousId,
@@ -234,6 +242,14 @@ export class TelemetryManager {
    */
   setPersonSource(source: TelemetryPersonSource): void {
     this.personSource = source;
+  }
+
+  /**
+   * Where a workspace's name is found, so analytics can show it instead of its
+   * id. The runtime registers its workspace store here.
+   */
+  setWorkspaceSource(source: TelemetryWorkspaceSource): void {
+    this.workspaceSource = source;
   }
 
   /** The signed-in person of the current request, on an identified deployment. */
@@ -287,6 +303,28 @@ export class TelemetryManager {
         if (!set || this.described.has(userId) || !this.client) return;
         this.described.add(userId);
         this.client.capture({ distinctId: userId, event: "$set", properties: { $set: set } });
+      })
+      .catch(() => {
+        // Telemetry never fails the work it describes.
+      });
+  }
+
+  /**
+   * Sets a workspace group's name, once per process: the first identified event
+   * grouped under it looks the name up and sends it as `$groupidentify`.
+   * A rename shows after the next restart.
+   */
+  private nameWorkspace(workspaceId: string): void {
+    if (!this.workspaceSource || this.namedWorkspaces.has(workspaceId)) return;
+    this.namedWorkspaces.add(workspaceId);
+    this.workspaceSource(workspaceId)
+      .then((name) => {
+        if (!name || !this.client) return;
+        this.client.capture({
+          distinctId: `$workspace_${workspaceId}`,
+          event: "$groupidentify",
+          properties: { $group_type: "workspace", $group_key: workspaceId, $group_set: { name } },
+        });
       })
       .catch(() => {
         // Telemetry never fails the work it describes.
