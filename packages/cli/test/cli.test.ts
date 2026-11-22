@@ -83,6 +83,23 @@ describe("doctor", () => {
     expect((await json(["doctor"], deps)).body.error).toBe("DOCKER_NOT_RUNNING");
   });
 
+  test("DOCKER_NOT_RUNNING names `colima start` when Colima's default VM is stopped", async () => {
+    const cases: Array<[string, string]> = [
+      ["unix:///home/dana/.colima/default/docker.sock", "colima start"],
+      ["unix:///home/dana/.colima/work/docker.sock", "Start Docker Desktop"],
+      ["unix:///var/run/docker.sock", "Start Docker Desktop"],
+    ];
+    for (const [socket, fix] of cases) {
+      const stderr = `failed to connect to the docker API at ${socket}; check if the path is correct and if the daemon is running`;
+      const deps = fakeDeps({
+        execMap: {
+          "docker info --format {{json .}}": { code: 1, stdout: "", stderr, missing: false },
+        },
+      });
+      expect((await json(["doctor"], deps)).body.fix).toContain(fix);
+    }
+  });
+
   test("a socket permission error is DOCKER_PERMISSION", async () => {
     const deps = fakeDeps({
       execMap: {
@@ -232,6 +249,24 @@ describe("doctor", () => {
       getJson: async () => ({ status: 200, body: { status: "ok" } }),
     });
     expect((await json(["doctor"], deps)).body.ok).toBe(true);
+  });
+
+  test("an install on another port is checked on its own port, unless --port names one", async () => {
+    const deps = fakeDeps({
+      portFree: async () => false,
+      readText: async () =>
+        JSON.stringify({ version: "0.70.0", port: 27300, project: "nimblebrain-local" }),
+      getJson: async (url) =>
+        url === "http://127.0.0.1:27300/v1/health"
+          ? { status: 200, body: { status: "ok" } }
+          : undefined,
+    });
+    const { body } = await json(["doctor"], deps);
+    expect(body.ok).toBe(true);
+    expect(body.checks.find((c: { check: string }) => c.check === "port").detail).toBe(
+      "27300 (this install)",
+    );
+    expect((await json(["doctor", "--port", "27246"], deps)).body.error).toBe("PORT_IN_USE");
   });
 });
 

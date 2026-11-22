@@ -53,6 +53,8 @@ One command does all of this: `npx nimblebrain` checks your machine, starts Nimb
          - ./instance.json:/data/instance.json:ro
        environment:
          - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+         # Where the browser reaches this install. OAuth callbacks are built on it.
+         - NB_PUBLIC_ORIGIN=${NB_PUBLIC_ORIGIN:-http://127.0.0.1:27246}
        networks:
          - internal
 
@@ -100,7 +102,7 @@ One command does all of this: `npx nimblebrain` checks your machine, starts Nimb
 
 4. **Open the web UI**
 
-   Go to [http://localhost:27246](http://localhost:27246).
+   Go to [http://127.0.0.1:27246](http://127.0.0.1:27246), the address connector sign-ins return to and the sign-in cookie is set on.
 
    There is no login screen: the `dev` adapter in `instance.json` makes you a single built-in user. This is the right setup for trying things out locally.
 

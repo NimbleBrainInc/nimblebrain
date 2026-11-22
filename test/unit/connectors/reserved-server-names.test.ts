@@ -15,6 +15,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  assertRuntimeSourceNamesReserved,
   isReservedServerName,
   slugifyServerName,
   validateServerName,
@@ -31,6 +32,8 @@ describe("reserved server names", () => {
       "conversations",
       "files",
       "tasks",
+      "usage",
+      "skills",
       `${PERSONAL_CONNECTOR_PREFIX}gmail`,
       "crm",
       "gmail",
@@ -53,6 +56,21 @@ describe("reserved server names", () => {
     for (const name of ["conversations", "files", "tasks"]) {
       expect(isReservedServerName(name)).toBe(true);
     }
+  });
+
+  test("connector names that belong to platform apps are reserved", () => {
+    // Each of these is one shared source in every workspace registry; a
+    // connector under the same name would collide with it there.
+    for (const name of ["nb", "compose", "hooks", "notifications", "skills", "usage"]) {
+      expect(isReservedServerName(name)).toBe(true);
+    }
+  });
+
+  test("boot refuses a runtime source whose name is not reserved", () => {
+    expect(() => assertRuntimeSourceNamesReserved(["nb", "usage", "conversations"])).not.toThrow();
+    expect(() => assertRuntimeSourceNamesReserved(["nb", "new-platform-app"])).toThrow(
+      /new-platform-app/,
+    );
   });
 
   test("the personal marker is reserved and lies outside slugify's image", () => {

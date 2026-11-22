@@ -112,7 +112,15 @@
 		# are served here), so no page can put the shell's controls under a click it chose.
 		header Referrer-Policy "strict-origin-when-cross-origin"
 		header X-Frame-Options "DENY"
-		header Content-Security-Policy "frame-ancestors 'none'"
+		# Images load from this origin (stored files, bundled artwork), `data:` and
+		# `blob:` (inlined assets, attachment previews), and the static host the
+		# bundled catalog's connector icons and NimbleBrain's brand artwork live on.
+		# NB_IMG_SRC adds sources: the hosts of an operator's own brand logos,
+		# favicon or catalog icons. An icon on a host not listed falls back to the
+		# connector's letter avatar. Rendered markdown loads images from this origin
+		# only (web/src/lib/streamdown-config.tsx); this directive holds the same for
+		# what the shell's own frames inherit (an HTML artifact's srcdoc preview).
+		header Content-Security-Policy "frame-ancestors 'none'; img-src 'self' data: blob: https://static.nimblebrain.ai {$NB_IMG_SRC:}"
 		try_files {path} /index.html
 		file_server
 	}

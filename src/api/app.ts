@@ -3,7 +3,9 @@ import { log } from "../observability/log.ts";
 import { enableDefaultMetrics } from "./metrics.ts";
 import { corsMiddleware } from "./middleware/cors.ts";
 import { rejectCrossSiteWrites } from "./middleware/fetch-site.ts";
+import { rejectUnlistedHost } from "./middleware/host.ts";
 import { metricsMiddleware } from "./middleware/metrics.ts";
+import { trustedBrowserOrigins } from "./middleware/origin.ts";
 import { securityHeaders } from "./middleware/security-headers.ts";
 import { tracingMiddleware } from "./middleware/tracing.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -35,6 +37,15 @@ export function createApp(ctx: AppContext, allowedOrigins: Set<string> | null) {
 
   // Request metrics first so it times the full handler chain.
   app.use("*", metricsMiddleware());
+
+  // Without sign-in every request is the local admin, so only a request
+  // addressed to a loopback or configured host is answered, on every route. A
+  // page served under another hostname that resolves to this machine is
+  // same-origin to the browser, and its GETs carry no Origin, so neither CORS
+  // nor an Origin check sees it; its Host does (src/api/AGENTS.md).
+  if (ctx.provider.capabilities.checksNoCredential) {
+    app.use("*", rejectUnlistedHost(trustedBrowserOrigins(allowedOrigins)));
+  }
 
   // Global CORS middleware
   app.use("*", corsMiddleware(allowedOrigins));

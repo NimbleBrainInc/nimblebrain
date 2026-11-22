@@ -106,7 +106,6 @@ let savedEnv: Record<string, string | undefined> = {};
 
 function saveEnv() {
   savedEnv = {
-    NB_TELEMETRY_DISABLED: process.env.NB_TELEMETRY_DISABLED,
     DO_NOT_TRACK: process.env.DO_NOT_TRACK,
   };
 }
@@ -132,7 +131,6 @@ describe("Telemetry Privacy", () => {
 
   beforeEach(() => {
     saveEnv();
-    delete process.env.NB_TELEMETRY_DISABLED;
     delete process.env.DO_NOT_TRACK;
     const setup = createMockSetup();
     client = setup.client;
@@ -374,11 +372,11 @@ describe("Telemetry Privacy", () => {
   // -----------------------------------------------------------------------
 
   describe("full opt-out", () => {
-    it("NB_TELEMETRY_DISABLED=1 prevents all captures and telemetry-id creation", () => {
+    it("DO_NOT_TRACK=1 prevents all captures and telemetry-id creation", () => {
       const optOutDir = mkdtempSync(join(tmpdir(), "nb-telemetry-optout-"));
 
       try {
-        process.env.NB_TELEMETRY_DISABLED = "1";
+        process.env.DO_NOT_TRACK = "1";
 
         const optOutClient = new MockTelemetryClient();
         const optOutManager = TelemetryManager.create({

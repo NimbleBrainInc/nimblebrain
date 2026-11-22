@@ -324,7 +324,7 @@
       "additionalProperties": false
     },
     "telemetry": {
-      "description": "Usage telemetry, anonymous unless identify is set. Unset, a person decides (the CLI or the web UI asks; nothing is sent before a yes). Turn off with telemetry.enabled: false, NB_TELEMETRY_DISABLED=1, or DO_NOT_TRACK=1.",
+      "description": "Usage telemetry, anonymous unless identify is set. Unset, a person decides (the CLI or the web UI asks; nothing is sent before a yes). Turn off with telemetry.enabled: false or DO_NOT_TRACK=1.",
       "type": "object",
       "properties": {
         "enabled": {

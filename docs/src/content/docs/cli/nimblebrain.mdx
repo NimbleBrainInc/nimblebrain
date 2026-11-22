@@ -56,7 +56,7 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `--json` | One JSON object on stdout. Progress goes to stderr. |
 | `--yes`, `-y` | Take every default. With no terminal attached, the CLI acts as if this were set and fails rather than wait for input. |
 | `--agent <name>` | `claude-code`, `cursor`, `codex` or `none`. |
-| `--port <n>` | The local port (default `27246`). |
+| `--port <n>` | The local port (default `27246`; for `doctor`, the install's own port). |
 | `--provider <name>` | For `key`: `anthropic` (default), `openai`, `google`, `greenpt`, `nebius` or `xai`. The installed release decides which it takes, and `key` lists them. |
 | `--local-model <model>` | For `init`: run on this Ollama model instead of a hosted key, without asking. |
 | `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). A home whose folder has another name is a separate install. See [A second install](#a-second-install). |
@@ -128,7 +128,7 @@ Every command answers `{"ok": true, ...}` or `{"ok": false, "error": "<CODE>", "
 
 | `error` | Means |
 |---|---|
-| `DOCKER_MISSING`, `DOCKER_NOT_RUNNING`, `DOCKER_PERMISSION`, `COMPOSE_MISSING` | Docker is missing, stopped, not usable by this user, or lacks Compose v2. On a Mac, `fix` names Docker Desktop (through Homebrew when it is there), or `brew install docker-compose` when only Compose is missing. |
+| `DOCKER_MISSING`, `DOCKER_NOT_RUNNING`, `DOCKER_PERMISSION`, `COMPOSE_MISSING` | Docker is missing, stopped, not usable by this user, or lacks Compose v2. On a Mac, `fix` names Docker Desktop (through Homebrew when it is there), or `brew install docker-compose` when only Compose is missing, or `colima start` when Colima's default VM is stopped. |
 | `ARCH_UNSUPPORTED`, `LOW_MEMORY`, `PORT_IN_USE` | No image for this CPU, less memory than a Docker VM set to 2 GB reports, or the port is taken. `LOW_MEMORY`'s `fix` names Colima's or Docker Desktop's own setting when it is one of those. |
 | `NOT_INSTALLED`, `NOT_OURS` | No install here, or files, containers or data this CLI did not make are in the way. |
 | `NETWORK`, `START_FAILED`, `HEALTH_TIMEOUT` | A download failed, Compose could not start it, or it did not become healthy in time. |
@@ -137,6 +137,7 @@ Every command answers `{"ok": true, ...}` or `{"ok": false, "error": "<CODE>", "
 | `LOCAL_MODEL_UNREACHABLE`, `LOCAL_MODEL_MISSING`, `LOCAL_MODEL_NO_TOOLS`, `LOCAL_CONTEXT_SMALL` | Ollama does not answer (it is not installed, starting it was declined, or it did not answer after a start; `fix` names the step for this machine), the model is not on it (or its download was declined or failed), the model cannot call tools, or its context window is below the 32k NimbleBrain needs. |
 | `INTERRUPTED` | The CLI was stopped (a signal, Ctrl-C) before it finished; `exit_code` says how. Check `status`, then run the command again. |
 | `NOT_RUNNING` | The command needs NimbleBrain running (`open`, `telemetry on`/`off`, every `mcp` command); run `npx nimblebrain up`. |
+| `TELEMETRY_LOCKED` | `telemetry on` or `off` cannot change the answer here: `DO_NOT_TRACK` is set, this CLI build has nowhere to send, or the running install refuses the change (`message` carries its reason). |
 | `UPDATE_REQUIRED` | `mcp add` on a release that cannot reach your machine; run `npx nimblebrain update`. |
 | `WORKSPACE_NOT_FOUND`, `SERVER_NOT_FOUND` | No such workspace (the answer lists the ones there are in `workspaces`), or no server by that name in it. |
 | `URL_INVALID`, `URL_NOT_LOOPBACK` | The URL is not an `http`/`https` URL NimbleBrain accepts, or is not on this machine. |

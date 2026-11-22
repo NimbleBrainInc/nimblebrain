@@ -17,6 +17,7 @@ import {
   connectorHasStaticAuth,
 } from "../connectors/runtime/connector-auth.ts";
 import {
+  isReservedServerName,
   isUsableConnectorRef,
   resolveConnectorDataDirForRef,
   serverNameFromRef,
@@ -108,6 +109,17 @@ export function buildProcessInventory(
         );
         continue;
       }
+      // A row named after a platform app or the system tools is never started or
+      // seeded, so it cannot take that name in this workspace. Install refuses
+      // such names, but a stored workspace record can still hold one; skipping
+      // it here leaves the record untouched and the row inert.
+      if (isReservedServerName(serverName)) {
+        log.warn(
+          `[connectors] ${ws.id}: skipping connector "${serverName}" — the name is reserved ` +
+            "for a platform app or system tools. Re-install it under a different name.",
+        );
+        continue;
+      }
       const dataDir = resolveConnectorDataDirForRef(workDir, ws.id, connector);
 
       entries.push({
@@ -131,10 +143,9 @@ export function buildProcessInventory(
  *
  * Both boot-time startup and JIT workspace provisioning use this function to
  * ensure consistent registry contents. Platform and system sources are added
- * directly (no SharedSourceRef wrapper) — `McpSource.stop()` is idempotent
- * (after the first call client/transport/server are nulled and subsequent
- * calls early-return), so the only place this matters is `Runtime.shutdown()`,
- * which already wants the source closed exactly once.
+ * `shared`: one instance sits in every workspace registry, so no workspace's
+ * registry may stop it. `removeSource` leaves a shared source registered and
+ * running, and `Runtime.shutdown()` stops each one once.
  *
  * Every workspace registry relays its own sources' server notifications to
  * those servers' views (`createServerNotificationRelay`), stamped with this
