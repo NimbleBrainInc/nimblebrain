@@ -1,4 +1,4 @@
-import { findCompose } from "./compose.ts";
+import { daemonVariant, findCompose } from "./compose.ts";
 import type { Deps } from "./deps.ts";
 import { CliError, type ErrorCode, type FixVariant } from "./result.ts";
 
@@ -97,7 +97,12 @@ async function checkDaemon(deps: Deps, log: Recorder): Promise<DaemonFacts> {
     if (/permission denied/i.test(`${info.stderr}\n${info.stdout}`)) {
       log.fail("docker-daemon", "DOCKER_PERMISSION", "This user may not use Docker.");
     }
-    log.fail("docker-daemon", "DOCKER_NOT_RUNNING", "Docker is installed but not running.");
+    log.fail(
+      "docker-daemon",
+      "DOCKER_NOT_RUNNING",
+      "Docker is installed but not running.",
+      daemonVariant(info.stderr),
+    );
   }
   log.pass("docker-daemon", "running");
   return parseInfo(info.stdout);

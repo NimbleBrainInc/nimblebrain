@@ -72,7 +72,7 @@ export function doNotTrack(deps: Deps): boolean {
 
 /** Whether no one can be asked: the person set `DO_NOT_TRACK`, or there is nowhere to send. */
 export function lockedHere(deps: Deps): TelemetryField["locked"] {
-  if (doNotTrack(deps) || deps.env.NB_TELEMETRY_DISABLED === "1") return "do_not_track";
+  if (doNotTrack(deps)) return "do_not_track";
   if (!telemetryKey(deps)) return "no_destination";
   return undefined;
 }
