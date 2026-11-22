@@ -980,6 +980,9 @@ export class Runtime {
       const user = await userStore.get(userId);
       return user ? { email: user.email, name: user.displayName } : undefined;
     });
+    telemetryManager.setWorkspaceSource(
+      async (wsId) => (await workspaceStore.get(wsId))?.name || undefined,
+    );
     // Identified telemetry (a no-op otherwise): who signed up, and the
     // workspaces and memberships they make, from the stores that write them.
     userStore.onCreated((user) =>
