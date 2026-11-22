@@ -30,9 +30,7 @@ describe("TelemetryManager", () => {
   const savedEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    savedEnv.NB_TELEMETRY_DISABLED = process.env.NB_TELEMETRY_DISABLED;
     savedEnv.DO_NOT_TRACK = process.env.DO_NOT_TRACK;
-    delete process.env.NB_TELEMETRY_DISABLED;
     delete process.env.DO_NOT_TRACK;
   });
 
@@ -45,21 +43,6 @@ describe("TelemetryManager", () => {
         process.env[key] = val;
       }
     }
-  });
-
-  it("disabled when NB_TELEMETRY_DISABLED=1", () => {
-    process.env.NB_TELEMETRY_DISABLED = "1";
-    const mock = new MockTelemetryClient();
-    const mgr = TelemetryManager.create({
-      workDir: makeTmpDir(),
-      clientFactory: mockFactory(mock),
-    });
-
-    expect(mgr.isEnabled()).toBe(false);
-
-    // capture should be a no-op
-    mgr.capture("test.event", { foo: 1 });
-    expect(mock.events).toHaveLength(0);
   });
 
   it("disabled when DO_NOT_TRACK=1", () => {
@@ -245,7 +228,7 @@ describe("TelemetryManager", () => {
   });
 
   it("capture is no-op when disabled", () => {
-    process.env.NB_TELEMETRY_DISABLED = "1";
+    process.env.DO_NOT_TRACK = "1";
     const mock = new MockTelemetryClient();
     const mgr = TelemetryManager.create({
       workDir: makeTmpDir(),
