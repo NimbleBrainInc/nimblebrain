@@ -50,7 +50,7 @@ Wire identifiers do not change: MCP client and server names, the `nb__` tool nam
 | `colors` | `object` | Color roles: `primary`, `ring`, `highlight`, `sidebar`. See [Colors](#colors). |
 | `fonts` | `object` | Typeface overrides for the `sans`, `heading` and `reading` roles. See [Fonts](#fonts). |
 
-Every URL is absolute (`http://` or `https://`) and must resolve. A set URL that returns 404 renders a broken image, not the default artwork, so publish assets before you reference them.
+Every URL is absolute (`http://` or `https://`) and must resolve, from a host the web UI may load images from: your own origin, `static.nimblebrain.ai`, or one listed in `NB_IMG_SRC` ([Web UI headers](/deploy/security/#web-ui-headers)). A set URL that returns 404 renders a broken image, not the default artwork, so publish assets before you reference them.
 
 When `name` is set, OAuth registration sends only your values: without a `homepageUrl` no `client_uri` is sent, and without a `logo.raster` no `logo_uri` is sent. NimbleBrain's are never sent on your behalf.
 

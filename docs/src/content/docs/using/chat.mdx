@@ -60,6 +60,10 @@ When you ask the agent to open or show something, it can move your screen: it fi
   When more than 30 tools are available, NimbleBrain uses tiered tool surfacing. Only system tools and matched skill tools are surfaced directly; the agent uses `nb__search` to find other tools as needed.
 </Aside>
 
+## Images in replies
+
+Images in chat load from the app's origin, such as a file stored in the workspace. An image from any other site is shown as a link to it, labelled with its description, or with its address when it has none. Like every link in a reply, it asks you to confirm before it opens. The same holds in markdown artifacts and on skill pages.
+
 ## Attaching files
 
 You can give the agent additional context by attaching files to a message. In the web UI:

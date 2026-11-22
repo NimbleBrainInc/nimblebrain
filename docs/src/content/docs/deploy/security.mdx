@@ -163,8 +163,11 @@ The web container serves the UI's pages with:
 
 - `Referrer-Policy: strict-origin-when-cross-origin`, so a link or request to another origin carries only your origin, not the page's path or query (which can name the open conversation).
 - `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`, so no page, on any origin including your own, can embed the UI in a frame. A portal that iframes the web UI will show a blank frame; link to it instead.
+- `Content-Security-Policy: img-src 'self' data: blob: https://static.nimblebrain.ai`, so the UI loads images only from your own origin and from the host that serves NimbleBrain's artwork and the bundled catalog's connector icons. If your [brand](/config/branding/) logos, favicon, or catalog icons are on another host, list it in `NB_IMG_SRC` on the web container, space-separated: `NB_IMG_SRC="https://cdn.example.com"`. A logo on an unlisted host renders as a broken image, and a connector icon shows the connector's letter instead.
 
-These apply to the UI's pages only. `/v1/*`, `/mcp*`, and static assets keep their own headers.
+Images in chat replies, markdown artifacts and skill pages load from your own origin only, such as a file stored in a workspace. An image from any other site is shown as a link to it, whatever `NB_IMG_SRC` lists.
+
+These headers apply to the UI's pages only. `/v1/*`, `/mcp*`, and static assets keep their own headers.
 
 Stored files (`/v1/files/<id>`) are always served with `Content-Security-Policy: sandbox` and the platform's default policy, even when `NB_CSP` is cleared. An uploaded HTML or SVG file opened in the browser then runs no script on your domain. Images and PDFs display as before.
 
