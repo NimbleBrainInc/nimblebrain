@@ -393,7 +393,7 @@ export async function telemetry(ctx: Ctx) {
     throw new CliError(
       "TELEMETRY_LOCKED",
       here === "do_not_track"
-        ? "DO_NOT_TRACK (or NB_TELEMETRY_DISABLED) is set, so telemetry stays off."
+        ? "DO_NOT_TRACK is set, so telemetry stays off."
         : "This CLI has nowhere to send telemetry.",
     );
   }

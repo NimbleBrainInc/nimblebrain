@@ -195,6 +195,7 @@
 
 ### Breaking
 
+- **`NB_TELEMETRY_DISABLED` is no longer read.** Set `DO_NOT_TRACK=1` or `telemetry.enabled: false` instead. Telemetry still sends nothing until a person says yes ([docs](https://docs.nimblebrain.ai/using/telemetry/)).
 - **The `ai.nimblebrain/host` block is read in camelCase only.** `host_version`, `record_arguments` and a hook's `register_tool` / `header_renames` are no longer read, and a block that contains `admin_tools` (any value) gates every tool on that server. Upgrade floor: every catalog entry's host block in camelCase, which `check-catalog-schema.ts` now enforces ([docs](https://docs.nimblebrain.ai/host/manifest/#spelling)).
 - **`CONNECTOR_SKILLS_REPO` and `CONNECTOR_SKILLS_VERSION` are ignored, with a warning at startup.** Set `NB_PLUGIN_CATALOG_URL` and `NB_PLUGIN_CATALOG_SHA256` instead: a repo and a git tag cannot name a catalog or its digest. A connector's `skillsLock` now records the plugin, server, catalog pin and digests; locks written before are re-bound at startup, so there is no upgrade floor ([docs](https://docs.nimblebrain.ai/using/skills/#connector-skill-overlays)).
 - **`tasks__create` and `tasks__update` take the schedule flat.** Give exactly one of `cron`, `at`, `intervalMs` or `match`, plus `timezone`: `{"cron": "0 8 * * 1-5", "timezone": "Pacific/Honolulu"}`. The `type` and `expression` fields are refused, since `type` was the field callers most often got wrong. Stored tasks are unchanged, and an update whose cron omits `timezone` keeps the task's own. Affects `/mcp` clients that create or edit tasks.

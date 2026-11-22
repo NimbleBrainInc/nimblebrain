@@ -27,7 +27,7 @@ export type TelemetryConsent = "on" | "off" | "undecided";
 
 /**
  * Why the answer cannot be changed here. `operator`: the deployment decided
- * (`DO_NOT_TRACK`, `NB_TELEMETRY_DISABLED`, or `telemetry.enabled` in the
+ * (`DO_NOT_TRACK` or `telemetry.enabled` in the
  * config). `no_destination`: no PostHog key is configured, so there is nothing
  * to agree to and no one is asked.
  */
@@ -145,7 +145,7 @@ export class TelemetryManager {
     const apiKey = env.POSTHOG_API_KEY ?? "";
 
     // The operator's off wins over everything, and leaves nothing on disk.
-    if (env.NB_TELEMETRY_DISABLED === "1" || env.DO_NOT_TRACK === "1" || options.enabled === false)
+    if (env.DO_NOT_TRACK === "1" || options.enabled === false)
       return new TelemetryManager(options.workDir, apiKey, factory, "", "off", "operator");
     // A test passes a factory in place of a key.
     if (!apiKey && !options.clientFactory)

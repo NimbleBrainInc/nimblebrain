@@ -220,7 +220,7 @@ describe("telemetry consent at init", () => {
   });
 
   test("locked off, no id is written anywhere", async () => {
-    for (const lock of [{ DO_NOT_TRACK: "1" }, { NB_TELEMETRY_DISABLED: "1" }]) {
+    for (const lock of [{ DO_NOT_TRACK: "1" }]) {
       const failing = machine({
         env: { ...env, ...lock },
         exec: { "docker --version": { ...fail(), missing: true } },

@@ -44,7 +44,7 @@ describe("serve entry", () => {
         ".environments/empty/nimblebrain.json",
       ],
       {
-        env: { ...process.env, NB_WORK_DIR: workDir, NB_TELEMETRY_DISABLED: "1" },
+        env: { ...process.env, NB_WORK_DIR: workDir, DO_NOT_TRACK: "1" },
         stdout: "pipe",
         stderr: "pipe",
       },
@@ -73,7 +73,7 @@ describe("serve entry", () => {
         ".environments/empty/nimblebrain.json",
       ],
       {
-        env: { ...process.env, NB_WORK_DIR: workDir, NB_TELEMETRY_DISABLED: "1" },
+        env: { ...process.env, NB_WORK_DIR: workDir, DO_NOT_TRACK: "1" },
         stdout: "pipe",
         stderr: "pipe",
       },
@@ -123,7 +123,7 @@ describe("serve listen address", () => {
           PORT: "",
           ...opts.env,
           NB_WORK_DIR: workDir,
-          NB_TELEMETRY_DISABLED: "1",
+          DO_NOT_TRACK: "1",
         },
         stdout: "pipe",
         stderr: "pipe",
