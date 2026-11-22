@@ -488,4 +488,15 @@ describe("package.json", () => {
     expect(pkg.scripts).toHaveProperty("dev:web");
     expect(pkg.scripts).toHaveProperty("start");
   });
+
+  it("every --config a script passes names a file in the checkout", async () => {
+    const pkg = await Bun.file("package.json").json();
+    const missing = Object.entries(pkg.scripts as Record<string, string>).flatMap(([name, cmd]) =>
+      [...cmd.matchAll(/(?:--config|-c)\s+(\S+)/g)]
+        .map((m) => m[1])
+        .filter((path) => !existsSync(path))
+        .map((path) => `${name}: ${path}`),
+    );
+    expect(missing).toEqual([]);
+  });
 });
