@@ -312,6 +312,7 @@
 
 ### Fixed
 
+- **A missing or rejected model API key says so in the chat.** The turn ends with stream error code `model_auth_failed` and a message naming the provider whose key to set, with no Try again, in place of "Something went wrong" and a retry that failed the same way ([#1989](https://github.com/NimbleBrainInc/nimblebrain/pull/1989)).
 - **A schedule set in the form runs at the time you picked.** The form read every daily, weekly, or custom schedule in Pacific/Honolulu, and moved an edited schedule there too. It now uses your browser's timezone for a new schedule, keeps a schedule's own when you edit it, and shows which one applies.
 - **Turning a personal plugin on or off shows everywhere at once.** The chat's plugin list, a plugin request card, and the Plugins pages in every open tab refresh on the new `connector.grant_changed` event, sent to that person only.
 - **A connector's sign-in completes on an `npx nimblebrain` install.** The release Compose file sets `NB_PUBLIC_ORIGIN` to the published web port, so OAuth callbacks no longer point at the runtime's unpublished port 27247.
