@@ -128,6 +128,8 @@ export class ToolRegistry implements ToolRouter {
     | null = null;
   /** Per-source unsubscribe handles for server-notification subscriptions. */
   private serverNotificationUnsubs = new Map<string, () => void>();
+  /** Names of the sources added `shared` (see `addSource`), which `removeSource` leaves alone. */
+  private sharedSources = new Set<string>();
 
   /**
    * Configure permission enforcement context. Called once when the
@@ -176,12 +178,17 @@ export class ToolRegistry implements ToolRouter {
    * at once (platform sources, the system source): its server's notifications
    * name no workspace, so they are not relayed from here. A `SharedSourceRef`
    * is shared by construction and carries no notification seam to subscribe to.
+   *
+   * A shared source is also one this registry does not own: its owner (the
+   * runtime) starts and stops it, and `removeSource` leaves it registered and
+   * running, so a workspace's uninstall never stops a shared app.
    */
   addSource(source: ToolSource, options?: { shared?: boolean }): void {
     if (this.sources.has(source.name)) {
       throw new Error(`Source "${source.name}" is already registered`);
     }
     this.sources.set(source.name, source);
+    if (options?.shared) this.sharedSources.add(source.name);
     // Bridge the source's own readiness transitions (subprocess (re)connect,
     // native `tools/list_changed`) to this registry's invalidation listener.
     // Crucially this covers paths that do NOT re-enter `addSource` — a
@@ -199,7 +206,13 @@ export class ToolRegistry implements ToolRouter {
     this.fireInvalidation();
   }
 
+  /**
+   * Remove a source this registry owns and stop it. A shared source is left
+   * registered and running: it sits in every workspace registry at once, and
+   * stopping it here would stop it for all of them (see `addSource`).
+   */
   async removeSource(name: string): Promise<void> {
+    if (this.sharedSources.has(name)) return;
     const source = this.sources.get(name);
     if (source) {
       this.toolsChangedUnsubs.get(name)?.();
