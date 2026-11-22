@@ -527,6 +527,21 @@ describe("after install", () => {
     );
   });
 
+  test("logs reads a home whose first start failed or never came up healthy", async () => {
+    const failed = machine({
+      env,
+      exec: { "docker compose up -d --no-build": fail("Error response from daemon: boom") },
+    });
+    expect((await json(["--yes"], failed)).body.error).toBe("START_FAILED");
+    const slow = machine({ env });
+    slow.deps.getJson = async () => undefined;
+    expect((await json(["--yes"], slow)).body.error).toBe("HEALTH_TIMEOUT");
+    for (const m of [failed, slow]) {
+      expect((await json(["logs"], m)).body.ok).toBe(true);
+      expect(m.calls).toContain(`${HOME}$ docker compose logs --no-color --tail 100 platform`);
+    }
+  });
+
   test("commands on a machine with no install say NOT_INSTALLED", async () => {
     for (const cmd of ["up", "down", "logs", "update"]) {
       expect((await json([cmd])).body.error).toBe("NOT_INSTALLED");

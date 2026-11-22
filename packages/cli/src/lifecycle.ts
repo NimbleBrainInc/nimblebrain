@@ -290,7 +290,8 @@ export async function down(ctx: Ctx) {
 }
 
 export async function logs(ctx: Ctx) {
-  await requireInstall(ctx);
+  // A start that failed leaves no install.json, and its error's fix names this command.
+  if (!(await markedProject(ctx.deps, ctx.home))) await requireInstall(ctx);
   const res = await compose(ctx.deps, ctx.home, [
     "logs",
     "--no-color",
