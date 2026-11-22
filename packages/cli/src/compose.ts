@@ -217,12 +217,7 @@ export function startError(res: ExecResult): CliError {
       .pop() ?? "Compose failed.";
   // Before the network check: a stale socket answers "connection refused".
   if (/cannot connect to the docker daemon|failed to connect to the docker api/i.test(text)) {
-    return new CliError(
-      "DOCKER_NOT_RUNNING",
-      "Docker is installed but not running.",
-      {},
-      daemonVariant(text),
-    );
+    return new CliError("DOCKER_NOT_RUNNING", last, {}, daemonVariant(text));
   }
   if (/no such host|timeout|TLS handshake|connection refused|network is unreachable/i.test(text)) {
     return new CliError("NETWORK", last);

@@ -527,7 +527,7 @@ describe("after install", () => {
     );
   });
 
-  test("a stopped Docker is DOCKER_NOT_RUNNING for up, down, logs and uninstall", async () => {
+  test("a stopped Docker is DOCKER_NOT_RUNNING for up, down, logs, update and uninstall", async () => {
     const stopped = [
       "failed to connect to the docker API at unix:///home/dana/.colima/default/docker.sock; check if the path is correct and if the daemon is running: dial unix /home/dana/.colima/default/docker.sock: connect: no such file or directory",
       "Cannot connect to the Docker daemon at unix:///home/dana/.docker/run/docker.sock. Is the docker daemon running?",
@@ -535,12 +535,18 @@ describe("after install", () => {
       "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running? dial unix /var/run/docker.sock: connect: connection refused",
     ];
     for (const stderr of stopped) {
-      for (const cmd of ["up", "down", "logs", "uninstall"]) {
+      for (const args of [
+        ["up"],
+        ["down"],
+        ["logs"],
+        ["update", "--runtime", "v0.74.0"],
+        ["uninstall"],
+      ]) {
         const m = await installed();
         const real = m.deps.exec;
         m.deps.exec = async (c, a, o) =>
           c === "docker" && a[0] === "compose" && a[1] !== "version" ? fail(stderr) : real(c, a, o);
-        const { body } = await json([cmd, "--yes"], m);
+        const { body } = await json([...args, "--yes"], m);
         expect(body.error).toBe("DOCKER_NOT_RUNNING");
         expect(body.fix).not.toContain("logs");
         expect(body.fix).toContain(
