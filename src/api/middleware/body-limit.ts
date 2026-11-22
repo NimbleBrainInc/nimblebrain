@@ -105,21 +105,67 @@ async function discardBody(request: Request, declaredLength: number, limit: numb
   if (declaredLength > limit + MAX_DRAIN_OVERRUN_BYTES) return;
   const body = request.body;
   if (!body) return;
+  try {
+    await drainReader(body.getReader(), declaredLength, drainBudgetMs(declaredLength));
+  } catch {
+    // The body was already claimed — there is nothing left to drain, and
+    // refusing still has to happen either way.
+  }
+}
+
+/** The two calls a drain makes on a body's reader. */
+interface ByteReader {
+  read(): Promise<{ done: boolean; value?: Uint8Array }>;
+  cancel(): Promise<void>;
+}
+
+/** How a drain ended: the bytes it read, and whether it reached the body's end. */
+interface DrainOutcome {
+  read: number;
+  complete: boolean;
+}
+
+/**
+ * Read and discard what is left on `reader`, under the same deadlines as
+ * {@link discardBody}: `DRAIN_STALL_MS` without a byte, `budgetMs` in total,
+ * and no more than `maxBytes`. Whichever bound is reached first cancels the
+ * read and ends the drain.
+ */
+async function drainReader(
+  reader: ByteReader,
+  maxBytes: number,
+  budgetMs: number,
+): Promise<DrainOutcome> {
+  let read = 0;
+  let complete = false;
+  let cancelled = false;
   let stall: ReturnType<typeof setTimeout> | undefined;
   let total: ReturnType<typeof setTimeout> | undefined;
+  // Cancelling settles a read that is already pending, so a sender that
+  // stops sending cannot outlast the deadline.
+  const cancel = () => {
+    cancelled = true;
+    void reader.cancel().catch(() => {});
+  };
   try {
-    const reader = body.getReader();
-    // Cancelling settles a read that is already pending, so a sender that
-    // stops sending cannot outlast the deadline.
-    const cancel = () => void reader.cancel().catch(() => {});
     // The two deadlines race, and whichever is reached first ends the drain.
-    total = setTimeout(cancel, drainBudgetMs(declaredLength));
+    total = setTimeout(cancel, budgetMs);
     const armStall = () => {
       clearTimeout(stall);
       stall = setTimeout(cancel, DRAIN_STALL_MS);
     };
     armStall();
-    while (!(await reader.read()).done) {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        complete = true;
+        break;
+      }
+      read += value?.byteLength ?? 0;
+      if (read > maxBytes) {
+        cancel();
+        break;
+      }
       // Only the socket needs draining; the bytes go nowhere. Arriving bytes
       // are the progress the stall deadline is watching for — they reset that
       // one, never the total, which is what stops a paced sender from renewing
@@ -127,36 +173,142 @@ async function discardBody(request: Request, declaredLength: number, limit: numb
       armStall();
     }
   } catch {
-    // Sender hung up, or the body was already claimed — there is nothing left
-    // to drain, and refusing still has to happen either way.
+    // Sender hung up — there is nothing left to drain.
   } finally {
     clearTimeout(stall);
     clearTimeout(total);
   }
+  // A cancelled read reports `done`, so only a drain that was never cancelled
+  // has seen the body's real end.
+  return { read, complete: complete && !cancelled };
+}
+
+/** The result of reading a body that declared no length. */
+type CountedBody =
+  | { kind: "within"; bytes: Uint8Array }
+  | { kind: "over"; received: number | undefined }
+  | { kind: "unreadable" };
+
+/**
+ * Read a body that declared no `Content-Length` (chunked transfer encoding),
+ * counting bytes as they arrive and stopping at `limit`.
+ *
+ * Within the limit, the bytes are returned so the route can be handed the same
+ * body. Past it, the rest is drained on the same terms as a declared refusal,
+ * so the connection survives; the total is reported only when the drain saw
+ * the body's end. A body that cannot be read (the sender hung up) is reported
+ * as such.
+ */
+async function readCountedBody(
+  body: ReadableStream<Uint8Array>,
+  limit: number,
+): Promise<CountedBody> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let read = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      read += value.byteLength;
+      if (read > limit) {
+        const ceiling = limit + MAX_DRAIN_OVERRUN_BYTES;
+        const drained = await drainReader(reader, ceiling - read, drainBudgetMs(ceiling));
+        return { kind: "over", received: drained.complete ? read + drained.read : undefined };
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return { kind: "unreadable" };
+  }
+  const bytes = new Uint8Array(read);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { kind: "within", bytes };
 }
 
 /**
- * The refusal's message, naming the size and the limit. The message is what a
- * client shows, so the limit belongs in it and not only in `details`. A
- * multipart body is an upload (a chat message's or the file picker's), and its
- * declared length counts the form encoding as well as the files.
+ * The same request, carrying `bytes` as its body. The headers then describe
+ * the body the route will read: its length, and no transfer encoding.
  */
-function payloadTooLargeMessage(received: number, limit: number, isMultipart: boolean): string {
+function withBufferedBody(request: Request, bytes: Uint8Array): Request {
+  const headers = new Headers(request.headers);
+  headers.delete("transfer-encoding");
+  headers.set("content-length", String(bytes.byteLength));
+  return new Request(request, { headers, body: bytes });
+}
+
+/**
+ * The refusal's message, naming the size (when known) and the limit. The
+ * message is what a client shows, so the limit belongs in it and not only in
+ * `details`. A multipart body is an upload (a chat message's or the file
+ * picker's), and its length counts the form encoding as well as the files.
+ */
+function payloadTooLargeMessage(
+  received: number | undefined,
+  limit: number,
+  isMultipart: boolean,
+): string {
   const noun = isMultipart ? "Upload" : "Request body";
+  if (received === undefined) return `${noun} is over the limit of ${humanSize(limit)}.`;
   return `${noun} is ${humanSize(received)}; the limit is ${humanSize(limit)}.`;
 }
 
 /**
- * Request body size limit middleware.
- * Returns 413 Payload Too Large if Content-Length exceeds the applicable
- * limit. JSON payloads are bounded by `maxBytes`; multipart uploads use
- * `opts.multipart` when provided, otherwise they fall back to `maxBytes`.
+ * The size of the largest body the HTTP server will accept on any route:
+ * `largestRouteLimit` plus the drain overrun.
  *
- * This is advisory: requests without `Content-Length` (e.g. chunked
- * transfer encoding) or with malformed headers pass through untouched.
- * The ingest pipeline in `src/files/ingest.ts` enforces per-file,
- * total-size, and MIME rules authoritatively — middleware only stops
- * oversized uploads before we buffer them. A refused body within
+ * This is `Bun.serve`'s `maxRequestBodySize` (`server.ts`). Up to it, a body
+ * over a route's limit reaches `bodyLimit` and gets the structured `413` and
+ * the drain; past it, the server refuses the body itself with a bare `413`,
+ * whatever the route and however the body is sent. It also bounds a route that
+ * does not chain `bodyLimit`.
+ */
+export function serverBodyCeiling(largestRouteLimit: number): number {
+  return largestRouteLimit + MAX_DRAIN_OVERRUN_BYTES;
+}
+
+/** What `bodyLimit` decides about a body: the request to hand on, or why not. */
+type Admission =
+  | { kind: "admit"; request: Request }
+  | { kind: "over"; received: number | undefined }
+  | { kind: "unreadable" };
+
+/**
+ * Judge a body against `limit`: by its declared `Content-Length` when it has a
+ * valid one, otherwise by counting the bytes as they arrive. A counted body
+ * within the limit is handed on as a request carrying the bytes read.
+ */
+async function admitBody(request: Request, limit: number): Promise<Admission> {
+  const declared = Number.parseInt(request.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(declared) && declared >= 0) {
+    if (declared <= limit) return { kind: "admit", request };
+    await discardBody(request, declared, limit);
+    return { kind: "over", received: declared };
+  }
+  if (!request.body) return { kind: "admit", request };
+  const counted = await readCountedBody(request.body, limit);
+  if (counted.kind !== "within") return counted;
+  return { kind: "admit", request: withBufferedBody(request, counted.bytes) };
+}
+
+/**
+ * Request body size limit middleware: `413 payload_too_large` once a body is
+ * over the applicable limit. JSON payloads are bounded by `maxBytes`; multipart
+ * uploads use `opts.multipart` when provided, otherwise they fall back to
+ * `maxBytes`.
+ *
+ * The limit holds on the bytes received, however the body is sent. A body
+ * that declares `Content-Length` is judged by that length (the server reads no
+ * more than it declares). A body without one (chunked transfer encoding), or
+ * with a malformed one, is read here and counted: within the limit, the route
+ * is handed the bytes read; past it, the request is refused once the limit is
+ * crossed. The ingest pipeline in `src/files/ingest.ts` still enforces
+ * per-file, total-size, and MIME rules for uploads. A refused body within
  * `MAX_DRAIN_OVERRUN_BYTES` of the applicable limit is still read and
  * discarded, never buffered, so the connection survives the refusal.
  */
@@ -167,32 +319,23 @@ export function bodyLimit(maxBytes: number, opts: BodyLimitOptions = {}) {
       await next();
       return;
     }
-    const contentLengthHeader = c.req.header("content-length");
-    if (!contentLengthHeader) {
-      await next();
-      return;
-    }
-    const received = Number.parseInt(contentLengthHeader, 10);
-    if (!Number.isFinite(received) || received < 0) {
-      await next();
-      return;
-    }
     const contentType = c.req.header("content-type") ?? "";
     const isMultipart = contentType.toLowerCase().startsWith("multipart/");
     const limit = isMultipart && opts.multipart !== undefined ? opts.multipart : maxBytes;
-    if (received > limit) {
-      await discardBody(c.req.raw, received, limit);
+    const admission = await admitBody(c.req.raw, limit);
+    if (admission.kind === "over") {
+      const { received } = admission;
       return apiError(
         413,
         "payload_too_large",
         payloadTooLargeMessage(received, limit, isMultipart),
-        {
-          limit,
-          received,
-          contentType,
-        },
+        { limit, ...(received === undefined ? {} : { received }), contentType },
       );
     }
+    if (admission.kind === "unreadable") {
+      return apiError(400, "bad_request", "The request body could not be read.");
+    }
+    c.req.raw = admission.request;
     await next();
   });
 }
