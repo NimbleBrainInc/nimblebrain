@@ -81,13 +81,11 @@ export async function run(argv: string[], deps: Deps): Promise<Answer> {
     switch (command) {
       case "doctor": {
         const install = await readInstall(deps, home);
-        const ours =
-          install !== undefined &&
-          install.port === flags.port &&
-          (await isHealthy(deps, flags.port));
+        const port = flags.portGiven ? flags.port : (install?.port ?? flags.port);
+        const ours = install?.port === port && (await isHealthy(deps, port));
         // Doctor starts Ollama only when a person at the terminal says yes, never by default.
         const startOllama = confirmOllamaStart({ deps, flags }, false);
-        result = { ...(await doctorInstall(deps, home, flags.port, ours, startOllama)) };
+        result = { ...(await doctorInstall(deps, home, port, ours, startOllama)) };
         break;
       }
       case "status":

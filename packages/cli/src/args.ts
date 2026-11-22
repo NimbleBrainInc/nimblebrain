@@ -56,6 +56,8 @@ export interface Flags {
   yes: boolean;
   agent?: Agent;
   port: number;
+  /** Whether `--port` was passed, so a command can prefer the install's own port. */
+  portGiven: boolean;
   home?: string;
   provider?: string;
   /** `--local-model <model>`: run NimbleBrain's agents on this Ollama model instead of a hosted key. */
@@ -208,6 +210,7 @@ export function parse(argv: string[]): Parsed {
     yes: values.yes === true,
     agent,
     port,
+    portGiven: values.port !== undefined,
     home: values.home,
     provider: values.provider,
     localModel: values["local-model"],
