@@ -250,6 +250,24 @@ describe("doctor", () => {
     });
     expect((await json(["doctor"], deps)).body.ok).toBe(true);
   });
+
+  test("an install on another port is checked on its own port, unless --port names one", async () => {
+    const deps = fakeDeps({
+      portFree: async () => false,
+      readText: async () =>
+        JSON.stringify({ version: "0.70.0", port: 27300, project: "nimblebrain-local" }),
+      getJson: async (url) =>
+        url === "http://127.0.0.1:27300/v1/health"
+          ? { status: 200, body: { status: "ok" } }
+          : undefined,
+    });
+    const { body } = await json(["doctor"], deps);
+    expect(body.ok).toBe(true);
+    expect(body.checks.find((c: { check: string }) => c.check === "port").detail).toBe(
+      "27300 (this install)",
+    );
+    expect((await json(["doctor", "--port", "27246"], deps)).body.error).toBe("PORT_IN_USE");
+  });
 });
 
 describe("status", () => {

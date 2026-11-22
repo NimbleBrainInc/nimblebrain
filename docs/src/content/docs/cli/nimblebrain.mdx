@@ -56,7 +56,7 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `--json` | One JSON object on stdout. Progress goes to stderr. |
 | `--yes`, `-y` | Take every default. With no terminal attached, the CLI acts as if this were set and fails rather than wait for input. |
 | `--agent <name>` | `claude-code`, `cursor`, `codex` or `none`. |
-| `--port <n>` | The local port (default `27246`). |
+| `--port <n>` | The local port (default `27246`; for `doctor`, the install's own port). |
 | `--provider <name>` | For `key`: `anthropic` (default), `openai`, `google`, `greenpt`, `nebius` or `xai`. The installed release decides which it takes, and `key` lists them. |
 | `--local-model <model>` | For `init`: run on this Ollama model instead of a hosted key, without asking. |
 | `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). A home whose folder has another name is a separate install. See [A second install](#a-second-install). |

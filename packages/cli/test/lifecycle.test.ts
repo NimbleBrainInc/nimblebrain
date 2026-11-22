@@ -527,6 +527,21 @@ describe("after install", () => {
     );
   });
 
+  test("logs reads a home whose first start failed or never came up healthy", async () => {
+    const failed = machine({
+      env,
+      exec: { "docker compose up -d --no-build": fail("Error response from daemon: boom") },
+    });
+    expect((await json(["--yes"], failed)).body.error).toBe("START_FAILED");
+    const slow = machine({ env });
+    slow.deps.getJson = async () => undefined;
+    expect((await json(["--yes"], slow)).body.error).toBe("HEALTH_TIMEOUT");
+    for (const m of [failed, slow]) {
+      expect((await json(["logs"], m)).body.ok).toBe(true);
+      expect(m.calls).toContain(`${HOME}$ docker compose logs --no-color --tail 100 platform`);
+    }
+  });
+
   test("a stopped Docker is DOCKER_NOT_RUNNING for up, down, logs, update and uninstall", async () => {
     const stopped = [
       "failed to connect to the docker API at unix:///home/dana/.colima/default/docker.sock; check if the path is correct and if the daemon is running: dial unix /home/dana/.colima/default/docker.sock: connect: no such file or directory",
