@@ -263,6 +263,28 @@ describe("init", () => {
     expect(m.files.size).toBe(1);
   });
 
+  test("the download line is printed only when a release image is missing", async () => {
+    const images = [
+      "ghcr.io/nimblebraininc/nimblebrain-runtime:v0.74.0",
+      "ghcr.io/nimblebraininc/nimblebrain-web:v0.74.0",
+    ];
+    const inspect = `docker image inspect ${images.join(" ")}`;
+    const present = machine({ env, tags: ["v0.74.0"] });
+    await json(["--yes", "--runtime", "v0.74.0"], present);
+    expect(present.said).toContain("Starting NimbleBrain v0.74.0.");
+    expect(present.calls).toContain(`$ ${inspect}`);
+
+    const absent = machine({
+      env,
+      tags: ["v0.74.0"],
+      exec: { [inspect]: fail("No such image", 1) },
+    });
+    await json(["--yes", "--runtime", "v0.74.0"], absent);
+    expect(absent.said).toContain(
+      "Starting NimbleBrain v0.74.0. The first start downloads about 2 GB of images.",
+    );
+  });
+
   test("a failed pull over the network is NETWORK", async () => {
     const m = machine({
       env,
