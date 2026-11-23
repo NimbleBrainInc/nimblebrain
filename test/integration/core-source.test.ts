@@ -75,6 +75,7 @@ async function makeRuntime(): Promise<Runtime> {
   return Runtime.start({
     identityProvider: devProvider,
     languageModel: createEchoModel(),
+    providers: { anthropic: {} },
     workDir,
     logging: { disabled: true },
   });
@@ -193,6 +194,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -227,6 +229,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -253,6 +256,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -280,6 +284,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -307,6 +312,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -348,6 +354,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -376,6 +383,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -433,6 +441,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -502,6 +511,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -530,6 +540,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -573,6 +584,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -610,6 +622,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -649,6 +662,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -679,6 +693,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -717,6 +732,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -747,6 +763,7 @@ describe("Core Source", () => {
       const runtime = await Runtime.start({
         identityProvider: devProvider,
         languageModel: createEchoModel(),
+        providers: { anthropic: {} },
         workDir,
         configPath,
         logging: { disabled: true },
@@ -910,6 +927,7 @@ describe("Core Source", () => {
         identityProvider: devProvider,
         ...loaded,
         languageModel: createEchoModel(),
+        providers: { anthropic: {} },
         workDir,
         logging: { disabled: true },
       });
@@ -1153,6 +1171,7 @@ describe("Core Source", () => {
       const runtime = await Runtime.start({
         identityProvider: devProvider,
         languageModel: createEchoModel(),
+        providers: { anthropic: {} },
         workDir,
         configPath,
         logging: { disabled: true },
@@ -1331,6 +1350,7 @@ describe("Core Source", () => {
     const r1 = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -1364,6 +1384,7 @@ describe("Core Source", () => {
       identityProvider: devProvider,
       ...loaded,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       logging: { disabled: true },
     });

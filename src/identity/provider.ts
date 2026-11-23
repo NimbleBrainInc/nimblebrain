@@ -58,6 +58,13 @@ export interface ProviderCapabilities {
    * the provider signs the user in by them. Absent means none.
    */
   providerOwnedUserFields?: readonly UserEditField[];
+  /**
+   * Admits every request as one identity with no credential checked (the `dev`
+   * adapter). The HTTP server then answers only requests addressed to a
+   * loopback or configured host (`rejectUnlistedHost`). Absent means the
+   * provider checks a credential.
+   */
+  checksNoCredential?: boolean;
 }
 
 /** The fields of an existing user that `manage_users` can change. */

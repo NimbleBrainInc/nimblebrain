@@ -14,7 +14,7 @@ NimbleBrain can send anonymous usage data so we can see where installs fail and 
 | `npx nimblebrain` | You | `init` asks once in your terminal, before it checks your machine. The question shows `[Y/n]`: Enter is yes, `n` is no, and either can be changed later. |
 | `npx nimblebrain` run by a coding agent | You, through the agent | The agent passes the question on (below) and runs `npx nimblebrain telemetry on` or `off` with your answer. |
 | Any install, still unanswered | An org admin | The web UI asks once, at the foot of the sidebar. |
-| A deployment that set it | The operator | `telemetry.enabled` in `nimblebrain.json`, or `NB_TELEMETRY_DISABLED` / `DO_NOT_TRACK`. Nobody is asked. |
+| A deployment that set it | The operator | `telemetry.enabled` in `nimblebrain.json`, or `DO_NOT_TRACK`. Nobody is asked. |
 
 An agent's unattended `init` installs everything and reports the question instead of answering it:
 
@@ -75,7 +75,7 @@ Runtime events also carry the NimbleBrain version, OS, CPU architecture and Bun 
 
 ## Identity
 
-Each install has one random ID, and nothing else identifies it. `npx nimblebrain init` creates it on its first attempt in an install folder, before checking the machine, and keeps it in `telemetry-id` there, so a retry after a failed check counts as the same install. Making the ID sends nothing; events still wait for your yes. With `DO_NOT_TRACK=1` or `NB_TELEMETRY_DISABLED=1` set, no ID is written. The CLI passes the ID to the runtime as `NB_TELEMETRY_ID` in the install's `.env`, so the CLI's events and the runtime's count as one install. An install started another way keeps its ID in `.telemetry-id` in the work directory. The web client tags its events with the same ID.
+Each install has one random ID, and nothing else identifies it. `npx nimblebrain init` creates it on its first attempt in an install folder, before checking the machine, and keeps it in `telemetry-id` there, so a retry after a failed check counts as the same install. Making the ID sends nothing; events still wait for your yes. With `DO_NOT_TRACK=1` set, no ID is written. The CLI passes the ID to the runtime as `NB_TELEMETRY_ID` in the install's `.env`, so the CLI's events and the runtime's count as one install. An install started another way keeps its ID in `.telemetry-id` in the work directory. The web client tags its events with the same ID.
 
 To unlink future events from past ones, delete `NB_TELEMETRY_ID` from the install's `.env` (or `.telemetry-id` from the work directory). A new ID is made at the next start.
 
@@ -91,10 +91,9 @@ Changing it needs NimbleBrain running (`npx nimblebrain up`), since the runtime 
 
 ## Turning it off for a deployment
 
-Any one of these turns telemetry off and stops anyone from being asked:
+Either of these turns telemetry off and stops anyone from being asked:
 
 - `"telemetry": { "enabled": false }` in `nimblebrain.json`
-- `NB_TELEMETRY_DISABLED=1`
 - `DO_NOT_TRACK=1`
 
 `"telemetry": { "enabled": true }` turns it on without asking anyone. Set it only where you, as the operator, have the right to decide for the people using the install.
@@ -113,7 +112,7 @@ Events then name the person instead of the install, so a person's runtime and we
 |---|---|---|
 | Who an event is about | The install's random ID | The signed-in person's user ID; the install ID for work no person asked for |
 | Person properties | None | Email and display name, sent once per person per runtime start |
-| Groups | None | `tenant` (from `NB_TENANT_ID`, when set) and `workspace` (the workspace the request is bound to) |
+| Groups | None | `tenant` (from `NB_TENANT_ID`, when set) and `workspace` (the workspace the request is bound to), with the workspace's name |
 | Names of things used | None | Catalog names of connectors, tools, skills and models (below) |
 | Pages viewed | None | A web `$pageview` each time the page on screen changes (below) |
 
@@ -123,7 +122,7 @@ An identified deployment also names what was used, by catalog name only. A conne
 |---|---|
 | `tool.called` (one per tool call) | `source` (`kernel`, `app` or `connector`), the app or the connector's catalog id, the tool, whether it succeeded, its duration, and the run's id (`run_id`) |
 | `agent.chat_started` | The run's id, the model, and what started the run (`trigger`: `chat` for a person in a chat; `schedule`, `manual` or `event` for a scheduled task's run, by what started it; `api` for a caller driving the runtime directly) |
-| `agent.chat_completed` | The run's id, the model, the trigger, the connectors used, and the skills used (a catalog connector's skill as `<catalog id>:<skill>`; any other as `custom`) |
+| `agent.chat_completed` | The run's id, the model, the trigger, the connectors used, the skills used (a catalog connector's skill as `<catalog id>:<skill>`; any other as `custom`), and `cost_usd`: what the run's model calls cost in USD, each priced at its model's rates from the model catalog. A run with any call at a model the catalog has no rates for has no `cost_usd`, since its cost is unknown, not zero |
 | `connector.installed` | The connector's catalog id |
 | `skill.created` | The skill's scope (`org`, `workspace` or `user`), never its name |
 
@@ -137,7 +136,7 @@ It also sends events for moments in a person's use of the product. None carries 
 | `connector.auth_started` / `connector.auth_completed` / `connector.auth_failed` | The connector's catalog id or `custom`, `workspace` or `personal`, and for a failure the state it ended in |
 | `connector.auth_lost` | A connected connector that now needs signing in again |
 | `automation.created` | Its trigger (`cron`, `interval`, `event`, `once` or `manual`), who made it (`user` or `agent`), `saved` or `oneoff`, and `automation_id` |
-| `automation.run_completed` | Its status, trigger (`schedule`, `manual` or `event`), duration, whether it ran in a batch, `run_id`, and `automation_id`. The run's steps are on its `agent.chat_*` and `tool.called` events, which carry the same `run_id`; a run that never started has only this event |
+| `automation.run_completed` | Its status, trigger (`schedule`, `manual` or `event`), duration, whether it ran in a batch, `run_id`, `automation_id`, and `cost_usd` (the run's recorded cost, priced as on `agent.chat_completed`; left out when any call could not be priced, and for a run that never reached a model). The run's steps are on its `agent.chat_*` and `tool.called` events, which carry the same `run_id`; a run that never started has only this event |
 
 `run_id` is the run's own random id. An automation's own id is its name, so `automation_id` is a hash of where it lives and that id instead: it groups an automation's runs and names nothing. The automation's name is never sent.
 
@@ -162,4 +161,4 @@ Everything else in [What is never sent](#what-is-never-sent) still holds, apart 
 ## What's next
 
 - [`npx nimblebrain`](/cli/nimblebrain/): installing and running NimbleBrain locally
-- [Environment variables](/config/environment/): `NB_TELEMETRY_DISABLED`, `DO_NOT_TRACK` and the telemetry settings
+- [Environment variables](/config/environment/): `DO_NOT_TRACK` and the telemetry settings

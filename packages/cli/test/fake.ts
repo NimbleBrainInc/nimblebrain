@@ -38,6 +38,26 @@ export const OLLAMA_STARTS = [
   "systemctl start --no-ask-password ollama",
 ];
 
+/** A project as `newProject` names one: the folder's name and six hex digits. */
+export const PROJECT = /^nimblebrain(-[a-z0-9_-]+)?-[0-9a-f]{6}$/;
+
+/**
+ * An install's record, `install.json`, as `init` writes it: `starting` at the
+ * claim, `ready` once the first start answered health. A `starting` record
+ * beside a `.env` is a home whose first start did not finish.
+ */
+export function record(
+  over: { project?: string; port?: number; version?: string; phase?: "starting" | "ready" } = {},
+): string {
+  return JSON.stringify({
+    project: "nimblebrain-local-0a1b2c",
+    port: 27246,
+    version: "0.73.0",
+    phase: "ready",
+    ...over,
+  });
+}
+
 export const GB = 1024 ** 3;
 export const ok = (stdout = ""): ExecResult => ({ code: 0, stdout, stderr: "", missing: false });
 export const missing = (): ExecResult => ({ code: null, stdout: "", stderr: "", missing: true });
@@ -133,7 +153,6 @@ export function machine(opts: MachineOptions = {}): Machine {
       JSON.stringify({ Architecture: "x86_64", MemTotal: 8 * GB }),
     ),
     "docker compose version --short": ok("2.29.1"),
-    "docker compose ls -a --format json": ok("[]"),
     // No Homebrew unless a test gives it.
     "brew list --versions ollama": missing(),
     ...opts.exec,

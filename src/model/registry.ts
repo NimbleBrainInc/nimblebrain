@@ -12,6 +12,7 @@ import {
 } from "ai";
 import { wrapFetchWithLiveness } from "./fetch-liveness.ts";
 import { googleStreamErrorMiddleware } from "./google-stream-error.ts";
+import { ModelAuthError, modelAuthMiddleware } from "./model-auth.ts";
 import { requireQualifiedModelId } from "./model-id.ts";
 
 export interface ProvidersConfig {
@@ -76,6 +77,21 @@ export const MODEL_PROVIDERS = [
 ] as const;
 
 /**
+ * The environment variable each provider's key is read from when its config
+ * gives none. With no `providers` block, a provider whose variable is set is
+ * the provider the environment configures (`providersFromEnv`,
+ * src/config/model-providers.ts).
+ */
+export const MODEL_PROVIDER_KEY_ENV: Record<(typeof MODEL_PROVIDERS)[number], string> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  openai: "OPENAI_API_KEY",
+  google: "GOOGLE_GENERATIVE_AI_API_KEY",
+  xai: "XAI_API_KEY",
+  nebius: "NEBIUS_API_KEY",
+  greenpt: "GREENPT_API_KEY",
+};
+
+/**
  * A provider's base URL on the model gateway: its own path, then the version
  * prefix its client expects (Gemini's API is `v1beta`, every other one `v1`).
  */
@@ -136,7 +152,8 @@ function assertNothingBesideGateway(config: ProvidersConfig): void {
  * provider the runtime knows (`MODEL_PROVIDERS`) is built through it, whatever
  * `providers` names; which of them the gateway serves is its own answer
  * (`watchGatewayProviders`). Without one, each configured provider is built
- * with its own key.
+ * with its own key, and its models fail a missing or rejected key as
+ * `ModelAuthError` (`model-auth.ts`).
  */
 export function buildRegistry(config: ProvidersConfig, gateway?: ModelGatewayAccess): Provider {
   if (gateway && config.providers?.local) {
@@ -148,7 +165,7 @@ export function buildRegistry(config: ProvidersConfig, gateway?: ModelGatewayAcc
   if (gateway) assertNothingBesideGateway(config);
   const providersCfg = gateway
     ? Object.fromEntries(MODEL_PROVIDERS.map((id) => [id, config.providers?.[id] ?? {}]))
-    : (config.providers ?? { anthropic: {} });
+    : (config.providers ?? {});
 
   const providers: Record<string, ProviderV4> = {};
 
@@ -161,7 +178,23 @@ export function buildRegistry(config: ProvidersConfig, gateway?: ModelGatewayAcc
   if (providersCfg.xai) providers.xai = xaiProvider(providersCfg.xai, gateway);
   if (!gateway && config.providers?.local) providers.local = localProvider(config.providers.local);
 
+  if (!gateway) failKeyErrorsAsModelAuth(providers);
+
   return createProviderRegistry(providers);
+}
+
+/** Wraps each directly built provider so a missing or rejected key fails as `ModelAuthError`. */
+function failKeyErrorsAsModelAuth(providers: Record<string, ProviderV4>): void {
+  for (const [id, built] of Object.entries(providers)) {
+    providers[id] = {
+      ...built,
+      languageModel: (modelId: string) =>
+        wrapLanguageModel({
+          model: built.languageModel(modelId),
+          middleware: modelAuthMiddleware(id),
+        }),
+    };
+  }
 }
 
 type ProviderConfig<K extends keyof NonNullable<ProvidersConfig["providers"]>> = NonNullable<
@@ -367,7 +400,7 @@ function localProvider(cfg: LocalProviderConfig): ProviderV4 {
 /**
  * Each configured provider's model allowlist (`providers.<id>.models`), the one
  * provider field `buildRegistry` does not read. With no `providers` block it
- * reports `{ anthropic: {} }`, the provider the registry builds by default.
+ * reports none, as the registry builds none.
  *
  * `buildRegistry`, this function and `localCatalogModels` (catalog.ts, for a
  * local server's limits) are the only readers of a provider's config, which
@@ -377,9 +410,8 @@ function localProvider(cfg: LocalProviderConfig): ProviderV4 {
 export function providerModelAllowlists(
   config: ProvidersConfig,
 ): Record<string, { models?: string[] }> {
-  if (!config.providers) return { anthropic: {} };
   const result: Record<string, { models?: string[] }> = {};
-  for (const [id, cfg] of Object.entries(config.providers)) {
+  for (const [id, cfg] of Object.entries(config.providers ?? {})) {
     result[id] = { models: cfg?.models };
   }
   return result;
@@ -387,12 +419,21 @@ export function providerModelAllowlists(
 
 /**
  * Build a function that resolves `provider:model` ids to LanguageModelV4 instances.
- * If no providers configured, defaults to anthropic with env var fallback.
+ * The registry builds only the providers `config` names: no provider is ever
+ * assumed, so a model is never called through a provider nobody configured.
+ * With none configured, every model fails as `ModelAuthError` naming the
+ * settings that configure one.
  */
 export function buildModelResolver(
   config: ProvidersConfig,
   gateway?: ModelGatewayAccess,
 ): (modelString: string) => LanguageModelV4 {
+  if (!gateway && Object.keys(config.providers ?? {}).length === 0) {
+    return (modelString: string): LanguageModelV4 => {
+      requireQualifiedModelId(modelString);
+      throw new ModelAuthError(undefined);
+    };
+  }
   const provider = buildRegistry(config, gateway);
 
   return (modelString: string): LanguageModelV4 =>

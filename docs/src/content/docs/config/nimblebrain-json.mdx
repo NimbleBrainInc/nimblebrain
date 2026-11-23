@@ -290,7 +290,9 @@ list falls back to the configured default on their next turn.
 
 ## providers
 
-Per-provider API keys. With no `providers` block, the runtime uses Anthropic, keyed from `ANTHROPIC_API_KEY`.
+The model providers the runtime builds. A `providers` block is the whole set: the runtime calls no provider it does not name, whatever keys the environment holds.
+
+With no `providers` block, each provider whose key variable is set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `GREENPT_API_KEY`, `NEBIUS_API_KEY`, `XAI_API_KEY`) is configured from the environment; this is how an install made with `npx nimblebrain` is configured. When neither names a provider, none is assumed: the runtime starts, logs that no model provider is configured, and each chat fails with a message saying how to configure one.
 
 ```json
 {
@@ -406,6 +408,8 @@ The exact model lineup is account- and tier-specific and changes over time. The 
 A local model needs tool calling. Gemma 4 and Qwen 3 serve it on Ollama; Gemma 3 does not. A turn sends about 5k tokens of system prompt and tool schemas before the person's message, more on a turn about tasks, so 16k is the least workable window and 32k is comfortable. `local` is not offered through `execution.modelGateway`, which reaches hosted providers only.
 
 A Docker install can name the server in its `.env` instead; see [`NB_LOCAL_MODEL_URL`](/config/environment/#local-model-server).
+
+To keep every model call on your own network, name only `local` under `providers`. A cloud provider's key in the environment then configures nothing, and no model call leaves for a hosted provider. Narrow [`modelPolicy.allowed`](#modelpolicy) to the local models as well if people can choose a model.
 
 Which servers and models have been run with NimbleBrain, and how they did: [Local Models](/config/local-models/).
 
@@ -741,6 +745,8 @@ File upload limits applied when `features.fileContext` is enabled.
 
 An upload to the workspace file store (the Files app, or an app's file picker) is not a chat message: `maxFilesPerMessage` does not apply to it. It takes up to 100 files at a time, each within `maxFileSize` and all together within `maxTotalSize`. The chat composer shows the per-message limits before you send.
 
+Request bodies are limited by bytes received, including chunked bodies. A JSON request (a chat message, a tool call) takes up to 1 MB, and an upload, a chat message's or the file store's, takes up to `maxTotalSize`; a larger one is refused with `413 payload_too_large`. The server refuses any body more than 8 MB past the larger of the two before a route sees it.
+
 ## telemetry
 
 Anonymous, aggregate usage data, with no content, names, error messages or paths. Left unset, a person decides: nothing is sent until someone says yes in the CLI or the web UI. Setting `enabled` is the operator deciding for everyone, and no one is asked.
@@ -749,7 +755,7 @@ Anonymous, aggregate usage data, with no content, names, error messages or paths
 { "telemetry": { "enabled": false } }
 ```
 
-`NB_TELEMETRY_DISABLED=1` and `DO_NOT_TRACK=1` turn it off too. `"enabled": true` turns it on without asking anyone. See [Telemetry](/using/telemetry/).
+`DO_NOT_TRACK=1` turns it off too. `"enabled": true` turns it on without asking anyone. See [Telemetry](/using/telemetry/).
 
 `"identify": true`, with `"enabled": true`, names the signed-in person (ID, email, name) and groups events by tenant and workspace, for a deployment sending to its own analytics project. See [Identified deployments](/using/telemetry/#identified-deployments).
 

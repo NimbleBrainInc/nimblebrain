@@ -9,27 +9,38 @@ import { currentTelemetry, type TelemetryField } from "./telemetry.ts";
 import { VERSION } from "./version.ts";
 
 /**
- * What an install records about itself, in `<home>/install.json`. Written by
- * `init` and `update`; read by everything else. Holds no secret: the model key
- * lives in `<home>/.env`, which nothing here reads.
+ * An install's record, `<home>/install.json`: the one mark that a home, its
+ * Compose project, containers and data volume are this CLI's. `init` writes it
+ * first, before any other file, so a run that stops partway never leaves files
+ * without an owner; every command reads the project and port from it and never
+ * derives them. Holds no secret: the model key lives in `<home>/.env`, which
+ * nothing here reads.
  */
 export interface InstallState {
-  version: string;
-  port: number;
-  /** The Compose project name, which is also what marks containers and the data volume as ours. */
+  /** The Compose project name, chosen once at `init` and unique to this home (`newProject`). */
   project: string;
+  port: number;
+  version: string;
+  /**
+   * `starting` from the claim until the first start answers health, `ready`
+   * after. A starting install can be stopped, read and removed; using it waits
+   * until `init` runs again and finishes it.
+   */
+  phase: "starting" | "ready";
   agent?: Agent;
 }
 
+/** The home's record; undefined when there is none, or it does not parse as one. */
 export async function readInstall(deps: Deps, home: string): Promise<InstallState | undefined> {
   const text = await deps.readText(join(home, "install.json"));
   if (text === undefined) return undefined;
   try {
-    const state = JSON.parse(text) as Partial<InstallState>;
+    const state = JSON.parse(text) as Partial<InstallState> | null;
     if (
-      typeof state.version !== "string" ||
+      typeof state?.version !== "string" ||
       typeof state.port !== "number" ||
-      typeof state.project !== "string"
+      typeof state.project !== "string" ||
+      (state.phase !== "starting" && state.phase !== "ready")
     ) {
       return undefined;
     }
@@ -37,6 +48,25 @@ export async function readInstall(deps: Deps, home: string): Promise<InstallStat
   } catch {
     return undefined;
   }
+}
+
+/** The home's record in any phase, for the commands that stop, read or remove an install. */
+export async function requireInstall(deps: Deps, home: string): Promise<InstallState> {
+  const install = await readInstall(deps, home);
+  if (!install) throw new CliError("NOT_INSTALLED", `No NimbleBrain install in ${home}.`);
+  return install;
+}
+
+/** The home's record once its first start came up, for the commands that use the install. */
+export async function requireReady(deps: Deps, home: string): Promise<InstallState> {
+  const install = await requireInstall(deps, home);
+  if (install.phase !== "ready") {
+    throw new CliError(
+      "INSTALL_INCOMPLETE",
+      `The NimbleBrain install in ${home} has not finished installing.`,
+    );
+  }
+  return install;
 }
 
 export interface Workspace {
@@ -48,6 +78,8 @@ export interface Workspace {
 export interface StatusResult {
   ok: true;
   version: string;
+  /** The install's phase: `starting` until `init` finishes it, then `ready`. */
+  phase: InstallState["phase"];
   /** This CLI's own version; `version` is the runtime's. They move independently (ADR-0064). */
   cli_version: string;
   health: "ok" | "down";
@@ -63,7 +95,7 @@ export interface StatusResult {
 }
 
 /**
- * The install's state from the outside: is it answering, which workspaces
+ * The install's state from the outside, in any phase: is it answering, which workspaces
  * does it have, and is a model key configured. Reads only what the local
  * instance serves to anyone on this machine (`/v1/health`, and `/v1/bootstrap`
  * under the `dev` adapter), so it never needs a credential.
@@ -77,13 +109,13 @@ export interface StatusResult {
  * be the internal one, and the web port forwards `/mcp*` to it either way.
  */
 export async function status(deps: Deps, home: string): Promise<StatusResult> {
-  const install = await readInstall(deps, home);
-  if (!install) throw new CliError("NOT_INSTALLED", `No NimbleBrain install in ${home}.`);
+  const install = await requireInstall(deps, home);
   const url = installUrl(install);
 
   const up = await isUp(deps, url);
 
-  const workspaces = up ? await readWorkspaces(deps, url) : [];
+  // A starting install has no workspace to hand an agent yet: `init` finishes it first.
+  const workspaces = up && install.phase === "ready" ? await readWorkspaces(deps, url) : [];
   // The install's `.env` is the only place a key can come from: every Compose
   // call runs without the shell's key variables. Read for names, never values.
   const composeText = (await deps.readText(join(home, "docker-compose.yml"))) ?? "";
@@ -94,6 +126,7 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
   return {
     ok: true,
     version: install.version,
+    phase: install.phase,
     cli_version: VERSION,
     health: up ? "ok" : "down",
     url,

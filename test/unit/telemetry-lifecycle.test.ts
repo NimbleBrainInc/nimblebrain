@@ -57,6 +57,110 @@ describe("captureAbout", () => {
     expect(events[1]?.properties.$set).toBeUndefined();
   });
 
+  it("looks up a person the event names without their email, once, and sets it", async () => {
+    const { events, manager } = setup(true);
+    const asked: string[] = [];
+    manager.setPersonSource(async (userId) => {
+      asked.push(userId);
+      return userId === "usr_1" ? { email: "a@example.com", name: "Ada" } : undefined;
+    });
+    // A scheduled run acts as its owner's id alone.
+    manager.captureAbout("automation.run_completed", {}, { userId: "usr_1", workspaceId: "ws_1" });
+    manager.captureAbout("automation.run_completed", {}, { userId: "usr_1", workspaceId: "ws_1" });
+    manager.captureAbout("automation.run_completed", {}, { userId: "usr_gone" });
+    await settle();
+
+    expect(asked).toEqual(["usr_1", "usr_gone"]);
+    expect(events.filter((e) => e.event === "$set")).toEqual([
+      {
+        distinctId: "usr_1",
+        event: "$set",
+        properties: { $set: { email: "a@example.com", name: "Ada" } },
+      },
+    ]);
+  });
+
+  it("names a workspace once, the first time an event is grouped under it", async () => {
+    const { events, manager } = setup(true);
+    const asked: string[] = [];
+    manager.setWorkspaceSource(async (wsId) => {
+      asked.push(wsId);
+      return wsId === "ws_1" ? "Acme ops" : undefined;
+    });
+    manager.captureAbout("automation.run_completed", {}, { userId: "usr_1", workspaceId: "ws_1" });
+    manager.captureAbout("automation.run_completed", {}, { userId: "usr_1", workspaceId: "ws_1" });
+    manager.captureAbout(
+      "automation.run_completed",
+      {},
+      { userId: "usr_1", workspaceId: "ws_gone" },
+    );
+    await settle();
+
+    expect(asked).toEqual(["ws_1", "ws_gone"]);
+    expect(events.filter((e) => e.event === "$groupidentify")).toEqual([
+      {
+        distinctId: "$workspace_ws_1",
+        event: "$groupidentify",
+        properties: {
+          $group_type: "workspace",
+          $group_key: "ws_1",
+          $group_set: { name: "Acme ops" },
+        },
+      },
+    ]);
+  });
+
+  it("names the workspace of the request an event comes from", async () => {
+    const { events, manager } = setup(true);
+    manager.setSubjectSource(() => ({ userId: "usr_1", workspaceId: "ws_1" }));
+    manager.setWorkspaceSource(async () => "Acme ops");
+    manager.capture("agent.chat_started", {});
+    await settle();
+    expect(events.filter((e) => e.event === "$groupidentify")).toEqual([
+      {
+        distinctId: "$workspace_ws_1",
+        event: "$groupidentify",
+        properties: {
+          $group_type: "workspace",
+          $group_key: "ws_1",
+          $group_set: { name: "Acme ops" },
+        },
+      },
+    ]);
+  });
+
+  it("keeps the event when the workspace lookup fails", async () => {
+    const { events, manager } = setup(true);
+    manager.setWorkspaceSource(async () => {
+      throw new Error("store down");
+    });
+    manager.captureAbout("automation.run_completed", {}, { userId: "usr_1", workspaceId: "ws_1" });
+    await settle();
+    expect(events.map((e) => e.event)).toEqual(["automation.run_completed"]);
+  });
+
+  it("names no workspace when the deployment does not identify", async () => {
+    const { events, manager } = setup(false);
+    const asked: string[] = [];
+    manager.setSubjectSource(() => ({ userId: "usr_1", workspaceId: "ws_1" }));
+    manager.setWorkspaceSource(async (wsId) => {
+      asked.push(wsId);
+      return "Acme ops";
+    });
+    manager.captureAbout("automation.run_completed", {}, { userId: "usr_1", workspaceId: "ws_1" });
+    manager.capture("agent.chat_started", {});
+    await settle();
+    expect(asked).toEqual([]);
+    expect(events.filter((e) => e.event === "$groupidentify")).toEqual([]);
+  });
+
+  it("still sets the email from a later event after one that lacked it", () => {
+    const { events, manager } = setup(true);
+    manager.captureAbout("automation.run_completed", {}, { userId: "usr_1" });
+    manager.captureAbout("member.added", {}, { userId: "usr_1", email: "a@example.com" });
+    expect(events[1]?.properties.$set).toEqual({ email: "a@example.com" });
+  });
+
   it("sends nothing when the deployment does not identify", () => {
     const { events, manager } = setup(false);
     manager.captureAbout("user.signed_up", {}, { userId: "usr_1", email: "a@example.com" });
@@ -318,6 +422,36 @@ describe("automation.run_completed", () => {
     expect(ended[0]?.properties.tool_calls).toBeUndefined();
     expect(typeof ended[0]?.properties.duration_ms).toBe("number");
     expect(JSON.stringify(events)).not.toContain("acme");
+  });
+
+  it("carries the run's recorded cost, and leaves out an incomplete one", async () => {
+    const costed =
+      (extra: Partial<TaskRun>): Executor =>
+      async (...args) => {
+        const out = await executor(...args);
+        return { ...out, run: { ...out.run, ...extra } };
+      };
+    const ended = async (exec: Executor) => {
+      const { events, manager } = setup(true);
+      const { workDir, task } = seeded();
+      const scheduler = new Scheduler(exec, {
+        workDir,
+        onRunEnded: (wsId, ownerId, run) =>
+          captureAutomationRunEnded(runtimeOf(manager), wsId, ownerId, run),
+      });
+      scheduler.start();
+      await scheduler.runNow(WS, OWNER, task.id);
+      scheduler.stop();
+      return events.find((e) => e.event === "automation.run_completed")?.properties;
+    };
+
+    expect((await ended(costed({ costUsd: 0.0421 })))?.cost_usd).toBe(0.0421);
+    // A call no rates were known for: the recorded cost is short, so none is sent.
+    const short = await ended(costed({ costUsd: 0.0421, unpricedCalls: 1 }));
+    expect(short && "cost_usd" in short).toBe(false);
+    // A run that never reached the model has no recorded cost.
+    const none = await ended(executor);
+    expect(none && "cost_usd" in none).toBe(false);
   });
 
   it("keeps the recorded run when the observer throws", async () => {

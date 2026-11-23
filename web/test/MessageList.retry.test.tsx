@@ -57,4 +57,27 @@ describe("MessageList retry affordance", () => {
     );
     expect(retryButton(container)).not.toBeNull();
   });
+
+  it("offers no retry for a missing or rejected model key and shows the fix as the headline", () => {
+    const authMsg: ChatMessage = {
+      role: "assistant",
+      content: "",
+      error:
+        "The model provider has no valid API key. Set one for anthropic and restart NimbleBrain.",
+      errorCode: "model_auth_failed",
+    };
+    const { container } = render(
+      <MessageList
+        messages={[authMsg]}
+        isStreaming={false}
+        streamingState={null}
+        displayDetail="balanced"
+        onRetry={() => {}}
+      />,
+    );
+    expect(container.textContent).toContain("Set one for anthropic and restart");
+    expect(container.textContent).not.toContain("You can try again");
+    expect(container.getElementsByTagName("details")).toHaveLength(0);
+    expect(retryButton(container)).toBeNull();
+  });
 });

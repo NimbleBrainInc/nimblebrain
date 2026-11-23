@@ -1,35 +1,31 @@
+import { randomBytes } from "node:crypto";
 import { basename, join } from "node:path";
 import type { Deps, ExecOptions, ExecResult } from "./deps.ts";
-import { CliError } from "./result.ts";
+import { CliError, type FixVariant } from "./result.ts";
 
 /**
- * The Compose project of the default home, and of every install an older CLI
- * made, whatever its home.
+ * The Compose project for a new install in `home`: the folder's name, for a
+ * person reading `docker ps`, and six random hex digits, so no two homes share
+ * one, whatever their folders are called (`~/nb-rc` gives
+ * `nimblebrain-nb-rc-3f9a1c`). The project names the containers, the network
+ * and the data volume. `init` chooses it once, at the claim, and records it in
+ * `install.json`; every later command reads it from there, so moving the
+ * folder changes nothing. Always a valid Compose name: lowercase, starting
+ * with a letter.
  */
-export const DEFAULT_PROJECT = "nimblebrain-local";
-
-/**
- * The Compose project for a new install in `home`. The project names the
- * containers, the network and the data volume (`volumeOf`), and it is how the
- * CLI tells its own install from anyone else's. It follows the home folder's
- * name, so another home is another install: `~/.nimblebrain-local` gives
- * `nimblebrain-local`, `~/nb-rc` gives `nimblebrain-nb-rc`. `init` chooses it
- * once and writes it to `install.json` and `.env`; every later command reads
- * it from there, so moving the folder changes nothing. Two homes whose folders
- * share a name share a project, which `init` refuses as `NOT_OURS`.
- */
-export function projectFor(home: string): string {
+export function newProject(home: string): string {
   const slug = basename(home)
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^[^a-z0-9]+/, "")
     .replace(/[^a-z0-9]+$/, "");
-  if (!slug) return "nimblebrain";
-  return slug.startsWith("nimblebrain") ? slug : `nimblebrain-${slug}`;
+  const name = !slug
+    ? "nimblebrain"
+    : slug.startsWith("nimblebrain")
+      ? slug
+      : `nimblebrain-${slug}`;
+  return `${name}-${randomBytes(3).toString("hex")}`;
 }
-
-/** The project's data volume, as Compose names it. */
-export const volumeOf = (project: string) => `${project}_workspace`;
 
 const RAW = "https://raw.githubusercontent.com/NimbleBrainInc/nimblebrain";
 
@@ -197,6 +193,35 @@ export async function compose(
   });
 }
 
+/**
+ * Whether the claim wrote every install file. `.env` is written last, and
+ * nothing is started before it exists, so without it this home has no
+ * containers, and Compose must not run here: with no `COMPOSE_PROJECT_NAME`
+ * it would name the project after the folder, which may be another install's.
+ */
+export async function claimWritten(deps: Deps, home: string): Promise<boolean> {
+  return (await deps.readText(paths(home).env)) !== undefined;
+}
+
+/**
+ * Whether this home's own containers are running (`compose ps -q` lists any).
+ * The port they publish is then this install's, not something in the way.
+ */
+export async function runningHere(deps: Deps, home: string): Promise<boolean> {
+  if (!(await claimWritten(deps, home))) return false;
+  const res = await compose(deps, home, ["ps", "-q"], 30_000);
+  return res.code === 0 && res.stdout.trim() !== "";
+}
+
+/**
+ * The fix for a stopped Docker, by the socket Docker names: Colima's default VM
+ * starts with `colima start`; another profile starts by its own name, so it
+ * keeps the general fix.
+ */
+export function daemonVariant(text: string): FixVariant | undefined {
+  return /\/\.colima\/default\//.test(text) ? "colima" : undefined;
+}
+
 /** Turns a failed Compose call into the error a person can act on. */
 export function startError(res: ExecResult): CliError {
   const text = `${res.stderr}\n${res.stdout}`;
@@ -206,6 +231,10 @@ export function startError(res: ExecResult): CliError {
       .split("\n")
       .filter((l) => l.trim())
       .pop() ?? "Compose failed.";
+  // Before the network check: a stale socket answers "connection refused".
+  if (/cannot connect to the docker daemon|failed to connect to the docker api/i.test(text)) {
+    return new CliError("DOCKER_NOT_RUNNING", last, {}, daemonVariant(text));
+  }
   if (/no such host|timeout|TLS handshake|connection refused|network is unreachable/i.test(text)) {
     return new CliError("NETWORK", last);
   }

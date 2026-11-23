@@ -23,6 +23,7 @@ async function makeRuntime(overrides?: Record<string, unknown>): Promise<Runtime
   return Runtime.start({
     identityProvider: devProvider,
     languageModel: createEchoModel(),
+    providers: { anthropic: {} },
     workDir,
     logging: { disabled: true },
     ...overrides,
@@ -109,13 +110,13 @@ describe("get_config tool", () => {
     }
   });
 
-  it("defaults to anthropic when no providers configured", async () => {
-    const runtime = await makeRuntime();
+  it("reports no provider when none is configured", async () => {
+    const runtime = await makeRuntime({ providers: undefined });
     try {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const result = await asDevUser(() => source.execute("get_config", {}));
       const config = result.structuredContent as Record<string, unknown>;
-      expect(config.configuredProviders).toContain("anthropic");
+      expect(config.configuredProviders).toEqual([]);
     } finally {
       await runtime.shutdown();
     }

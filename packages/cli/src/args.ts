@@ -55,7 +55,8 @@ export interface Flags {
   json: boolean;
   yes: boolean;
   agent?: Agent;
-  port: number;
+  /** `--port` as passed; each command that takes it supplies its own default. */
+  port?: number;
   home?: string;
   provider?: string;
   /** `--local-model <model>`: run NimbleBrain's agents on this Ollama model instead of a hosted key. */
@@ -111,14 +112,14 @@ export const FLAG_SPECS = {
   port: {
     type: "string",
     takes: "n",
-    description: `Local port (default ${DEFAULT_PORT})`,
+    description: `Local port (default ${DEFAULT_PORT}; for doctor, the install's own port)`,
     commands: ["init", "doctor"],
   },
   home: {
     type: "string",
     takes: "dir",
     description:
-      "Where the install lives (default ~/.nimblebrain-local, or NIMBLEBRAIN_HOME); a home with another folder name is a separate install",
+      "Where the install lives (default ~/.nimblebrain-local, or NIMBLEBRAIN_HOME); each home is a separate install",
   },
   provider: {
     type: "string",
@@ -191,8 +192,8 @@ export function parse(argv: string[]): Parsed {
   const { values, positionals } = parseStrict(argv);
 
   const json = values.json === true;
-  const port = values.port === undefined ? DEFAULT_PORT : Number(values.port);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  const port = values.port === undefined ? undefined : Number(values.port);
+  if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) {
     throw new CliError("USAGE", `--port must be a port number, not "${values.port}".`);
   }
   let agent: Agent | undefined;

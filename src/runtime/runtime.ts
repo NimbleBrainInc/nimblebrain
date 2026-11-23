@@ -44,7 +44,11 @@ import { resolveHostLoopback, setHostLoopbackAlias } from "../connectors/runtime
 import { setInBandAuthErrorsCatalog } from "../connectors/runtime/in-band-auth-errors.ts";
 import { bindInstanceOAuthClients } from "../connectors/runtime/instance-oauth-clients.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
-import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
+import {
+  assertRuntimeSourceNamesReserved,
+  serverNameFromRef,
+  slugifyServerName,
+} from "../connectors/runtime/paths.ts";
 import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
 import type { ConnectorInstance, PlacementDeclaration } from "../connectors/runtime/types.ts";
@@ -151,9 +155,11 @@ import {
   setConfiguredModels,
 } from "../model/catalog.ts";
 import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../model/gateway-refusal.ts";
+import { ModelAuthError } from "../model/model-auth.ts";
 import { isQualifiedModelId, requireQualifiedModelId } from "../model/model-id.ts";
 import {
   buildModelResolver,
+  MODEL_PROVIDER_KEY_ENV,
   MODEL_PROVIDERS,
   type ModelGatewayAccess,
   providerModelAllowlists,
@@ -295,7 +301,7 @@ import {
 import { isToolAllowedForRun, unmatchedAllowedTools } from "../tools/tool-pattern.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { toToolSchema } from "../tools/types.ts";
-import { estimateCost, resolveRates } from "../usage/cost.ts";
+import { callCostUsd, resolveRates } from "../usage/cost.ts";
 import { createProcessLedger, type UsageLedger } from "../usage/ledger.ts";
 import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
@@ -976,6 +982,13 @@ export class Runtime {
     const allowInsecureRemotes = config.allowInsecureRemotes === true || hostLoopback !== null;
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
+    telemetryManager.setPersonSource(async (userId) => {
+      const user = await userStore.get(userId);
+      return user ? { email: user.email, name: user.displayName } : undefined;
+    });
+    telemetryManager.setWorkspaceSource(
+      async (wsId) => (await workspaceStore.get(wsId))?.name || undefined,
+    );
     // Identified telemetry (a no-op otherwise): who signed up, and the
     // workspaces and memberships they make, from the stores that write them.
     userStore.onCreated((user) =>
@@ -1253,6 +1266,9 @@ export class Runtime {
       // `createPlatformSources` returns sources already started.
       const { createPlatformSources } = await import("../platform/index.ts");
       const platformSources = await createPlatformSources(rt, events);
+      // A connector may never take the name of a source the runtime registers
+      // itself; install and boot both read that from the reserved set.
+      assertRuntimeSourceNamesReserved([systemTools.name, ...platformSources.map((s) => s.name)]);
       // Telemetry counts calls to connector tools apart from the kernel's own.
       telemetrySink.addBuiltinSources(platformSources.map((s) => s.name));
       // Identified telemetry names a connector by its catalog id, never by the
@@ -1558,7 +1574,7 @@ export class Runtime {
           this.runBus.end(conversationId, "cancelled");
         } else {
           this.publishTurnEvent(conversationId, "error", {
-            error: "engine_error",
+            error: err instanceof ModelAuthError ? err.code : "engine_error",
             message: err instanceof Error ? err.message : String(err),
           });
           this.runBus.end(conversationId, "error");
@@ -1846,6 +1862,7 @@ export class Runtime {
       ...stopDetail(handle),
       usage: handle.usage,
       costUsd: handle.costUsd,
+      ...(handle.unpricedCalls ? { unpricedCalls: handle.unpricedCalls } : {}),
       skillsDelivered: handle.skillsDelivered,
     };
   }
@@ -2199,6 +2216,7 @@ export class Runtime {
         stopReason: "aborted",
         usage: partial.usage(spec.model),
         costUsd: partial.costUsd(),
+        ...unpricedOf(partial),
         skillsDelivered: deliveries.list,
       };
     } finally {
@@ -2221,6 +2239,7 @@ export class Runtime {
         iterations: result.iterations,
       },
       costUsd: partial.costUsd(),
+      ...unpricedOf(partial),
       skillsDelivered: deliveries.list,
     };
   }
@@ -5418,10 +5437,10 @@ export class Runtime {
    * Whether a model a *caller* named is permitted here.
    *
    * False only where a policy exists and excludes it. Absence of policy is not
-   * denial: with no `providers` block, or behind an injected `languageModel`
-   * that serves every string, `getProviderConfigs()` reports a display default
-   * (`{anthropic:{}}`) rather than a reachability claim, so consulting it would
-   * refuse every non-Anthropic model on a deployment that can serve them.
+   * denial: with no provider configured, `getProviderConfigs()` is empty, and
+   * consulting it would refuse every model on a deployment that serves them
+   * through an injected `languageModel`, and turn a missing provider into "not
+   * permitted" where the resolver says how to configure one.
    *
    * Operator config is not a caller's choice and never passes through here —
    * a configured slot value is governed where it is written.
@@ -5432,12 +5451,14 @@ export class Runtime {
     // pin every future conversation to a model that names no provider.
     if (!isQualifiedModelId(modelString)) return false;
     // Policy is checked before the provider guard and independently of it. The
-    // guard below tolerates absent provider config because `getProviderConfigs`
-    // reports a display default rather than a reachability claim — but an
+    // guard below tolerates absent provider config, as above — but an
     // allowlist is an explicit operator statement, so when one exists it binds
     // whether or not providers are configured.
     if (!isModelInPolicy(modelString, this.config.modelPolicy?.allowed)) return false;
-    if (!this.config.providers && !this._gatewayProviders) return true;
+    // With no provider configured the model is let through, so the turn fails
+    // as the resolver fails it: naming how to configure one.
+    if (Object.keys(this.config.providers ?? {}).length === 0 && !this._gatewayProviders)
+      return true;
     return isModelAllowed(modelString, this.getProviderConfigs());
   }
 
@@ -5594,10 +5615,7 @@ export class Runtime {
     if (this._gatewayProviders) {
       return [...(this._gatewayProviders.served() ?? MODEL_PROVIDERS)];
     }
-    if (this.config.providers) {
-      return Object.keys(this.config.providers);
-    }
-    return ["anthropic"];
+    return Object.keys(this.config.providers ?? {});
   }
 
   /**
@@ -6301,11 +6319,21 @@ export class Runtime {
     // cooperatively) and clears the run map. Order matters: stop the
     // producers first, then dismantle their dependencies.
     this.runBus.reset();
-    // Stop all sources across all workspace registries
+    // Stop all sources across all workspace registries. A shared source (the
+    // system source, the platform apps) is not stopped by a registry; the
+    // runtime created them, so it stops them here, each once.
     for (const [_wsId, reg] of this._workspaceRegistries) {
       for (const name of reg.sourceNames()) {
         await reg.removeSource(name);
       }
+    }
+    // Every platform source and the system source, workspace-scoped and identity
+    // alike, stopped once each. Identity sources (tasks, files, conversations) sit
+    // in no workspace registry at all, and the tasks source's stop is what ends its
+    // scheduler, whose timer otherwise outlives the runtime and keeps the process
+    // alive.
+    for (const source of [...this._platformSources, this._systemSource]) {
+      await source?.stop();
     }
     // Nothing drains the run queue once the sources are gone, so a run still
     // waiting for a slot is refused rather than left waiting forever.
@@ -6455,8 +6483,16 @@ function resolveModel(
   setConfiguredModels("local", "Local", localCatalogModels(config.providers?.local ?? {}));
   const adapter = config.languageModel;
   if (adapter) return () => adapter;
-  // No providers configured means Anthropic, keyed from the environment.
-  return buildModelResolver({ providers: config.providers ?? { anthropic: {} } }, gateway);
+  // Only the providers the config names are built; with none, every model
+  // fails naming the settings that configure one. The runtime still starts, so
+  // an install can come up first and be given its key afterwards.
+  if (!gateway && Object.keys(config.providers ?? {}).length === 0) {
+    log.warn(
+      "[runtime] No model provider is configured: chat fails until nimblebrain.json sets providers " +
+        `(providers.local for a model server you run) or the environment holds a provider key (${Object.values(MODEL_PROVIDER_KEY_ENV).join(", ")}).`,
+    );
+  }
+  return buildModelResolver({ providers: config.providers }, gateway);
 }
 
 /** Initialize work directory env vars and sync core skills. */
@@ -6801,8 +6837,16 @@ function createPartialRunAccumulator(): {
   toolCalls: RunHandle["toolCalls"];
   usage: (model: string) => TurnUsage;
   costUsd: () => number;
+  unpricedCalls: () => number;
 } {
-  const totals = { inputTokens: 0, outputTokens: 0, iterations: 0, llmMs: 0, costUsd: 0 };
+  const totals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    iterations: 0,
+    llmMs: 0,
+    costUsd: 0,
+    unpricedCalls: 0,
+  };
   const toolCalls: RunHandle["toolCalls"] = [];
   const sink: EventSink = {
     emit(event: EngineEvent): void {
@@ -6813,7 +6857,11 @@ function createPartialRunAccumulator(): {
         totals.llmMs += data.llmMs;
         totals.inputTokens += data.usage.inputTokens;
         totals.outputTokens += data.usage.outputTokens;
-        totals.costUsd += estimateCost(data.model, data.usage);
+        // A call at a model the catalog has no rates for adds nothing to the
+        // cost and is counted, so a reader can tell an incomplete cost from a free one.
+        const cost = callCostUsd(data.model, data.usage);
+        if (cost === undefined) totals.unpricedCalls += 1;
+        else totals.costUsd += cost;
       } else if (event.type === "tool.done") {
         const { data } = event;
         // `errorReason` is intentionally absent here: this accumulator only
@@ -6851,7 +6899,14 @@ function createPartialRunAccumulator(): {
       iterations: totals.iterations,
     }),
     costUsd: () => totals.costUsd,
+    unpricedCalls: () => totals.unpricedCalls,
   };
+}
+
+/** A run's unpriced-call count, present only when non-zero. */
+function unpricedOf(partial: { unpricedCalls: () => number }): { unpricedCalls?: number } {
+  const n = partial.unpricedCalls();
+  return n > 0 ? { unpricedCalls: n } : {};
 }
 
 /**

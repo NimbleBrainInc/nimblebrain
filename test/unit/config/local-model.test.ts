@@ -25,11 +25,9 @@ describe("localModelFromEnv", () => {
     });
   });
 
-  it("keeps Anthropic beside it only when a key for it is set", () => {
+  it("adds no hosted provider of its own, whatever keys the environment holds", () => {
     const withKey = localModelFromEnv({}, { ...env, ANTHROPIC_API_KEY: "sk-ant-x" });
-    expect(Object.keys(withKey.providers ?? {})).toEqual(["anthropic", "local"]);
-    const emptyKey = localModelFromEnv({}, { ...env, ANTHROPIC_API_KEY: "" });
-    expect(Object.keys(emptyKey.providers ?? {})).toEqual(["local"]);
+    expect(Object.keys(withKey.providers ?? {})).toEqual(["local"]);
   });
 
   it("keeps a providers.local block and a default model the file sets", () => {

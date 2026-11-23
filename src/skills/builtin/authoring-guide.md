@@ -56,7 +56,10 @@ multi-connector workflow. Default to the connector's instructions.
 Set `loading-strategy` under `metadata.nimblebrain`:
 
 - **`always`**: in context every turn. Only for short, durable rules (voice,
-  identity); it costs context on every call.
+  identity); it costs context on every call. The user sets it in Skills
+  settings: `skills__create`, `skills__update`, and `skills__restore` refuse a
+  write from you that would leave a skill `always`, so draft the text and ask
+  the user to add it there.
 - **`dynamic`**: loaded on demand, by one of:
   - its **`description`**, which the model reads in the catalog. This is the
     main path: say what the skill does **and when to use it**, in the words a

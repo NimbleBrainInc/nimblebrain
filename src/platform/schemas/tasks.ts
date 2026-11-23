@@ -1157,6 +1157,8 @@ export const TaskRunRecord = Type.Object({
   batchIndex: Type.Optional(Type.Number()),
   /** What the run's model calls cost, in USD. */
   costUsd: Type.Optional(Type.Number()),
+  /** Model calls no rates were known for; their cost is not in `costUsd`. */
+  unpricedCalls: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 export type TaskRunRecord = Static<typeof TaskRunRecord>;
 

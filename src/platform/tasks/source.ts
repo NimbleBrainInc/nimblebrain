@@ -878,6 +878,9 @@ export function captureAutomationRunEnded(
       automation_id: automationTelemetryId(wsId, ownerId, run.taskId),
       in_batch: run.batchId !== undefined,
       ...(Number.isFinite(ended - started) ? { duration_ms: ended - started } : {}),
+      // The run's recorded cost. An incomplete one (a call no rates were known
+      // for) is left out, never reported as a lower figure.
+      ...(run.costUsd !== undefined && !run.unpricedCalls ? { cost_usd: run.costUsd } : {}),
     },
     { userId: ownerId, workspaceId: wsId },
   );

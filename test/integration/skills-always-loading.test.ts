@@ -60,7 +60,10 @@ function createCapturingModel(): { model: LanguageModelV4; getSystem: () => stri
   return { model, getSystem: () => captured };
 }
 
-/** Run a tool through the workspace registry as the dev identity. */
+/**
+ * Run a tool through the workspace registry as the dev identity, from the
+ * Skills settings page's REST door, where an always-on skill is written.
+ */
 async function callToolAsDev(
   toolName: string,
   input: Record<string, unknown>,
@@ -70,6 +73,7 @@ async function callToolAsDev(
     {
       identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
+      shellCall: true,
     },
     () => registry.execute({ id: `test-${toolName}`, name: toolName, input }),
   );

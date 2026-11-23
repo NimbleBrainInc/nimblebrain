@@ -36,6 +36,8 @@ Publish every file at a stable `https://` URL before you reference it. A URL tha
 | Favicon (`favicon`) | Browser tab | PNG or ICO. |
 | Fonts (`fonts.sans`, `fonts.heading`, `fonts.reading`) | Shell and embedded apps | One `.woff2` file per role, typically a variable font covering every weight you use. |
 
+Host the logos and favicon on your deployment's own origin, or list their host in `NB_IMG_SRC` on the web container (`NB_IMG_SRC="https://static.example.com"`). Apart from `static.nimblebrain.ai`, the UI loads images from no other host, so a logo anywhere else renders as a broken image ([Web UI headers](/deploy/security/#web-ui-headers)).
+
 Set `name`, `logo` and `favicon` together. A brand with a name but no logo keeps the bundled NimbleBrain artwork, with your name as its alt text.
 
 **Fonts must be files you may redistribute.** You serve them to every visitor's browser, so check the licence. Self-host the `.woff2` files; a Google Fonts stylesheet URL (`https://fonts.googleapis.com/css2?…`) is rejected, because embedded apps load faces from the file URL and cannot follow a stylesheet.

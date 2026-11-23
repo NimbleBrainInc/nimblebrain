@@ -87,6 +87,31 @@ test("a task run's cost sums its calls, each on the base card", async () => {
   expect(result.costUsd).toBeCloseTo(CALLS * perCall, 10);
 });
 
+test("a task run on a model the catalog cannot price counts its calls as unpriced", async () => {
+  const rt = await start();
+  const result = await rt.executeTask({
+    identity: TEST_IDENTITY,
+    workspaceId: TEST_WORKSPACE_ID,
+    model: "anthropic:unlisted-model",
+    prompt: "do the thing",
+  });
+
+  expect(result.usage.iterations).toBe(CALLS);
+  expect(result.costUsd).toBe(0);
+  expect(result.unpricedCalls).toBe(CALLS);
+});
+
+test("a priced task run has no unpriced calls", async () => {
+  const rt = await start();
+  const result = await rt.executeTask({
+    identity: TEST_IDENTITY,
+    workspaceId: TEST_WORKSPACE_ID,
+    model: HAIKU,
+    prompt: "do the thing",
+  });
+  expect(result.unpricedCalls).toBeUndefined();
+});
+
 test("a chat turn's done event carries the same per-call sum", async () => {
   const rt = await start();
   const result = await rt.chat({

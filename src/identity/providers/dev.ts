@@ -40,6 +40,7 @@ export class DevIdentityProvider implements IdentityProvider {
     managedUsers: false,
     // Dev mode has no auth at all, so nothing to discover.
     authorizationServer: false,
+    checksNoCredential: true,
   };
 
   /** The profile seed, shared by every request that arrives while it runs. */

@@ -1,10 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Deps, ExecResult } from "../src/deps.ts";
+import { type Deps, type ExecResult, realDeps } from "../src/deps.ts";
 import { interrupted, run, VERSION } from "../src/main.ts";
-import { fail, GB, machine, missing, ok } from "./fake.ts";
+import { fail, GB, machine, missing, ok, record } from "./fake.ts";
 
 /** A machine where everything passes unless a test overrides one answer. */
 function fakeDeps(over: Partial<Deps> & { execMap?: Record<string, ExecResult> } = {}): Deps {
@@ -81,6 +90,23 @@ describe("doctor", () => {
       },
     });
     expect((await json(["doctor"], deps)).body.error).toBe("DOCKER_NOT_RUNNING");
+  });
+
+  test("DOCKER_NOT_RUNNING names `colima start` when Colima's default VM is stopped", async () => {
+    const cases: Array<[string, string]> = [
+      ["unix:///home/dana/.colima/default/docker.sock", "colima start"],
+      ["unix:///home/dana/.colima/work/docker.sock", "Start Docker Desktop"],
+      ["unix:///var/run/docker.sock", "Start Docker Desktop"],
+    ];
+    for (const [socket, fix] of cases) {
+      const stderr = `failed to connect to the docker API at ${socket}; check if the path is correct and if the daemon is running`;
+      const deps = fakeDeps({
+        execMap: {
+          "docker info --format {{json .}}": { code: 1, stdout: "", stderr, missing: false },
+        },
+      });
+      expect((await json(["doctor"], deps)).body.fix).toContain(fix);
+    }
   });
 
   test("a socket permission error is DOCKER_PERMISSION", async () => {
@@ -224,22 +250,50 @@ describe("doctor", () => {
     expect(body.checks.filter((c: { ok: boolean }) => c.ok)).toHaveLength(5);
   });
 
-  test("the port held by this CLI's own running install passes", async () => {
+  /** The install's own containers are running: `compose ps -q` lists them. */
+  const running = { "docker compose ps -q": ok("4f1c2a9e\n") };
+
+  test("the port held by this CLI's own running install passes, healthy or not", async () => {
+    for (const phase of ["ready", "starting"] as const) {
+      const deps = fakeDeps({
+        execMap: running,
+        portFree: async () => false,
+        readText: async (p) =>
+          p.endsWith("install.json") ? record({ phase }) : p.endsWith(".env") ? "" : undefined,
+      });
+      const { body } = await json(["doctor"], deps);
+      expect(body.ok).toBe(true);
+      expect(body.checks.at(-1)).toMatchObject({ check: "port", detail: "27246 (this install)" });
+    }
+  });
+
+  test("a port held by something else is PORT_IN_USE, even with an install recorded", async () => {
     const deps = fakeDeps({
       portFree: async () => false,
-      readText: async () =>
-        JSON.stringify({ version: "0.70.0", port: 27246, project: "nimblebrain-local" }),
-      getJson: async () => ({ status: 200, body: { status: "ok" } }),
+      readText: async (p) => (p.endsWith("install.json") ? record() : undefined),
     });
-    expect((await json(["doctor"], deps)).body.ok).toBe(true);
+    expect((await json(["doctor"], deps)).body.error).toBe("PORT_IN_USE");
+  });
+
+  test("an install on another port is checked on its own port, unless --port names one", async () => {
+    const deps = fakeDeps({
+      execMap: running,
+      portFree: async () => false,
+      readText: async (p) =>
+        p.endsWith("install.json") ? record({ port: 27300 }) : p.endsWith(".env") ? "" : undefined,
+    });
+    const { body } = await json(["doctor"], deps);
+    expect(body.ok).toBe(true);
+    expect(body.checks.find((c: { check: string }) => c.check === "port").detail).toBe(
+      "27300 (this install)",
+    );
+    expect((await json(["doctor", "--port", "27246"], deps)).body.error).toBe("PORT_IN_USE");
   });
 });
 
 describe("status", () => {
   const install = JSON.stringify({
-    version: "0.70.0",
-    port: 27246,
-    project: "nimblebrain-local",
+    ...JSON.parse(record({ version: "0.70.0" })),
     agent: "claude-code",
   });
 
@@ -281,6 +335,15 @@ describe("status", () => {
     const { body, code } = await json(["status"], deps);
     expect(code).toBe(0);
     expect(body).toMatchObject({ health: "down", workspaces: [], model_key: "missing" });
+  });
+
+  test("a corrupt or incomplete install.json is no install", async () => {
+    for (const text of ["{", "null", "", JSON.stringify({ version: "0.70.0", port: 27246 })]) {
+      const deps = fakeDeps({
+        readText: async (p) => (p.endsWith("install.json") ? text : undefined),
+      });
+      expect((await json(["status"], deps)).body.error).toBe("NOT_INSTALLED");
+    }
   });
 
   test("NIMBLEBRAIN_HOME moves the install", async () => {
@@ -349,5 +412,27 @@ describe("the entry point", () => {
     expect(out.trim().split("\n")).toHaveLength(1);
     expect(JSON.parse(out)).toMatchObject({ ok: false, error: "INTERRUPTED", exit_code: 143 });
     expect(err).toContain("stopped before answering (exit code 143)");
+  });
+});
+
+describe("writing a file", () => {
+  test("replaces it whole, with its mode, and leaves nothing beside it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nb-write-"));
+    const path = join(dir, "install.json");
+    writeFileSync(path, "old\n");
+    await realDeps().writeText(path, "new\n", 0o600);
+    expect(readFileSync(path, "utf8")).toBe("new\n");
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(readdirSync(dir)).toEqual(["install.json"]);
+  });
+
+  test("a write that fails leaves the old file whole", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nb-write-"));
+    const path = join(dir, "install.json");
+    writeFileSync(path, "old\n");
+    // The sibling it writes first cannot be a file, so the write fails before the rename.
+    mkdirSync(`${path}.${process.pid}.tmp`);
+    await expect(realDeps().writeText(path, "new\n")).rejects.toThrow();
+    expect(readFileSync(path, "utf8")).toBe("old\n");
   });
 });

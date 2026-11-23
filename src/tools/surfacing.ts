@@ -73,6 +73,9 @@ const DIRECT_KERNEL_TOOLS: ReadonlySet<string> = new Set([
   "files__read",
   "files__create",
   "files__list",
+  // Showing something is the host's core verb, and a model that has not been
+  // sent this tool answers "I can't open that" instead of searching for it.
+  "nb__open_app",
 ]);
 
 /** A tool is a KERNEL tool, surfaced DIRECT, when it is in {@link DIRECT_KERNEL_TOOLS}. */
