@@ -48,8 +48,8 @@ describe("model ids are provider:model at every runtime boundary", () => {
     const runtime = await startRuntime("builtin-default");
     try {
       expect(runtime.getModelSlots()).toEqual({
-        default: "anthropic:claude-sonnet-4-6",
-        fast: "anthropic:claude-sonnet-4-6",
+        default: "anthropic:claude-sonnet-5-5",
+        fast: "anthropic:claude-sonnet-5-5",
       });
     } finally {
       await runtime.shutdown();

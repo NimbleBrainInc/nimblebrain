@@ -38,6 +38,23 @@ export class ModelAuthError extends Error {
   }
 }
 
+/**
+ * A model names a provider the configuration does not build. Raised by the
+ * resolver before any provider client is called, with the same code as
+ * `ModelAuthError`, so the chat states the fix and offers no retry. When
+ * `providers.local` is configured with no `models`, the runtime has no local
+ * model to default to, and the message names that list rather than the provider
+ * the fallback default happened to name.
+ */
+export class ModelProviderNotConfiguredError extends ModelAuthError {
+  constructor(provider: string, localWithoutModels: boolean) {
+    super(provider);
+    this.message = localWithoutModels
+      ? "providers.local lists no models, so there is no local model to use. Add your model server's model ids to providers.local.models, or set models.default to local:<model-id>, and restart NimbleBrain."
+      : `The model provider ${provider} is not configured. Set its API key, or choose a model of a configured provider, and restart NimbleBrain.`;
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }

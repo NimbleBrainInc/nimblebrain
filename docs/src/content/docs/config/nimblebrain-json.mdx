@@ -215,7 +215,21 @@ The `models` object declares two role-based slots. Each value is a `provider:mod
 | `default` | Chat, general requests, most tool-using turns |
 | `fast` | Conversation titles and both history folds — end-of-turn compaction and the mid-turn fold. Cheap/fast workloads, but still needs a large context window: see below |
 
-A slot left unset resolves to the built-in default model, `anthropic:claude-sonnet-4-6`. The slots are independent: an unset `fast` does not follow `default`.
+A slot left unset resolves to the default model of a configured [provider](#providers), so an install keyed for any one provider works without naming a model. With several configured, the first in this order supplies it. A local model server comes first, so an install that runs one keeps its prompts on its own network:
+
+| Provider | Default model |
+|---|---|
+| `local` | the first model in `providers.local.models` |
+| `anthropic` | `anthropic:claude-sonnet-5-5` |
+| `openai` | `openai:gpt-6.1-sol` |
+| `google` | `google:gemini-4-argon` |
+| `xai` | `xai:grok-4.7` |
+| `nebius` | `nebius:zai-org/GLM-5.3` |
+| `greenpt` | `greenpt:glm-5.3` |
+
+The default stays inside each provider's `models` allowlist and [`modelPolicy.allowed`](#modelpolicy): a provider whose default model they leave out supplies the first model on its allowlist, then the first policy entry for it, and a provider with no permitted model is passed over. With no provider configured, or behind a [model gateway](#through-a-model-gateway), an unset slot is `anthropic:claude-sonnet-5-5`.
+
+The slots are independent: an unset `fast` takes the default model above, not the value of `models.default`. A slot you set is used as written; one that names a provider that is not configured fails each chat, naming that provider. When `providers.local` is the only provider and lists no `models`, the chat names that list instead.
 
 A workspace can override individual slots via `workspace.json → models`. When a per-request model specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots. `"alias:fast"` is the same reference written explicitly; both spellings resolve identically.
 

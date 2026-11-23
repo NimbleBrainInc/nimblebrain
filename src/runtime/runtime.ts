@@ -154,6 +154,7 @@ import {
   localCatalogModels,
   setConfiguredModels,
 } from "../model/catalog.ts";
+import { defaultModelFor, FALLBACK_DEFAULT_MODEL } from "../model/default-model.ts";
 import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../model/gateway-refusal.ts";
 import { ModelAuthError } from "../model/model-auth.ts";
 import { isQualifiedModelId, requireQualifiedModelId } from "../model/model-id.ts";
@@ -374,7 +375,6 @@ import {
 } from "./workspace-runtime.ts";
 
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
-const DEFAULT_MODEL = "anthropic:claude-sonnet-4-6";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
 import { buildMidTurnCompaction } from "./mid-turn-compaction.ts";
@@ -5392,9 +5392,15 @@ export class Runtime {
       if (value === null) delete models[slot];
       else if (value !== undefined) models[slot] = value;
     }
+    // A slot left unset gets the configured providers' default model, so an
+    // install keyed for any one provider works without naming a model. Behind a
+    // model gateway, which reaches every provider, it stays the fallback.
+    const fallback = this.config.execution?.modelGateway
+      ? FALLBACK_DEFAULT_MODEL
+      : defaultModelFor(this.config.providers ?? {}, this.config.modelPolicy?.allowed);
     return {
-      default: models.default ?? DEFAULT_MODEL,
-      fast: models.fast ?? DEFAULT_MODEL,
+      default: models.default ?? fallback,
+      fast: models.fast ?? fallback,
     };
   }
 
