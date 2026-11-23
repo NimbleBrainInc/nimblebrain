@@ -102,6 +102,18 @@ describe("init on a local model", () => {
     expect(m.ollamaModels["gemma4:e4b"]).toBeDefined();
   });
 
+  test("choosing local names the model, and the command that picks another", async () => {
+    const { code, m } = await atTerminal([], {
+      answers: ["", "local", "", "none"],
+      ollama: { models: { "gemma4:e4b": GEMMA } },
+    });
+
+    expect(code).toBe(0);
+    expect(m.said).toContain(
+      "Using gemma4:e4b. Another model: npx nimblebrain local-model <model>",
+    );
+  });
+
   test("a person who answers hosted is asked for a key, as before", async () => {
     const { m } = await atTerminal([], {
       answers: ["", "", "", "", "none"],
