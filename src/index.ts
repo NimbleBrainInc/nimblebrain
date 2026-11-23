@@ -29,15 +29,25 @@ export { ConnectorLifecycleManager } from "./connectors/runtime/index.ts";
 export { EventSourcedConversationStore } from "./conversation/event-sourced-store.ts";
 export type {
   Conversation,
-  ConversationListResult,
+  ConversationChange,
   ConversationPatch,
+  ConversationScope,
   ConversationStore,
   ConversationSummary,
-  ListOptions,
+  ListQuery,
+  NewConversation,
+  Page,
+  SearchHit,
+  SearchQuery,
+  StoredEvent,
   StoredMessage,
 } from "./conversation/index.ts";
 // Conversation
-export { InMemoryConversationStore } from "./conversation/index.ts";
+export {
+  ConversationCorruptError,
+  createFilesystemConversationStore,
+  createMemoryConversationStore,
+} from "./conversation/index.ts";
 export type {
   EngineConfig,
   EngineEvent,

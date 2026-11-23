@@ -1,200 +1,168 @@
-import { estimateCost } from "../usage/cost.ts";
-import type { TokenUsage } from "../usage/types.ts";
-import { addUsage, emptyUsage } from "../usage/types.ts";
-import { canAccess } from "./index-cache.ts";
-import { previewTextOf } from "./preview.ts";
+/**
+ * The in-memory conversation store: a test double held to the same contract
+ * as every provider (the conformance suite runs against it). Single-process
+ * like the filesystem provider, so it declares `crossProcess: false` and proves
+ * nothing about another process.
+ */
+
+import { conversationScopeOf } from "../runtime/conversation-scope.ts";
+import { ConversationNotFoundError } from "../runtime/errors.ts";
+import { assertNoBinaryPayloads } from "./binary-guard.ts";
+import { createChangeFeed } from "./instrument.ts";
+import {
+  type ConversationHeader,
+  paginate,
+  projectConversation,
+  projectSummary,
+  searchMatches,
+  summaryMatches,
+} from "./projection.ts";
 import type {
-  Conversation,
-  ConversationAccessContext,
-  ConversationListResult,
-  ConversationPatch,
+  ConversationScope,
   ConversationStore,
   ConversationSummary,
-  CreateConversationOptions,
-  ListOptions,
-  StoredMessage,
-} from "./types.ts";
+  SearchHit,
+  StoredEvent,
+} from "./store.ts";
+import { CONVERSATION_ID_RE, type Conversation, type ConversationEvent } from "./types.ts";
 
-/**
- * Derive cumulative usage + cost from a flat list of stored messages.
- * Used by the in-memory store when building a ConversationSummary. Cost is computed at read time from the catalog;
- * never stored.
- */
-function deriveSummaryTotals(messages: StoredMessage[]): {
-  usage: TokenUsage;
-  costUsd: number;
-} {
-  const usage = emptyUsage();
-  let costUsd = 0;
-  for (const msg of messages) {
-    if (msg.role !== "assistant" || !msg.metadata?.usage || !msg.metadata.model) continue;
-    addUsage(usage, msg.metadata.usage);
-    costUsd += estimateCost(msg.metadata.model, msg.metadata.usage);
+interface StoredRecord {
+  workspaceId: string;
+  header: ConversationHeader;
+  events: ConversationEvent[];
+}
+
+/** A deep copy, so a caller holding a returned value cannot change what is stored. */
+function copy<T>(value: T): T {
+  return structuredClone(value);
+}
+
+export function createMemoryConversationStore(): ConversationStore {
+  const feed = createChangeFeed();
+  /** Keyed by workspace, owner and id, so a scope reaches only its own records. */
+  const records = new Map<string, StoredRecord>();
+  const keyOf = (scope: ConversationScope, id: string) =>
+    JSON.stringify([scope.workspaceId, scope.ownerId, id]);
+
+  function find(scope: ConversationScope, id: string): StoredRecord | null {
+    return records.get(keyOf(scope, id)) ?? null;
   }
-  return { usage, costUsd };
-}
 
-/** First user message's preview text, or "" when there is none. */
-function firstUserPreview(messages: StoredMessage[]): string {
-  const firstUser = messages.find((m) => m.role === "user");
-  return firstUser ? previewTextOf(firstUser.content) : "";
-}
+  function stored(record: StoredRecord): StoredEvent[] {
+    return record.events.map((event, i) => ({ seq: i + 1, event: copy(event) }));
+  }
 
-/** True when the lowercased search term hits the title or the preview. */
-function matchesSearch(title: string | null, preview: string, search: string): boolean {
-  const titleMatch = title?.toLowerCase().includes(search) ?? false;
-  const previewMatch = preview.toLowerCase().includes(search);
-  return titleMatch || previewMatch;
-}
+  function inScope(scope: ConversationScope): StoredRecord[] {
+    return [...records.entries()]
+      .filter(([key]) => {
+        const [ws, owner] = JSON.parse(key) as [string, string];
+        return ws === scope.workspaceId && owner === scope.ownerId;
+      })
+      .map(([, record]) => record);
+  }
 
-/** Assemble a ConversationSummary (with derived totals) for one conversation. */
-function buildSummary(
-  conversation: Conversation,
-  msgs: StoredMessage[],
-  preview: string,
-): ConversationSummary {
-  const totals = deriveSummaryTotals(msgs);
+  async function get(scope: ConversationScope, id: string): Promise<Conversation | null> {
+    const record = find(scope, id);
+    return record ? projectConversation(copy(record.header), scope, record.events) : null;
+  }
+
+  /** Synchronous, so a batch lands between two awaits and never interleaves another. */
+  function append(scope: ConversationScope, id: string, events: ConversationEvent[]): number {
+    const record = find(scope, id);
+    if (!record) throw new ConversationNotFoundError(id, scope.workspaceId);
+    record.events.push(...events.map(copy));
+    return record.events.length;
+  }
+
   return {
-    id: conversation.id,
-    createdAt: conversation.createdAt,
-    updatedAt: conversation.updatedAt,
-    title: conversation.title,
-    messageCount: msgs.length,
-    preview,
-    totalInputTokens: totals.usage.inputTokens,
-    totalOutputTokens: totals.usage.outputTokens,
-    totalCostUsd: totals.costUsd,
-    ownerId: conversation.ownerId,
+    crossProcess: false,
+    get,
+
+    async create(scope, init) {
+      const id = init.id ?? `conv_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+      if (!CONVERSATION_ID_RE.test(id)) {
+        throw new Error("Invalid conversation ID: must match conv_ + 16 hex chars");
+      }
+      if (find(scope, id)) throw new Error(`Conversation ${id} already exists`);
+      const header: ConversationHeader = {
+        id,
+        createdAt: new Date().toISOString(),
+        ownerId: scope.ownerId,
+        model: init.model,
+        ...(init.metadata ? { metadata: copy(init.metadata) } : {}),
+      };
+      records.set(keyOf(scope, id), { workspaceId: scope.workspaceId, header, events: [] });
+      feed.publish({ kind: "created", id, scope });
+      return projectConversation(copy(header), scope, []);
+    },
+
+    async *events(scope, id, opts) {
+      const record = find(scope, id);
+      if (!record) return;
+      const after = opts?.afterSeq ?? 0;
+      for (const event of stored(record)) {
+        if (event.seq > after) yield event;
+      }
+    },
+
+    async appendEvents(scope, id, events) {
+      for (const event of events) assertNoBinaryPayloads(event, `event(${event.type})`);
+      const seq = append(scope, id, events);
+      if (events.length > 0) feed.publish({ kind: "appended", id, scope });
+      return seq;
+    },
+
+    async update(scope, id, patch) {
+      if (!find(scope, id)) return null;
+      if (patch.title !== undefined) {
+        append(scope, id, [
+          { ts: new Date().toISOString(), type: "metadata.title", title: patch.title },
+        ]);
+        feed.publish({ kind: "updated", id, scope });
+      }
+      return get(scope, id);
+    },
+
+    async delete(scope, id) {
+      if (!records.delete(keyOf(scope, id))) return false;
+      feed.publish({ kind: "deleted", id, scope });
+      return true;
+    },
+
+    async deleteWorkspace(workspaceId) {
+      for (const [key, record] of [...records.entries()]) {
+        if (record.workspaceId !== workspaceId) continue;
+        records.delete(key);
+        const [, ownerId] = JSON.parse(key) as [string, string];
+        feed.publish({
+          kind: "deleted",
+          id: record.header.id,
+          scope: conversationScopeOf({ workspaceId, identity: { id: ownerId } }),
+        });
+      }
+    },
+
+    async list(scope, query) {
+      const summaries: ConversationSummary[] = inScope(scope)
+        .map((record) => projectSummary(record.header, record.events))
+        .filter((summary) => summaryMatches(summary, query));
+      const key = query.sort === "created" ? "createdAt" : "lastActivityAt";
+      return paginate(summaries, (s) => s[key], query.cursor, query.limit);
+    },
+
+    async search(scope, query) {
+      const text = query.text.trim();
+      if (!text) throw new Error("A search needs non-empty text");
+      const hits: Array<SearchHit & { lastActivityAt: string }> = [];
+      for (const record of inScope(scope)) {
+        const summary = projectSummary(record.header, record.events);
+        const hit = searchMatches(record.header.id, summary.title, stored(record), text);
+        if (hit) hits.push({ ...hit, lastActivityAt: summary.lastActivityAt });
+      }
+      const page = paginate(hits, (h) => h.lastActivityAt, query.cursor, query.limit);
+      return { ...page, items: page.items.map(({ lastActivityAt: _at, ...hit }) => hit) };
+    },
+
+    subscribe: (listener) => feed.subscribe(listener),
   };
-}
-
-/** Entries after the cursor ID (inclusive skip); all entries when no/unknown cursor. */
-function applyCursor(summaries: ConversationSummary[], cursor?: string): ConversationSummary[] {
-  if (!cursor) return summaries;
-  const idx = summaries.findIndex((s) => s.id === cursor);
-  return idx >= 0 ? summaries.slice(idx + 1) : summaries;
-}
-
-export class InMemoryConversationStore implements ConversationStore {
-  private conversations = new Map<string, Conversation>();
-  private messages = new Map<string, StoredMessage[]>();
-
-  async create(options: CreateConversationOptions): Promise<Conversation> {
-    const id = `conv_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
-    const now = new Date().toISOString();
-    const conversation: Conversation = {
-      id,
-      createdAt: now,
-      updatedAt: now,
-      title: null,
-      lastModel: null,
-      ownerId: options.ownerId,
-      model: options.model,
-      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
-    };
-    this.conversations.set(id, conversation);
-    this.messages.set(id, []);
-    return conversation;
-  }
-
-  async load(id: string, access?: ConversationAccessContext): Promise<Conversation | null> {
-    const conversation = this.conversations.get(id) ?? null;
-    if (!conversation) return null;
-
-    if (access && !canAccess({ ownerId: conversation.ownerId }, access)) {
-      return null;
-    }
-
-    return conversation;
-  }
-
-  async append(conversation: Conversation, message: StoredMessage): Promise<void> {
-    const messages = this.messages.get(conversation.id);
-    if (!messages) throw new Error(`Conversation ${conversation.id} not found`);
-
-    // Track lastModel for display. Token totals are derived from message
-    // history at read time (deriveSummaryTotals), never stored.
-    if (message.role === "assistant" && message.metadata?.model) {
-      conversation.lastModel = message.metadata.model;
-    }
-
-    // Update updatedAt from message timestamp
-    conversation.updatedAt = message.timestamp;
-
-    messages.push(message);
-  }
-
-  async history(conversation: Conversation, limit?: number): Promise<StoredMessage[]> {
-    const messages = this.messages.get(conversation.id);
-    if (!messages) return [];
-    const slice = limit ? messages.slice(-limit) : messages;
-    return slice.map((m) => ({ ...m }));
-  }
-
-  /** Summary for one conversation, or null when access/search filters exclude it. */
-  private summarize(
-    id: string,
-    conversation: Conversation,
-    access: ConversationAccessContext | undefined,
-    search: string | undefined,
-  ): ConversationSummary | null {
-    if (access && !canAccess({ ownerId: conversation.ownerId }, access)) return null;
-    const msgs = this.messages.get(id) ?? [];
-    const preview = firstUserPreview(msgs);
-    if (search && !matchesSearch(conversation.title, preview, search)) return null;
-    return buildSummary(conversation, msgs, preview);
-  }
-
-  async list(
-    options?: ListOptions,
-    access?: ConversationAccessContext,
-  ): Promise<ConversationListResult> {
-    const limit = options?.limit ?? 20;
-    const search = options?.search?.toLowerCase();
-    const sortBy = options?.sortBy ?? "updatedAt";
-    const summaries: ConversationSummary[] = [];
-
-    for (const [id, conversation] of this.conversations) {
-      const summary = this.summarize(id, conversation, access, search);
-      if (summary) summaries.push(summary);
-    }
-
-    // Sort descending
-    summaries.sort((a, b) => b[sortBy].localeCompare(a[sortBy]));
-
-    const totalCount = summaries.length;
-
-    // Cursor pagination: skip entries up to and including the cursor ID
-    const items = applyCursor(summaries, options?.cursor);
-    const page = items.slice(0, limit);
-    const nextCursor =
-      page.length === limit && items.length > limit ? (page[page.length - 1]?.id ?? null) : null;
-
-    return { conversations: page, nextCursor, totalCount };
-  }
-
-  async delete(id: string, access?: ConversationAccessContext): Promise<boolean> {
-    const conv = this.conversations.get(id);
-    if (!conv) return false;
-    if (access && conv.ownerId !== access.userId) return false;
-    this.conversations.delete(id);
-    this.messages.delete(id);
-    return true;
-  }
-
-  async update(
-    id: string,
-    patch: ConversationPatch,
-    access?: ConversationAccessContext,
-  ): Promise<Conversation | null> {
-    const conversation = this.conversations.get(id);
-    if (!conversation) return null;
-    if (access && conversation.ownerId !== access.userId) return null;
-
-    if (patch.title !== undefined) {
-      conversation.title = patch.title;
-    }
-
-    return { ...conversation };
-  }
 }

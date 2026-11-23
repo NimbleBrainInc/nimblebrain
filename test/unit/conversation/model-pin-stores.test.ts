@@ -1,12 +1,7 @@
 /**
- * `CreateConversationOptions.model` is part of the `ConversationStore`
- * contract, so every implementation has to honor it — not just the one the
- * runtime happens to be typed to.
- *
- * The runtime only ever constructs `EventSourcedConversationStore`, so a store
- * that dropped the option would fail silently and invisibly. The in-memory
- * store is exported from the package index and already honors `workspaceId`
- * through the identical spread; this keeps the two options symmetric.
+ * The event-sourced store honors the model binding. The `ConversationStore`
+ * providers are held to it by the conformance suite
+ * (`test/unit/conversation/store-conformance.test.ts`).
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
@@ -15,8 +10,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
-import { InMemoryConversationStore } from "../../../src/conversation/memory-store.ts";
-import type { ConversationStore } from "../../../src/conversation/types.ts";
 import { ConversationCorruptedError } from "../../../src/runtime/errors.ts";
 
 const MODEL = "nebius:moonshotai/Kimi-K2.6";
@@ -32,14 +25,9 @@ afterAll(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 });
 
-const stores: Array<[string, () => ConversationStore]> = [
-  ["EventSourcedConversationStore", () => new EventSourcedConversationStore({ dir: tempDir() })],
-  ["InMemoryConversationStore", () => new InMemoryConversationStore()],
-];
-
-describe.each(stores)("%s", (_name, make) => {
+describe("EventSourcedConversationStore", () => {
   test("create carries the model binding", async () => {
-    const store = make();
+    const store = new EventSourcedConversationStore({ dir: tempDir() });
     const conversation = await store.create({ ownerId: "usr_test", model: MODEL });
     expect(conversation.model).toBe(MODEL);
 

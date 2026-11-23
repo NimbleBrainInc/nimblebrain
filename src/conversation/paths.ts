@@ -28,6 +28,14 @@ export function workspaceConversationsDir(workDir: string, wsId: string, ownerId
   return join(workDir, WORKSPACES_SEGMENT, wsId, CONVERSATIONS_SEGMENT, ownerId);
 }
 
+/**
+ * Directory holding every owner's conversations in one workspace:
+ * `{workDir}/workspaces/<wsId>/conversations`. A workspace delete removes it.
+ */
+export function workspaceConversationsRoot(workDir: string, wsId: string): string {
+  return join(workDir, WORKSPACES_SEGMENT, wsId, CONVERSATIONS_SEGMENT);
+}
+
 /** What a parsed conversation path resolves to. */
 export interface ParsedConversationPath {
   wsId: string;

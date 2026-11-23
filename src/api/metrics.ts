@@ -801,3 +801,17 @@ export const modelGatewayProvidersUnknown = new Gauge({
     if (status) this.set(status.known ? 0 : 1);
   },
 });
+
+/**
+ * Duration of one domain-store operation, in seconds (ADR-0075): `store` names
+ * the domain (`conversations`), `op` the method, `provider` the medium serving
+ * it, and `outcome` whether it resolved (`ok`) or threw (`error`). Every
+ * provider is measured the same way, so a slow store shows whichever serves it.
+ */
+export const storeOperationSeconds = new Histogram({
+  name: "nb_store_operation_seconds",
+  help: "Duration of one domain-store operation in seconds, by store, operation, provider and outcome.",
+  labelNames: ["store", "op", "provider", "outcome"] as const,
+  buckets: [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+  registers: [metricsRegistry],
+});
