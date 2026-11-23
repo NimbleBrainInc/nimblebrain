@@ -118,3 +118,52 @@ describe("check-catalog-dcr checkEntry at /authorize", () => {
     expect(formatStatus(r)).toBe("✓ ok (DCR + authorize end-to-end)");
   });
 });
+
+describe("check-catalog-dcr checkEntry reachability", () => {
+  const origFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+  });
+
+  const REDIRECT = "https://nb.example.com/v1/mcp-auth/callback";
+  const entry = {
+    name: "com.example/mcp",
+    description: "dcr vendor",
+    version: "1.0.0",
+    remotes: [{ type: "sse", url: "https://mcp.example.com/sse" }],
+    _meta: { "ai.nimblebrain/connector": { auth: "dcr" } },
+  } as Parameters<typeof checkEntry>[0];
+
+  /** A vendor whose OAuth chain works; `endpoint` answers the MCP URL by method. */
+  function vendor(endpoint: (method: string) => Response): typeof fetch {
+    return (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      if (url.pathname === "/sse") return endpoint(init?.method ?? "GET");
+      if (url.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          registration_endpoint: "https://mcp.example.com/register",
+          authorization_endpoint: "https://mcp.example.com/authorize",
+        });
+      }
+      if (url.pathname === "/register") return Response.json({ client_id: "probe-client" });
+      if (url.pathname === "/authorize") return new Response("login", { status: 200 });
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+  }
+
+  test("a retired endpoint (410 Gone) fails", async () => {
+    globalThis.fetch = vendor(() => new Response("moved to /mcp", { status: 410 }));
+    const r = await checkEntry(entry, REDIRECT);
+    expect(r.pass).toBe(false);
+    expect(formatStatus(r)).toBe("✗ FAIL — unreachable (HTTP 410)");
+  });
+
+  test("a 404 on HEAD alone is not trusted when GET answers", async () => {
+    globalThis.fetch = vendor(
+      (method) => new Response(null, { status: method === "HEAD" ? 404 : 401 }),
+    );
+    const r = await checkEntry(entry, REDIRECT);
+    expect(r.pass).toBe(true);
+    expect(r.reachability.status).toBe(401);
+  });
+});
