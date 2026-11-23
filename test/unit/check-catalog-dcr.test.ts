@@ -1,5 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import { selectDcrEntries } from "../../scripts/check-catalog-dcr.ts";
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  checkEntry,
+  formatStatus,
+  isBotChallenge,
+  selectDcrEntries,
+} from "../../scripts/check-catalog-dcr.ts";
 import { readCatalogServers } from "../../src/connectors/catalog/read.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
@@ -33,5 +38,83 @@ describe("check-catalog-dcr selectDcrEntries", () => {
       },
     ]);
     expect(noRemote).toHaveLength(0);
+  });
+});
+
+describe("check-catalog-dcr isBotChallenge", () => {
+  test("recognizes Cloudflare's challenge marker", () => {
+    const res = new Response("<title>Just a moment...</title>", {
+      status: 403,
+      headers: { "cf-mitigated": "challenge" },
+    });
+    expect(isBotChallenge(res)).toBe(true);
+  });
+
+  test("treats a vendor's own 4xx as a real answer", () => {
+    const res = new Response("invalid redirect", { status: 400 });
+    expect(isBotChallenge(res)).toBe(false);
+  });
+});
+
+describe("check-catalog-dcr checkEntry at /authorize", () => {
+  const origFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+  });
+
+  const REDIRECT = "https://nb.example.com/v1/mcp-auth/callback";
+  const entry = {
+    name: "com.example/mcp",
+    description: "dcr vendor",
+    version: "1.0.0",
+    remotes: [{ type: "streamable-http", url: "https://mcp.example.com/mcp" }],
+    _meta: { "ai.nimblebrain/connector": { auth: "dcr" } },
+  } as Parameters<typeof checkEntry>[0];
+
+  /** A vendor whose discovery and registration succeed; `authorize` answers /authorize. */
+  function vendor(authorize: () => Response): typeof fetch {
+    return (async (input: string | URL | Request) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      if (url.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          registration_endpoint: "https://mcp.example.com/register",
+          authorization_endpoint: "https://mcp.example.com/authorize",
+        });
+      }
+      if (url.pathname === "/register") return Response.json({ client_id: "probe-client" });
+      if (url.pathname === "/authorize") return authorize();
+      if (url.pathname === "/mcp") return new Response(null, { status: 401 });
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+  }
+
+  test("a Cloudflare challenge passes, marked unverified", async () => {
+    globalThis.fetch = vendor(
+      () =>
+        new Response("<title>Just a moment...</title>", {
+          status: 403,
+          headers: { "cf-mitigated": "challenge" },
+        }),
+    );
+    const r = await checkEntry(entry, REDIRECT);
+    expect(r.pass).toBe(true);
+    expect(r.unverified).toContain("bot challenge");
+    expect(formatStatus(r)).toStartWith("⚠ ok (DCR registered; ");
+  });
+
+  test("a vendor's own 400 still fails", async () => {
+    globalThis.fetch = vendor(() => new Response("Invalid redirect URI", { status: 400 }));
+    const r = await checkEntry(entry, REDIRECT);
+    expect(r.pass).toBe(false);
+    expect(r.unverified).toBeUndefined();
+    expect(formatStatus(r)).toBe(
+      "✗ FAIL — /authorize rejected our redirect URI: HTTP 400: Invalid redirect URI",
+    );
+  });
+
+  test("a login page passes, verified end to end", async () => {
+    globalThis.fetch = vendor(() => new Response("login", { status: 200 }));
+    const r = await checkEntry(entry, REDIRECT);
+    expect(formatStatus(r)).toBe("✓ ok (DCR + authorize end-to-end)");
   });
 });

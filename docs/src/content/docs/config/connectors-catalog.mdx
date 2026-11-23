@@ -470,7 +470,7 @@ Steps 1–4 are the discovery chain the production OAuth provider uses; steps 5 
 5. **DCR registration** — POST a synthetic client to the `registration_endpoint` with that redirect URI. Catches vendors that advertise DCR but enforce a redirect-URI host allowlist (Intercom, Vercel).
 6. **Authorize** — `GET` the `authorization_endpoint` with that `client_id` and the same redirect URI. Catches vendors that accept the registration but reject the redirect URI one step later (Canva).
 
-An entry passes only if every step succeeds; step 6 is skipped when the AS advertises no `authorization_endpoint`. Steps 5 and 6 are what catch "DCR theater" — a vendor that ships the RFC 7591 endpoints but enforces a parallel host allowlist the spec is meant to make obsolete, which discovery alone reports as healthy.
+An entry passes only if every step succeeds; step 6 is skipped when the AS advertises no `authorization_endpoint`. When step 6 meets a bot challenge (Cloudflare's `cf-mitigated: challenge`) instead of the vendor's answer, the entry passes marked ⚠ unverified: a script cannot pass the challenge, a person's browser can, and step 5 has already accepted the redirect URI. Steps 5 and 6 are what catch "DCR theater" — a vendor that ships the RFC 7591 endpoints but enforces a parallel host allowlist the spec is meant to make obsolete, which discovery alone reports as healthy.
 
 In this repo it is a **manual CLI** — deliberately, since the catalog it needs to check is deployment config living in the directory `NB_CURATED_CATALOG_DIR` points at, not in the image. The automated gate runs in the deploy repo alongside that real catalog, so a vendor going down or dropping DCR support breaks the catalog's own PR. It is not part of `bun run verify`, which stays offline.
 
