@@ -2030,6 +2030,9 @@ export class Runtime {
     // fails or the process is killed. Reports the skills composed at turn start:
     // the trigger match and the always-on context skills (persona +
     // org/workspace/user + connector always-on; vendored core excluded).
+    const composedSkills = composedSkillNames(composed);
+    // The tools a run calls read the composed skills from its request context.
+    const runCtx: RequestContext = { ...reqCtx, composedSkills };
     const skillsLoaded = buildSkillsLoadedPayload(
       collectLoadedSkills({
         trigger: composed.skillMatch,
@@ -2078,10 +2081,11 @@ export class Runtime {
       // From the UN-rehydrated history — this is what makes surface-ONCE hold
       // across turns. A fresh one-shot run has a single user message and no
       // prior history, so its set is empty.
-      // A declared skill is in the system prompt, so no channel delivers it again.
+      // A declared or trigger-matched skill is already in the prompt, so no
+      // channel delivers it again.
       alreadyInjectedConnectorSkills: [
         ...this.collectInjectedConnectorSkills(effectiveHistory),
-        ...composed.declaredSkills.map((s) => s.name),
+        ...composedSkills,
       ],
       signal: deadline.signal,
     });
@@ -2155,7 +2159,7 @@ export class Runtime {
     // the llm.call and tool.dispatch spans nest under it.
     let result: EngineResult;
     try {
-      result = await runWithRequestContext(agentExecutionContext(reqCtx, agentRuntime), () =>
+      result = await runWithRequestContext(agentExecutionContext(runCtx, agentRuntime), () =>
         withSpan(
           "agent.turn",
           {
@@ -6677,6 +6681,19 @@ function resolveEngineSystem(
  * Forking a call means wrapping it too — surrounding code is NOT in this
  * context by default.
  */
+/**
+ * The skills a turn's prompt already carries: its declared skills and the one a
+ * trigger matched. No channel should deliver one of them again.
+ */
+function composedSkillNames(composed: {
+  declaredSkills: readonly { name: string }[];
+  skillMatch: { skill: { manifest: { name: string } } } | null;
+}): string[] {
+  const names = composed.declaredSkills.map((s) => s.name);
+  if (composed.skillMatch) names.push(composed.skillMatch.skill.manifest.name);
+  return names;
+}
+
 function buildRunContext(
   spec: RunSpec,
   runId: string,

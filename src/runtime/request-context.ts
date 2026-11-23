@@ -115,6 +115,12 @@ export interface RequestContext {
   agentRuntime?: string;
   toolPromotion?: ToolPromotionControls;
   /**
+   * Skills this turn's prompt already carries: the run's declared skills and
+   * the trigger-matched one. `nb__use_skill` answers "already loaded" for these,
+   * since no conversation event records a composed skill.
+   */
+  composedSkills?: readonly string[];
+  /**
    * True when this context belongs to an unattended run (`executeTask` — a
    * task), false/undefined for interactive chat. Set once by the runtime
    * (never from caller input) and, because it rides the AsyncLocalStorage
