@@ -843,6 +843,36 @@ describe("a share of the budget too small for an item", () => {
     expect(rerun?.errorCode).toBeUndefined();
   });
 
+  it("settles an item that left a deliverable as incomplete, and runs it again on rerun_failed though its verdict passed", async () => {
+    // One run alone is granted 249 tokens, spent before the fourth of five
+    // calls. It leaves a partial deliverable, so the item settles incomplete
+    // with a passing verdict: only its errorCode makes it rerunnable.
+    const h = harness({
+      door: { calls: 5, grant: true, cachedInput: true },
+      behave: () => ({ resultPreview: '{"partial":true}' }),
+      maxConcurrentRuns: 4,
+    });
+    makeTask();
+    const out = handleRunBatch(
+      { taskId: "enrich", items: items("a"), concurrency: 1, budgetUsd: 0.25 },
+      h.ctx,
+    );
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    const [item] = readBatchItems(workDir, WS, OWNER, out.batch.id);
+    expect(item?.execution).toBe("incomplete");
+    expect(item?.errorCode).toBe("exceeds_share");
+    expect(item?.verdict).toBe("pass");
+    const settledRunId = item?.runId;
+
+    h.driver.control(WS, OWNER, out.batch.id, "rerun_failed", 4);
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    const [rerun] = readBatchItems(workDir, WS, OWNER, out.batch.id);
+    expect(rerun?.runId).not.toBe(settledRunId);
+    expect(rerun?.previousRunIds).toContain(settledRunId);
+    expect(rerun?.execution).toBe("completed");
+    expect(rerun?.errorCode).toBeUndefined();
+  });
+
   it("takes its queued runs back to pending when it halves, and completes with fewer sharing", async () => {
     // Two slots under a concurrency of 4, so two of the batch's runs wait
     // queued. 0.8 shared by 4 grants 200 tokens, spent after two of three
