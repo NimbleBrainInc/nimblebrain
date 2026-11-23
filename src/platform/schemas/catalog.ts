@@ -51,7 +51,6 @@ export const PlatformToolCatalog = {
     get: { input: Conversations.ConversationsGetInput },
     search: { input: Conversations.ConversationsSearchInput },
     update: { input: Conversations.ConversationsUpdateInput },
-    fork: { input: Conversations.ConversationsForkInput },
     stats: { input: Conversations.ConversationsStatsInput },
     export: { input: Conversations.ConversationsExportInput },
   },

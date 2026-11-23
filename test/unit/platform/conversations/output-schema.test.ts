@@ -233,7 +233,7 @@ afterEach(async () => {
 describe("conversations tools publish results their output schemas admit", () => {
   test("every tool declares an output schema", async () => {
     const tools = await source.tools();
-    expect(tools.length).toBe(7);
+    expect(tools.length).toBe(6);
     for (const tool of tools) expect(tool.outputSchema).toBeDefined();
   });
 

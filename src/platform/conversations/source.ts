@@ -17,8 +17,6 @@ import type { McpSource } from "../../tools/mcp-source.ts";
 import {
   ConversationsExportInput,
   ConversationsExportOutput,
-  ConversationsForkInput,
-  ConversationsForkOutput,
   ConversationsGetInput,
   ConversationsGetOutput,
   ConversationsListInput,
@@ -32,7 +30,6 @@ import {
 } from "../schemas/conversations.ts";
 import { ConversationIndex, type ReadScope } from "./index-cache.ts";
 import { handleExport } from "./tools/export.ts";
-import { handleFork } from "./tools/fork.ts";
 import { handleGet } from "./tools/get.ts";
 import { handleList } from "./tools/list.ts";
 import { handleSearch } from "./tools/search.ts";
@@ -49,7 +46,7 @@ import { loadConversationsUi } from "./ui-resource.ts";
  * themselves live beside this file (`tools/`, `index-cache.ts`,
  * `jsonl-reader.ts`), as does the iframe dist (`ui/`).
  *
- * Tools: list, get, search, update, fork, stats, export
+ * Tools: list, get, search, update, stats, export
  * Resources: ui://conversations/browser (HTML SPA from `ui/dist`)
  * Placements: sidebar conversations link at priority 1
  */
@@ -160,7 +157,7 @@ export async function createConversationsSource(
    *
    * An agent running in a chat has no way to learn its own conversation id —
    * it is not in the prompt and no tool reports it — so a required `id` on
-   * `update`/`get`/`fork`/`export` makes the current conversation the one
+   * `update`/`get`/`export` makes the current conversation the one
    * conversation these tools cannot reach. The observed failure is an agent
    * inventing a placeholder and getting `Conversation not found`.
    *
@@ -303,25 +300,6 @@ export async function createConversationsSource(
         // announcement never fires for it.
         runtime.announceIdentitySourceChange("conversations", scope.userId);
         return capSummary(updated);
-      }),
-    }),
-    typedTool({
-      name: "fork",
-      description:
-        "Fork a conversation at a specific message index, creating a new conversation with messages up to that point. Omit `id` to fork the conversation you are in.",
-      inputSchema: ConversationsForkInput,
-      outputSchema: ConversationsForkOutput,
-      handler: withErrorHandling(async (fork) => {
-        const { index } = await getIndex();
-        const scope = currentReadScope();
-        const forked = await handleFork(
-          { ...fork, id: resolveConversationId(fork.id) },
-          index,
-          scope,
-        );
-        // As `update`: written beside the store, so announced here.
-        runtime.announceIdentitySourceChange("conversations", scope.userId);
-        return capSummary(forked);
       }),
     }),
     typedTool({

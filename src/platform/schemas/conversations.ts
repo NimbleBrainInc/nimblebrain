@@ -77,16 +77,6 @@ export const ConversationsUpdateInput = Type.Object(
 );
 export type ConversationsUpdateInput = Static<typeof ConversationsUpdateInput>;
 
-export const ConversationsForkInput = Type.Object({
-  id: Type.Optional(
-    Type.String({ description: `Source conversation. ${CONVERSATION_ID_DESCRIPTION}` }),
-  ),
-  atMessage: Type.Optional(
-    Type.Number({ description: "Message index to fork at. Default: all messages." }),
-  ),
-});
-export type ConversationsForkInput = Static<typeof ConversationsForkInput>;
-
 export const ConversationsStatsInput = Type.Object({
   period: Type.Optional(
     StringEnum(["day", "week", "month", "all"] as const, {
@@ -115,7 +105,7 @@ export type ConversationsExportInput = Static<typeof ConversationsExportInput>;
 
 const NullableString = Type.Union([Type.String(), Type.Null()]);
 
-/** A conversation as its header and events project it: the row `list`, `update` and `fork` describe. */
+/** A conversation as its header and events project it: the row `list` and `update` describe. */
 const ConversationSummaryFields = {
   id: Type.String(),
   createdAt: Type.String(),
@@ -128,13 +118,6 @@ const ConversationSummaryFields = {
     description: "The conversation's first user message, capped for the response.",
   }),
 };
-
-/** What `conversations__fork` returns: a summary of the new conversation. */
-export const ConversationsForkOutput = Type.Object({
-  ...ConversationSummaryFields,
-  title: Type.Null({ description: "A fork starts untitled." }),
-});
-export type ConversationsForkOutput = Static<typeof ConversationsForkOutput>;
 
 /** What `conversations__update` returns: the conversation as a reader now projects it. */
 export const ConversationsUpdateOutput = Type.Object({
@@ -217,10 +200,8 @@ export const DisplayUsage = Type.Object({
   outputTokens: Type.Number(),
   cacheReadTokens: Type.Optional(Type.Number()),
   /**
-   * Cache-write and reasoning subtotals carried through so fork() can
-   * round-trip them onto the new file. Losing them here means a forked
-   * conversation would report lower cost than the original on cache-heavy or
-   * reasoning-heavy turns.
+   * Cache-write and reasoning subtotals, carried so a `get` or JSON export
+   * holds the turn's full usage, not only its input and output tokens.
    */
   cacheWriteTokens: Type.Optional(Type.Number()),
   reasoningTokens: Type.Optional(Type.Number()),

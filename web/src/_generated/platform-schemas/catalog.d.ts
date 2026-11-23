@@ -353,12 +353,6 @@ export declare const PlatformToolCatalog: {
                 title: import("@sinclair/typebox").TString;
             }>;
         };
-        readonly fork: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                atMessage: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-            }>;
-        };
         readonly stats: {
             readonly input: import("@sinclair/typebox").TObject<{
                 period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"all" | "day" | "month" | "week">>;

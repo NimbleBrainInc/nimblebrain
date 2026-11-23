@@ -157,10 +157,10 @@ export function reconstructMessages(
 ): StoredMessage[] {
   // `ignoreCompaction` reconstructs the FULL verbatim history, replaying every
   // turn and skipping the summary seed entirely. This is the conversation's
-  // truth — what the UI/export show and what a fork must copy — as opposed to
-  // the default (compacted) projection, which is a model-context optimization.
-  // Callers that feed the model want the compacted view; callers that copy or
-  // display the conversation want this one.
+  // truth — what the UI and export show — as opposed to the default
+  // (compacted) projection, which is a model-context optimization. Callers
+  // that feed the model want the compacted view; callers that display the
+  // conversation want this one.
   if (!opts?.ignoreCompaction) {
     // Honor the most recent compaction: every event before its boundary is
     // represented by the summary seed; turns at or after the boundary replay

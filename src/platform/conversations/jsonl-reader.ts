@@ -653,8 +653,8 @@ interface UsageAccumulator {
 
 /**
  * Add one llm.response's usage into the accumulator. cacheWrite and reasoning
- * are carried so fork() can round-trip them; the chat UI doesn't render them
- * per-message today.
+ * are carried so a turn's usage is complete for `get` and export; the chat UI
+ * doesn't render them per-message.
  */
 function addLlmUsage(acc: UsageAccumulator, llm: LlmResponseEvent): void {
   acc.inputTokens += llm.usage.inputTokens;

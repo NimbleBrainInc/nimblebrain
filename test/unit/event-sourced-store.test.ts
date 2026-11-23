@@ -551,75 +551,7 @@ describe("EventSourcedConversationStore", () => {
     expect((await wsStore.load("conv_00000000000000a2"))?.workspaceId).toBe("ws_00aa00aa00aa00aa");
   });
 
-  it("fork() preserves assistant turns through history() round-trip", async () => {
-    // fork() must write llm.response events inside run.start/run.done
-    // bookends. The reconstructor only emits assistant messages inside an
-    // active run scope, so without them history() on a forked event-format
-    // conversation returns only the user turns.
-    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
-    store.setActiveConversation(conv.id);
-
-    store.emit(engineEvent("run.start", runStartPayload({ runId: "r1", model: "test-model" })));
-    store.emit({
-      type: "llm.done",
-      data: llmDonePayload({
-        runId: "r1",
-        model: "test-model",
-        content: [{ type: "text", text: "First reply" }],
-        usage: { inputTokens: 10, outputTokens: 5 },
-        llmMs: 50,
-      }),
-    });
-    store.emit({
-      type: "run.done",
-      data: { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 50 },
-    });
-
-    store.appendEvent(conv.id, {
-      ts: new Date().toISOString(),
-      type: "user.message",
-      content: [{ type: "text", text: "Follow up" }],
-    } as ConversationEvent);
-
-    store.emit(engineEvent("run.start", runStartPayload({ runId: "r2", model: "test-model" })));
-    store.emit({
-      type: "llm.done",
-      data: llmDonePayload({
-        runId: "r2",
-        model: "test-model",
-        content: [{ type: "text", text: "Second reply" }],
-        usage: { inputTokens: 20, outputTokens: 8 },
-        llmMs: 75,
-      }),
-    });
-    store.emit({
-      type: "run.done",
-      data: { runId: "r2", stopReason: "complete", iterations: 1, totalMs: 75 },
-    });
-
-    const sourceMessages = await store.history(conv);
-    const sourceAssistantCount = sourceMessages.filter((m) => m.role === "assistant").length;
-
-    const forked = await store.fork(conv.id);
-    expect(forked).not.toBeNull();
-    expect(forked!.id).not.toBe(conv.id);
-
-    const forkedMessages = await store.history(forked!);
-    const forkedAssistantCount = forkedMessages.filter((m) => m.role === "assistant").length;
-
-    // Forked conversation must have the same number of assistant turns
-    // as the source. Without the synthetic run.start/run.done bookends
-    // around each forked llm.response, this would be 0.
-    expect(forkedAssistantCount).toBe(sourceAssistantCount);
-    expect(forkedAssistantCount).toBeGreaterThan(0);
-  });
-
-  it("fork() copies the verbatim history, not the compacted projection", async () => {
-    // Regression: fork() routed through history() → the COMPACTED projection.
-    // Forking a compacted conversation baked the `<conversation-summary>` seed
-    // in as real events and permanently dropped the pre-boundary turns the UI
-    // still shows. fork() must read the full verbatim history (ignore
-    // compaction) so a fork copies the real turns the user sees.
+  it("history() returns the compacted projection once a compaction is logged", async () => {
     const T = (n: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString();
     const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
 
@@ -671,19 +603,9 @@ describe("EventSourcedConversationStore", () => {
         )
         .join(" | ");
 
-    // Sanity: the model-facing projection IS compacted (first turn summarized).
+    // The model-facing projection is compacted: the first turn is summarized.
     const modelText = flatten(await store.history(conv));
     expect(modelText).toContain("SUMMARY OF FIRST TURN");
     expect(modelText).not.toContain("FIRST REPLY");
-
-    // The fork preserves every verbatim turn and carries no summary seed.
-    const forked = await store.fork(conv.id);
-    expect(forked).not.toBeNull();
-    const forkedText = flatten(await store.history(forked!));
-    expect(forkedText).toContain("FIRST QUESTION");
-    expect(forkedText).toContain("FIRST REPLY");
-    expect(forkedText).toContain("SECOND QUESTION");
-    expect(forkedText).toContain("SECOND REPLY");
-    expect(forkedText).not.toContain("SUMMARY OF FIRST TURN");
   });
 });

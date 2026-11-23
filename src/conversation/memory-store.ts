@@ -197,48 +197,4 @@ export class InMemoryConversationStore implements ConversationStore {
 
     return { ...conversation };
   }
-
-  async fork(
-    id: string,
-    atMessage?: number,
-    access?: ConversationAccessContext,
-  ): Promise<Conversation | null> {
-    // Fork needs the source for history + messagesToCopy, so we
-    // resolve it first. Foreign-owner and missing both return null —
-    // indistinguishable to the caller, same posture as delete/update.
-    const source = this.conversations.get(id);
-    if (!source) return null;
-    if (access && source.ownerId !== access.userId) return null;
-
-    const sourceMessages = this.messages.get(id) ?? [];
-    const messagesToCopy =
-      atMessage !== undefined ? sourceMessages.slice(0, atMessage) : [...sourceMessages];
-
-    const newConv = await this.create({
-      ownerId: source.ownerId,
-      // A fork continues the source conversation, so it inherits the binding.
-      model: source.model,
-      ...(source.workspaceId ? { workspaceId: source.workspaceId } : {}),
-    });
-
-    // Track lastModel from copied messages. Token totals derive at read.
-    for (const msg of messagesToCopy) {
-      if (msg.role === "assistant" && msg.metadata?.model) {
-        newConv.lastModel = msg.metadata.model;
-      }
-    }
-
-    // Update updatedAt if there are messages
-    if (messagesToCopy.length > 0) {
-      newConv.updatedAt =
-        messagesToCopy[messagesToCopy.length - 1]?.timestamp ?? new Date().toISOString();
-    }
-
-    this.messages.set(
-      newConv.id,
-      messagesToCopy.map((m) => ({ ...m })),
-    );
-
-    return newConv;
-  }
 }
