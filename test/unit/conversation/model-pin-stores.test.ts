@@ -48,15 +48,6 @@ describe.each(stores)("%s", (_name, make) => {
     const loaded = await store.load(conversation.id);
     expect(loaded?.model).toBe(MODEL);
   });
-
-  test("a fork inherits the binding", async () => {
-    // A fork continues the source conversation; re-resolving would replay its
-    // history to whatever the default is now.
-    const store = make();
-    const source = await store.create({ ownerId: "usr_test", model: MODEL });
-    const fork = await store.fork(source.id);
-    expect(fork?.model).toBe(MODEL);
-  });
 });
 
 describe("EventSourcedConversationStore — a header without a model", () => {

@@ -152,16 +152,6 @@ export interface ConversationStore {
     patch: ConversationPatch,
     access?: ConversationAccessContext,
   ): Promise<Conversation | null>;
-  /**
-   * Fork a conversation, optionally truncating at a specific message
-   * index. Returns the new conversation, or `null` if the source doesn't
-   * exist OR — when `access` is supplied — the caller isn't the owner.
-   */
-  fork(
-    id: string,
-    atMessage?: number,
-    access?: ConversationAccessContext,
-  ): Promise<Conversation | null>;
 }
 
 /**

@@ -4,9 +4,6 @@
  * "writes are announced eventually" but "every write announces its own
  * conversation" — an unannounced write leaves an entry no unrelated traffic
  * will ever repair.
- *
- * The fork case is the one that motivated this file: `fork()` writes twice, and
- * only the second write carries the messages.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -86,36 +83,10 @@ describe("EventSourcedConversationStore onMutate", () => {
     expect(forId(conv.id).length).toBeGreaterThan(0);
   });
 
-  test("fork announces the copy AFTER its messages are written", async () => {
-    const source = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "usr_a" });
-    store.appendEvent!(source.id, userEvent("one"));
-    store.appendEvent!(source.id, userEvent("two"));
-    seen = [];
-
-    const forked = await store.fork(source.id);
-    expect(forked).not.toBeNull();
-
-    // `create()` inside `fork()` announces an EMPTY conversation. The messages
-    // arrive in a second write, so the last announcement for the fork must come
-    // after that write — otherwise a listener that refreshed on the first one
-    // caches a 0-message fork forever. Reading the file at the moment of the
-    // final announcement is what pins the ordering, not the count.
-    const announcements = forId(forked!.id);
-    expect(announcements.length).toBeGreaterThanOrEqual(2);
-
-    // The fork really did carry messages across, so the second announcement is
-    // reporting a state the first one could not have.
-    const sourceHistory = await store.history(source);
-    const forkedHistory = await store.history(forked!);
-    expect(forkedHistory.length).toBe(sourceHistory.length);
-    expect(forkedHistory.length).toBeGreaterThan(0);
-  });
-
   test("every announcement names a path inside the store's own directory", async () => {
     const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "usr_a" });
     store.appendEvent!(conv.id, userEvent("hello"));
     await store.update(conv.id, { title: "T" });
-    await store.fork(conv.id);
     await store.delete(conv.id);
 
     expect(seen.length).toBeGreaterThan(0);

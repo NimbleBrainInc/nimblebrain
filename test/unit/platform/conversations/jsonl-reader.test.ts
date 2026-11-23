@@ -579,7 +579,7 @@ describe("readConversation (event format)", () => {
   });
 
   test("defaults to settled when the caller supplies no liveness signal", async () => {
-    // A reader with no RunBus in hand (export, fork, stats) must not assert
+    // A reader with no RunBus in hand (export, stats) must not assert
     // a turn is still coming. The dangerous default is the one that claims
     // liveness it cannot know.
     const runId = "run_nodefault";

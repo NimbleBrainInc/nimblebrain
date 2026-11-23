@@ -5,7 +5,7 @@ description: Persistence, history, resuming, and storage for NimbleBrain convers
 
 import { Aside } from '@astrojs/starlight/components';
 
-NimbleBrain automatically persists every conversation. Each conversation is stored as a JSONL file owned by the user who created it, and you can resume, rename, fork, and delete conversations through the web UI or CLI.
+NimbleBrain automatically persists every conversation. Each conversation is stored as a JSONL file owned by the user who created it, and you can resume, rename, and delete conversations through the web UI or CLI.
 
 ## Where conversations live
 
@@ -110,7 +110,7 @@ For long-running conversations, NimbleBrain compacts older history to keep the c
 
 The runtime summarizes earlier turns once a conversation grows large, preserving the gist while freeing room for new context. Set the flag to `false` and the full event history is replayed every turn instead.
 
-Your own messages are kept **verbatim** through compaction, not folded into the summary. Instructions and corrections you give ("use this format, not that one") are the highest-value part of a long conversation, so they survive every compaction — including repeated ones — for the life of the conversation. The summary compacts the assistant and tool activity around them. Retention is bounded, so it never undoes the compaction; on an unusually long steering session the oldest of your messages may be elided (a marker shows when this happens), keeping the most recent guidance intact. The full, un-summarized history is always available in the conversation export and fork.
+Your own messages are kept **verbatim** through compaction, not folded into the summary. Instructions and corrections you give ("use this format, not that one") are the highest-value part of a long conversation, so they survive every compaction — including repeated ones — for the life of the conversation. The summary compacts the assistant and tool activity around them. Retention is bounded, so it never undoes the compaction; on an unusually long steering session the oldest of your messages may be elided (a marker shows when this happens), keeping the most recent guidance intact. The full, un-summarized history is always available in the conversation export.
 
 If the first message and the latest message or tool-call/result group cannot fit in the model's context window, the provider may reject the turn. NimbleBrain then reports that the turn cannot fit instead of retrying the same required messages. Choose a model with a larger context window, shorten the first message, or reduce the latest tool output.
 

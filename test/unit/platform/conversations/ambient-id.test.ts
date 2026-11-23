@@ -2,7 +2,7 @@
  * The conversation-addressing tools resolve the conversation you are in.
  *
  * An agent running inside a chat is never told its own conversation id, so a
- * required `id` on `update`/`get`/`fork`/`export` left the current conversation
+ * required `id` on `update`/`get`/`export` left the current conversation
  * as the one conversation those tools could not name. What an agent does
  * instead is invent a placeholder — and get `Conversation not found` back.
  *
@@ -284,18 +284,6 @@ describe("the other conversation-addressing tools resolve the same way", () => {
     expect(content).toContain(CURRENT_MESSAGE);
   });
 
-  test("fork with no id forks the current conversation", async () => {
-    const result = await inChat("fork", {});
-
-    expect(result.isError).toBe(false);
-    // A fork is a NEW conversation, so its own id proves nothing — the preview
-    // is what says which conversation it was copied from.
-    const forked = parseFirst(result) as { id: string; preview: string };
-    expect(forked.id).not.toBe(CURRENT_ID);
-    expect(forked.preview).toContain(CURRENT_MESSAGE);
-    expect(announced).toEqual([`conversations:${OWNER_ID}`]);
-  });
-
   test("outside a chat, get with no id errors rather than guessing", async () => {
     const result = await outsideChat("get", { expand: "metadata" });
 
@@ -352,7 +340,6 @@ describe("a task run has no conversation", () => {
     ["update", { title: "Doctrine" }],
     ["get", { expand: "metadata" }],
     ["export", { format: "json" }],
-    ["fork", {}],
   ] as const) {
     test(`${tool} with no id errors, and does not name the run id`, async () => {
       const result = await inTaskRun(tool, args);

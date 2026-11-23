@@ -451,9 +451,9 @@ describe("reconstructMessages — history.compacted", () => {
     expect((msgs[0]!.content as { text?: string }[])[0]?.text).toBe("hi");
   });
 
-  test("ignoreCompaction returns the full verbatim history (fork/UI projection)", () => {
+  test("ignoreCompaction returns the full verbatim history (UI projection)", () => {
     // The truth projection: every turn replays and the summary seed is absent.
-    // This is what fork() and the web client must read — NOT the model view.
+    // This is what the web client must read — NOT the model view.
     const events: ConversationEvent[] = [
       { ts: ts(0), type: "user.message", content: [{ type: "text", text: "old turn 1" }] },
       { ts: ts(2), type: "user.message", content: [{ type: "text", text: "old turn 2" }] },

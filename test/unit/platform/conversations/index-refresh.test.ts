@@ -8,9 +8,8 @@
  * path must not serve — frozen summaries on update, ghosts on delete. The
  * second is what the named signal costs: a write that does not announce itself
  * is never repaired, because no unrelated traffic will name that conversation
- * again. `conversations__update` and `conversations__fork` write their files
- * outside the store, so they are the cases that group exists for, and those
- * tests use targeted refreshes only — a bare `invalidate()` would rebuild
+ * again. `conversations__update` writes its file outside the store, so it is
+ * the case that group exists for, and those tests use targeted refreshes only — a bare `invalidate()` would rebuild
  * everything and mask exactly the defect under test.
  */
 
@@ -20,7 +19,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { workspaceConversationsDir } from "../../../../src/conversation/paths.ts";
 import { ConversationIndex } from "../../../../src/platform/conversations/index-cache.ts";
-import { handleFork } from "../../../../src/platform/conversations/tools/fork.ts";
 import { handleUpdate } from "../../../../src/platform/conversations/tools/update.ts";
 
 let workDir: string;
@@ -110,9 +108,9 @@ test("a delete drops the entry on invalidate()+refresh() (no ghost)", async () =
 // ---------------------------------------------------------------------------
 
 /**
- * `conversations__update` and `conversations__fork` write conversation files
- * themselves rather than going through `EventSourcedConversationStore`, so the
- * store's `onMutate` never fires for them. Now that the index refreshes only
+ * `conversations__update` writes the conversation file itself rather than
+ * going through `EventSourcedConversationStore`, so the store's `onMutate`
+ * never fires for it. Now that the index refreshes only
  * what a change names, an unannounced write is never repaired — no unrelated
  * traffic will name that conversation again.
  *
@@ -135,29 +133,6 @@ test("handleUpdate's write is announced, so the rename lands on a targeted refre
   // The handler supplies the wsId, so the announcement is also what keeps the
   // entry inside its workspace wall.
   expect(index.get(CONV, SCOPE)!.workspaceId).toBe(WS);
-});
-
-test("handleFork's new conversation is announced, so it appears on a targeted refresh", async () => {
-  const file = convFile();
-  seed(file);
-  appendFileSync(
-    file,
-    `${JSON.stringify({ ts: "2026-06-25T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "hi" }] })}\n`,
-  );
-
-  const index = new ConversationIndex();
-  await index.build(workspacesRoot());
-  expect(index.list(SCOPE).totalCount).toBe(1);
-
-  const forked = await handleFork({ id: CONV }, index, SCOPE);
-  await index.refresh();
-
-  // Absent, not merely stale: the index has never seen this conversation, so
-  // nothing but its own announcement can introduce it.
-  expect(index.get(forked.id, SCOPE)).toBeDefined();
-  expect(index.list(SCOPE).totalCount).toBe(2);
-  // The fork inherits the source's workspace, and only the announcement carries it.
-  expect(index.get(forked.id, SCOPE)!.workspaceId).toBe(WS);
 });
 
 test("a targeted refresh keeps the entry's workspace binding", async () => {

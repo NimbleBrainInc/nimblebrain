@@ -13,7 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
@@ -24,7 +24,6 @@ import {
 } from "../../../../src/platform/conversations/index-cache.ts";
 import { createConversationsSource } from "../../../../src/platform/conversations/source.ts";
 import { handleExport } from "../../../../src/platform/conversations/tools/export.ts";
-import { handleFork } from "../../../../src/platform/conversations/tools/fork.ts";
 import { handleGet } from "../../../../src/platform/conversations/tools/get.ts";
 import { handleList } from "../../../../src/platform/conversations/tools/list.ts";
 import { handleSearch } from "../../../../src/platform/conversations/tools/search.ts";
@@ -154,13 +153,6 @@ afterEach(async () => {
   await source.stop();
   rmSync(workDir, { recursive: true, force: true });
 });
-
-/** Every conversation file under the test's workspaces root. */
-function conversationFiles(): string[] {
-  return readdirSync(join(workDir, "workspaces"), { recursive: true, encoding: "utf8" }).filter(
-    (f) => f.endsWith(".jsonl"),
-  );
-}
 
 describe("the door exposes no workspace coordinate", () => {
   // The guard against reintroducing the bug rather than the bug's effect: as
@@ -363,18 +355,6 @@ describe("by-id reads and writes are walled to the scope's workspace", () => {
     expect(readFileSync(B_FILE(), "utf8")).toBe(before);
   });
 
-  test("fork in workspace A of a conversation held in workspace B fails and creates nothing", async () => {
-    const index = await buildIndex();
-    const before = conversationFiles().length;
-    expect(await rejection(handleFork({ id: "conv_b1" }, index, SCOPE_A))).toBe(
-      "Conversation not found: conv_b1",
-    );
-    expect(await rejection(handleFork({ id: "conv_none" }, index, SCOPE_A))).toBe(
-      "Conversation not found: conv_none",
-    );
-    expect(conversationFiles()).toHaveLength(before);
-  });
-
   test("the door's by-id tools answer another workspace's id exactly as a missing one", async () => {
     // Through the source, so the scope is the one the request carries rather
     // than one a test constructs.
@@ -382,7 +362,6 @@ describe("by-id reads and writes are walled to the scope's workspace", () => {
       get: {},
       export: { format: "json" },
       update: { title: "retitled" },
-      fork: {},
     };
     for (const [tool, extra] of Object.entries(args)) {
       const held = await exec(tool, { ...extra, id: "conv_b1" }, WS_A);

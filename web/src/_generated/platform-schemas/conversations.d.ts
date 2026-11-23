@@ -28,11 +28,6 @@ export declare const ConversationsUpdateInput: import("@sinclair/typebox").TObje
     title: import("@sinclair/typebox").TString;
 }>;
 export type ConversationsUpdateInput = Static<typeof ConversationsUpdateInput>;
-export declare const ConversationsForkInput: import("@sinclair/typebox").TObject<{
-    id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    atMessage: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-}>;
-export type ConversationsForkInput = Static<typeof ConversationsForkInput>;
 export declare const ConversationsStatsInput: import("@sinclair/typebox").TObject<{
     period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"all" | "day" | "month" | "week">>;
 }>;
@@ -42,19 +37,6 @@ export declare const ConversationsExportInput: import("@sinclair/typebox").TObje
     format: import("@sinclair/typebox").TUnsafe<"json" | "markdown">;
 }>;
 export type ConversationsExportInput = Static<typeof ConversationsExportInput>;
-/** What `conversations__fork` returns: a summary of the new conversation. */
-export declare const ConversationsForkOutput: import("@sinclair/typebox").TObject<{
-    title: import("@sinclair/typebox").TNull;
-    id: import("@sinclair/typebox").TString;
-    createdAt: import("@sinclair/typebox").TString;
-    updatedAt: import("@sinclair/typebox").TString;
-    messageCount: import("@sinclair/typebox").TNumber;
-    totalInputTokens: import("@sinclair/typebox").TNumber;
-    totalOutputTokens: import("@sinclair/typebox").TNumber;
-    lastModel: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
-    preview: import("@sinclair/typebox").TString;
-}>;
-export type ConversationsForkOutput = Static<typeof ConversationsForkOutput>;
 /** What `conversations__update` returns: the conversation as a reader now projects it. */
 export declare const ConversationsUpdateOutput: import("@sinclair/typebox").TObject<{
     title: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
@@ -189,10 +171,8 @@ export declare const DisplayUsage: import("@sinclair/typebox").TObject<{
     outputTokens: import("@sinclair/typebox").TNumber;
     cacheReadTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     /**
-     * Cache-write and reasoning subtotals carried through so fork() can
-     * round-trip them onto the new file. Losing them here means a forked
-     * conversation would report lower cost than the original on cache-heavy or
-     * reasoning-heavy turns.
+     * Cache-write and reasoning subtotals, carried so a `get` or JSON export
+     * holds the turn's full usage, not only its input and output tokens.
      */
     cacheWriteTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     reasoningTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -305,10 +285,8 @@ export declare const DisplayMessage: import("@sinclair/typebox").TObject<{
         outputTokens: import("@sinclair/typebox").TNumber;
         cacheReadTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         /**
-         * Cache-write and reasoning subtotals carried through so fork() can
-         * round-trip them onto the new file. Losing them here means a forked
-         * conversation would report lower cost than the original on cache-heavy or
-         * reasoning-heavy turns.
+         * Cache-write and reasoning subtotals, carried so a `get` or JSON export
+         * holds the turn's full usage, not only its input and output tokens.
          */
         cacheWriteTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         reasoningTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -462,10 +440,8 @@ export declare const ConversationsGetOutput: import("@sinclair/typebox").TObject
             outputTokens: import("@sinclair/typebox").TNumber;
             cacheReadTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             /**
-             * Cache-write and reasoning subtotals carried through so fork() can
-             * round-trip them onto the new file. Losing them here means a forked
-             * conversation would report lower cost than the original on cache-heavy or
-             * reasoning-heavy turns.
+             * Cache-write and reasoning subtotals, carried so a `get` or JSON export
+             * holds the turn's full usage, not only its input and output tokens.
              */
             cacheWriteTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             reasoningTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;

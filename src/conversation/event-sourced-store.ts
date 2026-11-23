@@ -7,7 +7,7 @@
  */
 
 import { appendFileSync, existsSync } from "node:fs";
-import { readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
   ConnectorSkillInjectedPayload,
@@ -103,11 +103,6 @@ function mapSkillSuppression(ts: string, d: SkillSuppressionPayload): Conversati
 // Helpers
 // ---------------------------------------------------------------------------
 
-let tmpCounter = 0;
-function uniqueTmpSuffix(): string {
-  return `${Date.now()}.${++tmpCounter}`;
-}
-
 /** Conversation events that are persisted (non-workspace, non-ephemeral). */
 const CONVERSATION_EVENT_TYPES = new Set([
   "run.start",
@@ -168,88 +163,16 @@ function applyDerivedMeta(conversation: Conversation, lines: string[]): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Fork message → event-line conversion
-// ---------------------------------------------------------------------------
-
-/** Model of the last assistant message that carries one, else undefined. */
-function forkLastModel(messages: StoredMessage[]): string | undefined {
-  let model: string | undefined;
-  for (const msg of messages) {
-    if (msg.role === "assistant" && msg.metadata?.model) {
-      model = msg.metadata.model;
-    }
-  }
-  return model;
-}
-
-/** Serialize a forked user message as a `user.message` event line. */
-function forkUserEventLine(msg: StoredMessage): string {
-  return JSON.stringify({
-    ts: msg.timestamp,
-    type: "user.message",
-    content: msg.content,
-    ...(msg.userId ? { userId: msg.userId } : {}),
-    ...(msg.metadata?.pluginRequestAnswer
-      ? { pluginRequestAnswer: msg.metadata.pluginRequestAnswer }
-      : {}),
-  });
-}
-
 /**
  * The finish reason for an `llm.response` synthesized from a stored assistant
  * message: the one its metadata recorded, else what its content implies — a
  * message carrying tool calls ended to run them, anything else ended normally.
- * Synthetic writers go through this so no `llm.response` is written without one.
+ * `append` goes through this so no `llm.response` is written without one.
  */
 function synthesizedFinishReason(msg: StoredMessage): LlmResponseEvent["finishReason"] {
   if (msg.metadata?.finishReason) return msg.metadata.finishReason;
   const content = Array.isArray(msg.content) ? msg.content : [];
   return content.some((c) => c.type === "tool-call") ? "tool-calls" : "stop";
-}
-
-/**
- * Serialize a forked assistant turn as run.start/llm.response/run.done event
- * lines. Each assistant turn must be wrapped in a synthetic run span — without
- * it, reconstructMessages drops the turn (assistant messages are only emitted
- * inside an active run scope).
- */
-function forkAssistantEventLines(msg: StoredMessage, runId: string): string[] {
-  const model = msg.metadata?.model ?? "unknown";
-  return [
-    JSON.stringify({ ts: msg.timestamp, type: "run.start", runId, model }),
-    JSON.stringify({
-      ts: msg.timestamp,
-      type: "llm.response",
-      runId,
-      model,
-      content: msg.content,
-      usage: msg.metadata?.usage ?? { inputTokens: 0, outputTokens: 0 },
-      llmMs: msg.metadata?.llmMs ?? 0,
-      finishReason: synthesizedFinishReason(msg),
-    }),
-    JSON.stringify({
-      ts: msg.timestamp,
-      type: "run.done",
-      runId,
-      stopReason: "complete",
-      totalMs: msg.metadata?.llmMs ?? 0,
-    }),
-  ];
-}
-
-/** Convert forked messages into event-format JSONL lines. */
-function messagesToForkEventLines(messages: StoredMessage[]): string[] {
-  const eventLines: string[] = [];
-  let runCounter = 0;
-  for (const msg of messages) {
-    if (msg.role === "user") {
-      eventLines.push(forkUserEventLine(msg));
-    } else if (msg.role === "assistant") {
-      eventLines.push(...forkAssistantEventLines(msg, `forked-${runCounter++}`));
-    }
-  }
-  return eventLines;
 }
 
 // ---------------------------------------------------------------------------
@@ -425,8 +348,8 @@ export interface EventSourcedStoreConfig {
    * conversation.** Listeners refresh only what is named, so a write that stays
    * silent leaves a permanently stale entry — unrelated traffic will not repair
    * it, because no other change names this conversation. The rule is per
-   * *write*, not per public method: `fork()` announces twice because it writes
-   * twice, and the second write is the one carrying the messages.
+   * *write*, not per public method: a method that writes a file twice
+   * announces twice.
    */
   onMutate?: (change: ConversationMutation) => void;
 }
@@ -623,19 +546,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   }
 
   /**
-   * Read and reconstruct a conversation's messages from disk.
-   *
-   * `ignoreCompaction` selects the projection: the default (false) returns the
-   * compacted view (summary seed + recent tail) that feeds the model;
-   * `ignoreCompaction: true` returns the FULL verbatim history — the
-   * conversation's truth, matching what the UI/export render. Use the verbatim
-   * view anywhere the conversation is copied or shown to the user (e.g.
-   * `fork`), never for the model context.
+   * Read and reconstruct a conversation's messages from disk, as the compacted
+   * view (summary seed + recent tail) that feeds the model.
    */
-  private async readMessages(
-    conversationId: string,
-    opts?: { ignoreCompaction?: boolean },
-  ): Promise<StoredMessage[]> {
+  private async readMessages(conversationId: string): Promise<StoredMessage[]> {
     const path = this.path(conversationId);
     if (!existsSync(path)) return [];
 
@@ -644,7 +558,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     if (lines.length < 2) return [];
 
     const events = safeParseLines<ConversationEvent>(lines.slice(1));
-    return reconstructMessages(events, opts);
+    return reconstructMessages(events);
   }
 
   async list(
@@ -682,84 +596,6 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       if (existing.ownerId !== access.userId) return null;
     }
     return this.trackWrite(this._update(id, patch));
-  }
-
-  async fork(
-    id: string,
-    atMessage?: number,
-    access?: ConversationAccessContext,
-  ): Promise<Conversation | null> {
-    // Unlike delete/update which can short-circuit on the access
-    // check, fork legitimately needs the loaded source to do its job
-    // (history + messagesToCopy). So we load first, then evaluate
-    // both branches in the same posture: foreign owner and missing
-    // both return null, indistinguishable to the caller.
-    const source = await this.load(id);
-    if (!source) return null;
-    if (access && source.ownerId !== access.userId) return null;
-
-    // Fork from the VERBATIM history, not the compacted projection. A fork is
-    // a faithful copy of the conversation as the user sees it; reading the
-    // compacted view here would bake the `<conversation-summary>` seed in as
-    // real events and permanently drop the pre-boundary turns the UI still
-    // shows. `atMessage` is an index into that same full-history view (the web
-    // client's projection), so slicing the compacted array would also cut at
-    // the wrong logical point.
-    const allMessages = await this.readMessages(source.id, { ignoreCompaction: true });
-    const messagesToCopy = atMessage !== undefined ? allMessages.slice(0, atMessage) : allMessages;
-
-    const newConv = await this.create({
-      ownerId: source.ownerId,
-      // A fork continues the source conversation, so it inherits the binding.
-      // Re-resolving here would silently move the copy onto the current
-      // default and replay the source's history to a different provider.
-      model: source.model,
-      ...(source.workspaceId ? { workspaceId: source.workspaceId } : {}),
-    });
-
-    if (messagesToCopy.length > 0) {
-      await this.writeForkedMessages(newConv, messagesToCopy);
-    }
-
-    return newConv;
-  }
-
-  /** Populate a freshly forked conversation file from copied messages, in event format. */
-  private async writeForkedMessages(
-    newConv: Conversation,
-    messagesToCopy: StoredMessage[],
-  ): Promise<void> {
-    // Token totals are derived from events; only carry lastModel forward.
-    const lastModel = forkLastModel(messagesToCopy);
-    if (lastModel) {
-      newConv.lastModel = lastModel;
-    }
-    newConv.updatedAt =
-      messagesToCopy[messagesToCopy.length - 1]?.timestamp ?? new Date().toISOString();
-
-    // Reconstructed messages should already be free of binary payloads
-    // (we read them out of the event log, which is guarded on write).
-    // Re-assert anyway so an in-memory source that somehow held bytes
-    // can't poison the forked file.
-    for (const msg of messagesToCopy) {
-      assertNoBinaryPayloads(msg, `fork.message(${msg.role})`);
-    }
-
-    // Write as event-format: convert messages to events. Each assistant turn
-    // is wrapped in a synthetic run.start/run.done span so reconstructMessages
-    // keeps it (assistant messages are only emitted inside an active run scope).
-    const eventLines = messagesToForkEventLines(messagesToCopy);
-    const lines = [JSON.stringify(newConv), ...eventLines];
-    const path = this.path(newConv.id);
-    const tmpPath = `${path}.tmp.${uniqueTmpSuffix()}`;
-    await writeFile(tmpPath, lines.map((l) => `${l}\n`).join(""));
-    await rename(tmpPath, path);
-    this.index.invalidate();
-    // `create()` already announced this conversation, but it announced an empty
-    // one — this rewrite is what gives it its messages, and a listener that
-    // consumed the create in between would otherwise hold a 0-message fork with
-    // nothing left to correct it.
-    this.onMutate?.({ id: newConv.id, filePath: path });
   }
 
   async flush(): Promise<void> {

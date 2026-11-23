@@ -41,7 +41,7 @@ describe("Conversation full lifecycle (store-level)", () => {
     if (existsSync(dir)) rmSync(dir, { recursive: true });
   });
 
-  it("create → append 3 messages → list (verify tokens) → rename → search → fork → delete", async () => {
+  it("create → append 3 messages → list (verify tokens) → rename → search → delete", async () => {
     // --- create ---
     const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     expect(conv.id).toMatch(/^conv_/);
@@ -86,32 +86,11 @@ describe("Conversation full lifecycle (store-level)", () => {
     const searchMiss = await store.list({ search: "quantum" });
     expect(searchMiss.conversations).toHaveLength(0);
 
-    // --- fork (at message 2 — user + first assistant) ---
-    const forked = await store.fork(conv.id, 2);
-    expect(forked).not.toBeNull();
-    expect(forked!.id).not.toBe(conv.id);
-    const forkedSummary = (await store.list()).conversations.find((c) => c.id === forked!.id);
-    expect(forkedSummary!.totalInputTokens).toBe(200);
-    expect(forkedSummary!.totalOutputTokens).toBe(80);
-
-    const forkedHistory = await store.history(forked!);
-    expect(forkedHistory).toHaveLength(2);
-    expect(forkedHistory[0]!.content).toEqual([
-      { type: "text", text: "Tell me about deployment pipelines" },
-    ]);
-    expect(forkedHistory[1]!.content).toEqual([
-      { type: "text", text: "Deployment pipelines automate releases..." },
-    ]);
-
-    // original still has 3 messages
+    // history holds all 3 messages
     const originalHistory = await store.history(conv);
     expect(originalHistory).toHaveLength(3);
 
-    // both appear in list
-    const bothList = await store.list();
-    expect(bothList.totalCount).toBe(2);
-
-    // --- delete original ---
+    // --- delete ---
     const deleted = await store.delete(conv.id);
     expect(deleted).toBe(true);
 
@@ -119,9 +98,7 @@ describe("Conversation full lifecycle (store-level)", () => {
     const afterDelete = await store.load(conv.id);
     expect(afterDelete).toBeNull();
 
-    // fork still exists
     const afterDeleteList = await store.list();
-    expect(afterDeleteList.totalCount).toBe(1);
-    expect(afterDeleteList.conversations[0]!.id).toBe(forked!.id);
+    expect(afterDeleteList.totalCount).toBe(0);
   });
 });

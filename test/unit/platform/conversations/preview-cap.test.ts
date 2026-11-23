@@ -114,12 +114,6 @@ describe("preview is capped on every tool that puts it on the wire", () => {
     expect(preview.length).toBeLessThan(LONG_MESSAGE.length);
   });
 
-  test("fork", async () => {
-    const data = payload(await exec("fork", { id: "conv_long" })) as { preview?: string };
-    expect(data.preview?.length ?? 0).toBeGreaterThan(0);
-    expect(data.preview?.length ?? 0).toBeLessThanOrEqual(PREVIEW_MAX_CHARS);
-  });
-
   test("update", async () => {
     const data = payload(await exec("update", { id: "conv_long", title: "renamed" })) as {
       preview?: string;

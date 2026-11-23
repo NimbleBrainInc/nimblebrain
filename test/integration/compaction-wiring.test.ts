@@ -2,7 +2,7 @@
  * End-to-end wiring test for history compaction.
  *
  * The unit tests cover the pure helpers (planCompaction, summarizeMessages,
- * compactConversationMessages, reconstructMessages, fork). This test covers
+ * compactConversationMessages, reconstructMessages). This test covers
  * the ROUTE the units don't: enabling `features.compaction` and driving real
  * `/v1/workspaces/<wsId>/chat/start` turns through a live Runtime + EventSourcedConversationStore until
  * the accumulated history crosses the budget, then proving that
@@ -223,7 +223,7 @@ describe("history compaction — wired path", () => {
     expect(modelView).toContain("<operator-messages>");
     expect(modelView).toContain(OLDEST_NEEDLE);
 
-    // (c) The verbatim projection (what fork/UI read) still holds every turn
+    // (c) The verbatim projection (what the UI reads) still holds every turn
     //     and carries no summary seed.
     const verbatimView = JSON.stringify(reconstructMessages(events, { ignoreCompaction: true }));
     expect(verbatimView).toContain(OLDEST_NEEDLE);

@@ -252,27 +252,6 @@ describe("what the pin stores", () => {
 });
 
 describe("the binding survives operations on the conversation", () => {
-  test("a fork inherits the source's binding", async () => {
-    runtime.updateConfig({ models: { default: MODEL_A } });
-    const source = await runtime.chat({
-      message: "one",
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: USER,
-    });
-
-    runtime.updateConfig({ models: { default: MODEL_B } });
-    const store = await runtime.resolveConversationStore(
-      TEST_WORKSPACE_ID,
-      source.conversationId,
-      USER.id,
-    );
-    const forked = await store!.fork(source.conversationId);
-
-    // Not MODEL_B: the fork carries the source's history, so re-resolving
-    // would replay it to a different provider.
-    expect(forked?.model).toBe(MODEL_A);
-  });
-
   test("renaming a conversation preserves the binding", async () => {
     runtime.updateConfig({ models: { default: MODEL_A } });
     const conv = await runtime.chat({
