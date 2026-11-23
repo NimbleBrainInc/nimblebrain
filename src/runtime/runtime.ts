@@ -154,6 +154,7 @@ import {
   localCatalogModels,
   setConfiguredModels,
 } from "../model/catalog.ts";
+import { defaultModelFor, FALLBACK_DEFAULT_MODEL } from "../model/default-model.ts";
 import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../model/gateway-refusal.ts";
 import { ModelAuthError } from "../model/model-auth.ts";
 import { isQualifiedModelId, requireQualifiedModelId } from "../model/model-id.ts";
@@ -374,7 +375,6 @@ import {
 } from "./workspace-runtime.ts";
 
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
-const DEFAULT_MODEL = "anthropic:claude-sonnet-4-6";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
 import { buildMidTurnCompaction } from "./mid-turn-compaction.ts";
@@ -1765,8 +1765,10 @@ export class Runtime {
    *    refs, and no trigger matching: a task description is not a phrase a skill
    *    should claim. A skill bound to a tool reaches the model when the run
    *    calls that tool, as in chat.
-   *  - The system prompt is composed in task mode, prepending `TASK_IDENTITY`
-   *    so the model produces a deliverable rather than a conversational reply.
+   *  - The prompt is composed in task mode: `TASK_IDENTITY` leads the
+   *    `<runtime-context>` head on the run's user message, so the model
+   *    produces a deliverable rather than a conversational reply while the
+   *    cached system prefix stays the one a chat in the workspace writes.
    *    The runtime owns this framing — connectors cannot spoof it by wrapping the
    *    user message.
    *  - `workspaceId` is required: that workspace's tool scope and briefing,
@@ -2028,6 +2030,9 @@ export class Runtime {
     // fails or the process is killed. Reports the skills composed at turn start:
     // the trigger match and the always-on context skills (persona +
     // org/workspace/user + connector always-on; vendored core excluded).
+    const composedSkills = composedSkillNames(composed);
+    // The tools a run calls read the composed skills from its request context.
+    const runCtx: RequestContext = { ...reqCtx, composedSkills };
     const skillsLoaded = buildSkillsLoadedPayload(
       collectLoadedSkills({
         trigger: composed.skillMatch,
@@ -2076,10 +2081,11 @@ export class Runtime {
       // From the UN-rehydrated history — this is what makes surface-ONCE hold
       // across turns. A fresh one-shot run has a single user message and no
       // prior history, so its set is empty.
-      // A declared skill is in the system prompt, so no channel delivers it again.
+      // A declared or trigger-matched skill is already in the prompt, so no
+      // channel delivers it again.
       alreadyInjectedConnectorSkills: [
         ...this.collectInjectedConnectorSkills(effectiveHistory),
-        ...composed.declaredSkills.map((s) => s.name),
+        ...composedSkills,
       ],
       signal: deadline.signal,
     });
@@ -2153,7 +2159,7 @@ export class Runtime {
     // the llm.call and tool.dispatch spans nest under it.
     let result: EngineResult;
     try {
-      result = await runWithRequestContext(agentExecutionContext(reqCtx, agentRuntime), () =>
+      result = await runWithRequestContext(agentExecutionContext(runCtx, agentRuntime), () =>
         withSpan(
           "agent.turn",
           {
@@ -2599,9 +2605,10 @@ export class Runtime {
       reason: "named by the run's task",
     }));
 
-    // Task mode prepends TASK_IDENTITY so an unattended run produces a
-    // deliverable rather than a conversational reply. The runtime owns that
-    // framing — a connector cannot spoof it by wrapping the user message.
+    // Task mode adds TASK_IDENTITY to the volatile head so an unattended run
+    // produces a deliverable rather than a conversational reply, and leaves the
+    // stable system prefix the same as a chat's. The runtime owns that framing —
+    // a connector cannot spoof it by wrapping the user message.
     const { stableSystem, volatileHead } = composeSystemSegments(
       requestContextSkills,
       matchedSkill,
@@ -5389,9 +5396,15 @@ export class Runtime {
       if (value === null) delete models[slot];
       else if (value !== undefined) models[slot] = value;
     }
+    // A slot left unset gets the configured providers' default model, so an
+    // install keyed for any one provider works without naming a model. Behind a
+    // model gateway, which reaches every provider, it stays the fallback.
+    const fallback = this.config.execution?.modelGateway
+      ? FALLBACK_DEFAULT_MODEL
+      : defaultModelFor(this.config.providers ?? {}, this.config.modelPolicy?.allowed);
     return {
-      default: models.default ?? DEFAULT_MODEL,
-      fast: models.fast ?? DEFAULT_MODEL,
+      default: models.default ?? fallback,
+      fast: models.fast ?? fallback,
     };
   }
 
@@ -6604,8 +6617,8 @@ function stampDerivedScope(workDir: string, skill: Skill): Skill {
  * verifiable without spinning a full Runtime.
  */
 /**
- * Prepend the volatile "runtime context" head (current date, app/focused-app
- * state, matched skill) to the latest user message as a leading text part. This
+ * Prepend the volatile "runtime context" head (task identity, current date,
+ * app/focused-app state, matched skill) to the latest user message as a leading text part. This
  * keeps per-turn-volatile content OUT of the 1h-cached system block (where any
  * change rewrites the whole prefix at the premium write rate) and on the message
  * stream, which rides the rolling cache instead. Mutates `messages` in place.
@@ -6668,6 +6681,19 @@ function resolveEngineSystem(
  * Forking a call means wrapping it too — surrounding code is NOT in this
  * context by default.
  */
+/**
+ * The skills a turn's prompt already carries: its declared skills and the one a
+ * trigger matched. No channel should deliver one of them again.
+ */
+function composedSkillNames(composed: {
+  declaredSkills: readonly { name: string }[];
+  skillMatch: { skill: { manifest: { name: string } } } | null;
+}): string[] {
+  const names = composed.declaredSkills.map((s) => s.name);
+  if (composed.skillMatch) names.push(composed.skillMatch.skill.manifest.name);
+  return names;
+}
+
 function buildRunContext(
   spec: RunSpec,
   runId: string,

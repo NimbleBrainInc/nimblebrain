@@ -69,7 +69,9 @@ No schedule: it runs only when asked. `enabled: false` pauses the schedule.
 ## More
 
 - **Many inputs:** create the task with an `inputSchema`, test one item with
-  `tasks__run {taskId, input}`, then `tasks__run_batch` with a `budgetUsd`.
+  `tasks__run {taskId, input}`, then `tasks__run_batch` with a `budgetUsd`. An
+  item with `errorCode: exceeds_share` cost more than the budget could give one
+  run; `tasks__batch_control` `rerun_failed` with a higher `budgetUsd` runs it again.
 - **Judged results:** `criteria` need a judge server (`tasks__judges`). Review
   with `tasks__runs {label: "Needs review"}` and `tasks__assess`.
 - **A one-off:** `tasks__run {definition: {body, manifest: {name}}}`.

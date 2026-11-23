@@ -128,6 +128,7 @@
 
 ### Changed
 
+- **An unset model slot follows the configured provider.** With no `models.default` or `models.fast`, an install keyed for OpenAI, Google, xAI, Nebius, GreenPT or only `providers.local` gets that provider's default model instead of Anthropic's, and a configured local model server comes first. Anthropic's default, and the default with no provider or behind a gateway, moves from Claude Sonnet 4.6 to Claude Sonnet 5.5 ([docs](https://docs.nimblebrain.ai/config/nimblebrain-json/#models)).
 - **Always-on skills are set by a person, not the agent.** `skills__create`, `skills__update` and `skills__restore` refuse a write from chat, a task or an MCP client that would leave a skill `always` (by manifest, pasted frontmatter, or an edit to one that already is), with code `always_on_set_by_user`; skill pages and Skills settings write them as before ([docs](https://docs.nimblebrain.ai/using/skills/#editing-a-skill)).
 - **Images in chat load from the app's origin; others are shown as links.** In replies, markdown artifacts and skill pages, an image from any other site renders as a link to it, which opens after the usual confirmation. The web UI's pages send `img-src 'self' data: blob: https://static.nimblebrain.ai` ([docs](https://docs.nimblebrain.ai/using/chat/#images-in-replies)).
 - **Runs lists work run once.** A tab beside Scheduled shows one-offs and batches by day, each named in words (an inline definition now takes an optional `manifest.name`), with who asked for it ("via Claude Code", from the MCP client's own name) and, for a batch, its pass/fail counts and cost. [Docs](https://docs.nimblebrain.ai/using/tasks/#runs).
@@ -317,6 +318,7 @@
 
 ### Fixed
 
+- **The conversation list no longer holds every conversation file in memory.** Its index kept each file's whole text alive after reading it, so a workspace with large conversations held roughly twice their size on disk for the life of the process.
 - **Request bodies are limited by bytes received, including chunked bodies.** A JSON request takes up to 1 MB and an upload up to `files.maxTotalSize` however it is sent, and the server refuses any body more than 8 MB past the larger of the two. ([docs](https://docs.nimblebrain.ai/config/nimblebrain-json/#files))
 - **Connector names that belong to platform apps are reserved, and a workspace's uninstall never stops a shared app.** Install refuses names such as `usage` or `skills`, boot skips a stored entry that has one with a warning, and removing a connector in one workspace leaves the platform apps every workspace shares running. ([docs](https://docs.nimblebrain.ai/config/connectors/#the-entry-shape))
 - **A missing or rejected model API key says so in the chat.** The turn ends with stream error code `model_auth_failed` and a message naming the provider whose key to set, with no Try again, in place of "Something went wrong" and a retry that failed the same way ([#1989](https://github.com/NimbleBrainInc/nimblebrain/pull/1989)).

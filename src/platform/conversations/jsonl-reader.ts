@@ -875,8 +875,13 @@ export async function readConversation(
 export interface HeaderScan {
   /** Line 1 as read, before event-derived fields are applied. */
   meta: ConversationMeta;
-  /** The file's text through line 1, compared against its first bytes on resume. */
-  line1: string;
+  /**
+   * The file's bytes through line 1, compared against its first bytes on resume.
+   * An owned copy, never a view of the file read or a slice of its decoded text:
+   * the index keeps every scan for the life of the process, and a view or a
+   * JavaScriptCore substring pins the whole file it came from.
+   */
+  line1: Buffer;
   ino: number;
   /** Bytes folded so far: always just past a newline, or the end of a final line that parsed. */
   offset: number;
@@ -960,6 +965,15 @@ function foldHeaderText(scan: HeaderScan, text: string): number {
   return lastNl + 1;
 }
 
+const NEWLINE = 0x0a;
+
+/** How many newline bytes the file starts with. */
+function leadingNewlines(bytes: Buffer): number {
+  let n = 0;
+  while (n < bytes.length && bytes[n] === NEWLINE) n++;
+  return n;
+}
+
 /**
  * Read a conversation file's header state, resuming from `prior` when the file
  * has only grown since that read.
@@ -981,10 +995,9 @@ export async function scanConversationHeader(
   try {
     const { ino, size } = await handle.stat();
     if (prior && prior.ino === ino && size >= prior.offset) {
-      const line1Bytes = Buffer.byteLength(prior.line1);
-      const head = Buffer.alloc(line1Bytes);
-      const headRead = await handle.read(head, 0, line1Bytes, 0);
-      if (head.toString("utf8", 0, headRead.bytesRead) === prior.line1) {
+      const head = Buffer.alloc(prior.line1.length);
+      const headRead = await handle.read(head, 0, head.length, 0);
+      if (headRead.bytesRead === head.length && head.equals(prior.line1)) {
         const scan = cloneScan(prior);
         if (size > prior.offset) {
           const buf = Buffer.alloc(size - prior.offset);
@@ -996,16 +1009,16 @@ export async function scanConversationHeader(
       }
     }
 
-    const content = (await handle.readFile()).toString("utf8");
+    const bytes = await handle.readFile();
     // Line 1 is the first non-empty line. `line1` keeps any blank lines before
     // it, so a resumed read can compare it against the file's first bytes.
-    const leading = content.length - content.replace(/^\n+/, "").length;
-    const lineEnd = content.indexOf("\n", leading);
-    const firstEnd = lineEnd < 0 ? content.length : lineEnd;
+    const leading = leadingNewlines(bytes);
+    const lineEnd = bytes.indexOf(NEWLINE, leading);
+    const firstEnd = lineEnd < 0 ? bytes.length : lineEnd;
     if (firstEnd === leading) return null;
     let raw: Record<string, unknown>;
     try {
-      raw = JSON.parse(content.slice(leading, firstEnd)) as Record<string, unknown>;
+      raw = JSON.parse(bytes.toString("utf8", leading, firstEnd)) as Record<string, unknown>;
     } catch {
       return null;
     }
@@ -1014,7 +1027,7 @@ export async function scanConversationHeader(
 
     const scan: HeaderScan = {
       meta,
-      line1: content.slice(0, firstEnd),
+      line1: Buffer.from(bytes.subarray(0, firstEnd)),
       ino,
       offset: 0,
       preview: "",
@@ -1023,9 +1036,9 @@ export async function scanConversationHeader(
       runsWithResponse: new Set(),
       metrics: { totalInputTokens: 0, totalOutputTokens: 0, lastModel: null, lastEventTs: null },
     };
-    const afterLine1 = Math.min(firstEnd + 1, content.length);
-    const consumed = foldHeaderText(scan, content.slice(afterLine1));
-    scan.offset = Buffer.byteLength(content.slice(0, afterLine1 + consumed));
+    const afterLine1 = Math.min(firstEnd + 1, bytes.length);
+    const rest = bytes.toString("utf8", afterLine1);
+    scan.offset = afterLine1 + Buffer.byteLength(rest.slice(0, foldHeaderText(scan, rest)));
     return scan;
   } finally {
     await handle.close();

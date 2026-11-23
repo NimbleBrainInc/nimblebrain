@@ -212,7 +212,7 @@ A fully specified example:
   "$schema": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
   "version": "1",
   "models": {
-    "default":   "anthropic:claude-sonnet-4-6",
+    "default":   "anthropic:claude-sonnet-5-5",
     "fast":      "anthropic:claude-haiku-4-5-20251001"
   },
   "providers": {
@@ -231,7 +231,7 @@ A fully specified example:
 }
 ```
 
-**Model slots.** `models` takes two named slots — `default` (every chat turn) and `fast` (titles, the home briefing, and both history folds). Each is a `provider:model-id` string. `providers` supplies per-provider API keys when you want to mix providers across slots. A slot left unset resolves to the built-in default model, `anthropic:claude-sonnet-4-6`.
+**Model slots.** `models` takes two named slots — `default` (every chat turn) and `fast` (titles, the home briefing, and both history folds). Each is a `provider:model-id` string. `providers` supplies per-provider API keys when you want to mix providers across slots. A slot left unset resolves to the default model of a configured provider, so an install keyed for any one provider works without naming a model; with none configured, or behind a model gateway, it is `anthropic:claude-sonnet-5-5`.
 
 **Feature flags.** All default to `true`. Disable a flag to remove the capability entirely — the tool is unregistered, not visible to the LLM, and `POST /v1/workspaces/:wsId/tools/call` returns 403. See [Feature Flags](#feature-flags) for the full set.
 
@@ -672,8 +672,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 
 | Setting | Value |
 |---------|-------|
-| `models.default` | `anthropic:claude-sonnet-4-6` |
-| `models.fast` | `anthropic:claude-haiku-4-5-20251001` |
+| `models.default`, `models.fast` | the first configured provider's default model (`src/model/default-model.ts`); `anthropic:claude-sonnet-5-5` with none or behind a gateway |
 | Max iterations | 25 (hard cap: 50) |
 | Max input tokens | 500,000 |
 | Max output tokens | the model's catalog output limit (16,384 for a model the catalog lacks) |

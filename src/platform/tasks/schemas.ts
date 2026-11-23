@@ -248,8 +248,8 @@ export const TOOL_SCHEMAS = toolSchemas({
       "Pause, resume, cancel, or re-run the failed items of a batch. pause: no new item starts. " +
       "resume: starts items again (with `budgetUsd`, under a new budget; a batch paused for " +
       "budget needs one). cancel: stops it for good, cancelling its queued and running runs. " +
-      "rerun_failed: runs every failed, skipped, cancelled, or fail-judged item again as a new " +
-      "run.",
+      "rerun_failed: runs every failed, skipped, cancelled, fail-judged, or exceeds_share item " +
+      "again as a new run (with `budgetUsd`, under a new budget).",
     inputSchema: TasksBatchControlInput,
     outputSchema: TasksBatchControlOutput,
     annotations: {

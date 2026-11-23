@@ -139,6 +139,9 @@ function buildPerCallContext(
     // running on answers from the run rather than from config.
     ...(outer?.model !== undefined ? { model: outer.model } : {}),
     ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
+    // The skills the turn composed ride the restamp so `nb__use_skill`, called
+    // below the top level, does not deliver one of them a second time.
+    ...(outer?.composedSkills !== undefined ? { composedSkills: outer.composedSkills } : {}),
     // `unattended` rides the restamp so a tool dispatched from an unattended
     // run stays walled from the task-authoring surface. Dropping it here
     // would reopen the wall for anything below the top level.

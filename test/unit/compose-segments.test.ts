@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import {
   type AppStateInfo,
+  type ComposeMode,
   composeSystemSegments,
   type FocusedAppInfo,
   type Layer3SkillEntry,
   type PromptAppInfo,
+  TASK_IDENTITY,
   type UserPrefs,
   type WorkspaceContext,
 } from "../../src/prompt/compose.ts";
@@ -251,5 +253,44 @@ describe("composeSystemSegments — skill catalog layer", () => {
     expect(line.length).toBeLessThanOrEqual("- huge — ".length + 1024);
     expect(line).toContain("x".repeat(1024));
     expect(line).not.toContain("x".repeat(1025));
+  });
+});
+
+describe("composeSystemSegments — task mode shares the chat prefix", () => {
+  /** A task run's inputs: no matched skill, focused app, or app state. */
+  function run(mode: ComposeMode, contextSkills: Skill[]) {
+    return composeSystemSegments(
+      contextSkills,
+      null,
+      apps,
+      undefined,
+      undefined,
+      prefs,
+      false,
+      ws,
+      layer3,
+      mode,
+      skillCatalog,
+    );
+  }
+
+  it("a task and a chat in the same workspace have byte-identical stable segments", () => {
+    for (const skills of [[ctx("soul", 0, "I am Nira."), ctx("voice", 50, "Speak plainly.")], []]) {
+      expect(run("task", skills).stableSystem).toBe(run("chat", skills).stableSystem);
+    }
+  });
+
+  it("carries TASK_IDENTITY in the volatile head in task mode only, ahead of the date", () => {
+    const skills = [ctx("soul", 0, "I am Nira.")];
+    const task = run("task", skills);
+    const chat = run("chat", skills);
+    expect(task.stableSystem).not.toContain(TASK_IDENTITY);
+    expect(task.volatileHead).toContain(TASK_IDENTITY);
+    expect(task.volatileHead.indexOf(TASK_IDENTITY)).toBeLessThan(
+      task.volatileHead.indexOf("## Current Date"),
+    );
+    expect(chat.volatileHead).not.toContain(TASK_IDENTITY);
+    expect(chat.stableSystem).not.toContain(TASK_IDENTITY);
+    expect(task.layers.find((l) => l.kind === "task_identity")?.segment).toBe("volatile");
   });
 });

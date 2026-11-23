@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4, SharedV4ProviderOptions } from "@ai-sdk/provider";
-import { ModelAuthError } from "../../src/model/model-auth.ts";
+import { ModelAuthError, ModelProviderNotConfiguredError } from "../../src/model/model-auth.ts";
 import { ModelNotQualifiedError } from "../../src/model/model-id.ts";
 import {
   buildModelResolver,
@@ -125,6 +125,34 @@ describe("buildRegistry", () => {
     } finally {
       if (prev === undefined) delete process.env.XAI_API_KEY;
       else process.env.XAI_API_KEY = prev;
+    }
+  });
+});
+
+describe("buildModelResolver: a model of an unconfigured provider", () => {
+  it("fails naming the provider, before any client is called", () => {
+    const resolver = buildModelResolver({ providers: { openai: {} } });
+    expect(() => resolver("anthropic:claude-sonnet-5-5")).toThrow(ModelProviderNotConfiguredError);
+    expect(() => resolver("anthropic:claude-sonnet-5-5")).toThrow(/anthropic is not configured/);
+  });
+
+  it("names providers.local.models when local is the only provider and lists none", () => {
+    const resolver = buildModelResolver({
+      providers: { local: { baseURL: "http://localhost:11434/v1" } },
+    });
+    expect(() => resolver("anthropic:claude-sonnet-5-5")).toThrow(
+      /providers\.local lists no models/,
+    );
+  });
+
+  it("is a ModelAuthError, so the chat offers no retry", () => {
+    const resolver = buildModelResolver({ providers: { openai: {} } });
+    try {
+      resolver("xai:grok-4.7");
+      throw new Error("expected a throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ModelAuthError);
+      expect((err as ModelAuthError).code).toBe("model_auth_failed");
     }
   });
 });

@@ -1033,7 +1033,7 @@ describe("Core Source", () => {
       // `models.default`, so the list names both.
       const { runtime, source } = await startWithPolicy("clear-sentinel", [
         "anthropic:claude-sonnet-5",
-        "anthropic:claude-sonnet-4-6",
+        "anthropic:claude-sonnet-5-5",
       ]);
       try {
         const res = await asDevUser(() =>
@@ -1041,7 +1041,7 @@ describe("Core Source", () => {
         );
         expect(`isError: ${res.isError} — ${extractText(res.content)}`).toContain("isError: false");
         // Cleared, so it falls back to the built-in default — which policy allows.
-        expect(runtime.configuredModelSlots().fast).toBe("anthropic:claude-sonnet-4-6");
+        expect(runtime.configuredModelSlots().fast).toBe("anthropic:claude-sonnet-5-5");
       } finally {
         await runtime.shutdown();
       }
@@ -1050,16 +1050,32 @@ describe("Core Source", () => {
     it("catches a clear that strands a slot under a policy already in force", async () => {
       // The check runs on every write, not only one that sets a policy: with
       // a list already in place, clearing a slot drops it to a fallback that
-      // the list may not contain.
-      const { runtime, source } = await startWithPolicy("clear-strands", [
-        "anthropic:claude-sonnet-5",
-      ]);
+      // the list may not contain. The default model follows the policy where a
+      // configured provider has a permitted model, so here none does.
+      const { runtime, source } = await startWithPolicy("clear-strands", ["openai:gpt-5.5"], {
+        models: { default: "openai:gpt-5.5", fast: "openai:gpt-5.5" },
+      });
       try {
         const res = await asDevUser(() =>
           source.execute("set_model_config", { models: { fast: null } }),
         );
         expect(res.isError).toBe(true);
         expect(extractText(res.content)).toContain("which the fast slot uses");
+      } finally {
+        await runtime.shutdown();
+      }
+    });
+
+    it("lets a clear land on a permitted model of a configured provider", async () => {
+      const { runtime, source } = await startWithPolicy("clear-follows-policy", [
+        "anthropic:claude-sonnet-5",
+      ]);
+      try {
+        const res = await asDevUser(() =>
+          source.execute("set_model_config", { models: { fast: null } }),
+        );
+        expect(res.isError).toBe(false);
+        expect(runtime.configuredModelSlots().fast).toBe("anthropic:claude-sonnet-5");
       } finally {
         await runtime.shutdown();
       }

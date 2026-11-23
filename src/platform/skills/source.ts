@@ -1142,6 +1142,20 @@ function skillLoadFailureMessage(name: string, reason: "unreachable" | "unverifi
 }
 
 /**
+ * Whether a skill is already in this conversation's context: delivered by an
+ * earlier activation or surface-once injection, or composed into this turn's
+ * prompt (declared, or matched by a trigger), which no event records. A task
+ * run has no conversation, so only the composed check applies there.
+ */
+async function alreadyLoaded(runtime: Runtime, name: string): Promise<boolean> {
+  const ctx = getRequestContext();
+  if (ctx?.composedSkills?.includes(name)) return true;
+  if (!ctx?.conversationId) return false;
+  const events = await readConvEvents(runtime, ctx.conversationId);
+  return !!events && collectDeliveredSkillNames(events).has(name);
+}
+
+/**
  * `nb__use_skill` core: deliver a catalog skill's full body into the
  * conversation, exactly once.
  *
@@ -1160,6 +1174,7 @@ function skillLoadFailureMessage(name: string, reason: "unreachable" | "unverifi
  * surface-once dedup set. The body itself persists via the normal `tool.done`
  * event — no synthetic history message, no `connector.skill.injected`.
  */
+
 async function handleUseSkill(
   runtime: Runtime,
   input: UseSkillInput,
@@ -1190,23 +1205,18 @@ async function handleUseSkill(
     };
   }
 
-  // Already-delivered check against the CURRENT conversation (from request
-  // context — never a caller-named id, so no ownership gate is needed).
-  // Task runs persist no conversation, so they skip the check and always
-  // deliver — a task is a single fresh run.
-  const convId = getRequestContext()?.conversationId;
-  if (convId) {
-    const events = await readConvEvents(runtime, convId);
-    if (events && collectDeliveredSkillNames(events).has(name)) {
-      const out: SkillsUseOutput = { status: "already_loaded", name };
-      return {
-        content: textContent(
-          `Skill "${name}" is already loaded in this conversation — its guidance is in context above; no need to load it again.`,
-        ),
-        structuredContent: out,
-        isError: false,
-      };
-    }
+  // Already in context: delivered earlier in this conversation, or composed
+  // into this turn (`alreadyLoaded`). Read from request context, never a
+  // caller-named id, so no ownership gate is needed.
+  if (await alreadyLoaded(runtime, name)) {
+    const out: SkillsUseOutput = { status: "already_loaded", name };
+    return {
+      content: textContent(
+        `Skill "${name}" is already loaded in this conversation — its guidance is in context above; no need to load it again.`,
+      ),
+      structuredContent: out,
+      isError: false,
+    };
   }
 
   // A server-published skill's body is fetched here, on activation — the

@@ -274,6 +274,33 @@ describe("nb__use_skill — already-delivered dedupe", () => {
     expect(result._meta?.[SKILL_ACTIVATED_META_KEY]).toBeDefined();
   });
 
+  test("a skill this turn composed (a trigger match) answers 'already loaded' with no event", async () => {
+    runtime.activatable = [RUNBOOK];
+    runtime.conversationEvents = [];
+    const src = await buildSource();
+
+    const result = await runWithRequestContext(
+      { ...CONV_CTX, composedSkills: ["invoice-runbook"] },
+      () => src.execute("use_skill", { name: "invoice-runbook" }),
+    );
+    expect(resultText(result)).toContain("already loaded");
+    expect(resultText(result)).not.toContain("<activated-skill>");
+    expect(result._meta?.[SKILL_ACTIVATED_META_KEY]).toBeUndefined();
+  });
+
+  test("a task run's composed skill is not delivered again either", async () => {
+    runtime.activatable = [RUNBOOK];
+    runtime.conversationEvents = [];
+    const src = await buildSource();
+
+    const { conversationId: _none, ...noConversation } = CONV_CTX;
+    const result = await runWithRequestContext(
+      { ...noConversation, composedSkills: ["invoice-runbook"] },
+      () => src.execute("use_skill", { name: "invoice-runbook" }),
+    );
+    expect(resultText(result)).toContain("already loaded");
+  });
+
   test("outside a conversation (task run), activation always delivers", async () => {
     runtime.activatable = [RUNBOOK];
     runtime.conversationEvents = [activatedEvent("invoice-runbook")];
