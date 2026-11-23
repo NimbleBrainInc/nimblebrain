@@ -511,12 +511,16 @@ async function carryingStarted<T>(started: string | undefined, next: () => Promi
 }
 
 /** Asks which model NimbleBrain's own agents run on: a local model's name, or undefined for a hosted key. */
-async function chooseModelSource(deps: Deps): Promise<string | undefined> {
+async function chooseModelSource(deps: Deps, home: string): Promise<string | undefined> {
   deps.say(
     "NimbleBrain's own agents need a model: a hosted one with your API key, or a local one through Ollama (free, slower; https://docs.nimblebrain.ai/config/local-models/).",
   );
   const answer = (await deps.prompt("Model (hosted, local) [hosted]: ")).trim().toLowerCase();
-  return answer === "local" ? DEFAULT_LOCAL_MODEL : undefined;
+  if (answer !== "local") return undefined;
+  deps.say(
+    `Using ${DEFAULT_LOCAL_MODEL}. Another model: ${invocation(deps, home)} local-model <model>`,
+  );
+  return DEFAULT_LOCAL_MODEL;
 }
 
 /**
@@ -616,7 +620,7 @@ async function prepareModel(ctx: Ctx, composeText: string): Promise<string | und
   const local =
     flags.localModel ??
     (!hasModel && asks(ctx) && takesLocalModel(composeText)
-      ? await chooseModelSource(deps)
+      ? await chooseModelSource(deps, home)
       : undefined);
   if (local) return (await useLocalModel(ctx, composeText, local)).started;
   if (saved) return (await ensureOllama(deps, confirmOllamaStart(ctx, true))).started;
