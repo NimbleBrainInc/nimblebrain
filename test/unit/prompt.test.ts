@@ -1057,10 +1057,10 @@ describe("composeSystemPrompt — task mode", () => {
     expect(result).toContain("deliverable");
   });
 
-  it("does NOT use the default identity fallback in task mode", () => {
-    // No core context skills → chat mode would emit the default identity.
-    // Task mode emits TASK_IDENTITY instead — emitting both would give
-    // the model contradictory role definitions.
+  it("applies the default identity fallback in task mode as in chat mode", () => {
+    // The fallback depends on the core skills alone, so the stable system
+    // prefix does not vary with the mode. The default identity is the vendored
+    // soul.md text, which a task run carries beside TASK_IDENTITY anyway.
     const result = composeSystemPrompt(
       [],
       null,
@@ -1073,7 +1073,8 @@ describe("composeSystemPrompt — task mode", () => {
       undefined,
       "task",
     );
-    expect(result).not.toContain(defaultIdentity());
+    expect(result).toContain(defaultIdentity());
+    expect(result).toContain(TASK_IDENTITY);
   });
 
   it("defaults to chat mode when mode is omitted (existing call sites unchanged)", () => {
@@ -1082,7 +1083,7 @@ describe("composeSystemPrompt — task mode", () => {
     expect(result).not.toContain(TASK_IDENTITY);
   });
 
-  it("layers TASK_IDENTITY ABOVE core skills (framing precedence by position)", () => {
+  it("orders TASK_IDENTITY first in the composed layers", () => {
     const soul = makeContextSkill("soul", 0, "I am Nira.");
     const result = composeSystemPrompt(
       [soul],
@@ -1127,6 +1128,7 @@ describe("composeSystemPrompt — task mode", () => {
     const taskLayer = traced.layers.find((l) => l.kind === "task_identity");
     expect(taskLayer).toBeDefined();
     expect(taskLayer?.text).toBe(TASK_IDENTITY);
+    expect(taskLayer?.segment).toBe("volatile");
   });
 });
 
