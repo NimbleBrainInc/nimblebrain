@@ -93,6 +93,8 @@ interface CheckResult {
   registrationEndpoint?: string;
   authorizationEndpoint?: string;
   failureReason?: string;
+  /** Set on a pass whose last step could not be observed, with the reason. */
+  unverified?: string;
 }
 
 /**
@@ -143,10 +145,11 @@ async function main(): Promise<void> {
   console.log(`${pad("ENTRY", colName)}  ${pad("URL", colUrl)}  STATUS`);
   console.log("─".repeat(colName + colUrl + 18));
   for (const r of results) {
-    const icon = r.pass ? "✓" : "✗";
-    const status = r.pass
-      ? `${icon} ok (DCR + authorize end-to-end)`
-      : `${icon} FAIL — ${r.failureReason}`;
+    const status = !r.pass
+      ? `✗ FAIL — ${r.failureReason}`
+      : r.unverified
+        ? `⚠ ok (DCR registered; ${r.unverified})`
+        : "✓ ok (DCR + authorize end-to-end)";
     console.log(`${pad(r.name, colName)}  ${pad(r.url, colUrl)}  ${status}`);
   }
 
@@ -228,7 +231,20 @@ async function checkEntry(s: ServerDetail, redirectUri: string): Promise<CheckRe
   }
 
   result.pass = true;
+  if (authResult.challenged) {
+    result.unverified = "/authorize is behind a bot challenge, so the redirect check is unverified";
+  }
   return result;
+}
+
+/**
+ * Whether a response is a bot-management challenge rather than the vendor's own
+ * answer. Cloudflare marks every challenge it serves with `cf-mitigated: challenge`.
+ * A challenge says nothing about our redirect URI: a person's browser passes it and
+ * reaches the vendor's page, while a script never can.
+ */
+export function isBotChallenge(res: Response): boolean {
+  return res.headers.get("cf-mitigated")?.toLowerCase() === "challenge";
 }
 
 async function probeReachable(
@@ -366,7 +382,7 @@ async function probeAuthorize(
   authorizationEndpoint: string,
   clientId: string,
   redirectUri: string,
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true; challenged?: boolean } | { ok: false; message: string }> {
   // PKCE challenge — `code_challenge_method=S256` of an arbitrary
   // verifier. Some vendors require it; supplying it never hurts.
   const url = new URL(authorizationEndpoint);
@@ -386,6 +402,9 @@ async function probeAuthorize(
     });
     // 2xx (login page) or 3xx (redirect to vendor login) = pass.
     if (res.status < 400) return { ok: true };
+    // The vendor never saw the request, so this is not a rejection. Registration
+    // already accepted the redirect URI, which is the step most allowlists check.
+    if (isBotChallenge(res)) return { ok: true, challenged: true };
     const body = (await res.text()).slice(0, 200).replace(/\s+/g, " ").trim();
     return { ok: false, message: `HTTP ${res.status}: ${body}` };
   } catch (err) {

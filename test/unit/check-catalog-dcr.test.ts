@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { selectDcrEntries } from "../../scripts/check-catalog-dcr.ts";
+import { isBotChallenge, selectDcrEntries } from "../../scripts/check-catalog-dcr.ts";
 import { readCatalogServers } from "../../src/connectors/catalog/read.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
@@ -33,5 +33,20 @@ describe("check-catalog-dcr selectDcrEntries", () => {
       },
     ]);
     expect(noRemote).toHaveLength(0);
+  });
+});
+
+describe("check-catalog-dcr isBotChallenge", () => {
+  test("recognizes Cloudflare's challenge marker", () => {
+    const res = new Response("<title>Just a moment...</title>", {
+      status: 403,
+      headers: { "cf-mitigated": "challenge" },
+    });
+    expect(isBotChallenge(res)).toBe(true);
+  });
+
+  test("treats a vendor's own 4xx as a real answer", () => {
+    const res = new Response("invalid redirect", { status: 400 });
+    expect(isBotChallenge(res)).toBe(false);
   });
 });
