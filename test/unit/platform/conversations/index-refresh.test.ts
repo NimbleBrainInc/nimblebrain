@@ -26,6 +26,7 @@ import { handleUpdate } from "../../../../src/platform/conversations/tools/updat
 let workDir: string;
 const WS = "ws_003eba8844413cd9";
 const OWNER = "usr_alice";
+const SCOPE = { workspaceId: WS, userId: OWNER };
 const CONV = "conv_00000000000000a1";
 
 beforeEach(() => {
@@ -66,7 +67,7 @@ test("an update is invisible until invalidate()+refresh() (no frozen summary)", 
 
   const index = new ConversationIndex();
   await index.build(workspacesRoot());
-  expect(index.list().conversations[0]?.messageCount).toBe(0);
+  expect(index.list(SCOPE).conversations[0]?.messageCount).toBe(0);
 
   // Append a user message (changes the derived summary).
   appendFileSync(
@@ -76,12 +77,12 @@ test("an update is invisible until invalidate()+refresh() (no frozen summary)", 
 
   // Clean cache → refresh is a no-op → still stale (this is the bug if relied on alone).
   await index.refresh();
-  expect(index.list().conversations[0]?.messageCount).toBe(0);
+  expect(index.list(SCOPE).conversations[0]?.messageCount).toBe(0);
 
   // The runtime's change hook flags it stale → refresh rebuilds → fresh.
   index.invalidate();
   await index.refresh();
-  expect(index.list().conversations[0]?.messageCount).toBe(1);
+  expect(index.list(SCOPE).conversations[0]?.messageCount).toBe(1);
 });
 
 test("a delete drops the entry on invalidate()+refresh() (no ghost)", async () => {
@@ -90,18 +91,18 @@ test("a delete drops the entry on invalidate()+refresh() (no ghost)", async () =
 
   const index = new ConversationIndex();
   await index.build(workspacesRoot());
-  expect(index.list().totalCount).toBe(1);
+  expect(index.list(SCOPE).totalCount).toBe(1);
 
   rmSync(file);
 
   // Clean cache still shows the ghost...
   await index.refresh();
-  expect(index.list().totalCount).toBe(1);
+  expect(index.list(SCOPE).totalCount).toBe(1);
 
   // ...invalidate + rebuild drops the vanished file.
   index.invalidate();
   await index.refresh();
-  expect(index.list().totalCount).toBe(0);
+  expect(index.list(SCOPE).totalCount).toBe(0);
 });
 
 // ---------------------------------------------------------------------------
@@ -125,15 +126,15 @@ test("handleUpdate's write is announced, so the rename lands on a targeted refre
 
   const index = new ConversationIndex();
   await index.build(workspacesRoot());
-  expect(index.get(CONV)!.title).toBeNull();
+  expect(index.get(CONV, SCOPE)!.title).toBeNull();
 
-  await handleUpdate({ id: CONV, title: "Renamed by the tool" }, index);
+  await handleUpdate({ id: CONV, title: "Renamed by the tool" }, index, SCOPE);
   await index.refresh();
 
-  expect(index.get(CONV)!.title).toBe("Renamed by the tool");
+  expect(index.get(CONV, SCOPE)!.title).toBe("Renamed by the tool");
   // The handler supplies the wsId, so the announcement is also what keeps the
   // entry inside its workspace wall.
-  expect(index.get(CONV)!.workspaceId).toBe(WS);
+  expect(index.get(CONV, SCOPE)!.workspaceId).toBe(WS);
 });
 
 test("handleFork's new conversation is announced, so it appears on a targeted refresh", async () => {
@@ -146,17 +147,17 @@ test("handleFork's new conversation is announced, so it appears on a targeted re
 
   const index = new ConversationIndex();
   await index.build(workspacesRoot());
-  expect(index.list().totalCount).toBe(1);
+  expect(index.list(SCOPE).totalCount).toBe(1);
 
-  const forked = await handleFork({ id: CONV }, index);
+  const forked = await handleFork({ id: CONV }, index, SCOPE);
   await index.refresh();
 
   // Absent, not merely stale: the index has never seen this conversation, so
   // nothing but its own announcement can introduce it.
-  expect(index.get(forked.id)).toBeDefined();
-  expect(index.list().totalCount).toBe(2);
+  expect(index.get(forked.id, SCOPE)).toBeDefined();
+  expect(index.list(SCOPE).totalCount).toBe(2);
   // The fork inherits the source's workspace, and only the announcement carries it.
-  expect(index.list({ workspaceId: WS }).totalCount).toBe(2);
+  expect(index.get(forked.id, SCOPE)!.workspaceId).toBe(WS);
 });
 
 test("a targeted refresh keeps the entry's workspace binding", async () => {
@@ -165,7 +166,7 @@ test("a targeted refresh keeps the entry's workspace binding", async () => {
 
   const index = new ConversationIndex();
   await index.build(workspacesRoot());
-  expect(index.get(CONV)!.workspaceId).toBe(WS);
+  expect(index.get(CONV, SCOPE)!.workspaceId).toBe(WS);
 
   // The incremental path derives workspaceId from the change rather than from a
   // directory walk. If it dropped that, the entry would fall out of every
@@ -173,6 +174,6 @@ test("a targeted refresh keeps the entry's workspace binding", async () => {
   index.invalidate({ id: CONV, filePath: file, wsId: WS });
   await index.refresh();
 
-  expect(index.get(CONV)!.workspaceId).toBe(WS);
-  expect(index.list({ workspaceId: WS }).totalCount).toBe(1);
+  expect(index.get(CONV, SCOPE)!.workspaceId).toBe(WS);
+  expect(index.list(SCOPE).totalCount).toBe(1);
 });

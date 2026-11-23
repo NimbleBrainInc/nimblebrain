@@ -11,7 +11,7 @@ import type {
   ConversationsSearchInput,
   ConversationsSearchOutput,
 } from "../../schemas/conversations.ts";
-import type { AccessContext, ConversationIndex, WorkspaceScope } from "../index-cache.ts";
+import type { ConversationIndex, ReadScope } from "../index-cache.ts";
 
 type MatchSnippet = ConversationSearchResult["matches"][number];
 
@@ -82,8 +82,7 @@ function collectSnippets(raw: string, query: string, queryLower: string): MatchS
 export async function handleSearch(
   input: ConversationsSearchInput,
   index: ConversationIndex,
-  scope: WorkspaceScope,
-  access?: AccessContext,
+  scope: ReadScope,
 ): Promise<ConversationsSearchOutput> {
   const query = input.query?.trim();
   if (!query) {
@@ -93,16 +92,10 @@ export async function handleSearch(
   const limit = input.limit ?? DEFAULT_LIMIT;
   const queryLower = query.toLowerCase();
 
-  // Walled to the focused workspace like every other read. Search returns
+  // Walled to the focused workspace and the caller like every other read. Search returns
   // verbatim snippets of message content, so an unscoped pass would put another
   // workspace's transcript text on the wire, not just its ids.
-  const allConversations = index.list(
-    {
-      limit: index.size || 1,
-      workspaceId: scope.workspaceId,
-    },
-    access,
-  );
+  const allConversations = index.list(scope, { limit: index.size || 1 });
   const results: ConversationSearchResult[] = [];
 
   for (const entry of allConversations.conversations) {

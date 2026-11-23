@@ -15,7 +15,7 @@ import type {
   ConversationsGetOutput,
   DisplayMessage,
 } from "../../schemas/conversations.ts";
-import type { AccessContext, ConversationIndex } from "../index-cache.ts";
+import type { ConversationIndex, ReadScope } from "../index-cache.ts";
 import { readConversation } from "../jsonl-reader.ts";
 
 /** Default number of trailing messages returned in "messages" mode. */
@@ -72,7 +72,7 @@ type ResolvedInput = ConversationsGetInput & { id: string };
 export async function handleGet(
   input: ResolvedInput,
   index: ConversationIndex,
-  access?: AccessContext,
+  scope: ReadScope,
   /**
    * Whether a turn is generating for this conversation right now. Supplied by
    * the caller because liveness lives in the kernel's RunBus, not in the event
@@ -80,9 +80,9 @@ export async function handleGet(
    */
   runActive?: boolean,
 ): Promise<ConversationsGetOutput> {
-  // `index.get` returns undefined for both not-found and exists-but-
-  // not-yours when `access` is supplied — one error message, no leak.
-  const entry = index.get(input.id, access);
+  // `index.get` returns undefined for not-found and for an entry outside
+  // `scope` (another owner or another workspace) — one error message, no leak.
+  const entry = index.get(input.id, scope);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);
   }

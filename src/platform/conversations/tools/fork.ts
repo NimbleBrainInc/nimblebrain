@@ -13,7 +13,7 @@ import type {
   ConversationsForkInput,
   ConversationsForkOutput,
 } from "../../schemas/conversations.ts";
-import type { AccessContext, ConversationIndex } from "../index-cache.ts";
+import type { ConversationIndex, ReadScope } from "../index-cache.ts";
 import type { DisplayMessage, DisplayToolCall, DisplayUsage } from "../jsonl-reader.ts";
 import { readConversation } from "../jsonl-reader.ts";
 
@@ -206,9 +206,9 @@ type ResolvedInput = ConversationsForkInput & { id: string };
 export async function handleFork(
   input: ResolvedInput,
   index: ConversationIndex,
-  access?: AccessContext,
+  scope: ReadScope,
 ): Promise<ConversationsForkOutput> {
-  const entry = index.get(input.id, access);
+  const entry = index.get(input.id, scope);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);
   }

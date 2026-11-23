@@ -32,6 +32,7 @@ import {
 
 const WS = "ws_00000000000000b1";
 const OWNER = "usr_alice";
+const SCOPE = { workspaceId: WS, userId: OWNER };
 const CONV = "conv_00000000000000b1";
 
 let workDir: string;
@@ -193,6 +194,6 @@ describe("ConversationIndex resumes on a named change", () => {
     index.invalidate({ id: CONV, filePath: file, wsId: WS });
     await index.refresh();
 
-    expect(index.get(CONV)).toMatchObject({ messageCount: 4, totalInputTokens: 105 });
+    expect(index.get(CONV, SCOPE)).toMatchObject({ messageCount: 4, totalInputTokens: 105 });
   });
 });

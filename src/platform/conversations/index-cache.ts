@@ -80,16 +80,18 @@ export interface ConversationChange {
 }
 
 /**
- * The one workspace a read is walled to.
+ * The one workspace and the one owner a call is walled to.
  *
- * Conversations are workspace-owned, so every user-facing read resolves inside
- * exactly one workspace. This is a separate parameter from the caller's input
- * on purpose: the workspace is ambient (the request's focused workspace), not a
- * coordinate the caller supplies, so it cannot be omitted into a full-tenant
- * read or pointed at a workspace the caller isn't in.
+ * Conversations are workspace-owned and single-owner, so every read or write
+ * through the index resolves inside exactly one workspace, for exactly one
+ * owner. Both halves are ambient — the request's workspace and its
+ * authenticated identity — never coordinates the caller supplies, and both are
+ * required: there is no way to ask the index for a full-tenant or any-owner
+ * answer. An entry outside either half is indistinguishable from an absent one.
  */
-export interface WorkspaceScope {
+export interface ReadScope {
   workspaceId: string;
+  userId: string;
 }
 
 export interface ListOptions {
@@ -99,17 +101,6 @@ export interface ListOptions {
   sortBy?: "created" | "updated";
   dateFrom?: string; // ISO 8601
   dateTo?: string; // ISO 8601
-  /** Scope to one workspace. Applied before pagination so the limit applies to the workspace's set. */
-  workspaceId?: string;
-}
-
-/**
- * Access context for ownership-gated reads. When supplied, list/search/
- * stats filter to entries owned by `userId`; get/update/fork/export
- * refuse mismatched owners with a "not found" — no existence leak.
- */
-export interface AccessContext {
-  userId: string;
 }
 
 export interface ListResult {
@@ -224,26 +215,20 @@ export class ConversationIndex {
     // return. Whatever arrives leaves its signal set for the next reader.
   }
 
-  /** List conversations with pagination, sorting, date filtering, search. */
-  list(options?: ListOptions, access?: AccessContext): ListResult {
-    let items = [...this.entries.values()];
-
-    // Ownership filter — applied before other filters so totalCount
-    // reflects the caller's visible set, not the global one.
-    if (access) {
-      items = items.filter((e) => e.ownerId === access.userId);
-    }
-
-    // Workspace filter — scope to one workspace BEFORE pagination, so the limit
-    // applies to the workspace's set rather than slicing a global page and then
-    // dropping out-of-workspace entries (which under-counts a workspace whose
-    // chats aren't in the global most-recent page). `e.workspaceId` is the
-    // entry's DIRECTORY, so a record is in exactly the workspace it is stored
-    // under — there is no "unstamped" case to fold in.
-    if (options?.workspaceId) {
-      const wsId = options.workspaceId;
-      items = items.filter((e) => e.workspaceId === wsId);
-    }
+  /**
+   * List the conversations `scope` can see, with pagination, sorting, date
+   * filtering, and search.
+   */
+  list(scope: ReadScope, options?: ListOptions): ListResult {
+    // Owner and workspace filter — applied BEFORE pagination and the other
+    // filters, so `totalCount` and the limit apply to the caller's set in this
+    // workspace rather than slicing a global page and then dropping entries
+    // (which under-counts a workspace whose chats aren't in the global
+    // most-recent page). `e.workspaceId` is the entry's DIRECTORY, so a record
+    // is in exactly the workspace it is stored under.
+    let items = [...this.entries.values()].filter(
+      (e) => e.ownerId === scope.userId && e.workspaceId === scope.workspaceId,
+    );
 
     // Search filter: case-insensitive substring on title + preview
     if (options?.search) {
@@ -287,15 +272,16 @@ export class ConversationIndex {
   }
 
   /**
-   * Get a single entry by ID. With `access` supplied, returns
-   * `undefined` for both "not found" AND "exists but not yours" — same
-   * shape, no existence leak. Without `access`, the caller is asserting
-   * trusted scope.
+   * Get a single entry by ID, inside `scope`. Returns `undefined` for "not
+   * found", "exists but not yours", and "exists in another workspace" alike —
+   * one shape, so a caller cannot learn that an id exists outside its scope.
    */
-  get(id: string, access?: AccessContext): IndexEntry | undefined {
+  get(id: string, scope: ReadScope): IndexEntry | undefined {
     const entry = this.entries.get(id);
     if (!entry) return undefined;
-    if (access && entry.ownerId !== access.userId) return undefined;
+    if (entry.ownerId !== scope.userId || entry.workspaceId !== scope.workspaceId) {
+      return undefined;
+    }
     return entry;
   }
 

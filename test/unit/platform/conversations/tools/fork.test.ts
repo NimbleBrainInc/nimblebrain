@@ -11,6 +11,9 @@ import {
   type FixtureTurn,
 } from "../../../../helpers/conversation-events.ts";
 
+/** The workspace and owner every fixture here is stored under. */
+const SCOPE = { workspaceId: "ws_00859aff6f095b0e", userId: "usr_test" };
+
 /** The workspaces root the index walks. */
 const ROOT = join(import.meta.dir, ".tmp-fork");
 /** One owner partition of one workspace, where the fixtures live. */
@@ -109,7 +112,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = await handleFork({ id: SOURCE_ID }, index);
+    const result = await handleFork({ id: SOURCE_ID }, index, SCOPE);
 
     // Result should have a new ID
     expect(result.id).not.toBe(SOURCE_ID);
@@ -164,7 +167,7 @@ describe("handleFork", () => {
     writeSourceConversation({ model });
     const index = await buildIndex();
 
-    const result = await handleFork({ id: SOURCE_ID }, index);
+    const result = await handleFork({ id: SOURCE_ID }, index, SCOPE);
 
     const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
     const newConv = await readConversation(newFilePath);
@@ -179,7 +182,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = await handleFork({ id: SOURCE_ID, atMessage: 3 }, index);
+    const result = await handleFork({ id: SOURCE_ID, atMessage: 3 }, index, SCOPE);
 
     // Should have 3 messages (indices 0, 1, 2)
     expect(result.messageCount).toBe(3);
@@ -210,7 +213,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    expect(handleFork({ id: "conv_doesnotexist00" }, index)).rejects.toThrow(
+    expect(handleFork({ id: "conv_doesnotexist00" }, index, SCOPE)).rejects.toThrow(
       "Conversation not found: conv_doesnotexist00",
     );
   });
@@ -225,7 +228,7 @@ describe("handleFork", () => {
     const originalContent = readFileSync(sourcePath, "utf-8");
 
     const index = await buildIndex();
-    await handleFork({ id: SOURCE_ID, atMessage: 2 }, index);
+    await handleFork({ id: SOURCE_ID, atMessage: 2 }, index, SCOPE);
 
     const afterContent = readFileSync(sourcePath, "utf-8");
     expect(afterContent).toBe(originalContent);
@@ -239,7 +242,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = await handleFork({ id: SOURCE_ID }, index);
+    const result = await handleFork({ id: SOURCE_ID }, index, SCOPE);
     const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
 
     // Read raw content and verify structure
@@ -278,7 +281,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = await handleFork({ id: SOURCE_ID, atMessage: 0 }, index);
+    const result = await handleFork({ id: SOURCE_ID, atMessage: 0 }, index, SCOPE);
 
     expect(result.messageCount).toBe(0);
     expect(result.totalInputTokens).toBe(0);
@@ -341,7 +344,7 @@ describe("handleFork", () => {
     ]);
     const index = await buildIndex();
 
-    const result = await handleFork({ id: SOURCE_ID }, index);
+    const result = await handleFork({ id: SOURCE_ID }, index, SCOPE);
 
     const source = await readConversation(join(TMP_DIR, `${SOURCE_ID}.jsonl`));
     const forked = await readConversation(join(TMP_DIR, `${result.id}.jsonl`));
@@ -357,7 +360,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = await handleFork({ id: SOURCE_ID }, index);
+    const result = await handleFork({ id: SOURCE_ID }, index, SCOPE);
     const id = result.id as string;
 
     expect(id).toMatch(/^conv_[0-9a-f]{16}$/);
