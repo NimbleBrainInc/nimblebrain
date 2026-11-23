@@ -85,7 +85,7 @@ function parseRedirectUri(raw: string | undefined): string | null {
   }
 }
 
-interface CheckResult {
+export interface CheckResult {
   name: string;
   url: string;
   pass: boolean;
@@ -145,12 +145,7 @@ async function main(): Promise<void> {
   console.log(`${pad("ENTRY", colName)}  ${pad("URL", colUrl)}  STATUS`);
   console.log("─".repeat(colName + colUrl + 18));
   for (const r of results) {
-    const status = !r.pass
-      ? `✗ FAIL — ${r.failureReason}`
-      : r.unverified
-        ? `⚠ ok (DCR registered; ${r.unverified})`
-        : "✓ ok (DCR + authorize end-to-end)";
-    console.log(`${pad(r.name, colName)}  ${pad(r.url, colUrl)}  ${status}`);
+    console.log(`${pad(r.name, colName)}  ${pad(r.url, colUrl)}  ${formatStatus(r)}`);
   }
 
   const failed = results.filter((r) => !r.pass);
@@ -166,7 +161,15 @@ async function main(): Promise<void> {
   console.log(`✓ All ${results.length} DCR entries pass.`);
 }
 
-async function checkEntry(s: ServerDetail, redirectUri: string): Promise<CheckResult> {
+/** The report's STATUS column for one entry. Exported for the offline unit test. */
+export function formatStatus(r: CheckResult): string {
+  if (!r.pass) return `✗ FAIL — ${r.failureReason}`;
+  if (r.unverified) return `⚠ ok (DCR registered; ${r.unverified})`;
+  return "✓ ok (DCR + authorize end-to-end)";
+}
+
+/** Run the five probe steps against one entry. Exported for the offline unit test. */
+export async function checkEntry(s: ServerDetail, redirectUri: string): Promise<CheckResult> {
   const url = s.remotes![0]!.url;
   const result: CheckResult = {
     name: s.name,
