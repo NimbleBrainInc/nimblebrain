@@ -223,7 +223,12 @@ async function install(
   // Asked before the start: the runtime reads `.env` only when its container is created.
   const ollamaStarted = await prepareModel(ctx, composeText);
   return carryingStarted(ollamaStarted, async () => {
-    deps.say(`Starting NimbleBrain ${tag}. The first start downloads about 2 GB of images.`);
+    const cached = await imagesPresent(deps, imagesOf(composeText, tag));
+    deps.say(
+      cached
+        ? `Starting NimbleBrain ${tag}.`
+        : `Starting NimbleBrain ${tag}. The first start downloads about 2 GB of images.`,
+    );
     await start(deps, home, port);
 
     state.phase = "ready";
@@ -561,6 +566,20 @@ async function chooseAgent(deps: Deps): Promise<Agent> {
   );
   const answer = await deps.prompt(`Connect a coding agent? (${AGENTS.join(", ")}) [none]: `);
   return (AGENTS as readonly string[]).includes(answer) ? (answer as Agent) : "none";
+}
+
+/** The images a release's Compose file names, with its tag filled into `${NIMBLEBRAIN_TAG}`. */
+function imagesOf(composeText: string, tag: string): string[] {
+  return [...composeText.matchAll(/^\s*image:\s*(\S+)/gm)].map((m) =>
+    (m[1] ?? "").replace(/\$\{NIMBLEBRAIN_TAG(:-[^}]*)?\}/g, tag),
+  );
+}
+
+/** Whether Docker already has every one of `images`; with none named, nothing is known to be present. */
+async function imagesPresent(deps: Deps, images: string[]): Promise<boolean> {
+  if (images.length === 0) return false;
+  const res = await deps.exec("docker", ["image", "inspect", ...images]);
+  return res.code === 0;
 }
 
 async function start(deps: Deps, home: string, port: number): Promise<void> {
