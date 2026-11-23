@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # The pinned frontend provides `COPY --parents`, used below for the UI build layer.
-FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b AS base
+FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS base
 
 LABEL org.opencontainers.image.title="NimbleBrain"
 LABEL org.opencontainers.image.description="Open-source runtime that runs agents and MCP apps on your systems, with any model"
