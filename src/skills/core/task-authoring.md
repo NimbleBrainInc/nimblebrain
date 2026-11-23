@@ -31,8 +31,8 @@ They are listed on the **Scheduled** page. Say "run" for one execution.
 
 ## Set one up
 
-1. Check the tools the job needs exist (`nb__search`). If a connector is
-   missing, say which one to install and stop.
+1. If a tool the job needs is not in your tool list, look for it once with
+   `nb__search`. If its connector is missing, say which one to install and stop.
 2. Write `body` as the job: what to read, what to make, where to deliver it.
    Set `allowedTools` to one `<connector>__*` glob per connector it uses.
 3. If the person has not said what it does or when, ask. Otherwise name it
