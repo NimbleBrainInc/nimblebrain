@@ -1,6 +1,6 @@
 # 0075. Stored records go through domain stores, and a configured storage provider supplies them
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-22
 - Serves: secure RBAC
 

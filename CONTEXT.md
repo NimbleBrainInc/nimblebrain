@@ -272,6 +272,16 @@ plugin into the workspace's registry, so other members gain nothing. It
 replaces ADR-0006's per-connector grant, which is what the runtime enforces
 today.
 
+### Storage provider *(decided, ADR-0075; not yet built)*
+The configured backend behind the runtime's records. Every record (a
+conversation, a task or run, a workspace, a notification, a skill, a file, a
+usage entry) is read and written through a **domain store**, an interface of
+that domain's operations that names no medium. One provider, named by
+`storage.provider`, serves a deployment's records: `filesystem` by default, a
+database when configured. Large write-once bodies go to a separately configured
+**blob store**. Configuration files are not records, and secrets stay behind
+their own backend (ADR-0035). Today most domains read and write files directly.
+
 ## Decisions
 
 The decision log is `adr/`. A proposed ADR is a draft and changes in place until
@@ -297,6 +307,7 @@ Foundational (secure RBAC):
 - [0044](adr/0044-the-url-is-the-only-thing-that-names-a-workspace.md) — the URL is the only thing that names a workspace; the server chooses none
 - [0069](adr/0069-a-plugin-belongs-to-a-workspace-or-a-person-and-a-personal-plugin-acts-only-where-its-owner-grants-it.md) — a plugin belongs to a workspace or a person; a personal plugin acts in a workspace only while its owner grants it there, and the grant covers its connectors and skills (amended by 0070)
 - [0070](adr/0070-a-models-request-to-use-a-personal-plugin-returns-at-once-and-the-answer-is-the-persons-next-message.md) — a model's request to use a personal plugin returns at once; the person answers in the client, and the model learns the answer as their next message
+- [0075](adr/0075-stored-records-go-through-domain-stores-that-a-configured-storage-provider-supplies.md) — every record goes through a domain store that names no medium, and one configured storage provider (files by default) serves a deployment's records; blobs are a separate store
 
 Manage skills:
 
