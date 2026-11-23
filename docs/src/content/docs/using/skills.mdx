@@ -70,7 +70,7 @@ Format action items as a checklist.
 
 ### Body length
 
-A skill body is delivered up to **12,000 characters** (frontmatter excluded), however it loads. A longer body is cut from the end, whole sections at a time, so the rules written last are the ones the model never sees.
+A skill body is delivered up to **8,000 characters** (frontmatter excluded), however it loads. A longer body is cut from the end, whole sections at a time, so the rules written last are the ones the model never sees.
 
 - `skills__create` refuses a body over the limit, and `skills__update` refuses an edit that would leave the body over the limit and longer than it was. Neither writes anything or takes a snapshot.
 - A skill already over the limit can still be edited as long as the edit does not grow it. The result says how far over it still is.

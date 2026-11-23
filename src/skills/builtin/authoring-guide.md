@@ -22,195 +22,78 @@ metadata:
 
 # Authoring Skills
 
-You are about to author or reason about a platform skill. Read this before
-writing or modifying any skill file. Be decisive and brief — skill content
-competes for context window space, and so does this guide.
+Read this before writing or changing a skill. Skill content competes for the
+context window, so be decisive and brief, and so is this guide.
 
-## The `nb__skills` tool surface
+## The tools
 
-Skills are created and managed through the `nb__skills` tools:
+- `skills__list` / `skills__read`: see what exists. Always list before changing.
+- `skills__create`: write a new skill at org, workspace, or user scope.
+- `skills__update`: patch manifest fields or the body. An omitted field keeps its
+  value; `null` clears one (`description` takes none). Not `status`: the durable
+  off switch is the user's, in Skills settings.
+- `skills__delete`: remove one (snapshotted first).
+- `skills__activate` / `skills__deactivate`: mute or un-mute for THIS
+  conversation only. Nothing is written. If the user wants it off for good, say
+  it is theirs to do in Skills settings; never mute and report it done.
+- `skills__history` / `skills__restore`: past versions, and putting one back.
 
-- `skills__create` — write a new skill at org / workspace / user scope
-- `skills__update` — patch manifest fields and/or change the body. An omitted
-  field keeps its value; `null` clears one (`description` takes none). Not
-  `status`: that is the durable off switch and it is refused here
-- `skills__delete` — remove a skill (snapshots to `_versions/` first)
-- `skills__activate` / `skills__deactivate` — mute or un-mute a skill for THIS
-  conversation. Nothing is written; other conversations and workspaces are
-  unaffected. You cannot turn a skill off permanently — that is the user's call,
-  in Skills settings. If they ask for it, say so rather than muting and
-  reporting it done.
-- `skills__list` / `skills__read` — inspect what exists before changing anything
-- `skills__history` / `skills__restore` — list past versions and put one back
+**Changing a body names its mode.** `body` without `body_mode` is refused.
+`"append"` adds after what is there: what "add a rule" means, and the default.
+`"replace"` overwrites the whole body; read it first. A bad replace is
+recoverable through `skills__history`, `skills__read {version}`, and
+`skills__restore`.
 
-Always `skills__list` before mutating so you know what you're working with.
+## Skill or connector instruction: choose first
 
-## Changing a body: say which you mean
+A rule for exactly one connector's behavior belongs in that connector's own
+instructions (its settings), scoped to its tools and deleted with it. A skill is
+for what spans connectors or governs the agent: voice, a personal preference, a
+multi-connector workflow. Default to the connector's instructions.
 
-`skills__update` will not guess. Passing `body` without `body_mode` is an error,
-because the two intents destroy different things when guessed wrong:
+## How it loads
 
-- **`body_mode: "append"`** — adds your text after what is already there. This is
-  what "add a rule to this skill" means. Reach for it by default.
-- **`body_mode: "replace"`** — overwrites the entire body. **Everything not in
-  `body` is gone from the live file.** Only correct when you are rewriting the
-  whole skill, and you should have read it first.
+Set `loading-strategy` under `metadata.nimblebrain`:
 
-If a replace turns out to have discarded something, it is recoverable:
-`skills__history` lists the snapshots taken before each write, `skills__read`
-with a `version` shows one, and `skills__restore` puts it back.
+- **`always`**: in context every turn. Only for short, durable rules (voice,
+  identity); it costs context on every call. The user sets it in Skills
+  settings: `skills__create`, `skills__update`, and `skills__restore` refuse a
+  write from you that would leave a skill `always`, so draft the text and ask
+  the user to add it there.
+- **`dynamic`**: loaded on demand, by one of:
+  - its **`description`**, which the model reads in the catalog. This is the
+    main path: say what the skill does **and when to use it**, in the words a
+    user would say ("Extract text from PDFs, fill forms. Use when the user
+    mentions PDFs or forms."). A thin description is never reached for.
+  - **`tool-affinity`**: globs matched against each tool called; the skill
+    arrives before the first matching call. Only `*`, `<prefix>__*`, and
+    `*__<suffix>` match as globs; anything else is an exact name. `*` is almost
+    always wrong: use `always` instead.
+  - **`triggers`**: exact phrases for must-fire loading. Two to four, specific
+    ("compliance review", not "review").
 
-## The three layers
+## Scope and priority
 
-The platform composes context in three layers. **Layer 1** is vendored
-content shipped inside a connector (this file is Layer 1). **Layer 2** is
-per-connector workspace customization — instructions written through a single
-connector's settings surface, scoped to that connector's tools. **Layer 3** is
-skills — cross-connector context that loads across the whole agent. The
-boundary is vertical (one connector, deep) versus horizontal (across connectors,
-shallow).
+- **org**: every workspace (org admin). **workspace**: this workspace, the
+  default for workflows (workspace admin). **user**: only your conversations.
+- Priority: 0–10 is reserved for core; 11–20 high (language, accessibility);
+  21–40 medium (tone); 41–60 standard (default 50); 61–99 fallback.
 
-## Layer 3 vs Layer 2 — choose first
+## Tools the skill calls
 
-Before authoring a Layer 3 skill, ask: does this apply to exactly one
-connector's behavior?
+`allowed-tools` (a space-separated string, `<connector>__*` globs) scopes what
+the skill may call; `tool-affinity` decides when it loads. Confirm the tools
+exist with `nb__search` (`scope: "tools"`) first; if they are missing, tell the
+user to install the app. In the body, describe the capability ("search the CRM
+for the contact"), never a tool's name, which changes with how a connector is
+installed.
 
-- **Yes, one connector.** Author it as a Layer 2 instruction through that
-  connector's settings / instructions surface — deterministic, scoped, and
-  deletable with the connector. A single-connector rule in Layer 3 pollutes the
-  cross-connector pool.
-- **No — it spans connectors or governs the agent itself** (voice, a personal
-  preference, a multi-connector workflow). Author as a Layer 3 skill.
+## Frontmatter
 
-The default is Layer 2. Layer 3 is for content that has nowhere else to live.
-
-## How a skill loads — `loading-strategy`
-
-Every skill declares exactly one strategy (under `metadata.nimblebrain`):
-
-- **`always`** — always in context (the always-on channel). For voice,
-  identity, and durable cross-cutting rules. It pays the context tax on
-  every turn, so keep it short — a few hundred words at most. The user
-  sets it in Skills settings: `skills__create`, `skills__update`, and
-  `skills__restore` refuse a write from you that would leave a skill
-  `always`, so draft the text and ask the user to add it there.
-- **`dynamic`** — loaded on demand (the conditional channel). For
-  capability / domain skills (a compliance review, a research workflow). A
-  dynamic skill enters context through one of three activation signals:
-  - **`description`** — the model reads every skill's name + description in
-    the catalog and activates the relevant one. This is the default path, so
-    write the description to say **what the skill does AND when to use it**
-    (fold in the words a user would actually say). Always available; needs
-    no extra field.
-  - **`tool-affinity`** — reaches the model before the first call to a tool
-    that glob-matches an entry. Use for skills bound to specific tools /
-    connectors.
-  - **`triggers`** — exact-phrase substring match, for deterministic
-    "must-fire" activation (e.g. a compliance skill that must load the moment
-    a regulated action is named, rather than relying on the model noticing
-    the catalog).
-
-  A `dynamic` skill with no `tool-affinity` and no `triggers` is
-  catalog-only: it loads solely when the model activates it on its
-  description.
-
-## Write the description to be found
-
-A dynamic skill is reached mainly by its **description** — the model reads it
-in the catalog and decides whether to pull the skill in. State **what the
-skill does and when to use it**, including the words a user would actually say
-(e.g. "Extract text from PDFs, fill forms, merge files. Use when the user
-mentions PDFs, forms, or document extraction."). A thin description means the
-skill is never reached for.
-
-## `tool-affinity` patterns
-
-`tool-affinity` is a list of globs matched against the name of each tool
-called:
-
-- `synapse-collateral__*` — any tool from one connector.
-- `synapse-collateral__*` plus `synapse-research__*` — across connectors (the
-  sweet spot for a workflow skill).
-- `*__patch_source` — a specific tool name across connectors. Use sparingly.
-- `*` — every tool. Almost always wrong; if you mean "always," use
-  `loading-strategy: always` instead.
-
-Only three shapes match: `*` (everything), `<prefix>__*` (starts-with), and
-`*__<suffix>` (ends-with). Anything else falls back to exact-string match
-(usually matches nothing) — list each tool by exact name if you need more.
-
-## `triggers` — for must-fire
-
-`triggers` are exact substring phrases for deterministic activation: when a
-skill MUST load and you can't rely on the model noticing the catalog. Good
-triggers are:
-
-- Specific enough to avoid false positives: "compliance review", not "review"
-- Natural phrases users actually type
-- 2–4 per skill
-
-## Choosing the scope
-
-Each `skills__create` writes to one tier — pick by reach:
-
-- **org** — every conversation in every workspace. Org-wide voice / policy.
-  Org admin only.
-- **workspace** — the active workspace only. Default for domain workflows.
-  Workspace admin.
-- **user** — your own conversations only. Personal preferences. Self-write only.
-
-## Priority guidelines
-
-- **0–10** — RESERVED for core skills. Never use.
-- **11–20** — high-authority (language, accessibility).
-- **21–40** — medium (formatting, tone).
-- **41–60** — standard (default 50).
-- **61–99** — low-priority / fallback.
-
-## Tools the skill calls — `allowed-tools`
-
-To scope a skill to specific tools it may **call**, set `allowed-tools` (a
-space-separated string, e.g. `policy_search__find`). This is distinct from
-`tool-affinity`, which decides *when the skill loads*. Before creating,
-`nb__search` with scope `tools` to confirm the tools exist; if they're
-missing, tell the user to install the providing app from the Apps section of
-settings.
-
-In the skill's body, describe the capability ("search the CRM for the contact"),
-not a tool's name. A name like `github__search_issues` changes with how the
-connector is installed (a personal connection carries `my_`) and with the
-connector, so a body that names one stops working without saying so. Names
-belong in `allowed-tools` and `tool-affinity`, as `<connector>__*` globs.
-
-## What skills cannot do
-
-- Change runtime config (maxIterations, model) — that's `nimblebrain.json`.
-- Create tools — that needs an MCP server connector.
-- Override core identity (soul) — they layer on top.
-
-## Anti-patterns
-
-- **A single-connector rule as a Layer 3 skill.** Move it to Layer 2.
-- **An `always` skill with kilobytes of body.** Make it `dynamic`; reserve
-  `always` for short, durable rules.
-- **`tool-affinity: ["*"]`.** Be specific, or use `loading-strategy: always`.
-- **Putting "when to use it" only in `triggers` / `tool-affinity`, not the
-  `description`.** The catalog activates on the description — a thin
-  description means the model never reaches for the skill.
-- **Restating identity, tool discovery, or core platform context in the
-  body.** Those layers compose automatically; add, don't duplicate.
-
-## Frontmatter and example
-
-Standard top-level: `name` (lowercase + hyphens, ≤64) and `description`.
-Optional: `license`, and `allowed-tools` (a space-separated string of tools
-the skill may **call** — distinct from `tool-affinity`, which is *when to
-load*). NimbleBrain config nests under `metadata.nimblebrain`:
-`loading-strategy` (required), `priority`, `tool-affinity`, `triggers`. Not
-`status` — you cannot create or edit a skill's durable on/off state; a new
-skill is always active.
-
-A valid dynamic workflow skill:
+Top level: `name` (lowercase and hyphens, at most 64), `description`, and
+optional `license` and `allowed-tools`. NimbleBrain fields nest under
+`metadata.nimblebrain`: `loading-strategy` (required), `priority`,
+`tool-affinity`, `triggers`. Never `status`; a new skill is active.
 
 ```yaml
 ---
@@ -227,46 +110,37 @@ metadata:
       - synapse-research__*
 ---
 
-When the user finalizes a proposal with synapse-collateral, draft a follow-up
-plan using synapse-research and confirm the schedule before sending. Do not
-start the sequence until the proposal is marked sent.
+When the user finalizes a proposal, draft a follow-up plan and confirm the
+schedule before sending. Do not start the sequence until the proposal is sent.
 ```
 
-This validates: `name` is lowercase-and-hyphens, the `description` says what
-the skill does and when to use it, and `metadata.nimblebrain.loading-strategy`
-is `dynamic` with a populated `tool-affinity`.
+## The body
 
-## Writing the body
+- Instructions to the agent, imperative and second person ("Always cite section
+  numbers"), specific about format.
+- Add to what composes on its own; never restate identity, tool discovery, or
+  platform context.
+- **Keep it under 4,000 characters** (about 1,000 tokens). A body past 8,000 is
+  refused, because a loaded skill rides every call of its turn and a small
+  model's window cannot carry more. Split a longer one into skills that load
+  for different jobs.
+- A skill cannot change runtime config (that is `nimblebrain.json`), create
+  tools (that needs a connector), or override core identity.
 
-- Instructions TO the agent, not descriptions about it.
-- Imperative, second person: "Always cite section numbers", not "The agent
-  should cite".
-- Specific about format: "Use bullet points with bold headers".
-- Compose: don't restate identity (soul) or tool discovery (capabilities).
-- Stay under ~500 words — the body competes for context window space.
+## Anti-patterns
 
-## Confirming with the user
-
-Before creating or editing a skill, show:
-
-1. The skill name and how it loads (`always`, or `dynamic` + any
-   `triggers` / `tool-affinity`).
-2. A summary of the behavioral change.
-3. Any tool scoping (`allowed-tools`).
-4. Ask for confirmation.
-
-After creation, suggest a test phrase (for a trigger) or note how it will be
-picked up.
+- A single-connector rule as a skill: put it in the connector's instructions.
+- An `always` skill with a long body: make it `dynamic`.
+- `tool-affinity: ["*"]`: be specific, or use `always`.
+- "When to use it" only in `triggers` or `tool-affinity`, not the description.
+- A body that restates identity, tool discovery, or platform context.
 
 ## Authoring checklist
 
-1. The content belongs in Layer 3 — it spans connectors or governs the agent,
-   not a single-connector rule.
-2. `loading-strategy` matches the content — `always` for short durable
-   rules, `dynamic` for everything else.
-3. For `dynamic`: the `description` states **when** to use it; add
-   `tool-affinity` and/or `triggers` only if you need auto / deterministic
-   activation.
-4. Body size matches the strategy — `always` stays short.
-5. Instructions in second person; no restated identity or tool discovery.
-6. `priority` is in the operator range (11–99; 0–10 is reserved for core).
+1. It spans connectors or governs the agent.
+2. The strategy fits: `always` only for short durable rules.
+3. A `dynamic` description says when to use it.
+4. The body is under 4,000 characters, in second person.
+5. Priority is 11–99.
+6. Show the user the name, how it loads, the change, and any `allowed-tools`;
+   confirm; then suggest a phrase that will load it.

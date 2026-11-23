@@ -21,7 +21,12 @@
 
 /**
  * Per-skill body ceiling (chars), applied when a skill body is rendered into the
- * PROMPT (heading-aware via `truncateMarkdownToBudget`). ~12000 chars ≈ 3000 tokens.
+ * PROMPT (heading-aware via `truncateMarkdownToBudget`). ~8000 chars ≈ 2000 tokens.
+ *
+ * Sized from the smallest context window a model runs on (32k tokens): a loaded
+ * skill rides every call of its turn beside the system prompt and the tools, and
+ * that fixed part should stay near a quarter of the window, so one skill gets
+ * about 2k tokens. Depth beyond that belongs in what the skill's tools return.
  *
  * Threat model: this backstops UNVETTED user/workspace Layer-3 skills, which were
  * injected into the prompt uncapped before this change — a single oversized one
@@ -40,7 +45,7 @@
  * a backstop for files that arrived some other way, not something an author
  * meets silently.
  */
-export const MAX_SKILL_BODY_CHARS = 12_000;
+export const MAX_SKILL_BODY_CHARS = 8_000;
 
 /**
  * A body's length as the loader measures it against {@link MAX_SKILL_BODY_CHARS}:
