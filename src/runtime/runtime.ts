@@ -1765,8 +1765,10 @@ export class Runtime {
    *    refs, and no trigger matching: a task description is not a phrase a skill
    *    should claim. A skill bound to a tool reaches the model when the run
    *    calls that tool, as in chat.
-   *  - The system prompt is composed in task mode, prepending `TASK_IDENTITY`
-   *    so the model produces a deliverable rather than a conversational reply.
+   *  - The prompt is composed in task mode: `TASK_IDENTITY` leads the
+   *    `<runtime-context>` head on the run's user message, so the model
+   *    produces a deliverable rather than a conversational reply while the
+   *    cached system prefix stays the one a chat in the workspace writes.
    *    The runtime owns this framing — connectors cannot spoof it by wrapping the
    *    user message.
    *  - `workspaceId` is required: that workspace's tool scope and briefing,
@@ -2599,9 +2601,10 @@ export class Runtime {
       reason: "named by the run's task",
     }));
 
-    // Task mode prepends TASK_IDENTITY so an unattended run produces a
-    // deliverable rather than a conversational reply. The runtime owns that
-    // framing — a connector cannot spoof it by wrapping the user message.
+    // Task mode adds TASK_IDENTITY to the volatile head so an unattended run
+    // produces a deliverable rather than a conversational reply, and leaves the
+    // stable system prefix the same as a chat's. The runtime owns that framing —
+    // a connector cannot spoof it by wrapping the user message.
     const { stableSystem, volatileHead } = composeSystemSegments(
       requestContextSkills,
       matchedSkill,
@@ -6604,8 +6607,8 @@ function stampDerivedScope(workDir: string, skill: Skill): Skill {
  * verifiable without spinning a full Runtime.
  */
 /**
- * Prepend the volatile "runtime context" head (current date, app/focused-app
- * state, matched skill) to the latest user message as a leading text part. This
+ * Prepend the volatile "runtime context" head (task identity, current date,
+ * app/focused-app state, matched skill) to the latest user message as a leading text part. This
  * keeps per-turn-volatile content OUT of the 1h-cached system block (where any
  * change rewrites the whole prefix at the premium write rate) and on the message
  * stream, which rides the rolling cache instead. Mutates `messages` in place.
