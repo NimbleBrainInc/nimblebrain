@@ -1015,7 +1015,7 @@ describe("Core Source", () => {
       // `models.default`, so the list names both.
       const { runtime, source } = await startWithPolicy("clear-sentinel", [
         "anthropic:claude-sonnet-5",
-        "anthropic:claude-sonnet-4-6",
+        "anthropic:claude-sonnet-5-5",
       ]);
       try {
         const res = await asDevUser(() =>
@@ -1023,7 +1023,7 @@ describe("Core Source", () => {
         );
         expect(`isError: ${res.isError} — ${extractText(res.content)}`).toContain("isError: false");
         // Cleared, so it falls back to the built-in default — which policy allows.
-        expect(runtime.configuredModelSlots().fast).toBe("anthropic:claude-sonnet-4-6");
+        expect(runtime.configuredModelSlots().fast).toBe("anthropic:claude-sonnet-5-5");
       } finally {
         await runtime.shutdown();
       }
