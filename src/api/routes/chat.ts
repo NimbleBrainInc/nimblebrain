@@ -46,6 +46,7 @@ export function chatRoutes(ctx: AppContext) {
       )
       // Explicit Stop — the only way to abort an in-flight turn.
       .post(
+        // lint-ok:conversation-path (an HTTP route, not a storage path)
         `${WORKSPACE_ROUTE_PREFIX}/conversations/:id/cancel`,
         auth,
         logErrors,

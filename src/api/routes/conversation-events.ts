@@ -67,6 +67,7 @@ export function conversationEventRoutes(ctx: AppContext) {
   // scopes enforcement to exactly this path — same precedent as
   // `mcp-auth.ts` (per-handler, not `.use("*")`).
   return new Hono<AppEnv>().get(
+    // lint-ok:conversation-path (an HTTP route, not a storage path)
     `${WORKSPACE_ROUTE_PREFIX}/conversations/:id/events`,
     requireAuth(ctx.authOptions),
     errorLog(ctx),
