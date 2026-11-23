@@ -60,10 +60,7 @@ export interface ListOptions {
 
 // A listing takes its workspace as a required argument — there is no
 // cross-workspace variant. Conversations are workspace-owned, so "every
-// workspace the owner belongs to" is not a view anything needs: the tenant-wide
-// file walk that usage aggregation genuinely does need is
-// `listAllConversationFiles`, which is a different read (raw files, no owner
-// scoping, no summaries) and stays where it is.
+// workspace the owner belongs to" is not a view anything needs.
 
 /** Paginated conversation list result. */
 export interface ConversationListResult {

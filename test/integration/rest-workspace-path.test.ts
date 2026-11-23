@@ -197,10 +197,11 @@ describe("X-Workspace-Id has no effect on a workspace-scoped route", () => {
     });
     expect(res.status).toBe(200);
     const { conversationId } = await readJson<ChatStartResponse>(res);
-    let conversation = await runtime.findConversation(conversationId);
+    const access = { userId: TEST_IDENTITY.id };
+    let conversation = await runtime.findConversation(wsA, conversationId, access);
     for (let i = 0; i < 50 && !conversation; i++) {
       await Bun.sleep(20);
-      conversation = await runtime.findConversation(conversationId);
+      conversation = await runtime.findConversation(wsA, conversationId, access);
     }
     expect(conversation?.workspaceId).toBe(wsA);
   });
@@ -239,6 +240,56 @@ describe("cross-site writes to a workspace route", () => {
   });
 });
 
+describe("a conversation's event stream and cancel name its workspace", () => {
+  async function startInA(): Promise<string> {
+    const started = await send("POST", `/v1/workspaces/${wsA}/chat/start`, {
+      body: { message: "for the event stream" },
+    });
+    return (await readJson<ChatStartResponse>(started)).conversationId;
+  }
+
+  it("answer in the workspace the conversation lives in", async () => {
+    const conversationId = await startInA();
+
+    const events = await send(
+      "GET",
+      `/v1/workspaces/${wsA}/conversations/${conversationId}/events`,
+    );
+    expect(events.status).toBe(200);
+    await events.body?.cancel();
+
+    const cancel = await send(
+      "POST",
+      `/v1/workspaces/${wsA}/conversations/${conversationId}/cancel`,
+    );
+    expect(cancel.status).toBe(200);
+  });
+
+  it("answer 404 conversation_not_found from another workspace of the same owner", async () => {
+    const conversationId = await startInA();
+
+    const events = await send(
+      "GET",
+      `/v1/workspaces/${wsB}/conversations/${conversationId}/events`,
+    );
+    expect(events.status).toBe(404);
+    expect((await readJson<ApiErrorBody>(events)).error).toBe("conversation_not_found");
+
+    const cancel = await send(
+      "POST",
+      `/v1/workspaces/${wsB}/conversations/${conversationId}/cancel`,
+    );
+    expect(cancel.status).toBe(404);
+    expect((await readJson<ApiErrorBody>(cancel)).error).toBe("conversation_not_found");
+  });
+
+  it("the routes without a workspace no longer exist", async () => {
+    const conversationId = await startInA();
+    expect((await send("GET", `/v1/conversations/${conversationId}/events`)).status).toBe(404);
+    expect((await send("POST", `/v1/conversations/${conversationId}/cancel`)).status).toBe(404);
+  });
+});
+
 describe("identity-scoped routes need no workspace", () => {
   it("bootstrap", async () => {
     const res = await send("GET", "/v1/bootstrap");
@@ -256,20 +307,6 @@ describe("identity-scoped routes need no workspace", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     await res.body?.cancel();
-  });
-
-  it("a conversation's event stream and cancel, located by conversation id", async () => {
-    const started = await send("POST", `/v1/workspaces/${wsA}/chat/start`, {
-      body: { message: "for the event stream" },
-    });
-    const { conversationId } = await readJson<ChatStartResponse>(started);
-
-    const events = await send("GET", `/v1/conversations/${conversationId}/events`);
-    expect(events.status).toBe(200);
-    await events.body?.cancel();
-
-    const cancel = await send("POST", `/v1/conversations/${conversationId}/cancel`);
-    expect(cancel.status).toBeLessThan(400);
   });
 
   it("a file by its bare id", async () => {

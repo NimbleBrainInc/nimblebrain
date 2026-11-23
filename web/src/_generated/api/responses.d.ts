@@ -230,7 +230,10 @@ export interface BootstrapResponse {
     version: string;
     buildSha: string | null;
 }
-/** A finished chat turn: the `done` frame of `GET /v1/conversations/:id/events`. */
+/**
+ * A finished chat turn: the `done` frame of
+ * `GET /v1/workspaces/:wsId/conversations/:id/events`.
+ */
 export interface ChatResponse {
     response: string;
     conversationId: string;

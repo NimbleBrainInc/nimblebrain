@@ -35,15 +35,16 @@ A settings form whose fields stand alone saves each field when its edit is compl
 
 `ChatProvider` (`web/src/context/ChatContext.tsx`) watches the **focus** workspace, derived from the `/w/:slug` route and membership-gated. Never from `WorkspaceContext`'s `activeWorkspace`, which reconciles to the route a render after the route changes — keying focus off that intermediate value looks like a workspace switch and clears the conversation the per-tab restore just reopened. Reading `activeWorkspace` is fine for display-only consumers; it is the *focus* decision that must come from the route.
 
-The panel keeps its conversation and the URL's workspace in agreement, because a chat runs in the workspace its URL names and the server answers a conversation from any other workspace as unknown (`404 conversation_not_found`). When they disagree, one gives:
+The panel holds only a conversation of the focus workspace, because a chat runs in the workspace its URL names and the server finds a conversation only in the workspace a request names: one stored in any other workspace answers as unknown (`404 conversation_not_found`), on `conversations__get`, the event stream and Stop alike.
 
-- **The URL, for a conversation the user chose.** `openConversation` (a `?chat=` deep link through `openPanel`, Recents, an app's `open` of a `conversation://` URI) marks the conversation followed; once its workspace is known and differs from the focus, the provider navigates to `/w/<its slug>`, and the arrival is not treated as a switch away from it. Only for a workspace the user belongs to.
-- **The conversation, otherwise.** `loadConversation` alone (the per-tab restore) never moves the URL: the URL the user loaded wins. Re-scoping uses the narrow `newConversation()` (back to the panel's unsent chat, or a fresh one once a send was attempted in it; an unsent chat has no workspace until its first send), **not** `chatStore.reset()` (that is the identity-change broad reset).
+- **A conversation opens in the focus workspace.** A `?chat=` link names its workspace through the `/w/<slug>` route it sits on. The panel never navigates to another workspace on the strength of a by-id read; a conversation outside the focus workspace is not found, and the panel shows that.
+- **A conversation's event stream and Stop name the workspace it lives in**: `conversationMeta.workspaceId`, which is the workspace its `conversations__get` was read in or its first turn was started in (`web/src/hooks/chat-store.ts`). Never the active workspace at the moment of the request, which can have moved since.
+- **When focus and conversation disagree, the conversation gives.** Re-scoping uses the narrow `newConversation()` (back to the panel's unsent chat, or a fresh one once a send was attempted in it; an unsent chat has no workspace until its first send), **not** `chatStore.reset()` (that is the identity-change broad reset).
 
 Two triggers:
 
-1. **In-session switch.** `A→B` re-scopes and clears the open conversation, unless the switch is the followed conversation arriving at its own workspace. A `null` focus on home/identity routes is *held*, not reset, so `A→home→A` keeps context.
-2. **Mount / async-focus / open reconcile.** Once the conversation's own workspace is known (`conversationMeta.workspaceId`, from `conversations__get`) it follows or re-scopes as above if that differs from the focus. This fires only when the workspace is **known** — a not-yet-loaded conversation is left alone, which is the open-in-progress race guard.
+1. **In-session switch.** `A→B` re-scopes and clears the open conversation. A `null` focus on home/identity routes is *held*, not reset, so `A→home→A` keeps context.
+2. **Mount / async-focus reconcile.** Once the conversation's own workspace is known (`conversationMeta.workspaceId`) it re-scopes if that differs from the focus, as when the per-tab restore read the conversation in the active workspace before it was reconciled to the route. This fires only when the workspace is **known** — a not-yet-loaded conversation is left alone, which is the open-in-progress race guard.
 
 Opening a conversation from within its own workspace doesn't change focus and matches, so it isn't cleared.
 

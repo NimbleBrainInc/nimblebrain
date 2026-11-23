@@ -1,7 +1,9 @@
 /**
  * Conversation turn-stream client (server-authoritative streaming).
  *
- * Connects to GET /v1/conversations/:id/events?afterSeq=N. The server replays
+ * Connects to GET /v1/workspaces/:wsId/conversations/:id/events?afterSeq=N, in
+ * the workspace the conversation lives in (the server looks for it there
+ * only, and answers 404 for one stored anywhere else). The server replays
  * the in-flight turn from the RunBus (events with seq > afterSeq), then tails
  * live. This is the ONE rendering path: send, resume-after-refresh, switch
  * back, and cross-tab all watch the same stream.
@@ -21,7 +23,7 @@
  *     watchdog tick.
  */
 
-import { refreshSession } from "./client";
+import { refreshSession, workspacePath } from "./client";
 
 /** No-frame interval after which the watchdog force-reconnects. Slightly above
  *  the server's 30s heartbeat so a single missed heartbeat doesn't churn. */
@@ -31,6 +33,8 @@ const DEFAULT_WATCHDOG_TICK_MS = 15_000;
 
 export interface ConversationStreamOptions {
   conversationId: string;
+  /** The workspace the conversation lives in. */
+  workspaceId: string;
   apiBase?: string;
   token?: string;
   /** Highest seq the caller has already applied (resume point). Default 0. */
@@ -68,6 +72,7 @@ export function connectConversationStream(
 ): ConversationStreamConnection {
   const {
     conversationId,
+    workspaceId,
     apiBase = "",
     token,
     onEvent,
@@ -249,7 +254,11 @@ export function connectConversationStream(
     if (token && token !== "__cookie__") hdrs.Authorization = `Bearer ${token}`;
 
     try {
-      const url = `${apiBase}/v1/conversations/${encodeURIComponent(conversationId)}/events?afterSeq=${lastSeq}`;
+      const path = workspacePath(
+        `/conversations/${encodeURIComponent(conversationId)}/events`,
+        workspaceId,
+      );
+      const url = `${apiBase}${path}?afterSeq=${lastSeq}`;
       const res = await fetch(url, {
         headers: hdrs,
         credentials: "include",

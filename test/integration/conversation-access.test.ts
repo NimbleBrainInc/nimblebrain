@@ -13,6 +13,10 @@
  *    throws ConversationNotFoundError and creates nothing; missing
  *    request.identity throws when an identity provider is configured.
  *  - HTTP: `POST …/chat/start` answers each of those cases with the same 404.
+ *  - Every other by-id read (`findConversation`, `skills__loading_log`,
+ *    `compose__effective_context`, skill-mute suppression) looks only in the
+ *    workspace of its request: the owner's conversation in another workspace
+ *    is invisible.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -32,7 +36,9 @@ import type {
 } from "../../src/identity/provider.ts";
 import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User } from "../../src/identity/user.ts";
+import type { SkillsLoadingLogOutput } from "../../src/platform/schemas/skills.ts";
 import { ConversationNotFoundError } from "../../src/runtime/errors.ts";
+import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { postChatTurn } from "../helpers/chat-turn.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
@@ -149,7 +155,11 @@ describe("runtime.chat — single-owner ownership check", () => {
     });
     expect(second.conversationId).toBe(first.conversationId);
 
-    const store = await runtime.resolveConversationStore(first.conversationId);
+    const store = await runtime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      first.conversationId,
+      ALICE.id,
+    );
     const loaded = await store!.load(first.conversationId);
     expect(loaded).not.toBeNull();
     expect(loaded!.ownerId).toBe(ALICE.id);
@@ -185,7 +195,9 @@ describe("runtime.chat — single-owner ownership check", () => {
 
     // The foreign attempt did NOT silently mint a new conversation — that
     // would mask a takeover attempt as a normal flow.
-    const loaded = await runtime.findConversation(aliceConv.conversationId);
+    const loaded = await runtime.findConversation(TEST_WORKSPACE_ID, aliceConv.conversationId, {
+      userId: ALICE.id,
+    });
     expect(loaded!.ownerId).toBe(ALICE.id);
   });
 
@@ -201,7 +213,9 @@ describe("runtime.chat — single-owner ownership check", () => {
         identity: ALICE,
       }),
     ).rejects.toBeInstanceOf(ConversationNotFoundError);
-    expect(await runtime.findConversation(bogus)).toBeNull();
+    expect(
+      await runtime.findConversation(TEST_WORKSPACE_ID, bogus, { userId: ALICE.id }),
+    ).toBeNull();
   });
 });
 
@@ -361,10 +375,12 @@ describe("HTTP — a conversation that is not the caller's in the path's workspa
 
     // Nothing ran in B and nothing was born in A under either id.
     expect(runtime.isTurnActive(aliceConvInB)).toBe(false);
-    const inBStore = await runtime.resolveConversationStore(aliceConvInB);
+    const inBStore = await runtime.resolveConversationStore(wsB, aliceConvInB, ALICE.id);
     const conv = await inBStore!.load(aliceConvInB);
     expect(await inBStore!.history(conv!)).toHaveLength(2);
-    expect(await runtime.findConversation(unknownId)).toBeNull();
+    expect(
+      await runtime.findConversation(TEST_WORKSPACE_ID, unknownId, { userId: ALICE.id }),
+    ).toBeNull();
   });
 
   test(`${route}: another owner's conversation is refused exactly like an unknown one`, async () => {
@@ -374,8 +390,78 @@ describe("HTTP — a conversation that is not the caller's in the path's workspa
 
     expect(foreign.status).toBe(404);
     expect(shape(foreign.body, aliceConvInA)).toEqual(shape(unknown.body, unknownId));
-    const loaded = await runtime.findConversation(aliceConvInA);
+    const loaded = await runtime.findConversation(TEST_WORKSPACE_ID, aliceConvInA, {
+      userId: ALICE.id,
+    });
     expect(loaded!.ownerId).toBe(ALICE.id);
+  });
+
+  /** Call a workspace tool as Alice, in `wsId`. */
+  function callAsAlice(wsId: string, name: string, input: Record<string, unknown>) {
+    return runWithRequestContext({ identity: ALICE, workspaceId: wsId }, () =>
+      runtime.getRegistryForWorkspace(wsId).execute({ id: `t-${name}`, name, input }),
+    );
+  }
+
+  test("by-id reads in A do not see Alice's conversation in B", async () => {
+    const access = { userId: ALICE.id };
+    expect(await runtime.findConversation(wsB, aliceConvInB, access)).not.toBeNull();
+    expect(await runtime.findConversation(TEST_WORKSPACE_ID, aliceConvInB, access)).toBeNull();
+    expect(
+      await runtime.resolveConversationStore(TEST_WORKSPACE_ID, aliceConvInB, ALICE.id),
+    ).toBeNull();
+
+    // Skill-mute suppression: a mute recorded in B's conversation applies there only.
+    const storeB = (await runtime.resolveConversationStore(wsB, aliceConvInB, ALICE.id))!;
+    storeB.appendEvent(aliceConvInB, {
+      ts: new Date().toISOString(),
+      type: "skill.suppression",
+      runId: "run_mute",
+      skillName: "muted-skill",
+      suppressed: true,
+    });
+    expect([...(await runtime.suppressedSkillNamesFor(wsB, ALICE.id, aliceConvInB))]).toEqual([
+      "muted-skill",
+    ]);
+    expect(
+      (await runtime.suppressedSkillNamesFor(TEST_WORKSPACE_ID, ALICE.id, aliceConvInB)).size,
+    ).toBe(0);
+
+    // skills__loading_log with an explicit id: rows in B, none from A.
+    storeB.appendEvent(aliceConvInB, {
+      ts: new Date().toISOString(),
+      type: "skill.activated",
+      runId: "run_mute",
+      toolCallId: "call_1",
+      skillName: "activated-skill",
+      scope: "workspace",
+      tokens: 10,
+    });
+    const logIn = async (wsId: string) => {
+      const res = await callAsAlice(wsId, "skills__loading_log", {
+        conversation_id: aliceConvInB,
+      });
+      expect(res.isError ?? false).toBe(false);
+      return (res.structuredContent as SkillsLoadingLogOutput).loads;
+    };
+    expect(await logIn(TEST_WORKSPACE_ID)).toEqual([]);
+    const inB = await logIn(wsB);
+    expect(inB.some((row) => row.skill === "activated-skill")).toBe(true);
+    expect(inB.every((row) => row.conv_id === aliceConvInB)).toBe(true);
+
+    // compose__effective_context for one of its runs: answered in B, not found from A.
+    const events = await storeB.readEvents(aliceConvInB);
+    const runId = events.findLast((e) => e.type === "run.start")?.runId;
+    expect(runId).toBeDefined();
+    const composeIn = (wsId: string) =>
+      callAsAlice(wsId, "compose__effective_context", {
+        conversation_id: aliceConvInB,
+        run_id: runId,
+      });
+    expect((await composeIn(wsB)).isError ?? false).toBe(false);
+    const fromA = await composeIn(TEST_WORKSPACE_ID);
+    expect(fromA.isError).toBe(true);
+    expect(JSON.stringify(fromA.content)).toContain("Conversation not found");
   });
 
   test("the conversation resumes at its own workspace's path", async () => {

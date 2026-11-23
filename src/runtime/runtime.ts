@@ -71,7 +71,6 @@ import {
   type ConversationMutation,
   EventSourcedConversationStore,
 } from "../conversation/event-sourced-store.ts";
-import { ConversationLocator } from "../conversation/locator.ts";
 import { workspaceConversationsDir } from "../conversation/paths.ts";
 import {
   CONVERSATION_ID_RE,
@@ -633,8 +632,6 @@ export class Runtime {
   private skillMatcher: SkillMatcher;
   private config: RuntimeConfig;
   private contextSkills: Skill[];
-  /** Process-wide convId → workspace resolver; lazily built over the workspaces root. */
-  private _conversationLocator?: ConversationLocator;
   private _fileLocator?: FileLocator;
   /** Subscribers (e.g. the conversations-tool index) notified on any conversation change. */
   private _conversationsChangedListeners = new Set<(change?: ConversationChange) => void>();
@@ -823,11 +820,10 @@ export class Runtime {
     this._instanceConfig = instanceConfig;
     this._userStore = userStore;
     this._workspaceStore = workspaceStore;
-    // A workspace archive-delete moves its `conversations/` subtree out from
-    // under the locator without going through a workspace store, so the cache would
-    // otherwise keep ghosts (and a resume could re-mkdir the archived workspace).
-    // Deletion fires `membershipChanged` for each former member; ride that to
-    // invalidate the conversation caches.
+    // A workspace archive-delete moves its `conversations/` subtree away
+    // without going through a workspace store, so the conversations-tool index
+    // would otherwise keep ghosts. Deletion fires `membershipChanged` for each
+    // former member; ride that to invalidate the conversation caches.
     this._workspaceStore.onMembershipChanged(() => this.notifyConversationsChanged());
     this._identityProvider = identityProvider;
     this._workspaceRegistries = workspaceRegistries;
@@ -4333,20 +4329,6 @@ export class Runtime {
   }
 
   /**
-   * Process-wide conversation locator: resolves a `convId` to the workspace +
-   * owner it's stored under, and serves the cross-workspace (All-workspaces) and
-   * workspace-scoped list views. Lazily built over the workspaces root; invalidated
-   * via `notifyConversationsChanged` on every conversation write and on
-   * workspace archive-delete.
-   */
-  getConversationLocator(): ConversationLocator {
-    if (!this._conversationLocator) {
-      this._conversationLocator = new ConversationLocator(this._workspaceStore.getWorkspacesDir());
-    }
-    return this._conversationLocator;
-  }
-
-  /**
    * Process-wide file locator: resolves a globally-unique `fileId` to the
    * workspace it lives under, within the caller's own owner partitions. Backs
    * the bare `GET /v1/files/:fileId` serve path (no workspace in the URL, so a
@@ -4362,8 +4344,8 @@ export class Runtime {
   /**
    * Subscribe to conversation changes (create / delete / append, and workspace
    * archive-delete). The conversations-tool index registers here so it refreshes
-   * off the same invalidation signal the locator uses — one hook, both caches,
-   * no divergent freshness. Returns an unsubscribe function.
+   * off the one invalidation signal every conversation write raises. Returns an
+   * unsubscribe function.
    *
    * The listener receives the conversation that moved, or `undefined` when the
    * change is not attributable to one — see `notifyConversationsChanged`.
@@ -4376,8 +4358,8 @@ export class Runtime {
   /**
    * Invalidate conversation caches. The single freshness chokepoint: workspace
    * stores call this on create/delete/append (via `onMutate`), and a workspace
-   * archive-delete calls it (via the membership-change hook), so the locator and
-   * the conversations-tool index never serve a frozen summary or a ghost of a
+   * archive-delete calls it (via the membership-change hook), so the
+   * conversations-tool index never serves a frozen summary or a ghost of a
    * deleted workspace.
    *
    * `change` names the one conversation that moved, letting a listening cache
@@ -4385,14 +4367,8 @@ export class Runtime {
    * anything may have changed"** and costs a full rebuild — correct for a
    * workspace archive-delete, which retires an unbounded set of conversations
    * at once and so cannot name one.
-   *
-   * The locator is invalidated wholesale either way: it memoises id → workspace
-   * bindings that a targeted re-read cannot repair, and its rebuild is a
-   * readdir-only walk that never opens a file, so it is not what made list
-   * views expensive.
    */
   notifyConversationsChanged(change?: ConversationChange): void {
-    this._conversationLocator?.invalidate();
     for (const listener of this._conversationsChangedListeners) {
       try {
         listener(change);
@@ -4424,14 +4400,23 @@ export class Runtime {
   }
 
   /**
-   * Resolve a conversation id to the workspace store that holds it, or `null` if no
-   * workspace contains it. The single bridge from a bare `convId` (deep link,
-   * history fetch, event append) to its workspace-owned store.
+   * The store holding `convId` in `ownerId`'s partition of `workspaceId`, or
+   * `null` when that partition does not hold it. The workspace is always named
+   * by the caller (the route or the request context), never discovered: no
+   * conversation read crosses a workspace, so a conversation stored in another
+   * workspace answers exactly like one that does not exist. One `existsSync`
+   * on one partition: no scan.
    */
-  async resolveConversationStore(convId: string): Promise<EventSourcedConversationStore | null> {
-    const loc = await this.getConversationLocator().locate(convId);
-    if (!loc) return null;
-    return this.workspaceConversationStore(loc.wsId, loc.ownerId ?? "");
+  async resolveConversationStore(
+    workspaceId: string,
+    convId: string,
+    ownerId: string,
+  ): Promise<EventSourcedConversationStore | null> {
+    const dir = workspaceConversationsDir(resolveWorkDir(this.config), workspaceId, ownerId);
+    if (!CONVERSATION_ID_RE.test(convId) || !existsSync(join(dir, `${convId}.jsonl`))) {
+      return null;
+    }
+    return this.workspaceConversationStore(workspaceId, ownerId);
   }
 
   /**
@@ -4508,19 +4493,18 @@ export class Runtime {
   }
 
   /**
-   * Locate a conversation by id across workspaces. Returns the `Conversation`
-   * metadata, or `null` if no workspace holds it / the caller isn't the owner.
-   *
-   * Pass `access` to gate the read by ownership at the store layer. Without
-   * `access` the caller asserts "I am the ownership boundary" (e.g.
-   * `runtime.chat` after its own owner check); with it, the store returns
-   * `null` for existence-but-not-yours, matching `load()`'s posture.
+   * Load one of `access.userId`'s conversations in `workspaceId`. Returns
+   * `null` when the caller's partition of that workspace does not hold it, so
+   * an unknown id, another owner's conversation, and one stored in another
+   * workspace are the same answer. Throws `ConversationCorruptedError` for a
+   * stored file the store cannot read.
    */
   async findConversation(
+    workspaceId: string,
     convId: string,
-    access?: ConversationAccessContext,
+    access: ConversationAccessContext,
   ): Promise<Conversation | null> {
-    const store = await this.resolveConversationStore(convId);
+    const store = await this.resolveConversationStore(workspaceId, convId, access.userId);
     if (!store) return null;
     return store.load(convId, access);
   }
@@ -5938,12 +5922,18 @@ export class Runtime {
 
   /**
    * Names muted in a conversation, or an empty set when there is none in scope.
-   * Reads the conversation's own event log through the locator, so any surface
-   * that reports composition can agree with what composition actually did.
+   * Reads the conversation's own event log from the caller's partition of
+   * `workspaceId`, so any surface that reports composition can agree with what
+   * composition actually did. A conversation outside that partition has no
+   * mutes here.
    */
-  async suppressedSkillNamesFor(convId: string | undefined): Promise<Set<string>> {
+  async suppressedSkillNamesFor(
+    workspaceId: string,
+    ownerId: string,
+    convId: string | undefined,
+  ): Promise<Set<string>> {
     if (!convId) return new Set();
-    const store = await this.resolveConversationStore(convId);
+    const store = await this.resolveConversationStore(workspaceId, convId, ownerId);
     if (!store) return new Set();
     return collectSuppressedSkillNames(await store.readEvents(convId));
   }
@@ -6048,7 +6038,11 @@ export class Runtime {
     // status surface and the prompt diverging, and a muted skill still listed
     // is that divergence: an operator asking "did my mute take?" is told it
     // did not.
-    const suppressed = await this.suppressedSkillNamesFor(getRequestContext()?.conversationId);
+    const suppressed = await this.suppressedSkillNamesFor(
+      wsId,
+      ownerId,
+      getRequestContext()?.conversationId,
+    );
     const { context, capability } = partitionSkillsByRole(
       withoutSuppressed(this.loadConversationSkills(wsId, userId), suppressed),
     );
@@ -6216,20 +6210,19 @@ export class Runtime {
   }
 
   /**
-   * List one workspace's conversations via the locator. `workspaceId` is
-   * required: conversations are workspace-owned, so there is no cross-workspace
-   * listing to fall back to. Pass `access` to filter by ownership; without it
-   * the caller asserts trusted enumeration scope (CLI, admin tools). The
-   * workspace is the path filter; ownership is the access gate — orthogonal
-   * axes. For the tenant-wide raw-file read that usage aggregation needs, use
-   * `listAllConversationFiles`.
+   * List `access.userId`'s conversations in one workspace. Reads only that
+   * owner's partition of `workspaceId`: conversations are workspace-owned, so
+   * there is no cross-workspace listing to fall back to.
    */
   async listConversations(
     workspaceId: string,
-    options?: ListOptions,
-    access?: ConversationAccessContext,
+    options: ListOptions | undefined,
+    access: ConversationAccessContext,
   ): Promise<ConversationListResult> {
-    return this.getConversationLocator().list(workspaceId, options, access);
+    const dir = workspaceConversationsDir(resolveWorkDir(this.config), workspaceId, access.userId);
+    // A read creates nothing: a partition that was never written lists empty.
+    if (!existsSync(dir)) return { conversations: [], nextCursor: null, totalCount: 0 };
+    return this.workspaceConversationStore(workspaceId, access.userId).list(options, access);
   }
 
   /**

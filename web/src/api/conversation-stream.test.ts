@@ -84,6 +84,7 @@ describe("conversation-stream watchdog", () => {
 
     const conn = connectConversationStream({
       conversationId: "conv_abc",
+      workspaceId: "ws_00079598e311c160",
       onEvent: () => {},
       staleThresholdMs: 30,
       watchdogTickMs: 10,
@@ -97,7 +98,10 @@ describe("conversation-stream watchdog", () => {
     expect(reconnected).toBe(true);
     expect(urls.length).toBeGreaterThanOrEqual(2);
     // Every (re)connect carries the afterSeq resume param — gapless by design.
-    for (const u of urls) expect(u).toContain("afterSeq=");
+    for (const u of urls) {
+      expect(u).toContain("/v1/workspaces/ws_00079598e311c160/conversations/conv_abc/events");
+      expect(u).toContain("afterSeq=");
+    }
   });
 
   test("does not reconnect after close()", async () => {
@@ -109,6 +113,7 @@ describe("conversation-stream watchdog", () => {
 
     const conn = connectConversationStream({
       conversationId: "conv_abc",
+      workspaceId: "ws_00079598e311c160",
       onEvent: () => {},
       staleThresholdMs: 30,
       watchdogTickMs: 10,
@@ -136,6 +141,7 @@ describe("conversation-stream watchdog", () => {
     // the window is the visibility handler — isolates the behavior under test.
     const conn = connectConversationStream({
       conversationId: "conv_abc",
+      workspaceId: "ws_00079598e311c160",
       onEvent: () => {},
       staleThresholdMs: 20,
       watchdogTickMs: 10_000,

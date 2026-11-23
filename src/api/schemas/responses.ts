@@ -218,7 +218,7 @@ export interface BrandResponse {
   fonts?: Partial<Record<"sans" | "heading" | "reading", BrandFontResponse>>;
 }
 
-// ── GET /v1/workspaces/:wsId/shell ──────────────────────────────────────────
+// ── GET /v1/workspaces/:wsId/shell ───────────────────────────────────────────
 
 export interface ShellResponse {
   placements: PlacementEntry[];
@@ -276,7 +276,10 @@ export interface BootstrapResponse {
 
 // ── The finished turn ───────────────────────────────────────────────────────
 
-/** A finished chat turn: the `done` frame of `GET /v1/conversations/:id/events`. */
+/**
+ * A finished chat turn: the `done` frame of
+ * `GET /v1/workspaces/:wsId/conversations/:id/events`.
+ */
 export interface ChatResponse {
   response: string;
   conversationId: string;
@@ -290,20 +293,20 @@ export interface ChatResponse {
   usage: ChatUsage;
 }
 
-// ── POST /v1/workspaces/:wsId/chat/start ────────────────────────────────────
+// ── POST /v1/workspaces/:wsId/chat/start ─────────────────────────────────────
 
 export interface ChatStartResponse {
   conversationId: string;
 }
 
-// ── POST /v1/conversations/:id/cancel ───────────────────────────────────────
+// ── POST /v1/workspaces/:wsId/conversations/:id/cancel ───────────────────────
 
 export interface ChatCancelResponse {
   /** False when no turn was in flight. */
   cancelled: boolean;
 }
 
-// ── POST /v1/workspaces/:wsId/tools/call ────────────────────────────────────
+// ── POST /v1/workspaces/:wsId/tools/call ─────────────────────────────────────
 
 /** An MCP content block, typed as loosely as the MCP union allows. */
 export interface ToolContentBlock {
@@ -318,7 +321,7 @@ export interface ToolCallResponse {
   isError: boolean;
 }
 
-// ── POST /v1/workspaces/:wsId/resources/read
+// ── POST /v1/workspaces/:wsId/resources/read ─────────────────────────────────
 //    GET  /v1/workspaces/:wsId/apps/:name/resources/* ─────────────────────────
 
 /** An MCP `ReadResourceResult` entry. Exactly one of `text` or `blob` (base64) is set. */
@@ -336,7 +339,7 @@ export interface ReadResourceResponse {
   _meta?: Record<string, unknown>;
 }
 
-// ── POST /v1/workspaces/:wsId/resources ─────────────────────────────────────
+// ── POST /v1/workspaces/:wsId/resources ──────────────────────────────────────
 
 export interface UploadResourceResponse {
   files: FileEntry[];
@@ -344,7 +347,7 @@ export interface UploadResourceResponse {
   errors?: string[];
 }
 
-// ── POST /v1/workspaces/:wsId/mcp-auth/initiate
+// ── POST /v1/workspaces/:wsId/mcp-auth/initiate ──────────────────────────────
 //    POST /v1/mcp-auth/initiate-identity ────────────────────────────────────
 
 export interface OAuthInitiateResponse {
@@ -352,7 +355,7 @@ export interface OAuthInitiateResponse {
   authorizationUrl: string | null;
 }
 
-// ── POST /v1/workspaces/:wsId/composio-auth/initiate
+// ── POST /v1/workspaces/:wsId/composio-auth/initiate ─────────────────────────
 //    POST /v1/composio-auth/initiate-identity ────────────────────────────────
 
 export interface ComposioInitiateResponse {

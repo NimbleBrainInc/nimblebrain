@@ -40,6 +40,8 @@ class FakeRuntime {
   identity: { id: string } | null = { id: "user_test" };
   activatable: ActivatableSkill[] = [];
   conversationEvents: ConversationEvent[] | null = null;
+  /** The workspace the conversation's events are stored in. */
+  conversationWsId = "ws_0076759dbbe19fcc";
   /** Records what workspace/user the handler resolved the set for. */
   listCalls: Array<{ wsId: string; userId: string | null }> = [];
 
@@ -54,8 +56,17 @@ class FakeRuntime {
     this.listCalls.push({ wsId, userId });
     return this.activatable;
   }
-  async resolveConversationStore(_convId: string): Promise<EventSourcedConversationStore | null> {
-    if (this.conversationEvents === null) return null;
+  resolveRequestUserId(identity: UserIdentity | undefined): string {
+    if (!identity) throw new Error("no identity");
+    return identity.id;
+  }
+  async resolveConversationStore(
+    wsId: string,
+    _convId: string,
+    _ownerId: string,
+  ): Promise<EventSourcedConversationStore | null> {
+    // Found only in the workspace the conversation is stored in.
+    if (this.conversationEvents === null || wsId !== this.conversationWsId) return null;
     const events = this.conversationEvents;
     return stub<EventSourcedConversationStore>({ readEvents: async () => events });
   }
@@ -272,6 +283,18 @@ describe("nb__use_skill — already-delivered dedupe", () => {
     );
     expect(resultText(result)).toContain("<activated-skill>");
     expect(result._meta?.[SKILL_ACTIVATED_META_KEY]).toBeDefined();
+  });
+
+  test("a delivery in the same id's conversation in another workspace does not count", async () => {
+    runtime.activatable = [RUNBOOK];
+    runtime.conversationEvents = [activatedEvent("invoice-runbook")];
+    runtime.conversationWsId = "ws_005820c54ca342ad";
+    const src = await buildSource();
+
+    const result = await runWithRequestContext(CONV_CTX, () =>
+      src.execute("use_skill", { name: "invoice-runbook" }),
+    );
+    expect(resultText(result)).toContain("<activated-skill>");
   });
 
   test("a skill this turn composed (a trigger match) answers 'already loaded' with no event", async () => {

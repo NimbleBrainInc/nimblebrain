@@ -15,7 +15,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
-/** What `POST /v1/conversations/:id/cancel` answers. */
+/** What `POST /v1/workspaces/:wsId/conversations/:id/cancel` answers. */
 
 /** What `POST …/chat/start` answers: the turn runs on, the id comes back now. */
 
@@ -88,7 +88,7 @@ describe("detached turn HTTP surface", () => {
     expect(body.conversationId).toMatch(/^conv_/);
   });
 
-  it("GET /v1/conversations/:id/events replays the turn (incl. the user message)", async () => {
+  it("GET …/conversations/:id/events replays the turn (incl. the user message)", async () => {
     const startRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -100,7 +100,9 @@ describe("detached turn HTTP surface", () => {
     // replay the whole turn from the RunBus (within the grace window).
     await new Promise((r) => setTimeout(r, 100));
 
-    const evRes = await fetch(`${baseUrl}/v1/conversations/${conversationId}/events`);
+    const evRes = await fetch(
+      `${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/conversations/${conversationId}/events`,
+    );
     expect(evRes.status).toBe(200);
     const types = await readSse(evRes, 400);
     expect(types).toContain("subscribed");
@@ -108,26 +110,33 @@ describe("detached turn HTTP surface", () => {
     expect(types).toContain("chat.start");
   });
 
-  it("POST /v1/conversations/:id/cancel returns ok for the owner", async () => {
+  it("POST …/conversations/:id/cancel returns ok for the owner", async () => {
     const startRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "cancel target", workspaceId: TEST_WORKSPACE_ID }),
     });
     const { conversationId } = await readJson<ChatStartResponse>(startRes);
-    const res = await fetch(`${baseUrl}/v1/conversations/${conversationId}/cancel`, {
-      method: "POST",
-    });
+    const res = await fetch(
+      `${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/conversations/${conversationId}/cancel`,
+      {
+        method: "POST",
+      },
+    );
     expect(res.status).toBe(200);
     const body = await readJson<ChatCancelResponse>(res);
     expect(typeof body.cancelled).toBe("boolean");
   });
 
   it("cancel of a non-existent conversation is 404", async () => {
-    const res = await fetch(`${baseUrl}/v1/conversations/conv_0000000000000000/cancel`, {
-      method: "POST",
-    });
+    const res = await fetch(
+      `${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/conversations/conv_0000000000000000/cancel`,
+      {
+        method: "POST",
+      },
+    );
     expect(res.status).toBe(404);
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("conversation_not_found");
   });
 
   it("start on a pre-migration (ownerless) conversation is 422, not 500", async () => {
@@ -191,11 +200,10 @@ describe("detached turn HTTP surface", () => {
 
   /**
    * Seed a well-formed conversation owned by a *different* user. The HTTP
-   * suite runs in dev mode (caller is always `usr_default`), so a mismatched
-   * `ownerId` is the way to drive the ownership 403 branch without an identity
-   * provider. Seed through the workspace store so the locator (which the
-   * read/cancel/start routes resolve through) sees it; the route's own
-   * ownership check is what must 403.
+   * suite runs in dev mode (caller is always `usr_default`), so another
+   * owner's partition is the way to reach the other-owner branch without an
+   * identity provider. The routes look only in the caller's own partition, so
+   * they must answer it as they answer an unknown id.
    */
   async function seedOtherUserConversation(convId: string): Promise<void> {
     await runtime
@@ -203,32 +211,42 @@ describe("detached turn HTTP surface", () => {
       .create({ model: "anthropic:claude-sonnet-4-6", ownerId: "usr_someone_else", id: convId });
   }
 
-  it("GET /v1/conversations/:id/events on another user's conversation is 403", async () => {
+  it("GET …/conversations/:id/events on another user's conversation is 404, as for an unknown one", async () => {
     const convId = "conv_0a0a0a0a0a0a0a0a";
     await seedOtherUserConversation(convId);
-    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`);
-    expect(res.status).toBe(403);
-    expect((await readJson<ApiErrorBody>(res)).error).toBe("conversation_access_denied");
+    const res = await fetch(
+      `${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/conversations/${convId}/events`,
+    );
+    expect(res.status).toBe(404);
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("conversation_not_found");
   });
 
-  it("POST /v1/conversations/:id/cancel on another user's conversation is 403", async () => {
+  it("POST …/conversations/:id/cancel on another user's conversation is 404, as for an unknown one", async () => {
     const convId = "conv_0b0b0b0b0b0b0b0b";
     await seedOtherUserConversation(convId);
-    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/cancel`, {
-      method: "POST",
-    });
-    expect(res.status).toBe(403);
-    expect((await readJson<ApiErrorBody>(res)).error).toBe("conversation_access_denied");
+    const res = await fetch(
+      `${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/conversations/${convId}/cancel`,
+      {
+        method: "POST",
+      },
+    );
+    expect(res.status).toBe(404);
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("conversation_not_found");
   });
 
   it("malformed conversationId on the events + cancel routes is 400, not 500", async () => {
-    const evRes = await fetch(`${baseUrl}/v1/conversations/bogus/events`);
+    const evRes = await fetch(
+      `${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/conversations/bogus/events`,
+    );
     expect(evRes.status).toBe(400);
     expect((await readJson<ApiErrorBody>(evRes)).error).toBe("bad_request");
 
-    const cancelRes = await fetch(`${baseUrl}/v1/conversations/not-a-conv-id/cancel`, {
-      method: "POST",
-    });
+    const cancelRes = await fetch(
+      `${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/conversations/not-a-conv-id/cancel`,
+      {
+        method: "POST",
+      },
+    );
     expect(cancelRes.status).toBe(400);
     expect((await readJson<ApiErrorBody>(cancelRes)).error).toBe("bad_request");
   });

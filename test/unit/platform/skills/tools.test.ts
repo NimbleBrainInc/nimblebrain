@@ -14,12 +14,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
-import { ConversationLocator } from "../../../../src/conversation/locator.ts";
 import { workspaceConversationsDir } from "../../../../src/conversation/paths.ts";
 import type {
   ConversationAccessContext,
@@ -46,8 +45,8 @@ const TEST_HASH = "0".repeat(64);
 // workspace-owned (`workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`);
 // every `runtime.store().create(...)` in this file seeds into this workspace +
 // owner partition, and the facade (`resolveConversationStore` /
-// `findConversation` / `listConversations`) reads them back through a real
-// `ConversationLocator` over `{workDir}/workspaces`.
+// `findConversation` / `listConversations`) reads them back from the one
+// workspace + owner partition each call names, as the runtime does.
 const SEED_WS_ID = "ws_0076759dbbe19fcc";
 const SEED_OWNER_ID = "user_test";
 
@@ -62,7 +61,6 @@ class FakeRuntime {
   hasIdentityProvider = false;
   wsId: string | null = null;
   private readonly _store: EventSourcedConversationStore;
-  private readonly _locator: ConversationLocator;
 
   contextSkills: Skill[] = [];
   matchableSkills: Skill[] = [];
@@ -71,17 +69,12 @@ class FakeRuntime {
   overlayFor: ((wsId: string | null, userId: string | null) => Skill[]) | null = null;
 
   constructor(private workDir: string) {
-    // Back the fake with a real locator over the workspaces root and a real
-    // workspace store, so the conversation facade (`resolveConversationStore` /
-    // `findConversation` / `listConversations`) is exercised end-to-end
-    // against the workspace-partitioned on-disk layout.
-    this._locator = new ConversationLocator(join(workDir, "workspaces"));
+    // Back the fake with a real workspace store, so the conversation facade
+    // (`resolveConversationStore` / `findConversation` / `listConversations`)
+    // is exercised against the workspace-partitioned on-disk layout.
     const convDir = workspaceConversationsDir(workDir, SEED_WS_ID, SEED_OWNER_ID);
     mkdirSync(convDir, { recursive: true });
-    this._store = new EventSourcedConversationStore({
-      dir: convDir,
-      onMutate: () => this._locator.invalidate(),
-    });
+    this._store = new EventSourcedConversationStore({ dir: convDir });
   }
 
   getWorkDir(): string {
@@ -97,25 +90,33 @@ class FakeRuntime {
     if (!this.wsId) throw new Error("no workspace");
     return this.wsId;
   }
-  /** Resolve the workspace store holding `convId` via the locator (null if unknown). */
-  async resolveConversationStore(convId: string): Promise<EventSourcedConversationStore | null> {
-    const loc = await this._locator.locate(convId);
-    if (!loc) return null;
-    return new EventSourcedConversationStore({
-      dir: workspaceConversationsDir(this.workDir, loc.wsId, loc.ownerId ?? ""),
-    });
+  resolveRequestUserId(identity: UserIdentity | undefined): string {
+    if (!identity) throw new Error("no identity");
+    return identity.id;
   }
-  async findConversation(id: string, access?: ConversationAccessContext) {
-    const store = await this.resolveConversationStore(id);
+  /** The store holding `convId` in `ownerId`'s partition of `wsId` (null if it is not there). */
+  async resolveConversationStore(
+    wsId: string,
+    convId: string,
+    ownerId: string,
+  ): Promise<EventSourcedConversationStore | null> {
+    const dir = workspaceConversationsDir(this.workDir, wsId, ownerId);
+    if (!existsSync(join(dir, `${convId}.jsonl`))) return null;
+    return new EventSourcedConversationStore({ dir });
+  }
+  async findConversation(wsId: string, id: string, access: ConversationAccessContext) {
+    const store = await this.resolveConversationStore(wsId, id, access.userId);
     if (!store) return null;
     return store.load(id, access);
   }
   async listConversations(
     workspaceId: string,
-    options?: ListOptions,
-    access?: ConversationAccessContext,
+    options: ListOptions | undefined,
+    access: ConversationAccessContext,
   ): Promise<ConversationListResult> {
-    return this._locator.list(workspaceId, options, access);
+    const dir = workspaceConversationsDir(this.workDir, workspaceId, access.userId);
+    if (!existsSync(dir)) return { conversations: [], nextCursor: null, totalCount: 0 };
+    return new EventSourcedConversationStore({ dir }).list(options, access);
   }
   getWorkspaceStore() {
     // Tests that exercise the cross-workspace path supply this directly
@@ -820,6 +821,7 @@ describe("skills__loading_log", () => {
       runtime.store().appendEvent(conv.id, { type: "skills.loaded", ...e });
     }
 
+    runtime.wsId = SEED_WS_ID;
     const src = await buildSource();
     const client = src.getClient()!;
 
@@ -888,6 +890,7 @@ describe("skills__loading_log", () => {
       tokens: 300,
     });
 
+    runtime.wsId = SEED_WS_ID;
     const src = await buildSource();
     const client = src.getClient()!;
 
@@ -1006,5 +1009,52 @@ describe("skills__loading_log", () => {
     expect(convIds.has(conv1.id)).toBe(true);
     expect(convIds.has(conv2.id)).toBe(true);
     expect(convIds.has(convOther.id)).toBe(false);
+  });
+
+  test("an explicit conversation_id is read only in the active workspace", async () => {
+    // The same owner's conversation, held in a different workspace.
+    const otherWs = "ws_005820c54ca342ad";
+    const otherDir = workspaceConversationsDir(runtime.getWorkDir(), otherWs, SEED_OWNER_ID);
+    mkdirSync(otherDir, { recursive: true });
+    const otherStore = new EventSourcedConversationStore({ dir: otherDir });
+    const convOther = await otherStore.create({
+      model: "anthropic:claude-sonnet-4-6",
+      ownerId: SEED_OWNER_ID,
+    });
+    otherStore.appendEvent(convOther.id, {
+      type: "skill.activated",
+      ts: "2026-03-01T00:00:00.000Z",
+      runId: "r-other",
+      toolCallId: "tc-other",
+      skillName: "elsewhere",
+      scope: "workspace",
+      tokens: 10,
+    });
+
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const loadsIn = async (wsId: string) => {
+      runtime.wsId = wsId;
+      const res = await client.callTool({
+        name: "loading_log",
+        arguments: { conversation_id: convOther.id },
+      });
+      return (res as { structuredContent?: { loads?: unknown[] } }).structuredContent?.loads;
+    };
+    expect(await loadsIn(SEED_WS_ID)).toEqual([]);
+    expect(await loadsIn(otherWs)).toHaveLength(1);
+  });
+
+  test("an explicit conversation_id with no workspace in scope is refused", async () => {
+    const conv = await runtime
+      .store()
+      .create({ model: "anthropic:claude-sonnet-4-6", ownerId: SEED_OWNER_ID });
+    runtime.wsId = null;
+    const src = await buildSource();
+    const res = await src.getClient()!.callTool({
+      name: "loading_log",
+      arguments: { conversation_id: conv.id },
+    });
+    expect(res.isError).toBe(true);
   });
 });

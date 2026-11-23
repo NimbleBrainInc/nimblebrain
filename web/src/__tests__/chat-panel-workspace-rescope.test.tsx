@@ -1,11 +1,10 @@
 // ---------------------------------------------------------------------------
 // ChatProvider — workspace re-scope (the panel follows the focused workspace).
 //
-// A conversation lives in exactly one workspace, and a chat runs in the
-// workspace its URL names. A conversation the user OPENS from another workspace
-// (`openConversation`: a `?chat=` deep link, a list) takes them to that
-// workspace's path. Otherwise, when the focused workspace
-// changes from one workspace to a DIFFERENT one, the open conversation clears
+// A conversation lives in exactly one workspace, a chat runs in the workspace
+// its URL names, and a conversation is read only in the workspace a request
+// names: one opened from another workspace is not found. When the focused
+// workspace changes from one workspace to a DIFFERENT one, the open conversation clears
 // and the panel resets to a fresh draft in the newly-focused workspace. It does
 // NOT clear when the focus is unchanged (e.g. navigating within the same
 // workspace or opening a conversation from its own workspace's list). A second
@@ -29,11 +28,14 @@ import { realClient } from "../../test/setup";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// The workspace the mocked `conversations__get` reports for a loaded
-// conversation — how a test says "this conversation lives in workspace X". null
-// ⇒ unstamped (a legacy record with no workspaceId), which the panel must leave
-// alone (the client's "unknown ⇒ don't reconcile" rule).
+// The workspace the mocked conversation lives in — how a test says "this
+// conversation lives in workspace X". The mocked `conversations__get` answers
+// it only when the read names that workspace, as the server does; a read in
+// any other workspace is "not found". null ⇒ a record with no stamped
+// workspace, answered in whichever workspace reads it.
 let mockConversationWorkspaceId: string | null = "ws_00079598e311c160";
+// The workspace each event stream was opened in.
+let streamWorkspaces: string[] = [];
 // Captured `startChatTurn` calls — asserts which conversation (if any) a send
 // resumes. A fresh draft carries no `conversationId`.
 let startCalls: Array<{ conversationId?: string }> = [];
@@ -42,24 +44,37 @@ mock.module("../api/client", () => ({
   ...realClient,
   // `conversations__get` reports the conversation's own workspace (what the
   // panel reconciles against); every other incidental call stubs empty.
-  callTool: mock(async (server: string, tool: string, args?: { id?: string }) => {
-    if (server === "conversations" && tool === "get") {
-      return {
-        isError: false,
-        structuredContent: {
-          metadata: {
-            id: args?.id ?? "conv_existing",
-            ownerId: "u1",
-            ...(mockConversationWorkspaceId ? { workspaceId: mockConversationWorkspaceId } : {}),
-            title: null,
+  callTool: mock(
+    async (
+      server: string,
+      tool: string,
+      args?: { id?: string },
+      opts?: { workspaceId?: string },
+    ) => {
+      if (server === "conversations" && tool === "get") {
+        if (mockConversationWorkspaceId && opts?.workspaceId !== mockConversationWorkspaceId) {
+          return {
+            isError: true,
+            content: [{ type: "text", text: `Conversation not found: ${args?.id}` }],
+          };
+        }
+        return {
+          isError: false,
+          structuredContent: {
+            metadata: {
+              id: args?.id ?? "conv_existing",
+              ownerId: "u1",
+              ...(mockConversationWorkspaceId ? { workspaceId: mockConversationWorkspaceId } : {}),
+              title: null,
+            },
+            messages: [],
           },
-          messages: [],
-        },
-        content: [],
-      };
-    }
-    return { structuredContent: null, content: [] };
-  }),
+          content: [],
+        };
+      }
+      return { structuredContent: null, content: [] };
+    },
+  ),
   // Capture the resumed conversation id (undefined ⇒ a fresh turn).
   startChatTurn: mock(async (req: { conversationId?: string }) => {
     startCalls.push({ conversationId: req.conversationId });
@@ -70,7 +85,10 @@ mock.module("../api/client", () => ({
 // No real SSE — `loadConversation` sets the slice meta then opens a stream; the
 // no-op connection keeps the reconcile logic under test without a network.
 mock.module("../api/conversation-stream", () => ({
-  connectConversationStream: () => ({ close() {} }),
+  connectConversationStream: (opts: { workspaceId: string }) => {
+    streamWorkspaces.push(opts.workspaceId);
+    return { close() {} };
+  },
 }));
 
 const React = await import("react");
@@ -92,13 +110,15 @@ const WS_B = ws("ws_001c32f121060ff3", "Bravo");
 // Probe that publishes the live conversationId (and the send fn) out of the context.
 let observedConversationId: string | null | undefined;
 let capturedSendMessage: ((text: string) => Promise<void>) | null = null;
-let capturedOpenConversation: ((id: string) => Promise<void>) | null = null;
+let capturedLoadConversation: ((id: string) => Promise<void>) | null = null;
+let observedError: string | null | undefined;
 let observedPathname: string | undefined;
 function Probe(): null {
   const ctx = useChatContext();
   observedConversationId = ctx.conversationId;
+  observedError = ctx.error;
   capturedSendMessage = ctx.sendMessage;
-  capturedOpenConversation = ctx.openConversation;
+  capturedLoadConversation = ctx.loadConversation;
   observedPathname = useLocation().pathname;
   return null;
 }
@@ -160,8 +180,10 @@ beforeEach(() => {
   chatStore.reset();
   observedConversationId = undefined;
   capturedSendMessage = null;
-  capturedOpenConversation = null;
+  capturedLoadConversation = null;
+  observedError = undefined;
   observedPathname = undefined;
+  streamWorkspaces = [];
   setActiveWorkspace = null;
   navigate = null;
   mockConversationWorkspaceId = "ws_00079598e311c160";
@@ -263,8 +285,10 @@ describe("ChatProvider reconciles a foreign-workspace conversation after a refre
 
   test("mounts a workspace-A conversation while focused on B, then re-scopes once A's workspace is known", async () => {
     // Focused on B at mount (as after refreshing on /w/B); the restored
-    // conversation belongs to A (mockConversationWorkspaceId default = ws_00079598e311c160).
-    await mountHarness({ route: "/w/001c32f121060ff3/overview", activeId: "ws_001c32f121060ff3" });
+    // conversation belongs to A (mockConversationWorkspaceId default = ws_00079598e311c160)
+    // and is read in A, the active workspace bootstrap seeded before the route
+    // guard reconciled it.
+    await mountHarness({ route: "/w/001c32f121060ff3/overview", activeId: "ws_00079598e311c160" });
 
     // Desync: the panel holds A's conversation while displaying B, because the
     // conversation's own workspace isn't known yet (no transition fired).
@@ -312,11 +336,9 @@ describe("ChatProvider reconciles a foreign-workspace conversation after a refre
     expect(observedConversationId).toBe("conv_existing");
   });
 
-  test("an unstamped (legacy) conversation is left alone — unknown workspace ⇒ don't reconcile", async () => {
-    // A legacy record with no stamped workspaceId: conversations__get omits it,
-    // so the panel can't know the conversation's workspace and must NOT clear it.
-    // (This is why the fix lives on the client: it fails safe when the workspace
-    // is unknown, rather than rejecting a resume the way a server guard would.)
+  test("a conversation with no stamped workspace takes the workspace it was read in", async () => {
+    // conversations__get omits the workspace; the read named the focused
+    // workspace, so that is the conversation's workspace and it stays open.
     mockConversationWorkspaceId = null;
     await mountHarness({ route: "/w/001c32f121060ff3/overview", activeId: "ws_001c32f121060ff3" });
     expect(observedConversationId).toBe("conv_existing");
@@ -332,7 +354,7 @@ describe("ChatProvider reconciles a foreign-workspace conversation after a refre
     // a restored workspace-A conversation, the reconcile re-scopes to a fresh
     // draft, so a send starts a new turn in B rather than resuming A. The
     // reconcile is the single guard — this is the config the app actually builds.
-    await mountHarness({ route: "/w/001c32f121060ff3/overview", activeId: "ws_001c32f121060ff3" });
+    await mountHarness({ route: "/w/001c32f121060ff3/overview", activeId: "ws_00079598e311c160" });
     await act(async () => {
       await chatStore.loadConversation("conv_existing");
     });
@@ -347,8 +369,8 @@ describe("ChatProvider reconciles a foreign-workspace conversation after a refre
   });
 });
 
-describe("ChatProvider follows a conversation the user opens to its own workspace", () => {
-  test("a deep-linked conversation from another workspace lands on that workspace's path and stays open", async () => {
+describe("A conversation is opened only in the focused workspace", () => {
+  test("a conversation from another workspace is not found, and the URL stays put", async () => {
     // On workspace A, the user opens a conversation that lives in B.
     await mountHarness({
       route: "/w/00079598e311c160/overview",
@@ -358,46 +380,27 @@ describe("ChatProvider follows a conversation the user opens to its own workspac
     mockConversationWorkspaceId = "ws_001c32f121060ff3";
 
     await act(async () => {
-      await capturedOpenConversation?.("conv_in_b");
+      await capturedLoadConversation?.("conv_in_b");
     });
 
-    // They are on B's path, with B's conversation still open — the arrival is
-    // not mistaken for a switch away from it.
-    expect(observedPathname).toBe("/w/001c32f121060ff3");
-    expect(observedConversationId).toBe("conv_in_b");
-
-    // A send resumes it, now from B's path.
-    await act(async () => {
-      await capturedSendMessage?.("follow-up");
-    });
-    expect(startCalls).toEqual([{ conversationId: "conv_in_b" }]);
+    // Not found from A: the panel says so, stays on A, and never watches it.
+    expect(observedPathname).toBe("/w/00079598e311c160/overview");
+    expect(observedError).toContain("not found");
+    expect(streamWorkspaces).toEqual([]);
   });
 
-  test("a conversation opened in its own workspace keeps the URL", async () => {
+  test("a conversation opened in its own workspace keeps the URL and is watched there", async () => {
     await mountHarness({
       route: "/w/00079598e311c160/overview",
       activeId: "ws_00079598e311c160",
       convId: "",
     });
     await act(async () => {
-      await capturedOpenConversation?.("conv_in_a");
+      await capturedLoadConversation?.("conv_in_a");
     });
     expect(observedPathname).toBe("/w/00079598e311c160/overview");
     expect(observedConversationId).toBe("conv_in_a");
-  });
-
-  test("a conversation in a workspace the user does not belong to is dropped, not followed", async () => {
-    await mountHarness({
-      route: "/w/00079598e311c160/overview",
-      activeId: "ws_00079598e311c160",
-      convId: "",
-    });
-    mockConversationWorkspaceId = "ws_002dac437e67305b";
-    await act(async () => {
-      await capturedOpenConversation?.("conv_elsewhere");
-    });
-    expect(observedPathname).toBe("/w/00079598e311c160/overview");
-    expect(observedConversationId).toBeNull();
+    expect(streamWorkspaces).toEqual(["ws_00079598e311c160"]);
   });
 });
 

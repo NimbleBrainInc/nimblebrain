@@ -118,7 +118,8 @@ function runInProgressResponse(conversationId: string): Response {
  * Handle POST /v1/workspaces/:wsId/chat/start — kick off a detached, server-authoritative turn
  * and return the conversation id immediately. The turn runs to completion on
  * the server regardless of this request's lifecycle (closing the tab does NOT
- * cancel it). Clients watch the turn via GET /v1/conversations/:id/events,
+ * cancel it). Clients watch the turn via
+ * GET /v1/workspaces/:wsId/conversations/:id/events,
  * which replays the in-flight turn then tails live.
  */
 export async function handleChatStart(
@@ -144,14 +145,17 @@ export async function handleChatStart(
 }
 
 /**
- * Handle POST /v1/conversations/:id/cancel — the explicit Stop button. The
- * ONLY thing that aborts generation; client disconnect does not. Ownership is
- * enforced (same posture as the events route).
+ * Handle POST /v1/workspaces/:wsId/conversations/:id/cancel — the explicit
+ * Stop button. The ONLY thing that aborts generation; client disconnect does
+ * not. The conversation is looked for only in the caller's partition of the
+ * workspace in the path (same posture as the events route), so an unknown id,
+ * another owner's conversation, and one in another workspace are all `404`.
  */
 export async function handleChatCancel(
   conversationId: string,
   runtime: Runtime,
-  identity?: UserIdentity,
+  identity: UserIdentity | undefined,
+  workspaceId: string,
 ): Promise<Response> {
   // Reject a malformed id with 400 before it reaches the store, where
   // `validateConversationId` would throw a plain Error that bubbles to a 500.
@@ -163,28 +167,17 @@ export async function handleChatCancel(
   if (!callerId) {
     return apiError(401, "authentication_required", "Authentication required.");
   }
-  const conversation = await runtime.findConversation(conversationId).catch((err) => {
-    if (err instanceof ConversationCorruptedError) return err;
-    throw err;
-  });
-  if (conversation instanceof ConversationCorruptedError) {
-    return apiError(422, "conversation_corrupted", conversation.message, {
-      conversationId: conversation.conversationId,
-      reason: conversation.reason,
+  const conversation = await runtime
+    .findConversation(workspaceId, conversationId, { userId: callerId })
+    .catch((err) => {
+      if (err instanceof ConversationCorruptedError) return err;
+      throw err;
     });
+  if (conversation instanceof ConversationCorruptedError) {
+    return conversationCorruptedResponse(conversation);
   }
   if (!conversation) {
-    return apiError(404, "not_found", "Conversation not found");
-  }
-  if (conversation.ownerId !== callerId) {
-    return apiError(
-      403,
-      "conversation_access_denied",
-      "You do not have access to this conversation.",
-      {
-        conversationId,
-      },
-    );
+    return conversationNotFoundResponse(conversationId);
   }
   const cancelled = runtime.cancelTurn(conversationId);
   return json<ChatCancelResponse>({ cancelled });

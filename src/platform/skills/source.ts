@@ -1151,7 +1151,14 @@ async function alreadyLoaded(runtime: Runtime, name: string): Promise<boolean> {
   const ctx = getRequestContext();
   if (ctx?.composedSkills?.includes(name)) return true;
   if (!ctx?.conversationId) return false;
-  const events = await readConvEvents(runtime, ctx.conversationId);
+  // The conversation is read in the request's workspace only; both lookups
+  // throw when the request carries no workspace or no identity.
+  const events = await readConvEvents(
+    runtime,
+    runtime.requireWorkspaceId(),
+    ctx.conversationId,
+    runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined),
+  );
   return !!events && collectDeliveredSkillNames(events).has(name);
 }
 
@@ -1301,10 +1308,10 @@ function inferScopeFromPath(
  * Replay the skill-load ledger — every channel, not just `skills.loaded`.
  *
  * The projection lives in `skills/load-ledger.ts`; this function owns the
- * access gate, the conversation set, and the filters. When `conversation_id`
- * is provided, scan just that conversation (owner-gated, and resolvable from
- * any workspace — the same by-id read a deep link does); otherwise scan every
- * conversation the caller owns in the active workspace. The cross-conv scan
+ * access gate, the conversation set, and the filters. Every read is in the
+ * active workspace: when `conversation_id` is provided, scan just that
+ * conversation if the caller owns it there; otherwise scan every conversation
+ * the caller owns there. A conversation in another workspace yields no rows. The cross-conv scan
  * reads each jsonl in turn — intentionally simple; there is no derived index.
  */
 async function loadingLog(
@@ -1320,12 +1327,14 @@ async function loadingLog(
     throw new Error("skills__loading_log requires an authenticated identity");
   }
   const access = { userId: identity.id };
+  // Throws when no workspace is in scope: never a read across workspaces.
+  const wsId = runtime.requireWorkspaceId();
 
-  const convIds = await resolveLoadingLogConvIds(runtime, filter, access);
+  const convIds = await resolveLoadingLogConvIds(runtime, wsId, filter, access);
 
   const out: SkillLoadRow[] = [];
   for (const convId of convIds) {
-    const events = await readConvEvents(runtime, convId);
+    const events = await readConvEvents(runtime, wsId, convId, access.userId);
     if (!events) continue;
     for (const row of projectSkillLoads(convId, events)) {
       if (matchesLoadingLogFilter(row, filter)) out.push(row);
@@ -1339,18 +1348,19 @@ async function loadingLog(
 /** Resolve the conversation ids to scan for `skills__loading_log`, scoped to the caller. */
 async function resolveLoadingLogConvIds(
   runtime: Runtime,
+  wsId: string,
   filter: SkillsLoadingLogInput,
   access: { userId: string },
 ): Promise<string[]> {
   if (filter.conversation_id) {
-    // Explicit-id branch: verify ownership before reading events.
-    // `findConversation(id, access)` returns null for both not-found
-    // and foreign-owner, so we treat them the same: no entries.
-    const owned = await runtime.findConversation(filter.conversation_id, access);
+    // Explicit-id branch: verify ownership in this workspace before reading
+    // events. `findConversation` returns null for not-found, foreign-owner,
+    // and another workspace alike, so all three yield no entries.
+    const owned = await runtime.findConversation(wsId, filter.conversation_id, access);
     if (!owned) return [];
     return [filter.conversation_id];
   }
-  return listOwnedConversationIds(runtime, access);
+  return listOwnedConversationIds(runtime, wsId, access);
 }
 
 /**
@@ -1370,40 +1380,38 @@ function matchesLoadingLogFilter(row: SkillLoadRow, filter: SkillsLoadingLogInpu
 }
 
 /**
- * Read raw conversation events for the given id from the top-level
- * conversation store. Returns `null` for not-found, `[]` for a conversation
- * that holds no events.
+ * Read raw conversation events for the given id from the caller's partition
+ * of `wsId`. Returns `null` for not-found, `[]` for a conversation that holds
+ * no events.
  */
 async function readConvEvents(
   runtime: Runtime,
+  wsId: string,
   convId: string,
+  ownerId: string,
 ): Promise<ConversationEvent[] | null> {
-  // The locator resolves the conversation's workspace store (null if not found,
-  // which folds in the existence check).
-  const store = await runtime.resolveConversationStore(convId);
+  const store = await runtime.resolveConversationStore(wsId, convId, ownerId);
   if (!store) return null;
   return store.readEvents(convId);
 }
 
 /**
- * Conversation ids owned by the caller IN THE ACTIVE WORKSPACE. Goes through
- * the locator's `list(workspaceId, opts, access)`, which applies the same
- * workspace wall and ownership filter the platform conversation tools use.
- * Walks paginated results so a workspace with many owned conversations is
- * covered.
+ * Conversation ids owned by the caller IN THE ACTIVE WORKSPACE, through
+ * `runtime.listConversations`, which reads only the caller's partition of
+ * that workspace. Walks paginated results so a workspace with many owned
+ * conversations is covered.
  *
  * Workspace-scoped because `skills` is a workspace source and skills are
  * workspace-tiered: "which skills loaded" is a question about THIS workspace.
  */
 async function listOwnedConversationIds(
   runtime: Runtime,
+  wsId: string,
   access: { userId: string },
 ): Promise<string[]> {
-  const wsId = runtime.requireWorkspaceId();
   const ids: string[] = [];
   let cursor: string | undefined;
-  // Fixed page size; enough that a normal tenant gets one page. The locator's
-  // `list` is in-memory after populate, so paging is cheap. Loop until done.
+  // Fixed page size; enough that a normal workspace gets one page. Loop until done.
   while (true) {
     const page = await runtime.listConversations(
       wsId,

@@ -230,7 +230,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
     streamingState,
     preparingTool,
     stop,
-    openConversation,
+    loadConversation,
     conversationMeta,
     conversationKey,
   } = useChatContext();
@@ -323,7 +323,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
         onCopyId={handleCopyConversationId}
         isStreaming={isStreaming}
         onNewChat={handleNewChat}
-        onOpenConversation={openConversation}
+        onOpenConversation={loadConversation}
         onFullscreen={onFullscreen}
         onClose={onClose}
         isFullscreen={isFullscreen}

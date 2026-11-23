@@ -2,27 +2,22 @@ import type { ApiErrorBody, ChatResponse } from "../../src/api/schemas/responses
 import { postChatTurn } from "../helpers/chat-turn.ts";
 import { readJson } from "../helpers/http.ts";
 /**
- * E2E — conversation access after the owner is removed from its workspace.
- *
- *   **Read stays, resume is denied.**
+ * E2E — a conversation is reached only through the workspace it lives in.
  *
  * A conversation lives inside the workspace it was created in
- * (`workspaces/<wsId>/conversations/<ownerId>/...`) and is sealed to it: on
- * resume the session's tools/skills/apps resolve in that workspace. So once the
- * owner is removed from that workspace:
- *   - READ stays owner-gated — they can still load their own authored
- *     conversation (`findConversation`, the SSE event stream).
- *   - RESUME is denied — continuing the chat would grant the workspace's tools to
- *     someone offboarded from it, so the membership gate refuses it (`403`),
- *     regardless of which workspace the request is addressed to.
+ * (`workspaces/<wsId>/conversations/<ownerId>/...`) and is sealed to it. No
+ * read or write crosses a workspace:
+ *   - From another workspace the same owner belongs to, the conversation is
+ *     not found: the event stream, Stop and a chat resume all answer
+ *     `404 conversation_not_found`, and `findConversation` returns null.
+ *   - Once the owner is removed from the conversation's workspace, its HTTP
+ *     routes answer the workspace gate's 404, and a resume from another
+ *     workspace is still `conversation_not_found`.
+ *   - The runtime read `findConversation(wsId, …)` stays owner-gated within
+ *     its workspace: it does not consult membership.
  *
- * This replaces the earlier "conversations outlive their workspace context"
- * stance, which dated from when conversations lived at flat top-level storage
- * outside any workspace. They now live inside the workspace (and are archived
- * with it on delete), so access is bound to current membership for active use.
- *
- * Secondary assertion: `canAccess` is a pure ownership check (the READ gate) and
- * does not consult workspace membership — read access is unaffected by removal.
+ * Secondary assertion: `canAccess` is a pure ownership check and does not
+ * consult workspace membership.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -148,7 +143,7 @@ describe("conversation access after the owner is removed from its workspace", ()
     rmSync(workDir, { recursive: true, force: true });
   });
 
-  test("an owned conversation in A stays readable but cannot be resumed after Alice leaves A", async () => {
+  test("an owned conversation in A is not found from B, before and after Alice leaves A", async () => {
     // 1. Alice POSTs a chat in shared_a — produces a conversation born in the
     //    workspace the request is addressed to (sharedA, from the path), stored
     //    under `workspaces/<sharedA>/conversations/<ownerId>/` and sealed to it.
@@ -183,31 +178,49 @@ describe("conversation access after the owner is removed from its workspace", ()
     }
     expect(flatExists).toBe(false);
 
-    // 2. Remove Alice from shared_a. This is the load-bearing
-    //    mutation: workspace membership goes away, conversation
-    //    ownership stays.
-    const wsStore = runtime.getWorkspaceStore();
-    await wsStore.removeMember(sharedA, ALICE.id);
+    const auth = { Authorization: `Bearer ${ALICE_TOKEN}` };
+    const eventsIn = (wsId: string) =>
+      fetch(`${baseUrl}/v1/workspaces/${wsId}/conversations/${convId}/events`, { headers: auth });
+    const cancelIn = (wsId: string) =>
+      fetch(`${baseUrl}/v1/workspaces/${wsId}/conversations/${convId}/cancel`, {
+        method: "POST",
+        headers: auth,
+      });
+    const expectError = async (res: Response, error: string) => {
+      expect(res.status).toBe(404);
+      expect((await readJson<ApiErrorBody>(res)).error).toBe(error);
+    };
 
-    // 3. READ stays owner-gated — `findConversation` still loads it after removal.
-    //    Reading your own authored conversation does not consult workspace
-    //    membership; only RESUME does (step 6).
-    const loaded = await runtime.findConversation(convId, { userId: ALICE.id });
-    expect(loaded).not.toBeNull();
-    expect(loaded?.ownerId).toBe(ALICE.id);
-    // The conversation is workspace-owned: its metadata `workspaceId` records the
-    // workspace it lives in (`sharedA`), where its file also lives.
-    expect(loaded?.workspaceId).toBe(sharedA);
-
-    // 4. SSE event stream on the conversation also still works —
-    //    the events route gates on ownership, not workspace membership.
-    const sseRes = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${ALICE_TOKEN}` },
-    });
+    // 2. In A, its own workspace, the event stream answers.
+    const sseRes = await eventsIn(sharedA);
     expect(sseRes.status).toBe(200);
     expect(sseRes.headers.get("Content-Type")).toMatch(/text\/event-stream/);
     await sseRes.body?.cancel();
+
+    // 3. From B, a workspace Alice also belongs to, it does not exist: the
+    //    event stream and Stop answer exactly as for an unknown id, and the
+    //    runtime read in B finds nothing.
+    await expectError(await eventsIn(sharedB), "conversation_not_found");
+    await expectError(await cancelIn(sharedB), "conversation_not_found");
+    expect(await runtime.findConversation(sharedB, convId, { userId: ALICE.id })).toBeNull();
+
+    // 4. Remove Alice from shared_a: workspace membership goes away,
+    //    conversation ownership stays.
+    const wsStore = runtime.getWorkspaceStore();
+    await wsStore.removeMember(sharedA, ALICE.id);
+
+    // The runtime read in A is owner-gated and does not consult membership.
+    // The conversation is workspace-owned: its metadata `workspaceId` records the
+    // workspace it lives in (`sharedA`), where its file also lives.
+    const loaded = await runtime.findConversation(sharedA, convId, { userId: ALICE.id });
+    expect(loaded?.ownerId).toBe(ALICE.id);
+    expect(loaded?.workspaceId).toBe(sharedA);
+
+    // Its HTTP routes in A now answer the workspace gate's 404, and from B it
+    // is still not found.
+    await expectError(await eventsIn(sharedA), "workspace_error");
+    await expectError(await cancelIn(sharedA), "workspace_error");
+    await expectError(await eventsIn(sharedB), "conversation_not_found");
 
     // 5. But chatting IN shared_a is refused with the workspace gate's single
     //    answer for a workspace the caller cannot reach (404, indistinguishable
@@ -248,7 +261,7 @@ describe("conversation access after the owner is removed from its workspace", ()
 
     // 7. The denied resume left the conversation untouched: still one turn,
     //    still in sharedA, and the refused message was never appended.
-    const store = await runtime.resolveConversationStore(convId);
+    const store = await runtime.resolveConversationStore(sharedA, convId, ALICE.id);
     const conv = (await store!.load(convId)) ?? null;
     expect(conv).not.toBeNull();
     if (conv) {

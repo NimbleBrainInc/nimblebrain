@@ -197,7 +197,11 @@ describe("connector-skill adapter — end-to-end", () => {
     });
 
     // Pull the conversation store and read the skills.loaded event.
-    const store = await runtime.resolveConversationStore(chat.conversationId);
+    const store = await runtime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      chat.conversationId,
+      DEV_IDENTITY.id,
+    );
     const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
@@ -224,7 +228,11 @@ describe("connector-skill adapter — end-to-end", () => {
       allowedTools: ["ai-nimblebrain-test-mcp__doit"],
     });
 
-    const store = await runtime.resolveConversationStore(chat.conversationId);
+    const store = await runtime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      chat.conversationId,
+      DEV_IDENTITY.id,
+    );
     const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
@@ -263,7 +271,11 @@ describe("connector-skill adapter — end-to-end", () => {
       allowedTools: [],
     });
 
-    const store = await runtime.resolveConversationStore(chat.conversationId);
+    const store = await runtime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      chat.conversationId,
+      DEV_IDENTITY.id,
+    );
     const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
@@ -427,7 +439,11 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
       allowedTools: ["nb__manage_tools"],
     });
 
-    const store = await promoRuntime.resolveConversationStore(chat.conversationId);
+    const store = await promoRuntime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      chat.conversationId,
+      DEV_IDENTITY.id,
+    );
     const events = await store!.readEvents(chat.conversationId);
 
     // Precondition: the connector skill did NOT load at turn start.
@@ -623,7 +639,11 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     // It rides the always-on context channel, so it is reported in `skills.loaded`
     // as an always-on entry (`loadedBy: "always"`, layer 0). The Context Ledger
     // surfaces it as workspace/connector context the user configured.
-    const store = await multiRuntime.resolveConversationStore(chat.conversationId);
+    const store = await multiRuntime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      chat.conversationId,
+      DEV_IDENTITY.id,
+    );
     const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     const always = skillsLoaded?.skills.find((s) => s.id === "skill://always-guide/SKILL.md");
@@ -646,7 +666,11 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     expect(prompt).toContain("ALWAYS_ON_WORKFLOW_MARKER");
     expect(prompt).not.toContain("DYNAMIC_USAGE_MARKER");
 
-    const store = await multiRuntime.resolveConversationStore(chat.conversationId);
+    const store = await multiRuntime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      chat.conversationId,
+      DEV_IDENTITY.id,
+    );
     const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     // Only the always skill is recorded at turn start.
@@ -866,7 +890,11 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
         message: "go",
         allowedTools: [`${AFFINITY_SERVER}__${tool}`],
       });
-      const store = await affinityRuntime.resolveConversationStore(chat.conversationId);
+      const store = await affinityRuntime.resolveConversationStore(
+        TEST_WORKSPACE_ID,
+        chat.conversationId,
+        DEV_IDENTITY.id,
+      );
       const events = await store!.readEvents(chat.conversationId);
       const loaded = firstStoredEvent(events, "skills.loaded");
       expect(loaded?.skills.map((s) => s.id) ?? []).not.toContain("skill://reference/SKILL.md");

@@ -214,7 +214,11 @@ describe("published skills and the surface-once channel", () => {
     // The first call is held, not run, and the re-issue after the guidance runs.
     // Read the persisted `tool.done`s rather than inferring either from the
     // injection between them.
-    const store = await runtime.resolveConversationStore(chat.conversationId);
+    const store = await runtime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      chat.conversationId,
+      DEV_IDENTITY.id,
+    );
     const events = await store!.readEvents(chat.conversationId);
     const dones = events.filter(
       (e) => e.type === "tool.done" && (e as { name?: string }).name === CALLED_TOOL,

@@ -83,7 +83,11 @@ async function getLatestRunId(runtime: Runtime, convId: string): Promise<string 
       workspaceId: TEST_WORKSPACE_ID,
     },
     async () => {
-      const store = await runtime.resolveConversationStore(convId);
+      const store = await runtime.resolveConversationStore(
+        TEST_WORKSPACE_ID,
+        convId,
+        DEV_IDENTITY.id,
+      );
       if (!(store instanceof EventSourcedConversationStore)) return null;
       const events = await store.readEvents(convId);
       for (let i = events.length - 1; i >= 0; i--) {

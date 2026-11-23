@@ -141,10 +141,16 @@ describe("detached turns (server-authoritative streaming)", () => {
     // Never attach — wait for the run to end purely via server state.
     await waitFor(() => !runtime.isTurnActive(conversationId));
 
-    const conv = await runtime.findConversation(conversationId, { userId: "usr_default" });
+    const conv = await runtime.findConversation(TEST_WORKSPACE_ID, conversationId, {
+      userId: DEV_IDENTITY.id,
+    });
     expect(conv).not.toBeNull();
 
-    const store = await runtime.resolveConversationStore(conversationId);
+    const store = await runtime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      conversationId,
+      DEV_IDENTITY.id,
+    );
     expect(store).toBeInstanceOf(EventSourcedConversationStore);
     const events = await store!.readEvents(conversationId);
     expect(events.length).toBeGreaterThan(0);
@@ -168,7 +174,9 @@ describe("detached turns (server-authoritative streaming)", () => {
         0,
       );
       expect(runtime.isTurnActive(id)).toBe(false);
-      expect(await runtime.findConversation(id)).toBeNull();
+      expect(
+        await runtime.findConversation(TEST_WORKSPACE_ID, id, { userId: DEV_IDENTITY.id }),
+      ).toBeNull();
     } finally {
       createSpy.mockRestore();
     }

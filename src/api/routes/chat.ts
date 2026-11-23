@@ -23,15 +23,17 @@ export function chatRoutes(ctx: AppContext) {
   // `handlers.ts::parseChatBody`.
   //
   // `requireWorkspace` is per-route and placed AFTER `chatBodyLimit`/`rl` so
-  // body-limit and rate-limit apply before the workspace lookup. `/cancel` is
-  // identity-scoped: owner-gated by conversation id.
+  // body-limit and rate-limit apply before the workspace lookup. `/cancel`
+  // finds the conversation only in the caller's partition of the workspace in
+  // its path, like every conversation read.
   const auth = requireAuth(ctx.authOptions);
   const logErrors = errorLog(ctx);
   return (
     new Hono<AppEnv>()
       // Server-authoritative entry point: starts a detached turn and returns
       // the conversation id immediately. The client then watches via
-      // GET /v1/conversations/:id/events. Generation survives client disconnect.
+      // GET /v1/workspaces/:wsId/conversations/:id/events. Generation survives
+      // client disconnect.
       .post(
         `${WORKSPACE_ROUTE_PREFIX}/chat/start`,
         auth,
@@ -43,8 +45,13 @@ export function chatRoutes(ctx: AppContext) {
           handleChatStart(c.req.raw, ctx.runtime, ctx.features, c.var.identity, c.var.workspaceId),
       )
       // Explicit Stop — the only way to abort an in-flight turn.
-      .post("/v1/conversations/:id/cancel", auth, logErrors, (c) =>
-        handleChatCancel(c.req.param("id"), ctx.runtime, c.var.identity),
+      .post(
+        // lint-ok:conversation-path (an HTTP route, not a storage path)
+        `${WORKSPACE_ROUTE_PREFIX}/conversations/:id/cancel`,
+        auth,
+        logErrors,
+        requireWorkspace(ctx),
+        (c) => handleChatCancel(c.req.param("id"), ctx.runtime, c.var.identity, c.var.workspaceId),
       )
   );
 }

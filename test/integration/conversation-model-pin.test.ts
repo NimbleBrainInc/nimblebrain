@@ -81,8 +81,8 @@ afterAll(async () => {
 });
 
 /** The distinct models the conversation's assistant turns actually ran on. */
-async function modelsUsed(conversationId: string): Promise<string[]> {
-  const store = await runtime.resolveConversationStore(conversationId);
+async function modelsUsed(conversationId: string, owner = USER): Promise<string[]> {
+  const store = await runtime.resolveConversationStore(TEST_WORKSPACE_ID, conversationId, owner.id);
   const conversation = await store!.load(conversationId);
   const messages = await store!.history(conversation!);
   const models = messages
@@ -93,8 +93,8 @@ async function modelsUsed(conversationId: string): Promise<string[]> {
 }
 
 /** The pin as persisted on line 1. */
-async function pinOf(conversationId: string): Promise<string | undefined> {
-  const store = await runtime.resolveConversationStore(conversationId);
+async function pinOf(conversationId: string, owner = USER): Promise<string | undefined> {
+  const store = await runtime.resolveConversationStore(TEST_WORKSPACE_ID, conversationId, owner.id);
   const conversation = await store!.load(conversationId);
   return conversation?.model;
 }
@@ -261,7 +261,11 @@ describe("the binding survives operations on the conversation", () => {
     });
 
     runtime.updateConfig({ models: { default: MODEL_B } });
-    const store = await runtime.resolveConversationStore(source.conversationId);
+    const store = await runtime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      source.conversationId,
+      USER.id,
+    );
     const forked = await store!.fork(source.conversationId);
 
     // Not MODEL_B: the fork carries the source's history, so re-resolving
@@ -280,7 +284,11 @@ describe("the binding survives operations on the conversation", () => {
     // A rename appends a `metadata.title` event and leaves line 1 alone, so this
     // passes by construction. It is a forward guard: the pin lives on line 1,
     // so a rename that ever moves to rewriting that line must not drop the field.
-    const store = await runtime.resolveConversationStore(conv.conversationId);
+    const store = await runtime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      conv.conversationId,
+      USER.id,
+    );
     await store!.update(conv.conversationId, { title: "renamed" });
 
     expect(await pinOf(conv.conversationId)).toBe(MODEL_A);
@@ -299,7 +307,11 @@ describe("the binding survives operations on the conversation", () => {
     });
 
     // The title call is fire-and-forget; wait for its event to land.
-    const store = await runtime.resolveConversationStore(conv.conversationId);
+    const store = await runtime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      conv.conversationId,
+      USER.id,
+    );
     const titleUsage = await waitForAuxUsage(store!, conv.conversationId, "title");
 
     expect(titleUsage.model).toBe(FAST_MODEL);
@@ -359,7 +371,7 @@ describe("how a client learns the binding", () => {
     // PICKY's own choice, which is what the pin took — announcing the org
     // default here would contradict the conversation on its first paint.
     expect(data?.model).toBe(MODEL_B);
-    expect(data?.model).toBe(await pinOf(conversationId));
+    expect(data?.model).toBe(await pinOf(conversationId, PICKY));
   });
 
   test("a later turn announces the pin, not the current default", async () => {
@@ -398,10 +410,10 @@ describe("whose model the pin captures", () => {
       identity: PICKY,
     });
 
-    expect(await pinOf(conv.conversationId)).toBe(MODEL_B);
+    expect(await pinOf(conv.conversationId, PICKY)).toBe(MODEL_B);
     // And the turn actually ran on it — a pin the engine ignores is no better
     // than no pin.
-    expect(await modelsUsed(conv.conversationId)).toEqual([MODEL_B]);
+    expect(await modelsUsed(conv.conversationId, PICKY)).toEqual([MODEL_B]);
   });
 
   test("someone without a preference still gets the org default", async () => {
@@ -425,6 +437,6 @@ describe("whose model the pin captures", () => {
       identity: PICKY,
     });
 
-    expect(await pinOf(conversationId)).toBe(MODEL_B);
+    expect(await pinOf(conversationId, PICKY)).toBe(MODEL_B);
   });
 });

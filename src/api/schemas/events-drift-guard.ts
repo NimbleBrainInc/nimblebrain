@@ -65,7 +65,8 @@ type Unrestated<Catalog, ServerBuilt> = {
 // GET /v1/events: every engine event the SSE route table forwards.
 export type DriftWorkspaceStream = AssertNone<Unrestated<Wire.WorkspaceStreamEvents, "heartbeat">>;
 
-// GET /v1/conversations/:id/events: every engine run event the RunBus forwards.
+// GET /v1/workspaces/:wsId/conversations/:id/events: every engine run event the
+// RunBus forwards.
 export type DriftConversationStream = AssertNone<
   Unrestated<Wire.ConversationStreamEvents, Wire.TurnFrame | Wire.ControlFrame>
 >;

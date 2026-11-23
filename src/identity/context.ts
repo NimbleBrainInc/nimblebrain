@@ -25,9 +25,9 @@ import { join } from "node:path";
  *     builds those paths, so there is no credential accessor here. That is what
  *     keeps the single credential-path convention `check:credential-paths`
  *     enforces from acquiring a second entry point.
- *   - **Conversations.** Conversations are top-level + ownership-authorized
- *     (`{workDir}/conversations/{convId}.jsonl`, `ownerId === userId`), not
- *     under a per-user directory. Reach them via `runtime.findConversation`,
+ *   - **Conversations.** Conversations are workspace-owned
+ *     (`workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`), not under a
+ *     per-user directory. Reach them via `runtime.findConversation(wsId, …)`,
  *     not a path helper here.
  *
  * What it owns: per-user data directories at `{workDir}/users/{userId}/...`.

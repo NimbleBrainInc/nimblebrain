@@ -74,7 +74,11 @@ describe("workspace-tier skills load from the focused workspace", () => {
       message: "hello",
     });
 
-    const store = await runtime.resolveConversationStore(chat.conversationId);
+    const store = await runtime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      chat.conversationId,
+      DEV_IDENTITY.id,
+    );
     const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
