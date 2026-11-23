@@ -99,14 +99,15 @@ docker compose config    # Validate compose file
 
 All endpoints require authentication (Bearer token or session cookie) unless noted. Auth is configured via `instance.json` — see the identity system docs.
 
-A route that acts on a workspace names it in its path, `/v1/workspaces/:wsId/…`, and admits only a member of it: a malformed, unknown or non-member id gets `404 workspace_error`. Every other route acts on the caller, or on a conversation or file its own id locates, and names no workspace ([ADR-0037](./adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md)). The path is the only way to name a workspace: a `ws_<id>-` qualified server, app or tool name is refused with `400`, and a `conversationId` on a chat or upload must be one of the caller's conversations in the path's workspace, or the request gets `404 conversation_not_found`, the same answer as for an id that does not exist.
+A route that acts on a workspace names it in its path, `/v1/workspaces/:wsId/…`, and admits only a member of it: a malformed, unknown or non-member id gets `404 workspace_error`. Every other route acts on the caller, or on a file its own id locates, and names no workspace ([ADR-0037](./adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md)). The path is the only way to name a workspace: a `ws_<id>-` qualified server, app or tool name is refused with `400`, and a `conversationId` on a chat or upload must be one of the caller's conversations in the path's workspace, or the request gets `404 conversation_not_found`, the same answer as for an id that does not exist.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | /v1/health | No | Health check |
 | GET | /v1/bootstrap | Yes | Bootstrap workspace context (user, workspaces, shell config) |
 | POST | /v1/workspaces/:wsId/chat/start | Yes | Start a turn that runs to completion on the server |
-| POST | /v1/conversations/:id/cancel | Yes | Stop a conversation's in-flight turn |
+| GET | /v1/workspaces/:wsId/conversations/:id/events | Yes | Watch a conversation's turns (SSE) |
+| POST | /v1/workspaces/:wsId/conversations/:id/cancel | Yes | Stop a conversation's in-flight turn |
 | GET | /v1/workspaces/:wsId/apps/:name/resources/:path | Yes | Fetch app UI resource |
 | POST | /v1/workspaces/:wsId/tools/call | Yes | Direct tool invocation |
 | POST | /v1/workspaces/:wsId/resources/read | Yes | Read an MCP resource |
@@ -560,7 +561,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 **Workspace-level** (`GET /v1/events`): Events: `connector.installed`, `connector.uninstalled`, `connector.grant_changed` (to the person whose plugin it is only), `connection.state_changed`, `server.notification`, `conversation.title`, `config.changed`, `skill.created`, `skill.updated`, `skill.deleted`, `bridge.tool.call`, `bridge.tool.done`, `notification.created`, `notification.delivered`, `notification.delivery_failed`, `heartbeat` (30s).
 
-**Per-conversation** (`GET /v1/conversations/:id/events`): For multi-participant chat. Security: `requireAuth` → ownership of the conversation (no workspace). Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`.
+**Per-conversation** (`GET /v1/workspaces/:wsId/conversations/:id/events`): Security: `requireAuth` → membership of the workspace in the path → the caller's own conversation in that workspace; any other conversation is `404 conversation_not_found`. Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`.
 
 ### Web Client Internals
 

@@ -473,10 +473,14 @@ export async function uploadResource(files: File[]): Promise<UploadResourceRespo
 /**
  * Start a server-authoritative turn. Returns the conversation id immediately;
  * the turn runs to completion on the server regardless of this client. Watch
- * it via `connectConversationStream`.
+ * it via `connectConversationStream` in the same workspace. `workspaceId`
+ * defaults to the active workspace.
  */
-export async function startChatTurn(req: ChatRequest): Promise<ChatStartResponse> {
-  const res = await fetchWithRefresh(`${API_BASE}${workspacePath("/chat/start")}`, {
+export async function startChatTurn(
+  req: ChatRequest,
+  workspaceId?: string,
+): Promise<ChatStartResponse> {
+  const res = await fetchWithRefresh(`${API_BASE}${workspacePath("/chat/start", workspaceId)}`, {
     method: "POST",
     credentials: "include",
     headers: headers(),
@@ -497,6 +501,7 @@ export async function startChatTurn(req: ChatRequest): Promise<ChatStartResponse
 export async function startChatTurnMultipart(
   req: ChatRequest,
   files: File[],
+  workspaceId?: string,
 ): Promise<ChatStartResponse> {
   const formData = new FormData();
   formData.append("message", req.message);
@@ -508,7 +513,7 @@ export async function startChatTurnMultipart(
   const h: Record<string, string> = {};
   if (authToken && authToken !== "__cookie__") h.Authorization = `Bearer ${authToken}`;
 
-  const res = await fetchWithRefresh(`${API_BASE}${workspacePath("/chat/start")}`, {
+  const res = await fetchWithRefresh(`${API_BASE}${workspacePath("/chat/start", workspaceId)}`, {
     method: "POST",
     credentials: "include",
     headers: h,
@@ -525,10 +530,13 @@ export async function startChatTurnMultipart(
   return res.json() as Promise<ChatStartResponse>;
 }
 
-/** Explicitly stop an in-flight turn (the Stop button). */
-export async function cancelChatTurn(conversationId: string): Promise<void> {
+/**
+ * Explicitly stop an in-flight turn (the Stop button). `workspaceId` is the
+ * workspace the conversation lives in: the server looks for it there only.
+ */
+export async function cancelChatTurn(conversationId: string, workspaceId: string): Promise<void> {
   await fetchWithRefresh(
-    `${API_BASE}/v1/conversations/${encodeURIComponent(conversationId)}/cancel`,
+    `${API_BASE}${workspacePath(`/conversations/${encodeURIComponent(conversationId)}/cancel`, workspaceId)}`,
     { method: "POST", credentials: "include", headers: headers() },
   ).catch(() => {
     // Best-effort — the turn may have already finished.

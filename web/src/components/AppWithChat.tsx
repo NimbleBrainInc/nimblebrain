@@ -27,6 +27,7 @@
 
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
+import { getActiveWorkspaceId } from "../api/client";
 import type { AppTrailEntry } from "../bridge/schemas";
 import { useAppLocation } from "../context/AppLocationContext";
 import { useChatContext } from "../context/ChatContext";
@@ -34,7 +35,7 @@ import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
 import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
-import { getSavedConversationId, setSavedConversationId } from "../lib/active-conversation-storage";
+import { getSavedConversation, setSavedConversation } from "../lib/active-conversation-storage";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
 import { appTargetFrom } from "../lib/open-app";
 import { cn } from "../lib/utils";
@@ -48,13 +49,23 @@ import { SlotRenderer } from "./SlotRenderer";
  */
 let restoredLastConversation = false;
 
-/** Reopen the last-viewed conversation (per-tab), so an in-flight turn resumes its viewer. */
-function restoreSavedConversation(chat: ReturnType<typeof useChatContext>) {
-  const saved = getSavedConversationId();
+/**
+ * Reopen the last-viewed conversation (per-tab), so an in-flight turn resumes
+ * its viewer — only when it belongs to the workspace on screen. A conversation
+ * is found only in its own workspace, so one from another restores nothing and
+ * the panel opens on a fresh chat.
+ */
+function restoreSavedConversation(
+  chat: ReturnType<typeof useChatContext>,
+  workspaceId: string | null,
+) {
+  const saved = getSavedConversation();
   // Hydrate without forcing the panel open — its visibility is restored
   // independently from ChatPanelContext's persisted state. When the panel
   // is (re)opened it shows this conversation.
-  if (saved) void chat.loadConversation(saved);
+  if (saved && workspaceId && saved.workspaceId === workspaceId) {
+    void chat.loadConversation(saved.conversationId);
+  }
 }
 
 interface AppWithChatProps {
@@ -110,17 +121,23 @@ export function AppWithChat({ placement }: AppWithChatProps) {
     }
     if (restoredLastConversation) return;
     restoredLastConversation = true;
-    restoreSavedConversation(chat);
+    restoreSavedConversation(chat, getActiveWorkspaceId());
   });
   useEffect(() => {
     openFromUrl();
   }, []);
 
-  // Persist the active conversation id (per-tab) so a reload can reopen it.
-  // Cleared automatically when a new/draft chat is active (conversationId null).
+  // Persist the active conversation and its workspace (per-tab) so a reload in
+  // the same workspace can reopen it. Cleared when a new/draft chat is active
+  // (conversationId null) or its workspace is not yet known.
+  const savedWorkspaceId = chat.conversationMeta?.workspaceId ?? null;
   useEffect(() => {
-    setSavedConversationId(chat.conversationId);
-  }, [chat.conversationId]);
+    setSavedConversation(
+      chat.conversationId && savedWorkspaceId
+        ? { conversationId: chat.conversationId, workspaceId: savedWorkspaceId }
+        : null,
+    );
+  }, [chat.conversationId, savedWorkspaceId]);
 
   const appContext = useMemo<AppContext>(
     () => ({

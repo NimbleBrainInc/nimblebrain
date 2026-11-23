@@ -207,7 +207,11 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     });
     expect(t2.conversationId).toBe(t1.conversationId);
 
-    const store = await runtime.resolveConversationStore(t1.conversationId);
+    const store = await runtime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      t1.conversationId,
+      DEV_IDENTITY.id,
+    );
     const events = await store!.readEvents(t1.conversationId);
     const injected = events.filter((e) => e.type === "connector.skill.injected");
     // Exactly once across both turns — re-injection (length 2) is the bug.

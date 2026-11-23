@@ -407,7 +407,7 @@ describe("runtime.executeTask", () => {
     // The deliverable rides back on the result, not a persisted conversation.
     expect(result.output.length).toBeGreaterThan(0);
     // Nothing is persisted under the runId (it is not a conversation id).
-    const store = await runtime.resolveConversationStore(result.runId);
+    const store = await runtime.resolveConversationStore(defaultWsId, result.runId, TEST_USER_ID);
     const convo = store ? await store.load(result.runId) : null;
     expect(convo).toBeNull();
   });
@@ -645,7 +645,7 @@ describe("runtime.executeTask", () => {
     // A task is not a conversation: the caller's metadata has nowhere to be
     // persisted as a chat, and no conversation is written under the runId.
     expect(result.runId).toMatch(/^run_[a-z0-9_-]+$/i);
-    const store = await runtime.resolveConversationStore(result.runId);
+    const store = await runtime.resolveConversationStore(defaultWsId, result.runId, TEST_USER_ID);
     const convo = store ? await store.load(result.runId) : null;
     expect(convo).toBeNull();
   });

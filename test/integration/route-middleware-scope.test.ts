@@ -184,7 +184,8 @@ describe("every route in the table", () => {
       "POST /v1/workspaces/:wsId/chat/start",
       "POST /v1/workspaces/:wsId/tools/call",
       "POST /v1/workspaces/:wsId/resources/read",
-      "GET /v1/conversations/:id/events",
+      "GET /v1/workspaces/:wsId/conversations/:id/events",
+      "POST /v1/workspaces/:wsId/conversations/:id/cancel",
       "ALL /mcp/:wsId",
       // Mounted after bootstrap, chat, tools and resources.
       "GET /v1/events",

@@ -7,7 +7,7 @@ type PanelState = "closed" | "sidebar" | "fullscreen";
 export interface ChatPanelContextValue {
   panelState: PanelState;
   panelWidth: number;
-  /** Open the panel. If conversationId provided, open that conversation (see `openConversation`). */
+  /** Open the panel. If conversationId provided, open that conversation in the focused workspace (see `loadConversation`). */
   openPanel: (conversationId?: string) => void;
   /**
    * Open the panel over the whole main area, as a conversation started from
@@ -67,10 +67,10 @@ export function ChatPanelProvider({ children }: ChatPanelProviderProps) {
   const [unreadCount, setUnreadCount] = useState(0);
   const toggleButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  // Use a ref for openConversation so openPanel's identity doesn't change
+  // Use a ref for loadConversation so openPanel's identity doesn't change
   // when the chat context value changes during streaming.
-  const openConversationRef = useRef(chat.openConversation);
-  openConversationRef.current = chat.openConversation;
+  const loadConversationRef = useRef(chat.loadConversation);
+  loadConversationRef.current = chat.loadConversation;
 
   const setPanelState = useCallback((state: PanelState) => {
     setPanelStateRaw(state);
@@ -86,7 +86,7 @@ export function ChatPanelProvider({ children }: ChatPanelProviderProps) {
     (conversationId?: string) => {
       setPanelState("sidebar");
       if (conversationId) {
-        void openConversationRef.current(conversationId);
+        void loadConversationRef.current(conversationId);
       }
     },
     [setPanelState],
@@ -96,7 +96,7 @@ export function ChatPanelProvider({ children }: ChatPanelProviderProps) {
     (conversationId?: string) => {
       setPanelState("fullscreen");
       if (conversationId) {
-        void openConversationRef.current(conversationId);
+        void loadConversationRef.current(conversationId);
       }
     },
     [setPanelState],

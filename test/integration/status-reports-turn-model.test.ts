@@ -25,7 +25,7 @@ import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-works
 
 /** Auto-title generation is async and shares the model queue; wait it out. */
 async function waitForTitle(runtime: Runtime, conversationId: string, timeoutMs = 5000) {
-  const store = await runtime.resolveConversationStore(conversationId);
+  const store = await runtime.resolveConversationStore(TEST_WORKSPACE_ID, conversationId, USER.id);
   if (!store) throw new Error(`no conversation store for ${conversationId}`);
   const start = Date.now();
   for (;;) {

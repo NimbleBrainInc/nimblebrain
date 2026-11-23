@@ -8,13 +8,13 @@ import {
   useRef,
   useState,
 } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import type { PluginRequestAnswer } from "../_generated/platform-schemas/plugins";
 import { callToolWithoutWorkspace } from "../api/client";
 import { chatStore } from "../hooks/chat-store";
 import type { UseChatReturn } from "../hooks/useChat";
 import { useChat } from "../hooks/useChat";
-import { toSlug, toWsId } from "../lib/workspace-slug";
+import { toWsId } from "../lib/workspace-slug";
 import type { AppContext, ConfigInfo, FileLimits, ToolCallResponse } from "../types";
 import { useWorkspaceContext } from "./WorkspaceContext";
 
@@ -47,13 +47,6 @@ export interface ChatContextValue extends Omit<UseChatReturn, "sendMessage"> {
     model?: string,
     pluginRequestAnswer?: PluginRequestAnswer,
   ) => Promise<void>;
-  /**
-   * Open a conversation the user chose (a deep link, a list, an app's open
-   * action). Unlike `loadConversation`, which restores quietly, a conversation
-   * opened here takes the user to its own workspace's path once that workspace
-   * is known, because a chat runs in the workspace its URL names.
-   */
-  openConversation: (id: string) => Promise<void>;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -75,25 +68,19 @@ function extractConfigPayload(result: ToolCallResponse): unknown {
 /**
  * What the panel does when the focused workspace or its conversation's
  * workspace moves (see the comment above the effect in `ChatProvider`):
- * `keep` it, `clear` it, `follow` it to its workspace's path, or note that it
- * has `arrived` in its own workspace.
+ * `keep` the open conversation or `clear` it.
  */
 function scopeAction(s: {
   prevFocus: string | null;
   focus: string;
   conversationId: string | null;
   conversationWorkspaceId: string | null;
-  followed: boolean;
-  isMember: (wsId: string) => boolean;
-}): "keep" | "clear" | "follow" | "arrived" {
+}): "keep" | "clear" {
   // (1) Transition.
-  if (s.prevFocus !== null && s.prevFocus !== s.focus) {
-    return s.followed && s.conversationWorkspaceId === s.focus ? "arrived" : "clear";
-  }
+  if (s.prevFocus !== null && s.prevFocus !== s.focus) return "clear";
   // (2) Reconcile, once the conversation's own workspace is known.
   if (s.conversationId === null || s.conversationWorkspaceId === null) return "keep";
-  if (s.conversationWorkspaceId === s.focus) return "arrived";
-  return s.followed && s.isMember(s.conversationWorkspaceId) ? "follow" : "clear";
+  return s.conversationWorkspaceId === s.focus ? "keep" : "clear";
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +127,6 @@ export function ChatProvider({
   // as home) rather than a phantom id; `WorkspaceRouteGuard` bounces that route
   // anyway.
   const location = useLocation();
-  const navigate = useNavigate();
   const { workspaces } = useWorkspaceContext();
   const routeSlug = location.pathname.startsWith("/w/")
     ? (location.pathname.split("/")[2] ?? null)
@@ -164,22 +150,16 @@ export function ChatProvider({
   }, [currentUserId]);
 
   // Keep the panel's conversation and the URL's workspace the same. A chat runs
-  // in the workspace its URL names, and the server refuses a conversation that
-  // lives anywhere else, so the panel never holds a conversation from a
-  // workspace other than the one focused. When they disagree, one of two
-  // things gives:
-  //
-  //  - The URL, when the user CHOSE the conversation (`openConversation`: a
-  //    `?chat=` deep link, a list, an app's open action). The user asked for
-  //    that conversation, so they go to its workspace's path — `/w/<its slug>` —
-  //    and every request the panel makes from then on names that workspace.
-  //    Only for a workspace they belong to; otherwise the next case applies.
-  //
-  //  - The conversation, otherwise. The panel returns to its unsent chat, or a
-  //    fresh one once a send has been attempted in it. An unsent chat belongs
-  //    to no workspace until its first send creates the conversation in the
-  //    focused one, so its text can follow the switch without carrying anything
-  //    across. The panel stays open.
+  // in the workspace its URL names, and the server finds a conversation only
+  // in the workspace a request names, so the panel never holds a conversation
+  // from a workspace other than the one focused. A conversation is opened in
+  // the focused workspace: a `?chat=` link names its workspace through the
+  // `/w/<slug>` route it sits on, and one stored in any other workspace is not
+  // found. When the two still disagree, the conversation gives: the panel
+  // returns to its unsent chat, or a fresh one once a send has been attempted
+  // in it. An unsent chat belongs to no workspace until its first send creates
+  // the conversation in the focused one, so its text can follow the switch
+  // without carrying anything across. The panel stays open.
   //
   // Narrow on purpose: this moves off only the OPEN conversation
   // (`newConversation()`), unlike the identity reset above which nukes every
@@ -189,61 +169,36 @@ export function ChatProvider({
   //
   //  (1) In-session workspace→workspace TRANSITION, tracked off the focus value.
   //      The open conversation belongs to the workspace we just left, so clear
-  //      it — unless this transition is the one `openConversation` asked for,
-  //      arriving at the chosen conversation's own workspace. This fires even
-  //      before the conversation's own workspace has loaded — the transition
-  //      itself is the signal. `null` focus (home / identity routes, or focus
-  //      not yet resolved) is held, not tracked: A→home→B still re-scopes on
-  //      arrival at B, while A→home→A does not.
+  //      it. This fires even before the conversation's own workspace has
+  //      loaded — the transition itself is the signal. `null` focus (home /
+  //      identity routes, or focus not yet resolved) is held, not tracked:
+  //      A→home→B still re-scopes on arrival at B, while A→home→A does not.
   //
-  //  (2) Mount / async-focus / open RECONCILE. After a reload (per-tab restore),
-  //      on a `null → workspace` async resolve, and when a conversation is
-  //      opened, there is no transition for (1) to observe. Compare the
-  //      conversation's OWN workspace to the focus — but ONLY once that
-  //      workspace is KNOWN (`conversationMeta.workspaceId`, loaded from the
-  //      server). A conversation whose workspace hasn't loaded is left alone, so
-  //      opening one from within its own workspace never briefly self-clears.
+  //  (2) Mount / async-focus RECONCILE. After a reload (per-tab restore) and on
+  //      a `null → workspace` async resolve, there is no transition for (1) to
+  //      observe. Compare the conversation's OWN workspace to the focus — but
+  //      ONLY once that workspace is KNOWN (`conversationMeta.workspaceId`). A
+  //      conversation whose workspace hasn't loaded is left alone, so opening
+  //      one from within its own workspace never briefly self-clears.
   //
   // Both triggers depend on focus being route-derived (above): only a real
   // navigation moves it, so (1) sees a transition when — and only when — the URL
   // changes workspace, and (2) never compares against an intermediate value.
   const lastWorkspaceFocusRef = useRef(focusWorkspaceId);
-  /** The conversation the user chose to open, followed to its workspace's path. */
-  const followRef = useRef<string | null>(null);
-  const { newConversation, conversationId, conversationMeta, loadConversation } = chat;
+  const { newConversation, conversationId, conversationMeta } = chat;
   const conversationWorkspaceId = conversationMeta?.workspaceId ?? null;
-  const openConversation = useCallback(
-    (id: string) => {
-      followRef.current = id;
-      return loadConversation(id);
-    },
-    [loadConversation],
-  );
   useEffect(() => {
     if (focusWorkspaceId === null) return; // home / identity, or not-yet-resolved — hold
     const prevFocus = lastWorkspaceFocusRef.current;
     lastWorkspaceFocusRef.current = focusWorkspaceId;
-    const followed = conversationId !== null && followRef.current === conversationId;
     const action = scopeAction({
       prevFocus,
       focus: focusWorkspaceId,
       conversationId,
       conversationWorkspaceId,
-      followed,
-      isMember: (wsId) => workspaces.some((w) => w.id === wsId),
     });
-    if (action === "arrived" && followed) followRef.current = null;
-    else if (action === "follow" && conversationWorkspaceId) {
-      navigate(`/w/${toSlug(conversationWorkspaceId)}`);
-    } else if (action === "clear") newConversation();
-  }, [
-    focusWorkspaceId,
-    conversationId,
-    conversationWorkspaceId,
-    newConversation,
-    navigate,
-    workspaces,
-  ]);
+    if (action === "clear") newConversation();
+  }, [focusWorkspaceId, conversationId, conversationWorkspaceId, newConversation]);
 
   // Dev helper: window.__nb.simulateError("some error message")
   useEffect(() => {
@@ -305,7 +260,7 @@ export function ChatProvider({
 
   // Cross-tab / refresh sync is now handled by the per-conversation turn
   // stream itself (server-authoritative): every viewer attaches to
-  // GET /v1/conversations/:id/events, which replays the in-flight turn and
+  // GET /v1/workspaces/:wsId/conversations/:id/events, which replays the in-flight turn and
   // tails live. No separate remote-event bridge needed.
 
   // A model may be passed only where it can still mean something: at create,
@@ -354,9 +309,8 @@ export function ChatProvider({
     () => ({
       ...chat,
       sendMessage: wrappedSendMessage,
-      openConversation,
     }),
-    [chat, wrappedSendMessage, openConversation],
+    [chat, wrappedSendMessage],
   );
 
   return (

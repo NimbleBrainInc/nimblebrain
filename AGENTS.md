@@ -93,7 +93,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`src/workspace/AGENTS.md`](./src/workspace/AGENTS.md) | Workspace roots and `assertWorkspaceRootExists`, write authorization, opaque ids, provisioning the first workspace |
 | [`src/orchestrator/AGENTS.md`](./src/orchestrator/AGENTS.md) | The workspace wall: tool-name shape as scope, `routeToolCall`, name parsing, skill walling |
 | [`src/tools/AGENTS.md`](./src/tools/AGENTS.md) | `CredentialStore`, credential refs, OAuth records, credential ownership; long-running (task-augmented) MCP tools |
-| [`src/conversation/AGENTS.md`](./src/conversation/AGENTS.md) | Conversation paths, workspace binding on resume, no cross-workspace listing |
+| [`src/conversation/AGENTS.md`](./src/conversation/AGENTS.md) | Conversation paths, workspace binding on resume, no conversation read or listing across workspaces |
 | [`src/files/AGENTS.md`](./src/files/AGENTS.md) | File store paths, bare `files://` URIs, the file locator |
 | [`src/api/AGENTS.md`](./src/api/AGENTS.md) | Three API audiences, tool actions over new routes, named response bodies, router middleware chained per route, `/mcp/<wsId>` wall and which credentials reach it, the browser origins `/mcp` and the `/v1` tool-call doors trust, the hosts answered without sign-in, the one protocol revision `/mcp` speaks and the connector prompts it serves, what blocks running more than one replica, `clientAddressFor` |
 | [`src/hooks/AGENTS.md`](./src/hooks/AGENTS.md) | The inbound webhook door: never parse a body, uniform 404, delivery ids, rotation, provisioning |

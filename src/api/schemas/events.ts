@@ -2,7 +2,7 @@
 // The events the two SSE streams send to a client, by stream.
 //
 // `WorkspaceStreamEvents` is `GET /v1/events`; `ConversationStreamEvents` is
-// `GET /v1/conversations/:id/events`. Each maps an
+// `GET /v1/workspaces/:wsId/conversations/:id/events`. Each maps an
 // SSE `event:` name to its `data:` payload.
 //
 // Each catalog is also the stream's allowlist: an engine event reaches a client
@@ -208,7 +208,7 @@ export interface WorkspaceStreamEvents {
   "notification.delivery_failed": NotificationDeliveryFailedEvent;
 }
 
-// ── GET /v1/conversations/:id/events ────────────────────────────────────────
+// ── GET /v1/workspaces/:wsId/conversations/:id/events ────────────────────────
 
 /** The first frame of every subscription. */
 export interface SubscribedEvent {
@@ -335,7 +335,7 @@ export type TurnFrame = "user.message" | "done" | "cancelled" | "error";
 /** The stream's control frames, which carry no turn content. */
 export type ControlFrame = "subscribed" | "heartbeat";
 
-/** Every event `GET /v1/conversations/:id/events` sends, by SSE event name. */
+/** Every event `GET /v1/workspaces/:wsId/conversations/:id/events` sends, by SSE event name. */
 export interface ConversationStreamEvents {
   subscribed: SubscribedEvent;
   heartbeat: HeartbeatEvent;

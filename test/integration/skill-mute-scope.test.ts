@@ -266,7 +266,9 @@ describe("muting a skill is conversation-scoped", () => {
     // The skill is untouched, and the failure named the reason.
     await chat("after", conv);
     expect(promptText()).toContain(MARKER);
-    const events = await (await runtime.resolveConversationStore(conv))?.readEvents(conv);
+    const events = await (
+      await runtime.resolveConversationStore(TEST_WORKSPACE_ID, conv, DEV_IDENTITY.id)
+    )?.readEvents(conv);
     const errored = events?.find(
       (e) => e.type === "tool.done" && e.name === "skills__deactivate" && e.ok === false,
     );

@@ -13,6 +13,7 @@ import type { ChatMessage } from "../src/hooks/chat-store.ts";
 
 interface CapturedStream {
   conversationId: string;
+  workspaceId: string;
   onEvent: (type: string, data: unknown, seq: number) => void;
   onSubscribed?: (info: { isActive: boolean; activeSeq: number }) => void;
   onError?: (error: Error) => void;
@@ -66,12 +67,14 @@ const LOADED_WITH_SKILLS: ChatMessage[] = [
 mock.module("../src/api/conversation-stream", () => ({
   connectConversationStream: (opts: {
     conversationId: string;
+    workspaceId: string;
     onEvent: (type: string, data: unknown, seq: number) => void;
     onSubscribed?: (info: { isActive: boolean; activeSeq: number }) => void;
     onError?: (error: Error) => void;
   }) => {
     const entry: CapturedStream = {
       conversationId: opts.conversationId,
+      workspaceId: opts.workspaceId,
       onEvent: opts.onEvent,
       onSubscribed: opts.onSubscribed,
       onError: opts.onError,
@@ -89,6 +92,7 @@ mock.module("../src/api/conversation-stream", () => ({
 // Captured calls into the turn transport (asserted by the retry / cancel tests).
 let startCalls: Array<{ conversationId?: string; model?: string }> = [];
 let cancelCalls: string[] = [];
+let cancelWorkspaces: string[] = [];
 // When true, startChatTurn parks until `resolvePendingStart()` is called — lets
 // a test open the "Stop before /v1/chat/start resolves" window deterministically.
 let deferStart = false;
@@ -116,8 +120,9 @@ mock.module("../src/api/client", () => ({
     convCounter += 1;
     return Promise.resolve({ conversationId: req.conversationId ?? `conv_${convCounter}` });
   },
-  cancelChatTurn: (id: string) => {
+  cancelChatTurn: (id: string, workspaceId: string) => {
     cancelCalls.push(id);
+    cancelWorkspaces.push(workspaceId);
     return Promise.resolve();
   },
   callTool: (_server: string, _action: string, args?: Record<string, unknown>) => {
@@ -150,6 +155,11 @@ mock.module("../src/api/client", () => ({
 
 import { createChatStore, freshDraftKey } from "../src/hooks/chat-store.ts";
 
+// The panel starts and opens conversations in the active (focused) workspace,
+// and watches and stops each in the workspace it was started or read in.
+const WS = "ws_00079598e311c160";
+actualClient.setActiveWorkspaceId(WS);
+
 function lastAssistant(messages: ChatMessage[]): ChatMessage | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === "assistant") return messages[i];
@@ -169,6 +179,7 @@ describe("chat-store viewer", () => {
     getCalls = {};
     startCalls = [];
     cancelCalls = [];
+    cancelWorkspaces = [];
     deferStart = false;
     pendingStartResolvers = [];
   });
@@ -629,6 +640,36 @@ describe("chat-store viewer", () => {
     // The deferred cancel fired with the now-known conversationId.
     expect(cancelCalls).toHaveLength(1);
     expect(cancelCalls[0]).toBe("conv_1");
+    expect(cancelWorkspaces).toEqual([WS]);
+  });
+
+  it("watches and stops a conversation in the workspace its turn started in", async () => {
+    const store = createChatStore();
+    await store.sendTurn("kA", { text: "go" });
+    expect(latestStream().workspaceId).toBe(WS);
+    expect(store.getSnapshot("kA").meta?.workspaceId).toBe(WS);
+
+    // A later focus change does not move where this conversation is addressed.
+    actualClient.setActiveWorkspaceId("ws_0076759dbbe19fcc");
+    try {
+      store.cancelTurn("kA");
+      expect(cancelWorkspaces).toEqual([WS]);
+    } finally {
+      actualClient.setActiveWorkspaceId(WS);
+    }
+  });
+
+  it("refuses to start a turn with no active workspace", async () => {
+    const store = createChatStore();
+    actualClient.setActiveWorkspaceId(null);
+    try {
+      await store.sendTurn("kA", { text: "go" });
+    } finally {
+      actualClient.setActiveWorkspaceId(WS);
+    }
+    expect(startCalls).toHaveLength(0);
+    expect(streams).toHaveLength(0);
+    expect(store.getSnapshot("kA").error).not.toBeNull();
   });
 
   it("onError closes the stream so reopening refetches the persisted result", async () => {
@@ -787,6 +828,7 @@ describe("composer drafts", () => {
     getCalls = {};
     startCalls = [];
     cancelCalls = [];
+    cancelWorkspaces = [];
     deferStart = false;
     pendingStartResolvers = [];
   });

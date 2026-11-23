@@ -191,14 +191,6 @@ const GUARDED: Array<{
   admitted: (res: Response) => Promise<void>;
 }> = [
   {
-    name: "POST /v1/conversations/:id/cancel",
-    send: async (headers) => post(`/v1/conversations/${await startConversation()}/cancel`, headers),
-    admitted: async (res) => {
-      expect(res.status).toBe(200);
-      expect(typeof (await readJson<ChatCancelResponse>(res)).cancelled).toBe("boolean");
-    },
-  },
-  {
     name: "POST /v1/mcp-auth/initiate-identity",
     send: (headers) => post("/v1/mcp-auth/initiate-identity", headers, { serverName: "absent" }),
     admitted: async (res) => {
@@ -336,8 +328,12 @@ describe("the web app's own flows", () => {
 
   it("cancels its own turn", async () => {
     const id = await startConversation();
-    const res = await post(`/v1/conversations/${id}/cancel`, browserHeaders(SAME_ORIGIN));
+    const res = await post(
+      `/v1/workspaces/${wsId}/conversations/${id}/cancel`,
+      browserHeaders(SAME_ORIGIN),
+    );
     expect(res.status).toBe(200);
+    expect(typeof (await readJson<ChatCancelResponse>(res)).cancelled).toBe("boolean");
   });
 
   it("starts a personal connector sign-in", async () => {
@@ -369,7 +365,7 @@ describe("every non-safe route in the table", () => {
     // The walk covers the routes that motivated the guard; if the table stops
     // listing them, this is not testing the app it thinks it is.
     for (const known of [
-      "/v1/conversations/x/cancel",
+      `/v1/workspaces/${wsId}/conversations/x/cancel`,
       "/v1/mcp-auth/initiate-identity",
       "/v1/composio-auth/initiate-identity",
       "/v1/auth/refresh",

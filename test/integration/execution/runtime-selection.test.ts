@@ -82,7 +82,7 @@ afterAll(async () => {
 });
 
 async function eventsOf(conversationId: string): Promise<ConversationEvent[]> {
-  const store = await runtime.resolveConversationStore(conversationId);
+  const store = await runtime.resolveConversationStore(TEST_WORKSPACE_ID, conversationId, USER.id);
   return store!.readEvents(conversationId);
 }
 

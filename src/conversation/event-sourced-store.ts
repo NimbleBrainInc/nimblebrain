@@ -417,8 +417,8 @@ export interface EventSourcedStoreConfig {
   /**
    * Called on any write to this dir's conversations — create, delete, or
    * append (an append changes a conversation's summary). The runtime routes
-   * this to its conversation-cache invalidation so cross-workspace lists/loads
-   * (the locator and the conversations-tool index) stay fresh. The per-dir
+   * this to its conversation-cache invalidation so the conversations-tool
+   * index stays fresh. The per-dir
    * `ConversationIndex` is invalidated independently in-store.
    *
    * **Invariant: every write to a conversation file fires this, naming that

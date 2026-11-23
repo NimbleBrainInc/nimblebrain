@@ -146,16 +146,16 @@ describe("Runtime identity stores wiring", () => {
 
     await provisionTestWorkspace(rt);
 
-    // A conversation written through the workspace store (it invalidates the
-    // process-wide locator on create) is immediately resolvable by id via
-    // `findConversation`, which routes through that same locator.
+    // A conversation written through the workspace store is immediately
+    // resolvable by id via `findConversation` in that workspace, which opens
+    // the same owner partition.
     const store = rt.workspaceConversationStore(TEST_WORKSPACE_ID, "user_test");
     const conv = await store.create({
       model: "anthropic:claude-sonnet-4-6",
       workspaceId: TEST_WORKSPACE_ID,
       ownerId: "user_test",
     });
-    const loaded = await rt.findConversation(conv.id);
+    const loaded = await rt.findConversation(TEST_WORKSPACE_ID, conv.id, { userId: "user_test" });
     expect(loaded).not.toBeNull();
     expect(loaded?.id).toBe(conv.id);
   });

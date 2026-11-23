@@ -1,25 +1,17 @@
 /**
  * Per-conversation SSE event stream route.
  *
- * GET /v1/conversations/:id/events
+ * GET /v1/workspaces/:wsId/conversations/:id/events
  *
- * Security: requireAuth → ownership check.
+ * Security: requireAuth → requireWorkspace (membership of the workspace in the
+ * path) → the caller's own conversation in that workspace.
  *
- * Identity-scoped: a conversation is located by its id, and a read is
- * authorized by ownership, not workspace membership, so the route names no
- * workspace.
- *
- * Response shape:
- *  - Conversation doesn't exist → 404 `not_found`.
- *  - Conversation exists but the caller isn't the owner → 403
- *    `conversation_access_denied`. The caller has authenticated and
- *    supplied a specific id; leaking existence vs not is fine in that
- *    posture (matches the `ConversationAccessDeniedError` mapping on
- *    the chat path). Content does not leak.
- *  - Conversation exists and the caller is the owner → 200 SSE.
- *
- * A request with no identity gets a 401 (never a default to
- * usr_default that would pool every user's reads).
+ * The workspace in the path is the only place the conversation is looked
+ * for: no conversation read crosses a workspace. An unknown id, another
+ * owner's conversation, and one the caller holds in another workspace all
+ * answer `404 conversation_not_found`, so the answer reveals neither
+ * existence nor location. A stored file the store cannot read answers
+ * `422 conversation_corrupted`.
  */
 
 import { Hono } from "hono";
@@ -27,16 +19,27 @@ import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
 import { ConversationCorruptedError } from "../../runtime/errors.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { errorLog } from "../middleware/error-log.ts";
+import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 
-/** Look up a conversation, surfacing a `ConversationCorruptedError` as a value instead of a throw. */
-async function findConversationOrCorrupted(ctx: AppContext, conversationId: string) {
-  return ctx.runtime.findConversation(conversationId).catch((err) => {
-    if (err instanceof ConversationCorruptedError) {
-      return err;
-    }
-    throw err;
-  });
+/**
+ * Look up one of `callerId`'s conversations in `workspaceId`, surfacing a
+ * `ConversationCorruptedError` as a value instead of a throw.
+ */
+async function findConversationOrCorrupted(
+  ctx: AppContext,
+  workspaceId: string,
+  conversationId: string,
+  callerId: string,
+) {
+  return ctx.runtime
+    .findConversation(workspaceId, conversationId, { userId: callerId })
+    .catch((err) => {
+      if (err instanceof ConversationCorruptedError) {
+        return err;
+      }
+      throw err;
+    });
 }
 
 /** Parse the client's `afterSeq` resume cursor, defaulting to 0 for absent or non-finite input. */
@@ -64,9 +67,10 @@ export function conversationEventRoutes(ctx: AppContext) {
   // scopes enforcement to exactly this path — same precedent as
   // `mcp-auth.ts` (per-handler, not `.use("*")`).
   return new Hono<AppEnv>().get(
-    "/v1/conversations/:id/events",
+    `${WORKSPACE_ROUTE_PREFIX}/conversations/:id/events`,
     requireAuth(ctx.authOptions),
     errorLog(ctx),
+    requireWorkspace(ctx),
     async (c) => {
       const conversationId = c.req.param("id");
       // Reject a malformed id with 400 before it reaches the store, where
@@ -77,22 +81,19 @@ export function conversationEventRoutes(ctx: AppContext) {
         return apiError(400, "bad_request", "Invalid conversationId format");
       }
 
-      // The caller is the authenticated identity; none → 401 instead of
-      // pooling reads under a sentinel user.
+      // `requireWorkspace` admitted only an identified member, so the
+      // identity is present here.
       const callerId = c.var.identity?.id;
       if (!callerId) {
         return apiError(401, "authentication_required", "Authentication required.");
       }
 
-      // Two-step lookup so we can return 403 (not-yours) distinctly
-      // from 404 (doesn't exist). Pass no access ctx to `findConversation`
-      // — we want raw existence, then evaluate ownership ourselves.
-      //
-      // The store throws `ConversationCorruptedError` for pre-migration
-      // files lacking `ownerId` (operator forgot one of the two
-      // migrations). Map that to a clean 422 with the migration
-      // command in the message instead of letting it bubble as 500.
-      const conversation = await findConversationOrCorrupted(ctx, conversationId);
+      const conversation = await findConversationOrCorrupted(
+        ctx,
+        c.var.workspaceId,
+        conversationId,
+        callerId,
+      );
       if (conversation instanceof ConversationCorruptedError) {
         return apiError(422, "conversation_corrupted", conversation.message, {
           conversationId: conversation.conversationId,
@@ -100,17 +101,9 @@ export function conversationEventRoutes(ctx: AppContext) {
         });
       }
       if (!conversation) {
-        return apiError(404, "not_found", "Conversation not found");
-      }
-      if (conversation.ownerId !== callerId) {
-        return apiError(
-          403,
-          "conversation_access_denied",
-          "You do not have access to this conversation.",
-          {
-            conversationId,
-          },
-        );
+        return apiError(404, "conversation_not_found", "Conversation not found", {
+          conversationId,
+        });
       }
 
       // Resume point: the client passes the highest sequence number it has

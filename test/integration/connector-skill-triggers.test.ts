@@ -160,7 +160,11 @@ function countOccurrences(haystack: string, needle: string): number {
 
 /** The `skills.loaded` entries persisted for a conversation's latest turn. */
 async function loadedSkills(conversationId: string): Promise<SkillsLoadedEntry[]> {
-  const store = await runtime.resolveConversationStore(conversationId);
+  const store = await runtime.resolveConversationStore(
+    TEST_WORKSPACE_ID,
+    conversationId,
+    DEV_IDENTITY.id,
+  );
   const events = await store!.readEvents(conversationId);
   const skillsLoaded = firstStoredEvent(events, "skills.loaded");
   expect(skillsLoaded).toBeDefined();

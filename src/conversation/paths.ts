@@ -37,10 +37,9 @@ export interface ParsedConversationPath {
 /**
  * Inverse of the builder: recover `{ wsId, ownerId }` from a conversation file or
  * directory path. Returns `null` for a path that is not under a
- * `workspaces/<wsId>/conversations/<ownerId>/...` subtree, so the locator can
- * skip it. The path is the
- * authority; this is how the locator recovers a conversation's workspace without
- * reading the file.
+ * `workspaces/<wsId>/conversations/<ownerId>/...` subtree. The path is the
+ * authority; this is how a store recovers its conversations' workspace without
+ * reading line 1.
  */
 export function parseConversationPath(absPath: string): ParsedConversationPath | null {
   const segments = absPath.split(sep);

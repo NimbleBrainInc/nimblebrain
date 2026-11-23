@@ -3,12 +3,12 @@
  *
  * The run is owned by the runtime, not by any HTTP connection. A mobile
  * client that locks its screen / backgrounds the tab / hits a network blip
- * tears down its `/v1/conversations/:id/events` stream, but the engine loop
+ * tears down its `/v1/workspaces/:wsId/conversations/:id/events` stream, but the engine loop
  * keeps running, persists its result, and stays available to a reconnecting
  * subscriber. This is the "leave and come back and it loaded" contract: after
  * the viewer disconnects, the conversation still ends in `run.done` with the
  * assistant's response persisted, and no `run.error` is written. Only
- * `/v1/conversations/:id/cancel` stops a turn.
+ * `/v1/workspaces/:wsId/conversations/:id/cancel` stops a turn.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -106,9 +106,12 @@ describe("chat turn — run survives viewer disconnect", () => {
     expect(start.status).toBe(200);
 
     const ac = new AbortController();
-    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
-      signal: ac.signal,
-    });
+    const res = await fetch(
+      `${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/conversations/${convId}/events`,
+      {
+        signal: ac.signal,
+      },
+    );
 
     // Read until the run has demonstrably started server-side.
     const reader = res.body!.getReader();
@@ -135,7 +138,11 @@ describe("chat turn — run survives viewer disconnect", () => {
     expect(runtime.isTurnActive(convId)).toBe(false);
 
     // Inspect the persisted event log.
-    const store = (await runtime.resolveConversationStore(convId))!;
+    const store = (await runtime.resolveConversationStore(
+      TEST_WORKSPACE_ID,
+      convId,
+      DEV_IDENTITY.id,
+    ))!;
     const events = await store.readEvents(convId);
 
     const runErrors = events.filter((e) => e.type === "run.error");

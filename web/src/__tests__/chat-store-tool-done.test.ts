@@ -18,6 +18,9 @@ mock.module("../api/client", () => ({
   startChatTurn: mock(async () => ({ conversationId: "conv_open" })),
 }));
 
+// The panel starts conversations in the active workspace.
+realClient.setActiveWorkspaceId("ws_00079598e311c160");
+
 mock.module("../api/conversation-stream", () => ({
   connectConversationStream: (opts: { onEvent: OnEvent }) => {
     emit = opts.onEvent;

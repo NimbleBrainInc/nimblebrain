@@ -105,6 +105,9 @@ interface LiveWorkspace {
 
 const EMPTY_WORKSPACE: LiveWorkspace = { apps: [], skills: [], tools: [] };
 
+/** Every conversation lookup the source made, as (workspace, conversation, owner). */
+let lookups: Array<[string, string, string]> = [];
+
 function makeRuntime(live: LiveWorkspace = EMPTY_WORKSPACE): Runtime {
   const store = stub<EventSourcedConversationStore>({
     load: async (id: string) => stub<Conversation>({ id }),
@@ -113,7 +116,10 @@ function makeRuntime(live: LiveWorkspace = EMPTY_WORKSPACE): Runtime {
   return stub<Runtime>({
     getCurrentIdentity: () => makeIdentity({ id: "usr_test" }),
     requireWorkspaceId: () => WS_ID,
-    resolveConversationStore: async () => store,
+    resolveConversationStore: async (wsId: string, convId: string, ownerId: string) => {
+      lookups.push([wsId, convId, ownerId]);
+      return store;
+    },
     getWorkspaceStore: () => stub<WorkspaceStore>({ get: async () => null }),
     loadConversationSkills: () => live.skills,
     loadConnectorSkillCandidates: () => [],
@@ -136,6 +142,7 @@ function succeeded<T extends object>(result: ToolResult): T {
 }
 
 beforeEach(async () => {
+  lookups = [];
   workDir = mkdtempSync(join(tmpdir(), "nb-compose-test-"));
   skillPath = join(workDir, "draft-rules.md");
   writeFileSync(skillPath, `---\nname: draft-rules\ndescription: Drafting\n---\n\n${SKILL_BODY}\n`);
@@ -230,6 +237,8 @@ describe("compose__effective_context", () => {
     expect(composed.totalTokens).toBe(400);
     const [layer] = composed.layers;
     expect(layer?.subItems?.map((s) => s.metadata?.hashStatus)).toEqual(["match", "missing"]);
+    // The conversation is looked for only in the request's workspace, as the caller's.
+    expect(lookups).toEqual([[WS_ID, CONV_ID, "usr_test"]]);
   });
 
   test("historical mode keeps a connector's recorded skills under its filter", async () => {

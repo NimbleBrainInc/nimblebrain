@@ -821,10 +821,15 @@ async function readConvEvents(
   // assembled-context / skills.loaded / llm.response events.
   const identity = runtime.getCurrentIdentity();
   if (!identity) return null;
-  // One locator resolution: get the conversation's workspace store, then gate on
-  // ownership via its access-checked `load` (null for both not-found and
-  // foreign-owner, same shape as the "no store" branch).
-  const store = await runtime.resolveConversationStore(convId);
+  // The conversation is looked for only in the caller's partition of the
+  // active workspace (throws when none is in scope), then gated on ownership
+  // via the access-checked `load` (null for both not-found and foreign-owner,
+  // same shape as the "no store" branch).
+  const store = await runtime.resolveConversationStore(
+    runtime.requireWorkspaceId(),
+    convId,
+    identity.id,
+  );
   if (!store) return null;
   const owned = await store.load(convId, { userId: identity.id });
   if (!owned) return null;

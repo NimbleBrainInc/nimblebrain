@@ -6,7 +6,7 @@ const TURN_TIMEOUT_MS = 15_000;
 
 /**
  * Run one chat turn over HTTP the way a client does: `POST …/chat/start`, then
- * read `GET /v1/conversations/:id/events` until the turn's terminal frame.
+ * read `GET /v1/workspaces/:wsId/conversations/:id/events` until the turn's terminal frame.
  *
  * A refused start (any non-2xx) comes back as that response. Otherwise the
  * answer is a `Response` built from the terminal frame: `done` as 200 with its
@@ -28,7 +28,10 @@ export async function postChatTurn(
 
   const headers = new Headers(init.headers);
   headers.delete("Content-Type");
-  const events = await fetch(`${baseUrl}/v1/conversations/${conversationId}/events`, { headers });
+  const events = await fetch(
+    `${baseUrl}/v1/workspaces/${wsId}/conversations/${conversationId}/events`,
+    { headers },
+  );
   if (!events.ok || !events.body) return events;
 
   const reader = events.body.getReader();

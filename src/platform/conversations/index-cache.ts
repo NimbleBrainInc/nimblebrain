@@ -56,8 +56,8 @@ export interface IndexEntry {
   ownerId: string;
   /**
    * The workspace the conversation lives in, taken from its DIRECTORY — the
-   * only binding (line 1 holds none), so this wall and the
-   * `ConversationLocator`'s agree by construction.
+   * only binding (line 1 holds none), so this wall and the runtime's
+   * per-workspace reads agree by construction.
    */
   workspaceId: string;
 }

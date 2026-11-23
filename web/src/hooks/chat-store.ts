@@ -1,7 +1,9 @@
 import type { PluginRequestAnswer } from "../_generated/platform-schemas/plugins";
 import {
+  ApiClientError,
   callTool,
   cancelChatTurn,
+  getActiveWorkspaceId,
   getAuthToken,
   startChatTurn,
   startChatTurnMultipart,
@@ -158,12 +160,13 @@ export interface LoadedConversationMeta {
    */
   model?: string;
   /**
-   * The workspace this conversation is sealed to (from the server's
-   * `conversations__get` metadata). The panel uses it to avoid resuming a
-   * conversation that belongs to a workspace other than the one currently
-   * focused — see `ChatProvider`'s re-scope effect. Absent on legacy records
-   * with no stamped workspace; absence means "workspace unknown — don't reconcile", which preserves the
-   * open-in-progress race guard.
+   * The workspace this conversation lives in: the one its `conversations__get`
+   * was read in, or the one its first turn was started in. Its event stream
+   * and Stop name this workspace, because the server looks for a conversation
+   * only in the workspace a request names. The panel also compares it with
+   * the focused workspace — see `ChatProvider`'s re-scope effect. Absent until
+   * the conversation has been read or started, and absence means "workspace
+   * unknown — don't reconcile", which is the open-in-progress race guard.
    */
   workspaceId?: string;
 }
@@ -415,6 +418,39 @@ function buildChatRequest(slice: ConversationSlice, params: StartTurnParams): Ch
     ...(params.model ? { model: params.model } : {}),
     ...(params.pluginRequestAnswer ? { pluginRequestAnswer: params.pluginRequestAnswer } : {}),
   };
+}
+
+/**
+ * The active workspace: the focused one, which the panel starts and opens
+ * conversations in. Throws when there is none, as a workspace route would.
+ */
+function requireActiveWorkspace(): string {
+  const workspaceId = getActiveWorkspaceId();
+  if (!workspaceId) {
+    throw new ApiClientError(
+      "no_active_workspace",
+      "No active workspace; cannot start or open a conversation.",
+      0,
+    );
+  }
+  return workspaceId;
+}
+
+/**
+ * Start a turn in the active workspace, the focused one the panel sends from.
+ * The workspace is read once and returned, so the start, the stream and Stop
+ * all name the same workspace even if the focus moves meanwhile.
+ */
+async function startInActiveWorkspace(
+  req: ChatRequest,
+  files: File[] | undefined,
+): Promise<{ workspaceId: string; conversationId: string }> {
+  const workspaceId = requireActiveWorkspace();
+  const { conversationId } =
+    files && files.length > 0
+      ? await startChatTurnMultipart(req, files, workspaceId)
+      : await startChatTurn(req, workspaceId);
+  return { workspaceId, conversationId };
 }
 
 /** A loaded conversation: server metadata plus its reconstructed messages. */
@@ -846,7 +882,12 @@ export function createChatStore(): ChatStore {
     return "fallthrough";
   }
 
-  function openConnection(slice: ConversationSlice, conversationId: string, resume: boolean): void {
+  function openConnection(
+    slice: ConversationSlice,
+    conversationId: string,
+    workspaceId: string,
+    resume: boolean,
+  ): void {
     closeConnection(slice);
     slice.resumeOnSubscribe = resume;
     slice.watchingOwnTurn = !resume;
@@ -860,6 +901,7 @@ export function createChatStore(): ChatStore {
     let dropEvents = false;
     slice.connection = connectConversationStream({
       conversationId,
+      workspaceId,
       token: getAuthToken() ?? undefined,
       afterSeq: 0,
       onSubscribed: (info) => {
@@ -1276,14 +1318,10 @@ export function createChatStore(): ChatStore {
     commit(slice);
 
     const req = buildChatRequest(slice, params);
-
+    let workspaceId: string;
     let conversationId: string;
     try {
-      const result =
-        params.files && params.files.length > 0
-          ? await startChatTurnMultipart(req, params.files)
-          : await startChatTurn(req);
-      conversationId = result.conversationId;
+      ({ workspaceId, conversationId } = await startInActiveWorkspace(req, params.files));
     } catch (err) {
       handleTurnError(slice, err);
       slice.isStreaming = false;
@@ -1299,16 +1337,20 @@ export function createChatStore(): ChatStore {
       hooks?.onConversationId?.(conversationId);
       commit(slice);
     }
+    if (slice.meta?.workspaceId !== workspaceId) {
+      slice.meta = { ...slice.meta, workspaceId };
+      commit(slice);
+    }
 
     // Watch the turn we just started (fresh turn — not a resume).
-    openConnection(slice, conversationId, false);
+    openConnection(slice, conversationId, workspaceId, false);
 
     // Stop was pressed before we had a conversationId — honor it now. The
     // server's `cancelled` frame arrives on the connection just opened and
     // clears the streaming state.
     if (slice.cancelRequested) {
       slice.cancelRequested = false;
-      void cancelChatTurn(conversationId).catch((err) => {
+      void cancelChatTurn(conversationId, workspaceId).catch((err) => {
         console.warn("[chat-store] deferred cancel failed", err);
       });
     }
@@ -1343,16 +1385,21 @@ export function createChatStore(): ChatStore {
     ensureSlice(id, { conversationId: id });
     const slice = byKey.get(id);
     if (slice) slice.error = null;
+    // Read in the active workspace (the focused one). The server finds a
+    // conversation only in the workspace a request names, so one stored in any
+    // other workspace is not found here, and the panel shows the load error.
     try {
-      const res = await callTool("conversations", "get", { id, expand: "full" });
+      const workspaceId = requireActiveWorkspace();
+      const res = await callTool("conversations", "get", { id, expand: "full" }, { workspaceId });
       const current = byKey.get(id);
       if (!current) return;
       const parsed = parseConversationResult(res);
+      const readIn = parsed.metadata.workspaceId ?? workspaceId;
       current.conversationId = parsed.metadata.id;
       aliasSlice(current, parsed.metadata.id);
       current.meta = {
         ownerId: parsed.metadata.ownerId,
-        workspaceId: parsed.metadata.workspaceId,
+        workspaceId: readIn,
         model: parsed.metadata.model,
       };
       current.title = parsed.metadata.title ?? null;
@@ -1361,7 +1408,7 @@ export function createChatStore(): ChatStore {
       commit(current);
       // Attach to any in-flight turn (resume — trims a stale in-flight turn
       // from the loaded history if the server says one is active).
-      openConnection(current, parsed.metadata.id, true);
+      openConnection(current, parsed.metadata.id, readIn, true);
     } catch (err) {
       handleLoadError(id, err);
     }
@@ -1379,7 +1426,13 @@ export function createChatStore(): ChatStore {
     // The server emits a terminal `cancelled` event which finalizes the slice;
     // no optimistic mutation needed. Surface a failed cancel — without this the
     // turn keeps running, Stop silently did nothing, and the rejection is lost.
-    void cancelChatTurn(slice.conversationId).catch((err) => {
+    // A conversation with an id was read or started, so its workspace is known.
+    const workspaceId = slice.meta?.workspaceId;
+    if (!workspaceId) {
+      console.warn("[chat-store] cancel skipped: the conversation's workspace is unknown");
+      return;
+    }
+    void cancelChatTurn(slice.conversationId, workspaceId).catch((err) => {
       console.warn("[chat-store] cancel failed", err);
     });
   }
@@ -1455,7 +1508,8 @@ export function createChatStore(): ChatStore {
     // re-tails (or, if it ended while we were away, the server-authoritative
     // reconcile in onSubscribed clears the stuck spinner).
     for (const slice of allSlices) {
-      if (slice.isStreaming && slice.conversationId && !slice.connection) {
+      const workspaceId = slice.meta?.workspaceId;
+      if (slice.isStreaming && slice.conversationId && workspaceId && !slice.connection) {
         // The trailing turn IS this slice's in-flight turn (it's streaming it),
         // built live so it carries no disk `pending` flag — the resume reconcile
         // can't recognize it. The replay (afterSeq:0) re-sends the whole turn
@@ -1463,7 +1517,7 @@ export function createChatStore(): ChatStore {
         // echo is consumed and the assistant rebuilt from the replay, exactly
         // like a fresh send — NOT appended as a duplicate user+assistant pair.
         slice.pendingEcho = true;
-        openConnection(slice, slice.conversationId, true);
+        openConnection(slice, slice.conversationId, workspaceId, true);
       }
     }
   }

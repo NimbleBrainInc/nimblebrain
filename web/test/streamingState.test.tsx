@@ -34,6 +34,9 @@ mock.module("../src/api/client", () => ({
   cancelChatTurn: () => Promise.resolve(),
 }));
 
+// The panel starts conversations in the active workspace.
+realClient.setActiveWorkspaceId("ws_00079598e311c160");
+
 function wrapper({ children }: { children: ReactNode }) {
   return (
     <MemoryRouter>

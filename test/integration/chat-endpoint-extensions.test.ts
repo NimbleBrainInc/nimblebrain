@@ -175,7 +175,9 @@ describe("ChatRequest.metadata — conversation persistence", () => {
       });
 
       // Load the conversation and verify metadata is present
-      const conv = await runtime.findConversation(result.conversationId);
+      const conv = await runtime.findConversation(TEST_WORKSPACE_ID, result.conversationId, {
+        userId: DEV_IDENTITY.id,
+      });
       expect(conv).not.toBeNull();
       expect(conv!.metadata).toEqual({ source: "task", id: "test-123" });
 
@@ -210,7 +212,9 @@ describe("ChatRequest.metadata — conversation persistence", () => {
         message: "hello",
         workspaceId: TEST_WORKSPACE_ID,
       });
-      const conv = await runtime.findConversation(result.conversationId);
+      const conv = await runtime.findConversation(TEST_WORKSPACE_ID, result.conversationId, {
+        userId: DEV_IDENTITY.id,
+      });
       expect(conv).not.toBeNull();
       expect(conv!.metadata).toBeUndefined();
     } finally {
@@ -246,7 +250,9 @@ describe("ChatRequest.metadata — conversation persistence", () => {
         metadata: { source: "second" },
       });
 
-      const conv = await runtime.findConversation(result1.conversationId);
+      const conv = await runtime.findConversation(TEST_WORKSPACE_ID, result1.conversationId, {
+        userId: DEV_IDENTITY.id,
+      });
       expect(conv!.metadata).toEqual({ source: "first" });
     } finally {
       await runtime.shutdown();

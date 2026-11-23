@@ -274,7 +274,7 @@ export interface SkillsLoadedEvent {
 export type TurnFrame = "user.message" | "done" | "cancelled" | "error";
 /** The stream's control frames, which carry no turn content. */
 export type ControlFrame = "subscribed" | "heartbeat";
-/** Every event `GET /v1/conversations/:id/events` sends, by SSE event name. */
+/** Every event `GET /v1/workspaces/:wsId/conversations/:id/events` sends, by SSE event name. */
 export interface ConversationStreamEvents {
     subscribed: SubscribedEvent;
     heartbeat: HeartbeatEvent;

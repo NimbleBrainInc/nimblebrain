@@ -8,8 +8,7 @@
  * `conversations__list` returns twenty rows by default.
  *
  * **Cap at the wire, never at the index.** The stored preview backs the
- * case-insensitive substring match behind `list?search=` (`index-cache.ts`) and
- * the locator's own list filter, so truncating at production would silently
+ * case-insensitive substring match behind `list?search=` (`index-cache.ts`), so truncating at production would silently
  * narrow recall — a search for a term deep in a pasted document would stop
  * matching. Producers keep the full string; every site that puts it on a wire
  * caps it here.

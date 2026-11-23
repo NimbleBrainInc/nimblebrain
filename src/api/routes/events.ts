@@ -15,7 +15,7 @@ import { type AppContext, type AppEnv, apiError } from "../types.ts";
  * `WorkspaceStore.onMembershipChanged`).
  *
  * A request with no identity gets a 401, never reads pooled under a
- * sentinel user — same posture as `/v1/conversations/:id/events`. The
+ * sentinel user — same posture as the conversation event stream. The
  * `dev` identity provider verifies every request as `usr_default`, so
  * `bun run dev` passes like any other login.
  *

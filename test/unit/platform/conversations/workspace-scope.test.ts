@@ -13,14 +13,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
-import {
-  ConversationLocator,
-  listAllConversationFiles,
-} from "../../../../src/conversation/locator.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
 import {
   ConversationIndex,
@@ -159,6 +155,13 @@ afterEach(async () => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
+/** Every conversation file under the test's workspaces root. */
+function conversationFiles(): string[] {
+  return readdirSync(join(workDir, "workspaces"), { recursive: true, encoding: "utf8" }).filter(
+    (f) => f.endsWith(".jsonl"),
+  );
+}
+
 describe("the door exposes no workspace coordinate", () => {
   // The guard against reintroducing the bug rather than the bug's effect: as
   // soon as `workspaceId` is back on the input schema, a client can omit it,
@@ -253,34 +256,6 @@ describe("conversations__stats — ambient workspace scoping", () => {
   test("denies when no workspace is in scope", async () => {
     const result = await exec("stats", { period: "all" }, undefined);
     expect(result.isError).toBe(true);
-  });
-});
-
-describe("there is no cross-workspace conversation listing", () => {
-  // `ConversationLocator.list` takes the workspace as a required positional
-  // argument. Were it optional, forgetting it would widen the read to every
-  // workspace — silently, and looking identical to a scoped call. Required,
-  // the widening form does not exist to be reached.
-  test("a listing covers only the named workspace", async () => {
-    const locator = new ConversationLocator(join(workDir, "workspaces"));
-    const result = await locator.list(WS_A, { limit: 100 }, { userId: OWNER_ID });
-    expect(result.conversations.map((c) => c.id).sort()).toEqual(["conv_a1", "conv_a2"]);
-  });
-
-  test("the owner's other workspaces are reachable only by naming them", async () => {
-    const locator = new ConversationLocator(join(workDir, "workspaces"));
-    const b = await locator.list(WS_B, { limit: 100 }, { userId: OWNER_ID });
-    expect(b.conversations.map((c) => c.id)).toEqual(["conv_b1"]);
-  });
-
-  test("the tenant-wide raw-file read stays a separate, differently-named function", async () => {
-    // `listAllConversationFiles` is genuinely tenant-wide and usage aggregation
-    // needs it — but it returns raw paths with no owner filter and no
-    // summaries, so it can never be mistaken for a conversation VIEW. Keeping
-    // the two apart is what lets `list` have no cross-workspace form at all.
-    const files = listAllConversationFiles(join(workDir, "workspaces"));
-    expect(files.length).toBeGreaterThan(2);
-    expect(files.every((f) => f.endsWith(".jsonl"))).toBe(true);
   });
 });
 
@@ -390,14 +365,14 @@ describe("by-id reads and writes are walled to the scope's workspace", () => {
 
   test("fork in workspace A of a conversation held in workspace B fails and creates nothing", async () => {
     const index = await buildIndex();
-    const before = listAllConversationFiles(join(workDir, "workspaces")).length;
+    const before = conversationFiles().length;
     expect(await rejection(handleFork({ id: "conv_b1" }, index, SCOPE_A))).toBe(
       "Conversation not found: conv_b1",
     );
     expect(await rejection(handleFork({ id: "conv_none" }, index, SCOPE_A))).toBe(
       "Conversation not found: conv_none",
     );
-    expect(listAllConversationFiles(join(workDir, "workspaces"))).toHaveLength(before);
+    expect(conversationFiles()).toHaveLength(before);
   });
 
   test("the door's by-id tools answer another workspace's id exactly as a missing one", async () => {
