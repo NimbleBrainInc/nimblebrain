@@ -128,6 +128,7 @@
 
 ### Changed
 
+- **An unset model slot follows the configured provider.** With no `models.default` or `models.fast`, an install keyed for OpenAI, Google, xAI, Nebius, GreenPT or only `providers.local` gets that provider's default model instead of Anthropic's ([docs](https://docs.nimblebrain.ai/config/nimblebrain-json/#models)).
 - **Always-on skills are set by a person, not the agent.** `skills__create`, `skills__update` and `skills__restore` refuse a write from chat, a task or an MCP client that would leave a skill `always` (by manifest, pasted frontmatter, or an edit to one that already is), with code `always_on_set_by_user`; skill pages and Skills settings write them as before ([docs](https://docs.nimblebrain.ai/using/skills/#editing-a-skill)).
 - **Images in chat load from the app's origin; others are shown as links.** In replies, markdown artifacts and skill pages, an image from any other site renders as a link to it, which opens after the usual confirmation. The web UI's pages send `img-src 'self' data: blob: https://static.nimblebrain.ai` ([docs](https://docs.nimblebrain.ai/using/chat/#images-in-replies)).
 - **Runs lists work run once.** A tab beside Scheduled shows one-offs and batches by day, each named in words (an inline definition now takes an optional `manifest.name`), with who asked for it ("via Claude Code", from the MCP client's own name) and, for a batch, its pass/fail counts and cost. [Docs](https://docs.nimblebrain.ai/using/tasks/#runs).
