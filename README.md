@@ -318,7 +318,7 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 |----------|---------|
 | `WORKOS_API_KEY` | WorkOS API key (when `auth.adapter: "workos"` in `instance.json`) |
 | `POSTHOG_API_KEY` | Where anonymous telemetry goes; nothing is sent until a person says yes |
-| `NB_TELEMETRY_DISABLED` | Set to `1` to disable telemetry (also `DO_NOT_TRACK=1`) |
+| `DO_NOT_TRACK` | Set to `1` to disable telemetry |
 
 ## Programmatic API
 
@@ -590,11 +590,13 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 - `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `connectors`, `skillDirs`, and optional `models` overrides.
 - `<workDir>/instance.json` — the identity provider (`dev`, `oidc`, or `workos` adapter). Required: `serve` refuses to start without it.
 
-**Config resolution** for `nimblebrain.json` (when no `--config` flag):
-1. `--workdir <dir>` → `<dir>/nimblebrain.json`
-2. Otherwise → `./nimblebrain.json` (CWD)
+**Config resolution** for `nimblebrain.json` (`resolveConfigPath` in `src/cli/config.ts`), the first that applies:
+1. `--config` / `-c <path>`
+2. `./.nimblebrain/nimblebrain.json`, when it exists
+3. `<NB_WORK_DIR or ~/.nimblebrain>/nimblebrain.json`
+4. `./nimblebrain.json` (CWD), when the caller passes no default workdir
 
-`NB_WORK_DIR` overrides `workDir` from either the config file or `--workdir`.
+`NB_WORK_DIR` overrides `workDir` from the config file.
 
 #### Connector Entry Fields (in `workspace.json`)
 
@@ -705,7 +707,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 - **`WorkspaceLogSink`** — Workspace-level daily rolling JSONL logs. Only persists workspace events (connector lifecycle, data/config changes, skill/file operations).
 - **`ConsoleEventSink`** — Human-readable stderr for development.
 - **`DebugEventSink`** — Verbose JSON dumps (`--debug`).
-- **`PostHogEventSink`** — Anonymous telemetry, sent only after a person says yes. No PII. Off for a deployment: `telemetry.enabled: false`, `NB_TELEMETRY_DISABLED=1`, or `DO_NOT_TRACK=1`.
+- **`PostHogEventSink`** — Anonymous telemetry, sent only after a person says yes. No PII. Off for a deployment: `telemetry.enabled: false` or `DO_NOT_TRACK=1`.
 
 ## License
 

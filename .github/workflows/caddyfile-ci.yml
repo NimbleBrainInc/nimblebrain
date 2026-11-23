@@ -103,6 +103,13 @@ jobs:
             echo "FAIL: shell document lacks X-Frame-Options"; exit 1; }
           echo "$shell" | grep -iq "^content-security-policy: frame-ancestors 'none'" || {
             echo "FAIL: shell document lacks frame-ancestors"; exit 1; }
+          # Images load from this origin and the listed hosts only; a bare
+          # `https:` source would admit every host.
+          echo "$shell" | grep -iq "^content-security-policy: .*img-src 'self' data: blob: https://static\.nimblebrain\.ai" || {
+            echo "FAIL: shell document lacks img-src"; exit 1; }
+          if echo "$shell" | tr -d '\r' | grep -i '^content-security-policy:' | grep -Eq "img-src[^;]* https:( |;|$)"; then
+            echo "FAIL: shell img-src admits every https host"; exit 1
+          fi
 
           # App frames nest each app in this page so the app's base URL never
           # names the shell's URL. It must be the page itself (never the SPA

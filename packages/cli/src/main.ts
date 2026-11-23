@@ -1,6 +1,6 @@
 import type { SkillRefresh } from "./agents.ts";
-import { type Parsed, parse, wantsJson } from "./args.ts";
-import { paths } from "./compose.ts";
+import { DEFAULT_PORT, type Parsed, parse, wantsJson } from "./args.ts";
+import { paths, runningHere } from "./compose.ts";
 import { BARE_CLI, type Deps, forInstall, installHome, invocation } from "./deps.ts";
 import { doctor } from "./doctor.ts";
 import { describe, helpText } from "./help.ts";
@@ -81,13 +81,12 @@ export async function run(argv: string[], deps: Deps): Promise<Answer> {
     switch (command) {
       case "doctor": {
         const install = await readInstall(deps, home);
-        const ours =
-          install !== undefined &&
-          install.port === flags.port &&
-          (await isHealthy(deps, flags.port));
+        const port = flags.port ?? install?.port ?? DEFAULT_PORT;
+        // The install's own running containers hold its port, healthy or not.
+        const ours = install?.port === port && (await runningHere(deps, home));
         // Doctor starts Ollama only when a person at the terminal says yes, never by default.
         const startOllama = confirmOllamaStart({ deps, flags }, false);
-        result = { ...(await doctorInstall(deps, home, flags.port, ours, startOllama)) };
+        result = { ...(await doctorInstall(deps, home, port, ours, startOllama)) };
         break;
       }
       case "status":
@@ -198,11 +197,6 @@ async function doctorInstall(
     const local = (err.detail.checks as unknown[] | undefined) ?? [];
     throw err.with({ checks: [...machine.checks, ...local] });
   }
-}
-
-async function isHealthy(deps: Deps, port: number): Promise<boolean> {
-  const res = await deps.getJson(`http://127.0.0.1:${port}/v1/health`);
-  return res?.status === 200;
 }
 
 function toFailure(err: unknown): Failure {

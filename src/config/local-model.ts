@@ -45,10 +45,10 @@ export function localModelFromEnv(
     throw new Error(`${LOCAL_MODEL_ENV.context} must be a positive integer, got "${contextText}"`);
   }
 
-  // With no providers block the runtime would build Anthropic alone; keep it
-  // only when a key for it is present, so a local-only install offers only the
-  // local model.
-  const base = config.providers ?? (env.ANTHROPIC_API_KEY?.trim() ? { anthropic: {} } : {});
+  // The hosted providers beside it are the file's, or those the environment's
+  // keys configure (`providersFromEnv`, applied first), so a local-only install
+  // offers only the local model.
+  const base = config.providers ?? {};
   const providers =
     "local" in base
       ? base

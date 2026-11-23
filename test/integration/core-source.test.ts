@@ -75,6 +75,7 @@ async function makeRuntime(): Promise<Runtime> {
   return Runtime.start({
     identityProvider: devProvider,
     languageModel: createEchoModel(),
+    providers: { anthropic: {} },
     workDir,
     logging: { disabled: true },
   });
@@ -193,6 +194,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -227,6 +229,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -253,6 +256,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -280,6 +284,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -307,6 +312,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -348,6 +354,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -376,6 +383,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -433,6 +441,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -502,6 +511,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -530,6 +540,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -573,6 +584,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -610,6 +622,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -649,6 +662,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -679,6 +693,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -717,6 +732,7 @@ describe("Core Source", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -747,6 +763,7 @@ describe("Core Source", () => {
       const runtime = await Runtime.start({
         identityProvider: devProvider,
         languageModel: createEchoModel(),
+        providers: { anthropic: {} },
         workDir,
         configPath,
         logging: { disabled: true },
@@ -910,6 +927,7 @@ describe("Core Source", () => {
         identityProvider: devProvider,
         ...loaded,
         languageModel: createEchoModel(),
+        providers: { anthropic: {} },
         workDir,
         logging: { disabled: true },
       });
@@ -1032,16 +1050,32 @@ describe("Core Source", () => {
     it("catches a clear that strands a slot under a policy already in force", async () => {
       // The check runs on every write, not only one that sets a policy: with
       // a list already in place, clearing a slot drops it to a fallback that
-      // the list may not contain.
-      const { runtime, source } = await startWithPolicy("clear-strands", [
-        "anthropic:claude-sonnet-5",
-      ]);
+      // the list may not contain. The default model follows the policy where a
+      // configured provider has a permitted model, so here none does.
+      const { runtime, source } = await startWithPolicy("clear-strands", ["openai:gpt-5.5"], {
+        models: { default: "openai:gpt-5.5", fast: "openai:gpt-5.5" },
+      });
       try {
         const res = await asDevUser(() =>
           source.execute("set_model_config", { models: { fast: null } }),
         );
         expect(res.isError).toBe(true);
         expect(extractText(res.content)).toContain("which the fast slot uses");
+      } finally {
+        await runtime.shutdown();
+      }
+    });
+
+    it("lets a clear land on a permitted model of a configured provider", async () => {
+      const { runtime, source } = await startWithPolicy("clear-follows-policy", [
+        "anthropic:claude-sonnet-5",
+      ]);
+      try {
+        const res = await asDevUser(() =>
+          source.execute("set_model_config", { models: { fast: null } }),
+        );
+        expect(res.isError).toBe(false);
+        expect(runtime.configuredModelSlots().fast).toBe("anthropic:claude-sonnet-5");
       } finally {
         await runtime.shutdown();
       }
@@ -1153,6 +1187,7 @@ describe("Core Source", () => {
       const runtime = await Runtime.start({
         identityProvider: devProvider,
         languageModel: createEchoModel(),
+        providers: { anthropic: {} },
         workDir,
         configPath,
         logging: { disabled: true },
@@ -1331,6 +1366,7 @@ describe("Core Source", () => {
     const r1 = await Runtime.start({
       identityProvider: devProvider,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       configPath,
       logging: { disabled: true },
@@ -1364,6 +1400,7 @@ describe("Core Source", () => {
       identityProvider: devProvider,
       ...loaded,
       languageModel: createEchoModel(),
+      providers: { anthropic: {} },
       workDir,
       logging: { disabled: true },
     });

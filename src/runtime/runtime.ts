@@ -44,7 +44,11 @@ import { resolveHostLoopback, setHostLoopbackAlias } from "../connectors/runtime
 import { setInBandAuthErrorsCatalog } from "../connectors/runtime/in-band-auth-errors.ts";
 import { bindInstanceOAuthClients } from "../connectors/runtime/instance-oauth-clients.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
-import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
+import {
+  assertRuntimeSourceNamesReserved,
+  serverNameFromRef,
+  slugifyServerName,
+} from "../connectors/runtime/paths.ts";
 import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
 import type { ConnectorInstance, PlacementDeclaration } from "../connectors/runtime/types.ts";
@@ -150,10 +154,13 @@ import {
   localCatalogModels,
   setConfiguredModels,
 } from "../model/catalog.ts";
+import { defaultModelFor, FALLBACK_DEFAULT_MODEL } from "../model/default-model.ts";
 import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../model/gateway-refusal.ts";
+import { ModelAuthError } from "../model/model-auth.ts";
 import { isQualifiedModelId, requireQualifiedModelId } from "../model/model-id.ts";
 import {
   buildModelResolver,
+  MODEL_PROVIDER_KEY_ENV,
   MODEL_PROVIDERS,
   type ModelGatewayAccess,
   providerModelAllowlists,
@@ -368,7 +375,6 @@ import {
 } from "./workspace-runtime.ts";
 
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
-const DEFAULT_MODEL = "anthropic:claude-sonnet-5-5";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
 import { buildMidTurnCompaction } from "./mid-turn-compaction.ts";
@@ -980,6 +986,9 @@ export class Runtime {
       const user = await userStore.get(userId);
       return user ? { email: user.email, name: user.displayName } : undefined;
     });
+    telemetryManager.setWorkspaceSource(
+      async (wsId) => (await workspaceStore.get(wsId))?.name || undefined,
+    );
     // Identified telemetry (a no-op otherwise): who signed up, and the
     // workspaces and memberships they make, from the stores that write them.
     userStore.onCreated((user) =>
@@ -1257,6 +1266,9 @@ export class Runtime {
       // `createPlatformSources` returns sources already started.
       const { createPlatformSources } = await import("../platform/index.ts");
       const platformSources = await createPlatformSources(rt, events);
+      // A connector may never take the name of a source the runtime registers
+      // itself; install and boot both read that from the reserved set.
+      assertRuntimeSourceNamesReserved([systemTools.name, ...platformSources.map((s) => s.name)]);
       // Telemetry counts calls to connector tools apart from the kernel's own.
       telemetrySink.addBuiltinSources(platformSources.map((s) => s.name));
       // Identified telemetry names a connector by its catalog id, never by the
@@ -1562,7 +1574,7 @@ export class Runtime {
           this.runBus.end(conversationId, "cancelled");
         } else {
           this.publishTurnEvent(conversationId, "error", {
-            error: "engine_error",
+            error: err instanceof ModelAuthError ? err.code : "engine_error",
             message: err instanceof Error ? err.message : String(err),
           });
           this.runBus.end(conversationId, "error");
@@ -1753,8 +1765,10 @@ export class Runtime {
    *    refs, and no trigger matching: a task description is not a phrase a skill
    *    should claim. A skill bound to a tool reaches the model when the run
    *    calls that tool, as in chat.
-   *  - The system prompt is composed in task mode, prepending `TASK_IDENTITY`
-   *    so the model produces a deliverable rather than a conversational reply.
+   *  - The prompt is composed in task mode: `TASK_IDENTITY` leads the
+   *    `<runtime-context>` head on the run's user message, so the model
+   *    produces a deliverable rather than a conversational reply while the
+   *    cached system prefix stays the one a chat in the workspace writes.
    *    The runtime owns this framing — connectors cannot spoof it by wrapping the
    *    user message.
    *  - `workspaceId` is required: that workspace's tool scope and briefing,
@@ -2587,9 +2601,10 @@ export class Runtime {
       reason: "named by the run's task",
     }));
 
-    // Task mode prepends TASK_IDENTITY so an unattended run produces a
-    // deliverable rather than a conversational reply. The runtime owns that
-    // framing — a connector cannot spoof it by wrapping the user message.
+    // Task mode adds TASK_IDENTITY to the volatile head so an unattended run
+    // produces a deliverable rather than a conversational reply, and leaves the
+    // stable system prefix the same as a chat's. The runtime owns that framing —
+    // a connector cannot spoof it by wrapping the user message.
     const { stableSystem, volatileHead } = composeSystemSegments(
       requestContextSkills,
       matchedSkill,
@@ -5377,9 +5392,15 @@ export class Runtime {
       if (value === null) delete models[slot];
       else if (value !== undefined) models[slot] = value;
     }
+    // A slot left unset gets the configured providers' default model, so an
+    // install keyed for any one provider works without naming a model. Behind a
+    // model gateway, which reaches every provider, it stays the fallback.
+    const fallback = this.config.execution?.modelGateway
+      ? FALLBACK_DEFAULT_MODEL
+      : defaultModelFor(this.config.providers ?? {}, this.config.modelPolicy?.allowed);
     return {
-      default: models.default ?? DEFAULT_MODEL,
-      fast: models.fast ?? DEFAULT_MODEL,
+      default: models.default ?? fallback,
+      fast: models.fast ?? fallback,
     };
   }
 
@@ -5425,10 +5446,10 @@ export class Runtime {
    * Whether a model a *caller* named is permitted here.
    *
    * False only where a policy exists and excludes it. Absence of policy is not
-   * denial: with no `providers` block, or behind an injected `languageModel`
-   * that serves every string, `getProviderConfigs()` reports a display default
-   * (`{anthropic:{}}`) rather than a reachability claim, so consulting it would
-   * refuse every non-Anthropic model on a deployment that can serve them.
+   * denial: with no provider configured, `getProviderConfigs()` is empty, and
+   * consulting it would refuse every model on a deployment that serves them
+   * through an injected `languageModel`, and turn a missing provider into "not
+   * permitted" where the resolver says how to configure one.
    *
    * Operator config is not a caller's choice and never passes through here —
    * a configured slot value is governed where it is written.
@@ -5439,12 +5460,14 @@ export class Runtime {
     // pin every future conversation to a model that names no provider.
     if (!isQualifiedModelId(modelString)) return false;
     // Policy is checked before the provider guard and independently of it. The
-    // guard below tolerates absent provider config because `getProviderConfigs`
-    // reports a display default rather than a reachability claim — but an
+    // guard below tolerates absent provider config, as above — but an
     // allowlist is an explicit operator statement, so when one exists it binds
     // whether or not providers are configured.
     if (!isModelInPolicy(modelString, this.config.modelPolicy?.allowed)) return false;
-    if (!this.config.providers && !this._gatewayProviders) return true;
+    // With no provider configured the model is let through, so the turn fails
+    // as the resolver fails it: naming how to configure one.
+    if (Object.keys(this.config.providers ?? {}).length === 0 && !this._gatewayProviders)
+      return true;
     return isModelAllowed(modelString, this.getProviderConfigs());
   }
 
@@ -5601,10 +5624,7 @@ export class Runtime {
     if (this._gatewayProviders) {
       return [...(this._gatewayProviders.served() ?? MODEL_PROVIDERS)];
     }
-    if (this.config.providers) {
-      return Object.keys(this.config.providers);
-    }
-    return ["anthropic"];
+    return Object.keys(this.config.providers ?? {});
   }
 
   /**
@@ -6308,18 +6328,21 @@ export class Runtime {
     // cooperatively) and clears the run map. Order matters: stop the
     // producers first, then dismantle their dependencies.
     this.runBus.reset();
-    // Stop all sources across all workspace registries
+    // Stop all sources across all workspace registries. A shared source (the
+    // system source, the platform apps) is not stopped by a registry; the
+    // runtime created them, so it stops them here, each once.
     for (const [_wsId, reg] of this._workspaceRegistries) {
       for (const name of reg.sourceNames()) {
         await reg.removeSource(name);
       }
     }
-    // Identity sources (tasks, files, conversations) sit in no workspace
-    // registry, so the loop above never reaches them. Stop them here: the tasks
-    // source's stop is what ends its scheduler, whose timer otherwise outlives
-    // the runtime and keeps the process alive.
-    for (const source of this._platformSources) {
-      if (isIdentitySource(source.name)) await source.stop();
+    // Every platform source and the system source, workspace-scoped and identity
+    // alike, stopped once each. Identity sources (tasks, files, conversations) sit
+    // in no workspace registry at all, and the tasks source's stop is what ends its
+    // scheduler, whose timer otherwise outlives the runtime and keeps the process
+    // alive.
+    for (const source of [...this._platformSources, this._systemSource]) {
+      await source?.stop();
     }
     // Nothing drains the run queue once the sources are gone, so a run still
     // waiting for a slot is refused rather than left waiting forever.
@@ -6469,8 +6492,16 @@ function resolveModel(
   setConfiguredModels("local", "Local", localCatalogModels(config.providers?.local ?? {}));
   const adapter = config.languageModel;
   if (adapter) return () => adapter;
-  // No providers configured means Anthropic, keyed from the environment.
-  return buildModelResolver({ providers: config.providers ?? { anthropic: {} } }, gateway);
+  // Only the providers the config names are built; with none, every model
+  // fails naming the settings that configure one. The runtime still starts, so
+  // an install can come up first and be given its key afterwards.
+  if (!gateway && Object.keys(config.providers ?? {}).length === 0) {
+    log.warn(
+      "[runtime] No model provider is configured: chat fails until nimblebrain.json sets providers " +
+        `(providers.local for a model server you run) or the environment holds a provider key (${Object.values(MODEL_PROVIDER_KEY_ENV).join(", ")}).`,
+    );
+  }
+  return buildModelResolver({ providers: config.providers }, gateway);
 }
 
 /** Initialize work directory env vars and sync core skills. */
@@ -6582,8 +6613,8 @@ function stampDerivedScope(workDir: string, skill: Skill): Skill {
  * verifiable without spinning a full Runtime.
  */
 /**
- * Prepend the volatile "runtime context" head (current date, app/focused-app
- * state, matched skill) to the latest user message as a leading text part. This
+ * Prepend the volatile "runtime context" head (task identity, current date,
+ * app/focused-app state, matched skill) to the latest user message as a leading text part. This
  * keeps per-turn-volatile content OUT of the 1h-cached system block (where any
  * change rewrites the whole prefix at the premium write rate) and on the message
  * stream, which rides the rolling cache instead. Mutates `messages` in place.

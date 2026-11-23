@@ -6,6 +6,7 @@ import type { ChatResponse } from "../../src/api/schemas/responses.ts";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { ModelAuthError } from "../../src/model/model-auth.ts";
 import { ConversationNotFoundError, RunInProgressError } from "../../src/runtime/errors.ts";
 import type { BufferedRunEvent, RunStatus } from "../../src/runtime/run-bus.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -311,6 +312,98 @@ describe("cancel delivers a terminal frame to live viewers (Stop button)", () =>
     // synchronously, so publishing after it (engine's catch) would no-op.
     expect(captured.some((e) => e.type === "cancelled")).toBe(true);
     expect(rt.isTurnActive(conversationId)).toBe(false);
+  });
+});
+
+describe("a missing or rejected model key ends the turn with a structured error code", () => {
+  let rt: Runtime;
+  const dir = join(tmpdir(), `nimblebrain-auth-${Date.now()}`);
+
+  beforeAll(async () => {
+    mkdirSync(dir, { recursive: true });
+    rt = await Runtime.start({
+      identityProvider: devProvider,
+      languageModel: createMockModel(() => {
+        throw new ModelAuthError("anthropic");
+      }),
+      logging: { disabled: true },
+      workDir: dir,
+    });
+    await provisionTestWorkspace(rt);
+  });
+
+  afterAll(async () => {
+    await rt.shutdown();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("publishes `error` with code model_auth_failed and the fix as its message", async () => {
+    const { conversationId } = await rt.startTurn({
+      identity: DEV_IDENTITY,
+      message: "What can you help me with?",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    await waitFor(() => !rt.isTurnActive(conversationId));
+    const last = rt.getTurnReplay(conversationId, 0).at(-1);
+    expect(last?.type).toBe("error");
+    const data = last?.data as { error: string; message: string };
+    expect(data.error).toBe("model_auth_failed");
+    expect(data.message).toBe(
+      "The model provider has no valid API key. Set one for anthropic and restart NimbleBrain.",
+    );
+  });
+});
+
+describe("a runtime with no model provider configured", () => {
+  let rt: Runtime;
+  const dir = join(tmpdir(), `nimblebrain-no-provider-${Date.now()}`);
+  let prevKey: string | undefined;
+
+  beforeAll(async () => {
+    // A key in the environment configures nothing when the config names no provider.
+    prevKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-stray";
+    mkdirSync(dir, { recursive: true });
+    rt = await Runtime.start({
+      identityProvider: devProvider,
+      logging: { disabled: true },
+      workDir: dir,
+    });
+    await provisionTestWorkspace(rt);
+  });
+
+  afterAll(async () => {
+    await rt.shutdown();
+    rmSync(dir, { recursive: true, force: true });
+    if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = prevKey;
+  });
+
+  it("starts, reports no provider, and fails a turn naming how to configure one", async () => {
+    expect(rt.getConfiguredProviders()).toEqual([]);
+    const { conversationId } = await rt.startTurn({
+      identity: DEV_IDENTITY,
+      message: "What can you help me with?",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    await waitFor(() => !rt.isTurnActive(conversationId));
+    const last = rt.getTurnReplay(conversationId, 0).at(-1);
+    expect(last?.type).toBe("error");
+    const data = last?.data as { error: string; message: string };
+    expect(data.error).toBe("model_auth_failed");
+    expect(data.message).toContain("No model provider is configured");
+  });
+
+  it("fails a turn that names a model the same way, rather than as not permitted", async () => {
+    const { conversationId } = await rt.startTurn({
+      identity: DEV_IDENTITY,
+      message: "Hello",
+      model: "openai:gpt-5",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    await waitFor(() => !rt.isTurnActive(conversationId));
+    const data = rt.getTurnReplay(conversationId, 0).at(-1)?.data as { error: string };
+    expect(data.error).toBe("model_auth_failed");
   });
 });
 

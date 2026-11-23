@@ -3,10 +3,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ANSWER_FIELDS } from "../src/answers.ts";
 import { COMMANDS, FLAG_SPECS, MCP_SUBCOMMANDS, parse } from "../src/args.ts";
-import { DEFAULT_PROJECT } from "../src/compose.ts";
 import { run, VERSION } from "../src/main.ts";
 import { ERRORS } from "../src/result.ts";
-import { LOCAL_COMPOSE, type Machine, machine } from "./fake.ts";
+import { LOCAL_COMPOSE, type Machine, machine, record } from "./fake.ts";
 
 interface Help {
   ok: true;
@@ -122,7 +121,8 @@ describe("help --json", () => {
         },
       }),
       files: {
-        [`${home}/.env`]: `COMPOSE_PROJECT_NAME=${DEFAULT_PROJECT}\nANTHROPIC_API_KEY=sk-test\n`,
+        [`${home}/install.json`]: record({ phase: "starting" }),
+        [`${home}/.env`]: "ANTHROPIC_API_KEY=sk-test\n",
       },
     });
     const runs: string[][] = [

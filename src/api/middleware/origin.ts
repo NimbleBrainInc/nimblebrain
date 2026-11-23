@@ -54,6 +54,16 @@ function isTrustedOrigin(
     return false;
   }
   if (url.origin !== origin || url.host !== host?.toLowerCase()) return false;
-  const hostname = url.hostname.replace(/^\[(.*)\]$/, "$1");
-  return hostname === "localhost" || isIP(hostname) !== 0;
+  return isLocalAddressHostname(url.hostname);
+}
+
+/**
+ * Whether a URL's hostname is `localhost` or an IP literal (IPv6 in brackets,
+ * as `URL` gives it): an address the browser connects to as written, so a page
+ * served under that name is this server's own. Any other name resolves through
+ * DNS, and only configuration can say it names this server.
+ */
+export function isLocalAddressHostname(hostname: string): boolean {
+  const bare = hostname.replace(/^\[(.*)\]$/, "$1");
+  return bare === "localhost" || isIP(bare) !== 0;
 }

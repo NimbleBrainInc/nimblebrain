@@ -1301,6 +1301,27 @@ describe("manage_connectors.install", () => {
     }
   });
 
+  test("refuses an entry whose name belongs to a platform app or the system tools", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    for (const id of ["usage", "skills", "nb", "conversations"]) {
+      const result = await tool.handler({
+        action: "install",
+        wsId: h.wsId,
+        entry: {
+          id,
+          name: id,
+          description: "x",
+          install: { kind: "remote-oauth", url: "https://app.example.test/mcp", auth: "dcr" },
+        },
+      });
+      expect(result.isError).toBe(true);
+      const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+      expect(text).toContain("reserved");
+      expect(h.lifecycle.getInstance(id, h.wsId)).toBeUndefined();
+    }
+    expect((await h.workspaceStore.get(h.wsId))?.connectors).toEqual([]);
+  });
+
   test("a catalog connector is installed at its entry's URL, not the caller's", async () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({

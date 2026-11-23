@@ -139,8 +139,12 @@ If the name is taken, `tasks__create` refuses: change that task with
    - A batch whose `sharing` is below its concurrency has lowered how many items
      run at once, because the budget split that many ways could not pay for an
      item. A higher `budgetUsd` (pause, then `resume`) restores it.
-   - `rerun_failed` reruns failed, skipped, cancelled, and fail-judged items, but
-     not uncertain ones: give those a verdict instead (Workflow 3).
+   - An item with `errorCode: exceeds_share` cost more than the budget could
+     grant one run; the batch went on without it. `rerun_failed` with a higher
+     `budgetUsd` runs it again.
+   - `rerun_failed` reruns failed, skipped, cancelled, fail-judged, and
+     `exceeds_share` items, but not uncertain ones: give those a verdict instead
+     (Workflow 3).
 
 ## Workflow 3: reviewing results
 

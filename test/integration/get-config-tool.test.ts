@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { PROVIDER_DEFAULT_MODEL } from "../../src/model/default-model.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createCoreToolDefs } from "../../src/tools/core-source.ts";
@@ -23,6 +24,7 @@ async function makeRuntime(overrides?: Record<string, unknown>): Promise<Runtime
   return Runtime.start({
     identityProvider: devProvider,
     languageModel: createEchoModel(),
+    providers: { anthropic: {} },
     workDir,
     logging: { disabled: true },
     ...overrides,
@@ -109,13 +111,45 @@ describe("get_config tool", () => {
     }
   });
 
-  it("defaults to anthropic when no providers configured", async () => {
-    const runtime = await makeRuntime();
+  it("reports no provider when none is configured", async () => {
+    const runtime = await makeRuntime({ providers: undefined });
     try {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const result = await asDevUser(() => source.execute("get_config", {}));
       const config = result.structuredContent as Record<string, unknown>;
-      expect(config.configuredProviders).toContain("anthropic");
+      expect(config.configuredProviders).toEqual([]);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("defaults both model slots to the configured provider's model when none is set", async () => {
+    const runtime = await makeRuntime({ providers: { openai: {} } });
+    try {
+      const expected = `openai:${PROVIDER_DEFAULT_MODEL.openai}`;
+      expect(runtime.configuredModelSlots()).toEqual({ default: expected, fast: expected });
+      const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+      const result = await asDevUser(() => source.execute("get_config", {}));
+      const config = result.structuredContent as Record<string, unknown>;
+      // The derived default is resolved, not operator-set: nothing to save back.
+      expect(config.models).toBeUndefined();
+      const resolved = config.resolved as { models: Record<string, string> };
+      expect(resolved.models.default).toBe(expected);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("keeps an explicit models.default, whichever provider is configured", async () => {
+    const runtime = await makeRuntime({
+      providers: { openai: {} },
+      models: { default: "anthropic:claude-sonnet-4-6" },
+    });
+    try {
+      expect(runtime.configuredModelSlots()).toEqual({
+        default: "anthropic:claude-sonnet-4-6",
+        fast: `openai:${PROVIDER_DEFAULT_MODEL.openai}`,
+      });
     } finally {
       await runtime.shutdown();
     }

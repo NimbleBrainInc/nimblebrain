@@ -40,6 +40,9 @@ expect "$out" '.telemetry.locked == "no_destination"' "a development build sends
 if grep -q '^NB_TELEMETRY_KEY=.' "$NIMBLEBRAIN_HOME/.env"; then echo "FAILED: the runtime was given a telemetry key"; exit 1; fi
 echo "ok: the runtime has no telemetry key"
 mcp=$(jq -r '.workspaces[0].mcp' <<<"$out")
+# The Compose project is the install's own, chosen at init and kept in its record.
+project=$(jq -r .project "$NIMBLEBRAIN_HOME/install.json")
+expect "$(jq -c . "$NIMBLEBRAIN_HOME/install.json")" '.phase == "ready" and (.project | test("^nimblebrain-local-[0-9a-f]{6}$"))' "the record names a ready install and its own project"
 
 step "the workspace MCP endpoint lists tools, as a connected agent would"
 # The endpoint speaks MCP 2026-07-28 only: no initialize handshake; every
@@ -55,7 +58,7 @@ grep -q '"tools"' /tmp/mcp-tools.txt
 echo "ok: tools/list returns the workspace's tools"
 
 step "the port is published on this machine only"
-ports=$(docker ps --filter "label=com.docker.compose.project=nimblebrain-local" --format '{{.Ports}}')
+ports=$(docker ps --filter "label=com.docker.compose.project=$project" --format '{{.Ports}}')
 echo "$ports"
 grep -q '127.0.0.1:27246->8080' <<<"$ports"
 # Not `! grep`: under `set -e` a negated command never stops the script.
@@ -107,8 +110,8 @@ step "uninstall needs --yes, then removes everything"
 expect "$(nb uninstall)" '.error == "CANCELLED"' "uninstall without --yes changes nothing"
 expect "$(nb uninstall --yes)" '.removed == true' "uninstall --yes removes it"
 test ! -e "$NIMBLEBRAIN_HOME"
-test -z "$(docker volume ls -q --filter name=^nimblebrain-local_workspace$)"
-test -z "$(docker ps -a -q --filter label=com.docker.compose.project=nimblebrain-local)"
+test -z "$(docker volume ls -q --filter "label=com.docker.compose.project=$project")"
+test -z "$(docker ps -a -q --filter "label=com.docker.compose.project=$project")"
 echo "ok: no folder, no volume, no containers"
 
 printf '\nAll end-to-end checks passed.\n'

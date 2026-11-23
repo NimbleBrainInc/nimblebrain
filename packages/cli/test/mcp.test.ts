@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_PROJECT, hostLoopback } from "../src/compose.ts";
+import { hostLoopback } from "../src/compose.ts";
 import { run } from "../src/main.ts";
 import { ERRORS } from "../src/result.ts";
-import { type MachineOptions, machine, REPO_COMPOSE } from "./fake.ts";
+import { type MachineOptions, machine, REPO_COMPOSE, record } from "./fake.ts";
 
 const HOME = "/home/dana/.nimblebrain-local";
-const INSTALL = JSON.stringify({ version: "v0.80.0", port: 27246, project: DEFAULT_PROJECT });
+const INSTALL = record({ version: "v0.80.0" });
 /** A release's Compose file from before the runtime could reach this machine. */
 const OLD_COMPOSE = REPO_COMPOSE.split("\n")
   .filter((l) => !l.includes("NB_HOST_LOOPBACK") && !l.includes("host-gateway"))

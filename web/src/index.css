@@ -2,8 +2,10 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-/* Fonts: Hanken Grotesk (display + UI) and Newsreader (agent prose in chat)
-   via Google Fonts, loaded in index.html; JetBrains Mono via Fontsource */
+/* Fonts, all served from the build: Hanken Grotesk (display + UI) and
+   Newsreader (agent prose in chat) declared in fonts.css; JetBrains Mono via
+   Fontsource */
+@import "./fonts.css";
 @import "@fontsource-variable/jetbrains-mono";
 
 /* Brand palette :root/.dark values — generated from src/theme/palette.ts */

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4, SharedV4ProviderOptions } from "@ai-sdk/provider";
+import { ModelAuthError, ModelProviderNotConfiguredError } from "../../src/model/model-auth.ts";
 import { ModelNotQualifiedError } from "../../src/model/model-id.ts";
-import { buildModelResolver, buildRegistry } from "../../src/model/registry.ts";
+import {
+  buildModelResolver,
+  buildRegistry,
+  type ProvidersConfig,
+} from "../../src/model/registry.ts";
 import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 describe("buildRegistry", () => {
@@ -14,13 +19,33 @@ describe("buildRegistry", () => {
     expect(model.modelId).toContain("claude-sonnet");
   });
 
-  it("defaults to anthropic when no providers configured", () => {
-    const registry = buildRegistry({});
-    const model = registry.languageModel("anthropic:claude-sonnet-4-6") as LanguageModelV4;
-    expect(model).toBeDefined();
-    expect(model.provider).toContain("anthropic");
-    // Verify it has the same spec version as explicit config
-    expect(model.specificationVersion).toBe("v4");
+  it("builds no provider when none is configured, whatever keys the environment holds", () => {
+    const prev = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-stray";
+    try {
+      const registry = buildRegistry({});
+      expect(() => registry.languageModel("anthropic:claude-sonnet-4-6")).toThrow();
+    } finally {
+      if (prev === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prev;
+    }
+  });
+
+  it("builds only the local provider a local-only config names, beside a stray cloud key", () => {
+    const prev = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-stray";
+    try {
+      const registry = buildRegistry({
+        providers: { local: { baseURL: "http://127.0.0.1:11434/v1", models: ["qwen3:8b"] } },
+      });
+      expect((registry.languageModel("local:qwen3:8b") as LanguageModelV4).provider).toContain(
+        "local",
+      );
+      expect(() => registry.languageModel("anthropic:claude-sonnet-4-6")).toThrow();
+    } finally {
+      if (prev === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prev;
+    }
   });
 
   it("throws for unregistered provider prefix", () => {
@@ -104,7 +129,46 @@ describe("buildRegistry", () => {
   });
 });
 
+describe("buildModelResolver: a model of an unconfigured provider", () => {
+  it("fails naming the provider, before any client is called", () => {
+    const resolver = buildModelResolver({ providers: { openai: {} } });
+    expect(() => resolver("anthropic:claude-sonnet-5-5")).toThrow(ModelProviderNotConfiguredError);
+    expect(() => resolver("anthropic:claude-sonnet-5-5")).toThrow(/anthropic is not configured/);
+  });
+
+  it("names providers.local.models when local is the only provider and lists none", () => {
+    const resolver = buildModelResolver({
+      providers: { local: { baseURL: "http://localhost:11434/v1" } },
+    });
+    expect(() => resolver("anthropic:claude-sonnet-5-5")).toThrow(
+      /providers\.local lists no models/,
+    );
+  });
+
+  it("is a ModelAuthError, so the chat offers no retry", () => {
+    const resolver = buildModelResolver({ providers: { openai: {} } });
+    try {
+      resolver("xai:grok-4.7");
+      throw new Error("expected a throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ModelAuthError);
+      expect((err as ModelAuthError).code).toBe("model_auth_failed");
+    }
+  });
+});
+
 describe("buildModelResolver", () => {
+  it("fails every model as ModelAuthError naming the settings when no provider is configured", () => {
+    for (const config of [{}, { providers: {} }] as ProvidersConfig[]) {
+      const resolver = buildModelResolver(config);
+      expect(() => resolver("anthropic:claude-sonnet-4-6")).toThrow(ModelAuthError);
+      expect(() => resolver("anthropic:claude-sonnet-4-6")).toThrow(
+        "No model provider is configured",
+      );
+      expect(() => resolver("anthropic:claude-sonnet-4-6")).toThrow("providers.local");
+    }
+  });
+
   it("returns a function", () => {
     const resolver = buildModelResolver({ providers: { anthropic: {} } });
     expect(typeof resolver).toBe("function");
@@ -376,6 +440,116 @@ describe("providers through the model gateway", () => {
       // The stand-in answers 500; only where the call went matters.
     }
     expect(url).toBe(`${GATEWAY}/xai/v1/chat/completions`);
+  });
+});
+
+describe("a missing or rejected key", () => {
+  const PROMPT = {
+    prompt: [{ role: "user" as const, content: [{ type: "text" as const, text: "x" }] }],
+  };
+
+  /**
+   * Build the registry from `config` and run one call of `model` against a
+   * stand-in provider that answers `status` with `body`. The stand-in replaces
+   * `fetch` before the build, since a client keeps the `fetch` it was built with.
+   */
+  async function failure(
+    config: ProvidersConfig,
+    model: string,
+    status: number,
+    body: unknown,
+  ): Promise<{ err: unknown; sent: boolean }> {
+    const realFetch = globalThis.fetch;
+    let sent = false;
+    const answer = fakeFetch(async () => {
+      sent = true;
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    globalThis.fetch = answer;
+    try {
+      const err = await Promise.resolve(buildModelResolver(config)(model).doStream(PROMPT)).catch(
+        (e: unknown) => e,
+      );
+      return { err, sent };
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  const ANTHROPIC_401 = {
+    type: "error",
+    error: { type: "authentication_error", message: "invalid x-api-key" },
+  };
+
+  it("fails a direct provider's rejected key as ModelAuthError naming the provider", async () => {
+    const { err } = await failure(
+      { providers: { anthropic: { apiKey: "sk-wrong" } } },
+      "anthropic:claude-sonnet-4-6",
+      401,
+      ANTHROPIC_401,
+    );
+    expect(err).toBeInstanceOf(ModelAuthError);
+    expect((err as Error).message).toContain("Set one for anthropic");
+  });
+
+  it("fails a direct provider with no key as ModelAuthError before any request", async () => {
+    const prev = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const { err, sent } = await failure(
+        { providers: { anthropic: {} } },
+        "anthropic:claude-sonnet-4-6",
+        401,
+        ANTHROPIC_401,
+      );
+      expect(err).toBeInstanceOf(ModelAuthError);
+      expect(sent).toBe(false);
+    } finally {
+      if (prev !== undefined) process.env.ANTHROPIC_API_KEY = prev;
+    }
+  });
+
+  it("fails a key Gemini rejects with 400 API_KEY_INVALID as ModelAuthError", async () => {
+    const { err } = await failure(
+      { providers: { google: { apiKey: "wrong" } } },
+      "google:gemini-3-pro",
+      400,
+      {
+        error: {
+          code: 400,
+          message: "API key not valid. Please pass a valid API key.",
+          status: "INVALID_ARGUMENT",
+          details: [
+            { "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "API_KEY_INVALID" },
+          ],
+        },
+      },
+    );
+    expect(err).toBeInstanceOf(ModelAuthError);
+    expect((err as Error).message).toContain("Set one for google");
+  });
+
+  // The gateway holds the keys, so there is no key here for anyone to set.
+  it("leaves a 401 through the model gateway as the provider client raised it", async () => {
+    const gatewayFetch = fakeFetch(
+      async () =>
+        new Response(JSON.stringify(ANTHROPIC_401), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const resolve = buildModelResolver(
+      {},
+      { url: "http://model-gateway.test", fetch: gatewayFetch },
+    );
+    const err = await Promise.resolve(
+      resolve("anthropic:claude-sonnet-4-6").doStream(PROMPT),
+    ).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(ModelAuthError);
+    expect((err as { statusCode?: number }).statusCode).toBe(401);
   });
 });
 

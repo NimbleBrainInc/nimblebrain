@@ -25,10 +25,10 @@ const SEPARATOR = "\n\n---\n\n";
 export interface TracedLayer {
   kind: TracedLayerKind;
   /**
-   * Volatility tier. `volatile` layers (current date, app/focused-app state,
-   * matched skill) change per turn and are evicted from the cached system
-   * prefix onto the latest user message; `stable` layers form the cached
-   * system prefix. See `composeSystemSegments`.
+   * Volatility tier. `volatile` layers (task identity, current date,
+   * app/focused-app state, matched skill) vary per run or per turn and are
+   * evicted from the cached system prefix onto the latest user message;
+   * `stable` layers form the cached system prefix. See `composeSystemSegments`.
    */
   segment: "stable" | "volatile";
   /**
@@ -92,11 +92,13 @@ export interface ComposedPrompt {
  * Volatility-tiered system composition.
  *
  * `stableSystem` is the cacheable system prefix (identity, scoped skills,
- * apps). `volatileHead` is the per-turn-volatile content (current
- * date, app/focused-app state, matched skill) wrapped in a single
- * `<runtime-context>` block — the runtime prepends it to the latest user
- * message so a per-turn change does not rewrite the cached system prefix.
- * `volatileHead` is "" when there is no volatile content.
+ * apps); it does not depend on the invocation mode, so a task run and a chat in
+ * the same workspace with the same inputs share it byte for byte. `volatileHead`
+ * is the per-run or per-turn content (task identity, current date,
+ * app/focused-app state, matched skill) wrapped in a single `<runtime-context>`
+ * block — the runtime prepends it to the latest user message so it does not
+ * rewrite the cached system prefix. `volatileHead` is "" when there is no
+ * volatile content.
  *
  * `layers` and `totalTokens` mirror `ComposedPrompt` (the full set, both tiers).
  */
@@ -107,8 +109,13 @@ export interface ComposedSegments {
   totalTokens: number;
 }
 
-/** Layer kinds that change per turn — evicted from the cached system block. */
+/**
+ * Layer kinds that vary per turn or per run — evicted from the cached system
+ * block. `task_identity` is per-run framing: classed stable, it would make every
+ * task's prefix differ from the chat prefix the same workspace already cached.
+ */
 const VOLATILE_KINDS: ReadonlySet<TracedLayerKind> = new Set([
+  "task_identity",
   "current_date",
   "app_state",
   "focused_app",
@@ -137,9 +144,10 @@ export function defaultIdentity(): string {
 
 /**
  * Identity framing for task-mode invocations (e.g. scheduled tasks,
- * eval runs, future webhook-triggered jobs). Prepended above the core
- * skills when `composeSystemPrompt({ mode: "task" })`. The runtime owns
- * this contract; connectors cannot spoof it by wrapping the user message.
+ * eval runs, future webhook-triggered jobs). Composed when the mode is
+ * `task`, as the first block of the volatile `<runtime-context>` head that
+ * rides the run's user message. The runtime owns this contract; connectors
+ * cannot spoof it by wrapping the user message.
  *
  * The contract: artifact production, no follow-up questions, factual
  * gap-handling, markdown by default.
@@ -293,17 +301,15 @@ export function composeSystemPromptTraced(
 ): ComposedPrompt {
   const layers: PendingLayer[] = [];
 
-  // Layer 0a (task mode) then Layer 0 (core identity), with the default-identity
-  // fallback applied only when neither produced content. In task mode the
-  // TASK_IDENTITY layer already supplies framing, so `layers` is non-empty here
-  // and the fallback is skipped — the two would give the model contradictory
-  // role definitions.
+  // Layer 0a (task mode, volatile) then Layer 0 (core identity, stable). The
+  // default-identity fallback depends on the core skills alone, never on the
+  // mode: the stable segment is the same for a task and a chat, and the default
+  // identity is the vendored `soul.md` text that a task run carries beside
+  // TASK_IDENTITY whenever core skills load.
   layers.push(...taskIdentityLayers(mode));
   const { core, user } = partitionContextSkills(contextSkills);
-  layers.push(...coreContextLayers(core));
-  if (layers.length === 0) {
-    layers.push(defaultIdentityLayer());
-  }
+  const coreLayers = coreContextLayers(core);
+  layers.push(...(coreLayers.length > 0 ? coreLayers : [defaultIdentityLayer()]));
 
   // Layer 1: tenant-authored user context (priority > threshold).
   layers.push(...userContextLayers(user));
@@ -339,11 +345,13 @@ export function composeSystemPromptTraced(
 type PendingLayer = Omit<TracedLayer, "segment">;
 
 /**
- * Layer 0a (task mode only): the TASK_IDENTITY contract, prepended before any
- * core skill so the framing is read first. The runtime owns this layer — connectors
- * cannot remove or override it by wrapping the user message. Workspace `soul.md`
- * and similar core skills still layer in below; their domain identity composes
- * with, not against, the task contract.
+ * Layer 0a (task mode only): the TASK_IDENTITY contract. Volatile, so it leads
+ * the `<runtime-context>` head on the run's user message rather than the cached
+ * system prefix; the prefix stays the one a chat in the same workspace writes.
+ * The runtime owns this layer — connectors cannot remove or override it by
+ * wrapping the user message. Workspace `soul.md` and similar core skills stay in
+ * the system prompt; their domain identity composes with, not against, the task
+ * contract.
  */
 function taskIdentityLayers(mode: ComposeMode): PendingLayer[] {
   if (mode !== "task") return [];
