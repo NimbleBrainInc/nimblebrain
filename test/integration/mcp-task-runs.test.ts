@@ -326,7 +326,7 @@ describe("tasks__run for a client that does not opt in to tasks", () => {
     await client.connect(new StreamableHTTPClientTransport(mcpUrl()));
     try {
       const instructions = client.getInstructions() ?? "";
-      expect(instructions).toContain("## Running and following a run");
+      expect(instructions).toContain("follow it with `tasks__run_result {runId}`");
       expect(instructions).toContain("tasks__run_result");
       expect(instructions).not.toContain("tool-affinity");
     } finally {

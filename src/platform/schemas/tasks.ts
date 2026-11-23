@@ -51,8 +51,7 @@ const Schedule = Type.Object(
     ),
     at: Type.Optional(
       Type.String({
-        description:
-          "Fires once at this future ISO-8601 time (with an offset).",
+        description: "Fires once at this future ISO-8601 time (with an offset).",
       }),
     ),
     intervalMs: Type.Optional(
@@ -61,14 +60,12 @@ const Schedule = Type.Object(
     match: Type.Optional(
       Type.Object(NotificationRouteMatch.properties, {
         additionalProperties: false,
-        description:
-          "Fires on matching notifications routed to this task by an admin.",
+        description: "Fires on matching notifications routed to this task by an admin.",
       }),
     ),
     timezone: Type.Optional(
       Type.String({
-        description:
-          "IANA timezone for `cron`. Default: the instance's.",
+        description: "IANA timezone for `cron`. Default: the instance's.",
       }),
     ),
     debounceMs: Type.Optional(
@@ -84,8 +81,7 @@ const Schedule = Type.Object(
       Type.Integer({
         minimum: 1,
         maximum: 60,
-        description:
-          "With `match`: max runs per hour before the task disables. Default 12.",
+        description: "With `match`: max runs per hour before the task disables. Default 12.",
       }),
     ),
   },
@@ -119,8 +115,7 @@ const TokenBudget = Type.Object(
   },
   {
     additionalProperties: false,
-    description:
-      "Token limit across runs. Spent, the task is disabled.",
+    description: "Token limit across runs. Spent, the task is disabled.",
   },
 );
 
@@ -137,13 +132,9 @@ function jsonSchemaField(description: string) {
   });
 }
 
-const InputSchemaField = jsonSchemaField(
-  "JSON Schema each run's `input` must match.",
-);
+const InputSchemaField = jsonSchemaField("JSON Schema each run's `input` must match.");
 
-const OutputSchemaField = jsonSchemaField(
-  "JSON Schema the deliverable must match.",
-);
+const OutputSchemaField = jsonSchemaField("JSON Schema the deliverable must match.");
 
 // ── Acceptance criteria and the judge ────────────────────────────────────
 //
@@ -161,8 +152,7 @@ const Criterion = Type.Object(
     rule: Type.String({
       minLength: 1,
       maxLength: 4000,
-      description:
-        "The rule in plain language.",
+      description: "The rule in plain language.",
     }),
     type: StringEnum(["boolean", "score", "choice"] as const, {
       description:
@@ -231,8 +221,7 @@ const JudgeField = Type.Object(
 );
 
 const OnPoorResultField = StringEnum(["record", "notify", "retry_once"] as const, {
-  description:
-    "What a `fail` does: record, notify (default), or retry_once.",
+  description: "What a `fail` does: record, notify (default), or retry_once.",
 });
 
 const MaxIterationsField = Type.Integer({
@@ -244,8 +233,7 @@ const MaxIterationsField = Type.Integer({
 const MaxInputTokensField = Type.Integer({
   minimum: 1000,
   maximum: 1000000,
-  description:
-    "Input tokens one run may spend. Omit for no cap.",
+  description: "Input tokens one run may spend. Omit for no cap.",
 });
 
 const MaxRunDurationField = Type.Integer({
@@ -263,8 +251,7 @@ const AllowedToolsField = Type.Array(Type.String({ minLength: 1 }), {
 const SkillsField = Type.Array(Type.String({ minLength: 1 }), {
   minItems: 1,
   maxItems: 5,
-  description:
-    "Skills each run is given in full, by name.",
+  description: "Skills each run is given in full, by name.",
 });
 
 const ModelField = Type.String({
@@ -297,8 +284,7 @@ const DefinitionFields = {
 };
 
 const BodyField = Type.String({
-  description:
-    "The prompt every run starts from: the job, and where to deliver its result.",
+  description: "The prompt every run starts from: the job, and where to deliver its result.",
 });
 
 const CreateManifest = Type.Object(

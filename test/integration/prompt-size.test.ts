@@ -56,7 +56,11 @@ beforeAll(async () => {
     workDir: testDir,
     telemetry: { enabled: false },
     providers: {
-      local: { baseURL: `http://localhost:${server.port}/v1`, models: ["m"], contextWindow: 32_768 },
+      local: {
+        baseURL: `http://localhost:${server.port}/v1`,
+        models: ["m"],
+        contextWindow: 32_768,
+      },
     },
     models: { default: "local:m", fast: "local:m" },
   });
