@@ -318,6 +318,7 @@
 
 ### Fixed
 
+- **The conversation list no longer holds every conversation file in memory.** Its index kept each file's whole text alive after reading it, so a workspace with large conversations held roughly twice their size on disk for the life of the process.
 - **Request bodies are limited by bytes received, including chunked bodies.** A JSON request takes up to 1 MB and an upload up to `files.maxTotalSize` however it is sent, and the server refuses any body more than 8 MB past the larger of the two. ([docs](https://docs.nimblebrain.ai/config/nimblebrain-json/#files))
 - **Connector names that belong to platform apps are reserved, and a workspace's uninstall never stops a shared app.** Install refuses names such as `usage` or `skills`, boot skips a stored entry that has one with a warning, and removing a connector in one workspace leaves the platform apps every workspace shares running. ([docs](https://docs.nimblebrain.ai/config/connectors/#the-entry-shape))
 - **A missing or rejected model API key says so in the chat.** The turn ends with stream error code `model_auth_failed` and a message naming the provider whose key to set, with no Try again, in place of "Something went wrong" and a retry that failed the same way ([#1989](https://github.com/NimbleBrainInc/nimblebrain/pull/1989)).
