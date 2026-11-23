@@ -284,7 +284,7 @@ Each conversation is a single append-only `.jsonl` event log:
 ```
 {"id":"conv_abc123","ownerId":"user_abc123","createdAt":"2025-03-15T10:30:00Z", ...}
 {"ts":"...","type":"user.message","content":[...]}
-{"ts":"...","type":"run.start","runId":"run_1","model":"anthropic:claude-sonnet-4-6"}
+{"ts":"...","type":"run.start","runId":"run_1","model":"anthropic:claude-sonnet-5-5"}
 {"ts":"...","type":"llm.response","runId":"run_1","content":[...],"usage":{...}}
 {"ts":"...","type":"tool.done","runId":"run_1", ...}
 {"ts":"...","type":"run.done","runId":"run_1","stopReason":"complete"}
