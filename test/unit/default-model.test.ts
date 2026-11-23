@@ -32,9 +32,18 @@ describe("defaultModelFor", () => {
     expect(defaultModelFor({ google: {}, anthropic: {} })).toBe(FALLBACK_DEFAULT_MODEL);
   });
 
-  it("prefers a hosted provider to local when both are configured", () => {
-    expect(defaultModelFor({ local: { models: ["gemma4:e4b"] }, greenpt: {} })).toBe(
-      `greenpt:${PROVIDER_DEFAULT_MODEL.greenpt}`,
+  it("prefers local to a hosted provider when both are configured", () => {
+    expect(defaultModelFor({ greenpt: {}, local: { models: ["gemma4:e4b"] } })).toBe(
+      "local:gemma4:e4b",
+    );
+    expect(defaultModelFor({ anthropic: {}, local: { models: ["qwen3:8b"] } })).toBe(
+      "local:qwen3:8b",
+    );
+  });
+
+  it("falls to a hosted provider when local lists no model", () => {
+    expect(defaultModelFor({ local: {}, openai: {} })).toBe(
+      `openai:${PROVIDER_DEFAULT_MODEL.openai}`,
     );
   });
 

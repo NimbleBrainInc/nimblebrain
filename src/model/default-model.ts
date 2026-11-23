@@ -26,12 +26,13 @@ export const PROVIDER_DEFAULT_MODEL: Record<HostedProvider, string> = {
 };
 
 /**
- * The order a default is picked in when several providers are configured: the
- * hosted providers in `MODEL_PROVIDERS` order, then `local`. Fixed, so the
- * default does not depend on the order a config file or an environment lists
- * them in.
+ * The order a default is picked in when several providers are configured:
+ * `local` first, then the hosted providers in `MODEL_PROVIDERS` order. An
+ * operator who runs a model server meant it to be used, and a local default keeps
+ * an installation's prompts on its own network. Fixed, so the default does not
+ * depend on the order a config file or an environment lists them in.
  */
-const PREFERENCE = [...MODEL_PROVIDERS, "local"] as const;
+const PREFERENCE = ["local", ...MODEL_PROVIDERS] as const;
 
 /** Used when no configured provider supplies one: none is configured, or a model gateway reaches them all. */
 export const FALLBACK_DEFAULT_MODEL = `anthropic:${PROVIDER_DEFAULT_MODEL.anthropic}`;

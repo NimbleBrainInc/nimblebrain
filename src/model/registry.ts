@@ -12,7 +12,11 @@ import {
 } from "ai";
 import { wrapFetchWithLiveness } from "./fetch-liveness.ts";
 import { googleStreamErrorMiddleware } from "./google-stream-error.ts";
-import { ModelAuthError, modelAuthMiddleware } from "./model-auth.ts";
+import {
+  ModelAuthError,
+  ModelProviderNotConfiguredError,
+  modelAuthMiddleware,
+} from "./model-auth.ts";
 import { requireQualifiedModelId } from "./model-id.ts";
 
 export interface ProvidersConfig {
@@ -435,7 +439,19 @@ export function buildModelResolver(
     };
   }
   const provider = buildRegistry(config, gateway);
+  const configured = new Set(Object.keys(config.providers ?? {}));
+  const local = config.providers?.local;
+  const localWithoutModels = local !== undefined && !(local.models ?? []).some((m) => m.trim());
 
-  return (modelString: string): LanguageModelV4 =>
-    provider.languageModel(requireQualifiedModelId(modelString)) as LanguageModelV4;
+  return (modelString: string): LanguageModelV4 => {
+    const id = requireQualifiedModelId(modelString);
+    const providerId = id.slice(0, id.indexOf(":"));
+    if (!gateway && !configured.has(providerId)) {
+      throw new ModelProviderNotConfiguredError(
+        providerId,
+        localWithoutModels && configured.size === 1,
+      );
+    }
+    return provider.languageModel(id) as LanguageModelV4;
+  };
 }
