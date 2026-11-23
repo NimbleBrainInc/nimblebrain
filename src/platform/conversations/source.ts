@@ -30,7 +30,7 @@ import {
   ConversationsUpdateInput,
   ConversationsUpdateOutput,
 } from "../schemas/conversations.ts";
-import { type AccessContext, ConversationIndex, type WorkspaceScope } from "./index-cache.ts";
+import { ConversationIndex, type ReadScope } from "./index-cache.ts";
 import { handleExport } from "./tools/export.ts";
 import { handleFork } from "./tools/fork.ts";
 import { handleGet } from "./tools/get.ts";
@@ -44,10 +44,10 @@ import { loadConversationsUi } from "./ui-resource.ts";
  * Create the "conversations" platform source — an in-process MCP server.
  *
  * The only entry point into a user's conversations: every handler here
- * enforces `currentAccess()`, so ownership is gated in one place rather
- * than at each caller. The handlers themselves live beside this file
- * (`tools/`, `index-cache.ts`, `jsonl-reader.ts`), as does the iframe
- * dist (`ui/`).
+ * reads and writes through `currentReadScope()`, so the workspace and owner
+ * walls are applied in one place rather than at each caller. The handlers
+ * themselves live beside this file (`tools/`, `index-cache.ts`,
+ * `jsonl-reader.ts`), as does the iframe dist (`ui/`).
  *
  * Tools: list, get, search, update, fork, stats, export
  * Resources: ui://conversations/browser (HTML SPA from `ui/dist`)
@@ -60,9 +60,9 @@ export async function createConversationsSource(
   // Single process-wide ConversationIndex over the workspaces root.
   // Conversations are workspace-owned (`workspaces/<wsId>/conversations/<ownerId>/`),
   // so the index recurses every workspace's conversation subtree; each entry keeps
-  // its own `filePath`, so the handlers read the right workspace file. Access
-  // filtering is the dispatcher's job (see `currentAccess()` below) — the index
-  // tracks ownerId on every entry and each handler narrows to the caller's set.
+  // its own `filePath`, so the handlers read the right workspace file. The index
+  // tracks ownerId and workspaceId on every entry, and every index read takes a
+  // `ReadScope` (see `currentReadScope()` below) naming both.
   //
   // Memoise the BUILD PROMISE, not the instance. `build()` publishes the index
   // object and then awaits per-file reads, so caching the instance let a second
@@ -106,7 +106,7 @@ export async function createConversationsSource(
    * without an authenticated request — these tools are user-facing
    * and have no defensible "system" caller.
    */
-  function currentAccess(): AccessContext {
+  function currentAccess(): { userId: string } {
     const identity = runtime.getCurrentIdentity();
     if (!identity) {
       throw new Error(
@@ -134,7 +134,7 @@ export async function createConversationsSource(
    * rather than one the request proves. No workspace in scope ⇒ deny, never a
    * cross-workspace fallback.
    */
-  function currentScope(): WorkspaceScope {
+  function currentScope(): { workspaceId: string } {
     const workspaceId = getRequestContext()?.workspaceId;
     if (!workspaceId) {
       throw new Error(
@@ -143,6 +143,15 @@ export async function createConversationsSource(
       );
     }
     return { workspaceId };
+  }
+
+  /**
+   * The one workspace and owner this request's index reads and writes are
+   * walled to. Both halves throw when absent, so a call with no workspace or no
+   * identity is denied rather than widened.
+   */
+  function currentReadScope(): ReadScope {
+    return { ...currentScope(), ...currentAccess() };
   }
 
   /**
@@ -237,8 +246,7 @@ export async function createConversationsSource(
       outputSchema: ConversationsListOutput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        const access = currentAccess();
-        const result = await handleList(input, index, currentScope(), access);
+        const result = await handleList(input, index, currentReadScope());
         // `active` is read per request from the RunBus, never cached in the
         // index: a turn starting or ending does not rewrite the file header the
         // index holds. The runtime announces both moments, so a view refetches
@@ -262,7 +270,7 @@ export async function createConversationsSource(
       handler: withErrorHandling(async (get) => {
         const { index } = await getIndex();
         const id = resolveConversationId(get.id);
-        return handleGet({ ...get, id }, index, currentAccess(), runtime.isTurnActive(id));
+        return handleGet({ ...get, id }, index, currentReadScope(), runtime.isTurnActive(id));
       }),
     }),
     typedTool({
@@ -274,8 +282,7 @@ export async function createConversationsSource(
       outputSchema: ConversationsSearchOutput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        const access = currentAccess();
-        return handleSearch(input, index, currentScope(), access);
+        return handleSearch(input, index, currentReadScope());
       }),
     }),
     typedTool({
@@ -286,15 +293,15 @@ export async function createConversationsSource(
       outputSchema: ConversationsUpdateOutput,
       handler: withErrorHandling(async (update) => {
         const { index } = await getIndex();
-        const access = currentAccess();
+        const scope = currentReadScope();
         const updated = await handleUpdate(
           { ...update, id: resolveConversationId(update.id) },
           index,
-          access,
+          scope,
         );
         // Written beside the store rather than through it, so the store's
         // announcement never fires for it.
-        runtime.announceIdentitySourceChange("conversations", access.userId);
+        runtime.announceIdentitySourceChange("conversations", scope.userId);
         return capSummary(updated);
       }),
     }),
@@ -306,14 +313,14 @@ export async function createConversationsSource(
       outputSchema: ConversationsForkOutput,
       handler: withErrorHandling(async (fork) => {
         const { index } = await getIndex();
-        const access = currentAccess();
+        const scope = currentReadScope();
         const forked = await handleFork(
           { ...fork, id: resolveConversationId(fork.id) },
           index,
-          access,
+          scope,
         );
         // As `update`: written beside the store, so announced here.
-        runtime.announceIdentitySourceChange("conversations", access.userId);
+        runtime.announceIdentitySourceChange("conversations", scope.userId);
         return capSummary(forked);
       }),
     }),
@@ -326,8 +333,7 @@ export async function createConversationsSource(
       outputSchema: ConversationsStatsOutput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        const access = currentAccess();
-        return handleStats(input, index, currentScope(), access);
+        return handleStats(input, index, currentReadScope());
       }),
     }),
     typedTool({
@@ -339,7 +345,11 @@ export async function createConversationsSource(
       outputSchema: ConversationsExportOutput,
       handler: withErrorHandling(async (exp) => {
         const { index } = await getIndex();
-        return handleExport({ ...exp, id: resolveConversationId(exp.id) }, index, currentAccess());
+        return handleExport(
+          { ...exp, id: resolveConversationId(exp.id) },
+          index,
+          currentReadScope(),
+        );
       }),
     }),
   ];

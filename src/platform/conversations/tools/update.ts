@@ -14,7 +14,7 @@ import type {
   ConversationsUpdateInput,
   ConversationsUpdateOutput,
 } from "../../schemas/conversations.ts";
-import type { AccessContext, ConversationIndex } from "../index-cache.ts";
+import type { ConversationIndex, ReadScope } from "../index-cache.ts";
 import { readConversationHeader } from "../jsonl-reader.ts";
 
 /** `ConversationsUpdateInput` once the source has resolved an omitted or "current" `id`. */
@@ -23,9 +23,9 @@ type ResolvedInput = ConversationsUpdateInput & { id: string };
 export async function handleUpdate(
   input: ResolvedInput,
   index: ConversationIndex,
-  access?: AccessContext,
+  scope: ReadScope,
 ): Promise<ConversationsUpdateOutput> {
-  const entry = index.get(input.id, access);
+  const entry = index.get(input.id, scope);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);
   }

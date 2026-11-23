@@ -318,6 +318,7 @@
 
 ### Fixed
 
+- **Conversation tools act only within the workspace a call is made in.** Getting, renaming, forking or exporting a conversation by id finds it only in the calling workspace, like listing and search already did.
 - **The conversation list no longer holds every conversation file in memory.** Its index kept each file's whole text alive after reading it, so a workspace with large conversations held roughly twice their size on disk for the life of the process.
 - **Request bodies are limited by bytes received, including chunked bodies.** A JSON request takes up to 1 MB and an upload up to `files.maxTotalSize` however it is sent, and the server refuses any body more than 8 MB past the larger of the two. ([docs](https://docs.nimblebrain.ai/config/nimblebrain-json/#files))
 - **Connector names that belong to platform apps are reserved, and a workspace's uninstall never stops a shared app.** Install refuses names such as `usage` or `skills`, boot skips a stored entry that has one with a warning, and removing a connector in one workspace leaves the platform apps every workspace shares running. ([docs](https://docs.nimblebrain.ai/config/connectors/#the-entry-shape))

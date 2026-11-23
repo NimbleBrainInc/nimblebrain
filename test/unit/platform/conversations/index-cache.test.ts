@@ -7,6 +7,8 @@ import { conversationEventLines, type FixtureTurn } from "../../../helpers/conve
 const TMP_DIR = join(import.meta.dir, ".tmp-index-cache");
 /** The workspace a fixture lives under when its spec names none. */
 const DEFAULT_WS = "ws_00859aff6f095b0e";
+/** The read scope of a fixture that names neither workspace nor owner. */
+const SCOPE = { workspaceId: DEFAULT_WS, userId: "usr_test" };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -149,7 +151,7 @@ describe("build", () => {
 
     expect(index.size).toBe(3);
 
-    const a = index.get("aaa");
+    const a = index.get("aaa", SCOPE);
     expect(a).toBeDefined();
     expect(a!.title).toBe("First conversation");
     expect(a!.messageCount).toBe(2);
@@ -158,12 +160,12 @@ describe("build", () => {
     expect(a!.lastModel).toBe("claude-sonnet-4-5-20250929");
     expect(a!.preview).toBe("Hello world");
 
-    const b = index.get("bbb");
+    const b = index.get("bbb", SCOPE);
     expect(b).toBeDefined();
     expect(b!.messageCount).toBe(1);
     expect(b!.preview).toBe("How does MCP work?");
 
-    const c = index.get("ccc");
+    const c = index.get("ccc", SCOPE);
     expect(c).toBeDefined();
     expect(c!.title).toBeNull();
     expect(c!.messageCount).toBe(3);
@@ -175,7 +177,7 @@ describe("build", () => {
     await index.build(TMP_DIR);
     expect(index.size).toBe(0);
 
-    const result = index.list();
+    const result = index.list(SCOPE);
     expect(result.conversations).toEqual([]);
     expect(result.nextCursor).toBeNull();
     expect(result.totalCount).toBe(0);
@@ -200,7 +202,7 @@ describe("build", () => {
     await index.build(TMP_DIR);
 
     expect(index.size).toBe(1);
-    expect(index.get("conv_ownerless")).toBeUndefined();
+    expect(index.get("conv_ownerless", SCOPE)).toBeUndefined();
   });
 
   test("skips non-JSONL files and malformed files", async () => {
@@ -223,7 +225,7 @@ describe("build", () => {
     const index = new ConversationIndex();
     await index.build(TMP_DIR);
     expect(index.size).toBe(1);
-    expect(index.get("good")).toBeDefined();
+    expect(index.get("good", SCOPE)).toBeDefined();
   });
 });
 
@@ -259,13 +261,13 @@ describe("list pagination", () => {
     await index.build(TMP_DIR);
 
     // First page
-    const page1 = index.list({ limit: 2 });
+    const page1 = index.list(SCOPE, { limit: 2 });
     expect(page1.conversations).toHaveLength(2);
     expect(page1.totalCount).toBe(3);
     expect(page1.nextCursor).not.toBeNull();
 
     // Second page using cursor
-    const page2 = index.list({ limit: 2, cursor: page1.nextCursor! });
+    const page2 = index.list(SCOPE, { limit: 2, cursor: page1.nextCursor! });
     expect(page2.conversations).toHaveLength(1);
     expect(page2.nextCursor).toBeNull();
     expect(page2.totalCount).toBe(3);
@@ -319,23 +321,23 @@ describe("list search", () => {
     await index.build(TMP_DIR);
 
     // Search by title
-    const r1 = index.list({ search: "kubernetes" });
+    const r1 = index.list(SCOPE, { search: "kubernetes" });
     expect(r1.conversations).toHaveLength(2);
     expect(r1.totalCount).toBe(2);
     const ids1 = r1.conversations.map((c) => c.id).sort();
     expect(ids1).toEqual(["s1", "s3"]);
 
     // Search by preview content
-    const r2 = index.list({ search: "postgres" });
+    const r2 = index.list(SCOPE, { search: "postgres" });
     expect(r2.conversations).toHaveLength(1);
     expect(r2.conversations[0]!.id).toBe("s2");
 
     // Case insensitive
-    const r3 = index.list({ search: "DEPLOY" });
+    const r3 = index.list(SCOPE, { search: "DEPLOY" });
     expect(r3.conversations).toHaveLength(2);
 
     // No match
-    const r4 = index.list({ search: "nonexistent" });
+    const r4 = index.list(SCOPE, { search: "nonexistent" });
     expect(r4.conversations).toHaveLength(0);
     expect(r4.totalCount).toBe(0);
   });
@@ -391,9 +393,9 @@ describe("list workspace filtering", () => {
     return index;
   }
 
-  test("workspaceId scopes to that workspace, excluding other workspaces and workspaceless chats", async () => {
+  test("the scope's workspace walls the list, excluding the owner's other workspaces and other owners", async () => {
     const index = await buildWorkspaceIndex();
-    const r = index.list({ workspaceId: "ws_003eba8844413cd9" }, { userId: "u1" });
+    const r = index.list({ workspaceId: "ws_003eba8844413cd9", userId: "u1" });
     expect(r.conversations.map((c) => c.id)).toEqual(["helix1"]);
     expect(r.totalCount).toBe(1);
   });
@@ -403,19 +405,21 @@ describe("list workspace filtering", () => {
     // not in one — whichever workspace the owner lists from.
     const index = await buildWorkspaceIndex();
     expect(
-      index.list({ workspaceId: "ws_007dc0488ce56f9e" }, { userId: "u1" }).conversations,
+      index.list({ workspaceId: "ws_007dc0488ce56f9e", userId: "u1" }).conversations,
     ).toHaveLength(0);
     expect(
       index
-        .list({ workspaceId: "ws_003eba8844413cd9" }, { userId: "u1" })
+        .list({ workspaceId: "ws_003eba8844413cd9", userId: "u1" })
         .conversations.map((c) => c.id),
     ).toEqual(["helix1"]);
   });
 
-  test("no workspaceId returns all of the owner's workspaces", async () => {
+  test("each workspace lists only its own chats, never the owner's union", async () => {
     const index = await buildWorkspaceIndex();
-    const r = index.list({}, { userId: "u1" });
-    expect(r.conversations.map((c) => c.id).sort()).toEqual(["acme1", "helix1", "legacy1"]);
+    const acme = index.list({ workspaceId: "ws_000f7ed6658f9d30", userId: "u1" });
+    expect(acme.conversations.map((c) => c.id)).toEqual(["acme1"]);
+    const home = index.list({ workspaceId: DEFAULT_WS, userId: "u1" });
+    expect(home.conversations.map((c) => c.id)).toEqual(["legacy1"]);
   });
 
   test("the workspace filter runs before the limit (no post-pagination under-count)", async () => {
@@ -446,12 +450,13 @@ describe("list workspace filtering", () => {
     const index = new ConversationIndex();
     await index.build(TMP_DIR);
 
-    // The Helix chat is NOT in the global most-recent page of 20.
-    const globalPage = index.list({ limit: 20 }, { userId: "u1" });
-    expect(globalPage.conversations.map((c) => c.id)).not.toContain("helix_old");
+    // Acme's page of 20 is a slice of Acme's 25 alone.
+    const acme = index.list({ workspaceId: "ws_000f7ed6658f9d30", userId: "u1" }, { limit: 20 });
+    expect(acme.conversations).toHaveLength(20);
+    expect(acme.totalCount).toBe(25);
 
-    // Workspace-scoped: the limit applies to Helix's set, so its chat is returned.
-    const helix = index.list({ limit: 20, workspaceId: "ws_003eba8844413cd9" }, { userId: "u1" });
+    // Helix: the limit applies to Helix's set, so its one older chat is returned.
+    const helix = index.list({ workspaceId: "ws_003eba8844413cd9", userId: "u1" }, { limit: 20 });
     expect(helix.conversations.map((c) => c.id)).toEqual(["helix_old"]);
     expect(helix.totalCount).toBe(1);
   });
@@ -489,17 +494,17 @@ describe("list date filtering", () => {
     await index.build(TMP_DIR);
 
     // Only February onwards
-    const r1 = index.list({ dateFrom: "2025-02-01T00:00:00.000Z" });
+    const r1 = index.list(SCOPE, { dateFrom: "2025-02-01T00:00:00.000Z" });
     expect(r1.totalCount).toBe(2);
     expect(r1.conversations.map((c) => c.id).sort()).toEqual(["d2", "d3"]);
 
     // Only up to February
-    const r2 = index.list({ dateTo: "2025-02-28T00:00:00.000Z" });
+    const r2 = index.list(SCOPE, { dateTo: "2025-02-28T00:00:00.000Z" });
     expect(r2.totalCount).toBe(2);
     expect(r2.conversations.map((c) => c.id).sort()).toEqual(["d1", "d2"]);
 
     // Exact range: February only
-    const r3 = index.list({
+    const r3 = index.list(SCOPE, {
       dateFrom: "2025-02-01T00:00:00.000Z",
       dateTo: "2025-02-28T23:59:59.999Z",
     });
@@ -546,11 +551,11 @@ describe("list sorting", () => {
     await index.build(TMP_DIR);
 
     // Sort by created (desc): sort3, sort2, sort1
-    const byCreated = index.list({ sortBy: "created" });
+    const byCreated = index.list(SCOPE, { sortBy: "created" });
     expect(byCreated.conversations.map((c) => c.id)).toEqual(["sort3", "sort2", "sort1"]);
 
     // Sort by updated (desc): sort1, sort2, sort3
-    const byUpdated = index.list({ sortBy: "updated" });
+    const byUpdated = index.list(SCOPE, { sortBy: "updated" });
     expect(byUpdated.conversations.map((c) => c.id)).toEqual(["sort1", "sort2", "sort3"]);
   });
 
@@ -573,7 +578,7 @@ describe("list sorting", () => {
     const index = new ConversationIndex();
     await index.build(TMP_DIR);
 
-    const result = index.list();
+    const result = index.list(SCOPE);
     // def1 has later updatedAt, so comes first
     expect(result.conversations[0]!.id).toBe("def1");
   });
@@ -596,9 +601,9 @@ describe("get", () => {
     const index = new ConversationIndex();
     await index.build(TMP_DIR);
 
-    expect(index.get("get1")).toBeDefined();
-    expect(index.get("get1")!.title).toBe("Get test");
-    expect(index.get("nonexistent")).toBeUndefined();
+    expect(index.get("get1", SCOPE)).toBeDefined();
+    expect(index.get("get1", SCOPE)!.title).toBe("Get test");
+    expect(index.get("nonexistent", SCOPE)).toBeUndefined();
   });
 });
 
@@ -646,11 +651,11 @@ describe("incremental invalidation", () => {
     });
     rmSync(bPath);
 
-    index.invalidate({ id: "inc_a", filePath: aPath, wsId: null });
+    index.invalidate({ id: "inc_a", filePath: aPath, wsId: DEFAULT_WS });
     await index.refresh();
 
-    expect(index.get("inc_a")!.title).toBe("A renamed");
-    expect(index.get("inc_b")).toBeDefined();
+    expect(index.get("inc_a", SCOPE)!.title).toBe("A renamed");
+    expect(index.get("inc_b", SCOPE)).toBeDefined();
     expect(index.size).toBe(2);
   });
 
@@ -660,11 +665,11 @@ describe("incremental invalidation", () => {
     expect(index.size).toBe(0);
 
     const path = conv("inc_new", "Brand new");
-    index.invalidate({ id: "inc_new", filePath: path, wsId: null });
+    index.invalidate({ id: "inc_new", filePath: path, wsId: DEFAULT_WS });
     await index.refresh();
 
     expect(index.size).toBe(1);
-    expect(index.get("inc_new")!.title).toBe("Brand new");
+    expect(index.get("inc_new", SCOPE)!.title).toBe("Brand new");
   });
 
   test("a named change whose file is gone drops the entry", async () => {
@@ -672,14 +677,14 @@ describe("incremental invalidation", () => {
 
     const index = new ConversationIndex();
     await index.build(TMP_DIR);
-    expect(index.get("inc_del")).toBeDefined();
+    expect(index.get("inc_del", SCOPE)).toBeDefined();
 
     rmSync(path);
-    index.invalidate({ id: "inc_del", filePath: path, wsId: null });
+    index.invalidate({ id: "inc_del", filePath: path, wsId: DEFAULT_WS });
     await index.refresh();
 
     expect(index.size).toBe(0);
-    expect(index.get("inc_del")).toBeUndefined();
+    expect(index.get("inc_del", SCOPE)).toBeUndefined();
   });
 
   test("repeated changes to one conversation collapse to a single entry", async () => {
@@ -690,13 +695,13 @@ describe("incremental invalidation", () => {
 
     for (const title of ["v2", "v3", "v4"]) {
       retitle(path, title);
-      index.invalidate({ id: "inc_burst", filePath: path, wsId: null });
+      index.invalidate({ id: "inc_burst", filePath: path, wsId: DEFAULT_WS });
     }
 
     await index.refresh();
 
     expect(index.size).toBe(1);
-    expect(index.get("inc_burst")!.title).toBe("v4");
+    expect(index.get("inc_burst", SCOPE)!.title).toBe("v4");
   });
 
   test("an unattributed change still rebuilds the whole index", async () => {
@@ -714,8 +719,8 @@ describe("incremental invalidation", () => {
     await index.refresh();
 
     expect(index.size).toBe(1);
-    expect(index.get("inc_x")).toBeUndefined();
-    expect(index.get("inc_y")).toBeDefined();
+    expect(index.get("inc_x", SCOPE)).toBeUndefined();
+    expect(index.get("inc_y", SCOPE)).toBeDefined();
   });
 
   test("a full rebuild subsumes pending targeted changes", async () => {
@@ -725,17 +730,17 @@ describe("incremental invalidation", () => {
     await index.build(TMP_DIR);
 
     retitle(aPath, "P renamed");
-    index.invalidate({ id: "inc_p", filePath: aPath, wsId: null });
+    index.invalidate({ id: "inc_p", filePath: aPath, wsId: DEFAULT_WS });
     index.invalidate();
     await index.refresh();
 
-    expect(index.get("inc_p")!.title).toBe("P renamed");
+    expect(index.get("inc_p", SCOPE)!.title).toBe("P renamed");
 
     // The rebuild consumed the pending change; a second refresh has nothing
     // left to do and must not resurrect it.
     rmSync(aPath);
     await index.refresh();
-    expect(index.get("inc_p")!.title).toBe("P renamed");
+    expect(index.get("inc_p", SCOPE)!.title).toBe("P renamed");
   });
 
   test("refresh is a no-op when nothing was invalidated", async () => {

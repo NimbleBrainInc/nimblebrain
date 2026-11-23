@@ -9,6 +9,9 @@ import {
   type FixtureTurn,
 } from "../../../../helpers/conversation-events.ts";
 
+/** The workspace and owner every fixture here is stored under. */
+const SCOPE = { workspaceId: "ws_00859aff6f095b0e", userId: "usr_test" };
+
 /** The workspaces root the index walks. */
 const ROOT = join(import.meta.dir, ".tmp-update");
 /** One owner partition of one workspace, where the fixtures live. */
@@ -86,7 +89,7 @@ describe("handleUpdate", () => {
 
     await index.build(ROOT);
 
-    const result = await handleUpdate({ id: "conv_test001", title: "New title" }, index);
+    const result = await handleUpdate({ id: "conv_test001", title: "New title" }, index, SCOPE);
 
     expect(result.id).toBe("conv_test001");
     expect(result.title).toBe("New title");
@@ -113,7 +116,7 @@ describe("handleUpdate", () => {
 
     await index.build(ROOT);
 
-    await handleUpdate({ id: "conv_test001", title: "Updated" }, index);
+    await handleUpdate({ id: "conv_test001", title: "Updated" }, index, SCOPE);
 
     // Re-read the file and verify all messages are intact
     const filePath = join(TMP_DIR, "conv_test001.jsonl");
@@ -136,7 +139,7 @@ describe("handleUpdate", () => {
 
     await index.build(ROOT);
 
-    await handleUpdate({ id: "conv_test001", title: "Integrity check" }, index);
+    await handleUpdate({ id: "conv_test001", title: "Integrity check" }, index, SCOPE);
 
     const filePath = join(TMP_DIR, "conv_test001.jsonl");
     const content = readFileSync(filePath, "utf-8");
@@ -168,7 +171,7 @@ describe("handleUpdate", () => {
 
     await index.build(ROOT);
 
-    await handleUpdate({ id: "conv_test001", title: "After" }, index);
+    await handleUpdate({ id: "conv_test001", title: "After" }, index, SCOPE);
 
     const filePath = join(TMP_DIR, "conv_test001.jsonl");
     const conv = await readConversation(filePath);
@@ -183,9 +186,9 @@ describe("handleUpdate", () => {
   test("throws error for non-existent conversation ID", async () => {
     await index.build(ROOT);
 
-    await expect(handleUpdate({ id: "conv_nonexistent", title: "Nope" }, index)).rejects.toThrow(
-      "Conversation not found: conv_nonexistent",
-    );
+    await expect(
+      handleUpdate({ id: "conv_nonexistent", title: "Nope" }, index, SCOPE),
+    ).rejects.toThrow("Conversation not found: conv_nonexistent");
   });
 
   // ---------------------------------------------------------------------------
@@ -198,7 +201,7 @@ describe("handleUpdate", () => {
 
     await index.build(ROOT);
 
-    const result = await handleUpdate({ id: "conv_empty", title: "Empty conv" }, index);
+    const result = await handleUpdate({ id: "conv_empty", title: "Empty conv" }, index, SCOPE);
 
     expect(result.id).toBe("conv_empty");
     expect(result.title).toBe("Empty conv");
@@ -229,7 +232,7 @@ describe("handleUpdate", () => {
 
     await index.build(ROOT);
 
-    await handleUpdate({ id: "conv_trunc", title: "Agent Set This" }, index);
+    await handleUpdate({ id: "conv_trunc", title: "Agent Set This" }, index, SCOPE);
 
     const fileLines = readFileSync(path, "utf-8").split("\n").filter(Boolean);
     expect(fileLines).toHaveLength(4);

@@ -17,6 +17,7 @@ import { ConversationIndex } from "../../../../src/platform/conversations/index-
 
 const WS = "ws_00000000000000c1";
 const OWNER = "usr_alice";
+const SCOPE = { workspaceId: WS, userId: OWNER };
 const FILES = 64;
 const FILE_BYTES = 256 * 1024;
 
@@ -74,6 +75,6 @@ test("test_build_index_retains_far_less_than_the_files_it_read", async () => {
 
   // Hold the index past the measurement, and prove it indexed every file, so
   // the test cannot pass by measuring an index that was collected or empty.
-  expect(index.list({}, { userId: OWNER }).totalCount).toBe(FILES);
+  expect(index.list(SCOPE).totalCount).toBe(FILES);
   expect(grown).toBeLessThan(inputBytes * 0.25);
 });

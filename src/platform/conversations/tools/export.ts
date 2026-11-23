@@ -8,7 +8,7 @@ import type {
   ConversationsExportInput,
   ConversationsExportOutput,
 } from "../../schemas/conversations.ts";
-import type { AccessContext, ConversationIndex } from "../index-cache.ts";
+import type { ConversationIndex, ReadScope } from "../index-cache.ts";
 import { type DisplayMessage, readConversation } from "../jsonl-reader.ts";
 
 /** Truncate a string to maxLen, appending "..." if truncated. */
@@ -88,9 +88,9 @@ type ResolvedInput = ConversationsExportInput & { id: string };
 export async function handleExport(
   input: ResolvedInput,
   index: ConversationIndex,
-  access?: AccessContext,
+  scope: ReadScope,
 ): Promise<ConversationsExportOutput> {
-  const entry = index.get(input.id, access);
+  const entry = index.get(input.id, scope);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);
   }

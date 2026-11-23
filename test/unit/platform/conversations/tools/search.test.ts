@@ -14,7 +14,7 @@ import {
  * entry's workspace from its DIRECTORY. Cross-workspace scoping itself is
  * covered in test/unit/platform/conversations-workspace-scope.test.ts.
  */
-const SCOPE = { workspaceId: "ws_00859aff6f095b0e" };
+const SCOPE = { workspaceId: "ws_00859aff6f095b0e", userId: "usr_test" };
 
 function tempDir(): string {
   const dir = join(tmpdir(), `nb-search-test-${crypto.randomUUID()}`);

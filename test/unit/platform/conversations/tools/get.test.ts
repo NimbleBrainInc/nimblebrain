@@ -13,6 +13,9 @@ import {
   type FixtureTurn,
 } from "../../../../helpers/conversation-events.ts";
 
+/** The workspace and owner every fixture here is stored under. */
+const SCOPE = { workspaceId: "ws_00164434d8dd7ffb", userId: "usr_test" };
+
 function tempDir(): string {
   const dir = join(tmpdir(), `nb-get-test-${crypto.randomUUID()}`);
   mkdirSync(dir, { recursive: true });
@@ -118,7 +121,7 @@ describe("conversations__get", () => {
     });
     await index.build(dir);
 
-    const result = await handleGet({ id: "conv-5msgs" }, index);
+    const result = await handleGet({ id: "conv-5msgs" }, index, SCOPE);
 
     expect(result.metadata.id).toBe("conv-5msgs");
     expect(result.metadata.title).toBe("Test Chat");
@@ -138,7 +141,7 @@ describe("conversations__get", () => {
     writeConversation(dir, "conv-ws", { workspaceId: "ws_0000000000000000" });
     await index.build(dir);
 
-    const result = await handleGet({ id: "conv-ws", expand: "metadata" }, index);
+    const result = await handleGet({ id: "conv-ws", expand: "metadata" }, index, SCOPE);
 
     expect(result.metadata.workspaceId).toBe("ws_00164434d8dd7ffb");
   });
@@ -147,7 +150,7 @@ describe("conversations__get", () => {
     writeConversation(dir, "conv-unstamped");
     await index.build(dir);
 
-    const result = await handleGet({ id: "conv-unstamped", expand: "metadata" }, index);
+    const result = await handleGet({ id: "conv-unstamped", expand: "metadata" }, index, SCOPE);
 
     expect(result.metadata.workspaceId).toBe("ws_00164434d8dd7ffb");
   });
@@ -165,7 +168,7 @@ describe("conversations__get", () => {
     });
     await index.build(dir);
 
-    const result = await handleGet({ id: "conv-limited", limit: 2 }, index);
+    const result = await handleGet({ id: "conv-limited", limit: 2 }, index, SCOPE);
 
     expect(result.messages).toHaveLength(2);
     expect(result.messages[0]!.content).toBe("Fourth");
@@ -176,7 +179,7 @@ describe("conversations__get", () => {
   it("returns isError response for non-existent conversation ID", async () => {
     await index.build(dir);
 
-    await expect(handleGet({ id: "does-not-exist" }, index)).rejects.toThrow(
+    await expect(handleGet({ id: "does-not-exist" }, index, SCOPE)).rejects.toThrow(
       "Conversation not found: does-not-exist",
     );
   });
@@ -214,7 +217,7 @@ describe("conversations__get", () => {
     });
     await index.build(dir);
 
-    const result = await handleGet({ id: "conv-meta" }, index);
+    const result = await handleGet({ id: "conv-meta" }, index, SCOPE);
 
     expect(result.messages).toHaveLength(2);
 
@@ -242,7 +245,7 @@ describe("conversations__get", () => {
     });
     await index.build(dir);
 
-    const result = await handleGet({ id: "conv-meta-only", expand: "metadata" }, index);
+    const result = await handleGet({ id: "conv-meta-only", expand: "metadata" }, index, SCOPE);
 
     expect(result.metadata.id).toBe("conv-meta-only");
     expect(result.metadata.title).toBe("Metadata only");
@@ -261,7 +264,7 @@ describe("conversations__get", () => {
     writeConversation(dir, "conv-many", { messages });
     await index.build(dir);
 
-    const result = await handleGet({ id: "conv-many" }, index);
+    const result = await handleGet({ id: "conv-many" }, index, SCOPE);
 
     expect(result.totalMessages).toBe(totalMsgs);
     expect(result.messages).toHaveLength(DEFAULT_GET_LIMIT);
@@ -284,7 +287,7 @@ describe("conversations__get", () => {
     writeConversation(dir, "conv-full", { messages });
     await index.build(dir);
 
-    const result = await handleGet({ id: "conv-full", expand: "full" }, index);
+    const result = await handleGet({ id: "conv-full", expand: "full" }, index, SCOPE);
 
     expect(result.messages).toHaveLength(10);
     expect(result.totalMessages).toBe(10);
@@ -302,7 +305,7 @@ describe("conversations__get", () => {
     writeConversation(dir, "conv-bigwindow", { messages });
     await index.build(dir);
 
-    const result = await handleGet({ id: "conv-bigwindow" }, index);
+    const result = await handleGet({ id: "conv-bigwindow" }, index, SCOPE);
 
     expect(result.totalMessages).toBe(10);
     expect(result.truncated).toBe(true);
@@ -324,7 +327,7 @@ describe("conversations__get", () => {
     });
     await index.build(dir);
 
-    const result = await handleGet({ id: "conv-onehuge" }, index);
+    const result = await handleGet({ id: "conv-onehuge" }, index, SCOPE);
 
     // Single most recent message kept even though it alone exceeds cap.
     expect(result.messages).toHaveLength(1);
@@ -363,7 +366,7 @@ describe("conversations__get", () => {
     writeConversation(dir, "conv-fits-under-engine-cap", { messages });
     await index.build(dir);
 
-    const result = await handleGet({ id: "conv-fits-under-engine-cap" }, index);
+    const result = await handleGet({ id: "conv-fits-under-engine-cap" }, index, SCOPE);
     const serialized = JSON.stringify(result, null, 2);
     expect(serialized.length).toBeLessThan(MAX_TOOL_RESULT_CHARS);
 

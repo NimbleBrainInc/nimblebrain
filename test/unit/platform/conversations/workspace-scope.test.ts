@@ -13,7 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
@@ -22,7 +22,18 @@ import {
   listAllConversationFiles,
 } from "../../../../src/conversation/locator.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
+import {
+  ConversationIndex,
+  type ReadScope,
+} from "../../../../src/platform/conversations/index-cache.ts";
 import { createConversationsSource } from "../../../../src/platform/conversations/source.ts";
+import { handleExport } from "../../../../src/platform/conversations/tools/export.ts";
+import { handleFork } from "../../../../src/platform/conversations/tools/fork.ts";
+import { handleGet } from "../../../../src/platform/conversations/tools/get.ts";
+import { handleList } from "../../../../src/platform/conversations/tools/list.ts";
+import { handleSearch } from "../../../../src/platform/conversations/tools/search.ts";
+import { handleStats } from "../../../../src/platform/conversations/tools/stats.ts";
+import { handleUpdate } from "../../../../src/platform/conversations/tools/update.ts";
 import {
   ConversationsListInput,
   ConversationsSearchInput,
@@ -306,5 +317,143 @@ describe("conversations index — concurrent cold reads", () => {
     const [a, b] = await Promise.all([exec("list", {}, WS_A), exec("list", {}, WS_B)]);
     expect(idsOf(a)).toEqual(["conv_a1", "conv_a2"]);
     expect(idsOf(b)).toEqual(["conv_b1"]);
+  });
+});
+
+describe("by-id reads and writes are walled to the scope's workspace", () => {
+  // The owner holds `conv_b1` in WS_B. A call scoped to WS_A must treat it
+  // exactly as an id that does not exist: same error, nothing read, nothing
+  // written. The index takes the workspace and the owner together, so neither
+  // half can be left out.
+  const SCOPE_A: ReadScope = { workspaceId: WS_A, userId: OWNER_ID };
+  const B_FILE = () =>
+    join(workDir, "workspaces", WS_B, "conversations", OWNER_ID, "conv_b1.jsonl");
+
+  async function buildIndex(): Promise<ConversationIndex> {
+    const index = new ConversationIndex();
+    await index.build(join(workDir, "workspaces"));
+    return index;
+  }
+
+  /** The handler's rejection message, or a failure if it resolved. */
+  async function rejection(call: Promise<unknown>): Promise<string> {
+    try {
+      await call;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+    throw new Error("expected the call to reject");
+  }
+
+  test("index get with the right owner in another workspace returns undefined", async () => {
+    const index = await buildIndex();
+    expect(index.get("conv_b1", SCOPE_A)).toBeUndefined();
+    expect(index.get("conv_b1", { workspaceId: WS_B, userId: OWNER_ID })).toBeDefined();
+  });
+
+  test("index get with the right workspace and another owner returns undefined", async () => {
+    const index = await buildIndex();
+    expect(index.get("conv_peer", SCOPE_A)).toBeUndefined();
+  });
+
+  test("get in workspace A of a conversation held in workspace B fails as not found", async () => {
+    const index = await buildIndex();
+    expect(await rejection(handleGet({ id: "conv_b1" }, index, SCOPE_A))).toBe(
+      "Conversation not found: conv_b1",
+    );
+    expect(await rejection(handleGet({ id: "conv_none" }, index, SCOPE_A))).toBe(
+      "Conversation not found: conv_none",
+    );
+  });
+
+  test("export in workspace A of a conversation held in workspace B fails as not found", async () => {
+    const index = await buildIndex();
+    expect(await rejection(handleExport({ id: "conv_b1", format: "json" }, index, SCOPE_A))).toBe(
+      "Conversation not found: conv_b1",
+    );
+    expect(await rejection(handleExport({ id: "conv_none", format: "json" }, index, SCOPE_A))).toBe(
+      "Conversation not found: conv_none",
+    );
+  });
+
+  test("update in workspace A of a conversation held in workspace B fails and writes nothing", async () => {
+    const index = await buildIndex();
+    const before = readFileSync(B_FILE(), "utf8");
+    expect(
+      await rejection(handleUpdate({ id: "conv_b1", title: "retitled" }, index, SCOPE_A)),
+    ).toBe("Conversation not found: conv_b1");
+    expect(
+      await rejection(handleUpdate({ id: "conv_none", title: "retitled" }, index, SCOPE_A)),
+    ).toBe("Conversation not found: conv_none");
+    expect(readFileSync(B_FILE(), "utf8")).toBe(before);
+  });
+
+  test("fork in workspace A of a conversation held in workspace B fails and creates nothing", async () => {
+    const index = await buildIndex();
+    const before = listAllConversationFiles(join(workDir, "workspaces")).length;
+    expect(await rejection(handleFork({ id: "conv_b1" }, index, SCOPE_A))).toBe(
+      "Conversation not found: conv_b1",
+    );
+    expect(await rejection(handleFork({ id: "conv_none" }, index, SCOPE_A))).toBe(
+      "Conversation not found: conv_none",
+    );
+    expect(listAllConversationFiles(join(workDir, "workspaces"))).toHaveLength(before);
+  });
+
+  test("the door's by-id tools answer another workspace's id exactly as a missing one", async () => {
+    // Through the source, so the scope is the one the request carries rather
+    // than one a test constructs.
+    const args: Record<string, Record<string, unknown>> = {
+      get: {},
+      export: { format: "json" },
+      update: { title: "retitled" },
+      fork: {},
+    };
+    for (const [tool, extra] of Object.entries(args)) {
+      const held = await exec(tool, { ...extra, id: "conv_b1" }, WS_A);
+      const missing = await exec(tool, { ...extra, id: "conv_none" }, WS_A);
+      expect(held.isError).toBe(true);
+      expect(missing.isError).toBe(true);
+      expect(payload(held)).toEqual({ error: "Conversation not found: conv_b1" });
+      expect(payload(missing)).toEqual({ error: "Conversation not found: conv_none" });
+    }
+    expect(readFileSync(B_FILE(), "utf8")).not.toContain("retitled");
+  });
+});
+
+describe("list, search and stats handlers are walled to the scope's workspace", () => {
+  const SCOPE_A: ReadScope = { workspaceId: WS_A, userId: OWNER_ID };
+
+  async function buildIndex(): Promise<ConversationIndex> {
+    const index = new ConversationIndex();
+    await index.build(join(workDir, "workspaces"));
+    return index;
+  }
+
+  test("index list in workspace A never includes workspace B's conversations", async () => {
+    const index = await buildIndex();
+    const ids = index.list(SCOPE_A, { limit: 100 }).conversations.map((c) => c.id);
+    expect(ids.sort()).toEqual(["conv_a1", "conv_a2"]);
+  });
+
+  test("handleList in workspace A never includes workspace B's conversations", async () => {
+    const index = await buildIndex();
+    const page = await handleList({ limit: 100 }, index, SCOPE_A);
+    expect(page.conversations.map((c) => c.id).sort()).toEqual(["conv_a1", "conv_a2"]);
+    expect(page.totalCount).toBe(2);
+  });
+
+  test("handleSearch in workspace A never matches workspace B's transcripts", async () => {
+    const index = await buildIndex();
+    const result = await handleSearch({ query: WS_B }, index, SCOPE_A);
+    expect(result.results).toEqual([]);
+    const all = await handleSearch({ query: "hello from" }, index, SCOPE_A);
+    expect(all.results.map((r) => r.id).sort()).toEqual(["conv_a1", "conv_a2"]);
+  });
+
+  test("handleStats in workspace A counts only workspace A's conversations", async () => {
+    const index = await buildIndex();
+    const stats = await handleStats({ period: "all" }, index, SCOPE_A);
+    expect(stats.totalConversations).toBe(2);
   });
 });
