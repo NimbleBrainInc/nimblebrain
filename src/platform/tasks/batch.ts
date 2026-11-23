@@ -17,15 +17,18 @@
  *   balance lives across the gaps between runs. It is seeded when the driver
  *   opens it (create, resume, boot) from the budget minus the batch's cost, the
  *   sum of its items' costs; boot charges a run lost in a crash from the usage
- *   ledger, so its spend still counts. When the balance is spent, or a run that
- *   had the budget to itself is stopped by the batch's account (or the task's
- *   token budget), no new item starts and the batch pauses with reason `budget`.
+ *   ledger, so its spend still counts. When what is left cannot pay for
+ *   another item (nothing left, or no more than the cheapest item has cost), no
+ *   new item starts and the batch pauses with reason `budget`.
  * - **Sharing.** Each of a batch's runs may be held to a share of the budget,
  *   what is left divided by how many run at once. A run stopped by the budget
  *   after a model call had too small a share for its item, and what is left
  *   only falls, so the same share never pays for it later. The driver halves
  *   how many share the budget (`Batch.sharing`) and asks for the item again,
- *   down to one run at a time.
+ *   down to one run at a time. A run that had the budget to itself and was
+ *   stopped after a model call, with enough left for another item, settles its
+ *   item (`errorCode: exceeds_share`): no share of this budget pays for it, so
+ *   the batch goes on with the rest and never asks for it again on its own.
  * - **Pause.** No new item starts, and runs still queued at the door are
  *   withdrawn, their items back to pending; running runs finish.
  * - **Stop rule.** After `stopWhen.afterItems` assessed runs (pass, fail, or
@@ -43,6 +46,7 @@ import { randomBytes } from "node:crypto";
 import { log } from "../../observability/log.ts";
 import { runDetached } from "../../runtime/request-context.ts";
 import type { SpendBalances, SpendHold } from "../../runtime/spend.ts";
+import { formatCost } from "../../usage/cost.ts";
 import { WorkspaceRootMissingError } from "../../workspace/context.ts";
 import { executionOf, isAssessable } from "./assessment.ts";
 import {
@@ -180,6 +184,9 @@ interface LiveBatch {
   sharingAtStart: Map<string, number>;
 }
 
+/** What a budget stop means for the batch (`budgetStopOf`). */
+type BudgetStop = "none" | "again" | "exceeds_share" | "batch_spent" | "budget_spent";
+
 /** How many of a batch's runs share its budget, and so run at once. */
 export function sharingOf(batch: Pick<Batch, "concurrency" | "sharing">): number {
   return Math.max(1, Math.min(batch.concurrency, batch.sharing ?? batch.concurrency));
@@ -196,10 +203,14 @@ export function passRateOf(counts: Pick<Batch["counts"], "pass" | "fail">): numb
   return judged === 0 ? null : counts.pass / judged;
 }
 
-/** Whether an item's outcome is one `rerun_failed` puts back: no deliverable, or a failing one. */
+/**
+ * Whether an item's outcome is one `rerun_failed` puts back: no deliverable, a
+ * failing one, or one the budget settled (`exceeds_share`).
+ */
 export function isRerunnable(item: BatchItem): boolean {
   if (item.state !== "done") return false;
   return (
+    item.errorCode !== undefined ||
     item.execution === "failed" ||
     item.execution === "skipped" ||
     item.execution === "cancelled" ||
@@ -489,9 +500,9 @@ export class BatchDriver {
     const lb = this.load(wsId, ownerId, batchId);
     if (!lb) throw new Error(`Batch not found: "${batchId}".`);
     try {
-      if (budgetUsd !== undefined && action !== "resume") {
+      if (budgetUsd !== undefined && action !== "resume" && action !== "rerun_failed") {
         throw new Error(
-          "budgetUsd goes with `resume`: it sets the budget the batch resumes under.",
+          "budgetUsd goes with `resume` or `rerun_failed`: it sets the budget the batch runs under.",
         );
       }
       switch (action) {
@@ -502,7 +513,7 @@ export class BatchDriver {
         case "cancel":
           return this.controlCancel(lb);
         case "rerun_failed":
-          return this.controlRerun(lb);
+          return this.controlRerun(lb, budgetUsd);
       }
     } finally {
       // A batch loaded only to answer this, or left idle by it, goes back to disk.
@@ -614,13 +625,20 @@ export class BatchDriver {
     );
   }
 
-  private controlRerun(lb: LiveBatch): BatchControlResult {
+  private controlRerun(lb: LiveBatch, budgetUsd: number | undefined): BatchControlResult {
     const { batch } = lb;
     if (batch.state === "cancelled") throw new Error(`Batch "${batch.id}" is cancelled.`);
+    if (budgetUsd !== undefined && batch.state === "running") {
+      throw new Error(
+        `Batch "${batch.id}" is running: pause the batch first to change its budget, then ` +
+          "rerun_failed with the new budget.",
+      );
+    }
     const again = lb.items.filter(isRerunnable);
     if (again.length === 0) {
       return this.answer(lb, `Batch "${batch.id}" has no failed items to run again.`);
     }
+    if (budgetUsd !== undefined) this.setBudget(lb, budgetUsd);
     for (const item of again) {
       this.setItem(lb, backToPending(item));
       lb.pending.push(item.index);
@@ -694,7 +712,11 @@ export class BatchDriver {
       if (index === undefined) break;
       if (this.budgetSpent(lb)) {
         lb.pending.unshift(index);
-        this.pause(lb, "budget", "The batch's budget has nothing left for another run.");
+        this.pause(
+          lb,
+          "budget",
+          `The batch's budget has nothing left for another run (${this.spentOf(lb)}).`,
+        );
         return;
       }
       if (!this.requestItem(lb, index)) return;
@@ -838,12 +860,16 @@ export class BatchDriver {
     const item = lb.items[index];
     if (!item || item.runId !== runId) return;
     const stop = this.budgetStopOf(lb, runId, run);
-    this.settleItem(lb, index, run, stop !== "none", lb.withdrawn.delete(runId));
+    this.settleItem(lb, index, run, stop, lb.withdrawn.delete(runId));
     if (stop === "again") {
       // Wait for a reservation still held to free; with none held, ask again now.
       lb.waitForSettle = this.othersRunning(lb);
     } else if (stop === "batch_spent") {
-      this.pause(lb, "budget", "The batch's budget has too little left for another model call.");
+      this.pause(
+        lb,
+        "budget",
+        `The batch's budget has too little left for another item (${this.spentOf(lb)}).`,
+      );
     } else if (stop === "budget_spent") {
       this.pause(lb, "budget", "The task's token budget is spent for its window.");
     }
@@ -856,13 +882,12 @@ export class BatchDriver {
    * What an ended run's stop means for the batch: `none` when no budget
    * stopped it; `again` when its item can run again as things stand (another
    * run's reservation was in the way, or it outgrew its share and fewer now
-   * share); otherwise which budget is spent.
+   * share); `exceeds_share` when it had the batch's budget to itself, made a
+   * model call, and was stopped with enough left for another item, so the
+   * item, not the batch, is what the budget cannot pay for; otherwise which
+   * budget is spent.
    */
-  private budgetStopOf(
-    lb: LiveBatch,
-    runId: string,
-    run: TaskRun,
-  ): "none" | "again" | "batch_spent" | "budget_spent" {
+  private budgetStopOf(lb: LiveBatch, runId: string, run: TaskRun): BudgetStop {
     // Any run ending frees its reservation, so a reserved-out item may run now.
     lb.waitForSettle = false;
     // A batch run that ended after this one was asked for may have held the
@@ -883,7 +908,35 @@ export class BatchDriver {
       return "again";
     }
     if (this.reservedOut(lb, run.spendAccountId, endedSince)) return "again";
+    if (batchStop && madeCall && this.anotherItemFits(lb, run)) return "exceeds_share";
     return batchStop ? "batch_spent" : "budget_spent";
+  }
+
+  /**
+   * Whether what is left of the batch's budget can pay for another item: more
+   * than the cheapest item that completed has cost, or, before any has, more
+   * than nothing. A run that ended has already been debited from the live
+   * balance; without one, `run`'s cost is taken off the recorded budget.
+   */
+  private anotherItemFits(lb: LiveBatch, run: TaskRun): boolean {
+    const { batch } = lb;
+    if (batch.budgetUsd === undefined) return false;
+    const left =
+      this.config.spend?.balance(batchAccountId(batch)) ??
+      batch.budgetUsd - batch.costUsd - (run.costUsd ?? 0);
+    let cheapest = 0;
+    for (const item of lb.items) {
+      if (item.state !== "done" || item.execution !== "completed" || !item.costUsd) continue;
+      cheapest = cheapest === 0 ? item.costUsd : Math.min(cheapest, item.costUsd);
+    }
+    return left > cheapest;
+  }
+
+  /** What the batch has spent of its budget, for a pause message. */
+  private spentOf(lb: LiveBatch): string {
+    const { batch } = lb;
+    const budget = batch.budgetUsd === undefined ? "" : ` of ${formatCost(batch.budgetUsd)}`;
+    return `${formatCost(batch.costUsd)} spent${budget}`;
   }
 
   /** Give an item its run's outcome, or put it back to run again when the run did not really have its turn. */
@@ -891,13 +944,22 @@ export class BatchDriver {
     lb: LiveBatch,
     index: number,
     run: TaskRun,
-    accountStop: boolean,
+    stop: BudgetStop,
     withdrawn: boolean,
   ): void {
     const settled = this.outcomeOf(lb.items[index]!, run);
     const producedNothing = settled.execution === "failed" || settled.execution === "skipped";
+    const accountStop = stop !== "none" && stop !== "exceeds_share";
     let again = false;
-    if (!run.trigger && (this.stopping || withdrawn)) {
+    if (stop === "exceeds_share") {
+      // Its own run had the budget to itself and could not pay for it, so no
+      // share of this budget will: settled as it ended, with what it cost.
+      settled.errorCode = "exceeds_share";
+      settled.error =
+        "exceeds_share: a run of this item with what was left of the batch's budget to " +
+        `itself was stopped by it (${formatCost(settled.costUsd ?? 0)} spent on the item). ` +
+        "rerun_failed with a higher budgetUsd runs it again.";
+    } else if (!run.trigger && (this.stopping || withdrawn)) {
       // Dropped from the queue as the runtime stopped (asked again next boot),
       // or taken out of it by a pause (asked again on resume).
       again = true;
