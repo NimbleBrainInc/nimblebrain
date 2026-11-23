@@ -17,7 +17,7 @@ type HostedProvider = (typeof MODEL_PROVIDERS)[number];
 
 /** Each hosted provider's default model, as the id its catalog uses. */
 export const PROVIDER_DEFAULT_MODEL: Record<HostedProvider, string> = {
-  anthropic: "claude-sonnet-4-6",
+  anthropic: "claude-sonnet-5-5",
   openai: "gpt-6.1-sol",
   google: "gemini-4-argon",
   xai: "grok-4.7",
