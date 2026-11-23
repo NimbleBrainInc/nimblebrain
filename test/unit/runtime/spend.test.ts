@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createSpendBalances, type SpendPricing, spendIn } from "../../../src/runtime/spend.ts";
+import { resolveRates } from "../../../src/usage/cost.ts";
 import { emptyUsage, type TokenUsage } from "../../../src/usage/types.ts";
 
 /** $1 per 1M input tokens (up to $2 for a 1h cache write), $10 per 1M output tokens. */
@@ -270,5 +271,112 @@ describe("spend accounts — a run reserved as a whole (ADR-0063)", () => {
     first.release();
     second.release();
     expect(balances.balance("in")).toBeUndefined();
+  });
+});
+
+/**
+ * A run held by the gateway's grant is stopped once the tokens the gateway
+ * counts pass `reserveRun().tokens`. The gateway counts one number: input plus
+ * output, every kind alike, cache reads and writes included. These tests hold
+ * the grant to both sides of its contract, measured in that count.
+ */
+describe("spend accounts — the grant the gateway enforces", () => {
+  const SONNET: SpendPricing = {
+    model: "anthropic:claude-sonnet-4-6",
+    rates: resolveRates("anthropic:claude-sonnet-4-6"),
+  };
+
+  /** The tokens the gateway counts for one call: all input and all output. */
+  const counted = (u: TokenUsage) => u.inputTokens + u.outputTokens;
+
+  /**
+   * A production-shaped run of 20 calls. Call 1 writes the 20k-token prefix
+   * with a 1h TTL; each later call reads the cached prefix and history, writes
+   * the new turn with a 5m TTL, and sends a little uncached input. About 83% of
+   * the counted tokens are cache reads.
+   */
+  const CACHE_HEAVY_RUN: TokenUsage[] = [
+    {
+      ...usage(20_000, 800),
+      cacheWriteTokens: 20_000,
+      cacheWrite1hTokens: 20_000,
+    },
+    ...Array.from({ length: 19 }, () => ({
+      ...usage(30_000, 800),
+      cacheReadTokens: 26_500,
+      cacheWriteTokens: 1_750,
+      cacheWrite1hTokens: 0,
+    })),
+  ];
+
+  /** Each call's input is ten times its output. */
+  const PROMPT_HEAVY_CALL = usage(20_000, 2_000);
+
+  it("the fixtures are what the tests below say they are", () => {
+    expect(SONNET.rates).not.toBeNull();
+    const total = CACHE_HEAVY_RUN.reduce((sum, u) => sum + counted(u), 0);
+    const reads = CACHE_HEAVY_RUN.reduce((sum, u) => sum + (u.cacheReadTokens ?? 0), 0);
+    expect(reads / total).toBeGreaterThan(0.82);
+    expect(reads / total).toBeLessThan(0.84);
+    expect(PROMPT_HEAVY_CALL.inputTokens).toBe(10 * PROMPT_HEAVY_CALL.outputTokens);
+  });
+
+  // Invariant: a run is never held above its terms. The grant, spent entirely
+  // on the kind of token its account prices dearest, costs no more than the
+  // account in the account's own unit.
+  it("never grants more than the account pays for, whatever kind of token spends it", () => {
+    const usd = createSpendBalances()
+      .open([{ id: "usd", unit: "usd", remaining: 1 }], SONNET)
+      .reserveRun().tokens;
+    const asOutput = usage(0, usd);
+    const as1hWrite = { ...usage(usd, 0), cacheWriteTokens: usd, cacheWrite1hTokens: usd };
+    expect(spendIn("usd", asOutput, SONNET)).toBeLessThanOrEqual(1);
+    expect(spendIn("usd", as1hWrite, SONNET)).toBeLessThanOrEqual(1);
+
+    const out = createSpendBalances()
+      .open([{ id: "out", unit: "output_tokens", remaining: 50_000 }], SONNET)
+      .reserveRun().tokens;
+    expect(spendIn("output_tokens", usage(0, out), SONNET)).toBeLessThanOrEqual(50_000);
+
+    const inp = createSpendBalances()
+      .open([{ id: "in", unit: "input_tokens", remaining: 50_000 }], SONNET)
+      .reserveRun().tokens;
+    expect(spendIn("input_tokens", usage(inp, 0), SONNET)).toBeLessThanOrEqual(50_000);
+  });
+
+  // Invariant: a run that can pay is admitted. A run whose priced cost is 0.8x
+  // its `usd` account must fit inside the grant. Expected to fail: the gateway
+  // enforces a count of tokens, every kind alike, and `reserveRun` converts
+  // dollars to that count at the dearest per-token rate, so a mix that is
+  // mostly cache reads is stopped after a small part of its dollars. When the
+  // grant is enforced in the account's unit, this passes and `bun test` reports
+  // it; make it a plain `it` then.
+  it.failing("admits a cache-heavy run whose cost is 0.8x its dollar account", () => {
+    const cost = CACHE_HEAVY_RUN.reduce((sum, u) => sum + spendIn("usd", u, SONNET), 0);
+    const grant = createSpendBalances()
+      .open([{ id: "usd", unit: "usd", remaining: cost / 0.8 }], SONNET)
+      .reserveRun().tokens;
+    const total = CACHE_HEAVY_RUN.reduce((sum, u) => sum + counted(u), 0);
+    expect(total).toBeLessThanOrEqual(grant);
+  });
+
+  // Invariant: a run that can pay is admitted. An `output_tokens` budget B lets
+  // the run write at least 0.95B output before the grant stops it. Expected to
+  // fail: `reserveRun` grants B tokens and the gateway counts input against it
+  // too, so a run whose prompts are ten times its output stops near B/11. When
+  // the grant is enforced in the account's unit, this passes and `bun test`
+  // reports it; make it a plain `it` then.
+  it.failing("admits calls until an output budget is nearly spent when input is 10x output", () => {
+    const budget = 100_000;
+    const grant = createSpendBalances()
+      .open([{ id: "out", unit: "output_tokens", remaining: budget }], SONNET)
+      .reserveRun().tokens;
+    let countedSoFar = 0;
+    let output = 0;
+    while (output < budget && countedSoFar + counted(PROMPT_HEAVY_CALL) <= grant) {
+      countedSoFar += counted(PROMPT_HEAVY_CALL);
+      output += PROMPT_HEAVY_CALL.outputTokens;
+    }
+    expect(output).toBeGreaterThanOrEqual(0.95 * budget);
   });
 });
