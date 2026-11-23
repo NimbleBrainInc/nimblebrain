@@ -1877,6 +1877,12 @@ export declare const TaskBatchItemView: import("@sinclair/typebox").TObject<{
     label: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">>;
     costUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    /**
+     * exceeds_share: a run of the item with what was left of the batch's
+     * budget to itself could not pay for it, so it was settled rather than run
+     * again; rerun_failed (with a higher budgetUsd) runs it again.
+     */
+    errorCode: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"exceeds_share">>;
     /** The top-level scalar fields of the run's structured output, when it has one. */
     output: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TNull]>>>;
     /** With `output: "full"`: the run's whole structured output. */
@@ -1996,6 +2002,12 @@ export declare const TasksBatchOutput: import("@sinclair/typebox").TObject<{
         label: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">>;
         costUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        /**
+         * exceeds_share: a run of the item with what was left of the batch's
+         * budget to itself could not pay for it, so it was settled rather than run
+         * again; rerun_failed (with a higher budgetUsd) runs it again.
+         */
+        errorCode: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"exceeds_share">>;
         /** The top-level scalar fields of the run's structured output, when it has one. */
         output: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TNull]>>>;
         /** With `output: "full"`: the run's whole structured output. */

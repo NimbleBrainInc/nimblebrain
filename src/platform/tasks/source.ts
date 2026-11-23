@@ -21,6 +21,7 @@ import {
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { unmatchedAllowedTools } from "../../tools/tool-pattern.ts";
 import { ledgerCostByTaskRun } from "../../usage/aggregate.ts";
+import { formatCost } from "../../usage/cost.ts";
 import { splitInnerToolName } from "../../util/tool-name.ts";
 import type { TaskWarning } from "../schemas/tasks.ts";
 import { BatchDriver, passRateOf } from "./batch.ts";
@@ -277,9 +278,9 @@ function notifyRunFailed(
 /**
  * The inbox item for a batch that paused on its own: its budget ran out or its
  * stop rule fired. Generic for the same reason as a poor result (see
- * `poorResultEnvelope`): the batch id, its owner's id, why it paused, and its
- * counts, never the task's name, its criteria or stop rule, or any input or
- * deliverable.
+ * `poorResultEnvelope`): the batch id, its owner's id, why it paused, its
+ * counts, and what it has spent of its budget, never the task's name, its
+ * criteria or stop rule, or any input or deliverable.
  */
 export function batchPausedEnvelope(batch: Batch): NotificationEnvelope {
   const reason = batch.pause?.reason ?? "manual";
@@ -289,8 +290,12 @@ export function batchPausedEnvelope(batch: Batch): NotificationEnvelope {
     reason === "pass_rate"
       ? "its pass rate fell below its stop rule"
       : reason === "budget"
-        ? "its budget has too little left for another run"
+        ? "its budget has too little left for another item"
         : "it was paused";
+  const spent =
+    batch.budgetUsd !== undefined
+      ? ` It has spent ${formatCost(batch.costUsd)} of its ${formatCost(batch.budgetUsd)} budget.`
+      : "";
   return {
     eventId: `batch-paused:${batch.id}:${batch.pause?.at ?? batch.updatedAt}`,
     name: "task.batch.paused",
@@ -305,6 +310,8 @@ export function batchPausedEnvelope(batch: Batch): NotificationEnvelope {
       fail,
       uncertain,
       passRate: passRateOf(batch.counts),
+      costUsd: batch.costUsd,
+      ...(batch.budgetUsd !== undefined ? { budgetUsd: batch.budgetUsd } : {}),
     },
     _meta: {
       "ai.nimblebrain/notification": {
@@ -312,7 +319,7 @@ export function batchPausedEnvelope(batch: Batch): NotificationEnvelope {
         title: "A batch of scheduled task runs paused",
         body:
           `Batch ${batch.id} paused because ${why} (${done} of ${batch.items} done: ` +
-          `${pass} pass, ${fail} fail, ${uncertain} uncertain). Its owner can resume or ` +
+          `${pass} pass, ${fail} fail, ${uncertain} uncertain).${spent} Its owner can resume or ` +
           "cancel it in Scheduled.",
       },
     },

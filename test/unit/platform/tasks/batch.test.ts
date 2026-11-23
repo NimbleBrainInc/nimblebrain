@@ -127,6 +127,8 @@ interface HarnessOptions {
   /** Emulate the door's spend accounts: each run makes `calls` model calls of 100 in / 100 out. */
   door?: {
     calls: number;
+    /** With `grant`: the calls an item's run makes, in place of `calls`. */
+    callsFor?: (input: unknown) => number;
     /** Output tokens a call actually writes (default 100, the most it may reserve). */
     writes?: number;
     /** Hold each run after its first call is reserved, until the test releases it. */
@@ -231,7 +233,8 @@ function harness(opts: HarnessOptions = {}): Harness {
         try {
           const share = hold.reserveRun();
           usedInput = 0;
-          for (let i = 0; i < opts.door.calls; i++) {
+          const calls = opts.door.callsFor?.(input?.data) ?? opts.door.calls;
+          for (let i = 0; i < calls; i++) {
             if (usedInput >= share.tokens) {
               stop = share.accountId;
               break;
@@ -806,9 +809,10 @@ describe("a share of the budget too small for an item", () => {
     expect(h.paused).toHaveLength(0);
   });
 
-  it("pauses once a run that had the budget to itself is stopped, and shares as asked under a new budget", async () => {
+  it("settles an item a run with the budget to itself could not pay for, and runs it under a new budget on rerun_failed", async () => {
     // Five calls need more than 400 tokens granted; 0.25 grants 62, then 125,
-    // then 249 to a run alone: three runs, the last stopping the batch.
+    // then 249 to a run alone: three runs, the last settling the item with
+    // most of the budget left.
     const h = harness({
       door: { calls: 5, grant: true, cachedInput: true },
       maxConcurrentRuns: 4,
@@ -818,17 +822,25 @@ describe("a share of the budget too small for an item", () => {
       { taskId: "enrich", items: items("a"), concurrency: 4, budgetUsd: 0.25 },
       h.ctx,
     );
-    await waitFor(() => batchOf(h, out.batch.id).state === "paused", "budget pause");
-    const [item] = readBatchItems(workDir, WS, OWNER, out.batch.id);
-    expect(item?.previousRunIds).toHaveLength(3);
-    expect(item?.state).toBe("pending");
-    expect(batchOf(h, out.batch.id).pause?.reason).toBe("budget");
-    expect(batchOf(h, out.batch.id).sharing).toBe(1);
-
-    h.driver.control(WS, OWNER, out.batch.id, "resume", 4);
     await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    const [item] = readBatchItems(workDir, WS, OWNER, out.batch.id);
+    expect(item?.previousRunIds).toHaveLength(2);
+    expect(item?.execution).toBe("failed");
+    expect(item?.errorCode).toBe("exceeds_share");
+    expect(item?.costUsd).toBeGreaterThan(0);
+    expect(batchOf(h, out.batch.id).sharing).toBe(1);
+    expect(h.paused).toHaveLength(0);
+
+    expect(() =>
+      h.driver.control(WS, OWNER, out.batch.id, "rerun_failed", batchOf(h, out.batch.id).costUsd),
+    ).toThrow(/more than/);
+    h.driver.control(WS, OWNER, out.batch.id, "rerun_failed", 4);
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    expect(batchOf(h, out.batch.id).budgetUsd).toBe(4);
     expect(batchOf(h, out.batch.id).sharing).toBeUndefined();
     expect(batchOf(h, out.batch.id).counts.pass).toBe(1);
+    const [rerun] = readBatchItems(workDir, WS, OWNER, out.batch.id);
+    expect(rerun?.errorCode).toBeUndefined();
   });
 
   it("takes its queued runs back to pending when it halves, and completes with fewer sharing", async () => {
@@ -897,6 +909,111 @@ describe("a share of the budget too small for an item", () => {
     // With two slots and two sharing, no run waits at the door again.
     expect(everQueued).toBe(false);
     expect(h.paused).toHaveLength(0);
+  });
+});
+
+describe("an item no share of the budget can pay for", () => {
+  it("runs it at most log2(concurrency) + 1 times, settles it exceeds_share, and goes on without pausing; a resume never runs it again", async () => {
+    // Every call costs 0.001 and is granted 100 tokens of a run's share, at
+    // 1000 tokens a dollar. The cheap items make one call; "big" makes a
+    // thousand, more than any share of 0.15 (at most 150 tokens) pays for.
+    const h = harness({
+      gated: true,
+      door: {
+        calls: 1,
+        callsFor: (input) => ((input as { v?: string }).v === "big" ? 1000 : 1),
+        grant: true,
+        cachedInput: true,
+      },
+      maxConcurrentRuns: 8,
+    });
+    makeTask();
+    const cheap = Array.from({ length: 15 }, (_, i) => `c${i}`);
+    const out = handleRunBatch(
+      // The budget is ten times what the cheap items cost together.
+      { taskId: "enrich", items: items("big", ...cheap), concurrency: 8, budgetUsd: 0.15 },
+      h.ctx,
+    );
+    const id = out.batch.id;
+    const read = () => readBatchItems(workDir, WS, OWNER, id);
+    const bigRuns = () => readRuns(workDir, WS, OWNER, "enrich").filter((r) => r.batchIndex === 0);
+    const isBig = (g: Gate) => (g.input as { v?: string }).v === "big";
+
+    // Big's runs go as soon as they start. A cheap run goes only while big is
+    // pending (waiting for fewer runs to share), so the batch still has cheap
+    // items left when big is settled.
+    const released = new Set<Gate>();
+    let drainCheap = false;
+    const drain = setInterval(() => {
+      for (const g of h.gates) if (isBig(g)) g.release();
+      const held = h.gates.filter((g) => !isBig(g) && !released.has(g));
+      if (drainCheap) {
+        for (const g of held) g.release();
+      } else if (read()[0]?.state === "pending" && held[0]) {
+        released.add(held[0]);
+        held[0].release();
+      }
+    }, 5);
+    try {
+      await waitFor(() => read()[0]?.state === "done", "big settled", 5000);
+      const big = read()[0]!;
+      expect(big.errorCode).toBe("exceeds_share");
+      expect(big.error).toContain("exceeds_share");
+      expect(["failed", "incomplete"]).toContain(big.execution);
+      expect(big.costUsd).toBeGreaterThan(0);
+      expect(bigRuns().length).toBeLessThanOrEqual(Math.log2(8) + 1);
+      expect(batchOf(h, id).state).toBe("running");
+      expect(h.paused).toHaveLength(0);
+      const runsOfBig = bigRuns().length;
+
+      // A pause and a resume ask for what is pending, never the settled item.
+      h.driver.control(WS, OWNER, id, "pause");
+      h.driver.control(WS, OWNER, id, "resume");
+      drainCheap = true;
+      await waitFor(() => batchOf(h, id).state === "completed", "completion", 5000);
+      expect(bigRuns()).toHaveLength(runsOfBig);
+      expect(read()[0]?.errorCode).toBe("exceeds_share");
+    } finally {
+      clearInterval(drain);
+    }
+    const batch = batchOf(h, id);
+    expect(batch.counts.pass).toBe(15);
+    expect(batch.counts.failed + batch.counts.not_assessed).toBe(1);
+    expect(h.paused).toHaveLength(0);
+    expect(batch.costUsd).toBeLessThan(0.15);
+  });
+
+  it("pauses for budget when what is left cannot pay for the cheapest item, with spent and budget in the notice", async () => {
+    // One run at a time, so each has the budget to itself. a and b cost 0.001
+    // each, leaving 0.0015; big's run is granted 1.5 tokens, makes one call,
+    // and leaves 0.0005, less than either cheap item cost.
+    const h = harness({
+      door: {
+        calls: 1,
+        callsFor: (input) => ((input as { v?: string }).v === "big" ? 1000 : 1),
+        grant: true,
+        cachedInput: true,
+      },
+      maxConcurrentRuns: 4,
+    });
+    makeTask();
+    const out = handleRunBatch(
+      { taskId: "enrich", items: items("a", "b", "big", "c"), concurrency: 1, budgetUsd: 0.0035 },
+      h.ctx,
+    );
+    await waitFor(() => batchOf(h, out.batch.id).state === "paused", "budget pause");
+    const batch = batchOf(h, out.batch.id);
+    expect(batch.pause?.reason).toBe("budget");
+    expect(batch.pause?.message).toContain("0.30¢ spent of 0.35¢");
+    expect(batch.counts).toMatchObject({ pass: 2, pending: 2 });
+    const big = readBatchItems(workDir, WS, OWNER, out.batch.id)[2];
+    expect(big?.state).toBe("pending");
+    expect(big?.errorCode).toBeUndefined();
+    expect(h.paused).toHaveLength(1);
+    const envelope = batchPausedEnvelope(h.paused[0]!);
+    expect(envelope.data).toMatchObject({ reason: "budget", budgetUsd: 0.0035 });
+    expect((envelope.data as { costUsd: number }).costUsd).toBeCloseTo(0.003, 9);
+    expect(JSON.stringify(envelope)).toContain("spent 0.30¢ of its 0.35¢ budget");
   });
 });
 

@@ -296,6 +296,7 @@ function toItemView(item: BatchItem, output: TaskBatchItemView["output"]): TaskB
     ...(label ? { label } : {}),
     ...(item.costUsd !== undefined ? { costUsd: item.costUsd } : {}),
     ...(item.error ? { error: item.error } : {}),
+    ...(item.errorCode ? { errorCode: item.errorCode } : {}),
     ...(output ? { output } : {}),
   };
 }

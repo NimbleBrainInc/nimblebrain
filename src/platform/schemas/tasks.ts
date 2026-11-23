@@ -702,8 +702,10 @@ export const TasksRunBatchInput = Type.Object(
         exclusiveMinimum: 0,
         description:
           "Whole-batch ceiling in USD, checked before every model call across all of the batch's " +
-          "runs at once. When it is spent, no new item starts and the batch pauses (resume " +
-          "with a higher `budgetUsd`).",
+          "runs at once. When what is left cannot pay for another item, no new item starts and " +
+          "the batch pauses (resume with a higher `budgetUsd`). An item that costs more than " +
+          "what is left can grant one run ends with errorCode exceeds_share and the batch goes " +
+          "on (rerun_failed with a higher `budgetUsd` runs it again).",
       }),
     ),
     stopWhen: Type.Optional(
@@ -799,17 +801,18 @@ export const TasksBatchControlInput = Type.Object(
         "pause: no new item starts; runs still queued are taken back, runs in flight finish. " +
         "resume: start items again. cancel: stop for good, cancelling queued and running runs. " +
         "rerun_failed: run again, each as a new run, every item that failed, was skipped or " +
-        "cancelled, or was judged fail (not uncertain ones: judge those with tasks__assess). " +
-        "A batch paused for budget needs resume with a higher `budgetUsd` before anything " +
-        "runs again.",
+        "cancelled, or was judged fail, or ended with errorCode exceeds_share (not uncertain " +
+        "ones: judge those with tasks__assess). A batch paused for budget needs resume with a " +
+        "higher `budgetUsd` before anything runs again; an exceeds_share item needs " +
+        "rerun_failed with a higher `budgetUsd`.",
     }),
     budgetUsd: Type.Optional(
       Type.Number({
         exclusiveMinimum: 0,
         description:
-          "With resume of a paused batch: the budget to resume under (more than already spent). " +
-          "A running batch refuses it (pause first), and so does one whose runs sharing the old " +
-          "budget are still in flight.",
+          "With resume or rerun_failed of a batch that is not running: the budget to run under " +
+          "(more than already spent). A running batch refuses it (pause first), and so does one " +
+          "whose runs sharing the old budget are still in flight.",
       }),
     ),
   },
@@ -1617,6 +1620,12 @@ export const TaskBatchItemView = Type.Object({
   label: Type.Optional(TaskRunLabel),
   costUsd: Type.Optional(Type.Number()),
   error: Type.Optional(Type.String()),
+  /**
+   * exceeds_share: a run of the item with what was left of the batch's
+   * budget to itself could not pay for it, so it was settled rather than run
+   * again; rerun_failed (with a higher budgetUsd) runs it again.
+   */
+  errorCode: Type.Optional(StringEnum(["exceeds_share"] as const)),
   /** The top-level scalar fields of the run's structured output, when it has one. */
   output: Type.Optional(
     Type.Record(

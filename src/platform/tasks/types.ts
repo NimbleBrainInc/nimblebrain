@@ -870,4 +870,14 @@ export interface BatchItem {
   costUsd?: number;
   /** Why the run did not succeed, when it says. */
   error?: string;
+  /**
+   * Why the batch settled the item rather than running it again:
+   * `exceeds_share`, its run had the batch's budget to itself and was stopped
+   * by it after a model call while the balance could still pay for another
+   * item. `rerun_failed` (with a raised `budgetUsd`) runs it again.
+   */
+  errorCode?: BatchItemErrorCode;
 }
+
+/** Why the batch settled an item without running it again (`BatchItem.errorCode`). */
+export type BatchItemErrorCode = "exceeds_share";
