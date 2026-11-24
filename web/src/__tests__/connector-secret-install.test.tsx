@@ -70,7 +70,8 @@ const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
 
-const { ConnectorDirectory } = await import("../pages/settings/ConnectorBrowsePage");
+const { PluginsBrowsePage } = await import("../pages/PluginsBrowsePage");
+const { buttonNamed, openEntry } = await import("./directory-entry-helpers");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 
 // The real router, not a mock of it: a whole-module `react-router-dom` stub is
@@ -101,7 +102,7 @@ function Page() {
       <MemoryRouter initialEntries={["/w/000f7ed6658f9d30/plugins/browse"]}>
         <LocationProbe />
         <Routes>
-          <Route path="/w/:slug/plugins/browse" element={<ConnectorDirectory />} />
+          <Route path="/w/:slug/plugins/browse/*" element={<PluginsBrowsePage />} />
           <Route path="*" element={null} />
         </Routes>
       </MemoryRouter>
@@ -149,8 +150,9 @@ async function mount(element: React.ReactElement): Promise<Mounted> {
 
 function findButton(container: HTMLElement, text: string): HTMLButtonElement | null {
   return (
-    Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes(text)) ??
-    null
+    Array.from(container.querySelectorAll("button")).find((b) =>
+      `${b.getAttribute("aria-label") ?? ""} ${b.textContent ?? ""}`.includes(text),
+    ) ?? null
   );
 }
 
@@ -163,8 +165,9 @@ function setInputValue(input: HTMLInputElement, value: string): void {
 
 async function openDialog(): Promise<Mounted> {
   const m = await mount(<Page />);
+  const page = await openEntry(m.container, "Acme DB Query");
   await act(async () => {
-    findButton(m.container, "Install")?.click();
+    buttonNamed(page, "Install")?.click();
   });
   await act(async () => {
     await Promise.resolve();
@@ -173,7 +176,7 @@ async function openDialog(): Promise<Mounted> {
 }
 
 describe("a Browse entry that declares secretHeaders", () => {
-  test("says so on the card, before the click", async () => {
+  test("says so on its row, before the click", async () => {
     mounted = await mount(<Page />);
     expect(mounted.container.textContent).toContain("Needs a credential");
   });
@@ -188,7 +191,7 @@ describe("a Browse entry that declares secretHeaders", () => {
 
   test("the value is masked and never rendered back into the DOM", async () => {
     mounted = await openDialog();
-    const input = document.body.getElementsByTagName("input")[1] as HTMLInputElement;
+    const input = document.body.querySelector('[role="dialog"] input') as HTMLInputElement;
     expect(input.type).toBe("password");
     await act(async () => {
       setInputValue(input, "postgres://secret.acme.test/db");
@@ -198,7 +201,7 @@ describe("a Browse entry that declares secretHeaders", () => {
 
   test("submitting writes every key, then installs — in that order", async () => {
     mounted = await openDialog();
-    const input = document.body.getElementsByTagName("input")[1] as HTMLInputElement;
+    const input = document.body.querySelector('[role="dialog"] input') as HTMLInputElement;
     await act(async () => {
       setInputValue(input, "postgres://a.acme.test/db");
     });
@@ -215,7 +218,7 @@ describe("a Browse entry that declares secretHeaders", () => {
     expect(setWorkspaceSecret.mock.calls[0]).toEqual(["acme.db_url", "postgres://a.acme.test/db"]);
     // provider-auth completes without a sign-in, so the install finishes on
     // Browse — the credential is already in place when it starts.
-    expect(lastPath).toBe("/w/000f7ed6658f9d30/plugins/browse");
+    expect(lastPath).toBe("/w/000f7ed6658f9d30/plugins/browse/com.acme/db-query");
   });
 
   test("cancelling installs nothing and stores nothing", async () => {
@@ -250,7 +253,7 @@ describe("a Browse entry that declares secretHeaders", () => {
   test("filling the required value enables submit", async () => {
     mounted = await openDialog();
     expect(findButton(document.body, "Save and install")?.disabled).toBe(true);
-    const input = document.body.getElementsByTagName("input")[1] as HTMLInputElement;
+    const input = document.body.querySelector('[role="dialog"] input') as HTMLInputElement;
     await act(async () => {
       setInputValue(input, "postgres://a.acme.test/db");
     });

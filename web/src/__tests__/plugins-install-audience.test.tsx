@@ -131,9 +131,9 @@ const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes } = await import("react-router-dom");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
-const { ConnectorDirectory, PERSONAL_CONNECTORS_PATH } = await import(
-  "../pages/settings/ConnectorBrowsePage"
-);
+const { PERSONAL_CONNECTORS_PATH } = await import("../pages/settings/ConnectorBrowsePage");
+const { PluginsBrowsePage } = await import("../pages/PluginsBrowsePage");
+const { buttonNamed, entryRow, openEntry } = await import("./directory-entry-helpers");
 
 function workspace(userRole: "admin" | "member") {
   return { id: WS_ID, name: "Acme", memberCount: 2, connectorCount: 0, userRole };
@@ -143,9 +143,9 @@ function Page({ role }: { role: "admin" | "member" }) {
   const ws = workspace(role);
   return (
     <WorkspaceProvider initialWorkspaces={[ws]} initialActiveId={ws.id}>
-      <MemoryRouter initialEntries={[`/w/${SLUG}/plugins`]}>
+      <MemoryRouter initialEntries={[`/w/${SLUG}/plugins/browse`]}>
         <Routes>
-          <Route path="/w/:slug/plugins" element={<ConnectorDirectory offerPersonal />} />
+          <Route path="/w/:slug/plugins/browse/*" element={<PluginsBrowsePage />} />
         </Routes>
       </MemoryRouter>
     </WorkspaceProvider>
@@ -191,13 +191,6 @@ async function mount(role: "admin" | "member"): Promise<Mounted> {
   };
 }
 
-function card(container: HTMLElement, name: string): HTMLElement {
-  const title = Array.from(container.querySelectorAll("div")).find((d) => d.textContent === name);
-  const found = title?.closest(".border") as HTMLElement | null | undefined;
-  if (!found) throw new Error(`no card for ${name}`);
-  return found;
-}
-
 function button(root: ParentNode, text: string): HTMLButtonElement | null {
   const match = Array.from(root.querySelectorAll("button")).find((b) =>
     b.textContent?.includes(text),
@@ -205,7 +198,12 @@ function button(root: ParentNode, text: string): HTMLButtonElement | null {
   return (match as HTMLButtonElement | undefined) ?? null;
 }
 
-/** The dialog's own Install, not a card's. */
+/** The Configure link on an entry's page. */
+function configureLink(page: HTMLElement): HTMLAnchorElement | undefined {
+  return Array.from(page.querySelectorAll("a")).find((a) => a.textContent === "Configure");
+}
+
+/** The dialog's own Install, not the page's. */
 function confirmButton(): HTMLButtonElement | null {
   const dialog = document.querySelector('[role="dialog"]');
   return dialog ? button(dialog, "Install") : null;
@@ -229,7 +227,8 @@ async function click(el: HTMLElement | null) {
 describe("Plugins → Browse: whom an install is for", () => {
   test("Install asks, opening on Just me, with Everyone in the workspace beside it", async () => {
     mounted = await mount("admin");
-    await click(button(card(mounted.container, "Notes"), "Install"));
+    const page = await openEntry(mounted.container, "Notes");
+    await click(buttonNamed(page, "Install"));
     const options = radios();
     expect(options.map((r) => r.value)).toEqual(["personal", "workspace"]);
     expect(options[0]?.checked).toBe(true);
@@ -240,7 +239,8 @@ describe("Plugins → Browse: whom an install is for", () => {
 
   test("Just me installs personally, granted here, before the sign-in leaves the page", async () => {
     mounted = await mount("admin");
-    await click(button(card(mounted.container, "Notes"), "Install"));
+    const page = await openEntry(mounted.container, "Notes");
+    await click(buttonNamed(page, "Install"));
     await click(confirmButton());
     // The grant rides the install call, so it is written before the redirect:
     // when the OAuth callback brings the person back, there is nothing left to
@@ -256,19 +256,20 @@ describe("Plugins → Browse: whom an install is for", () => {
     personalAlreadyInstalled = true;
     personalState = "running";
     mounted = await mount("admin");
-    await click(button(card(mounted.container, "Notes"), "Install"));
+    const page = await openEntry(mounted.container, "Notes");
+    await click(buttonNamed(page, "Install"));
     await click(confirmButton());
     // The install call still grants it here; a Connect on a live connection
     // would be refused as busy, so none is made.
     expect(calls).toEqual([`installPersonalConnector:com.acme/notes:${WS_ID}`]);
-    const notes = card(mounted.container, "Notes");
-    expect(button(notes, "Installed")?.disabled).toBe(true);
-    expect(notes.querySelector("a")?.getAttribute("href")).toBe(PERSONAL_CONNECTORS_PATH);
+    expect(buttonNamed(page, "Installed")?.disabled).toBe(true);
+    expect(configureLink(page)?.getAttribute("href")).toBe(PERSONAL_CONNECTORS_PATH);
   });
 
   test("Everyone here installs into the workspace as before", async () => {
     mounted = await mount("admin");
-    await click(button(card(mounted.container, "Notes"), "Install"));
+    const page = await openEntry(mounted.container, "Notes");
+    await click(buttonNamed(page, "Install"));
     const everyone = radios().find((r) => r.value === "workspace");
     await click(everyone ?? null);
     await click(confirmButton());
@@ -284,11 +285,11 @@ describe("Plugins → Browse: whom an install is for", () => {
       { serverName: "com-acme-notes", catalogId: NOTES.id } as ApiClient.InstalledConnector,
     ];
     mounted = await mount("member");
-    const notes = card(mounted.container, "Notes");
-    expect(notes.querySelector("a")?.getAttribute("href")).toBe(
+    const page = await openEntry(mounted.container, "Notes");
+    expect(configureLink(page)?.getAttribute("href")).toBe(
       `/w/${SLUG}/settings/connectors/com-acme-notes`,
     );
-    await click(button(notes, "Install for me"));
+    await click(buttonNamed(page, "Install for me"));
     // Only Just me: the workspace's own install is already there.
     expect(radios().map((r) => r.value)).toEqual(["personal"]);
     expect(document.body.textContent).toContain("Everyone in Acme already uses it");
@@ -302,9 +303,11 @@ describe("Plugins → Browse: whom an install is for", () => {
 
   test("an entry that can't take a per-person credential installs for the workspace, and says why", async () => {
     mounted = await mount("admin");
-    const shared = card(mounted.container, "Shared");
-    expect(shared.textContent).toContain("Uses one account for the workspace");
-    await click(button(shared, "Install"));
+    expect(entryRow(mounted.container, "Shared").textContent).toContain(
+      "Uses one account for the workspace",
+    );
+    const page = await openEntry(mounted.container, "Shared");
+    await click(buttonNamed(page, "Install"));
     // No question to ask: the only choice is the workspace.
     expect(radios()).toHaveLength(0);
     expect(calls[0]).toBe("installConnector:com.acme/shared");
@@ -312,7 +315,8 @@ describe("Plugins → Browse: whom an install is for", () => {
 
   test("a member who may not write the workspace can install for themselves only", async () => {
     mounted = await mount("member");
-    await click(button(card(mounted.container, "Notes"), "Install"));
+    const page = await openEntry(mounted.container, "Notes");
+    await click(buttonNamed(page, "Install"));
     expect(radios().map((r) => r.value)).toEqual(["personal"]);
     expect(document.body.textContent).not.toContain("Everyone in Acme");
     expect(document.body.textContent).toContain("A workspace admin can install it for everyone");
@@ -320,9 +324,11 @@ describe("Plugins → Browse: whom an install is for", () => {
 
   test("a member who may not write the workspace, on a workspace-only entry, is told why", async () => {
     mounted = await mount("member");
-    const shared = card(mounted.container, "Shared");
-    expect(button(shared, "Install")).toBeNull();
-    expect(shared.textContent).toContain("Uses one account for the workspace");
-    expect(shared.textContent).toContain("Workspace admin required");
+    expect(entryRow(mounted.container, "Shared").textContent).toContain(
+      "Uses one account for the workspace",
+    );
+    const page = await openEntry(mounted.container, "Shared");
+    expect(buttonNamed(page, "Install")?.disabled).toBe(true);
+    expect(page.textContent).toContain("Workspace admin required");
   });
 });

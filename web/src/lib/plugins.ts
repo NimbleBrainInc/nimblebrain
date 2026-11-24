@@ -49,6 +49,16 @@ export function browsePluginsPath(slug: string): string {
   return `/w/${slug}/plugins/browse`;
 }
 
+/**
+ * One directory entry's page, `/w/<slug>/plugins/browse/<catalog id>`. A catalog
+ * id is the registry's reverse-DNS name and carries a `/` (`com.notion/mcp`), so
+ * it is the route's splat: each segment is encoded and the slashes stay.
+ */
+export function browsePluginPath(slug: string, catalogId: string): string {
+  const id = catalogId.split("/").map(encodeURIComponent).join("/");
+  return `${browsePluginsPath(slug)}/${id}`;
+}
+
 /** The workspace's Skills page, `/w/<slug>/skills`. */
 export function skillsPath(slug: string): string {
   return `/w/${slug}/skills`;

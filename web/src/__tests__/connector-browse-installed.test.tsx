@@ -7,7 +7,8 @@
 // stores a per-install session URL, so it is matched to its directory entry by
 // catalog id — a URL-only match would leave it offered for install again.
 //
-// A provider install stays on the page: the button spins, then reads Installed.
+// Install is on each entry's page. A provider install stays on that page: the
+// button spins, then reads Installed, and the entry's row reads Installed too.
 // The exception is an install that came back with a warning: that connector is
 // not working, and Configure is where its state renders, so it goes there.
 //
@@ -74,9 +75,9 @@ const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
 
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
-const { ConnectorDirectory, INSTALL_MIN_SPINNER_MS } = await import(
-  "../pages/settings/ConnectorBrowsePage"
-);
+const { INSTALL_MIN_SPINNER_MS } = await import("../pages/settings/ConnectorBrowsePage");
+const { PluginsBrowsePage } = await import("../pages/PluginsBrowsePage");
+const { buttonNamed, entryPage, entryRow, openEntry } = await import("./directory-entry-helpers");
 
 let lastPath = "";
 
@@ -102,7 +103,7 @@ function Page() {
       <MemoryRouter initialEntries={["/w/000f7ed6658f9d30/plugins/browse"]}>
         <LocationProbe />
         <Routes>
-          <Route path="/w/:slug/plugins/browse" element={<ConnectorDirectory />} />
+          <Route path="/w/:slug/plugins/browse/*" element={<PluginsBrowsePage />} />
           <Route path="*" element={null} />
         </Routes>
       </MemoryRouter>
@@ -149,34 +150,26 @@ async function mount(element: React.ReactElement): Promise<Mounted> {
   };
 }
 
-/** The card element holding `name`. */
-function card(container: HTMLElement, name: string): HTMLElement {
-  const title = Array.from(container.querySelectorAll("div")).find((d) => d.textContent === name);
-  const found = title?.closest(".border") as HTMLElement | null | undefined;
-  if (!found) throw new Error(`no card for ${name}`);
-  return found;
-}
-
-function buttonIn(el: HTMLElement): HTMLButtonElement | null {
-  return el.querySelector("button");
-}
-
 function installedSection(container: HTMLElement): HTMLElement | null {
   return container.querySelector("section");
 }
 
 describe("Browse lists installed connectors", () => {
-  test("an installed entry sits in the Installed section, not offered for install", async () => {
+  test("an installed entry sits in the Installed section, marked Installed", async () => {
     installed = [
       { serverName: "com-acme-tasks", url: "https://tasks.acme.test/mcp", catalogId: null },
     ];
     mounted = await mount(<Page />);
     const section = installedSection(mounted.container);
     expect(section?.textContent).toContain("Acme Tasks");
-    expect(buttonIn(card(mounted.container, "Acme Tasks"))?.textContent).toContain("Installed");
+    expect(entryRow(mounted.container, "Acme Tasks").textContent).toContain("Installed");
     // The other entry is still offered, above the section.
     expect(section?.textContent).not.toContain("Acme Brokered");
-    expect(buttonIn(card(mounted.container, "Acme Brokered"))?.textContent).toBe("Install");
+    expect(entryRow(mounted.container, "Acme Brokered").textContent).not.toContain("Installed");
+    // Its page says so, rather than offering Install again.
+    const page = await openEntry(mounted.container, "Acme Tasks");
+    expect(buttonNamed(page, "Installed")?.disabled).toBe(true);
+    expect(buttonNamed(page, "Install")).toBeNull();
   });
 
   test("a brokered install whose URL differs still matches, by catalog id", async () => {
@@ -200,9 +193,12 @@ describe("Browse lists installed connectors", () => {
     ];
     mounted = await mount(<Page />);
     expect(installedSection(mounted.container)?.textContent).toContain("Acme Brokered");
-    // Configure opens the plugin's page, by its encoded id.
-    const link = card(mounted.container, "Acme Brokered").querySelector("a");
-    expect(link?.getAttribute("href")).toBe(
+    // Configure, on its page, opens the plugin's page, by its encoded id.
+    const page = await openEntry(mounted.container, "Acme Brokered");
+    const configure = Array.from(page.querySelectorAll("a")).find(
+      (a) => a.textContent === "Configure",
+    );
+    expect(configure?.getAttribute("href")).toBe(
       "/w/000f7ed6658f9d30/plugins/workspace%3Acom-acme-brokered",
     );
   });
@@ -215,39 +211,47 @@ describe("Browse lists installed connectors", () => {
       throw new Error("down");
     });
     mounted = await mount(<Page />);
-    const link = card(mounted.container, "Acme Tasks").querySelector("a");
-    expect(link?.getAttribute("href")).toBe(
+    const page = await openEntry(mounted.container, "Acme Tasks");
+    const configure = Array.from(page.querySelectorAll("a")).find(
+      (a) => a.textContent === "Configure",
+    );
+    expect(configure?.getAttribute("href")).toBe(
       "/w/000f7ed6658f9d30/settings/connectors/com-acme-tasks",
     );
   });
 });
 
 describe("installing a provider connector", () => {
-  test("spins, then reads Installed in place, without leaving Browse", async () => {
+  test("spins, then reads Installed in place, on the entry's page", async () => {
     mounted = await mount(<Page />);
+    const page = await openEntry(mounted.container, "Acme Tasks");
     await act(async () => {
-      buttonIn(card(mounted!.container, "Acme Tasks"))?.click();
+      buttonNamed(page, "Install")?.click();
     });
-    const pending = buttonIn(card(mounted.container, "Acme Tasks"));
-    expect(pending?.textContent).toContain("Installing…");
-    expect(pending?.disabled).toBe(true);
+    expect(buttonNamed(entryPage(mounted.container)!, "Installing…")?.disabled).toBe(true);
 
     await act(async () => {
       await new Promise((r) => setTimeout(r, INSTALL_MIN_SPINNER_MS + 50));
     });
-    const done = buttonIn(card(mounted.container, "Acme Tasks"));
-    expect(done?.textContent).toContain("Installed");
-    expect(done?.disabled).toBe(true);
-    expect(lastPath).toBe("/w/000f7ed6658f9d30/plugins/browse");
-    // Stays in the grid for this visit rather than jumping to the section.
+    expect(buttonNamed(entryPage(mounted.container)!, "Installed")?.disabled).toBe(true);
+    expect(lastPath).toBe("/w/000f7ed6658f9d30/plugins/browse/com.acme/tasks");
+
+    // Back on the list, its row reads Installed and keeps its place for this
+    // visit rather than jumping to the section.
+    const back = mounted.container.querySelector<HTMLAnchorElement>('[data-testid="browse-back"]');
+    await act(async () => {
+      back?.click();
+    });
+    expect(entryRow(mounted.container, "Acme Tasks").textContent).toContain("Installed");
     expect(installedSection(mounted.container)).toBeNull();
   });
 
   test("an install that came back with a warning goes to Configure", async () => {
     installWarning = "Installed, but the connector failed to start.";
     mounted = await mount(<Page />);
+    const page = await openEntry(mounted.container, "Acme Tasks");
     await act(async () => {
-      buttonIn(card(mounted!.container, "Acme Tasks"))?.click();
+      buttonNamed(page, "Install")?.click();
     });
     await act(async () => {
       await Promise.resolve();

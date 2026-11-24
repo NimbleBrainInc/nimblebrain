@@ -24,7 +24,7 @@ servers:
     description: Read & write workspace pages
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/notion.png
+      - src: https://static.nimblebrain.ai/logos/notion/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
