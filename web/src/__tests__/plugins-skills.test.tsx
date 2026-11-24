@@ -557,6 +557,11 @@ describe("A skill's page", () => {
     expect(mounted.container.querySelector('[data-testid="skill-read-only"]')).not.toBeNull();
     expect(mounted.container.textContent).toContain("Workspace admins can change it.");
     expect(button(mounted.container, "Delete skill")).toBeUndefined();
+    expect(
+      mounted.container.querySelector(
+        '[aria-label="house-style — on, managed by workspace admins"]',
+      ),
+    ).not.toBeNull();
   });
 
   test("a member edits their own skill, which is written with no workspace", async () => {
