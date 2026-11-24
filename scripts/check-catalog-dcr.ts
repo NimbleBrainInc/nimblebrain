@@ -8,9 +8,10 @@
  * `_meta["ai.nimblebrain/connector"].auth === "dcr"`, and runs the
  * full DCR flow end-to-end against each vendor:
  *
- *   1. Reachability — `HEAD <remotes[0].url>`. Anything non-network-error
- *      counts; vendors return 200 / 401 / 405 depending on auth state.
- *      DNS failure / timeout / 5xx = the URL is dead.
+ *   1. Reachability — `HEAD <remotes[0].url>`. Vendors return 200 / 401 /
+ *      405 depending on auth state. DNS failure / timeout / 5xx = the URL is
+ *      dead, and so is 404 / 410 when a GET confirms it (a retired
+ *      endpoint, such as an SSE URL a vendor moved to /mcp).
  *   2. RFC 9728 protected-resource metadata — `GET <connector-origin>/
  *      .well-known/oauth-protected-resource`. Optional but preferred;
  *      yields the authorization-server origin(s).
@@ -250,32 +251,40 @@ export function isBotChallenge(res: Response): boolean {
   return res.headers.get("cf-mitigated")?.toLowerCase() === "challenge";
 }
 
+/**
+ * Statuses that say the endpoint no longer exists. A HEAD alone is not trusted for
+ * them: a server that routes only the methods MCP uses can answer HEAD with 404 at a
+ * live endpoint, so a GET confirms before the entry fails.
+ */
+const GONE_STATUSES = new Set([404, 410]);
+
 async function probeReachable(
   url: string,
 ): Promise<{ ok: boolean; status?: number; error?: string }> {
-  try {
+  const statusOf = async (method: "HEAD" | "GET"): Promise<number> => {
     const res = await fetch(url, {
-      method: "HEAD",
+      method,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       redirect: "manual",
     });
-    if (res.status >= 500) {
-      return { ok: false, status: res.status };
-    }
-    return { ok: true, status: res.status };
+    // Only the status matters; an SSE endpoint's body would stream until the timeout.
+    await res.body?.cancel();
+    return res.status;
+  };
+  let status: number | undefined;
+  try {
+    status = await statusOf("HEAD");
   } catch {
+    status = undefined;
+  }
+  if (status === undefined || GONE_STATUSES.has(status)) {
     try {
-      const res = await fetch(url, {
-        method: "GET",
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        redirect: "manual",
-      });
-      if (res.status >= 500) return { ok: false, status: res.status };
-      return { ok: true, status: res.status };
-    } catch (err2) {
-      return { ok: false, error: err2 instanceof Error ? err2.message : String(err2) };
+      status = await statusOf("GET");
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
+  return { ok: status < 500 && !GONE_STATUSES.has(status), status };
 }
 
 async function discoverAuthorizationServerOrigins(connectorOrigin: string): Promise<string[]> {
