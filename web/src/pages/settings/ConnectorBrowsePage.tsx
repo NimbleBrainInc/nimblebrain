@@ -793,7 +793,7 @@ function DirectoryEntryPage({
 
       <EntrySection title="Whose account it uses">
         {entry.personalInstallable
-          ? `Each person connects their own ${entry.name} account. Install it for yourself, or for everyone here so each member can connect their own.`
+          ? `Install it for just you, and it uses your own ${entry.name} account. Install it for everyone here, and it uses one ${entry.name} account that everyone shares.`
           : `It uses one ${entry.name} account for the whole workspace, not each person's own.`}
       </EntrySection>
 
