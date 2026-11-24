@@ -31,10 +31,10 @@ import { SecretHeadersModal } from "../../components/connectors/SecretHeadersMod
 import { Button } from "../../components/ui/button";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
+import { type CategoryCount, categoryCounts, matchesListing } from "../../lib/catalog-categories";
 import { installCompletesWithoutSignIn } from "../../lib/connector-auth-flow.ts";
 import { pluginPath, workspacePluginForServer } from "../../lib/plugins";
 import { type SecretHeaderField, secretHeaderFields } from "../../lib/secret-headers";
-import { type CategoryCount, categoryCounts, matchesListing } from "../../lib/catalog-categories";
 import { cn } from "../../lib/utils";
 import { toWsId } from "../../lib/workspace-slug";
 
@@ -585,8 +585,7 @@ function CategoryFilter({
     </button>
   );
   return (
-    <div
-      role="group"
+    <fieldset
       aria-label="Filter by category"
       data-testid="category-filter"
       className="flex flex-wrap gap-1.5"
@@ -595,7 +594,7 @@ function CategoryFilter({
       {categories.map(({ name, count }) =>
         chip(name, count, selected === name, () => onSelect(selected === name ? null : name)),
       )}
-    </div>
+    </fieldset>
   );
 }
 
