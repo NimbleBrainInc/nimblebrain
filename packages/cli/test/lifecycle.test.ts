@@ -455,6 +455,22 @@ describe("a first start that did not finish", () => {
     }
   });
 
+  test("status says to finish or remove an install whose first start did not finish", async () => {
+    const next =
+      "Next: finish installing it with npx nimblebrain, or remove it with npx nimblebrain uninstall.";
+    const m = await unfinished("START_FAILED");
+    const { stdout } = await run(["status"], m.deps);
+    expect(stdout).toContain("NimbleBrain v0.73.0: stopped at http://127.0.0.1:27246");
+    expect(stdout).toContain(next);
+
+    // An unfinished install that answers health is still unfinished.
+    const answering = await unfinished("HEALTH_TIMEOUT");
+    answering.healthy = true;
+    const running = (await run(["status"], answering.deps)).stdout;
+    expect(running).toContain("NimbleBrain v0.73.0: running at http://127.0.0.1:27246");
+    expect(running).toContain(next);
+  });
+
   test("status on a starting install that answers health still lists no workspace", async () => {
     const m = await unfinished("HEALTH_TIMEOUT");
     m.healthy = true;
@@ -609,6 +625,15 @@ describe("after install", () => {
     await json(["--yes", "--agent", "claude-code"], m);
     return m;
   }
+
+  test("status says to run up when the install is stopped, and nothing more when it runs", async () => {
+    const m = await installed();
+    expect((await run(["status"], m.deps)).stdout).not.toContain("Next:");
+    await json(["down"], m);
+    const { stdout } = await run(["status"], m.deps);
+    expect(stdout).toContain("stopped at http://127.0.0.1:27246");
+    expect(stdout).toContain("Next: start it with npx nimblebrain up.");
+  });
 
   test("down stops it and keeps data; up starts it", async () => {
     const m = await installed();
