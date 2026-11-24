@@ -779,7 +779,7 @@ function formatUptime(ms: number): string {
 /**
  * Keyword match over the projected catalog for agent catalog search.
  * Empty query returns everything; otherwise every whitespace-separated term
- * must appear (case-insensitive) in the id, name, description, or a tag.
+ * must appear (case-insensitive) in the id, name, description, category, or a tag.
  *
  * Matches over `CatalogListing`, not the raw `ServerDetail`, because that is
  * the set a caller can act on: the projection is what drops an entry this
