@@ -798,7 +798,9 @@ function matchEntriesByQuery(entries: CatalogListing[], query: string): CatalogL
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return entries;
   return entries.filter((e) => {
-    const hay = [e.id, e.name, e.description, ...(e.tags ?? [])].join(" ").toLowerCase();
+    const hay = [e.id, e.name, e.description, e.category ?? "", ...(e.tags ?? [])]
+      .join(" ")
+      .toLowerCase();
     return terms.every((t) => hay.includes(t));
   });
 }

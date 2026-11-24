@@ -297,7 +297,14 @@ export interface NimbleBrainConnectorMeta {
    * tool reporting on some other credential the same way.
    */
   inBandAuthErrors?: string[];
-  /** Search/filter tags surfaced on the Browse card. */
+  /**
+   * The job the connector does, as the text to show ("Sales & support"). Optional
+   * display metadata: Browse groups and filters by it when an entry has one, and
+   * shows nothing for it when an entry has none. The runtime holds no list of
+   * categories, so any catalog's value is shown as written.
+   */
+  category?: string;
+  /** Search keywords: words a person might type that the title and description lack. */
   tags?: string[];
   /** Marks the connector as exposing a UI surface — sets the "Interactive" badge. */
   interactive?: boolean;
