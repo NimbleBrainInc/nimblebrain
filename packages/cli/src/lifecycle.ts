@@ -584,8 +584,23 @@ async function imagesPresent(deps: Deps, images: string[]): Promise<boolean> {
 
 async function start(deps: Deps, home: string, port: number): Promise<void> {
   const res = await compose(deps, home, ["up", "-d", "--no-build"], START_TIMEOUT_MS);
-  if (res.code !== 0) throw startError(res);
+  if (res.code !== 0) throw await homeNotShared(deps, home, startError(res));
   await waitHealthy(deps, port);
+}
+
+/**
+ * Docker reports a bind source it cannot find in the same words whether the
+ * file is missing or its folder is outside what Docker's VM shares (Colima
+ * shares the user's home folder by default). The file on this side tells them
+ * apart: when `instance.json` is here and Docker still cannot find it, the home
+ * is not shared.
+ */
+async function homeNotShared(deps: Deps, home: string, err: CliError): Promise<CliError> {
+  if (err.code !== "START_FAILED" || !/bind source path does not exist/i.test(err.message)) {
+    return err;
+  }
+  const here = (await deps.readText(paths(home).instance)) !== undefined;
+  return here ? new CliError("HOME_NOT_SHARED", err.message) : err;
 }
 
 async function waitHealthy(deps: Deps, port: number): Promise<void> {
