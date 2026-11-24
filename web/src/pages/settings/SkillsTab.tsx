@@ -139,7 +139,7 @@ function tierChrome(
   editable: WritableScope,
   canManageOrg: boolean,
   writable: boolean,
-): { label: string; manageTo?: string; manageLabel?: string } {
+): { label: string; manageTo?: string; manageLabel?: string; toggleNote?: string } {
   // A tier label only renders on a multi-tier surface, which today is only the
   // workspace vantage — so the editable tier's label is the sole reachable one.
   // Org and user get theirs back in the PR that gives those surfaces a context
@@ -148,22 +148,27 @@ function tierChrome(
   if (scope === editable)
     // "Yours" would claim an agency a non-admin member doesn't have over this
     // tier — name the tier and who holds the pen instead.
-    return { label: writable ? "Yours" : "Workspace · managed by workspace admins" };
+    return {
+      label: writable ? "Yours" : "Workspace · managed by workspace admins",
+      toggleNote: writable ? undefined : "managed by workspace admins",
+    };
   if (scope === "user")
     return {
       label: "You · follows you everywhere",
+      toggleNote: "managed elsewhere",
       manageTo: "/profile/skills",
       manageLabel: "Edit in your profile",
     };
   if (scope === "org")
     return {
       label: "Organization · managed in org settings",
+      toggleNote: "managed elsewhere",
       // The manage link is only shown to org admins — /org/skills is guarded, so
       // for anyone else it would silently bounce to /profile.
       ...(canManageOrg ? { manageTo: "/org/skills", manageLabel: "Manage in org settings" } : {}),
     };
   // The only other context tier any surface renders is the system connector.
-  return { label: "System · built in" };
+  return { label: "System · built in", toggleNote: "built in" };
 }
 
 /** The loaded detail matching `editingId`, or null while it's absent/stale. */
@@ -648,7 +653,7 @@ function TierGroup({
   // `tier.editable` is `scope === editableScope && canWrite`, and this branch of
   // `tierChrome` only reads it where those scopes match — so it already carries
   // `canWrite` and the prop would be a second copy of the same bit.
-  const { label, manageTo, manageLabel } = tierChrome(
+  const { label, manageTo, manageLabel, toggleNote } = tierChrome(
     tier.scope,
     editableScope,
     canManageOrg,
@@ -668,6 +673,7 @@ function TierGroup({
           key={s.id}
           skill={s}
           editable={tier.editable}
+          disabledNote={toggleNote}
           expanded={selectedId === s.id}
           detail={selectedId === s.id ? detail : null}
           detailLoading={selectedId === s.id && detailLoading}
@@ -713,6 +719,7 @@ function rowLabel(skill: ListedSkill): string {
 function SkillRow({
   skill,
   editable,
+  disabledNote,
   expanded,
   detail,
   detailLoading,
@@ -725,6 +732,7 @@ function SkillRow({
   skill: ListedSkill;
   /** Editable on this surface (live toggle + edit/delete), or read-only context. */
   editable: boolean;
+  disabledNote?: string;
   expanded: boolean;
   detail: ReadSkill | null;
   detailLoading: boolean;
@@ -832,6 +840,7 @@ function SkillRow({
           on={skill.status === "active"}
           onChange={onToggle}
           disabled={!editable}
+          disabledNote={disabledNote}
           label={skill.name}
         />
       </div>

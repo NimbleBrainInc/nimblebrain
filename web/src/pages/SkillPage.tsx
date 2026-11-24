@@ -108,6 +108,11 @@ function NotHere() {
   return <p className="text-sm">This skill is not in this workspace.</p>;
 }
 
+/** What a locked toggle tells a screen reader about who can change the skill. */
+function lockedToggleNote(scope: AuthoredSkillScope): string {
+  return scope === "workspace" ? "managed by workspace admins" : "managed elsewhere";
+}
+
 function SkillDetailView({
   slug,
   scope,
@@ -232,6 +237,7 @@ function SkillDetailView({
           on={skill.status === "active"}
           onChange={() => void toggle(skill)}
           disabled={!editable || pending}
+          disabledNote={editable ? undefined : lockedToggleNote(scope)}
           label={skill.name}
         />
       </header>

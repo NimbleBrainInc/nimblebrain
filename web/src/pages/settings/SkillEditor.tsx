@@ -50,11 +50,13 @@ export function Toggle({
   on,
   onChange,
   disabled,
+  disabledNote,
   label,
 }: {
   on: boolean;
   onChange: () => void;
   disabled?: boolean;
+  disabledNote?: string;
   label: string;
 }) {
   return (
@@ -67,7 +69,7 @@ export function Toggle({
       disabled={disabled}
       aria-label={
         disabled
-          ? `${label} — ${on ? "on" : "off"}, managed elsewhere`
+          ? `${label} — ${on ? "on" : "off"}, ${disabledNote ?? "managed elsewhere"}`
           : `${on ? "Turn off" : "Turn on"} ${label}`
       }
       className={cn(

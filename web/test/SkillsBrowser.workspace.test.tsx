@@ -304,8 +304,8 @@ function clickByText(container: HTMLElement, text: string): boolean {
  * A skill's on/off toggle, addressed by accessible name. The toggle is a
  * *sibling* of the row's expander, so it can't be reached by querying inside
  * the expander — and addressing it by name is what a screen-reader user does.
- * Covers both `Toggle` label forms: locked (`<name> — on, managed elsewhere`)
- * and live (`Turn off <name>`).
+ * Covers both `Toggle` label forms: locked (`<name> — on, <tier note>`) and
+ * live (`Turn off <name>`).
  */
 function toggleFor(container: HTMLElement, skillName: string): HTMLButtonElement | null {
   const match = Array.from(container.querySelectorAll("button")).find((b) => {
@@ -407,6 +407,23 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     expect(text).toContain("System · built in");
     // Personal skills are a tier now, never a footer count.
     expect(text).not.toContain("personal skills active here");
+  });
+
+  test("locked toggles announce the correct management location for each tier", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+
+    expect(toggleFor(mounted.container, "workflow")?.getAttribute("aria-label")).toBe(
+      "workflow — on, managed by workspace admins",
+    );
+    expect(toggleFor(mounted.container, "personal-1")?.getAttribute("aria-label")).toBe(
+      "personal-1 — on, managed elsewhere",
+    );
+    expect(toggleFor(mounted.container, "voice")?.getAttribute("aria-label")).toBe(
+      "voice — on, managed elsewhere",
+    );
+    expect(toggleFor(mounted.container, "provided-skill")?.getAttribute("aria-label")).toBe(
+      "provided-skill — on, built in",
+    );
   });
 
   test("personal skills render as a read-only tier that deep-links to the profile", async () => {
