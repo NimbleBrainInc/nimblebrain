@@ -64,7 +64,8 @@ servers:
       ai.nimblebrain/connector:
         defaultScope: workspace
         auth: dcr
-        tags: [issues, project-mgmt]
+        category: "Projects & tasks"
+        tags: [tickets, bugs]
 ```
 
 For `auth: composio`, include a `composio` block with the toolkit slug and (strongly recommended) a curated tool allowlist:
@@ -170,7 +171,8 @@ NimbleBrain-specific fields under `_meta["ai.nimblebrain/connector"]`:
 | `secretHeaders` | no, `auth: provider` only | Header name → `{ ref: credential, key, label?, help? }`, for a connection that must present the *workspace's* own secret as well as its own credential. Resolved on every request at that workspace's scope. Only references are accepted — a literal is refused at install, naming the header. The install dialog asks the user for each value, using `label` / `help` when the entry sets them and a label derived from the key's last segment otherwise; both are display-only and never reach the transport. Nothing carries the field on any other auth kind, where it is silently ignored. See [per-workspace credentials](/config/secrets/#when-the-connection-also-has-to-say-who-is-calling). |
 | `composio` | required when `auth: composio` | `{ toolkit, tools?, authScheme?, fields? }`. `toolkit` is Composio's slug for the upstream, and doubles as the key your deployment's [`connectors.providers.composio.authConfigs`](/gateways/composio/#3-create-one-auth-config-per-toolkit-in-composio) is looked up under — the catalog itself carries no deployment-specific ids. `tools` is an optional allowlist of upstream tool names — strongly recommended to keep agent context bounded. `authScheme` defaults to `OAUTH2` (the redirect flow); set it to `API_KEY` for toolkits that authenticate by key (see below). `fields` is required for `API_KEY` — the inputs collected from the user at connect. |
 | `account` | no | `{ tool, arguments?, field }`. How to ask the service which account a connection is signed in as, when its sign-in does not say. See [Showing the connected account](#showing-the-connected-account). |
-| `tags` | no | Strings used for filter / search in the Browse page. |
+| `category` | no | The job the connector does, as the text to show (`"Sales & support"`). Browse offers a filter of the categories your entries name, and shows an entry's category on its page; an entry without one is listed as usual, and a catalog that names fewer than two categories shows no filter. Any text is accepted: the runtime keeps no list of categories. |
+| `tags` | no | Search keywords: words a person might type that the title and description do not already contain (`crm`, `wiki`, `invoices`). Browse search matches them, but never shows them. |
 | `interactive` | no | Sets the "Interactive" badge. |
 | `docsUrl` | no | Connector-specific docs link surfaced on the Configure page. Must be http(s). |
 | `personal` | ignored | Accepted so an older catalog still loads, and has no effect. Whether a person can install a connector follows from its `auth` (see below). |

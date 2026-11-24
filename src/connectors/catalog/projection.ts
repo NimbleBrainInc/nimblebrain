@@ -86,12 +86,23 @@ function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
 }
 
 /**
+ * The entry's category, only when it is a non-empty string. The meta block is raw
+ * catalog JSON, so a hand-written catalog can put anything there; anything else is
+ * treated as no category rather than shown.
+ */
+function categoryField(meta: NimbleBrainConnectorMeta | undefined): { category?: string } {
+  const category = typeof meta?.category === "string" ? meta.category.trim() : "";
+  return category ? { category } : {};
+}
+
+/**
  * Source-of-truth for each output field:
  *
  *   - `id`            ← `ServerDetail.name` (reverse-DNS string)
  *   - `name`          ← `ServerDetail.title` ?? `ServerDetail.name`
  *   - `description`   ← `ServerDetail.description`
  *   - `iconUrl`       ← `ServerDetail.icons[0].src` (theme-aware picker is a follow-up)
+ *   - `category`      ← `_meta.ai.nimblebrain/connector.category`, when a non-empty string
  *   - `tags`          ← `_meta.ai.nimblebrain/connector.tags`
  *   - `install`       ← derived from `remotes[]` (remote-oauth)
  *
@@ -111,6 +122,7 @@ export function projectServerDetailToCatalogListing(s: ServerDetail): CatalogLis
     name: s.title ?? s.name,
     description: s.description,
     ...(iconUrl ? { iconUrl } : {}),
+    ...categoryField(meta),
     ...(meta?.tags && meta.tags.length > 0 ? { tags: meta.tags } : {}),
     install,
   };
@@ -172,6 +184,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     url: remote.url,
     ...connectorMetaAuthFields(meta),
     ...(meta?.inBandAuthErrors?.length ? { inBandAuthErrors: meta.inBandAuthErrors } : {}),
+    ...categoryField(meta),
     ...(meta?.tags ? { tags: meta.tags } : {}),
     ...(interactive ? { interactive: true } : {}),
     ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),

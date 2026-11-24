@@ -897,6 +897,22 @@ describe("search — scope: catalog", () => {
     expect(extractText(result.content)).toContain("No servers found");
   });
 
+  it("matches a query found only in the entry's category", async () => {
+    const result = await search(
+      runtimeWithCatalog([
+        TWO_SERVERS[0]!,
+        {
+          ...TWO_SERVERS[1],
+          _meta: { "ai.nimblebrain/connector": { category: "Project Management" } },
+        },
+      ]),
+      "project management",
+    );
+    const text = extractText(result.content);
+    expect(text).toContain("dev.acme/asana");
+    expect(text).not.toContain("ai.nimblebrain/ipinfo");
+  });
+
   it("surfaces every publisher the catalog carries", async () => {
     const result = await search(runtimeWithCatalog(), "asana");
     expect(extractText(result.content)).toContain("dev.acme/asana");

@@ -779,7 +779,7 @@ function formatUptime(ms: number): string {
 /**
  * Keyword match over the projected catalog for agent catalog search.
  * Empty query returns everything; otherwise every whitespace-separated term
- * must appear (case-insensitive) in the id, name, description, or a tag.
+ * must appear (case-insensitive) in the id, name, description, category, or a tag.
  *
  * Matches over `CatalogListing`, not the raw `ServerDetail`, because that is
  * the set a caller can act on: the projection is what drops an entry this
@@ -798,7 +798,9 @@ function matchEntriesByQuery(entries: CatalogListing[], query: string): CatalogL
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return entries;
   return entries.filter((e) => {
-    const hay = [e.id, e.name, e.description, ...(e.tags ?? [])].join(" ").toLowerCase();
+    const hay = [e.id, e.name, e.description, e.category ?? "", ...(e.tags ?? [])]
+      .join(" ")
+      .toLowerCase();
     return terms.every((t) => hay.includes(t));
   });
 }

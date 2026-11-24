@@ -18,6 +18,37 @@ function detail(over: Partial<ServerDetail> = {}): ServerDetail {
   };
 }
 
+describe("category", () => {
+  const remote = [{ type: "streamable-http" as const, url: "https://example.com/mcp" }];
+  // Catalog meta arrives as raw YAML, so the value under test can be any JSON.
+  const withCategory = (category: unknown): ServerDetail =>
+    JSON.parse(
+      JSON.stringify({
+        ...detail({ remotes: remote }),
+        _meta: { "ai.nimblebrain/connector": { auth: "dcr", category } },
+      }),
+    );
+
+  test("carries the entry's category, as written, onto the listing and the catalog entry", () => {
+    const s = withCategory("Sales & support");
+    expect(projectServerDetailToCatalogListing(s)?.category).toBe("Sales & support");
+    expect(serverDetailToCatalogEntry(s)?.category).toBe("Sales & support");
+  });
+
+  test("trims it, and treats a blank or non-string value as no category", () => {
+    expect(projectServerDetailToCatalogListing(withCategory("  Docs & files "))?.category).toBe(
+      "Docs & files",
+    );
+    for (const value of ["", "   ", 3, ["Sales"], null, undefined]) {
+      const listing = projectServerDetailToCatalogListing(withCategory(value));
+      expect(listing).not.toBeNull();
+      expect(listing && "category" in listing).toBe(false);
+      const entry = serverDetailToCatalogEntry(withCategory(value));
+      expect(entry && "category" in entry).toBe(false);
+    }
+  });
+});
+
 describe("projectServerDetailToCatalogListing", () => {
   test("uses ServerDetail.name as the CatalogListing id", () => {
     const e = projectServerDetailToCatalogListing(

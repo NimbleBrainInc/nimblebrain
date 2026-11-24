@@ -31,6 +31,7 @@ import { SecretHeadersModal } from "../../components/connectors/SecretHeadersMod
 import { Button } from "../../components/ui/button";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
+import { type CategoryCount, categoryCounts, matchesListing } from "../../lib/catalog-categories";
 import { installCompletesWithoutSignIn } from "../../lib/connector-auth-flow.ts";
 import { pluginPath, workspacePluginForServer } from "../../lib/plugins";
 import { type SecretHeaderField, secretHeaderFields } from "../../lib/secret-headers";
@@ -120,6 +121,9 @@ export function ConnectorDirectory({
   // a card the user just installed into the Installed section.
   const [justInstalled, setJustInstalled] = useState<ReadonlyMap<string, string>>(new Map());
   const [query, setQuery] = useState("");
+  // The category the list is narrowed to; null shows every category.
+  const [category, setCategory] = useState<string | null>(null);
+  const categories = useMemo(() => categoryCounts(entries), [entries]);
   // The entry whose install is asking whom it is for, and whether the workspace
   // already has its own install of it.
   const [audienceEntry, setAudienceEntry] = useState<CatalogListing | null>(null);
@@ -221,12 +225,7 @@ export function ConnectorDirectory({
   // during this visit stays in `available` (rendered as Installed) so it
   // doesn't jump sections under the cursor.
   const { available, installedEntries } = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const matches = (e: CatalogListing) =>
-      !q ||
-      e.name.toLowerCase().includes(q) ||
-      e.description.toLowerCase().includes(q) ||
-      (e.tags ?? []).some((t) => t.toLowerCase().includes(q));
+    const matches = (e: CatalogListing) => matchesListing(e, query, category);
     const available: CatalogListing[] = [];
     const installedEntries: Array<{ entry: CatalogListing; serverName: string }> = [];
     for (const entry of entries) {
@@ -236,7 +235,7 @@ export function ConnectorDirectory({
       else available.push(entry);
     }
     return { available, installedEntries };
-  }, [entries, query, installedServerName, justInstalled]);
+  }, [entries, query, category, installedServerName, justInstalled]);
 
   const markInstalled = (entry: CatalogListing, managePath: string) => {
     setJustInstalled((prev) => new Map(prev).set(entry.id, managePath));
@@ -453,6 +452,7 @@ export function ConnectorDirectory({
             data-tour="catalog"
             className="w-full text-sm px-3 py-2 rounded border border-border bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           />
+          <CategoryFilter categories={categories} selected={category} onSelect={setCategory} />
           <CatalogReadErrors errors={errors} />
         </>
       )}
@@ -469,6 +469,7 @@ export function ConnectorDirectory({
       ) : (
         <DirectoryResults
           query={query}
+          category={category}
           available={available}
           installedEntries={installedEntries}
           renderCard={(entry, configurePath) => (
@@ -551,6 +552,52 @@ export function ConnectorDirectory({
   );
 }
 
+/**
+ * Narrows the list to one category. Built from the categories the catalog's entries
+ * state, so it is absent when they state fewer than two: there is nothing to narrow.
+ * Choosing the selected category again shows every category.
+ */
+function CategoryFilter({
+  categories,
+  selected,
+  onSelect,
+}: {
+  categories: CategoryCount[];
+  selected: string | null;
+  onSelect: (category: string | null) => void;
+}) {
+  if (categories.length < 2) return null;
+  const chip = (label: string, count: number | null, active: boolean, onClick: () => void) => (
+    <button
+      key={label}
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors",
+        active
+          ? "border-foreground/20 bg-foreground/10 font-medium text-foreground"
+          : "border-border text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {label}
+      {count !== null && <span className="tabular-nums text-muted-foreground">{count}</span>}
+    </button>
+  );
+  return (
+    <fieldset
+      aria-label="Filter by category"
+      data-testid="category-filter"
+      className="flex flex-wrap gap-1.5"
+    >
+      {chip("All", null, selected === null, () => onSelect(null))}
+      {categories.map(({ name, count }) =>
+        chip(name, count, selected === name, () => onSelect(selected === name ? null : name)),
+      )}
+    </fieldset>
+  );
+}
+
 /** Catalog files the directory could not read, named so an operator can fix them. */
 function CatalogReadErrors({ errors }: { errors: Array<{ file: string; message: string }> }) {
   if (errors.length === 0) return null;
@@ -572,6 +619,7 @@ function CatalogReadErrors({ errors }: { errors: Array<{ file: string; message: 
  */
 function DirectoryResults({
   query,
+  category,
   available,
   installedEntries,
   renderCard,
@@ -579,6 +627,7 @@ function DirectoryResults({
   installedPathFor,
 }: {
   query: string;
+  category: string | null;
   available: CatalogListing[];
   installedEntries: Array<{ entry: CatalogListing; serverName: string }>;
   renderCard: (entry: CatalogListing, configurePath: string | undefined) => ReactNode;
@@ -588,7 +637,11 @@ function DirectoryResults({
   if (available.length === 0 && installedEntries.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
-        {query ? `No results for "${query}".` : "No connectors are available to this workspace."}
+        {query
+          ? `No results for "${query}".`
+          : category
+            ? `Nothing in ${category} is available to this workspace.`
+            : "No connectors are available to this workspace."}
       </p>
     );
   }
@@ -601,7 +654,9 @@ function DirectoryResults({
       ) : (
         !query && (
           <p className="text-sm text-muted-foreground">
-            Everything available here is already installed.
+            {category
+              ? `Everything in ${category} is already installed.`
+              : "Everything available here is already installed."}
           </p>
         )
       )}
@@ -778,7 +833,6 @@ function DirectoryEntryPage({
   }
   const asks = installAsks(entry);
   const scopes = entry.install.kind === "remote-oauth" ? (entry.install.requiredScopes ?? []) : [];
-  const tags = entry.tags ?? [];
   return (
     <article data-testid="directory-entry-page" className="space-y-8">
       <header className="flex flex-wrap items-center gap-4">
@@ -786,7 +840,7 @@ function DirectoryEntryPage({
         <div className="min-w-0 flex-1 basis-48 space-y-1">
           <h1 className="text-xl font-semibold tracking-tight">{entry.name}</h1>
           <p className="text-sm text-muted-foreground">{entry.description}</p>
-          {tags.length > 0 && <p className="text-xs text-muted-foreground">{tags.join(" · ")}</p>}
+          {entry.category && <p className="text-xs text-muted-foreground">{entry.category}</p>}
         </div>
         <div className="shrink-0">{action}</div>
       </header>

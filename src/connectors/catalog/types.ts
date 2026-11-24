@@ -35,6 +35,8 @@ export interface CatalogListing {
   name: string;
   description: string;
   iconUrl?: string;
+  /** The catalog entry's category, as display text; absent when it names none. */
+  category?: string;
   tags?: string[];
   install: InstallAction;
   /**
@@ -116,6 +118,8 @@ export interface ConnectorCatalogEntry {
    * same reason `ui` and `hooks` are.
    */
   secretHeaders?: Record<string, SecretHeaderRef>;
+  /** The catalog entry's category, as display text; absent when it names none. */
+  category?: string;
   tags?: string[];
   interactive?: boolean;
   docsUrl?: string;
