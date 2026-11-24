@@ -19,6 +19,7 @@ export interface FixtureToolCall {
   ms?: number;
   resourceUri?: string;
   resourceLinks?: Array<{ uri: string; name?: string; mimeType?: string; description?: string }>;
+  structuredContent?: Record<string, unknown>;
 }
 
 /** Token usage as a fixture spells it. */
@@ -94,6 +95,7 @@ export function turnEvents(turn: FixtureTurn, runId: string): Record<string, unk
         output: tc.output ?? "",
         ...(tc.resourceUri ? { resourceUri: tc.resourceUri } : {}),
         ...(tc.resourceLinks ? { resourceLinks: tc.resourceLinks } : {}),
+        ...(tc.structuredContent ? { structuredContent: tc.structuredContent } : {}),
       },
     ]),
     { ts, type: "run.done", runId, stopReason: "complete", totalMs: llmMs },

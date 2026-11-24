@@ -294,6 +294,52 @@ describe("conversations__get", () => {
     expect(result.truncated).toBeUndefined();
   });
 
+  it("test_bounded_read_omits_structured_content_full_read_keeps_it", async () => {
+    // The full read feeds the web's inline views; the bounded read is an
+    // agent's, which reads the result text and would only lose older messages
+    // to the char cap for the payload.
+    const ts = "2025-01-15T10:00:00.000Z";
+    const structuredContent = { contact: { id: "c_1" } };
+    writeConversation(dir, "conv-sc", {
+      messages: [
+        { role: "user", content: "Open Ada", timestamp: ts },
+        {
+          role: "assistant",
+          content: "",
+          timestamp: ts,
+          metadata: {
+            toolCalls: [
+              {
+                id: "t1",
+                name: "crm__get_contact",
+                output: "Ada",
+                resourceUri: "ui://crm/contacts",
+                structuredContent,
+              },
+            ],
+          },
+        },
+      ],
+    });
+    await index.build(dir);
+
+    const toolCallsOf = (r: Awaited<ReturnType<typeof handleGet>>) => {
+      const msg = r.messages.find((m) => m.role === "assistant")!;
+      const block = msg.blocks.find((b) => b.type === "tool");
+      return [...msg.toolCalls!, ...(block?.type === "tool" ? block.toolCalls : [])];
+    };
+
+    const bounded = await handleGet({ id: "conv-sc" }, index, SCOPE);
+    for (const tc of toolCallsOf(bounded)) {
+      expect("structuredContent" in tc.result).toBe(false);
+      expect(tc.result.content).toEqual([{ type: "text", text: "Ada" }]);
+    }
+
+    const full = await handleGet({ id: "conv-sc", expand: "full" }, index, SCOPE);
+    for (const tc of toolCallsOf(full))
+      expect(tc.result.structuredContent).toEqual(structuredContent);
+  });
+
   it("default mode truncates the older end of the window when the char cap is hit and surfaces a hint", async () => {
     const ts = "2025-01-15T10:00:00.000Z";
     const bigContent = "X".repeat(Math.floor(DEFAULT_GET_CHAR_CAP / 4));

@@ -9,6 +9,7 @@
 import { appendFileSync, existsSync } from "node:fs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { DEFAULT_MAX_TOOL_RESULT_SIZE } from "../engine/content-helpers.ts";
 import type {
   ConnectorSkillInjectedPayload,
   EngineEventPayloads,
@@ -23,6 +24,7 @@ import type {
   ToolStartPayload,
 } from "../engine/schemas/events.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
+import { log } from "../observability/log.ts";
 import { ConversationCorruptedError } from "../runtime/errors.ts";
 import { ensureWorkspaceDir } from "../workspace/context.ts";
 import { assertNoBinaryPayloads } from "./binary-guard.ts";
@@ -225,8 +227,44 @@ function mapToolDone(ts: string, d: ToolDonePayload): ToolDoneEvent {
     // fetched on view.
     ...(d.resourceUri !== undefined ? { resourceUri: d.resourceUri } : {}),
     ...(d.resourceLinks && d.resourceLinks.length > 0 ? { resourceLinks: d.resourceLinks } : {}),
+    ...persistedStructuredContent(d),
     ...(d.held ? { held: d.held } : {}),
   };
+}
+
+/**
+ * The `structuredContent` a reopened conversation hands an inline view. The
+ * engine attaches `result` only for a call with a `ui://` view, and the view
+ * reads its state from this field, so it is persisted for those calls alone.
+ * A plain JSON copy is stored, never the live reference; a value that cannot
+ * be serialized, holds binary, or exceeds `DEFAULT_MAX_TOOL_RESULT_SIZE` is
+ * left out, so the write never throws and the view falls back to `output`.
+ */
+function persistedStructuredContent(d: ToolDonePayload): {
+  structuredContent?: Record<string, unknown>;
+} {
+  const structured = d.result?.structuredContent;
+  if (!d.resourceUri || structured === null || typeof structured !== "object") return {};
+  if (Array.isArray(structured)) return {};
+  let serialized: string;
+  try {
+    assertNoBinaryPayloads(structured, "structuredContent");
+    serialized = JSON.stringify(structured);
+  } catch (err) {
+    log.warn("[conversation] structured_content.not_persisted", {
+      tool: d.name,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    return {};
+  }
+  if (serialized.length > DEFAULT_MAX_TOOL_RESULT_SIZE) {
+    log.warn("[conversation] structured_content.not_persisted", {
+      tool: d.name,
+      reason: `${serialized.length} chars exceeds ${DEFAULT_MAX_TOOL_RESULT_SIZE}`,
+    });
+    return {};
+  }
+  return { structuredContent: JSON.parse(serialized) as Record<string, unknown> };
 }
 
 /** Map an engine `tool.progress` to a persisted `tool.progress` event. */

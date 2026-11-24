@@ -22,6 +22,9 @@
 
 ### Changed
 
+- A tool call's `result` carries the `structuredContent` stored with its `tool.done`
+  (calls with an inline view), on `get` with `expand: "full"` and in JSON export.
+  The bounded `get` read leaves it out.
 - Every tool publishes a TypeBox output schema and returns its result as
   `structuredContent` beside the unchanged JSON text. `DisplaySkill.scope` is a
   string, since a recorded `skills.loaded` keeps the scope vocabulary it was
