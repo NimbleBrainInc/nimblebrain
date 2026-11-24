@@ -232,6 +232,13 @@ function SkillDetailView({
           on={skill.status === "active"}
           onChange={() => void toggle(skill)}
           disabled={!editable || pending}
+          disabledNote={
+            !editable
+              ? scope === "workspace"
+                ? "managed by workspace admins"
+                : "managed elsewhere"
+              : undefined
+          }
           label={skill.name}
         />
       </header>
