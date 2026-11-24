@@ -166,4 +166,22 @@ describe("check-catalog-dcr checkEntry reachability", () => {
     expect(r.pass).toBe(true);
     expect(r.reachability.status).toBe(401);
   });
+
+  test("cancels an open response body instead of waiting on it", async () => {
+    let cancelled = 0;
+    const openStream = () =>
+      new ReadableStream({
+        cancel() {
+          cancelled++;
+        },
+      });
+    globalThis.fetch = vendor((method) =>
+      method === "HEAD"
+        ? new Response(openStream(), { status: 404 })
+        : new Response(openStream(), { status: 401 }),
+    );
+    const r = await checkEntry(entry, REDIRECT);
+    expect(r.pass).toBe(true);
+    expect(cancelled).toBe(2);
+  });
 });
