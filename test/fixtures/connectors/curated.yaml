@@ -48,7 +48,7 @@ servers:
     description: Meeting notes and transcripts
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/granola.png
+      - src: https://static.nimblebrain.ai/logos/granola/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
