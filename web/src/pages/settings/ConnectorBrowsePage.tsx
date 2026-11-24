@@ -1,4 +1,4 @@
-import { Check, Loader2 } from "lucide-react";
+import { Check, ChevronRight, Loader2, Plus } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { Plugin } from "../../_generated/platform-schemas/plugins";
@@ -34,6 +34,7 @@ import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import { installCompletesWithoutSignIn } from "../../lib/connector-auth-flow.ts";
 import { pluginPath, workspacePluginForServer } from "../../lib/plugins";
 import { type SecretHeaderField, secretHeaderFields } from "../../lib/secret-headers";
+import { cn } from "../../lib/utils";
 import { toWsId } from "../../lib/workspace-slug";
 
 type InstallResult = Awaited<ReturnType<typeof installConnector>>;
@@ -67,17 +68,21 @@ async function workspacePlugins(wsId: string | undefined): Promise<Plugin[]> {
 
 /**
  * Connector directory — what's available to install. Entries not yet in
- * this workspace fill the grid; installed ones sit in their own section
- * below, muted, with a link to their Configure page, so the directory
- * answers "do we have this already?" without a trip to the Installed
- * tab. Registry attribution is dropped from each card to reduce visual
- * noise. Cards render in a two-column grid because the catalog is long
- * enough that a single column wastes horizontal space. The grid steps on
- * its own container, since it renders beside the docked chat.
+ * this workspace fill the list; installed ones sit in their own section
+ * below, so the directory answers "do we have this already?" without a trip
+ * to the Installed tab. Each entry is a row that opens the entry's page
+ * (`entryPath`); rows render in two columns once the directory's own
+ * container is wide enough, since it renders beside the docked chat.
  *
- * An install that needs no sign-in finishes here: the card turns to
- * "Installed" in place. It moves to the Installed section on the next
- * visit, not mid-visit, so nothing jumps out from under the cursor.
+ * `entryId` renders that page in place of the list: what the entry signs in
+ * with, what installing asks for, and Install. The page is the only place an
+ * install starts, so every entry installs the same way: one button, with any
+ * step it needs first (an OAuth client, a credential, whom it is for) opening
+ * from it. The page shares this component's state and dialogs.
+ *
+ * An install that needs no sign-in finishes on the page, which turns to
+ * "Installed" in place. Back on the list, its row reads Installed and keeps
+ * its place until the next visit, so nothing jumps out from under the cursor.
  *
  * With `offerPersonal`, an entry that can hold a per-person credential
  * (`personalInstallable`) asks whom the install is for: "Just me" (the
@@ -87,9 +92,19 @@ async function workspacePlugins(wsId: string | undefined): Promise<Plugin[]> {
  * member who may write the workspace and only while the workspace has no
  * install of it. An entry the workspace already has still offers "Just me": a
  * person's own install sits beside the workspace's. An entry that cannot hold
- * a per-person credential is a workspace install, and its card says why.
+ * a per-person credential is a workspace install, and its row says why.
  */
-export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: boolean } = {}) {
+export function ConnectorDirectory({
+  offerPersonal = false,
+  entryId,
+  entryPath,
+}: {
+  offerPersonal?: boolean;
+  /** The catalog id of the entry whose page to show instead of the list. */
+  entryId?: string;
+  /** Where an entry's page lives. Every row opens it; installing happens there. */
+  entryPath: (entry: CatalogListing) => string;
+}) {
   const [entries, setEntries] = useState<CatalogListing[]>([]);
   const [errors, setErrors] = useState<Array<{ file: string; message: string }>>([]);
   const [installed, setInstalled] = useState<InstalledConnector[]>([]);
@@ -109,7 +124,9 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
   // already has its own install of it.
   const [audienceEntry, setAudienceEntry] = useState<CatalogListing | null>(null);
   const [audienceWorkspaceInstalled, setAudienceWorkspaceInstalled] = useState(false);
-  const [setupModalEntry, setSetupModalEntry] = useState<OAuthClientSetupTarget | null>(null);
+  // The entry whose OAuth client an admin is setting up on the way to installing
+  // it: saving the client carries straight on into the install.
+  const [setupEntry, setSetupEntry] = useState<CatalogListing | null>(null);
   // API-key Composio connector: after install we collect the key fields in a
   // modal (no OAuth redirect), then call connect_api_key. Holds the entry +
   // its installed serverName so success can route to Configure.
@@ -386,78 +403,105 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
     await onInstall(entry);
   };
 
+  // Whether the directory offers this entry a personal install; undefined when
+  // it never does. An entry installed just now for the viewer alone offers no
+  // second one.
+  const personalFor = (entry: CatalogListing, configurePath: string | undefined) =>
+    offerPersonal
+      ? Boolean(entry.personalInstallable) && configurePath !== PERSONAL_CONNECTORS_PATH
+      : undefined;
+
+  // The entry page's action: the one place an install starts.
+  const actionFor = (entry: CatalogListing, configurePath: string | undefined) => {
+    // Installed in this workspace, as opposed to installed just now for
+    // the viewer alone. The former still offers the viewer's own install.
+    const workspaceInstalled =
+      configurePath !== undefined && configurePath !== PERSONAL_CONNECTORS_PATH;
+    return (
+      <EntryAction
+        busy={busyId === entry.id}
+        canManage={canManage}
+        personalOffered={personalFor(entry, configurePath) === true}
+        configurePath={configurePath}
+        isStaticAuth={entry.install.kind === "remote-oauth" && entry.install.auth === "static"}
+        oauthClientReady={entry.oauthClientConfigured === true}
+        onInstall={() => onInstallClick(entry, workspaceInstalled)}
+        onSetUpAndInstall={() => setSetupEntry(entry)}
+      />
+    );
+  };
+
+  // The entry `entryId` names, and where it is managed if it is installed.
+  const pageEntry = entries.find((e) => e.id === entryId);
+  const pageConfigurePath = (entry: CatalogListing): string | undefined => {
+    const recent = justInstalled.get(entry.id);
+    if (recent) return recent;
+    const serverName = installedServerName(entry);
+    return serverName ? installedPath(serverName) : undefined;
+  };
+
   return (
     <div className="@container/directory space-y-6">
-      <input
-        type="search"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search plugins"
-        aria-label="Search plugins"
-        data-tour="catalog"
-        className="w-full text-sm px-3 py-2 rounded border border-border bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-      />
-
-      {errors.length > 0 && (
-        <div className="text-xs text-amber-600">
-          {errors.map((e) => (
-            <div key={e.file}>
-              Couldn't read <span className="font-medium">{e.file}</span>: {e.message}
-            </div>
-          ))}
-        </div>
+      {!entryId && (
+        <>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search plugins"
+            aria-label="Search plugins"
+            data-tour="catalog"
+            className="w-full text-sm px-3 py-2 rounded border border-border bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+          <CatalogReadErrors errors={errors} />
+        </>
       )}
 
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : loadError ? (
         <p className="text-sm text-destructive">{loadError}</p>
+      ) : entryId ? (
+        <DirectoryEntryPage
+          entry={pageEntry}
+          action={pageEntry && actionFor(pageEntry, pageConfigurePath(pageEntry))}
+        />
       ) : (
         <DirectoryResults
           query={query}
           available={available}
           installedEntries={installedEntries}
-          renderCard={(entry, configurePath) => {
-            // Installed in this workspace, as opposed to installed just now for
-            // the viewer alone. The former still offers the viewer's own install.
-            const workspaceInstalled =
-              configurePath !== undefined && configurePath !== PERSONAL_CONNECTORS_PATH;
-            return (
-              <DirectoryCard
-                key={entry.id}
-                entry={entry}
-                busy={busyId === entry.id}
-                canManage={canManage}
-                personal={
-                  offerPersonal
-                    ? Boolean(entry.personalInstallable) &&
-                      configurePath !== PERSONAL_CONNECTORS_PATH
-                    : undefined
-                }
-                configurePath={configurePath}
-                onInstall={() => onInstallClick(entry, workspaceInstalled)}
-                onSetUp={() => setSetupModalEntry(oauthClientSetupTarget(entry))}
-              />
-            );
-          }}
+          renderCard={(entry, configurePath) => (
+            <DirectoryRow
+              key={entry.id}
+              entry={entry}
+              personal={personalFor(entry, configurePath)}
+              configurePath={configurePath}
+              detailPath={entryPath(entry)}
+            />
+          )}
           configurePathFor={(entry) => justInstalled.get(entry.id)}
           installedPathFor={installedPath}
         />
       )}
 
-      {setupModalEntry && (
+      {setupEntry && (
         <OAuthClientSetupModal
-          entry={setupModalEntry}
+          entry={oauthClientSetupTarget(setupEntry)}
+          saveLabel="Save and install"
           // Pre-filling the existing clientId across renders is a v2
           // concern — list_installed doesn't echo the clientId today
           // (intentional: secret-or-not, surfacing identifiers from
           // workspace.json deserves its own response shape). For now
           // the admin re-enters on rotate.
           open={true}
-          onClose={() => setSetupModalEntry(null)}
-          onSaved={() => {
-            setSetupModalEntry(null);
-            fetchDirectory();
+          onClose={() => setSetupEntry(null)}
+          onSaved={async () => {
+            const entry = setupEntry;
+            setSetupEntry(null);
+            await fetchDirectory();
+            // The client was the first step of the install, not a separate task.
+            await onInstall({ ...entry, oauthClientConfigured: true });
           }}
         />
       )}
@@ -507,6 +551,20 @@ export function ConnectorDirectory({ offerPersonal = false }: { offerPersonal?: 
   );
 }
 
+/** Catalog files the directory could not read, named so an operator can fix them. */
+function CatalogReadErrors({ errors }: { errors: Array<{ file: string; message: string }> }) {
+  if (errors.length === 0) return null;
+  return (
+    <div className="text-xs text-amber-600">
+      {errors.map((e) => (
+        <div key={e.file}>
+          Couldn't read <span className="font-medium">{e.file}</span>: {e.message}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /**
  * The directory body: entries not yet installed in the grid, installed ones in
  * a muted section beneath. `configurePathFor` marks an entry installed during
@@ -537,7 +595,7 @@ function DirectoryResults({
   return (
     <>
       {available.length > 0 ? (
-        <div className="grid grid-cols-1 @md/directory:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-x-6 gap-y-1 @md/directory:grid-cols-2">
           {available.map((entry) => renderCard(entry, configurePathFor(entry)))}
         </div>
       ) : (
@@ -550,7 +608,7 @@ function DirectoryResults({
       {installedEntries.length > 0 && (
         <section className="space-y-3 pt-2">
           <h2 className="text-sm font-medium text-muted-foreground">Installed</h2>
-          <div className="grid grid-cols-1 @md/directory:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-1 @md/directory:grid-cols-2">
             {installedEntries.map(({ entry, serverName }) =>
               renderCard(entry, installedPathFor(serverName)),
             )}
@@ -576,104 +634,214 @@ export function oauthClientSetupTarget(entry: CatalogListing): OAuthClientSetupT
 }
 
 /**
- * One card in the Browse grid. Layout:
- *
- *   ┌────────────────────────────────────────────┐
- *   │ [icon] Connector name                         │
- *   │        Short description, two lines max.   │
- *   │                                            │
- *   │                              [Install / …] │
- *   └────────────────────────────────────────────┘
- *
- * Two invariants keep the grid visually consistent regardless of
- * content length:
- *
- *   1. The description block reserves space for two lines (`min-h-8`,
- *      = 2 × 16px line-height for text-xs). A one-line description
- *      pads to the same height as a two-line one, so the action row's
- *      vertical position never depends on copy length.
- *
- *   2. The action row uses `mt-auto`, pinning it to the bottom of the
- *      card's flex column. If something later disturbs the math
- *      (longer titles, an extra meta line), the button still sticks
- *      to the bottom — the card just grows uniformly.
- *
- * Belt and suspenders. Either alone would work; together they're
- * resilient to future content shifts.
+ * The entry's logo in a fixed square slot. Catalog logos arrive in every shape
+ * (a bare glyph, a wordmark, an icon that is already a tile), so the slot fixes
+ * the footprint and keeps every name on the same edge. It draws no frame of its
+ * own: a border around a logo that is already a tile reads as a box in a box.
  */
-function DirectoryCard({
+function EntryIcon({ entry, size }: { entry: CatalogListing; size: "row" | "page" }) {
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center justify-center",
+        size === "row" ? "size-10" : "size-14",
+      )}
+    >
+      <ConnectorIcon
+        name={entry.name}
+        iconUrl={entry.iconUrl}
+        className="size-full rounded-lg object-contain text-sm"
+      />
+    </span>
+  );
+}
+
+/**
+ * One entry in the directory, as a row:
+ *
+ *   [icon]  Name                                   Installed / >
+ *           One-line description
+ *           Whose account it uses · Needs a credential
+ *
+ * The whole row opens the entry's page (the name's link stretches over it),
+ * and that page is the only place an install starts, so every entry is
+ * installed the same way whatever its sign-in needs. The row says only what
+ * helps choose which page to open: whose account the plugin signs in with,
+ * whether it needs a credential, and whether it is already installed.
+ */
+function DirectoryRow({
   entry,
-  busy,
-  canManage,
   personal,
   configurePath,
-  onInstall,
-  onSetUp,
+  detailPath,
 }: {
   entry: CatalogListing;
-  busy: boolean;
-  canManage: boolean;
   /** Whether the directory offers a personal install of this entry; undefined when it never does. */
   personal?: boolean;
-  /** Set when the entry is installed in this workspace: its Configure page. */
+  /** Set when the entry is installed: the page that manages the install. */
   configurePath?: string;
-  onInstall: () => void;
-  onSetUp: () => void;
+  detailPath: string;
 }) {
-  const isStaticAuth = entry.install.kind === "remote-oauth" && entry.install.auth === "static";
-  const oauthClientReady = entry.oauthClientConfigured === true;
-  // Say it on the card, not once the dialog appears. `oauthClientConfigured` already
-  // distinguishes a static-auth entry that is ready from one that is not; this is
-  // the same disclosure for the other thing an install can ask for.
   const secretCount = configurePath ? 0 : secretHeaderFields(entry.install).length;
+  const accountNote = configurePath
+    ? null
+    : personal === true
+      ? "Signs in with your own account"
+      : personal === false
+        ? // Why there is no "Just me": the server signs in with one account
+          // the workspace or operator holds, never a person's own.
+          "Uses one account for the workspace"
+        : null;
 
   return (
-    <div className="flex flex-col gap-3 p-4 border border-border/60 rounded-sm bg-background h-full">
-      <div className={`flex items-start gap-3 ${configurePath ? "opacity-60" : ""}`}>
-        <ConnectorIcon name={entry.name} iconUrl={entry.iconUrl} />
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium truncate">{entry.name}</div>
-          <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5 min-h-8">
-            {entry.description}
-          </p>
-        </div>
+    <div
+      data-testid="directory-entry"
+      className="relative -mx-2 flex items-center gap-3 rounded-md px-2 py-2 hover:bg-foreground/5 has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-ring"
+    >
+      <EntryIcon entry={entry} size="row" />
+      <div className="min-w-0 flex-1">
+        <Link
+          to={detailPath}
+          className="block truncate text-sm font-medium outline-none after:absolute after:inset-0 after:rounded-md"
+        >
+          {entry.name}
+        </Link>
+        <p className="truncate text-xs text-muted-foreground">{entry.description}</p>
+        {(accountNote || secretCount > 0) && (
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
+            {accountNote && <span>{accountNote}</span>}
+            {secretCount > 0 && (
+              <span className="rounded-sm border border-border/60 px-1.5">
+                {secretCount === 1 ? "Needs a credential" : `Needs ${secretCount} credentials`}
+              </span>
+            )}
+          </div>
+        )}
       </div>
-      <div className="mt-auto flex items-end justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {secretCount > 0 ? (
-            <span className="text-2xs text-muted-foreground border border-border/60 rounded-sm px-1.5 py-0.5">
-              {secretCount === 1 ? "Needs a credential" : `Needs ${secretCount} credentials`}
-            </span>
-          ) : null}
-          {personal === false && !configurePath ? (
-            // Why there is no "Just me": the server signs in with one account
-            // the workspace or operator holds, never a person's own.
-            <span className="text-2xs text-muted-foreground">
-              Uses one account for the workspace
-            </span>
-          ) : null}
-        </div>
-        <CardAction
-          busy={busy}
-          canManage={canManage}
-          personalOffered={personal === true}
-          configurePath={configurePath}
-          isStaticAuth={isStaticAuth}
-          oauthClientReady={oauthClientReady}
-          onInstall={onInstall}
-          onSetUp={onSetUp}
-        />
-      </div>
+      {configurePath ? (
+        <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+          <Check className="size-3.5" />
+          Installed
+        </span>
+      ) : (
+        <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+      )}
     </div>
   );
 }
 
 /**
- * The card's action slot. Exported so the install gate is directly testable:
- * it is the only thing standing between a workspace member and an Install
- * button the server refuses.
+ * What installing an entry will ask of the person, in the order they meet it.
+ * Read from the listing alone, so it is what the install flow will actually
+ * do: an OAuth client an admin must set up first, credentials entered before
+ * the install, then a sign-in unless the platform or a broker holds the
+ * credential. Empty for an install kind the directory cannot run yet.
  */
-export function CardAction({
+export function installAsks(entry: CatalogListing): string[] {
+  const install = entry.install;
+  if (install.kind !== "remote-oauth") return [];
+  const asks: string[] = [];
+  if (install.auth === "static" && entry.oauthClientConfigured !== true) {
+    asks.push("A workspace admin sets up an OAuth client for it first.");
+  }
+  const fields = secretHeaderFields(install);
+  if (fields.length > 0) {
+    asks.push(`${fields.map((f) => f.label).join(", ")}, entered before it installs.`);
+  }
+  if (install.auth === "composio" && install.composio?.authScheme === "API_KEY") {
+    asks.push(`An API key for ${entry.name}.`);
+  } else if (!installCompletesWithoutSignIn(install.auth)) {
+    asks.push(`A sign-in to ${entry.name}, where you approve the access it requests.`);
+  } else if (asks.length === 0) {
+    asks.push("Nothing more. It connects as soon as it's installed.");
+  }
+  return asks;
+}
+
+/**
+ * One entry's page before install, at `/w/:slug/plugins/browse/<catalog id>`.
+ * It carries what the row has no room for: whose account the entry uses,
+ * what installing will ask for, and the access it requests. The action is the
+ * page's one filled button. Everything here is read from the catalog listing,
+ * so the page says nothing the install flow will not bear out.
+ */
+function DirectoryEntryPage({
+  entry,
+  action,
+}: {
+  /** Undefined when the directory has no entry by the page's id. */
+  entry: CatalogListing | undefined;
+  action: ReactNode;
+}) {
+  if (!entry) {
+    return <p className="text-sm text-muted-foreground">This plugin isn't in the directory.</p>;
+  }
+  const asks = installAsks(entry);
+  const scopes = entry.install.kind === "remote-oauth" ? (entry.install.requiredScopes ?? []) : [];
+  const tags = entry.tags ?? [];
+  return (
+    <article data-testid="directory-entry-page" className="space-y-8">
+      <header className="flex flex-wrap items-center gap-4">
+        <EntryIcon entry={entry} size="page" />
+        <div className="min-w-0 flex-1 basis-48 space-y-1">
+          <h1 className="text-xl font-semibold tracking-tight">{entry.name}</h1>
+          <p className="text-sm text-muted-foreground">{entry.description}</p>
+          {tags.length > 0 && <p className="text-xs text-muted-foreground">{tags.join(" · ")}</p>}
+        </div>
+        <div className="shrink-0">{action}</div>
+      </header>
+
+      <EntrySection title="Whose account it uses">
+        {entry.personalInstallable
+          ? `Each person connects their own ${entry.name} account. Install it for yourself, or for everyone here so each member can connect their own.`
+          : `It uses one ${entry.name} account for the whole workspace, not each person's own.`}
+      </EntrySection>
+
+      {asks.length > 0 && (
+        <EntrySection title="What installing asks for">
+          <ul className="list-disc space-y-1 pl-5">
+            {asks.map((ask) => (
+              <li key={ask}>{ask}</li>
+            ))}
+          </ul>
+        </EntrySection>
+      )}
+
+      {scopes.length > 0 && (
+        <EntrySection title="Access it requests">
+          <div className="flex flex-wrap gap-1.5">
+            {scopes.map((scope) => (
+              <code key={scope} className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-xs">
+                {scope}
+              </code>
+            ))}
+          </div>
+        </EntrySection>
+      )}
+    </article>
+  );
+}
+
+function EntrySection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-2">
+      <h2 className="text-sm font-semibold">{title}</h2>
+      <div className="text-sm text-muted-foreground">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * The entry page's action, the one place an install starts. Exported so the
+ * install gate is directly testable: it is the only thing standing between a
+ * workspace member and an Install button the server refuses.
+ *
+ * Every entry offers the same button, Install, whatever its sign-in needs. What
+ * an install asks for first (an OAuth client, a credential, whom it is for)
+ * opens as a step of that one install, not as a different button. Where the
+ * viewer cannot install, the button stays, disabled, with the reason beneath.
+ */
+export function EntryAction({
   busy,
   canManage,
   personalOffered = false,
@@ -681,7 +849,7 @@ export function CardAction({
   isStaticAuth,
   oauthClientReady,
   onInstall,
-  onSetUp,
+  onSetUpAndInstall,
 }: {
   busy: boolean;
   canManage: boolean;
@@ -690,22 +858,14 @@ export function CardAction({
    * a member who may not write the workspace still gets Install.
    */
   personalOffered?: boolean;
-  /** Set when the entry is installed in this workspace: its Configure page. */
+  /** Set when the entry is installed: the page that manages the install. */
   configurePath?: string;
   isStaticAuth: boolean;
   oauthClientReady: boolean;
   onInstall: () => void;
-  onSetUp: () => void;
+  /** Install a static-auth entry whose OAuth client is not set up yet: set it up first. */
+  onSetUpAndInstall: () => void;
 }) {
-  // Outline rather than filled: a grid of 30+ buttons reads as noise with a
-  // bold primary fill on every card. The portal URL lives in
-  // OAuthClientSetupModal, so no per-card hint is needed here.
-  //
-  // Static-auth flow:
-  //   - not configured + admin     → Set up
-  //   - not configured + non-admin → "Needs an OAuth client"
-  //   - configured                 → Install (rotation lives on Configure now)
-  //
   // Installed comes first, for every role: it is a fact about the workspace,
   // not an action, so a member sees it too and no setup state outranks it.
   // Where a personal install is offered, the viewer can still add their own
@@ -717,11 +877,9 @@ export function CardAction({
           Configure
         </Link>
         {personalOffered ? (
-          <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
-            Install for me
-          </Button>
+          <InstallButton busy={busy} onClick={onInstall} label="Install for me" />
         ) : (
-          <Button type="button" variant="outline" size="sm" disabled>
+          <Button type="button" variant="outline" size="lg" disabled>
             <Check />
             Installed
           </Button>
@@ -729,13 +887,14 @@ export function CardAction({
       </div>
     );
   }
+  // A static-auth entry needs the workspace's OAuth client before anyone can
+  // sign in. An admin's Install sets it up and carries on into the install; no
+  // member can supply it, so naming that blocker beats naming their role.
   if (isStaticAuth && !oauthClientReady) {
     return canManage ? (
-      <Button type="button" variant="outline" size="sm" onClick={onSetUp}>
-        Set up
-      </Button>
+      <InstallButton busy={busy} onClick={onSetUpAndInstall} />
     ) : (
-      <span className="text-xs text-muted-foreground">Needs an OAuth client</span>
+      <BlockedInstall reason="Needs an OAuth client" />
     );
   }
   // Every remaining path is an install, and installing is a workspace-scoped
@@ -746,18 +905,38 @@ export function CardAction({
   // install is the one install that writes nothing of the workspace's but the
   // viewer's own grant, so it opens the gate; the choice that follows offers
   // "Everyone here" only under the same `canManage`.
-  return canManage || personalOffered ? (
-    <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
-      {busy ? (
-        <>
-          <Loader2 className="animate-spin" />
-          Installing…
-        </>
-      ) : (
-        "Install"
-      )}
+  if (!canManage && !personalOffered) {
+    return <BlockedInstall reason="Workspace admin required" />;
+  }
+  return <InstallButton busy={busy} onClick={onInstall} />;
+}
+
+function InstallButton({
+  busy,
+  onClick,
+  label = "Install",
+}: {
+  busy: boolean;
+  onClick: () => void;
+  label?: string;
+}) {
+  return (
+    <Button type="button" size="lg" onClick={onClick} disabled={busy}>
+      {busy ? <Loader2 className="animate-spin" /> : <Plus />}
+      {busy ? "Installing…" : label}
     </Button>
-  ) : (
-    <span className="text-xs text-muted-foreground">Workspace admin required</span>
+  );
+}
+
+/** Install the viewer cannot use, with why beneath it. */
+function BlockedInstall({ reason }: { reason: string }) {
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Button type="button" size="lg" disabled>
+        <Plus />
+        Install
+      </Button>
+      <span className="text-xs text-muted-foreground">{reason}</span>
+    </div>
   );
 }

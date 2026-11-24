@@ -187,7 +187,7 @@ async function mount(opts: { role?: "admin" | "member"; path?: string } = {}): P
             <Probe />
             <Routes>
               <Route path="/w/:slug/plugins" element={<PluginsPage />} />
-              <Route path="/w/:slug/plugins/browse" element={<PluginsBrowsePage />} />
+              <Route path="/w/:slug/plugins/browse/*" element={<PluginsBrowsePage />} />
               <Route path="/w/:slug/plugins/:pluginRef" element={<p>plugin page</p>} />
             </Routes>
           </MemoryRouter>
@@ -735,17 +735,47 @@ describe("PluginsBrowsePage", () => {
     expect(back.getAttribute("href")).toBe(`/w/${SLUG}/plugins`);
   });
 
-  test("the directory offers Install to a writer", async () => {
+  test("the list has no install buttons: each row opens its entry's page", async () => {
     mounted = await mount({ role: "admin", path: `/w/${SLUG}/plugins/browse` });
     expect(mounted.container.textContent).toContain("Acme Tasks");
-    expect(button(mounted.container, "Install")).toBeDefined();
+    expect(mounted.container.querySelector('[data-testid="directory-entry"] button')).toBeNull();
   });
 
-  test("a member sees the directory without install actions", async () => {
-    mounted = await mount({ role: "member", path: `/w/${SLUG}/plugins/browse` });
-    expect(mounted.container.textContent).toContain("Acme Tasks");
-    expect(button(mounted.container, "Install")).toBeUndefined();
-    expect(mounted.container.textContent).toContain("Workspace admin required");
+  test("a row's name opens the entry's page", async () => {
+    mounted = await mount({ path: `/w/${SLUG}/plugins/browse` });
+    const link = [...mounted.container.querySelectorAll("a")].find(
+      (a) => a.textContent === "Acme Tasks",
+    );
+    // The catalog id's slash stays a path separator, under the route's splat.
+    expect(link?.getAttribute("href")).toBe(`/w/${SLUG}/plugins/browse/com.acme/tasks`);
+  });
+
+  test("an entry's page says what installing asks for, with the page's Install", async () => {
+    mounted = await mount({ role: "admin", path: `/w/${SLUG}/plugins/browse/com.acme/tasks` });
+    const page = mounted.container.querySelector('[data-testid="directory-entry-page"]')!;
+    expect(page.querySelector("h1")?.textContent).toBe("Acme Tasks");
+    // A platform-minted credential: no sign-in and nothing to enter.
+    expect(page.textContent).toContain("Nothing more. It connects as soon as it's installed.");
+    expect(page.textContent).toContain("one Acme Tasks account for the whole workspace");
+    expect(button(page, "Install")?.disabled).toBe(false);
+    const back = mounted.container.querySelector('[data-testid="browse-back"]')!;
+    expect(back.textContent).toBe("← Browse plugins");
+    expect(back.getAttribute("href")).toBe(`/w/${SLUG}/plugins/browse`);
+    // The entry's own name is the page's heading, not the directory's.
+    expect(mounted.container.textContent).not.toContain("Browse pluginsAcme");
+    expect(mounted.container.querySelector('input[type="search"]')).toBeNull();
+  });
+
+  test("an entry's page keeps the install gate", async () => {
+    mounted = await mount({ role: "member", path: `/w/${SLUG}/plugins/browse/com.acme/tasks` });
+    const page = mounted.container.querySelector('[data-testid="directory-entry-page"]')!;
+    expect(button(page, "Install")?.disabled).toBe(true);
+    expect(page.textContent).toContain("Workspace admin required");
+  });
+
+  test("an id the directory lacks says so", async () => {
+    mounted = await mount({ path: `/w/${SLUG}/plugins/browse/com.acme/gone` });
+    expect(mounted.container.textContent).toContain("This plugin isn't in the directory.");
   });
 
   test("offers no skill writing: that is on Skills", async () => {

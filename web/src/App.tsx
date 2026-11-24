@@ -491,7 +491,9 @@ function AuthenticatedAppContent({
               {/* The plugins installed here (the workspace's and the viewer's
                   own), and the directory to add more. */}
               <Route path="plugins" element={<PluginsPage />} />
-              <Route path="plugins/browse" element={<PluginsBrowsePage />} />
+              {/* The directory, and one entry's page before install. One route,
+                  so moving between them keeps the directory's loaded listing. */}
+              <Route path="plugins/browse/*" element={<PluginsBrowsePage />} />
               {/* One plugin: how it is configured, whose account it uses, where it is used. */}
               <Route path="plugins/:pluginRef" element={<PluginDetailPage />} />
               {/* What the agent is taught here, a skill someone wrote, and a new one. */}

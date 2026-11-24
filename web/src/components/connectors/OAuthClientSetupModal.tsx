@@ -47,6 +47,7 @@ export function OAuthClientSetupModal({
   open,
   onClose,
   onSaved,
+  saveLabel,
 }: {
   entry: OAuthClientSetupTarget;
   /** Pre-fill for the rotate case. Empty string for first-time setup. */
@@ -54,6 +55,11 @@ export function OAuthClientSetupModal({
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
+  /**
+   * The submit button's label when saving does more than save: on Browse, the
+   * client is the first step of an install, so it reads "Save and install".
+   */
+  saveLabel?: string;
 }) {
   const [clientId, setClientId] = useState(initialClientId ?? "");
   const [clientSecret, setClientSecret] = useState("");
@@ -258,7 +264,7 @@ export function OAuthClientSetupModal({
               Cancel
             </Button>
             <Button type="submit" size="sm" disabled={busy}>
-              {busy ? "Saving…" : isEdit ? "Save changes" : "Save"}
+              {busy ? "Saving…" : (saveLabel ?? (isEdit ? "Save changes" : "Save"))}
             </Button>
           </div>
         </form>

@@ -13,7 +13,7 @@ servers:
     description: Read and write workspace pages
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/notion.png
+      - src: https://static.nimblebrain.ai/logos/notion/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -43,7 +43,7 @@ servers:
     description: Channels, threads, and direct messages
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/slack.png
+      - src: https://static.nimblebrain.ai/logos/slack/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -58,7 +58,7 @@ servers:
     description: Repositories, issues, and pull requests
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/github.png
+      - src: https://static.nimblebrain.ai/logos/github/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -73,7 +73,7 @@ servers:
     description: Track issues and sprints
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/jira.png
+      - src: https://static.nimblebrain.ai/logos/jira/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -88,7 +88,7 @@ servers:
     description: Tasks, projects, and portfolios
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/asana.png
+      - src: https://static.nimblebrain.ai/logos/asana/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -103,7 +103,7 @@ servers:
     description: Contacts, companies, and deals
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/hubspot.png
+      - src: https://static.nimblebrain.ai/logos/hubspot/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -118,7 +118,7 @@ servers:
     description: Support tickets and help center articles
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/zendesk.png
+      - src: https://static.nimblebrain.ai/logos/zendesk/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -148,7 +148,7 @@ servers:
     description: Bases, tables, and records
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/airtable.png
+      - src: https://static.nimblebrain.ai/logos/airtable/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -163,7 +163,7 @@ servers:
     description: Search and read files in Drive
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/google-drive.png
+      - src: https://static.nimblebrain.ai/logos/google-drive/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -178,7 +178,7 @@ servers:
     description: Scheduling links and booked meetings
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/calendly.png
+      - src: https://static.nimblebrain.ai/logos/calendly/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -193,7 +193,7 @@ servers:
     description: Files and shared folders
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/dropbox.png
+      - src: https://static.nimblebrain.ai/logos/dropbox/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -208,7 +208,7 @@ servers:
     description: Meetings, recordings, and transcripts
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/zoom.png
+      - src: https://static.nimblebrain.ai/logos/zoom/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -223,7 +223,7 @@ servers:
     description: Orders, products, and customers
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/shopify.png
+      - src: https://static.nimblebrain.ai/logos/shopify/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -238,7 +238,7 @@ servers:
     description: Accounts, opportunities, and cases
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/salesforce.png
+      - src: https://static.nimblebrain.ai/logos/salesforce/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -257,7 +257,7 @@ servers:
     description: Search, read, and draft email
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/gmail.png
+      - src: https://static.nimblebrain.ai/logos/gmail/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -276,7 +276,7 @@ servers:
     description: Mail and calendar in Microsoft 365
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/outlook.png
+      - src: https://static.nimblebrain.ai/logos/outlook/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -295,7 +295,7 @@ servers:
     description: Invoices, bills, and customers
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/quickbooks.png
+      - src: https://static.nimblebrain.ai/logos/quickbooks/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -314,7 +314,7 @@ servers:
     description: Payments, customers, and subscriptions
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/stripe.png
+      - src: https://static.nimblebrain.ai/logos/stripe/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -333,7 +333,7 @@ servers:
     description: Events and availability
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/google-calendar.png
+      - src: https://static.nimblebrain.ai/logos/google-calendar/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -348,7 +348,7 @@ servers:
     description: Personal tasks and projects
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/todoist.png
+      - src: https://static.nimblebrain.ai/logos/todoist/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -363,7 +363,7 @@ servers:
     description: Designs and brand templates
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/canva.png
+      - src: https://static.nimblebrain.ai/logos/canva/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -378,7 +378,7 @@ servers:
     description: Boards, items, and updates
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/monday.png
+      - src: https://static.nimblebrain.ai/logos/monday/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -393,7 +393,7 @@ servers:
     description: Tasks, docs, and goals
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/clickup.png
+      - src: https://static.nimblebrain.ai/logos/clickup/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -407,6 +407,9 @@ servers:
     title: Miro
     description: Boards and sticky notes
     version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/logos/miro/light.svg
+        sizes: ["any"]
     remotes:
       - type: streamable-http
         url: https://miro.mcp.example/mcp
@@ -420,7 +423,7 @@ servers:
     description: Errors, issues, and releases
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/sentry.png
+      - src: https://static.nimblebrain.ai/logos/sentry/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -434,6 +437,9 @@ servers:
     title: Figma
     description: Design files and comments
     version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/logos/figma/light.svg
+        sizes: ["any"]
     remotes:
       - type: streamable-http
         url: https://figma.mcp.example/mcp
@@ -446,6 +452,9 @@ servers:
     title: Box
     description: Content and shared folders
     version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/logos/box/light.svg
+        sizes: ["any"]
     remotes:
       - type: streamable-http
         url: https://box.mcp.example/mcp
@@ -458,6 +467,9 @@ servers:
     title: Trello
     description: Boards, lists, and cards
     version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/logos/trello/light.svg
+        sizes: ["any"]
     remotes:
       - type: streamable-http
         url: https://trello.mcp.example/mcp
@@ -470,6 +482,9 @@ servers:
     title: Docusign
     description: Envelopes and signing status
     version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/logos/docusign/light.svg
+        sizes: ["any"]
     remotes:
       - type: streamable-http
         url: https://docusign.mcp.example/mcp
@@ -494,6 +509,9 @@ servers:
     title: Xero
     description: Invoices and bank reconciliation
     version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/logos/xero/light.svg
+        sizes: ["any"]
     remotes:
       - type: streamable-http
         url: https://xero.mcp.example/mcp
@@ -542,6 +560,9 @@ servers:
     title: Cloudflare
     description: Workers, DNS, and analytics
     version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/logos/cloudflare/light.svg
+        sizes: ["any"]
     remotes:
       - type: sse
         url: https://cloudflare.mcp.example/sse
@@ -578,6 +599,9 @@ servers:
     title: Vercel
     description: Deployments and projects
     version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/logos/vercel/light.svg
+        sizes: ["any"]
     remotes:
       - type: streamable-http
         url: https://vercel.mcp.example/mcp
@@ -590,6 +614,9 @@ servers:
     title: Zoho CRM
     description: Leads, deals, and accounts
     version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/logos/zoho/light.svg
+        sizes: ["any"]
     remotes:
       - type: streamable-http
         url: https://zoho.mcp.example/mcp

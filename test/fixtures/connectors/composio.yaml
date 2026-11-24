@@ -10,7 +10,7 @@ servers:
     description: Tasks, projects, and team workflows
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/asana.png
+      - src: https://static.nimblebrain.ai/logos/asana/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
