@@ -56,6 +56,18 @@ describe("check-catalog-dcr isBotChallenge", () => {
   });
 });
 
+/** Spec-valid RFC 8414 metadata for an authorization server at `issuer`. */
+function asMetadata(issuer: string) {
+  return {
+    issuer,
+    authorization_endpoint: `${issuer}/authorize`,
+    token_endpoint: `${issuer}/token`,
+    registration_endpoint: `${issuer}/register`,
+    response_types_supported: ["code"],
+    code_challenge_methods_supported: ["S256"],
+  };
+}
+
 describe("check-catalog-dcr checkEntry at /authorize", () => {
   const origFetch = globalThis.fetch;
   afterEach(() => {
@@ -76,10 +88,7 @@ describe("check-catalog-dcr checkEntry at /authorize", () => {
     return (async (input: string | URL | Request) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.pathname === "/.well-known/oauth-authorization-server") {
-        return Response.json({
-          registration_endpoint: "https://mcp.example.com/register",
-          authorization_endpoint: "https://mcp.example.com/authorize",
-        });
+        return Response.json(asMetadata("https://mcp.example.com"));
       }
       if (url.pathname === "/register") return Response.json({ client_id: "probe-client" });
       if (url.pathname === "/authorize") return authorize();
@@ -140,10 +149,7 @@ describe("check-catalog-dcr checkEntry reachability", () => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.pathname === "/sse") return endpoint(init?.method ?? "GET");
       if (url.pathname === "/.well-known/oauth-authorization-server") {
-        return Response.json({
-          registration_endpoint: "https://mcp.example.com/register",
-          authorization_endpoint: "https://mcp.example.com/authorize",
-        });
+        return Response.json(asMetadata("https://mcp.example.com"));
       }
       if (url.pathname === "/register") return Response.json({ client_id: "probe-client" });
       if (url.pathname === "/authorize") return new Response("login", { status: 200 });
@@ -182,6 +188,99 @@ describe("check-catalog-dcr checkEntry reachability", () => {
     );
     const r = await checkEntry(entry, REDIRECT);
     expect(r.pass).toBe(true);
-    expect(cancelled).toBe(2);
+    // HEAD, the confirming GET, and discovery's initialize POST.
+    expect(cancelled).toBe(3);
+  });
+});
+
+describe("check-catalog-dcr discovery follows sign-in", () => {
+  const origFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+  });
+
+  const REDIRECT = "https://nb.example.com/v1/mcp-auth/callback";
+  const entry = {
+    name: "com.example/mcp",
+    description: "dcr vendor",
+    version: "1.0.0",
+    remotes: [{ type: "streamable-http", url: "https://mcp.example.com/app/mcp" }],
+    _meta: { "ai.nimblebrain/connector": { auth: "dcr" } },
+  } as Parameters<typeof checkEntry>[0];
+
+  /**
+   * A vendor that answers only at the given paths, and records every authorize
+   * request. Its 401 names its protected-resource metadata, as the spec says.
+   */
+  function vendor(routes: Record<string, () => Response>, authorized: URL[]): typeof fetch {
+    return (async (input: string | URL | Request) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      if (url.pathname === "/app/mcp") {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "www-authenticate":
+              'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/app/mcp", scope="read write"',
+          },
+        });
+      }
+      if (url.pathname === "/.well-known/oauth-protected-resource/app/mcp") {
+        return Response.json({
+          resource: "https://mcp.example.com/app/mcp",
+          authorization_servers: ["https://mcp.example.com/app/auth"],
+        });
+      }
+      if (url.pathname === "/app/auth/register")
+        return Response.json({ client_id: "probe-client" });
+      if (url.pathname === "/app/auth/authorize") {
+        authorized.push(url);
+        return new Response("login", { status: 200 });
+      }
+      const route = routes[url.pathname];
+      return route ? route() : new Response("not found", { status: 404 });
+    }) as typeof fetch;
+  }
+
+  test("finds metadata at the path-aware RFC 8414 location, as sign-in does", async () => {
+    const authorized: URL[] = [];
+    globalThis.fetch = vendor(
+      {
+        "/.well-known/oauth-authorization-server/app/auth": () =>
+          Response.json(asMetadata("https://mcp.example.com/app/auth")),
+      },
+      authorized,
+    );
+    const r = await checkEntry(entry, REDIRECT);
+    expect(formatStatus(r)).toBe("✓ ok (DCR + authorize end-to-end)");
+    // The authorize request carries what sign-in sends: the resource and the scope.
+    expect(authorized[0]?.searchParams.get("resource")).toBe("https://mcp.example.com/app/mcp");
+    expect(authorized[0]?.searchParams.get("scope")).toBe("read write");
+    expect(authorized[0]?.searchParams.get("redirect_uri")).toBe(REDIRECT);
+  });
+
+  test("finds metadata published only by OpenID Connect discovery", async () => {
+    globalThis.fetch = vendor(
+      {
+        "/.well-known/openid-configuration/app/auth": () =>
+          Response.json({
+            ...asMetadata("https://mcp.example.com/app/auth"),
+            jwks_uri: "https://mcp.example.com/app/auth/jwks",
+            subject_types_supported: ["public"],
+            id_token_signing_alg_values_supported: ["RS256"],
+          }),
+      },
+      [],
+    );
+    const r = await checkEntry(entry, REDIRECT);
+    expect(r.pass).toBe(true);
+    expect(r.registrationEndpoint).toBe("https://mcp.example.com/app/auth/register");
+  });
+
+  test("fails when no location sign-in reads holds the metadata", async () => {
+    globalThis.fetch = vendor({}, []);
+    const r = await checkEntry(entry, REDIRECT);
+    expect(formatStatus(r)).toBe(
+      "✗ FAIL — no AS metadata advertised registration_endpoint (RFC 7591)",
+    );
   });
 });

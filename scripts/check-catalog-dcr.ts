@@ -12,13 +12,14 @@
  *      405 depending on auth state. DNS failure / timeout / 5xx = the URL is
  *      dead, and so is 404 / 410 when a GET confirms it (a retired
  *      endpoint, such as an SSE URL a vendor moved to /mcp).
- *   2. RFC 9728 protected-resource metadata — `GET <connector-origin>/
- *      .well-known/oauth-protected-resource`. Optional but preferred;
- *      yields the authorization-server origin(s).
- *   3. RFC 8414 authorization-server metadata — `GET <as-origin>/
- *      .well-known/oauth-authorization-server`. Must yield JSON with
- *      `registration_endpoint` (RFC 7591) for the catalog claim of
- *      `auth: "dcr"` to be truthful.
+ *   2 + 3. OAuth discovery, exactly as sign-in does it — the MCP SDK's
+ *      `discoverOAuthServerInfo`, which a connector's `auth()` calls: the
+ *      protected-resource metadata the server's 401 names (RFC 9728, else
+ *      its well-known locations), then the authorization server's RFC 8414
+ *      or OpenID Connect metadata, each at its path-aware location. It must
+ *      yield a `registration_endpoint` (RFC 7591) for the catalog claim of
+ *      `auth: "dcr"` to be truthful. A narrower chain than sign-in's fails
+ *      vendors that sign in fine.
  *   4. **DCR registration probe** — POST a synthetic client to the
  *      `registration_endpoint` with the redirect URI given as the second
  *      argument.
@@ -55,6 +56,13 @@
  * OAuth app for the workspace) is workspace-state, not catalog-rot.
  */
 
+import {
+  type AuthorizationServerMetadata,
+  discoverOAuthServerInfo,
+  extractWWWAuthenticateParams,
+  type FetchLike,
+  startAuthorization,
+} from "@modelcontextprotocol/client";
 import { readCatalogServers } from "../src/connectors/catalog/read.ts";
 import {
   getNimbleBrainConnectorMeta,
@@ -186,20 +194,10 @@ export async function checkEntry(s: ServerDetail, redirectUri: string): Promise<
     return result;
   }
 
-  // 2 + 3. OAuth metadata discovery — same chain as
-  // workspace-oauth-provider.discoverAuthorizationServerOrigins.
-  const connectorOrigin = new URL(url).origin;
-  const asOrigins = await discoverAuthorizationServerOrigins(connectorOrigin);
-
-  let asMetadata: { registration_endpoint: string; authorization_endpoint?: string } | null = null;
-  for (const asOrigin of asOrigins) {
-    const m = await fetchAsMetadata(`${asOrigin}/.well-known/oauth-authorization-server`);
-    if (m) {
-      asMetadata = m;
-      break;
-    }
-  }
-  if (!asMetadata) {
+  // 2 + 3. OAuth discovery, as sign-in does it.
+  const discovered = await discoverAuthServer(url);
+  const asMetadata = discovered?.metadata;
+  if (!discovered || typeof asMetadata?.registration_endpoint !== "string") {
     result.failureReason = "no AS metadata advertised registration_endpoint (RFC 7591)";
     return result;
   }
@@ -224,11 +222,7 @@ export async function checkEntry(s: ServerDetail, redirectUri: string): Promise<
     result.pass = true;
     return result;
   }
-  const authResult = await probeAuthorize(
-    asMetadata.authorization_endpoint,
-    regResult.clientId,
-    redirectUri,
-  );
+  const authResult = await probeAuthorize(discovered, regResult.clientId, redirectUri);
   if (!authResult.ok) {
     result.failureReason = `/authorize rejected our redirect URI: ${authResult.message}`;
     return result;
@@ -287,53 +281,67 @@ async function probeReachable(
   return { ok: status < 500 && !GONE_STATUSES.has(status), status };
 }
 
-async function discoverAuthorizationServerOrigins(connectorOrigin: string): Promise<string[]> {
-  const origins = new Set<string>();
-  try {
-    const prMetadataUrl = `${connectorOrigin}/.well-known/oauth-protected-resource`;
-    const res = await fetch(prMetadataUrl, {
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    if (res.ok) {
-      const body = (await res.json()) as { authorization_servers?: unknown };
-      if (Array.isArray(body.authorization_servers)) {
-        for (const entry of body.authorization_servers) {
-          if (typeof entry !== "string") continue;
-          try {
-            origins.add(new URL(entry).origin);
-          } catch {
-            // malformed AS entry — ignore
-          }
-        }
-      }
-    }
-  } catch {
-    // RFC 9728 not advertised — connector origin fallback below covers it.
-  }
-  origins.add(connectorOrigin);
-  return [...origins];
+/** `fetch` with the probe's per-request timeout, for the SDK's discovery calls. */
+const timedFetch: FetchLike = (input, init) =>
+  fetch(input, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+
+/** What a connector's sign-in learns from discovery, and the probe reuses. */
+interface Discovered {
+  authorizationServerUrl: string;
+  metadata: AuthorizationServerMetadata;
+  /** The RFC 8707 resource sign-in names: the protected-resource metadata's, when it has one. */
+  resource?: string;
+  /** The scope the server's 401 asks for, else the scopes its metadata advertises. */
+  scope?: string;
 }
 
-async function fetchAsMetadata(
-  metaUrl: string,
-): Promise<{ registration_endpoint: string; authorization_endpoint?: string } | null> {
+/**
+ * Discovery the way a connector's sign-in does it: the MCP SDK's
+ * `discoverOAuthServerInfo`, the call `auth()` makes, given the
+ * `resource_metadata` URL the server's 401 names. Undefined when it finds no
+ * authorization-server metadata.
+ */
+async function discoverAuthServer(url: string): Promise<Discovered | undefined> {
+  let challenge: ReturnType<typeof extractWWWAuthenticateParams> = {};
   try {
-    const res = await fetch(metaUrl, {
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    const res = await timedFetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "check-catalog-dcr", version: "1" },
+        },
+      }),
     });
-    if (!res.ok) return null;
-    const body = (await res.json()) as {
-      registration_endpoint?: unknown;
-      authorization_endpoint?: unknown;
-    };
-    if (typeof body.registration_endpoint !== "string") return null;
+    challenge = extractWWWAuthenticateParams(res);
+    await res.body?.cancel();
+  } catch {
+    // No 401 to read: discovery falls back to the well-known locations.
+  }
+  try {
+    const info = await discoverOAuthServerInfo(url, {
+      resourceMetadataUrl: challenge.resourceMetadataUrl,
+      fetchFn: timedFetch,
+    });
+    if (!info.authorizationServerMetadata) return undefined;
+    const advertised = info.resourceMetadata?.scopes_supported?.join(" ");
+    const scope = challenge.scope || advertised || undefined;
     return {
-      registration_endpoint: body.registration_endpoint,
-      authorization_endpoint:
-        typeof body.authorization_endpoint === "string" ? body.authorization_endpoint : undefined,
+      authorizationServerUrl: info.authorizationServerUrl,
+      metadata: info.authorizationServerMetadata,
+      ...(info.resourceMetadata?.resource ? { resource: info.resourceMetadata.resource } : {}),
+      ...(scope ? { scope } : {}),
     };
   } catch {
-    return null;
+    return undefined;
   }
 }
 
@@ -385,28 +393,26 @@ async function probeDcrRegistration(
 }
 
 /**
- * GET the authorization endpoint with a synthetic state + PKCE pair.
- * A spec-compliant vendor will redirect us to a login page (302/303)
- * or render one inline (200). A vendor with a parallel host
- * allowlist returns 4xx with a "redirect URI ... not allowed" body.
+ * GET the authorization request sign-in would send: built by the MCP SDK's
+ * `startAuthorization`, as `auth()` builds it, with the discovered `resource` and
+ * scope and a real PKCE pair. A spec-compliant vendor redirects to a login page
+ * (302/303) or renders one (200). A vendor with a parallel host allowlist returns
+ * 4xx with a "redirect URI ... not allowed" body.
  */
 async function probeAuthorize(
-  authorizationEndpoint: string,
+  discovered: Discovered,
   clientId: string,
   redirectUri: string,
 ): Promise<{ ok: true; challenged?: boolean } | { ok: false; message: string }> {
-  // PKCE challenge — `code_challenge_method=S256` of an arbitrary
-  // verifier. Some vendors require it; supplying it never hurts.
-  const url = new URL(authorizationEndpoint);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("client_id", clientId);
-  url.searchParams.set("redirect_uri", redirectUri);
-  url.searchParams.set("scope", "");
-  url.searchParams.set("state", "probe");
-  url.searchParams.set("code_challenge", "Wph4LpxPDcXGKQQjkmFwIyMu5ZKLXEUW2Bn7sV3vqYU");
-  url.searchParams.set("code_challenge_method", "S256");
-
   try {
+    const { authorizationUrl: url } = await startAuthorization(discovered.authorizationServerUrl, {
+      metadata: discovered.metadata,
+      clientInformation: { client_id: clientId },
+      redirectUrl: redirectUri,
+      state: "probe",
+      ...(discovered.scope ? { scope: discovered.scope } : {}),
+      ...(discovered.resource ? { resource: discovered.resource } : {}),
+    });
     const res = await fetch(url.toString(), {
       method: "GET",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
