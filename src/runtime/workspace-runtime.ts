@@ -154,8 +154,8 @@ export function buildProcessInventory(
  * is the one place that can say whose it was. Platform and system sources are
  * added `shared` — they sit in every workspace registry at once and belong to
  * none, so their notifications name no workspace and are not relayed.
- * Personal-connector and identity registries are not built here and relay
- * nothing.
+ * A person's personal connectors sit in that person's registry, which the
+ * connector lifecycle builds and relays to its owner.
  */
 export function createWorkspaceRegistry(
   wsId: string,
