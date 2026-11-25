@@ -11,12 +11,8 @@ export function buildDevWorktreeSeed(worktreeRoot: string, workdir: string) {
     // workdir co-located with this config (matches the `.environments/*`
     // pattern). `NB_WORK_DIR` overrides at runtime regardless.
     workDir: workdir === join(worktreeRoot, WORKDIR_NAME) ? WORKDIR_NAME : workdir,
-    // Defaults mirror the documented values in `AGENTS.md` § Defaults so
-    // dev:worktree starts in the same shape the rest of the platform's dev
-    // environments use.
-    models: {
-      default: "anthropic:claude-sonnet-4-6",
-      fast: "anthropic:claude-haiku-4-5-20251001",
-    },
+    // `models` is left unset so each slot resolves to the configured
+    // provider's default (`src/model/default-model.ts`), the same model a
+    // fresh install runs.
   };
 }
