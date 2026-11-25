@@ -436,6 +436,50 @@ describe("a first start that did not finish", () => {
     expect(body.fix).toContain("`npx nimblebrain` finishes");
   });
 
+  const NO_BIND_SOURCE = `Error response from daemon: invalid mount config for type "bind": bind source path does not exist: ${HOME}/instance.json`;
+
+  test("a home Docker cannot read is HOME_NOT_SHARED, not a pointer at empty logs", async () => {
+    const refusals = [
+      NO_BIND_SOURCE,
+      `Error response from daemon: Mounts denied: \nThe path ${HOME}/instance.json is not shared from the host and is not known to Docker.`,
+    ];
+    for (const stderr of refusals) {
+      const m = machine({ env, exec: { "docker compose up -d --no-build": fail(stderr) } });
+      const { body } = await json(["--yes"], m);
+      expect(m.files.has(`${HOME}/instance.json`)).toBe(true);
+      expect(body.error).toBe("HOME_NOT_SHARED");
+      expect(body.fix).not.toContain("logs");
+    }
+  });
+
+  test("on up of a finished install, its fix keeps the data: share or move the folder first", async () => {
+    const m = machine({
+      env,
+      files: {
+        [INSTALL]: record(),
+        [ENV]: "ANTHROPIC_API_KEY=sk-test\n",
+        [`${HOME}/instance.json`]: "{}",
+      },
+      exec: { "docker compose up -d --no-build": fail(NO_BIND_SOURCE) },
+    });
+    const { body } = await json(["up"], m);
+    expect(body.error).toBe("HOME_NOT_SHARED");
+    const fix: string = body.fix;
+    expect(fix.indexOf("Share this folder")).toBeGreaterThan(-1);
+    expect(fix.indexOf("Share this folder")).toBeLessThan(fix.indexOf("npx nimblebrain uninstall"));
+    expect(fix).toContain("deletes this install's data");
+  });
+
+  test("a missing instance.json keeps START_FAILED: the folder is not the cause", async () => {
+    const m = machine({
+      env,
+      files: { [INSTALL]: record(), [ENV]: "ANTHROPIC_API_KEY=sk-test\n" },
+      exec: { "docker compose up -d --no-build": fail(NO_BIND_SOURCE) },
+    });
+    expect(m.files.has(`${HOME}/instance.json`)).toBe(false);
+    expect((await json(["up"], m)).body.error).toBe("START_FAILED");
+  });
+
   test("down, logs, status and uninstall act on it", async () => {
     for (const how of ["START_FAILED", "HEALTH_TIMEOUT"] as const) {
       const m = await unfinished(how);
