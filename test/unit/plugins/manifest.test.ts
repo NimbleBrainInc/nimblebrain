@@ -293,6 +293,53 @@ describe("parsePluginManifest", () => {
   });
 });
 
+describe("server names are the plugin's own", () => {
+  const withImpl = (server: string) =>
+    manifest({
+      extensions: {
+        "ai.nimblebrain": {
+          implements: [{ contract: "ai.nimblebrain.conversations", version: "1.0", server }],
+        },
+      },
+    });
+  const store = { store: { type: "stdio", command: "./bin/store" } };
+
+  test("an inherited name is not a server", () => {
+    for (const server of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+      expect(
+        problemsOf(() =>
+          parsePluginManifest(
+            "notes",
+            files({ "plugin.json": withImpl(server), "mcp.json": mcp(store) }),
+            PATHS,
+          ),
+        ),
+      ).toContain(
+        `plugin.json extensions["ai.nimblebrain"].implements[0].server: "${server}" is not a server in mcp.json`,
+      );
+    }
+  });
+
+  test("a server named __proto__ is kept and can implement a contract", () => {
+    // Written as text: an object literal's `__proto__` key sets its prototype instead.
+    const mcpText = `{"$schema":"${MCP_SCHEMA}","mcpServers":{"__proto__":{"type":"stdio","command":"./bin/store"}}}`;
+    const parsed = parsePluginManifest(
+      "notes",
+      files({ "plugin.json": withImpl("__proto__"), "mcp.json": mcpText }),
+      PATHS,
+    );
+    expect(Object.keys(parsed.mcpServers)).toEqual(["__proto__"]);
+    expect(Object.hasOwn(parsed.mcpServers, "__proto__")).toBe(true);
+    expect(parsed.extension.implements[0]?.server).toBe("__proto__");
+  });
+
+  test("an extension server named __proto__ is kept", () => {
+    const text = `{"$schema":"${PLUGIN_SCHEMA}","name":"notes","extensions":{"ai.nimblebrain":{"servers":{"__proto__":"ai.example/notes"}}}}`;
+    const parsed = parsePluginManifest("notes", files({ "plugin.json": text }), PATHS);
+    expect(Object.entries(parsed.extension.servers)).toEqual([["__proto__", "ai.example/notes"]]);
+  });
+});
+
 describe("nimblebrainExtension", () => {
   test("keeps each well-formed field and drops a malformed one", () => {
     const ext = nimblebrainExtension({

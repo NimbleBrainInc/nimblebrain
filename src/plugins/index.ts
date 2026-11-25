@@ -29,6 +29,7 @@ import {
   loadContracts,
 } from "./contracts.ts";
 import {
+  nameMap,
   PLUGIN_MANIFEST_FILE,
   type PluginManifest,
   PluginManifestError,
@@ -205,14 +206,14 @@ function placeServers(
   overrides: Record<string, { url: string }>,
   fail: Fail,
 ): Record<string, ResolvedServer> {
-  const servers: Record<string, ResolvedServer> = {};
+  const servers = nameMap<ResolvedServer>();
   for (const [key, spec] of Object.entries(manifest.mcpServers)) servers[key] = { spec };
   for (const [key, registryName] of Object.entries(manifest.extension.servers)) {
     servers[key] = { ...servers[key], registryName };
   }
   for (const [key, { url }] of Object.entries(overrides)) {
     const field = `servers.${key}.url`;
-    if (!(key in servers)) fail(`"${key}" is not a server of the plugin`, { field });
+    if (!Object.hasOwn(servers, key)) fail(`"${key}" is not a server of the plugin`, { field });
     else if (!isHttpUrl(url)) fail("must be an absolute http or https URL", { field });
     else servers[key] = { ...servers[key], url };
   }
