@@ -19,6 +19,7 @@ import { Scheduler } from "../../../src/platform/tasks/scheduler.ts";
 import { resolveExecutorContext } from "../../../src/platform/tasks/source.ts";
 import { saveTask } from "../../../src/platform/tasks/store.ts";
 import type { Task } from "../../../src/platform/tasks/types.ts";
+import { createFilesystemWorkQueue } from "../../../src/providers/queue/filesystem.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import type { TaskRequest } from "../../../src/runtime/types.ts";
 import { defineInProcessApp } from "../../../src/tools/in-process-app.ts";
@@ -99,9 +100,14 @@ describe("cancelling a task run", () => {
         (req) => runtime.executeTask(req as TaskRequest),
         resolveExecutorContext,
       );
-      const scheduler = new Scheduler(executor, { workDir });
+      // A queue of its own: the runtime's scheduler claims from the runtime's.
+      const queue = createFilesystemWorkQueue({ dir: join(workDir, "test-queue") });
+      const scheduler = new Scheduler(executor, { workDir, queue });
       scheduler.start();
-      onShutdown = () => scheduler.stop();
+      onShutdown = () => {
+        scheduler.stop();
+        void queue.close();
+      };
 
       const firstRun = scheduler.runNow(WS, DEV_IDENTITY.id, "hangs");
       await enteredP;

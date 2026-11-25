@@ -51,6 +51,8 @@ import type {
   TaskRun,
   TaskRunResult,
 } from "../../../../src/platform/tasks/types.ts";
+import { createFilesystemWorkQueue } from "../../../../src/providers/queue/filesystem.ts";
+import type { WorkQueue } from "../../../../src/providers/queue/types.ts";
 import { createRunAdmission, type RunAdmission } from "../../../../src/runtime/admission.ts";
 import { createSpendBalances, type SpendBalances } from "../../../../src/runtime/spend.ts";
 import { isTaskForbiddenIdentityTool } from "../../../../src/tools/identity-sources.ts";
@@ -174,6 +176,8 @@ interface Harness {
   maxExecuting: () => number;
   paused: Batch[];
   totalSpent: () => number;
+  /** The process's work queue; closing it without stopping the scheduler is a crash. */
+  queue: WorkQueue;
 }
 
 function verdictFor(input: unknown): RunAssessment["verdict"] {
@@ -339,9 +343,11 @@ function harness(opts: HarnessOptions = {}): Harness {
       executing--;
     }
   };
+  const queue = createFilesystemWorkQueue({ dir: join(workDir, "queue") });
   const scheduler = new Scheduler(executor, {
     workDir,
     admission,
+    queue,
     assess: async (_task, run) => ({
       verdict: verdictFor(run.input),
       assessedAt: new Date().toISOString(),
@@ -368,7 +374,7 @@ function harness(opts: HarnessOptions = {}): Harness {
       : {}),
   });
   driver.start();
-  toStop.push(driver, scheduler);
+  toStop.push(driver, scheduler, { stop: () => void queue.close() });
   const ctx: ToolContext = {
     definitions: () => loadOwnerTasks(workDir, WS, OWNER),
     save: (map) => {
@@ -408,6 +414,7 @@ function harness(opts: HarnessOptions = {}): Harness {
     maxExecuting: () => maxExecuting,
     paused,
     totalSpent: () => totalSpent,
+    queue,
   };
 }
 
@@ -1480,6 +1487,7 @@ describe("restart", () => {
     const atCrash = readBatchItems(workDir, WS, OWNER, created.id);
     expect(atCrash.map((i) => i.state)).toEqual(["running", "queued", "pending"]);
     // The process dies: nothing more of it is written, and its runs never end.
+    await first.queue.close();
     toStop.splice(0);
 
     const second = harness();
@@ -1546,6 +1554,7 @@ describe("restart", () => {
       taskRunId: "run_unrelated00",
       rates: RATES,
     });
+    await first.queue.close();
     toStop.splice(0);
 
     const second = harness({ gated: true, ledger: true });

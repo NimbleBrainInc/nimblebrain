@@ -54,14 +54,14 @@ A **once** schedule is for a single action at a known time: send this email at 1
 
 The runtime runs a fixed number of unattended runs at once across all of its workspaces: two by default, set by the operator with [`tasks.maxConcurrentRuns`](/config/nimblebrain-json/#tasks). Scheduled runs, Run now, event runs, and any other run started without a person in the loop all share those slots. Chat is not limited by them.
 
-- **A scheduled run** that comes due while every slot is busy waits for a slot and then runs, oldest due first, so a tightly spaced batch runs late rather than being dropped. Its place is held by its next-run time, so it survives a restart.
-- **A Run now or an event run** that arrives while every slot is busy joins a queue and starts when a slot frees. A freed slot goes to the waiting run whose workspace holds the fewest slots, and to the oldest among equals, so one busy workspace cannot keep another waiting; a workspace with no one else waiting uses every slot. Run now answers at once that the run is queued and at what position in arrival order. A queued event run also gets a run id before it enters the queue; `tasks__upcoming` shows it. A queued run gets a freed slot before a waiting scheduled run does.
-- **The queue is bounded**: 50 runs by default ([`tasks.maxQueuedRuns`](/config/nimblebrain-json/#tasks)). A run that arrives when it is full is not started and is recorded as skipped, with the reason.
+- **A scheduled run and a Run now go on the runtime's work queue**, kept on disk under the work directory, and start when a slot is free, oldest first. A scheduled run that comes due while every slot is busy waits there, so a tightly spaced batch runs late rather than being dropped. Run now answers at once whether the run started or is queued, and at what position. `tasks__upcoming` lists both while they wait.
+- **An event run** that arrives while every slot is busy waits in an in-memory queue, and gets a run id before it enters it; `tasks__upcoming` shows it. A freed slot goes first to a run waiting there, to the one whose workspace holds the fewest slots, and to the oldest among equals.
+- **The queues are bounded**: 50 runs each by default ([`tasks.maxQueuedRuns`](/config/nimblebrain-json/#tasks)). A Run now or event run that arrives when its queue is full is not started and is recorded as skipped, with the reason.
 - **One run per task.** A Run now or event run for a task that already has a run in flight or queued is recorded as skipped. A [batch](#batches) is the exception: its runs of one task each take their own slot.
 - **Cancel** with `tasks__cancel` and the `runId` stops a run in flight, or removes a queued one and records it as cancelled. For an event run waiting in the queue, get the `runId` from `tasks__upcoming`.
 
 <Aside type="caution">
-The queue is held in memory. Runs still queued when the runtime stops are recorded as skipped, and a process that is killed outright loses them with no record. Run them again once it is back.
+A Run now or scheduled run still queued when the runtime stops stays queued, and runs once the runtime is back. An event run still queued is recorded as skipped, and a process that is killed outright loses it with no record; run it again once the runtime is back.
 </Aside>
 
 ## Running on an event
@@ -263,7 +263,7 @@ On the `2026-07-28` protocol, a client that declares the MCP tasks extension (`i
 | `failed` or `skipped` | `failed`, with the run's reason |
 | `cancelled` | `cancelled` |
 
-`tasks/cancel` cancels a queued run or one in flight. When the runtime stops, a run still queued reads `failed` (it never started), and one in flight reads `cancelled`, or `failed` if the process died without stopping.
+`tasks/cancel` cancels a queued run or one in flight. When the runtime stops, a run still queued stays `working` and runs once the runtime is back; one in flight reads `cancelled`, or `failed` if the process died without stopping.
 
 Task handles are offered on the `2026-07-28` protocol only. On an earlier protocol, or without the extension, `tasks__run` answers as it always has: the run record when the run ends within about 30 seconds, otherwise a `dispatched` or `queued` answer carrying the `runId` to poll with `tasks__run_result`.
 

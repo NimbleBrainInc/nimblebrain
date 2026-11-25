@@ -617,6 +617,14 @@ export interface RunTicket {
   /** When the run was asked for. */
   requestedAt: string;
   run: TaskRun;
+  /**
+   * Present when the work queue carries the run (a Run now, a retry): 0 until
+   * a worker claims its item, then the token of the claim that last wrote the
+   * ticket. A write under a lower token is refused, so a superseded claim
+   * cannot overwrite the current one's record. Absent on a run held only in
+   * this process's memory (a batch item's), which a restart loses.
+   */
+  claimToken?: number;
 }
 
 // ---------------------------------------------------------------------------

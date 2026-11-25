@@ -210,6 +210,7 @@ import type {
   PromptAppInfo,
 } from "../prompt/compose.ts";
 import { composeSystemSegments } from "../prompt/compose.ts";
+import type { WorkQueue } from "../providers/queue/types.ts";
 import {
   type ActivatableSkill,
   collectActivatableSkills,
@@ -382,6 +383,7 @@ import { resolveMessageBudget } from "./resolve-message-budget.ts";
 import { resolveThinking } from "./resolve-thinking.ts";
 import { tokenEstimateCorrection } from "./token-estimate-correction.ts";
 import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
+import { openWorkQueue } from "./work-queue.ts";
 
 /**
  * Apply one clearable config field: `undefined` leaves it alone, `null` clears
@@ -785,6 +787,9 @@ export class Runtime {
 
   /** Live spend-account balances; see {@link getSpendBalances}. */
   private _spendBalances?: SpendBalances;
+
+  /** The work queue triggered runs go through; see {@link getWorkQueue}. */
+  private _workQueue?: WorkQueue;
 
   private constructor(
     resolveModelFn: (modelString: string) => LanguageModelV4,
@@ -1260,6 +1265,9 @@ export class Runtime {
       // Phase 2: Create platform capability sources. Each is an in-process
       // MCP server reachable through `InMemoryTransport` — no subprocess.
       // `createPlatformSources` returns sources already started.
+      // The work queue opens before the sources that enqueue to it. Its lock
+      // makes a second process on this work directory fail here, at boot.
+      rt.getWorkQueue();
       const { createPlatformSources } = await import("../platform/index.ts");
       const platformSources = await createPlatformSources(rt, events);
       // A connector may never take the name of a source the runtime registers
@@ -1380,6 +1388,8 @@ export class Runtime {
       return rt;
     } catch (err) {
       rt._bootReady.reject(err);
+      // Release the queue's lock, so a boot retried in this process can take it.
+      await rt._workQueue?.close().catch(() => {});
       throw err;
     }
   }
@@ -6178,6 +6188,18 @@ export class Runtime {
     return this._spendBalances;
   }
 
+  /**
+   * The work queue (ADR-0076): triggers enqueue runs here, and the tasks
+   * scheduler's worker claims and executes them through the door. Opened at
+   * boot (`openWorkQueue`) and closed at shutdown, after the sources that use
+   * it have stopped. Created on first use, so a prototype-built test double
+   * gets one too.
+   */
+  getWorkQueue(): WorkQueue {
+    this._workQueue ??= openWorkQueue(this.getWorkDir());
+    return this._workQueue;
+  }
+
   /** Get the resolved work directory path. */
   getWorkDir(): string {
     return resolveWorkDir(this.config);
@@ -6344,6 +6366,9 @@ export class Runtime {
     // Nothing drains the run queue once the sources are gone, so a run still
     // waiting for a slot is refused rather than left waiting forever.
     this._runAdmission?.stop();
+    // Every item still in the queue stays on disk for the next process.
+    await this._workQueue?.close();
+    this._workQueue = undefined;
     this._gatewayProviders?.stop();
     // Release the ledger last: a turn aborted just above can still be inside a
     // `doStream()` that has already spent, and that call is recordable until it
