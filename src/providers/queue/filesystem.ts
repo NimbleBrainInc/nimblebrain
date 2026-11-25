@@ -104,7 +104,9 @@ interface StoredItem {
 const heldDirs = new Set<string>();
 
 export function itemFileName(scope: string, idempotencyKey: string): string {
-  return `${createHash("sha256").update(`${scope}\0${idempotencyKey}`).digest("hex")}.json`;
+  return `${createHash("sha256")
+    .update(JSON.stringify([scope, idempotencyKey]))
+    .digest("hex")}.json`;
 }
 
 function isAlive(pid: number): boolean {
@@ -168,9 +170,42 @@ function requireLeaseMs(leaseMs: number): void {
   }
 }
 
+/**
+ * Whether the date and time fields name a real calendar instant. `Date.parse`
+ * rolls an impossible one over (February 30 becomes March 2, hour 24 the next
+ * day), so the fields are checked before it runs. A leap second (`:60`) is
+ * refused, since no JavaScript clock can name one.
+ */
+function isRealDateTime(value: string): boolean {
+  const [y, mo, d, h, mi, s, oh, om] = [
+    value.slice(0, 4),
+    value.slice(5, 7),
+    value.slice(8, 10),
+    value.slice(11, 13),
+    value.slice(14, 16),
+    value.slice(17, 19),
+    ...(/[+-](\d{2}):(\d{2})$/.exec(value)?.slice(1) ?? ["00", "00"]),
+  ].map(Number) as [number, number, number, number, number, number, number, number];
+  const daysInMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  return (
+    mo >= 1 &&
+    mo <= 12 &&
+    d >= 1 &&
+    d <= daysInMonth &&
+    h <= 23 &&
+    mi <= 59 &&
+    s <= 59 &&
+    oh <= 23 &&
+    om <= 59
+  );
+}
+
 /** Parse an instant the caller names (RFC 3339 with an offset), or throw. */
 function parseInstant(value: string, field: string): number {
-  const ms = typeof value === "string" && RFC3339.test(value) ? Date.parse(value) : Number.NaN;
+  const ms =
+    typeof value === "string" && RFC3339.test(value) && isRealDateTime(value)
+      ? Date.parse(value)
+      : Number.NaN;
   if (Number.isNaN(ms)) {
     throw new RangeError(`${field} must be an RFC 3339 date-time with Z or an offset`);
   }
@@ -207,7 +242,7 @@ function claimOf(item: StoredItem): Claim {
   return {
     id: item.id,
     kind: item.kind,
-    payload: item.payload,
+    payload: structuredClone(item.payload),
     attempt: item.attempt,
     token: item.token,
     leaseUntil: item.leaseUntil ?? "",

@@ -154,6 +154,16 @@ export function describeWorkQueueConformance(
           expect((await claimOrFail(queue)).id).not.toBe((await claimOrFail(queue)).id);
         }));
 
+      test("scope and key are opaque: no split of one string between them aliases another", () =>
+        withQueue(async ({ queue }) => {
+          const a = await queue.enqueue(item("b\0c", 1, { scope: "a" }));
+          const b = await queue.enqueue(item("c", 2, { scope: "a\0b" }));
+          const c = await queue.enqueue(item("b:c", 3, { scope: "a" }));
+          const d = await queue.enqueue(item("c", 4, { scope: "a:b" }));
+          expect([a, b, c, d].every((r) => r.created)).toBe(true);
+          expect(new Set([a.id, b.id, c.id, d.id]).size).toBe(4);
+        }));
+
       test("one key under two kinds is one item", () =>
         withQueue(async ({ queue }) => {
           const a = await queue.enqueue(item("a", "a", { kind: "x" }));
@@ -240,6 +250,13 @@ export function describeWorkQueueConformance(
           expect((await queue.enqueue(item("a"))).created).toBe(true);
         }));
 
+      test("accepts a real leap day and the last instant of a day", () =>
+        withQueue(async ({ queue }) => {
+          for (const notBefore of ["2028-02-29T00:00:00Z", "2026-12-31T23:59:59.999+14:00"]) {
+            expect((await queue.enqueue(item(notBefore, 1, { notBefore }))).created).toBe(true);
+          }
+        }));
+
       test("accepts a notBefore in RFC 3339 with Z or an explicit offset", () =>
         withQueue(async ({ queue, clock }) => {
           const t = clock.now();
@@ -261,6 +278,12 @@ export function describeWorkQueueConformance(
             "Thu, 01 Jan 2026 01:00:00 GMT",
             "not a time",
             "",
+            "2026-02-30T00:00:00Z",
+            "2026-13-01T00:00:00Z",
+            "2026-01-01T24:00:00Z",
+            "2026-01-01T00:60:00Z",
+            "2026-01-01T00:00:60Z",
+            "2026-01-01T00:00:00+24:00",
           ]) {
             await expect(queue.enqueue(item("a", 1, { notBefore }))).rejects.toThrow();
           }
@@ -406,6 +429,18 @@ export function describeWorkQueueConformance(
           expect((await claimOrFail(queue, ["y"])).kind).toBe("y");
           expect(await queue.claim({ ...W, kinds: ["y"] })).toBeNull();
           expect((await claimOrFail(queue, ["x", "y"])).kind).toBe("x");
+        }));
+
+      test("a claim's payload is the caller's copy: changing it changes nothing kept", () =>
+        withQueue(async ({ queue, clock }) => {
+          await queue.enqueue(item("a", { value: "original", list: [1] }));
+          const claim = await claimOrFail(queue);
+          (claim.payload as { value: string; list: number[] }).value = "changed";
+          (claim.payload as { value: string; list: number[] }).list.push(2);
+          const extended = await queue.extend(claim, LEASE);
+          (extended.payload as { value: string }).value = "changed again";
+          clock.advance(LEASE + 1);
+          expect((await claimOrFail(queue)).payload).toEqual({ value: "original", list: [1] });
         }));
 
       test("the payload round-trips as JSON data", () =>
@@ -704,7 +739,13 @@ export function describeWorkQueueConformance(
         withQueue(async ({ queue, clock }) => {
           await queue.enqueue(item("a"));
           const claim = await claimOrFail(queue);
-          for (const retryAt of ["soon", "2026-01-01T01:00:00", "2026-01-01"]) {
+          for (const retryAt of [
+            "soon",
+            "2026-01-01T01:00:00",
+            "2026-01-01",
+            "2027-02-29T00:00:00Z",
+            "2026-01-01T24:00:00Z",
+          ]) {
             await expect(queue.fail(claim, { error: "x", retryAt })).rejects.toThrow();
           }
           // Still held: nobody else can claim it before its lease ends.

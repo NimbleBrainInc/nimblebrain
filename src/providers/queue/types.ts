@@ -38,8 +38,9 @@
  * an item is due, when a lease expires, when retention ends. `notBefore` and
  * `retryAt` are instants the caller names, as RFC 3339 date-times with `Z` or
  * an explicit offset (`2026-01-01T09:00:00Z`, `2026-01-01T09:00:00.000-10:00`);
- * any other form, an offsetless one included, is rejected and changes
- * nothing. Every time the queue returns is UTC with `Z` and millisecond
+ * any other form, an offsetless one included, and any date-time that names
+ * no real instant (`2026-02-30`, hour `24`, second `60`) is rejected and
+ * changes nothing. Every time the queue returns is UTC with `Z` and millisecond
  * precision (`2026-01-01T19:00:00.000Z`). A caller uses `leaseUntil` to plan
  * when to extend, never to decide whether it still holds the claim: only
  * `extend`, `complete` and `fail` answer that.
@@ -148,7 +149,10 @@ export interface Claim {
   id: string;
   /** The item's kind, as enqueued. */
   kind: string;
-  /** The item's payload, deep-equal to what was enqueued. */
+  /**
+   * The item's payload, deep-equal to what was enqueued. It is the caller's own
+   * copy: changing it changes nothing the queue keeps or delivers later.
+   */
   payload: unknown;
   /** How many times the item has been claimed, this claim included: 1 on the first. */
   attempt: number;
