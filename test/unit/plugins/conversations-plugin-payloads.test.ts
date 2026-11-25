@@ -13,7 +13,6 @@ import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { buildServer } from "../../../packages/conversations/src/server.ts";
 import { createStore } from "../../../packages/conversations/src/store.ts";
-import { callContext } from "../../../packages/plugin-sdk/src/index.ts";
 
 const WS = "ws_e5e5e5e5e5e5e5e5";
 const OWNER = "usr_payloads";
@@ -46,7 +45,7 @@ let dir: string;
 let client: Client;
 
 const meta = (principal: "host" | "person") => ({
-  "ai.nimblebrain/scope": { workspaceId: WS, ownerId: OWNER, principal },
+  "ai.nimblebrain/context": { workspaceId: WS, ownerId: OWNER, principal },
 });
 
 async function call(tool: string, args: Record<string, unknown>, principal: "host" | "person") {
@@ -58,10 +57,7 @@ async function call(tool: string, args: Record<string, unknown>, principal: "hos
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "conversations-payloads-"));
   mkdirSync(join(dir, "workspaces", WS), { recursive: true });
-  const server = buildServer({
-    store: createStore(dir),
-    contextOf: (m) => callContext({ meta: m }),
-  });
+  const server = buildServer({ store: createStore(dir) });
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   client = new Client({ name: "payloads", version: "1.0.0" });

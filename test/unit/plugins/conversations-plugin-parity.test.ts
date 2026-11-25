@@ -27,7 +27,6 @@ import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { buildServer } from "../../../packages/conversations/src/server.ts";
 import { createStore } from "../../../packages/conversations/src/store.ts";
-import { callContext } from "../../../packages/plugin-sdk/src/index.ts";
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { capPreview } from "../../../src/conversation/preview.ts";
@@ -299,16 +298,13 @@ function todaysApp(dir: string) {
 
 /** The plugin's server over `dir`, called through MCP with the context in `_meta`. */
 async function plugin(dir: string) {
-  const server = buildServer({
-    store: createStore(dir),
-    contextOf: (meta) => callContext({ meta }),
-  });
+  const server = buildServer({ store: createStore(dir) });
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "parity", version: "1.0.0" });
   await client.connect(clientTransport);
   const meta = (principal: "host" | "person", conversationId?: string) => ({
-    "ai.nimblebrain/scope": {
+    "ai.nimblebrain/context": {
       workspaceId: WS,
       ownerId: OWNER,
       principal,
@@ -322,8 +318,8 @@ async function plugin(dir: string) {
     opts: { ws?: string; owner?: string; conversationId?: string } = {},
   ) {
     const m = meta(principal, opts.conversationId);
-    if (opts.ws) m["ai.nimblebrain/scope"].workspaceId = opts.ws;
-    if (opts.owner) m["ai.nimblebrain/scope"].ownerId = opts.owner;
+    if (opts.ws) m["ai.nimblebrain/context"].workspaceId = opts.ws;
+    if (opts.owner) m["ai.nimblebrain/context"].ownerId = opts.owner;
     const r = await client.callTool({ name: tool, arguments: args, _meta: m });
     if (r.isError) throw new Error(`${tool}: ${JSON.stringify(r.content)}`);
     return r.structuredContent as Record<string, unknown>;

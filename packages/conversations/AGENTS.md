@@ -6,7 +6,7 @@ with one MCP server, on the local filesystem. How to run it standalone is in `RE
 
 ## Boundaries
 
-- **Never import the kernel.** This package imports only `packages/plugin-sdk` and reads the
+- **Never import the kernel.** This package imports only `packages/server-sdk` and reads the
   contract document (`schemas/contracts/conversations/v1/contract.json`). Biome refuses any
   other import that leaves the package. A plugin depends on contracts; the kernel never imports
   a plugin, and a plugin never imports the kernel.
@@ -20,14 +20,22 @@ with one MCP server, on the local filesystem. How to run it standalone is in `RE
 
 ## Calls
 
-- **Every `tools/call` is decided in one order** (`src/server.ts`): unknown tool
-  (`unknown_tool`), private tool by anyone but `host` (`forbidden`), arguments against the input
-  schema (`invalid_input`), workspace and owner present (`scope_missing`), then the tool.
-- **The context is the transport's** (`src/main.ts`). stdio: `params._meta["ai.nimblebrain/scope"]`,
-  believed because only the host that started the process holds its pipe. HTTP: every request
-  presents `Authorization: Bearer $NB_CONVERSATIONS_TOKEN` or is refused 401, then the context is
-  `_meta`, else the `x-nb-*` headers. The HTTP door is the host's alone: whoever holds the token
-  states scope and principal.
+- **Every call's context is the host context** (`contracts/host-context/CONTEXT.md`), the
+  object at `params._meta["ai.nimblebrain/context"]`, read by `packages/server-sdk`. Headers
+  never carry it.
+- **It is believed only from an authenticated host transport** (`src/main.ts`). stdio: by
+  construction, the pipe the host started. HTTP: every request presents
+  `Authorization: Bearer $NB_CONVERSATIONS_TOKEN`, the self-hosted host's credential the operator
+  issues for this server, or is refused 401 before its body is read.
+- **Fleet mode (`--http --edge`)**: an edge verifies the host and sets `x-tenant-id` and
+  `x-workspace-id`. The tenant walls every call (its data under `<data>/tenants/<tenantId>/`, the
+  layout below inside it); a request with no verified tenant is refused 400. A context whose
+  `workspaceId` differs from the verified one is `context_mismatch`, a JSON-RPC error before any
+  tool runs; an absent one takes the verified value.
+- **Every `tools/call` is decided in one order** (`src/server.ts`): the context
+  (`context_mismatch`), unknown tool (`unknown_tool`), private tool by anyone but `host`
+  (`forbidden`), arguments against the input schema (`invalid_input`), workspace and owner
+  present (`scope_missing`), then the tool.
 - **Errors are `{ code, error }`** from the contract's lists. A public error's text begins with
   its contract prefix. A public failure with no contract code is a JSON-RPC error.
 - **`active` and a trailing open run.** Whether a reply is generating is the host's to know. A
@@ -75,8 +83,8 @@ with one MCP server, on the local filesystem. How to run it standalone is in `RE
 ## Tests
 
 - `test/integration/conversations-plugin-conformance.test.ts` runs the contract's runner against
-  `bin/nb-conversations --http` in full mode (context in headers and in `_meta`) and public-only
-  mode, and checks the 401 and stdio. Full mode passes every case; public-only fails only
+  `bin/nb-conversations --http` in full mode and public-only mode, with the host context in
+  `_meta`, and checks the 401, stdio, and fleet mode (tenant walls, `context_mismatch`). Full mode passes every case; public-only fails only
   `no private tool is listed`, which holds a host's agent-facing door, not an implementation.
 - `test/unit/plugins/conversations-plugin-parity.test.ts` compares every public read with the
   built-in app's for the same files and for the same events.

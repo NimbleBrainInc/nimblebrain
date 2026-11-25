@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import Ajv2020, { type ValidateFunction } from "ajv/dist/2020.js";
-import type { ContractDocument } from "../../plugin-sdk/src/index.ts";
+import type { ContractDocument } from "../../server-sdk/src/index.ts";
 
 /** Where the document lives in this repository: the published schema tree. */
 const CONTRACT_PATH = resolve(

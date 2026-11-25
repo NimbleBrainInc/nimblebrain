@@ -5,7 +5,7 @@
  * Starts the plugin's own command over Streamable HTTP in a temporary data directory and
  * runs the contract's black-box runner against it:
  *
- * - the whole contract, once with the context in headers and once in request metadata:
+ * - the whole contract, with the host context in request metadata as the host states it:
  *   every tool, the walls, `forbidden` for every private tool as a person and for a call
  *   that names no principal, `forbidden` before input and scope, and `delete_workspace` in
  *   a scratch workspace. Every case must pass.
@@ -13,8 +13,10 @@
  *   implementation, not such a surface, so it lists its private tools: that case is the
  *   one expected failure, and every other case must pass.
  *
- * Also: a request without the host's credential is refused before any tool runs, and the
- * stdio transport (how `mcp.json` starts the server) carries the context in `_meta`.
+ * Also: a request without the host's credential is refused before any tool runs, the stdio
+ * transport (how `mcp.json` starts the server) carries the context in `_meta`, and fleet mode
+ * (`--edge`) walls by the edge's verified tenant and refuses a context that contradicts its
+ * verified workspace (`contracts/host-context/CONTEXT.md` §4).
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -44,6 +46,9 @@ const PUBLIC_ONLY_EXPECTED_FAILURE = "no private tool is listed";
 let dataDir: string;
 let proc: Subprocess<"ignore", "pipe", "pipe">;
 let url: string;
+let edgeDir: string;
+let edgeProc: Subprocess<"ignore", "pipe", "pipe">;
+let edgeUrl: string;
 
 async function readListening(p: Subprocess<"ignore", "pipe", "pipe">): Promise<string> {
   const reader = p.stdout.getReader();
@@ -65,69 +70,103 @@ async function readListening(p: Subprocess<"ignore", "pipe", "pipe">): Promise<s
 const failures = (results: CaseResult[]) =>
   results.filter((r) => r.status === "fail").map((r) => `${r.name}: ${r.detail}`);
 
-beforeAll(async () => {
-  dataDir = mkdtempSync(join(tmpdir(), "conversations-plugin-"));
-  // Workspaces exist when their directories do; the plugin never creates one.
-  for (const ws of [WORKSPACE, SCRATCH])
-    mkdirSync(join(dataDir, "workspaces", ws), { recursive: true });
-  proc = spawn(["bun", "--no-env-file", BIN, "--data-dir", dataDir, "--http", "0"], {
+function serve(dir: string, extra: string[] = []): Subprocess<"ignore", "pipe", "pipe"> {
+  return spawn(["bun", "--no-env-file", BIN, "--data-dir", dir, "--http", "0", ...extra], {
     env: { PATH: process.env.PATH ?? "", NB_CONVERSATIONS_TOKEN: TOKEN },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
+}
+
+beforeAll(async () => {
+  dataDir = mkdtempSync(join(tmpdir(), "conversations-plugin-"));
+  // Workspaces exist when their directories do; the plugin never creates one.
+  for (const ws of [WORKSPACE, SCRATCH]) {
+    mkdirSync(join(dataDir, "workspaces", ws), { recursive: true });
+  }
+  edgeDir = mkdtempSync(join(tmpdir(), "conversations-plugin-edge-"));
+  for (const tenant of ["tenant_a", "tenant_b"]) {
+    mkdirSync(join(edgeDir, "tenants", tenant, "workspaces", WORKSPACE), { recursive: true });
+  }
+  proc = serve(dataDir);
+  edgeProc = serve(edgeDir, ["--edge"]);
   url = await readListening(proc);
+  edgeUrl = await readListening(edgeProc);
 }, 30_000);
 
 afterAll(() => {
   proc?.kill();
+  edgeProc?.kill();
   if (dataDir) rmSync(dataDir, { recursive: true, force: true });
+  if (edgeDir) rmSync(edgeDir, { recursive: true, force: true });
 });
 
 describe("conversations plugin: the whole contract", () => {
-  for (const carriage of ["headers", "meta"] as const) {
-    it(`passes every case with the context in ${carriage}`, async () => {
-      const results = await runConformance({
-        server: url,
-        headers: AUTH,
-        carriage,
-        workspace: WORKSPACE,
-        owner: OWNER,
-        scratchWorkspace: SCRATCH,
-      });
-      expect(failures(results)).toEqual([]);
-      expect(results.filter((r) => r.status === "skip")).toEqual([]);
-      const names = results.map((r) => r.name);
-      for (const name of [
-        "every private tool answers a person with forbidden and changes nothing",
-        "a call that names no principal is not host",
-        "forbidden comes before the input and the scope",
-        "delete_workspace answers a person with forbidden and deletes nothing",
-        "delete_workspace removes every owner's conversations",
-        "tools/list as host matches the contract schemas",
-      ]) {
-        expect(names).toContain(name);
-      }
-    }, 60_000);
-  }
+  it("passes every case with the host context in _meta", async () => {
+    const results = await runConformance({
+      server: url,
+      headers: AUTH,
+      carriage: "meta",
+      workspace: WORKSPACE,
+      owner: OWNER,
+      scratchWorkspace: SCRATCH,
+    });
+    expect(failures(results)).toEqual([]);
+    expect(results.filter((r) => r.status === "skip")).toEqual([]);
+    expect(results.filter((r) => r.status === "pass")).toHaveLength(38);
+    const names = results.map((r) => r.name);
+    for (const name of [
+      "every private tool answers a person with forbidden and changes nothing",
+      "a call that names no principal is not host",
+      "forbidden comes before the input and the scope",
+      "delete_workspace answers a person with forbidden and deletes nothing",
+      "delete_workspace removes every owner's conversations",
+      "tools/list as host matches the contract schemas",
+    ]) {
+      expect(names).toContain(name);
+    }
+  }, 60_000);
 });
 
-/** A client whose every request states this context in headers, with the host's credential. */
-async function connectAs(ownerId: string, principal: "host" | "person"): Promise<Client> {
+/** A host client: the host's credential, plus any headers its transport adds. */
+async function connectTo(server: string, headers: Record<string, string> = {}): Promise<Client> {
   const client = new Client({ name: "conformance-test", version: "1.0.0" });
   await client.connect(
-    new StreamableHTTPClientTransport(new URL(url), {
+    new StreamableHTTPClientTransport(new URL(server), {
       fetch: (input, init) => {
         const h = new Headers(init?.headers);
-        h.set("authorization", AUTH.authorization);
-        h.set("x-nb-workspace-id", WORKSPACE);
-        h.set("x-nb-owner-id", ownerId);
-        h.set("x-nb-principal", principal);
+        for (const [k, v] of Object.entries({ ...AUTH, ...headers })) h.set(k, v);
         return fetch(input, { ...init, headers: h });
       },
     }),
   );
   return client;
+}
+
+type HostContext = {
+  principal: "host" | "person";
+  workspaceId?: string;
+  ownerId?: string;
+};
+
+/** A tool call carrying the host context. */
+function callAs(client: Client, ctx: HostContext, name: string, args: Record<string, unknown>) {
+  return client.callTool({
+    name,
+    arguments: args,
+    _meta: { "ai.nimblebrain/context": ctx },
+  });
+}
+
+async function connectAs(ownerId: string, principal: "host" | "person") {
+  const client = await connectTo(url);
+  const ctx = { principal, workspaceId: WORKSPACE, ownerId };
+  return {
+    callTool: (r: { name: string; arguments: Record<string, unknown> }) =>
+      callAs(client, ctx, r.name, r.arguments),
+    close: () => client.close(),
+  };
 }
 
 describe("conversations plugin: the public-only mode", () => {
@@ -162,7 +201,7 @@ describe("conversations plugin: the public-only mode", () => {
       server: url,
       publicOnly: true,
       headers: AUTH,
-      carriage: "headers",
+      carriage: "meta",
       workspace: WORKSPACE,
       owner,
       fixture,
@@ -209,7 +248,7 @@ describe("conversations plugin: transports", () => {
       const tools = (await client.listTools()).tools.map((t) => t.name).sort();
       expect(tools).toEqual([...PUBLIC_TOOLS, ...PRIVATE_TOOLS].sort());
       const meta = (principal: "host" | "person") => ({
-        "ai.nimblebrain/scope": { workspaceId: WORKSPACE, ownerId: "usr_stdio", principal },
+        "ai.nimblebrain/context": { workspaceId: WORKSPACE, ownerId: "usr_stdio", principal },
       });
       const created = await client.callTool({
         name: "create",
@@ -229,6 +268,57 @@ describe("conversations plugin: transports", () => {
       expect((listed.structuredContent as { totalCount: number }).totalCount).toBe(1);
     } finally {
       await client.close();
+    }
+  }, 30_000);
+});
+
+describe("conversations plugin: fleet mode behind an edge", () => {
+  const edge = (tenant: string) => ({ "x-tenant-id": tenant, "x-workspace-id": WORKSPACE });
+  const host = { principal: "host" as const, ownerId: OWNER };
+
+  it("refuses a request with no verified tenant", async () => {
+    const res = await fetch(edgeUrl, {
+      method: "POST",
+      headers: { ...AUTH, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("walls every call by the verified tenant, and takes the verified workspace", async () => {
+    const a = await connectTo(edgeUrl, edge("tenant_a"));
+    const b = await connectTo(edgeUrl, edge("tenant_b"));
+    try {
+      const created = await callAs(a, host, "create", { model: "anthropic:claude-sonnet-5-5" });
+      expect(created.isError).toBeFalsy();
+      const made = created.structuredContent as { conversation: { workspaceId: string } };
+      expect(made.conversation.workspaceId).toBe(WORKSPACE);
+      const inA = await callAs(a, host, "list", {});
+      const inB = await callAs(b, host, "list", {});
+      expect((inA.structuredContent as { totalCount: number }).totalCount).toBe(1);
+      expect((inB.structuredContent as { totalCount: number }).totalCount).toBe(0);
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  }, 30_000);
+
+  it("refuses a context that contradicts the verified workspace, before any tool runs", async () => {
+    const a = await connectTo(edgeUrl, edge("tenant_a"));
+    try {
+      let refusal: unknown;
+      try {
+        await callAs(a, { ...host, workspaceId: "ws_ffffffffffffffff" }, "create", {
+          model: "anthropic:claude-sonnet-5-5",
+        });
+      } catch (err) {
+        refusal = err;
+      }
+      expect(refusal).toMatchObject({ code: -32602, data: { code: "context_mismatch" } });
+      const listed = await callAs(a, host, "list", {});
+      expect((listed.structuredContent as { totalCount: number }).totalCount).toBe(1);
+    } finally {
+      await a.close();
     }
   }, 30_000);
 });

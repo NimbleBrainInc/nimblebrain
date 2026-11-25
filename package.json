@@ -94,9 +94,9 @@
     "check:cli": "bunx tsc --noEmit -p packages/cli && cd packages/cli && bun run build && node dist/nimblebrain.js --version",
     "check:web-tests": "bun run scripts/check-web-tests.ts",
     "check:theme": "cd web && bun run check:theme",
-    "lint": "bunx @biomejs/biome check contracts/ src/ instrument/ scripts/ web/src/ web/test/ test/ packages/cli/src/ packages/cli/test/ packages/plugin-sdk/ packages/conversations/",
-    "format": "bunx @biomejs/biome format --write contracts/ src/ web/src/ web/test/ instrument/ scripts/ test/ packages/cli/src/ packages/cli/test/ packages/plugin-sdk/ packages/conversations/",
-    "format:check": "bunx @biomejs/biome format contracts/ src/ web/src/ web/test/ instrument/ scripts/ test/ packages/cli/src/ packages/cli/test/ packages/plugin-sdk/ packages/conversations/",
+    "lint": "bunx @biomejs/biome check contracts/ src/ instrument/ scripts/ web/src/ web/test/ test/ packages/cli/src/ packages/cli/test/ packages/server-sdk/ packages/conversations/",
+    "format": "bunx @biomejs/biome format --write contracts/ src/ web/src/ web/test/ instrument/ scripts/ test/ packages/cli/src/ packages/cli/test/ packages/server-sdk/ packages/conversations/",
+    "format:check": "bunx @biomejs/biome format contracts/ src/ web/src/ web/test/ instrument/ scripts/ test/ packages/cli/src/ packages/cli/test/ packages/server-sdk/ packages/conversations/",
     "sync-models": "bun run src/model/sync-models.ts && bunx @biomejs/biome format --write src/model/catalog-data.json",
     "sync-nebius": "bun run src/model/sync-nebius.ts && bunx @biomejs/biome format --write src/model/catalog-nebius.json"
   },

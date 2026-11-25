@@ -2,14 +2,17 @@
  * The conversations server: one MCP server serving every tool of the conversations
  * contract and its screen. Each `tools/call` is decided in one order:
  *
+ *   0. its host context (`params._meta["ai.nimblebrain/context"]`) is read, with the
+ *      dimensions its transport verified applied; a contradiction is `context_mismatch`, a
+ *      JSON-RPC error before any tool runs (`contracts/host-context/CONTEXT.md`);
  *   1. a tool the contract does not name is `unknown_tool`;
  *   2. a private tool called by anyone but the host is `forbidden` (before input and scope);
  *   3. arguments that fail the tool's input schema are `invalid_input`;
  *   4. a call with no workspace or no owner is `scope_missing`;
  *   5. the tool runs, walled to that scope.
  *
- * How a call's context arrives (request metadata, headers) is the transport's; the server
- * is handed a function that reads it.
+ * Every request reaching the server came through an authenticated host transport
+ * (`main.ts`), so its host context is the host's word.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -21,6 +24,7 @@ import {
 } from "@modelcontextprotocol/server";
 import {
   type CallContext,
+  callContext,
   contractSchema,
   publicErrorPrefix,
   refuseUnlessAllowed,
@@ -28,7 +32,8 @@ import {
   type ToolErrorResult,
   toolError,
   toolVisibility,
-} from "../../plugin-sdk/src/index.ts";
+  type VerifiedDimensions,
+} from "../../server-sdk/src/index.ts";
 import { CONTRACT, DESCRIPTIONS, inputError } from "./contract.ts";
 import {
   exportTool,
@@ -60,9 +65,14 @@ const SCREEN_PLACEHOLDER =
   "<body><p>The conversations screen is not installed with this server.</p></body></html>";
 
 export interface ServerOptions {
-  store: ConversationStore;
-  /** The authenticated context of one request, as its transport carries it. */
-  contextOf: (meta: unknown, ctx: ServerContext) => CallContext;
+  /** The store: one, or one per transport-verified tenant (a multi-tenant server). */
+  store: ConversationStore | ((tenantId: string) => ConversationStore);
+  /**
+   * The dimensions this request's transport verified itself; none by default. Every request
+   * that reaches the server came through an authenticated host transport, so its host context
+   * (`params._meta["ai.nimblebrain/context"]`) is the host's word.
+   */
+  verifiedOf?: (ctx: ServerContext) => VerifiedDimensions;
   /** The built screen's HTML file; the placeholder page when absent. */
   screenPath?: string;
 }
@@ -196,7 +206,7 @@ function scopeMissing(visibility: "public" | "private", missing: "workspace" | "
 }
 
 async function callTool(
-  opts: ServerOptions,
+  store: ConversationStore,
   name: string,
   args: Args,
   ctx: CallContext,
@@ -221,7 +231,7 @@ async function callTool(
   const handler = (visibility === "public" ? PUBLIC : PRIVATE)[name];
   if (!handler) throw new Error(`no handler for contract tool "${name}"`);
   try {
-    const result = (await handler(opts.store, scope, args, ctx)) as Record<string, unknown>;
+    const result = (await handler(store, scope, args, ctx)) as Record<string, unknown>;
     return success(result, visibility === "public");
   } catch (err) {
     return visibility === "private" ? privateFailure(err) : publicFailure(err, args);
@@ -231,6 +241,26 @@ async function callTool(
 function readScreen(path: string | undefined): string {
   if (path && existsSync(path)) return readFileSync(path, "utf-8");
   return SCREEN_PLACEHOLDER;
+}
+
+/** The store a call is served from: the one store, or the verified tenant's. */
+function storeFor(opts: ServerOptions, tenantId: string | undefined): ConversationStore {
+  if (typeof opts.store !== "function") {
+    if (tenantId !== undefined) {
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidRequest,
+        "this server serves one tenant; the transport named one",
+      );
+    }
+    return opts.store;
+  }
+  if (tenantId === undefined) {
+    throw new ProtocolError(
+      ProtocolErrorCode.InvalidRequest,
+      "this server serves several tenants; the transport verified none",
+    );
+  }
+  return opts.store(tenantId);
 }
 
 /** A conversations server over `store`. One per connection; they share the store. */
@@ -255,9 +285,15 @@ export function buildServer(opts: ServerOptions): Server {
   }));
 
   server.setRequestHandler("tools/call", async (request, ctx) => {
-    const callCtx = opts.contextOf(request.params._meta, ctx);
+    const verified = opts.verifiedOf?.(ctx) ?? {};
+    const read = callContext(request.params._meta, verified);
+    if (!read.ok) {
+      // The host's word contradicts its transport's: refused before any tool runs.
+      throw new ProtocolError(ProtocolErrorCode.InvalidParams, read.error, { code: read.code });
+    }
+    const store = storeFor(opts, read.tenantId);
     const args = (request.params.arguments ?? {}) as Args;
-    return callTool(opts, request.params.name, args, callCtx);
+    return callTool(store, request.params.name, args, read.context);
   });
 
   server.setRequestHandler("resources/list", async () => ({

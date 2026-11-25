@@ -51,7 +51,7 @@
       "test/**/*.tsx",
       "packages/cli/src/**",
       "packages/cli/test/**",
-      "packages/plugin-sdk/**/*.ts",
+      "packages/server-sdk/**/*.ts",
       "packages/conversations/**/*.ts",
       "!**/dist/**",
       "!web/src/_generated/**",
@@ -69,7 +69,7 @@
         "test/**",
         "web/test/**",
         "packages/cli/**",
-        "packages/plugin-sdk/**",
+        "packages/server-sdk/**",
         "packages/conversations/**"
       ],
       "plugins": ["./biome-plugins/double-cast.grit"]
@@ -83,7 +83,7 @@
         "web/test/**",
         "test/**",
         "packages/cli/**",
-        "packages/plugin-sdk/**",
+        "packages/server-sdk/**",
         "packages/conversations/**"
       ],
       "plugins": ["./biome-plugins/never-cast.grit"]
@@ -113,7 +113,7 @@
       }
     },
     {
-      "includes": ["packages/plugin-sdk/**/*.ts"],
+      "includes": ["packages/server-sdk/**/*.ts"],
       "linter": {
         "rules": {
           "style": {
@@ -123,7 +123,7 @@
                 "patterns": [
                   {
                     "group": ["../../**", "@modelcontextprotocol/**", "ajv", "ajv/**"],
-                    "message": "The plugin SDK imports nothing outside itself: it is typed and tiny, and a plugin brings its own MCP library (packages/plugin-sdk/AGENTS.md)."
+                    "message": "The server SDK imports nothing outside itself: it is typed and tiny, and a plugin server brings its own MCP library (packages/server-sdk/AGENTS.md)."
                   }
                 ]
               }
@@ -142,12 +142,12 @@
               "options": {
                 "patterns": [
                   {
-                    "group": ["../../**", "!../../plugin-sdk/src/*.ts"],
-                    "message": "A plugin never imports the kernel: packages/conversations imports only packages/plugin-sdk and reads the contract document (packages/conversations/AGENTS.md)."
+                    "group": ["../../**", "!../../server-sdk/src/*.ts"],
+                    "message": "A plugin never imports the kernel: packages/conversations imports only packages/server-sdk and reads the contract document (packages/conversations/AGENTS.md)."
                   },
                   {
                     "group": ["../../../**"],
-                    "message": "A plugin never imports the kernel: packages/conversations imports only packages/plugin-sdk and reads the contract document (packages/conversations/AGENTS.md)."
+                    "message": "A plugin never imports the kernel: packages/conversations imports only packages/server-sdk and reads the contract document (packages/conversations/AGENTS.md)."
                   }
                 ]
               }

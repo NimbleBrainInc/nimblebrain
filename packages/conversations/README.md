@@ -20,7 +20,9 @@ Over stdio, as a host starts it from `mcp.json`:
 packages/conversations/bin/nb-conversations --data-dir ./data
 ```
 
-Each request names its context in `params._meta["ai.nimblebrain/scope"]`:
+Each request carries the host context
+([`contracts/host-context/CONTEXT.md`](../../contracts/host-context/CONTEXT.md)) in
+`params._meta["ai.nimblebrain/context"]`:
 
 ```json
 { "workspaceId": "ws_0123456789abcdef", "ownerId": "user_1",
@@ -34,9 +36,14 @@ NB_CONVERSATIONS_TOKEN=change-me \
   packages/conversations/bin/nb-conversations --data-dir ./data --http 8080 [--host 127.0.0.1]
 ```
 
-A request without `Authorization: Bearer $NB_CONVERSATIONS_TOKEN` is refused with 401. The
-context is `params._meta["ai.nimblebrain/scope"]` when a request states one, else the headers
-`x-nb-workspace-id`, `x-nb-owner-id`, `x-nb-conversation-id` and `x-nb-principal`.
+`NB_CONVERSATIONS_TOKEN` is the credential the operator issues to the host for this server: a
+request without `Authorization: Bearer $NB_CONVERSATIONS_TOKEN` is refused with 401. The context
+is the same `params._meta["ai.nimblebrain/context"]`.
+
+Behind an edge that verifies the host and sets `x-tenant-id` and `x-workspace-id`, add `--edge`:
+each tenant's data is kept under `<data>/tenants/<tenantId>/`, a request with no verified tenant
+is refused, and a context naming another workspace than the verified one is refused as
+`context_mismatch`.
 
 `--screen <file>` serves a built screen as `ui://conversations/browser`; without one the
 resource is a placeholder page.
@@ -57,6 +64,6 @@ The layout matches the NimbleBrain runtime's under its work directory.
 mkdir -p ./data/workspaces/ws_0123456789abcdef ./data/workspaces/ws_fedcba9876543210
 bun --no-env-file contracts/conversations/runner/conformance.ts \
   --server http://127.0.0.1:8080/mcp --header "authorization=Bearer change-me" \
-  --carriage headers --workspace ws_0123456789abcdef --owner user_1 \
+  --carriage meta --workspace ws_0123456789abcdef --owner user_1 \
   --scratch-workspace ws_fedcba9876543210
 ```

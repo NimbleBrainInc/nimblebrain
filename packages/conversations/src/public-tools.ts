@@ -4,7 +4,7 @@
  * returns the contract's output. A failure throws a `ToolCallError` with a public code.
  */
 
-import { ToolCallError } from "../../plugin-sdk/src/index.ts";
+import { ToolCallError } from "../../server-sdk/src/index.ts";
 import {
   type DisplayMessage,
   type DisplayToolCall,
