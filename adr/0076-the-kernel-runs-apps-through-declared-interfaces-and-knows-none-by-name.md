@@ -154,9 +154,17 @@ accept only `host`; any other caller is refused (`forbidden`) and nothing change
   kernel records.
 - **The runtime never offers private tools to agents** and never lists them at its MCP
   door. That keeps them out of view; the server's refusal is the boundary.
-- **On a remote transport, `host` also requires the runtime's own service credential.**
-  How scope and principal are carried (a process the runtime started, request metadata,
-  headers, tokens) is transport detail, outside the contract.
+- **The context travels the same way to every plugin server**: the host context, one shared
+  spec for every contract (`contracts/host-context/CONTEXT.md`, its schema at
+  `https://schemas.nimblebrain.ai/host-context/v1/host-context.schema.json`). It is the object
+  at `params._meta["ai.nimblebrain/context"]`: `principal`, and `workspaceId`, `ownerId` and
+  `conversationId` where the call has them. The runtime stamps it on every request and
+  overwrites any a caller supplied.
+- **A server believes the context only from an authenticated host transport**: stdio by
+  construction, HTTP by a credential the operator issues to the host for that server. Where
+  the transport verified a dimension itself (an edge's verified tenant and workspace), the
+  verified value wins and a context that contradicts it is refused (`context_mismatch`). A
+  server serving several tenants walls by the transport-verified tenant as well.
 
 ### Every capability the kernel consumes is a contract
 
@@ -234,9 +242,11 @@ does today.
 
 ```
 contracts/          language-neutral contracts: conversations/, tasks/, files/,
-                    plugin-extension/, host/
+                    plugin-extension/, host/, and host-context/, the call context
+                    every contract shares
 packages/           independent artifacts
-  plugin-sdk/       what a plugin builds on: MCP server builder, typed tools, host metadata
+  server-sdk/       what a plugin server builds on: reading the host context, tool errors,
+                    the principal rule, reading a contract document
   conversations/    a plugin: one MCP server;  tasks/, files/ likewise
   providers-*/      replaceable provider implementations
   cli/              npx nimblebrain

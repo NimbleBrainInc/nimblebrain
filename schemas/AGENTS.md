@@ -12,6 +12,8 @@
   Agent Plugins manifest) is emitted from `src/plugins/extension.ts` by
   `scripts/emit-plugin-extension-schema.ts` (`bun run emit:plugin-extension`,
   `bun run check:plugin-extension`).
+  `host-context/v1/host-context.schema.json` (the host context every contract call carries,
+  `contracts/host-context/CONTEXT.md`) is authored here.
 - **Paths are `/<thing>/v<major>/`**: `v` plus the major, never the minor. A minor that only
   adds is served in place, at the same path. A breaking change is a new major directory beside
   the old one, which stays served.

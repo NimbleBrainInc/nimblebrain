@@ -58,9 +58,12 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 
 ## 2. Scope and principal
 
-**Every call carries an authenticated context: a scope and a principal.** The host mints it
-from the request it is serving. A value a caller types into a tool's arguments cannot set or
-change it, and no schema in this contract has a workspace, owner or principal input.
+**Every call carries an authenticated context: a scope and a principal.** It is the host
+context ([`contracts/host-context/CONTEXT.md`](../host-context/CONTEXT.md)), which says how the
+host stamps it, where it travels and when a server may believe it. A value a caller types into
+a tool's arguments cannot set or change it, and no schema in this contract has a workspace,
+owner or principal input. This contract reads `workspaceId`, `ownerId`, `conversationId` and
+`principal` from it.
 
 **Scope** walls every call to one workspace and one owner. The owner is the verified identity
 whose conversations are read and written.
@@ -95,23 +98,16 @@ this on every call; it is the boundary that keeps people and agents from rewriti
 host records. The principal is checked before the input and the scope, so a `forbidden`
 answer reveals nothing about either.
 
-- **The host sets the principal on every call and discards any a caller supplied.** Only
-  the host's own code presents `host`. A call that starts with anyone else (an agent's tool
-  call, an MCP App's `tools/call` through the host's bridge, a request at a door where MCP
-  clients connect) presents `person`, whatever it names and whatever `_meta` it carries.
+- **The host sets the principal on every call and discards any a caller supplied**, and a
+  server believes the context only from an authenticated host transport (the host-context
+  spec, §2–3). So only the host's own code presents `host`.
 - **A host never offers private tools to agents and never lists them where agents or MCP
   clients connect.** That keeps them out of view; the server's refusal is what makes them
   unreachable.
-- **On a transport other parties can reach, `host` requires the host's own credential.** A
-  server MUST NOT accept a caller's claim to be `host` without it.
 
-**How scope and principal reach a server is transport-specific and non-normative.** A host
-and an implementation agree on it per transport: a process the host started and alone holds
-(`params._meta["ai.nimblebrain/scope"]` on each request), an authenticated URL and
-credential (a host's `/mcp/<wsId>`, where the workspace is in the URL, the owner is the
-signed-in identity and the principal is `person`), or headers behind an authenticating
-proxy, with the host's service credential for `host`. Each carries the same context under
-the same rules; none is part of the contract.
+A host's own door for MCP clients (`/mcp/<wsId>`) is the host, not a plugin server: it takes
+the workspace from its URL and the owner from the signed-in identity, and every call through
+it presents `person` to the server behind it.
 
 ## 4. Records and ordering
 
@@ -179,8 +175,9 @@ The document's `errors` is the closed list. A failed call writes nothing.
   `scope_missing`, `invalid_input`, `unknown_tool`, and `error` begins with that code's
   prefix in `errors.public`, the text models already read. A caller decides on `code`, never
   on the text.
-- Refusals before any tool runs (a missing or invalid credential, a request the transport
-  cannot place in a scope) belong to the transport.
+- Refusals before any tool runs (a missing or invalid credential, a context that contradicts a
+  transport-verified dimension, `context_mismatch` in the host-context spec) belong to the
+  transport.
 
 ## 7. Idempotency
 
@@ -199,7 +196,8 @@ answers (`false`, an empty list).
 - **Run liveness, model choice, cost, compaction**, and how the host builds what it sends a
   model.
 - **The screen's internals.** The contract names the resource and its MIME type, not its HTML.
-- **Credentials and the carriage of scope and principal** (§3).
+- **Credentials and the carriage of scope and principal**, which the host-context spec owns
+  for every contract (§2).
 
 ## 9. Versioning
 
@@ -222,12 +220,12 @@ given and reads only the contract document.
 ```bash
 bun --no-env-file contracts/conversations/runner/conformance.ts \
   --server <url> [--public-only] \
-  [--carriage none|headers|meta --workspace <id> --owner <id>] \
+  [--carriage none|meta --workspace <id> --owner <id>] \
   [--header k=v] [--bearer-env VAR] [--tool-prefix conversations__] [--fixture <convId>]
 ```
 
-- **The whole contract**: `--server <url>` with `--carriage headers` or `meta`, so the runner
-  can state several scopes and both principals. It checks every tool, the screen, the walls,
+- **The whole contract**: `--server <url>` with `--carriage meta`, so the runner states each
+  call's host context (several scopes and both principals) as the host does. It checks every tool, the screen, the walls,
   and that each private tool answers a `person` with `forbidden` and changes nothing. An
   implementation is conformant when this run reports no failure.
 - **A host's agent-facing surface**: `--public-only` checks only the public tools, as a

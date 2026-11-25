@@ -289,7 +289,10 @@ capability it consumes: a permanent reverse-DNS name (`ai.nimblebrain.conversati
 visibility (public or private), JSON Schemas per tool, error codes (one JSON document per
 version, at the URL its `$id` states), the rule that every
 call carries a scope and a principal (`host` or `person`), and a conformance runner over
-MCP. A
+MCP. The scope and principal are the **host context**, one spec shared by every contract
+(`contracts/host-context/CONTEXT.md`): the host stamps it at
+`params._meta["ai.nimblebrain/context"]` on every request, and a server believes it only
+from an authenticated host transport. A
 plugin declares the contracts it `implements` and `requires`; the kernel names
 contracts, never plugins. Chat is on when an enabled plugin implements the
 conversations contract.
