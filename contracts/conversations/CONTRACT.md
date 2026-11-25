@@ -87,8 +87,10 @@ this on every call; it is the boundary that keeps people and agents from rewriti
 host records. The principal is checked before the input and the scope, so a `forbidden`
 answer reveals nothing about either.
 
-- **Within a host, only the host's own code presents `host`.** The path that executes an
-  agent's tool calls always presents `person`, whatever tool the agent names.
+- **The host sets the principal on every call and discards any a caller supplied.** Only
+  the host's own code presents `host`. A call that starts with anyone else (an agent's tool
+  call, an MCP App's `tools/call` through the host's bridge, a request at a door where MCP
+  clients connect) presents `person`, whatever it names and whatever `_meta` it carries.
 - **A host never offers private tools to agents and never lists them where agents or MCP
   clients connect.** That keeps them out of view; the server's refusal is what makes them
   unreachable.
@@ -165,9 +167,10 @@ JSON-RPC error.
   `conversation_exists`, `workspace_not_found`, `conversation_corrupted`, `internal_error`.
   `error` is diagnostic only.
 - **Public tools, and a tool name the server does not have**: `isError: true`, text JSON
-  `{ error }`. The message begins with the prefix of one of `conversation_not_found`,
-  `no_current_conversation`, `scope_missing`, `invalid_input`, `unknown_tool`. Public tools
-  carry no `code` on the wire in 1.0: their error shape is the one models already read.
+  `{ code, error }`. `code` is one of `conversation_not_found`, `no_current_conversation`,
+  `scope_missing`, `invalid_input`, `unknown_tool`, and `error` begins with that code's
+  prefix in `errors.json`, the text models already read. A caller decides on `code`, never
+  on the text.
 - Refusals before any tool runs (a missing or invalid credential, a request the transport
   cannot place in a scope) belong to the transport.
 

@@ -41,9 +41,12 @@ const FIXTURE_TEXT = "otters";
  *   resource (identity sources are tried first on `resources/read`) and lists it
  *   when the request's `_meta` names the conversations source, but a plain
  *   listing omits it.
+ * - Today's app throws plain errors, so its public errors carry the contract's
+ *   message prefixes but no `code`. A conversations plugin emits both.
  */
 const KNOWN_DIFFERENCES: Record<string, string> = {
   "lists ui://conversations/browser as an MCP App": "not listed",
+  "public errors carry their code": "get code",
 };
 
 let runtime: Runtime;

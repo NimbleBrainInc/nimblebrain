@@ -147,9 +147,11 @@ with a scope (workspace, owner) and a **principal**: `host`, the runtime itself,
 `person`, a user directly or through an agent. Public tools accept either. Private tools
 accept only `host`; any other caller is refused (`forbidden`) and nothing changes.
 
-- **Only kernel code presents `host`.** The path that executes an agent's tool calls
-  always presents `person`, whatever tool the agent names, so no agent and no app can
-  rewrite what the kernel records.
+- **The runtime sets the principal on every call and discards any a caller supplied.**
+  Only kernel code presents `host`. An agent's tool call, an MCP App's `tools/call`
+  through the bridge, and a request at the MCP door all present `person`, whatever they
+  name and whatever `_meta` they carry, so no agent and no app can rewrite what the
+  kernel records.
 - **The runtime never offers private tools to agents** and never lists them at its MCP
   door. That keeps them out of view; the server's refusal is the boundary.
 - **On a remote transport, `host` also requires the runtime's own service credential.**

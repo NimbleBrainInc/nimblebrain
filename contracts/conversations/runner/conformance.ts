@@ -113,16 +113,16 @@ export const PRIVATE_TOOLS: readonly string[] = toolsOf("private");
 
 interface ErrorsFile {
   private: Array<{ code: string }>;
-  public: Array<{ kind: string; prefix: string }>;
+  public: Array<{ code: string; prefix: string }>;
 }
 const ERRORS = JSON.parse(
   readFileSync(resolve(CONTRACT_DIR, "errors.json"), "utf-8"),
 ) as ErrorsFile;
 const PRIVATE_CODES = new Set(ERRORS.private.map((e) => e.code));
 
-function publicPrefix(kind: string): string {
-  const entry = ERRORS.public.find((e) => e.kind === kind);
-  if (!entry) throw new Error(`errors.json has no public error "${kind}"`);
+function publicPrefix(code: string): string {
+  const entry = ERRORS.public.find((e) => e.code === code);
+  if (!entry) throw new Error(`errors.json has no public error "${code}"`);
   return entry.prefix;
 }
 
@@ -281,7 +281,10 @@ function privateCode(r: CallResult): string | undefined {
   assert(code && PRIVATE_CODES.has(code), `code ${String(code)} is not in errors.json#/private`);
   return code;
 }
-/** A public error that begins with the prefix of `kind`. */
+/**
+ * A public error whose text begins with the prefix of `kind`. Its `code` is checked once, by
+ * "public errors carry their code", so a host whose errors only lack the code fails one case.
+ */
 function expectPublicError(r: CallResult, kind: string, rest = ""): void {
   const { error } = errorBody(r);
   assert(String(error).startsWith(`${publicPrefix(kind)}${rest}`), `error ${error}`);
@@ -686,6 +689,17 @@ async function publicErrors(h: Harness, conn: Conn): Promise<void> {
   });
   await h.run("invalid arguments are invalid_input, refused before the handler", async () => {
     expectPublicError(await conn.call("update", {}), "invalid_input", '"update"');
+  });
+  await h.run("public errors carry their code", async () => {
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ["get", { id: ABSENT_ID }, "conversation_not_found"],
+      ["get", {}, "no_current_conversation"],
+      ["update", {}, "invalid_input"],
+    ];
+    for (const [tool, args, code] of cases) {
+      const got = errorBody(await conn.call(tool, args)).code;
+      assert(got === code, `${tool} code: got ${String(got)} want ${code}`);
+    }
   });
 }
 

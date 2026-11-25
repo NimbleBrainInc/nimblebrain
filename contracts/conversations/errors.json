@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/errors.json",
   "title": "Conversations contract errors",
-  "description": "The closed list of errors the contract defines. A private tool's error is a tools/call result with isError: true whose first text content is JSON {code, error}, code from `private`. A public tool's error, and the answer to a tool name the server does not have, is a tools/call result with isError: true whose first text content is JSON {error}, the message beginning with the `prefix` of one entry in `public`; public tools carry no code on the wire in 1.0. `error` text is diagnostic beyond what is stated here. A request refused before any tool runs (no or invalid credential, a connection with no scope) is the transport's answer and outside this list.",
+  "description": "The closed list of errors the contract defines. Every tool error is a tools/call result with isError: true whose first text content is JSON {code, error}. A private tool's code is from `private`. A public tool's code, and the answer to a tool name the server does not have, is from `public`, and its `error` begins with that entry's `prefix`, the text models already read. Beyond the prefix, `error` is diagnostic. A request refused before any tool runs (no or invalid credential, a connection with no scope) is the transport's answer and outside this list.",
   "private": [
     {
       "code": "forbidden",
@@ -39,27 +39,27 @@
   ],
   "public": [
     {
-      "kind": "conversation_not_found",
+      "code": "conversation_not_found",
       "prefix": "Conversation not found: ",
       "meaning": "get, update or export named a conversation outside the caller's scope or absent; the id named follows the prefix."
     },
     {
-      "kind": "no_current_conversation",
+      "code": "no_current_conversation",
       "prefix": "No conversation in scope.",
       "meaning": "id was omitted, or \"current\", on a call made outside a chat."
     },
     {
-      "kind": "scope_missing",
+      "code": "scope_missing",
       "prefix": "[conversations] no ",
       "meaning": "tools/call reached a public tool with no workspace or no authenticated identity in its scope."
     },
     {
-      "kind": "invalid_input",
+      "code": "invalid_input",
       "prefix": "Invalid arguments for ",
       "meaning": "The arguments do not match the tool's input schema; the tool name follows the prefix, quoted. Nothing was written."
     },
     {
-      "kind": "unknown_tool",
+      "code": "unknown_tool",
       "prefix": "Unknown tool ",
       "meaning": "No tool by that name, public or private."
     }
