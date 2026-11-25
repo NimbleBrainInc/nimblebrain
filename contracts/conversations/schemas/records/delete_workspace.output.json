@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/records/delete_workspace.output.json",
+  "type": "object",
+  "required": [
+    "deleted"
+  ],
+  "properties": {
+    "deleted": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "ownerId"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "ownerId": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

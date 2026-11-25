@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/records/get.output.json",
+  "type": "object",
+  "required": [
+    "conversation"
+  ],
+  "properties": {
+    "conversation": {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "createdAt",
+            "updatedAt",
+            "title",
+            "lastModel",
+            "ownerId",
+            "workspaceId",
+            "model"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "title": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lastModel": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ownerId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "metadata": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {}
+              }
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

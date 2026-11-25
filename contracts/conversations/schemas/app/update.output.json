@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/app/update.output.json",
+  "type": "object",
+  "required": [
+    "id",
+    "createdAt",
+    "updatedAt",
+    "messageCount",
+    "totalInputTokens",
+    "totalOutputTokens",
+    "lastModel",
+    "preview",
+    "title"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string"
+    },
+    "updatedAt": {
+      "type": "string"
+    },
+    "messageCount": {
+      "type": "number"
+    },
+    "totalInputTokens": {
+      "type": "number"
+    },
+    "totalOutputTokens": {
+      "type": "number"
+    },
+    "lastModel": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "preview": {
+      "description": "The conversation's first user message, capped for the response.",
+      "type": "string"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/records/create.input.json",
+  "type": "object",
+  "required": [
+    "model"
+  ],
+  "properties": {
+    "id": {
+      "pattern": "^conv_[0-9a-f]{16}$",
+      "type": "string"
+    },
+    "model": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {}
+      }
+    }
+  }
+}

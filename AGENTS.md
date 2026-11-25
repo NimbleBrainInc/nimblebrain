@@ -86,6 +86,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 
 | Guide | Covers |
 |---|---|
+| [`contracts/AGENTS.md`](./contracts/AGENTS.md) | Contracts the kernel consumes: no runtime dependency on `src/`, JSON published and TypeBox authored, `emit:contracts` and `check:contracts`, versioning in each `CONTRACT.md` |
 | [`src/platform/AGENTS.md`](./src/platform/AGENTS.md) | Authoring platform apps and their tools: MCP-native sources, strict input schemas, update tools as patches where `null` clears, named output types, `ui://` MIME type |
 | [`src/platform/tasks/AGENTS.md`](./src/platform/tasks/AGENTS.md) | Task storage, run data retention, per-run membership gate, run results, how the scheduler uses run admission, budget, per-run caps, run assessment and the connected judge, batches (driver, budget account, stop rule, restart) |
 | [`src/runtime/AGENTS.md`](./src/runtime/AGENTS.md) | Run admission at the run-start door: slots, queue, fair share, leases; spend accounts reserved before each model call |
@@ -152,6 +153,7 @@ Shared test helpers live in `test/helpers/` (imported by both unit and integrati
 ## Project Structure
 
 ```
+contracts/         Language-neutral contracts the kernel consumes: JSON Schemas, CONTRACT.md, conformance runner (see contracts/AGENTS.md)
 src/
 ├── engine/        Agentic loop (model → tool → repeat). Start here.
 ├── runtime/       High-level orchestration (Runtime.start → runtime.chat)

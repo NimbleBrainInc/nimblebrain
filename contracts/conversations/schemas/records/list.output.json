@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/records/list.output.json",
+  "type": "object",
+  "required": [
+    "items",
+    "nextCursor",
+    "total"
+  ],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "preview",
+          "createdAt",
+          "lastActivityAt",
+          "messageCount",
+          "usage"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preview": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "lastActivityAt": {
+            "type": "string"
+          },
+          "messageCount": {
+            "type": "integer"
+          },
+          "usage": {
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {
+                "type": "object",
+                "required": [
+                  "inputTokens",
+                  "outputTokens"
+                ],
+                "properties": {
+                  "inputTokens": {
+                    "type": "number"
+                  },
+                  "outputTokens": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "nextCursor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "total": {
+      "type": "integer"
+    }
+  }
+}

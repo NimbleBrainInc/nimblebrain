@@ -1,0 +1,541 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/app/get.output.json",
+  "type": "object",
+  "required": [
+    "metadata",
+    "totalMessages",
+    "messages"
+  ],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "createdAt",
+        "updatedAt",
+        "totalInputTokens",
+        "totalOutputTokens",
+        "lastModel",
+        "model",
+        "workspaceId"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        },
+        "totalInputTokens": {
+          "type": "number"
+        },
+        "totalOutputTokens": {
+          "type": "number"
+        },
+        "lastModel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "description": "The model the conversation is bound to.",
+          "type": "string"
+        },
+        "ownerId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "description": "The workspace the conversation is sealed to: the one it is stored under.",
+          "type": "string"
+        }
+      }
+    },
+    "totalMessages": {
+      "type": "number"
+    },
+    "truncated": {
+      "description": "Present, and true, when older messages were dropped.",
+      "type": "boolean"
+    },
+    "droppedOlderMessages": {
+      "type": "number"
+    },
+    "truncationHint": {
+      "type": "string"
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "role",
+          "content",
+          "blocks",
+          "timestamp"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "description": "Aggregated text across all text blocks.",
+            "type": "string"
+          },
+          "blocks": {
+            "description": "Ordered content blocks — the primary structure for rendering.",
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "text"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "text"
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "text"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "reasoning"
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "toolCalls"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "tool"
+                      ]
+                    },
+                    "toolCalls": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "name",
+                          "status",
+                          "ok",
+                          "ms",
+                          "input",
+                          "result"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "description": "Full tool name (may include \"server__tool\" prefix).",
+                            "type": "string"
+                          },
+                          "appName": {
+                            "description": "Server prefix from the name (before \"__\"), if any.",
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "done",
+                              "error"
+                            ],
+                            "description": "Terminal status — tool calls from history are never mid-flight."
+                          },
+                          "ok": {
+                            "type": "boolean"
+                          },
+                          "ms": {
+                            "type": "number"
+                          },
+                          "input": {
+                            "type": "object",
+                            "patternProperties": {
+                              "^(.*)$": {}
+                            }
+                          },
+                          "result": {
+                            "type": "object",
+                            "required": [
+                              "content",
+                              "isError"
+                            ],
+                            "properties": {
+                              "content": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "required": [
+                                    "type"
+                                  ],
+                                  "properties": {
+                                    "type": {
+                                      "type": "string"
+                                    },
+                                    "text": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              },
+                              "structuredContent": {
+                                "type": "object",
+                                "patternProperties": {
+                                  "^(.*)$": {}
+                                }
+                              },
+                              "isError": {
+                                "type": "boolean"
+                              }
+                            }
+                          },
+                          "resourceUri": {
+                            "type": "string"
+                          },
+                          "resourceLinks": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "required": [
+                                "uri"
+                              ],
+                              "properties": {
+                                "uri": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "mimeType": {
+                                  "type": "string"
+                                },
+                                "description": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "userId": {
+            "type": "string"
+          },
+          "toolCalls": {
+            "description": "All tool calls flattened out of blocks.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "status",
+                "ok",
+                "ms",
+                "input",
+                "result"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "description": "Full tool name (may include \"server__tool\" prefix).",
+                  "type": "string"
+                },
+                "appName": {
+                  "description": "Server prefix from the name (before \"__\"), if any.",
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "done",
+                    "error"
+                  ],
+                  "description": "Terminal status — tool calls from history are never mid-flight."
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "ms": {
+                  "type": "number"
+                },
+                "input": {
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  }
+                },
+                "result": {
+                  "type": "object",
+                  "required": [
+                    "content",
+                    "isError"
+                  ],
+                  "properties": {
+                    "content": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "structuredContent": {
+                      "type": "object",
+                      "patternProperties": {
+                        "^(.*)$": {}
+                      }
+                    },
+                    "isError": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "resourceUri": {
+                  "type": "string"
+                },
+                "resourceLinks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "uri"
+                    ],
+                    "properties": {
+                      "uri": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "mimeType": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "usage": {
+            "type": "object",
+            "required": [
+              "inputTokens",
+              "outputTokens",
+              "model",
+              "llmMs"
+            ],
+            "properties": {
+              "inputTokens": {
+                "type": "number"
+              },
+              "outputTokens": {
+                "type": "number"
+              },
+              "cacheReadTokens": {
+                "type": "number"
+              },
+              "cacheWriteTokens": {
+                "type": "number"
+              },
+              "reasoningTokens": {
+                "type": "number"
+              },
+              "model": {
+                "description": "Model of the last LLM call in the run (runs can switch models mid-turn).",
+                "type": "string"
+              },
+              "llmMs": {
+                "type": "number"
+              }
+            }
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "filename",
+                "mimeType",
+                "size",
+                "extracted"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "filename": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "number"
+                },
+                "extracted": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "pluginRequestAnswer": {
+            "type": "object",
+            "required": [
+              "serverName",
+              "answer"
+            ],
+            "properties": {
+              "serverName": {
+                "type": "string"
+              },
+              "answer": {
+                "anyOf": [
+                  {
+                    "const": "use",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_now",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          },
+          "stopReason": {
+            "type": "string"
+          },
+          "pending": {
+            "type": "boolean"
+          },
+          "skillsLoaded": {
+            "type": "object",
+            "required": [
+              "skills",
+              "totalTokens"
+            ],
+            "properties": {
+              "skills": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "scope",
+                    "tokens",
+                    "loadedBy",
+                    "reason"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "The skill's own name — safe to render directly.",
+                      "type": "string"
+                    },
+                    "connector": {
+                      "description": "The MCP server that published it; absent for filesystem skills.",
+                      "type": "string"
+                    },
+                    "scope": {
+                      "description": "Storage tier the skill loaded from: \"org\", \"workspace\", \"user\" or \"provided\".",
+                      "type": "string"
+                    },
+                    "tokens": {
+                      "type": "number"
+                    },
+                    "loadedBy": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "totalTokens": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
