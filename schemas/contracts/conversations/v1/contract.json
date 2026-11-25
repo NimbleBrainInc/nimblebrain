@@ -1,0 +1,1397 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/contracts/conversations/v1/contract.json",
+  "title": "Conversations contract",
+  "description": "The ai.nimblebrain.conversations contract: its identity, version, cardinality, tools with their visibility and schemas, and the closed list of errors. Every tool error is a tools/call result with isError: true whose first text content is JSON {code, error}. A private tool's code is from errors.private. A public tool's code, and the answer to a tool name the server does not have, is from errors.public, and its error begins with that entry's prefix. Beyond the prefix, error is diagnostic. A request refused before any tool runs is the transport's answer and outside this list.",
+  "contract": "ai.nimblebrain.conversations",
+  "version": "1.0",
+  "cardinality": "singleton",
+  "tools": {
+    "list": {
+      "visibility": "public",
+      "input": {
+        "$ref": "#/$defs/list_input"
+      },
+      "output": {
+        "$ref": "#/$defs/list_output"
+      }
+    },
+    "get": {
+      "visibility": "public",
+      "input": {
+        "$ref": "#/$defs/get_input"
+      },
+      "output": {
+        "$ref": "#/$defs/get_output"
+      }
+    },
+    "search": {
+      "visibility": "public",
+      "input": {
+        "$ref": "#/$defs/search_input"
+      },
+      "output": {
+        "$ref": "#/$defs/search_output"
+      }
+    },
+    "update": {
+      "visibility": "public",
+      "input": {
+        "$ref": "#/$defs/update_input"
+      },
+      "output": {
+        "$ref": "#/$defs/update_output"
+      }
+    },
+    "stats": {
+      "visibility": "public",
+      "input": {
+        "$ref": "#/$defs/stats_input"
+      },
+      "output": {
+        "$ref": "#/$defs/stats_output"
+      }
+    },
+    "export": {
+      "visibility": "public",
+      "input": {
+        "$ref": "#/$defs/export_input"
+      },
+      "output": {
+        "$ref": "#/$defs/export_output"
+      }
+    },
+    "create": {
+      "visibility": "private",
+      "input": {
+        "$ref": "#/$defs/create_input"
+      },
+      "output": {
+        "$ref": "#/$defs/create_output"
+      }
+    },
+    "events": {
+      "visibility": "private",
+      "input": {
+        "$ref": "#/$defs/events_input"
+      },
+      "output": {
+        "$ref": "#/$defs/events_output"
+      }
+    },
+    "append_events": {
+      "visibility": "private",
+      "input": {
+        "$ref": "#/$defs/append_events_input"
+      },
+      "output": {
+        "$ref": "#/$defs/append_events_output"
+      }
+    },
+    "delete": {
+      "visibility": "private",
+      "input": {
+        "$ref": "#/$defs/delete_input"
+      },
+      "output": {
+        "$ref": "#/$defs/delete_output"
+      }
+    },
+    "delete_workspace": {
+      "visibility": "private",
+      "input": {
+        "$ref": "#/$defs/delete_workspace_input"
+      },
+      "output": {
+        "$ref": "#/$defs/delete_workspace_output"
+      }
+    }
+  },
+  "errors": {
+    "public": [
+      {
+        "code": "conversation_not_found",
+        "prefix": "Conversation not found: ",
+        "meaning": "get, update or export named a conversation outside the caller's scope or absent; the id named follows the prefix."
+      },
+      {
+        "code": "no_current_conversation",
+        "prefix": "No conversation in scope.",
+        "meaning": "id was omitted, or \"current\", on a call made outside a chat."
+      },
+      {
+        "code": "scope_missing",
+        "prefix": "[conversations] no ",
+        "meaning": "tools/call reached a public tool with no workspace or no authenticated identity in its scope."
+      },
+      {
+        "code": "invalid_input",
+        "prefix": "Invalid arguments for ",
+        "meaning": "The arguments do not match the tool's input schema; the tool name follows the prefix, quoted. Nothing was written."
+      },
+      {
+        "code": "unknown_tool",
+        "prefix": "Unknown tool ",
+        "meaning": "No tool by that name, public or private."
+      }
+    ],
+    "private": [
+      {
+        "code": "forbidden",
+        "meaning": "A private tool was called by a principal other than host (a person, directly or through an agent, or a call that names no principal). Checked before the input and the scope, so the answer reveals nothing about either. Nothing was read or written."
+      },
+      {
+        "code": "invalid_input",
+        "meaning": "The arguments do not match the tool's input schema. Nothing was written."
+      },
+      {
+        "code": "scope_missing",
+        "meaning": "The call reached the server with no workspace or no owner in its scope. Nothing was read or written."
+      },
+      {
+        "code": "conversation_not_found",
+        "meaning": "append_events named a conversation absent from the caller's scope: another owner's, another workspace's and a missing one answer alike. Nothing was written. events answers an empty page instead, and delete answers false."
+      },
+      {
+        "code": "conversation_exists",
+        "meaning": "create named an id already stored in the caller's scope. Nothing was written."
+      },
+      {
+        "code": "workspace_not_found",
+        "meaning": "create in a workspace the implementation holds nothing for (deleted, or never created). Nothing was written."
+      },
+      {
+        "code": "conversation_corrupted",
+        "meaning": "The stored conversation cannot be read."
+      },
+      {
+        "code": "internal_error",
+        "meaning": "Anything else. The error text is diagnostic only."
+      }
+    ]
+  },
+  "$defs": {
+    "list_input": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "description": "Max conversations to return. Default: 20.",
+          "type": "number"
+        },
+        "cursor": {
+          "description": "Opaque pagination cursor from a previous response.",
+          "type": "string"
+        },
+        "search": {
+          "description": "Substring match on title and preview.",
+          "type": "string"
+        },
+        "sortBy": {
+          "type": "string",
+          "enum": [
+            "created",
+            "updated"
+          ],
+          "description": "Sort field. Default: \"updated\"."
+        },
+        "dateFrom": {
+          "description": "Filter: only conversations created on or after this ISO 8601 date.",
+          "type": "string"
+        },
+        "dateTo": {
+          "description": "Filter: only conversations created on or before this ISO 8601 date.",
+          "type": "string"
+        }
+      }
+    },
+    "list_output": {
+      "type": "object",
+      "required": [
+        "conversations",
+        "nextCursor",
+        "totalCount"
+      ],
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "createdAt",
+              "updatedAt",
+              "messageCount",
+              "totalInputTokens",
+              "totalOutputTokens",
+              "lastModel",
+              "preview",
+              "title",
+              "ownerId",
+              "workspaceId",
+              "active"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "messageCount": {
+                "type": "number"
+              },
+              "totalInputTokens": {
+                "type": "number"
+              },
+              "totalOutputTokens": {
+                "type": "number"
+              },
+              "lastModel": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "preview": {
+                "description": "The conversation's first user message, capped for the response.",
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "ownerId": {
+                "description": "The conversation's owner; null when its header names none.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "workspaceId": {
+                "description": "The workspace whose directory holds the conversation.",
+                "type": "string"
+              },
+              "active": {
+                "description": "Whether a reply is generating for it right now.",
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "nextCursor": {
+          "description": "Pass as `cursor` for the next page; null on the last page.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "totalCount": {
+          "type": "number"
+        }
+      }
+    },
+    "get_input": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Conversation ID. Omit it (or pass \"current\") to address the conversation this call is happening inside; required from outside a chat.",
+          "type": "string"
+        },
+        "expand": {
+          "type": "string",
+          "enum": [
+            "metadata",
+            "messages",
+            "full"
+          ],
+          "description": "How much of the conversation to return. \"metadata\" returns just metadata (no messages). \"messages\" (default) returns metadata + the most recent `limit` messages, capped by a content-size guard. \"full\" returns every message — use only when you genuinely need the entire transcript; long conversations can run hundreds of thousands of tokens."
+        },
+        "limit": {
+          "description": "Max messages to return when expand is \"messages\" (the default mode). Counted from the end of the conversation. Default: 20. Ignored when expand is \"metadata\" or \"full\".",
+          "type": "number"
+        }
+      }
+    },
+    "get_output": {
+      "type": "object",
+      "required": [
+        "metadata",
+        "totalMessages",
+        "messages"
+      ],
+      "properties": {
+        "metadata": {
+          "type": "object",
+          "required": [
+            "id",
+            "title",
+            "createdAt",
+            "updatedAt",
+            "totalInputTokens",
+            "totalOutputTokens",
+            "lastModel",
+            "model",
+            "workspaceId"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "title": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "totalInputTokens": {
+              "type": "number"
+            },
+            "totalOutputTokens": {
+              "type": "number"
+            },
+            "lastModel": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "model": {
+              "description": "The model the conversation is bound to.",
+              "type": "string"
+            },
+            "ownerId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "description": "The workspace the conversation is sealed to: the one it is stored under.",
+              "type": "string"
+            }
+          }
+        },
+        "totalMessages": {
+          "type": "number"
+        },
+        "truncated": {
+          "description": "Present, and true, when older messages were dropped.",
+          "type": "boolean"
+        },
+        "droppedOlderMessages": {
+          "type": "number"
+        },
+        "truncationHint": {
+          "type": "string"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "role",
+              "content",
+              "blocks",
+              "timestamp"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "assistant"
+                ]
+              },
+              "content": {
+                "description": "Aggregated text across all text blocks.",
+                "type": "string"
+              },
+              "blocks": {
+                "description": "Ordered content blocks — the primary structure for rendering.",
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "text"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "text"
+                          ]
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "text"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "reasoning"
+                          ]
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "toolCalls"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "tool"
+                          ]
+                        },
+                        "toolCalls": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "name",
+                              "status",
+                              "ok",
+                              "ms",
+                              "input",
+                              "result"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "description": "Full tool name (may include \"server__tool\" prefix).",
+                                "type": "string"
+                              },
+                              "appName": {
+                                "description": "Server prefix from the name (before \"__\"), if any.",
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "done",
+                                  "error"
+                                ],
+                                "description": "Terminal status — tool calls from history are never mid-flight."
+                              },
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "ms": {
+                                "type": "number"
+                              },
+                              "input": {
+                                "type": "object",
+                                "patternProperties": {
+                                  "^(.*)$": {}
+                                }
+                              },
+                              "result": {
+                                "type": "object",
+                                "required": [
+                                  "content",
+                                  "isError"
+                                ],
+                                "properties": {
+                                  "content": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "required": [
+                                        "type"
+                                      ],
+                                      "properties": {
+                                        "type": {
+                                          "type": "string"
+                                        },
+                                        "text": {
+                                          "type": "string"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "structuredContent": {
+                                    "type": "object",
+                                    "patternProperties": {
+                                      "^(.*)$": {}
+                                    }
+                                  },
+                                  "isError": {
+                                    "type": "boolean"
+                                  }
+                                }
+                              },
+                              "resourceUri": {
+                                "type": "string"
+                              },
+                              "resourceLinks": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "required": [
+                                    "uri"
+                                  ],
+                                  "properties": {
+                                    "uri": {
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "mimeType": {
+                                      "type": "string"
+                                    },
+                                    "description": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "timestamp": {
+                "type": "string"
+              },
+              "userId": {
+                "type": "string"
+              },
+              "toolCalls": {
+                "description": "All tool calls flattened out of blocks.",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "status",
+                    "ok",
+                    "ms",
+                    "input",
+                    "result"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "Full tool name (may include \"server__tool\" prefix).",
+                      "type": "string"
+                    },
+                    "appName": {
+                      "description": "Server prefix from the name (before \"__\"), if any.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "done",
+                        "error"
+                      ],
+                      "description": "Terminal status — tool calls from history are never mid-flight."
+                    },
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "ms": {
+                      "type": "number"
+                    },
+                    "input": {
+                      "type": "object",
+                      "patternProperties": {
+                        "^(.*)$": {}
+                      }
+                    },
+                    "result": {
+                      "type": "object",
+                      "required": [
+                        "content",
+                        "isError"
+                      ],
+                      "properties": {
+                        "content": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "type"
+                            ],
+                            "properties": {
+                              "type": {
+                                "type": "string"
+                              },
+                              "text": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "structuredContent": {
+                          "type": "object",
+                          "patternProperties": {
+                            "^(.*)$": {}
+                          }
+                        },
+                        "isError": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "resourceUri": {
+                      "type": "string"
+                    },
+                    "resourceLinks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "uri"
+                        ],
+                        "properties": {
+                          "uri": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "mimeType": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "usage": {
+                "type": "object",
+                "required": [
+                  "inputTokens",
+                  "outputTokens",
+                  "model",
+                  "llmMs"
+                ],
+                "properties": {
+                  "inputTokens": {
+                    "type": "number"
+                  },
+                  "outputTokens": {
+                    "type": "number"
+                  },
+                  "cacheReadTokens": {
+                    "type": "number"
+                  },
+                  "cacheWriteTokens": {
+                    "type": "number"
+                  },
+                  "reasoningTokens": {
+                    "type": "number"
+                  },
+                  "model": {
+                    "description": "Model of the last LLM call in the run (runs can switch models mid-turn).",
+                    "type": "string"
+                  },
+                  "llmMs": {
+                    "type": "number"
+                  }
+                }
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "filename",
+                    "mimeType",
+                    "size",
+                    "extracted"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "filename": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "number"
+                    },
+                    "extracted": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              },
+              "pluginRequestAnswer": {
+                "type": "object",
+                "required": [
+                  "serverName",
+                  "answer"
+                ],
+                "properties": {
+                  "serverName": {
+                    "type": "string"
+                  },
+                  "answer": {
+                    "anyOf": [
+                      {
+                        "const": "use",
+                        "type": "string"
+                      },
+                      {
+                        "const": "not_now",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              },
+              "stopReason": {
+                "type": "string"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "skillsLoaded": {
+                "type": "object",
+                "required": [
+                  "skills",
+                  "totalTokens"
+                ],
+                "properties": {
+                  "skills": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "name",
+                        "scope",
+                        "tokens",
+                        "loadedBy",
+                        "reason"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "description": "The skill's own name — safe to render directly.",
+                          "type": "string"
+                        },
+                        "connector": {
+                          "description": "The MCP server that published it; absent for filesystem skills.",
+                          "type": "string"
+                        },
+                        "scope": {
+                          "description": "Storage tier the skill loaded from: \"org\", \"workspace\", \"user\" or \"provided\".",
+                          "type": "string"
+                        },
+                        "tokens": {
+                          "type": "number"
+                        },
+                        "loadedBy": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "totalTokens": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "search_input": {
+      "required": [
+        "query"
+      ],
+      "type": "object",
+      "properties": {
+        "query": {
+          "description": "Search query. Case-insensitive substring match on message content.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Max conversations to return. Default: 10.",
+          "type": "number"
+        }
+      }
+    },
+    "search_output": {
+      "type": "object",
+      "required": [
+        "results",
+        "totalMatches"
+      ],
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "title",
+              "matches"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "matches": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "snippet"
+                  ],
+                  "properties": {
+                    "snippet": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "totalMatches": {
+          "type": "number"
+        }
+      }
+    },
+    "update_input": {
+      "required": [
+        "title"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Conversation ID. Omit it (or pass \"current\") to address the conversation this call is happening inside; required from outside a chat.",
+          "type": "string"
+        },
+        "title": {
+          "description": "New title for the conversation.",
+          "type": "string"
+        }
+      }
+    },
+    "update_output": {
+      "type": "object",
+      "required": [
+        "id",
+        "createdAt",
+        "updatedAt",
+        "messageCount",
+        "totalInputTokens",
+        "totalOutputTokens",
+        "lastModel",
+        "preview",
+        "title"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        },
+        "messageCount": {
+          "type": "number"
+        },
+        "totalInputTokens": {
+          "type": "number"
+        },
+        "totalOutputTokens": {
+          "type": "number"
+        },
+        "lastModel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "preview": {
+          "description": "The conversation's first user message, capped for the response.",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "stats_input": {
+      "type": "object",
+      "properties": {
+        "period": {
+          "type": "string",
+          "enum": [
+            "day",
+            "week",
+            "month",
+            "all"
+          ],
+          "description": "Time period for stats. Default: \"week\"."
+        }
+      }
+    },
+    "stats_output": {
+      "type": "object",
+      "required": [
+        "period",
+        "totalConversations",
+        "totalInputTokens",
+        "totalOutputTokens",
+        "byModel",
+        "topTools"
+      ],
+      "properties": {
+        "period": {
+          "type": "object",
+          "required": [
+            "since",
+            "until"
+          ],
+          "properties": {
+            "since": {
+              "description": "ISO 8601 lower bound; \"\" for period \"all\".",
+              "type": "string"
+            },
+            "until": {
+              "type": "string"
+            }
+          }
+        },
+        "totalConversations": {
+          "type": "number"
+        },
+        "totalInputTokens": {
+          "type": "number"
+        },
+        "totalOutputTokens": {
+          "type": "number"
+        },
+        "byModel": {
+          "description": "Usage keyed by model id.",
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "type": "object",
+              "required": [
+                "inputTokens",
+                "outputTokens",
+                "conversations"
+              ],
+              "properties": {
+                "inputTokens": {
+                  "type": "number"
+                },
+                "outputTokens": {
+                  "type": "number"
+                },
+                "conversations": {
+                  "description": "Conversations with a turn on this model.",
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        "topTools": {
+          "description": "Tools by call count, most-called first.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "callCount"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "callCount": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    },
+    "export_input": {
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Conversation ID. Omit it (or pass \"current\") to address the conversation this call is happening inside; required from outside a chat.",
+          "type": "string"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "markdown",
+            "json"
+          ],
+          "description": "Export format."
+        }
+      }
+    },
+    "export_output": {
+      "type": "object",
+      "required": [
+        "content"
+      ],
+      "properties": {
+        "content": {
+          "type": "string"
+        }
+      }
+    },
+    "create_input": {
+      "type": "object",
+      "required": [
+        "model"
+      ],
+      "properties": {
+        "id": {
+          "pattern": "^conv_[0-9a-f]{16}$",
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {}
+          }
+        }
+      }
+    },
+    "create_output": {
+      "type": "object",
+      "required": [
+        "conversation"
+      ],
+      "properties": {
+        "conversation": {
+          "type": "object",
+          "required": [
+            "id",
+            "createdAt",
+            "updatedAt",
+            "title",
+            "lastModel",
+            "ownerId",
+            "workspaceId",
+            "model"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "title": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lastModel": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ownerId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "metadata": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "events_input": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "afterSeq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "throughSeq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 5000,
+          "type": "integer"
+        }
+      }
+    },
+    "events_output": {
+      "type": "object",
+      "required": [
+        "events",
+        "lastSeq"
+      ],
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "seq",
+              "event"
+            ],
+            "properties": {
+              "seq": {
+                "type": "integer"
+              },
+              "event": {
+                "additionalProperties": true,
+                "type": "object",
+                "required": [
+                  "ts",
+                  "type"
+                ],
+                "properties": {
+                  "ts": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "lastSeq": {
+          "type": "integer"
+        }
+      }
+    },
+    "append_events_input": {
+      "type": "object",
+      "required": [
+        "id",
+        "events"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "additionalProperties": true,
+            "type": "object",
+            "required": [
+              "ts",
+              "type"
+            ],
+            "properties": {
+              "ts": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "append_events_output": {
+      "type": "object",
+      "required": [
+        "lastSeq"
+      ],
+      "properties": {
+        "lastSeq": {
+          "type": "integer"
+        }
+      }
+    },
+    "delete_input": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      }
+    },
+    "delete_output": {
+      "type": "object",
+      "required": [
+        "deleted"
+      ],
+      "properties": {
+        "deleted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "delete_workspace_input": {
+      "type": "object",
+      "properties": {}
+    },
+    "delete_workspace_output": {
+      "type": "object",
+      "required": [
+        "deleted"
+      ],
+      "properties": {
+        "deleted": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "ownerId"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "ownerId": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
