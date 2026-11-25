@@ -1,13 +1,15 @@
 /**
- * The built-in conversations app is the app role of the conversations contract
- * (`contracts/conversations/`), as served at a runtime's `/mcp/<wsId>` door.
+ * The built-in conversations app serves the public tools of the conversations
+ * contract (`contracts/conversations/`) at a runtime's `/mcp/<wsId>` door, and
+ * no private tool is reachable there.
  *
  * Boots a runtime, seeds one conversation through a chat turn, and runs the
- * contract's black-box conformance runner against `/mcp/<wsId>` with only the
- * app role. The door fixes one scope per connection (the workspace in its URL
- * and the signed-in identity), so the runner's scope carriage is `none`, and
- * the cases that need to state a second scope skip; the door's own wall is
- * covered by `mcp-server-identity-bound.test.ts`.
+ * contract's black-box conformance runner against `/mcp/<wsId>` in its
+ * public-only mode, the check for a host's agent-facing surface. The door fixes
+ * one scope and the `person` principal per connection (the workspace in its URL
+ * and the signed-in identity), so the runner's carriage is `none`, and the cases
+ * that need to state a second scope skip; the door's own wall is covered by
+ * `mcp-server-identity-bound.test.ts`.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -30,7 +32,7 @@ const testDir = join(tmpdir(), `nimblebrain-conversations-contract-${Date.now()}
 const FIXTURE_TEXT = "otters";
 
 /**
- * App cases today's door fails for a reason in the door, not in the case, each
+ * Public cases today's door fails for a reason in the door, not in the case, each
  * with the text its failure carries.
  *
  * - The app lists `ui://conversations/browser`, but the door's unscoped
@@ -64,8 +66,9 @@ beforeAll(async () => {
   });
   handle = startServer({ runtime, port: 0 });
   results = await runConformance({
-    app: `http://localhost:${handle.port}/mcp/${TEST_WORKSPACE_ID}`,
-    scopeCarriage: "none",
+    server: `http://localhost:${handle.port}/mcp/${TEST_WORKSPACE_ID}`,
+    publicOnly: true,
+    carriage: "none",
     protocolVersion: MCP_PROTOCOL_VERSION,
     toolPrefix: "conversations__",
     fixture: conversationId,
@@ -79,13 +82,16 @@ afterAll(async () => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 }, 30_000);
 
-describe("conversations contract: the app role at /mcp/<wsId>", () => {
-  it("runs only app cases", () => {
+describe("conversations contract: the public tools at /mcp/<wsId>", () => {
+  it("runs the public-only cases, including that private tools are absent", () => {
     expect(results.length).toBeGreaterThan(0);
-    expect(results.every((r) => r.role === "app")).toBe(true);
+    const names = results.map((r) => r.name);
+    expect(names).toContain("no private tool is listed");
+    expect(names).toContain("a private tool called here is refused");
+    expect(names.some((n) => n.includes("forbidden"))).toBe(false);
   });
 
-  it("passes every app case it can state, except the door's known difference", () => {
+  it("passes every case it can state, except the door's known difference", () => {
     const failed = results
       .filter((r) => r.status === "fail" && !(r.name in KNOWN_DIFFERENCES))
       .map((r) => `${r.name}: ${r.detail}`);

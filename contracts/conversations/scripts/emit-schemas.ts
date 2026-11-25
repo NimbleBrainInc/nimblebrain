@@ -8,15 +8,16 @@
  *
  * The JSON under `schemas/` is the published contract and is committed. TypeBox
  * is only where it is authored: `src/platform/schemas/conversations.ts` for the
- * app role (today's conversations tools are the app role), and
- * `../source/records.ts` for the records role. This script is build tooling; it
+ * public tools (today's conversations tools are the public tools), and
+ * `../source/private.ts` for the private tools. This script is build tooling; it
  * is the one place in `contracts/` that reads an authoring source under `src/`.
  *
  * Each file is the schema exactly as it travels in `tools/list` (a JSON round
  * trip, which drops TypeBox's symbol-keyed metadata), with `$schema` (draft
  * 2020-12) and `$id` added at the root. `$id` sits under the contract's derived
  * location, major only:
- * `https://schemas.nimblebrain.ai/contracts/<id>/<major>/<role>/<tool>.<kind>.json`.
+ * `https://schemas.nimblebrain.ai/contracts/<id>/<major>/<tool>.<kind>.json`.
+ * Each tool's source must match its visibility in `contract.json`.
  *
  * `--check` writes nothing. It exits 1 when a committed file is missing,
  * differs from what would be emitted, or is left over from a tool that no
@@ -27,7 +28,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join, relative, resolve } from "node:path";
 import type { TSchema } from "@sinclair/typebox";
 import * as App from "../../../src/platform/schemas/conversations.ts";
-import { RECORDS_SCHEMAS } from "../source/records.ts";
+import { PRIVATE_SCHEMAS } from "../source/private.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 const SCHEMAS_DIR = join(ROOT, "schemas");
@@ -36,12 +37,12 @@ const DRAFT = "https://json-schema.org/draft/2020-12/schema";
 interface ContractFile {
   id: string;
   version: string;
-  roles: Record<string, { visibility: string }>;
+  tools: Record<string, { visibility: "public" | "private" }>;
 }
 
 type ToolSchemas = Record<string, { input: TSchema; output: TSchema }>;
 
-const APP_SCHEMAS: ToolSchemas = {
+const PUBLIC_SCHEMAS: ToolSchemas = {
   list: { input: App.ConversationsListInput, output: App.ConversationsListOutput },
   get: { input: App.ConversationsGetInput, output: App.ConversationsGetOutput },
   search: { input: App.ConversationsSearchInput, output: App.ConversationsSearchOutput },
@@ -50,7 +51,10 @@ const APP_SCHEMAS: ToolSchemas = {
   export: { input: App.ConversationsExportInput, output: App.ConversationsExportOutput },
 };
 
-const ROLE_SCHEMAS: Record<string, ToolSchemas> = { app: APP_SCHEMAS, records: RECORDS_SCHEMAS };
+const SOURCES: Record<"public" | "private", ToolSchemas> = {
+  public: PUBLIC_SCHEMAS,
+  private: PRIVATE_SCHEMAS,
+};
 
 /** The contract's derived location: `https://schemas.nimblebrain.ai/contracts/<id>/<major>/`. */
 export function locationOf(contract: Pick<ContractFile, "id" | "version">): string {
@@ -62,15 +66,26 @@ export function locationOf(contract: Pick<ContractFile, "id" | "version">): stri
 export function emit(contract: ContractFile): Map<string, string> {
   const base = locationOf(contract);
   const files = new Map<string, string>();
-  for (const role of Object.keys(contract.roles)) {
-    const tools = ROLE_SCHEMAS[role];
-    if (!tools) throw new Error(`contract.json names role "${role}", which has no source`);
-    for (const [tool, pair] of Object.entries(tools)) {
-      for (const kind of ["input", "output"] as const) {
-        const rel = `${role}/${tool}.${kind}.json`;
-        const wire = JSON.parse(JSON.stringify(pair[kind])) as Record<string, unknown>;
-        const json = { $schema: DRAFT, $id: `${base}${rel}`, ...wire };
-        files.set(rel, `${JSON.stringify(json, null, 2)}\n`);
+  for (const [tool, { visibility }] of Object.entries(contract.tools)) {
+    const pair = SOURCES[visibility]?.[tool];
+    if (!pair) {
+      throw new Error(
+        `contract.json names ${visibility} tool "${tool}", which has no ${visibility} source`,
+      );
+    }
+    for (const kind of ["input", "output"] as const) {
+      const rel = `${tool}.${kind}.json`;
+      const wire = JSON.parse(JSON.stringify(pair[kind])) as Record<string, unknown>;
+      const json = { $schema: DRAFT, $id: `${base}${rel}`, ...wire };
+      files.set(rel, `${JSON.stringify(json, null, 2)}\n`);
+    }
+  }
+  for (const [visibility, tools] of Object.entries(SOURCES)) {
+    for (const tool of Object.keys(tools)) {
+      if (contract.tools[tool]?.visibility !== visibility) {
+        throw new Error(
+          `the ${visibility} source has "${tool}", which contract.json does not mark ${visibility}`,
+        );
       }
     }
   }
@@ -80,11 +95,8 @@ export function emit(contract: ContractFile): Map<string, string> {
 function committedFiles(): Set<string> {
   const out = new Set<string>();
   if (!existsSync(SCHEMAS_DIR)) return out;
-  for (const role of readdirSync(SCHEMAS_DIR, { withFileTypes: true })) {
-    if (!role.isDirectory()) continue;
-    for (const f of readdirSync(join(SCHEMAS_DIR, role.name))) {
-      if (f.endsWith(".json")) out.add(`${role.name}/${f}`);
-    }
+  for (const f of readdirSync(SCHEMAS_DIR, { withFileTypes: true })) {
+    if (f.isFile() && f.name.endsWith(".json")) out.add(f.name);
   }
   return out;
 }

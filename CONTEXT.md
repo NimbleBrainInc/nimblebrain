@@ -276,15 +276,19 @@ today.
 A plugin the operator lists as `system` in the instance's configuration: it holds
 records the kernel relies on, such as conversations, and sees data from other plugins by
 design, so a tenant cannot add, remove or replace one. It is an Agent Plugin like any
-other, and serves two MCP servers: its **app** (tools and screens, named in `mcp.json`)
-and its **records server** (declared only in its extension, reachable only by the
-runtime). Today conversations, tasks and files are kernel code.
+other, and implements each contract with one MCP server named in its `mcp.json`: the
+server's **public tools** and screen serve people and agents, and its **private tools**
+serve the kernel. The server refuses a private tool to any principal but `host` (the
+runtime itself), and the runtime never offers private tools to agents. Today
+conversations, tasks and files are kernel code.
 
 ### Contract *(proposed, ADR-0076; not yet built)*
 The versioned, language-neutral interface between the kernel and whatever implements a
 capability it consumes: a permanent reverse-DNS id (`ai.nimblebrain.conversations`), a
-`major.minor` version, a cardinality (`singleton` or `additive`), roles with their
-visibility, JSON Schemas per tool, error codes, and a conformance runner over MCP. A
+`major.minor` version, a cardinality (`singleton` or `additive`), its tools with their
+visibility (public or private), JSON Schemas per tool, error codes, the rule that every
+call carries a scope and a principal (`host` or `person`), and a conformance runner over
+MCP. A
 plugin declares the contracts it `implements` and `requires`; the kernel names
 contracts, never plugins. Chat is on when an enabled plugin implements the
 conversations contract.

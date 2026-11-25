@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/records/events.output.json",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/events.output.json",
   "type": "object",
   "required": [
     "events",

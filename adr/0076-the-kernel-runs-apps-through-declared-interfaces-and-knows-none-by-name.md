@@ -47,7 +47,7 @@ enters the runtime. This decision replaces it.
 - **Boot**: read configuration, load plugins in dependency order, check every contract
   version, and refuse a setup that cannot work.
 - **Identity and scope**: who is acting and in which workspace. The kernel mints the
-  scope every call to a plugin carries; nothing else can.
+  scope and principal every call to a plugin carries; nothing else can.
 - **The door**: whether a run may start, under whose authority, with what budget and
   tools, and which agent runtime executes it (ADR-0056).
 - **Governance**: the workspace wall, consent, audit and metering, applied the same way
@@ -77,27 +77,34 @@ directory installs on other hosts, where only the parts the format defines are s
 manifest that fails the format's published schema, or an extension that fails its own,
 is refused at load with the file and fields named.
 
+**The plugin's servers are declared in `mcp.json`, as the format defines**:
+
+```json
+{ "mcpServers": {
+  "conversations": { "type": "stdio", "command": "./bin/nb-conversations",
+                     "args": ["--data-dir", "${PLUGIN_DATA}"] }
+} }
+```
+
 **The extension declares capabilities, never trust**:
 
 ```json
 "extensions": { "ai.nimblebrain": {
   "$schema": "https://schemas.nimblebrain.ai/v1/plugin-extension.schema.json",
   "implements": [ { "contract": "ai.nimblebrain.conversations", "version": "1.0",
-      "servers": { "app": "conversations",
-                   "records": { "type": "stdio", "command": "./bin/nb-conversations",
-                                "args": ["--records", "--data-dir", "${PLUGIN_DATA}"] } } } ],
-  "requires": [ { "contract": "ai.nimblebrain.files", "version": "1.0", "optional": true } ],
-  "servers": { "conversations": { "host": { "hostVersion": "1.0", "placements": [ ... ] } } }
+                    "server": "conversations" } ],
+  "requires": [ { "contract": "ai.nimblebrain.files", "version": "1.0", "optional": true } ]
 } }
 ```
 
-- `implements` names each contract the plugin fulfils, at `major.minor`, and which
-  server fills each role the contract defines.
+- `implements` names each contract the plugin fulfils, at `major.minor`, and the
+  `mcp.json` key of the one server that implements it.
 - `requires` names contracts the plugin uses, never plugins. An `optional` requirement
   is used when some enabled plugin implements it; any other unmet requirement refuses
   boot.
-- `servers.<name>.host` is the published `ai.nimblebrain/host` metadata for that server:
-  its placements and screens. No second placement format exists.
+- A server's placements and screens are its own published `ai.nimblebrain/host`
+  metadata, served by the server itself. The extension carries no second placement
+  format.
 - Nothing in the extension grants trust, sets where a server runs, or switches a kernel
   feature. Those belong to the operator.
 
@@ -125,34 +132,45 @@ is refused at load with the file and fields named.
 one exception to ADR-0068's rule that the runtime only connects to servers: the
 operator chose the plugin, and the default plugins must run with no other service
 present. A plugin a tenant installs stays remote-only. A system plugin's processes
-receive the scope of each call and a minimal environment, never the runtime's own.
+receive the scope and principal of each call and a minimal environment, never the
+runtime's own.
 
-### A system plugin serves two servers
+### One server per capability, authorized by principal
 
-- **The app** is the server named in `mcp.json`: the tools and screens agents and people
-  use. Any host that installs the plugin may see it.
-- **The records server** is declared only in the extension, never in `mcp.json`, and
-  only the runtime reaches it, with a credential of its own. It carries the operations
-  the kernel uses to save and read what it depends on.
+**A plugin implements a contract with one MCP server.** The server exposes the contract's
+**public tools**, what agents and people use, with its screen, and its **private tools**,
+what the kernel uses to save and read what it depends on. Which tools are private is the
+contract's decision, not the plugin's.
 
-No agent, no app and no other host can reach a records server, so none can rewrite what
-the kernel records. Which roles are private is the contract's decision, not the
-plugin's: a private role is declared inline in the extension, a public role names an
-`mcp.json` server, and the loader holds each role to its contract.
+**The server enforces who may call what.** Every call carries an authenticated context
+with a scope (workspace, owner) and a **principal**: `host`, the runtime itself, or
+`person`, a user directly or through an agent. Public tools accept either. Private tools
+accept only `host`; any other caller is refused (`forbidden`) and nothing changes.
+
+- **Only kernel code presents `host`.** The path that executes an agent's tool calls
+  always presents `person`, whatever tool the agent names, so no agent and no app can
+  rewrite what the kernel records.
+- **The runtime never offers private tools to agents** and never lists them at its MCP
+  door. That keeps them out of view; the server's refusal is the boundary.
+- **On a remote transport, `host` also requires the runtime's own service credential.**
+  How scope and principal are carried (a process the runtime started, request metadata,
+  headers, tokens) is transport detail, outside the contract.
 
 ### Every capability the kernel consumes is a contract
 
 **A contract is versioned, language-neutral and independent of any implementation**:
 
 - `contract.json`: its permanent reverse-DNS id, its version, its cardinality, and its
-  roles with their visibility;
-- `CONTRACT.md`: the normative rules for scope, ordering, idempotency, errors and
-  versioning;
-- a JSON Schema per tool and role, each with its own `$id`;
+  tools with their visibility (public or private);
+- `CONTRACT.md`: the normative rules for scope and principal, ordering, idempotency,
+  errors and versioning;
+- a JSON Schema per tool, each with its own `$id`;
 - a closed list of error codes;
 - a conformance runner that speaks only MCP to an implementation.
 
-An implementation in any language is valid when it passes the runner. Generated types
+An implementation in any language is valid when it passes the runner. The runner also
+checks a host's agent-facing surface, where the public tools must be served and the
+private tools absent. Generated types
 for a language are packaging, never the contract.
 
 - **Identity is not location.** The id (`ai.nimblebrain.conversations`) is permanent.
@@ -164,16 +182,18 @@ for a language are packaging, never the contract.
 - **Cardinality belongs to the contract.** A `singleton` contract has at most one
   enabled implementation per instance; an `additive` one may have many. Two enabled
   plugins implementing a singleton contract refuse boot.
-- **Every contract call carries scope** (workspace, and owner where a record has one),
-  minted by the kernel from the request and never from tool input. A record outside
-  scope is indistinguishable from one that does not exist.
+- **Every contract call carries scope and principal** (workspace, owner where a record
+  has one, and `host` or `person`), minted by the kernel from the request and never
+  from tool input. A record outside scope is indistinguishable from one that does not
+  exist.
 - **The interface names no medium.** No path, handle, offset, query or bucket key
   crosses a contract. Order is assigned by the implementation, never by a caller's
   clock or lock. Lists page by opaque cursor.
 
 **Chat is a kernel feature that consumes the conversations contract.** It is on exactly
-when an enabled plugin implements `ai.nimblebrain.conversations` at a supported
-version. Turning that plugin off turns chat off: its routes answer that chat is
+when an enabled plugin's server implements `ai.nimblebrain.conversations` at a
+supported version. The kernel saves and reads each turn through that server's private
+tools, and people and agents use its public tools and screen. Turning that plugin off turns chat off: its routes answer that chat is
 disabled, and the shell shows no chat. A run that has no conversation, such as a
 scheduled task, needs none.
 
@@ -194,8 +214,8 @@ provider declares whether it is safe for more than one process, and boot refuses
 topology it cannot serve.
 
 **With shared providers and system plugins reached by URL, runtime processes are
-interchangeable workers.** Conversations, tasks and files scale on their own, and the
-runtime scales by adding processes.
+interchangeable workers.** Conversations, tasks and files each scale as one server of
+their own, and the runtime scales by adding processes.
 
 ### Defaults ship in the box
 
@@ -210,7 +230,7 @@ contracts/          language-neutral contracts: conversations/, tasks/, files/,
                     plugin-extension/, host/
 packages/           independent artifacts
   plugin-sdk/       what a plugin builds on: MCP server builder, typed tools, host metadata
-  conversations/    a plugin;  tasks/, files/ likewise
+  conversations/    a plugin: one MCP server;  tasks/, files/ likewise
   providers-*/      replaceable provider implementations
   cli/              npx nimblebrain
 src/                the kernel, one folder per job
@@ -243,6 +263,11 @@ kernel's `history/`.
 - Every call to a system plugin is an MCP call. Locally it reaches a process on the
   same machine; at scale it crosses the network to work that is a file write today.
   Batching a turn's writes keeps the calls per turn few.
+- Each system plugin runs as one process or one service, and its screen and tools read
+  the same records the kernel writes, in the same server.
+- The boundary between agents and the kernel's records is each server's authorization,
+  so every implementation must enforce the principal rule; the conformance runner
+  checks that each private tool refuses a `person`.
 - Every published contract is an interface maintained for every implementation built on
   it. Contracts are written for what the kernel consumes and what someone will replace,
   and nothing else.
@@ -260,9 +285,13 @@ kernel's `history/`.
   semantics (long-polling, acknowledgement) a tool call carries poorly.
 - **A plain HTTP contract for records.** Rejected: MCP carries the same semantics in tool
   schemas, and a second protocol splits how capabilities enter the runtime.
-- **One server per system plugin, with record tools hidden from agents.** Rejected:
-  hiding depends on the runtime filtering every path. A separate server and credential
-  makes the record operations unreachable.
+- **Two servers per plugin (an app and a records server).** Rejected: the boundary
+  belongs in the server's authorization, not in which server a caller can reach. Two
+  servers doubled the processes, and forced the app to reach its records across a
+  second connection.
+- **Private tools protected only by hiding them from agents.** Rejected: hiding depends
+  on the runtime filtering every path. The server refuses a private tool to any caller
+  but `host`, so a path that forgets to filter still reaches nothing.
 - **System plugins installable by tenants.** Rejected: a system plugin sees every
   plugin's data.
 - **`.claude-plugin/plugin.json` as the manifest.** Rejected: it is one host's format.

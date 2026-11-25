@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/app/get.output.json",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/get.output.json",
   "type": "object",
   "required": [
     "metadata",

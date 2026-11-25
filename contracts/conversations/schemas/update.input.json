@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/app/export.input.json",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/update.input.json",
   "required": [
-    "format"
+    "title"
   ],
   "type": "object",
   "properties": {
@@ -10,13 +10,9 @@
       "description": "Conversation ID. Omit it (or pass \"current\") to address the conversation this call is happening inside; required from outside a chat.",
       "type": "string"
     },
-    "format": {
-      "type": "string",
-      "enum": [
-        "markdown",
-        "json"
-      ],
-      "description": "Export format."
+    "title": {
+      "description": "New title for the conversation.",
+      "type": "string"
     }
   }
 }

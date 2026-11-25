@@ -2,15 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/errors.json",
   "title": "Conversations contract errors",
-  "description": "The closed list of errors the contract defines. A records tool error is a tools/call result with isError: true whose first text content is JSON {code, error}, code from `records`. An app tool error is a tools/call result with isError: true whose first text content is JSON {error}, the message beginning with the `prefix` of one entry in `app`; the app carries no code on the wire in 1.0. `error` text is diagnostic beyond what is stated here. A request refused before any tool runs (no or invalid credential, a connection with no scope) is the transport's answer and outside this list.",
-  "records": [
+  "description": "The closed list of errors the contract defines. A private tool's error is a tools/call result with isError: true whose first text content is JSON {code, error}, code from `private`. A public tool's error, and the answer to a tool name the server does not have, is a tools/call result with isError: true whose first text content is JSON {error}, the message beginning with the `prefix` of one entry in `public`; public tools carry no code on the wire in 1.0. `error` text is diagnostic beyond what is stated here. A request refused before any tool runs (no or invalid credential, a connection with no scope) is the transport's answer and outside this list.",
+  "private": [
+    {
+      "code": "forbidden",
+      "meaning": "A private tool was called by a principal other than host (a person, directly or through an agent, or a call that names no principal). Checked before the input and the scope, so the answer reveals nothing about either. Nothing was read or written."
+    },
     {
       "code": "invalid_input",
       "meaning": "The arguments do not match the tool's input schema. Nothing was written."
-    },
-    {
-      "code": "unknown_tool",
-      "meaning": "No records tool by that name."
     },
     {
       "code": "scope_missing",
@@ -18,7 +18,7 @@
     },
     {
       "code": "conversation_not_found",
-      "meaning": "append_events named a conversation absent from the caller's scope: another owner's, another workspace's and a missing one answer alike. Nothing was written. Reads answer null or an empty page instead."
+      "meaning": "append_events named a conversation absent from the caller's scope: another owner's, another workspace's and a missing one answer alike. Nothing was written. events answers an empty page instead, and delete answers false."
     },
     {
       "code": "conversation_exists",
@@ -37,7 +37,7 @@
       "meaning": "Anything else. The error text is diagnostic only."
     }
   ],
-  "app": [
+  "public": [
     {
       "kind": "conversation_not_found",
       "prefix": "Conversation not found: ",
@@ -51,7 +51,7 @@
     {
       "kind": "scope_missing",
       "prefix": "[conversations] no ",
-      "meaning": "tools/call reached the app with no workspace or no authenticated identity in its scope."
+      "meaning": "tools/call reached a public tool with no workspace or no authenticated identity in its scope."
     },
     {
       "kind": "invalid_input",
@@ -61,7 +61,7 @@
     {
       "kind": "unknown_tool",
       "prefix": "Unknown tool ",
-      "meaning": "No app tool by that name."
+      "meaning": "No tool by that name, public or private."
     }
   ]
 }

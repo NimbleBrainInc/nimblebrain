@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/records/get.input.json",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/export.output.json",
   "type": "object",
   "required": [
-    "id"
+    "content"
   ],
   "properties": {
-    "id": {
+    "content": {
       "type": "string"
     }
   }

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/app/stats.input.json",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/stats.input.json",
   "type": "object",
   "properties": {
     "period": {
