@@ -257,7 +257,7 @@ web/                the shell: renders what plugins declare, knows no plugin by 
 ```
 
 **Dependencies point one way, and a check enforces them**: contracts depend on nothing;
-the plugin SDK and plugins depend on contracts; the kernel depends on contracts and its
+the server SDK and plugins depend on contracts; the kernel depends on contracts and its
 providers. The kernel never imports a plugin, and a plugin never imports the kernel. A
 folder is named for its role, never for a domain noun that appears in several roles:
 how a conversation is stored belongs to its plugin, what a conversation is belongs to
