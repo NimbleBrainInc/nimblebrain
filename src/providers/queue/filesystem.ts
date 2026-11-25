@@ -27,9 +27,9 @@ import {
  * box, for one runtime process (`multiProcess: false`). It is durable: a queue
  * opened again on the directory sees every item as it was.
  *
- * - **One JSON file per item**, named by the SHA-256 of its scope, a NUL, and
- *   its key, so (scope, key) is the file name and a repeat finds it without an
- *   index.
+ * - **One JSON file per item**, named by the SHA-256 of the pair
+ *   `[scope, key]` as JSON, an encoding no split of one string can alias, so
+ *   (scope, key) is the file name and a repeat finds it without an index.
  * - **Every write is atomic.** A new item is written to a temp file and
  *   hard-linked to its name, which fails when the name exists, so creation is
  *   exclusive and never leaves a half-written item. A state change writes a
@@ -62,7 +62,7 @@ export interface FilesystemWorkQueueOptions {
 export const LOCK_FILE = "queue.lock";
 const ITEM_FILE = /^[0-9a-f]{64}\.json$/;
 const TEMP_SUFFIX = ".tmp";
-/** RFC 3339 date-time with `Z` or an explicit offset; `Date.parse` checks the values. */
+/** RFC 3339 date-time with `Z` or an explicit offset; `isRealDateTime` checks the values. */
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i;
 
 type ItemState = "pending" | "claimed" | "completed" | "failed";
