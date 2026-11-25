@@ -51,6 +51,8 @@
       "test/**/*.tsx",
       "packages/cli/src/**",
       "packages/cli/test/**",
+      "packages/plugin-sdk/**/*.ts",
+      "packages/conversations/**/*.ts",
       "!**/dist/**",
       "!web/src/_generated/**",
       "!web/src/bridge/host-constants.json",
@@ -66,7 +68,9 @@
         "web/src/**",
         "test/**",
         "web/test/**",
-        "packages/cli/**"
+        "packages/cli/**",
+        "packages/plugin-sdk/**",
+        "packages/conversations/**"
       ],
       "plugins": ["./biome-plugins/double-cast.grit"]
     },
@@ -78,7 +82,9 @@
         "web/src/**",
         "web/test/**",
         "test/**",
-        "packages/cli/**"
+        "packages/cli/**",
+        "packages/plugin-sdk/**",
+        "packages/conversations/**"
       ],
       "plugins": ["./biome-plugins/never-cast.grit"]
     },
@@ -98,6 +104,50 @@
                   {
                     "group": ["**/src/**"],
                     "message": "A contract depends on nothing in src/ at runtime: its runner and sources read only the contract's own files. Only the emitter (scripts/) reads an authoring source under src/ (contracts/AGENTS.md)."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/plugin-sdk/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["../../**", "@modelcontextprotocol/**", "ajv", "ajv/**"],
+                    "message": "The plugin SDK imports nothing outside itself: it is typed and tiny, and a plugin brings its own MCP library (packages/plugin-sdk/AGENTS.md)."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/conversations/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["../../**", "!../../plugin-sdk/src/*.ts"],
+                    "message": "A plugin never imports the kernel: packages/conversations imports only packages/plugin-sdk and reads the contract document (packages/conversations/AGENTS.md)."
+                  },
+                  {
+                    "group": ["../../../**"],
+                    "message": "A plugin never imports the kernel: packages/conversations imports only packages/plugin-sdk and reads the contract document (packages/conversations/AGENTS.md)."
                   }
                 ]
               }
