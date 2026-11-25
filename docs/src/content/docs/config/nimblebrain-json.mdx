@@ -115,7 +115,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
 | `tasks` | `object` | — | Task run slots, queue, and per-run ceilings. See [tasks](#tasks). |
 | `execution` | `object` | native engine | Which agent runtime executes a run: the native engine, or an agent worker the runtime dials. Experimental. See [execution](#execution). |
-| `plugins` | `object` | — | Agent Plugins the runtime runs as part of the instance, and which are system plugins. Experimental: validated at boot, not yet started. See [plugins](#plugins). |
+| `plugins` | `object` | — | Agent Plugins the runtime runs as part of the instance, and which are system plugins. Experimental: validated at boot; a server bound to a contract the runtime consumes is started. See [plugins](#plugins). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow plain HTTP to `localhost`, `127.0.0.1` and `::1` for remote connectors. Private ranges and cloud-metadata hosts stay refused. Dev only. |
 | `telemetry` | `object` | unset (a person decides) | Usage telemetry, anonymous unless `identify` is set. See [telemetry](#telemetry). |
@@ -770,7 +770,9 @@ At boot the runtime reads every enabled plugin and refuses to start, naming the 
 - a plugin requires a contract no enabled plugin implements (an `optional` requirement is logged instead);
 - a plugin that is not a system plugin has a `stdio` server with no `url`, since the runtime starts local servers only for system plugins.
 
-The runtime then logs the resolved plugins and contracts. It does not yet start their servers or change how anything is served, so with or without this block the instance behaves the same. Absent, nothing is read.
+The runtime then logs the resolved plugins and contracts, and starts the server of each plugin that implements a contract it consumes. Absent, nothing is read and nothing changes.
+
+- **Conversations** (`ai.nimblebrain.conversations`). With a plugin bound to it, such as `"conversations": { "source": "builtin", "system": true }`, the runtime starts that plugin's server at boot from its `mcp.json`, with the plugin's data directory at `<workDir>/plugin-data/<name>`, and stores every chat turn through it. Its public tools take the place of the built-in `conversations__*` tools, under the same names, and its private tools are never listed or callable by agents, MCP clients or apps. A server that does not start refuses the boot; one that exits is started again for the next call that needs it, and stopped at shutdown. Conversations stored before the plugin was bound stay in the workspace directories and are not read. Binding a server placed at a `url` is refused for now.
 
 ## files
 

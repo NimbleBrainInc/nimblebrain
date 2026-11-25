@@ -88,6 +88,8 @@ with one MCP server, on the local filesystem. How to run it standalone is in `RE
   `bin/nb-conversations --http` in full mode and public-only mode, with the host context in
   `_meta`, and checks the 401, stdio, and fleet mode (tenant walls, `context_mismatch`). Full mode passes every case; public-only fails only
   `no private tool is listed`, which holds a host's agent-facing door, not an implementation.
+  `test/integration/conversations-plugin-bound.test.ts` runs public-only mode at a runtime's
+  `/mcp/<wsId>` with this plugin bound, where that case passes.
 - `test/unit/plugins/conversations-plugin-parity.test.ts` compares every public read with the
   built-in app's for the same files and for the same events.
 - `test/unit/plugins/conversations-plugin-payloads.test.ts` appends schema-valid payloads no
