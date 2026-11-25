@@ -18,7 +18,7 @@ import { resolveWorkspaceDisplayName } from "../../workspace/workspace-store.ts"
 import { type CatalogEntriesReader, resolveMintedTransport } from "../catalog/binding.ts";
 import type { ConnectorCatalogEntry } from "../catalog/types.ts";
 import { connectorHasStaticAuth } from "./connector-auth.ts";
-import { inBandAuthErrorsOption } from "./in-band-auth-errors.ts";
+import { catalogTransportOptions } from "./in-band-auth-errors.ts";
 import { resolveStaticOAuthClient } from "./oauth-static-client.ts";
 import { validateServerName } from "./paths.ts";
 import { notifyConnectionRunning } from "./pending-auth-buffer.ts";
@@ -525,7 +525,7 @@ export async function startConnectorSource(
         (await resolveRefTransport(ref, opts.readCatalog)).transportConfig,
       allowInsecure: opts?.allowInsecureRemotes === true,
       authProvider,
-      ...(authProvider ? await inBandAuthErrorsOption(ref) : {}),
+      ...(authProvider ? await catalogTransportOptions(ref) : {}),
     },
     eventSink,
     composeConnectorMcpContext(opts?.connectorMcp, sourceName),
