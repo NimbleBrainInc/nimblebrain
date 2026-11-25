@@ -119,9 +119,9 @@ def add_error_contract(mcp: FastMCP) -> None:
     It covers tool calls; a resource read has no in-band error result to return.
 
     It also stops FastMCP logging a traceback for those errors on ``mcp``'s tool calls: each
-    is recorded once when it is surfaced (``service_error``, at ``WARNING`` for
-    ``bad_input``), which is the record to alert on. FastMCP's record is kept for a resource
-    read, a prompt, and a server that does not have the contract.
+    is recorded once when it is surfaced (``service_error``, at ``WARNING`` for a
+    caller-side code such as ``bad_input``), which is the record to alert on. FastMCP's record
+    is kept for a resource read, a prompt, and a server that does not have the contract.
     """
     mcp.add_middleware(ErrorContractMiddleware())
     _quiet_fastmcp_for_contract_errors()

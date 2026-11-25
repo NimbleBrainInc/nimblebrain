@@ -311,16 +311,43 @@ def test_db_re_exports_pgbulkheads_classes_as_the_same_objects() -> None:
     assert db.UnsafeRoleError is pgbulkhead.role.UnsafeRoleError
 
 
-def test_bad_input_is_logged_below_error(caplog: pytest.LogCaptureFixture) -> None:
-    """A caller's mistake is not a server error; every other code still logs at ERROR."""
+def test_every_error_code_has_a_log_level(caplog: pytest.LogCaptureFixture) -> None:
+    """A caller's mistake is not a server error. One row per code, so a new code needs a level."""
     import logging
 
     from nimblebrain_server_sdk.errors import ErrorCode, ServiceError, _log_only
+
+    expected = {
+        ErrorCode.BAD_INPUT: logging.WARNING,
+        ErrorCode.AUTH_REQUIRED: logging.WARNING,
+        ErrorCode.FORBIDDEN: logging.WARNING,
+        ErrorCode.NOT_FOUND: logging.WARNING,
+        ErrorCode.CONFLICT: logging.WARNING,
+        ErrorCode.QUOTA_EXHAUSTED: logging.ERROR,
+        ErrorCode.RATE_LIMITED: logging.ERROR,
+        ErrorCode.UPSTREAM_REJECTED: logging.ERROR,
+        ErrorCode.UPSTREAM_UNAVAILABLE: logging.ERROR,
+        ErrorCode.UPSTREAM_TIMEOUT: logging.ERROR,
+        ErrorCode.INTERNAL: logging.ERROR,
+    }
+    assert set(expected) == set(ErrorCode)
 
     with caplog.at_level(logging.DEBUG, logger="nimblebrain_server_sdk.errors"):
         for code in ErrorCode:
             _log_only(ServiceError(code))
     levels = {r.code: r.levelno for r in caplog.records}  # ty: ignore[unresolved-attribute]
-    assert levels.pop("bad_input") == logging.WARNING
-    assert set(levels.values()) == {logging.ERROR}
-    assert len(levels) == len(ErrorCode) - 1
+    assert levels == {code.value: level for code, level in expected.items()}
+
+
+def test_upstream_auth_required_is_logged_at_error(caplog: pytest.LogCaptureFixture) -> None:
+    """A 401 from a service the server called is the server's own credential failing."""
+    import logging
+
+    from nimblebrain_server_sdk.errors import ErrorCode, ServiceError, _log_only
+
+    err = ServiceError.from_upstream(401)
+    assert err.code is ErrorCode.AUTH_REQUIRED
+    assert err.upstream_status == 401
+    with caplog.at_level(logging.DEBUG, logger="nimblebrain_server_sdk.errors"):
+        _log_only(err)
+    assert [r.levelno for r in caplog.records] == [logging.ERROR]
