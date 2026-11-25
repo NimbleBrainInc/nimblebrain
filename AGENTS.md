@@ -108,6 +108,8 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`web/AGENTS.md`](./web/AGENTS.md) | Web shell: gating workspace writes, forms that save as they change and notices, shell rules, chat panel workspace scope, main-area views |
 | [`test/conformance/AGENTS.md`](./test/conformance/AGENTS.md) | The MCP conformance suite against `/mcp/<wsId>`: what it measures, the per-version baselines, the pin, where it runs in CI |
 | [`web/src/bridge/AGENTS.md`](./web/src/bridge/AGENTS.md) | MCP App Bridge rules: iframe scoping, handshake gate, notification relay, host capabilities |
+| [`packages/plugin-sdk/AGENTS.md`](./packages/plugin-sdk/AGENTS.md) | What a plugin server builds on: the per-call context, the `{code, error}` tool error, the principal rule; no dependencies, the contract document decides |
+| [`packages/conversations/AGENTS.md`](./packages/conversations/AGENTS.md) | The built-in conversations plugin: never imports the kernel, call order, context per transport, filesystem layout, `seq`, cursors, the screen, its conformance and parity tests |
 | [`packages/cli/AGENTS.md`](./packages/cli/AGENTS.md) | The `nimblebrain` CLI (`npx nimblebrain`): setup and running, plus a thin client of the local instance's API (`mcp add`), Node 20 with no dependencies, the `{ok, error, fix}` JSON contract, the model key never in output, never touching an install it did not make |
 
 ## Conventions
@@ -183,6 +185,11 @@ src/
 ├── cli/           Process entry: the serve HTTP API server (dev tooling is in scripts/)
 └── files/         File context extraction
 web/               Vite + React + TypeScript SPA (separate package.json)
+packages/
+├── plugin-sdk/    What a plugin server builds on: call context, tool errors, the principal rule (see plugin-sdk/AGENTS.md)
+├── conversations/ The built-in conversations plugin: one MCP server implementing the contract on the local filesystem (see conversations/AGENTS.md)
+├── cli/           The `nimblebrain` CLI (see cli/AGENTS.md)
+└── server-sdk-py/ The Python Server SDK
 ```
 
 ## Key Entry Points
