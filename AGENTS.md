@@ -88,6 +88,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 |---|---|
 | [`contracts/AGENTS.md`](./contracts/AGENTS.md) | Contracts the kernel consumes: spec and tooling, no runtime dependency on `src/`, one emitted document per version, `emit:contracts` and `check:contracts`, versioning in each `CONTRACT.md` |
 | [`schemas/AGENTS.md`](./schemas/AGENTS.md) | The published schema tree: mirrors `schemas.nimblebrain.ai`, every file authored or emitted with `--check`, `/<thing>/v<major>/` paths, runtime validation reads from here |
+| [`src/plugins/AGENTS.md`](./src/plugins/AGENTS.md) | One manifest format for catalog and system plugins, the one reader, the additive published extension (`emit:plugin-extension`, `check:plugin-extension`), system as an operator decision, the contract registry, the boot check |
 | [`src/platform/AGENTS.md`](./src/platform/AGENTS.md) | Authoring platform apps and their tools: MCP-native sources, strict input schemas, update tools as patches where `null` clears, named output types, `ui://` MIME type |
 | [`src/platform/tasks/AGENTS.md`](./src/platform/tasks/AGENTS.md) | Task storage, run data retention, per-run membership gate, run results, how the scheduler uses run admission, budget, per-run caps, run assessment and the connected judge, batches (driver, budget account, stop rule, restart) |
 | [`src/runtime/AGENTS.md`](./src/runtime/AGENTS.md) | Run admission at the run-start door: slots, queue, fair share, leases; spend accounts reserved before each model call |
@@ -169,6 +170,7 @@ src/
 │   └── gateways/  hosted-MCP vendors that broker nothing and take one account key
 ├── providers/     Infrastructure the kernel uses and no agent calls: interfaces plus local implementations (see providers/AGENTS.md)
 ├── platform/      The kernel's own apps — in-process MCP servers, one directory each (see platform/AGENTS.md)
+├── plugins/       Agent Plugins: the one manifest reader, the ai.nimblebrain extension, the contract registry, operator-configured plugins (see plugins/AGENTS.md)
 ├── tools/         System tool definitions (search, status, manage)
 ├── identity/      Auth adapters (dev, oidc, workos)
 ├── workspace/     Multi-tenant workspace isolation

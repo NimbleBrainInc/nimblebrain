@@ -79,6 +79,8 @@
     "check:core-skill-tool-refs": "bun run scripts/check-core-skill-tool-refs.ts",
     "check:contracts": "bun --no-env-file contracts/conversations/scripts/emit-contract.ts --check",
     "emit:contracts": "bun --no-env-file contracts/conversations/scripts/emit-contract.ts",
+    "check:plugin-extension": "bun --no-env-file scripts/emit-plugin-extension-schema.ts --check",
+    "emit:plugin-extension": "bun --no-env-file scripts/emit-plugin-extension-schema.ts",
     "codegen": "bun run scripts/codegen-web-platform-schemas.ts",
     "gen:host-constants": "cd web && bun run gen:host-constants",
     "check:codegen": "bun run codegen && bun run scripts/check-codegen.ts",

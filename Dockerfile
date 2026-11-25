@@ -60,6 +60,9 @@ RUN set -e; \
     for p in $pids; do wait "$p"; done
 
 COPY --chown=1000:1000 src/ src/
+# The contracts the kernel consumes (contract.json and schemas), read by the
+# plugin loader when nimblebrain.json configures plugins.
+COPY --chown=1000:1000 contracts/ contracts/
 # The connector catalog a fresh install starts with: NimbleBrain's catalog of
 # connectors that install with nothing to configure, taken at build. It replaces the
 # repo's example catalog, which .dockerignore keeps out of the image. A deployment

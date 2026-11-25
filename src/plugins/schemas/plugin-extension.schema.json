@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/v1/plugin-extension.schema.json",
+  "title": "NimbleBrain plugin extension",
+  "description": "The `ai.nimblebrain` entry of an Agent Plugins 1.0 manifest's `extensions` (plugin.json), and of an AI Catalog entry's. It names the plugin's registry servers, its conversation starters, and the contracts it implements and requires. It declares capabilities, never trust: whether a plugin is a system plugin, and where its servers run, are the operator's (nimblebrain.json `plugins`). Other hosts ignore it. Readers ignore fields they do not know.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "const": "https://schemas.nimblebrain.ai/v1/plugin-extension.schema.json",
+      "type": "string"
+    },
+    "servers": {
+      "description": "The plugin's servers that have a registry entry: server key to registry name. A key here is the same key as in mcp.json when the plugin also states how to reach the server there; a server only NimbleBrain can reach (a brokered connector) is named here alone. Auth, placements (`ai.nimblebrain/host`) and every other runtime field come from that registry entry's `_meta`, never from this extension.",
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "minLength": 1,
+          "description": "The server's registry name, e.g. \"com.example/mcp\".",
+          "type": "string"
+        }
+      }
+    },
+    "conversationStarters": {
+      "maxItems": 4,
+      "description": "What a host offers a person who has the plugin and does not know what to ask. Titles are unique within a plugin.",
+      "type": "array",
+      "items": {
+        "description": "One conversation starter: something the plugin's tools can do, offered to a person who has the plugin and does not know what to ask.",
+        "type": "object",
+        "required": ["title", "text"],
+        "properties": {
+          "title": {
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "The short action a person reads, e.g. \"Summarize my unread email\".",
+            "type": "string"
+          },
+          "text": {
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "What the host sends when the person chooses it.",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "nimblebrainOnly": {
+      "description": "True when only NimbleBrain can run the plugin: a server it names is brokered, or needs an operator's own OAuth app. A catalog derives it from the servers' auth and states it where it lists the plugin (an AI Catalog entry's `extensions[\"ai.nimblebrain\"]`). It describes the plugin; it grants nothing.",
+      "type": "boolean"
+    },
+    "implements": {
+      "description": "The contracts this plugin implements, each at most once. A host binds a contract it consumes when the version meets the one it needs, and ignores a contract it does not consume.",
+      "type": "array",
+      "items": {
+        "description": "A contract this plugin implements. Whether several enabled plugins may implement one contract is the contract's own cardinality, never the plugin's.",
+        "type": "object",
+        "required": ["contract", "version", "servers"],
+        "properties": {
+          "contract": {
+            "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+)+$",
+            "description": "A contract's permanent reverse-DNS id, e.g. \"ai.nimblebrain.conversations\". Never a URL: where a contract is published is derived from its id.",
+            "type": "string"
+          },
+          "version": {
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+            "description": "The contract version as \"major.minor\". An implementation at M.m meets a need for N.n when M equals N and m is at least n.",
+            "type": "string"
+          },
+          "servers": {
+            "minProperties": 1,
+            "description": "Which of this plugin's servers fills each role the contract defines: role name to server key. Every role the contract defines is mapped. A role names a server key, never a server: how a server is started or reached is stated once, in mcp.json (or, for a server named only by its registry name, in that server's registry entry). Which roles are private is the contract's decision, not the plugin's: the host never exposes a private role's server to agents or apps, and connects to it with a credential of its own.",
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {
+                "minLength": 1,
+                "description": "A server key of this plugin: a key of mcp.json `mcpServers` (how the server is started or reached), or a key of this extension's `servers` (its registry name).",
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "requires": {
+      "description": "The contracts this plugin uses from other enabled plugins. A requirement no enabled plugin meets refuses the boot unless it is optional.",
+      "type": "array",
+      "items": {
+        "description": "A contract (never a plugin) this plugin uses from an enabled plugin that implements it at a compatible version.",
+        "type": "object",
+        "required": ["contract", "version"],
+        "properties": {
+          "contract": {
+            "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+)+$",
+            "description": "A contract's permanent reverse-DNS id, e.g. \"ai.nimblebrain.conversations\". Never a URL: where a contract is published is derived from its id.",
+            "type": "string"
+          },
+          "version": {
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+            "description": "The contract version as \"major.minor\". An implementation at M.m meets a need for N.n when M equals N and m is at least n.",
+            "type": "string"
+          },
+          "optional": {
+            "description": "The plugin uses the contract when an enabled plugin implements it, and works without it. Default false: an unmet requirement refuses the boot.",
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

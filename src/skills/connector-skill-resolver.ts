@@ -37,6 +37,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ConversationStarter } from "../plugins/extension.ts";
+import { nimblebrainExtension, PLUGIN_MANIFEST_FILE, readPluginJson } from "../plugins/manifest.ts";
 import { readZip } from "../util/zip.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 
@@ -74,6 +76,9 @@ export function pinnedIndexUrl(catalogUrl: string, pin: string): string {
   return `${catalogUrl}/nimblebrain/marketplace/${pin}.json`;
 }
 
+/** Claude Code's manifest, read when an archive has no Agent Plugins root manifest. */
+const CLAUDE_PLUGIN_MANIFEST_FILE = ".claude-plugin/plugin.json";
+
 interface IndexEntry {
   name: string;
   url: string;
@@ -86,10 +91,7 @@ interface CatalogIndex {
 }
 
 /** One conversation starter from a plugin: the action a person reads, and the text sent. */
-export interface PluginConversationStarter {
-  title: string;
-  text: string;
-}
+export type PluginConversationStarter = ConversationStarter;
 
 /** The conversation starters of the plugin that names one server. */
 export interface ServerConversationStarters {
@@ -106,11 +108,6 @@ interface PluginRecord {
   skills: Array<{ name: string; server: string; body: string }>;
   conversationStarters: PluginConversationStarter[];
 }
-
-/** The most starters read from one plugin; the catalog build allows no more. */
-const MAX_CONVERSATION_STARTERS = 4;
-const MAX_STARTER_TITLE = 60;
-const MAX_STARTER_TEXT = 500;
 
 /**
  * Every curated skill in the pinned catalog bound to the server with registry
@@ -203,15 +200,25 @@ async function loadPlugin(
   return readPlugin(entry.name, bytes);
 }
 
-/** Read a verified plugin archive: its servers, and each skill that names one. */
+/**
+ * Read a verified plugin archive: its servers, its starters, and each skill
+ * that names one of its servers. The manifest and its `ai.nimblebrain`
+ * extension are read by the plugin reader (`src/plugins/manifest.ts`), the
+ * one place that knows those fields. A catalog vouches for the archive, so
+ * the extension is read leniently: a malformed field is dropped, a missing
+ * extension reads as none. Claude Code's `.claude-plugin/plugin.json` is read
+ * when the archive has no root manifest.
+ */
 function readPlugin(name: string, archive: Uint8Array): PluginRecord {
   const files = readZip(archive);
-  const manifestBytes = files.get("plugin.json") ?? files.get(".claude-plugin/plugin.json");
+  const manifestPath = files.has(PLUGIN_MANIFEST_FILE)
+    ? PLUGIN_MANIFEST_FILE
+    : CLAUDE_PLUGIN_MANIFEST_FILE;
+  const manifestBytes = files.get(manifestPath);
   if (!manifestBytes) throw new Error(`plugin ${name}: archive has no plugin.json`);
-  const manifest: unknown = JSON.parse(new TextDecoder().decode(manifestBytes));
-  const extension = field(field(manifest, "extensions"), "ai.nimblebrain");
-  const servers = stringRecord(field(extension, "servers"));
-  const conversationStarters = readConversationStarters(field(extension, "conversationStarters"));
+  const { servers, conversationStarters } = nimblebrainExtension(
+    readPluginJson(name, manifestPath, manifestBytes),
+  );
 
   const skills: PluginRecord["skills"] = [];
   for (const [path, bytes] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
@@ -224,28 +231,6 @@ function readPlugin(name: string, archive: Uint8Array): PluginRecord {
     }
   }
   return { servers, skills, conversationStarters };
-}
-
-/**
- * A plugin's conversation starters, keeping only well-formed ones within the
- * catalog's limits. The catalog build already refuses anything else; this keeps a
- * malformed entry from another catalog off the page rather than failing the
- * whole read.
- */
-function readConversationStarters(raw: unknown): PluginConversationStarter[] {
-  if (!Array.isArray(raw)) return [];
-  const out: PluginConversationStarter[] = [];
-  for (const item of raw) {
-    const title = field(item, "title");
-    const text = field(item, "text");
-    if (typeof title !== "string" || typeof text !== "string") continue;
-    const t = title.trim();
-    const x = text.trim();
-    if (!t || !x || t.length > MAX_STARTER_TITLE || x.length > MAX_STARTER_TEXT) continue;
-    out.push({ title: t, text: x });
-    if (out.length === MAX_CONVERSATION_STARTERS) break;
-  }
-  return out;
 }
 
 /** A skill's frontmatter, or nothing when it does not parse (the skill is then unbound). */
@@ -312,13 +297,4 @@ function field(value: unknown, key: string): unknown {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)[key]
     : undefined;
-}
-
-function stringRecord(value: unknown): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return out;
-  for (const [key, name] of Object.entries(value)) {
-    if (typeof name === "string") out[key] = name;
-  }
-  return out;
 }
