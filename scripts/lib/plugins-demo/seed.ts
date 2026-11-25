@@ -29,6 +29,7 @@ import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../../src/conversation/types.ts";
 import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
 import { UserStore } from "../../../src/identity/user.ts";
+import { FALLBACK_DEFAULT_MODEL } from "../../../src/model/default-model.ts";
 import { PermissionStore } from "../../../src/permissions/permission-store.ts";
 import { readSkill, writeSkill } from "../../../src/skills/writer.ts";
 import { type CredentialStore, setCredentialStore } from "../../../src/tools/credential-store.ts";
@@ -70,7 +71,7 @@ export interface SeedSummary {
 }
 
 const SEEDED_AT = "2026-11-02T09:00:00.000Z";
-const MODEL = "anthropic:claude-sonnet-4-6";
+const MODEL = FALLBACK_DEFAULT_MODEL;
 
 export async function seedPluginsDemo(opts: SeedOptions): Promise<SeedSummary> {
   registerBuiltinCredentialStoreBackends();
