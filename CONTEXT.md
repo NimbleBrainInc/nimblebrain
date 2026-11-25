@@ -272,7 +272,7 @@ plugin into the workspace's registry, so other members gain nothing. It
 replaces ADR-0006's per-connector grant, which is what the runtime enforces
 today.
 
-### System plugin *(decided, ADR-0076; not yet built)*
+### System plugin *(proposed, ADR-0076; not yet built)*
 A plugin the operator lists as `system` in the instance's configuration: it holds
 records the kernel relies on, such as conversations, and sees data from other plugins by
 design, so a tenant cannot add, remove or replace one. It is an Agent Plugin like any
@@ -280,7 +280,7 @@ other, and serves two MCP servers: its **app** (tools and screens, named in `mcp
 and its **records server** (declared only in its extension, reachable only by the
 runtime). Today conversations, tasks and files are kernel code.
 
-### Contract *(decided, ADR-0076; not yet built)*
+### Contract *(proposed, ADR-0076; not yet built)*
 The versioned, language-neutral interface between the kernel and whatever implements a
 capability it consumes: a permanent reverse-DNS id (`ai.nimblebrain.conversations`), a
 `major.minor` version, a cardinality (`singleton` or `additive`), roles with their
@@ -289,7 +289,7 @@ plugin declares the contracts it `implements` and `requires`; the kernel names
 contracts, never plugins. Chat is on when an enabled plugin implements the
 conversations contract.
 
-### Provider *(decided, ADR-0076; not yet built)*
+### Provider *(proposed, ADR-0076; not yet built)*
 Infrastructure the kernel uses and no agent calls: the work queue, pub/sub, leases,
 blobs. Configured behind a kernel interface, local by default and replaceable for
 scale. Distinct from a plugin, which is a capability agents and people use.
@@ -319,7 +319,8 @@ Foundational (secure RBAC):
 - [0044](adr/0044-the-url-is-the-only-thing-that-names-a-workspace.md) — the URL is the only thing that names a workspace; the server chooses none
 - [0069](adr/0069-a-plugin-belongs-to-a-workspace-or-a-person-and-a-personal-plugin-acts-only-where-its-owner-grants-it.md) — a plugin belongs to a workspace or a person; a personal plugin acts in a workspace only while its owner grants it there, and the grant covers its connectors and skills (amended by 0070)
 - [0070](adr/0070-a-models-request-to-use-a-personal-plugin-returns-at-once-and-the-answer-is-the-persons-next-message.md) — a model's request to use a personal plugin returns at once; the person answers in the client, and the model learns the answer as their next message
-- [0076](adr/0076-the-kernel-runs-apps-through-declared-interfaces-and-knows-none-by-name.md) — the kernel owns boot, identity and scope, the door, governance and hosting, and names no plugin; capabilities are Agent Plugins behind versioned contracts, system plugins are the operator's, infrastructure is configured providers (supersedes 0075)
+- [0075](adr/0075-stored-records-go-through-domain-stores-that-a-configured-storage-provider-supplies.md) — every record goes through a domain store that names no medium, and one configured storage provider (files by default) serves a deployment's records; blobs are a separate store
+- [0076](adr/0076-the-kernel-runs-apps-through-declared-interfaces-and-knows-none-by-name.md) — the kernel owns boot, identity and scope, the door, governance and hosting, and names no plugin; capabilities are Agent Plugins behind versioned contracts, system plugins are the operator's, infrastructure is configured providers; would supersede 0075 (proposed)
 
 Manage skills:
 

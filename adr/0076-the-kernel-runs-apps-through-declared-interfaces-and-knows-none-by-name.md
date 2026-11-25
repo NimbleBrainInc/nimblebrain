@@ -3,7 +3,7 @@
 - Status: Proposed
 - Date: 2026-11-24
 - Serves: secure RBAC; orchestrate remote MCP
-- Supersedes: ADR-0075
+- Supersedes: ADR-0075 (on acceptance)
 
 ## Context
 
