@@ -69,6 +69,15 @@ export interface Task {
   onceDone?: OnceDone;
 
   /**
+   * A once schedule's `at` whose occurrence is on the work queue: it came due
+   * while the runtime was running and waits for a run slot. Written only after
+   * the item is enqueued, so it never names an occurrence with no item. `start()`
+   * does not retire such a once as missed; its claim runs it. Cleared when the
+   * once retires.
+   */
+  onceQueuedAt?: string;
+
+  /**
    * Skills every run is given in full, in its system prompt, before its first
    * model call, by catalog name. The run is refused when one is not available.
    */

@@ -6,7 +6,16 @@
  * lease, so it claims a dead process's item again (`attempt > 1`).
  */
 
-import { afterEach, beforeEach, describe, expect, it, type Mock, mock } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  mock,
+  setSystemTime,
+} from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,7 +35,7 @@ import {
   saveRunTicket,
   saveTask,
 } from "../../../../src/platform/tasks/store.ts";
-import type { Task, TaskRun } from "../../../../src/platform/tasks/types.ts";
+import { ONCE_GRACE_MS, type Task, type TaskRun } from "../../../../src/platform/tasks/types.ts";
 import { createFilesystemWorkQueue } from "../../../../src/providers/queue/filesystem.ts";
 import type { WorkQueue } from "../../../../src/providers/queue/types.ts";
 import { createRunAdmission } from "../../../../src/runtime/admission.ts";
@@ -478,5 +487,58 @@ describe("queue position", () => {
     await sleep(20);
     release();
     await scheduler.assessmentsSettled();
+  });
+});
+
+describe("a once at restart", () => {
+  afterEach(() => {
+    setSystemTime();
+  });
+
+  it("whose occurrence was on the queue runs once after a restart past its grace, and retires ran", async () => {
+    const at = new Date(Date.now() - 1000).toISOString();
+    seedTask({ id: "blocker" });
+    const once = seedTask({ enabled: true, schedule: { type: "once", at }, nextRunAt: at });
+    const admission = createRunAdmission({ maxConcurrentRuns: 1 });
+    const queue = openQueue();
+    const first = new Scheduler(successExecutor(), { workDir, queue, admission });
+    first.start();
+    // Another source holds the one slot, so the occurrence fires and waits.
+    const hold = admission.request({ workspaceId: WS, key: "test:hold" });
+    if (hold.state !== "admitted") throw new Error("expected the slot");
+    await first.onTimer();
+    expect(loadTask(workDir, WS, OWNER, once.id)?.onceQueuedAt).toBe(at);
+    expect(readRuns(workDir, WS, OWNER, once.id)).toEqual([]);
+    first.stop();
+    await queue.close();
+
+    // The runtime comes back after the grace window.
+    setSystemTime(new Date(Date.now() + ONCE_GRACE_MS + 60_000));
+    const executor = successExecutor();
+    const second = startScheduler(executor, openQueue());
+    await second.onTimer();
+    await second.drain();
+
+    expect(executor).toHaveBeenCalledTimes(1);
+    const runs = readRuns(workDir, WS, OWNER, once.id);
+    expect(runs.map((r) => [r.status, r.trigger])).toEqual([["success", "scheduled"]]);
+    const stored = loadTask(workDir, WS, OWNER, once.id)!;
+    expect(stored.onceDone?.outcome).toBe("ran");
+    expect(stored.enabled).toBe(false);
+    expect(stored.onceQueuedAt).toBeUndefined();
+  });
+
+  it("whose occurrence was never enqueued is still retired missed", async () => {
+    const at = new Date(Date.now() - ONCE_GRACE_MS - 60_000).toISOString();
+    const once = seedTask({ enabled: true, schedule: { type: "once", at }, nextRunAt: at });
+    const executor = successExecutor();
+    const scheduler = startScheduler(executor, openQueue());
+    await scheduler.onTimer();
+    await scheduler.drain();
+
+    expect(executor).not.toHaveBeenCalled();
+    const stored = loadTask(workDir, WS, OWNER, once.id)!;
+    expect(stored.onceDone?.outcome).toBe("missed");
+    expect(readRuns(workDir, WS, OWNER, once.id).map((r) => r.status)).toEqual(["skipped"]);
   });
 });
