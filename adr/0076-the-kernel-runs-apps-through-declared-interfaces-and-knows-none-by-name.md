@@ -162,12 +162,12 @@ accept only `host`; any other caller is refused (`forbidden`) and nothing change
 
 **A contract is versioned, language-neutral and independent of any implementation**:
 
-- `contract.json`: its permanent reverse-DNS id, its version, its cardinality, and its
-  tools with their visibility (public or private);
+- one JSON document per version, `contract.json`: its permanent reverse-DNS id, its
+  version, its cardinality, its tools with their visibility (public or private), each
+  tool's input and output JSON Schema (draft 2020-12, bundled in `$defs`), and its closed
+  list of errors;
 - `CONTRACT.md`: the normative rules for scope and principal, ordering, idempotency,
   errors and versioning;
-- a JSON Schema per tool, each with its own `$id`;
-- a closed list of error codes;
 - a conformance runner that speaks only MCP to an implementation.
 
 An implementation in any language is valid when it passes the runner. The runner also
@@ -176,8 +176,12 @@ private tools absent. Generated types
 for a language are packaging, never the contract.
 
 - **Identity is not location.** The id (`ai.nimblebrain.conversations`) is permanent.
-  Where the contract is published is derived from it by convention, under
-  `https://schemas.nimblebrain.ai/contracts/<id>/<major>/`.
+  Where the document lives is its `$id`, stated in the document, never derived from the
+  id. Under NimbleBrain's domain it is
+  `https://schemas.nimblebrain.ai/contracts/<short-name>/v<major>/contract.json` (this
+  one is `…/contracts/conversations/v1/contract.json`); a third party's contract lives on
+  its own domain in the same shape. The URL names the major; a minor that only adds is
+  served in place.
 - **Versions are `major.minor`.** The same major is compatible; a higher minor only
   adds. A consumer states the minor it needs, and the kernel refuses an implementation
   below it.
@@ -301,7 +305,8 @@ kernel's `history/`.
   extension namespace.
 - **A URL or URN as the contract id.** Rejected: a URL ties identity to a location, and
   the URN scheme identifies published artifacts, not interfaces. A reverse-DNS name
-  matches how this ecosystem names extension points, and its location is derived.
+  matches how this ecosystem names extension points, and the document states its own
+  location.
 - **Keep conversations, tasks and files in the kernel.** Rejected: a deployment that
   wants scheduled work without chat, its own conversation storage, or more capacity
   for one capability than another would need a different kernel.

@@ -86,7 +86,8 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 
 | Guide | Covers |
 |---|---|
-| [`contracts/AGENTS.md`](./contracts/AGENTS.md) | Contracts the kernel consumes: no runtime dependency on `src/`, JSON published and TypeBox authored, `emit:contracts` and `check:contracts`, versioning in each `CONTRACT.md` |
+| [`contracts/AGENTS.md`](./contracts/AGENTS.md) | Contracts the kernel consumes: spec and tooling, no runtime dependency on `src/`, one emitted document per version, `emit:contracts` and `check:contracts`, versioning in each `CONTRACT.md` |
+| [`schemas/AGENTS.md`](./schemas/AGENTS.md) | The published schema tree: mirrors `schemas.nimblebrain.ai`, every file authored or emitted with `--check`, `/<thing>/v<major>/` paths, runtime validation reads from here |
 | [`src/platform/AGENTS.md`](./src/platform/AGENTS.md) | Authoring platform apps and their tools: MCP-native sources, strict input schemas, update tools as patches where `null` clears, named output types, `ui://` MIME type |
 | [`src/platform/tasks/AGENTS.md`](./src/platform/tasks/AGENTS.md) | Task storage, run data retention, per-run membership gate, run results, how the scheduler uses run admission, budget, per-run caps, run assessment and the connected judge, batches (driver, budget account, stop rule, restart) |
 | [`src/runtime/AGENTS.md`](./src/runtime/AGENTS.md) | Run admission at the run-start door: slots, queue, fair share, leases; spend accounts reserved before each model call |
@@ -154,7 +155,8 @@ Shared test helpers live in `test/helpers/` (imported by both unit and integrati
 ## Project Structure
 
 ```
-contracts/         Language-neutral contracts the kernel consumes: JSON Schemas, CONTRACT.md, conformance runner (see contracts/AGENTS.md)
+contracts/         Language-neutral contracts the kernel consumes: CONTRACT.md, authoring sources, emitter, conformance runner; output in schemas/ (see contracts/AGENTS.md)
+schemas/           Exactly what schemas.nimblebrain.ai serves, at /<thing>/v<major>/ (see schemas/AGENTS.md)
 src/
 ├── engine/        Agentic loop (model → tool → repeat). Start here.
 ├── runtime/       High-level orchestration (Runtime.start → runtime.chat)

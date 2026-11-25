@@ -286,7 +286,8 @@ conversations, tasks and files are kernel code.
 The versioned, language-neutral interface between the kernel and whatever implements a
 capability it consumes: a permanent reverse-DNS id (`ai.nimblebrain.conversations`), a
 `major.minor` version, a cardinality (`singleton` or `additive`), its tools with their
-visibility (public or private), JSON Schemas per tool, error codes, the rule that every
+visibility (public or private), JSON Schemas per tool, error codes (one JSON document per
+version, at the URL its `$id` states), the rule that every
 call carries a scope and a principal (`host` or `person`), and a conformance runner over
 MCP. A
 plugin declares the contracts it `implements` and `requires`; the kernel names

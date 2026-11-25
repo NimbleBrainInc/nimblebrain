@@ -20,13 +20,23 @@ function contractTools(names: readonly string[] = PUBLIC_TOOLS): ListedTool[] {
 }
 
 describe("the contract's tools", () => {
-  test("are split into public and private by contract.json", () => {
+  test("are split into public and private by the contract document", () => {
     expect([...PUBLIC_TOOLS].sort()).toEqual(
       ["export", "get", "list", "search", "stats", "update"].sort(),
     );
     expect([...PRIVATE_TOOLS].sort()).toEqual(
       ["append_events", "create", "delete", "delete_workspace", "events"].sort(),
     );
+  });
+
+  test("resolve each schema's $ref to its $defs entry", () => {
+    for (const tool of [...PUBLIC_TOOLS, ...PRIVATE_TOOLS]) {
+      for (const kind of ["input", "output"] as const) {
+        const schema = contractSchema(tool, kind);
+        expect(schema.$ref).toBeUndefined();
+        expect(schema.type).toBe("object");
+      }
+    }
   });
 });
 
@@ -47,6 +57,13 @@ describe("checkToolList", () => {
   test("fails when a contract tool is missing", () => {
     const tools = contractTools().filter((t) => t.name !== "search");
     expect(() => checkToolList(tools, PUBLIC_TOOLS)).toThrow(/missing contract tools: search/);
+  });
+
+  test("fails when a server lists the $ref instead of the resolved definition", () => {
+    const tools = contractTools().map((t) =>
+      t.name === "get" ? { ...t, inputSchema: { $ref: "#/$defs/get_input" } } : t,
+    );
+    expect(() => checkToolList(tools, PUBLIC_TOOLS)).toThrow(/get inputSchema/);
   });
 
   test("fails when a contract tool's schema differs", () => {

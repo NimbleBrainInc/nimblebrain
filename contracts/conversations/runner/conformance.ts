@@ -3,9 +3,10 @@
  * Black-box conformance runner for `ai.nimblebrain.conversations` 1.0.
  *
  * It speaks only MCP (Streamable HTTP) to the URL it is given and reads only
- * the contract's own files (`contract.json`, `schemas/`, `errors.json`). It
- * imports no implementation code, so it checks an implementation in any
- * language.
+ * the contract's published document
+ * (`schemas/contracts/conversations/v1/contract.json`: tools, visibility,
+ * schemas, errors). It imports no implementation code, so it checks an
+ * implementation in any language.
  *
  *   bun --no-env-file contracts/conversations/runner/conformance.ts \
  *     --server <url> [--public-only] [transport options] [fixture options]
@@ -90,19 +91,29 @@ export interface CaseResult {
 
 // ── The contract's files ─────────────────────────────────────────────────
 
-const CONTRACT_DIR = resolve(import.meta.dir, "..");
+const CONTRACT_PATH = resolve(
+  import.meta.dir,
+  "../../../schemas/contracts/conversations/v1/contract.json",
+);
 const SCOPE_META_KEY = "ai.nimblebrain/scope";
 const UI_URI = "ui://conversations/browser";
 const MCP_APP_MIME = "text/html;profile=mcp-app";
 const MODEL = "anthropic:claude-sonnet-5-5";
 const ABSENT_ID = "conv_0000000000000000";
 
-interface ContractFile {
-  tools: Record<string, { visibility: "public" | "private" }>;
+interface SchemaRef {
+  $ref: string;
 }
-const CONTRACT = JSON.parse(
-  readFileSync(resolve(CONTRACT_DIR, "contract.json"), "utf-8"),
-) as ContractFile;
+interface ContractDocument {
+  $id: string;
+  tools: Record<string, { visibility: "public" | "private"; input: SchemaRef; output: SchemaRef }>;
+  errors: {
+    public: Array<{ code: string; prefix: string }>;
+    private: Array<{ code: string }>;
+  };
+  $defs: Record<string, Record<string, unknown>>;
+}
+const CONTRACT = JSON.parse(readFileSync(CONTRACT_PATH, "utf-8")) as ContractDocument;
 const toolsOf = (visibility: "public" | "private") =>
   Object.entries(CONTRACT.tools)
     .filter(([, t]) => t.visibility === visibility)
@@ -111,30 +122,42 @@ const toolsOf = (visibility: "public" | "private") =>
 export const PUBLIC_TOOLS: readonly string[] = toolsOf("public");
 export const PRIVATE_TOOLS: readonly string[] = toolsOf("private");
 
-interface ErrorsFile {
-  private: Array<{ code: string }>;
-  public: Array<{ code: string; prefix: string }>;
-}
-const ERRORS = JSON.parse(
-  readFileSync(resolve(CONTRACT_DIR, "errors.json"), "utf-8"),
-) as ErrorsFile;
-const PRIVATE_CODES = new Set(ERRORS.private.map((e) => e.code));
+const PRIVATE_CODES = new Set(CONTRACT.errors.private.map((e) => e.code));
 
 function publicPrefix(code: string): string {
-  const entry = ERRORS.public.find((e) => e.code === code);
-  if (!entry) throw new Error(`errors.json has no public error "${code}"`);
+  const entry = CONTRACT.errors.public.find((e) => e.code === code);
+  if (!entry) throw new Error(`the contract has no public error "${code}"`);
   return entry.prefix;
 }
 
-/** A tool's committed schema, without `$schema` / `$id` (as it travels in tools/list). */
-export function contractSchema(tool: string, kind: "input" | "output") {
-  const raw = JSON.parse(
-    readFileSync(resolve(CONTRACT_DIR, "schemas", `${tool}.${kind}.json`), "utf-8"),
-  ) as Record<string, unknown>;
-  const { $schema: _s, $id: _i, ...wire } = raw;
-  return wire;
+/** Resolve a `$ref` local to the document (`#/<json pointer>`). */
+function resolveRef(ref: string): Record<string, unknown> {
+  if (!ref.startsWith("#/")) throw new Error(`unsupported $ref ${ref}`);
+  let node: unknown = CONTRACT;
+  for (const raw of ref.slice(2).split("/")) {
+    const token = decodeURIComponent(raw).replaceAll("~1", "/").replaceAll("~0", "~");
+    node = (node as Record<string, unknown> | undefined)?.[token];
+  }
+  if (!node || typeof node !== "object") throw new Error(`$ref ${ref} resolves to nothing`);
+  return node as Record<string, unknown>;
 }
 
+function refOf(tool: string, kind: "input" | "output"): string {
+  const entry = CONTRACT.tools[tool];
+  if (!entry) throw new Error(`the contract has no tool "${tool}"`);
+  return entry[kind].$ref;
+}
+
+/**
+ * A tool's input or output schema: the `$defs` entry its `$ref` names, which is the schema
+ * exactly as it travels in tools/list.
+ */
+export function contractSchema(tool: string, kind: "input" | "output"): Record<string, unknown> {
+  return resolveRef(refOf(tool, kind));
+}
+
+// Each `$defs` entry is self-contained (no `$ref` of its own), so it compiles alone. The whole
+// document does not go to Ajv: Ajv reads a root `id` as draft-04's schema id and refuses it.
 const ajv = new Ajv2020({ strict: false, allErrors: true });
 const validators = new Map<string, ReturnType<typeof ajv.compile>>();
 function validateOutput(tool: string, value: unknown): void {
@@ -275,10 +298,13 @@ function errorBody(r: CallResult): { code?: string; error?: string } {
   assert(r.isError === true, `expected isError, got ${JSON.stringify(r).slice(0, 200)}`);
   return JSON.parse(r.content?.[0]?.text ?? "{}") as { code?: string; error?: string };
 }
-/** A private tool's error code, which must be in `errors.json#/private`. */
+/** A private tool's error code, which must be in `errors.private` in the contract. */
 function privateCode(r: CallResult): string | undefined {
   const { code } = errorBody(r);
-  assert(code && PRIVATE_CODES.has(code), `code ${String(code)} is not in errors.json#/private`);
+  assert(
+    code && PRIVATE_CODES.has(code),
+    `code ${String(code)} is not in the contract's errors.private`,
+  );
   return code;
 }
 /**

@@ -1,11 +1,12 @@
 /**
- * The private tools' schemas: the TypeBox authoring source for the
- * `schemas/<tool>.*.json` of every tool `contract.json` marks private.
+ * The private tools' schemas: the TypeBox authoring source for the `$defs`
+ * entries of every tool `contract.ts` marks private.
  *
- * The emitted JSON is the published contract; this file is where it is
- * written. `scripts/emit-schemas.ts` turns it into JSON, and `--check` fails
- * when the committed JSON differs. Nothing at runtime imports this file. The
- * public tools are authored beside today's tools, in
+ * The emitted document (`schemas/contracts/conversations/v1/contract.json`) is
+ * the published contract; this file is where those schemas are written.
+ * `scripts/emit-contract.ts` turns it into JSON, and `--check` fails when the
+ * committed document differs. Nothing at runtime imports this file. The public
+ * tools are authored beside today's tools, in
  * `src/platform/schemas/conversations.ts`.
  *
  * Scope (workspace and owner) and principal are never arguments: they are

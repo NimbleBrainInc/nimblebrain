@@ -4,33 +4,41 @@ An implementation of this contract stores a deployment's chat history and serves
 people and agents that read it. The **host** (the NimbleBrain runtime) persists every chat turn
 through it and serves its tools and screen to the web shell, to MCP clients and to agents.
 
-`contract.json`, this file, `errors.json` and `schemas/*.json` are the contract. They are
-language-neutral: an implementation or a client in any language is written from the JSON. The
-TypeBox sources the JSON is emitted from are where it is authored, not part of it.
+The contract is two things: this file, and one JSON document,
+[`schemas/contracts/conversations/v1/contract.json`](../../schemas/contracts/conversations/v1/contract.json),
+published at its `$id`. The document holds the identity, version, cardinality, every tool with
+its visibility and its input and output schema, and the closed list of errors. It is
+language-neutral: an implementation or a client in any language is written from it. The
+TypeBox sources it is emitted from (`source/`) are where it is authored, not part of it.
 
 The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 
 ## 1. Identity, location, cardinality, tools
 
 ```json
-{ "id": "ai.nimblebrain.conversations", "version": "1.0", "cardinality": "singleton",
-  "tools": { "list": { "visibility": "public" }, "…": {},
-             "append_events": { "visibility": "private" } } }
+{ "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/contracts/conversations/v1/contract.json",
+  "id": "ai.nimblebrain.conversations", "version": "1.0", "cardinality": "singleton",
+  "tools": { "list": { "visibility": "public",
+                       "input": { "$ref": "#/$defs/list_input" },
+                       "output": { "$ref": "#/$defs/list_output" } }, "…": {} },
+  "errors": { "public": ["…"], "private": ["…"] },
+  "$defs": { "list_input": {}, "list_output": {}, "…": {} } }
 ```
 
-- **`id`** is a permanent reverse-DNS name. A contract is matched by its id, never by a URL.
-- **Location is derived from the id, never stated**:
-  `https://schemas.nimblebrain.ai/contracts/<id>/<major>/`, so this contract is published at
-  `https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/`. Every schema's
-  `$id` sits under it, with the major only (`…/1/list.input.json`,
-  `…/1/append_events.input.json`, `…/1/errors.json`). The location says where the contract is
-  published; it is not the contract's identity.
+- **`id`** is the contract's identity: a permanent reverse-DNS name. A contract is matched by
+  its id, never by a URL.
+- **`$id` is where the document lives.** It is stated in the document, never derived from the
+  id. Under NimbleBrain's domain a contract is served at
+  `https://schemas.nimblebrain.ai/contracts/<short-name>/v<major>/contract.json`; a third
+  party's contract lives on its own domain in the same shape.
 - **`version`** is `major.minor` (§9).
 - **`cardinality`** is `singleton`: an instance has at most one enabled implementation. A host
   that finds two refuses to start.
-- **An implementation is one MCP server.** It serves every tool `contract.json` names, each
-  with the input and output schema in `schemas/<tool>.input.json` and `.output.json`, and the
-  screen (§5). It MAY serve more than the contract names; a client ignores what it does not
+- **An implementation is one MCP server.** It serves every tool the document names, each
+  with the input and output schema its `$ref` names in `$defs` (`<tool>_input`,
+  `<tool>_output`), and the screen (§5). A server lists the definition itself as the tool's
+  `inputSchema` and `outputSchema`, not the `$ref`. It MAY serve more than the contract names; a client ignores what it does not
   know.
 - **Each tool is `public` or `private`** (§3):
 
@@ -64,7 +72,7 @@ whose conversations are read and written.
    reveals that another scope's conversation exists.
 2. **A call with no scope reads and writes nothing.** A call that reaches the server with no
    workspace or no owner fails `scope_missing`. A transport MAY refuse such a request before
-   any tool runs; that refusal is the transport's and outside `errors.json`.
+   any tool runs; that refusal is the transport's and outside the contract's errors.
 3. **`delete_workspace` is the one call that crosses owners**: it removes every owner's
    conversations in the scope's workspace and ignores the scope's owner.
 4. **A call MAY carry the conversation it is made inside.** Inside a chat, the context names
@@ -160,7 +168,7 @@ JSON-RPC error.
 
 ## 6. Errors
 
-`errors.json` is the closed list. A failed call writes nothing.
+The document's `errors` is the closed list. A failed call writes nothing.
 
 - **Private tools**: `isError: true`, text JSON `{ code, error }`. `code` is one of
   `forbidden`, `invalid_input`, `scope_missing`, `conversation_not_found`,
@@ -169,7 +177,7 @@ JSON-RPC error.
 - **Public tools, and a tool name the server does not have**: `isError: true`, text JSON
   `{ code, error }`. `code` is one of `conversation_not_found`, `no_current_conversation`,
   `scope_missing`, `invalid_input`, `unknown_tool`, and `error` begins with that code's
-  prefix in `errors.json`, the text models already read. A caller decides on `code`, never
+  prefix in `errors.public`, the text models already read. A caller decides on `code`, never
   on the text.
 - Refusals before any tool runs (a missing or invalid credential, a request the transport
   cannot place in a scope) belong to the transport.
@@ -195,21 +203,21 @@ answers (`false`, an empty list).
 
 ## 9. Versioning
 
-- The version is `major.minor`, in `contract.json` and in each implementation's declaration of
-  what it implements. Schema `$id`s carry the major only.
+- The version is `major.minor`, in the document and in each implementation's declaration of
+  what it implements. The document's URL names the major only (`…/v1/contract.json`).
 - **The same major is compatible.** An implementation at `M.m` meets a need for `N.n` when
   `M = N` and `m >= n`. A host states the minor it needs and refuses an implementation below
   it; it ignores what a higher minor adds.
 - **A minor only adds**: an optional input field, an output field (outputs are open), a tool, an
-  error code or public error kind, a resource.
+  error code or public error kind, a resource. A minor is served in place, at the same URL.
 - **Anything else is a new major**: a removed or renamed tool or field, a narrowed input, a
   newly required input, a changed meaning, a tool changing visibility. A new major is
-  published at its own location (`…/<id>/2/`) beside the old one.
+  a new document at its own URL (`…/conversations/v2/contract.json`) beside the old one.
 
 ## 10. Conformance
 
 `runner/conformance.ts` checks an implementation black-box. It speaks only MCP to the URL it is
-given and reads only this directory's JSON.
+given and reads only the contract document.
 
 ```bash
 bun --no-env-file contracts/conversations/runner/conformance.ts \
@@ -231,5 +239,5 @@ bun --no-env-file contracts/conversations/runner/conformance.ts \
 `--protocol-version` say how the runner reaches an implementation; they are transport
 options, not contract. Run with no arguments for the full option list in the file's header.
 
-Generate types for another language from `schemas/` (draft 2020-12, self-contained, no `$ref`);
-never write them by hand.
+Generate types for another language from the document's `$defs` (draft 2020-12; each entry is
+self-contained, with no `$ref` of its own); never write them by hand.
