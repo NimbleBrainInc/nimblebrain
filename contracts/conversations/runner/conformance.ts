@@ -467,37 +467,81 @@ async function fullBasics(c: FullCtx): Promise<void> {
 }
 
 /** Each private tool refuses a person with `forbidden`, and the host sees nothing changed. */
+/**
+ * The answer a private tool gives a caller that is not `host`: `forbidden`, whatever else is
+ * wrong with the call, since the principal is checked before the input and the scope
+ * (CONTRACT.md §3). Throws on any other answer, including a success.
+ */
+export function expectForbidden(r: CallResult, what: string): void {
+  if (r.isError !== true) throw new Error(`${what}: a non-host call succeeded`);
+  const { code } = JSON.parse(r.content?.[0]?.text ?? "{}") as { code?: string };
+  if (code !== "forbidden") throw new Error(`${what}: code ${String(code)}, want forbidden`);
+}
+
+async function withConn<T>(
+  opts: RunnerOptions,
+  ctx: Context,
+  fn: (conn: Conn) => Promise<T>,
+): Promise<T> {
+  const conn = await connect(opts, ctx);
+  try {
+    return await fn(conn);
+  } finally {
+    await conn.close();
+  }
+}
+
 async function fullForbidden(c: FullCtx): Promise<void> {
   const { h, host, person, opts } = c;
+  const scope = { workspace: opts.workspace, owner: opts.owner };
   await h.run(
     "every private tool answers a person with forbidden and changes nothing",
     async () => {
       const before = (await okCall(host, "list", { limit: 1 })).totalCount;
-      eq(privateCode(await person.call("create", { model: MODEL })), "forbidden", "create");
-      eq(privateCode(await person.call("events", { id: c.id })), "forbidden", "events");
+      expectForbidden(await person.call("create", { model: MODEL }), "create");
+      expectForbidden(await person.call("events", { id: c.id }), "events");
       const append = { id: c.id, events: turn("intruder", "no", 100, "run_x") };
-      eq(privateCode(await person.call("append_events", append)), "forbidden", "append_events");
-      eq(privateCode(await person.call("delete", { id: c.id })), "forbidden", "delete");
+      expectForbidden(await person.call("append_events", append), "append_events");
+      expectForbidden(await person.call("delete", { id: c.id }), "delete");
       eq((await okCall(host, "list", { limit: 1 })).totalCount, before, "conversation count");
       eq((await okCall(host, "events", { id: c.id, afterSeq: 8 })).lastSeq, 8, "lastSeq");
       await okCall(host, "get", { id: c.id, expand: "metadata" });
-      if (!opts.scratchWorkspace) return;
-      const scratch = await connect(opts, {
-        workspace: opts.scratchWorkspace,
-        owner: opts.owner,
-        principal: "person",
-      });
-      try {
-        eq(
-          privateCode(await scratch.call("delete_workspace", {})),
-          "forbidden",
-          "delete_workspace",
-        );
-      } finally {
-        await scratch.close();
-      }
     },
   );
+  await h.run("a call that names no principal is not host", () =>
+    withConn(opts, scope, async (anon) => {
+      expectForbidden(await anon.call("create", { model: MODEL }), "create");
+      expectForbidden(await anon.call("events", { id: c.id }), "events");
+    }),
+  );
+  await h.run("forbidden comes before the input and the scope", async () => {
+    expectForbidden(await person.call("create", {}), "create with invalid input");
+    expectForbidden(await person.call("events", { id: 42 }), "events with invalid input");
+    await withConn(opts, { owner: opts.owner, principal: "person" }, async (unscoped) => {
+      expectForbidden(await unscoped.call("create", { model: MODEL }), "create with no workspace");
+    });
+  });
+  const name = "delete_workspace answers a person with forbidden and deletes nothing";
+  if (!opts.scratchWorkspace) {
+    h.skip(name, "no --scratch-workspace to try it in");
+    return;
+  }
+  await h.run(name, async () => {
+    const scratch = { workspace: opts.scratchWorkspace, owner: opts.owner };
+    await withConn(opts, { ...scratch, principal: "host" }, async (scratchHost) => {
+      const made = (await okCall(scratchHost, "create", { model: MODEL })).conversation as {
+        id: string;
+      };
+      try {
+        await withConn(opts, { ...scratch, principal: "person" }, async (scratchPerson) => {
+          expectForbidden(await scratchPerson.call("delete_workspace", {}), "delete_workspace");
+        });
+        await okCall(scratchHost, "get", { id: made.id, expand: "metadata" });
+      } finally {
+        await scratchHost.call("delete", { id: made.id });
+      }
+    });
+  });
 }
 
 async function fullWalls(c: FullCtx, other: Conn, elsewhere: Conn): Promise<void> {

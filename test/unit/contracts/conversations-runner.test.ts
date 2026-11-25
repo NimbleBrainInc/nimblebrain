@@ -4,6 +4,7 @@ import {
   checkCursorWalk,
   checkToolList,
   contractSchema,
+  expectForbidden,
   type ListedTool,
   PRIVATE_TOOLS,
   PUBLIC_TOOLS,
@@ -98,5 +99,40 @@ describe("checkCursorWalk", () => {
 
   test("fails on a skip", () => {
     expect(() => checkCursorWalk(["a", "c"], existing)).toThrow(/b skipped/);
+  });
+});
+
+describe("expectForbidden", () => {
+  const error = (body: unknown) => ({
+    isError: true,
+    content: [{ type: "text", text: JSON.stringify(body) }],
+  });
+
+  test("passes on forbidden", () => {
+    expect(() => expectForbidden(error({ code: "forbidden", error: "x" }), "create")).not.toThrow();
+  });
+
+  test("fails when the call succeeded", () => {
+    expect(() => expectForbidden({ structuredContent: { ok: true } }, "create")).toThrow(
+      /succeeded/,
+    );
+  });
+
+  test("fails when input was judged before the principal", () => {
+    expect(() => expectForbidden(error({ code: "invalid_input", error: "x" }), "create")).toThrow(
+      /invalid_input, want forbidden/,
+    );
+  });
+
+  test("fails when scope was judged before the principal", () => {
+    expect(() => expectForbidden(error({ code: "scope_missing", error: "x" }), "create")).toThrow(
+      /scope_missing, want forbidden/,
+    );
+  });
+
+  test("fails on an error with no code", () => {
+    expect(() => expectForbidden(error({ error: "Forbidden" }), "create")).toThrow(
+      /undefined, want forbidden/,
+    );
   });
 });
