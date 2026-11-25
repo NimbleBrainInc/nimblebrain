@@ -9,7 +9,12 @@
 import { log } from "../observability/log.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
-import { estimateContentSize, type ResourceLinkInfo, textContent } from "./content-helpers.ts";
+import {
+  DEFAULT_MAX_TOOL_RESULT_SIZE,
+  estimateContentSize,
+  type ResourceLinkInfo,
+  textContent,
+} from "./content-helpers.ts";
 import type { ToolDonePayload } from "./schemas/events.ts";
 import type { SupervisorVerdict } from "./supervisor.ts";
 import type { ToolResult, ToolSchema } from "./types.ts";
@@ -97,7 +102,7 @@ export function enforceMaxToolResultSize(
   result: ToolResult,
   maxToolResultSize: number | undefined,
 ): ToolResult {
-  const maxResultSize = maxToolResultSize ?? 1_000_000;
+  const maxResultSize = maxToolResultSize ?? DEFAULT_MAX_TOOL_RESULT_SIZE;
   if (maxResultSize <= 0) return result;
   const resultSize = estimateContentSize(result.content);
   if (resultSize <= maxResultSize) return result;

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import type { ConversationEvent, StoredMessage } from "../../src/conversation/types.ts";
+import { DEFAULT_MAX_TOOL_RESULT_SIZE } from "../../src/engine/content-helpers.ts";
 import type { LlmDonePayload } from "../../src/engine/schemas/events.ts";
 import {
   engineEvent,
@@ -150,6 +151,78 @@ describe("EventSourcedConversationStore", () => {
     expect(done.resourceLinks).toEqual([
       { uri: "artifact://art_abc", name: "report", mimeType: "text/markdown" },
     ]);
+  });
+
+  describe("structuredContent on tool.done (inline view on reopen)", () => {
+    function persistedToolDone(convId: string): Record<string, unknown> {
+      const lines = readLines(join(dirs.dir, `${convId}.jsonl`));
+      return lines
+        .slice(1)
+        .map((l) => JSON.parse(l))
+        .find((e) => e.type === "tool.done");
+    }
+
+    async function emitDone(overrides: Parameters<typeof toolDonePayload>[0]) {
+      const conv = await store.create({
+        model: "anthropic:claude-sonnet-4-6",
+        ownerId: "user_test",
+      });
+      store.setActiveConversation(conv.id);
+      store.emit({ type: "tool.done", data: toolDonePayload(overrides) });
+      return persistedToolDone(conv.id);
+    }
+
+    it("test_tool_done_with_view_persists_structured_content", async () => {
+      const structuredContent = { contact: { id: "c_1", name: "Ada" } };
+      const done = await emitDone({
+        name: "crm__get_contact",
+        output: "Ada",
+        resourceUri: "ui://crm/contacts",
+        result: { content: [{ type: "text", text: "Ada" }], structuredContent, isError: false },
+      });
+      expect(done.structuredContent).toEqual(structuredContent);
+      // The rest of the result is not stored: `output` already holds its text.
+      expect("result" in done).toBe(false);
+    });
+
+    it("test_tool_done_error_with_view_persists_structured_refusal", async () => {
+      const structuredContent = { error: { code: "not_found" } };
+      const done = await emitDone({
+        ok: false,
+        resourceUri: "ui://crm/contacts",
+        result: { content: [], structuredContent, isError: true },
+      });
+      expect(done.structuredContent).toEqual(structuredContent);
+    });
+
+    it("test_tool_done_without_view_omits_structured_content", async () => {
+      const done = await emitDone({
+        result: { content: [], structuredContent: { a: 1 }, isError: false },
+      });
+      expect("structuredContent" in done).toBe(false);
+    });
+
+    it("test_tool_done_structured_content_over_cap_is_omitted", async () => {
+      const done = await emitDone({
+        resourceUri: "ui://crm/contacts",
+        result: {
+          content: [],
+          structuredContent: { blob: "x".repeat(DEFAULT_MAX_TOOL_RESULT_SIZE) },
+          isError: false,
+        },
+      });
+      expect(done).toBeDefined();
+      expect("structuredContent" in done).toBe(false);
+    });
+
+    it("test_tool_done_structured_content_with_binary_is_omitted_not_thrown", async () => {
+      const done = await emitDone({
+        resourceUri: "ui://crm/contacts",
+        result: { content: [], structuredContent: { bytes: new Uint8Array(4) }, isError: false },
+      });
+      expect(done).toBeDefined();
+      expect("structuredContent" in done).toBe(false);
+    });
   });
 
   it("history() reconstructs messages from events", async () => {

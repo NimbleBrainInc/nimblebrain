@@ -155,6 +155,8 @@ interface ToolDoneEvent {
   output: string;
   resourceUri?: string;
   resourceLinks?: DisplayResourceLink[];
+  /** The result's structured payload, kept for a call with an inline view. */
+  structuredContent?: Record<string, unknown>;
   /** The call did not run: the engine held it for its tool's guidance. */
   held?: true;
 }
@@ -588,7 +590,7 @@ function buildToolCall(
     ms: done?.ms ?? 0,
     input,
     // No `tool.done` yet (still running, or cut short): nothing to show.
-    result: wrapOutputAsResult(done ? done.output : "", !ok),
+    result: wrapOutputAsResult(done ? done.output : "", !ok, done?.structuredContent),
     ...(done?.resourceUri ? { resourceUri: done.resourceUri } : {}),
     ...(done?.resourceLinks && done.resourceLinks.length > 0
       ? { resourceLinks: done.resourceLinks }
@@ -759,9 +761,15 @@ function extractAppName(name: string): string | undefined {
 }
 
 /** Wrap a plain text output string as an MCP-shaped tool result envelope. */
-function wrapOutputAsResult(text: string, isError: boolean): DisplayToolResult {
+function wrapOutputAsResult(
+  text: string,
+  isError: boolean,
+  structuredContent: Record<string, unknown> | undefined,
+): DisplayToolResult {
   return {
     content: text ? [{ type: "text", text }] : [],
+    // An inline view reads its state from it, as it did from the live result.
+    ...(structuredContent ? { structuredContent } : {}),
     isError,
   };
 }

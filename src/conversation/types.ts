@@ -425,6 +425,16 @@ export interface ToolDoneEvent {
   resourceUri?: string;
   resourceLinks?: ResourceLinkInfo[];
   /**
+   * The result's `structuredContent`, for a call with an inline `ui://` view
+   * (`resourceUri`). The view is handed the tool result, not the call's input,
+   * and many read what to show from this field, so a reopened conversation
+   * needs it to render the view as it rendered live. Omitted for a call
+   * without a view, a result without the field, and one over
+   * `DEFAULT_MAX_TOOL_RESULT_SIZE` serialized; the view then gets `output` as
+   * text alone.
+   */
+  structuredContent?: Record<string, unknown>;
+  /**
    * The call did not run: the engine held it until the guidance for its tool
    * reached the model. Its `output` is the held notice the model read.
    */

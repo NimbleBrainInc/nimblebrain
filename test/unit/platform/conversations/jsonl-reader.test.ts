@@ -791,6 +791,50 @@ describe("readConversation (event format)", () => {
     expect(tc.result.isError).toBe(true);
   });
 
+  test("test_tool_result_with_stored_structured_content_reopens_with_it", async () => {
+    // An inline view reads its state from the result's structuredContent; a
+    // reopened conversation must hand it the same payload the live turn did.
+    const structuredContent = { contact: { id: "c_1", name: "Ada" } };
+    const lines = [
+      JSON.stringify(eventMeta("conv_evt_sc")),
+      ...conversationEventLines([
+        {
+          role: "assistant",
+          content: "",
+          timestamp: "2025-06-01T00:00:01.000Z",
+          metadata: {
+            toolCalls: [
+              {
+                id: "t_sc",
+                name: "crm__get_contact",
+                output: "Ada",
+                resourceUri: "ui://crm/contacts",
+                structuredContent,
+              },
+              {
+                id: "t_old",
+                name: "crm__get_contact",
+                output: "Bo",
+                resourceUri: "ui://crm/contacts",
+              },
+            ],
+          },
+        },
+      ]),
+    ];
+    const path = writeTmpFile("conv_evt_sc.jsonl", lines);
+
+    const result = await readConversation(path);
+    const [withSc, legacy] = result!.messages[0]!.toolCalls!;
+    expect(withSc!.result).toEqual({
+      content: [{ type: "text", text: "Ada" }],
+      structuredContent,
+      isError: false,
+    });
+    // An event written without it reads as before: text alone.
+    expect(legacy!.result).toEqual({ content: [{ type: "text", text: "Bo" }], isError: false });
+  });
+
   test("derives appName from 'server__tool' prefix", async () => {
     const runId = "run_c";
     const lines = [

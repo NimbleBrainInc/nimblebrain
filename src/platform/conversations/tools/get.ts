@@ -14,6 +14,7 @@ import type {
   ConversationsGetInput,
   ConversationsGetOutput,
   DisplayMessage,
+  DisplayToolCall,
 } from "../../schemas/conversations.ts";
 import type { ConversationIndex, ReadScope } from "../index-cache.ts";
 import { readConversation } from "../jsonl-reader.ts";
@@ -68,6 +69,30 @@ function selectByCharCap(messages: DisplayMessage[], cap: number): GetMessagesRe
 
 /** `ConversationsGetInput` once the source has resolved an omitted or "current" `id`. */
 type ResolvedInput = ConversationsGetInput & { id: string };
+
+/** A tool call with its result's `structuredContent` removed. */
+function withoutStructuredContent(tc: DisplayToolCall): DisplayToolCall {
+  if (tc.result.structuredContent === undefined) return tc;
+  const { structuredContent: _omitted, ...result } = tc.result;
+  return { ...tc, result };
+}
+
+/**
+ * A message as the bounded read returns it: without its tool results'
+ * `structuredContent`, which is kept for the inline views a full read renders.
+ * The bounded read is an agent's, and the result text in `content` is what it
+ * reads, so the payload would only crowd older messages out of the char cap.
+ */
+function forBoundedRead(message: DisplayMessage): DisplayMessage {
+  if (!message.toolCalls) return message;
+  return {
+    ...message,
+    blocks: message.blocks.map((b) =>
+      b.type === "tool" ? { ...b, toolCalls: b.toolCalls.map(withoutStructuredContent) } : b,
+    ),
+    toolCalls: message.toolCalls.map(withoutStructuredContent),
+  };
+}
 
 export async function handleGet(
   input: ResolvedInput,
@@ -135,7 +160,7 @@ export async function handleGet(
 
   // Default: most-recent `limit` messages, with a char-cap safety net.
   const limit = input.limit !== undefined && input.limit >= 0 ? input.limit : DEFAULT_GET_LIMIT;
-  const windowed = conversation.messages.slice(-limit);
+  const windowed = conversation.messages.slice(-limit).map(forBoundedRead);
   const { messages, droppedOlderMessages, truncated } = selectByCharCap(
     windowed,
     DEFAULT_GET_CHAR_CAP,

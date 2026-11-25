@@ -96,6 +96,13 @@ function blockSize(block: ContentBlock): number {
 }
 
 /**
+ * The default ceiling on a tool result's size in chars (`maxToolResultSize`
+ * when unset): the engine rejects a larger result, and the conversation store
+ * persists no larger `structuredContent`.
+ */
+export const DEFAULT_MAX_TOOL_RESULT_SIZE = 1_000_000;
+
+/**
  * Estimate the total char-level size of a ContentBlock array.
  * Used to guard against oversized tool results before they propagate
  * through event emission, hooks, and history accumulation.
