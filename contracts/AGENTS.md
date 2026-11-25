@@ -17,8 +17,9 @@ version is one JSON document, emitted to the published tree at
   identity, version, cardinality, tool visibility and errors, and TypeBox for the schemas (or,
   for tools that are today's tools, beside those tools). Never edit the emitted document by
   hand.
-- **The document's `$id` is stated in `source/`, never derived from the contract id.** The id
-  is the identity; the `$id` is where the document lives.
+- **The document's `$id` is stated in `source/`, never derived from its `contract` field.**
+  `contract` is the identity (the name `implements[].contract` uses); the `$id` is where the
+  document lives. The document is a valid JSON Schema 2020-12 document and compiles whole.
 - **A tool's schemas are `$defs` entries** named `<tool>_input` and `<tool>_output`, each
   self-contained, and the tool points at them with `$ref`. Underscores keep each key a plain
   identifier, so codegen can name a type after it.

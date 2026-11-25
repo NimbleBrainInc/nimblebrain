@@ -98,7 +98,7 @@ export function emit(): string {
     $id: CONTRACT.$id,
     title: CONTRACT.title,
     description: CONTRACT.description,
-    id: CONTRACT.id,
+    contract: CONTRACT.contract,
     version: CONTRACT.version,
     cardinality: CONTRACT.cardinality,
     tools,

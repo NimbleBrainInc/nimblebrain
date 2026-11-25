@@ -106,6 +106,7 @@ interface SchemaRef {
 }
 interface ContractDocument {
   $id: string;
+  contract: string;
   tools: Record<string, { visibility: "public" | "private"; input: SchemaRef; output: SchemaRef }>;
   errors: {
     public: Array<{ code: string; prefix: string }>;
@@ -156,16 +157,12 @@ export function contractSchema(tool: string, kind: "input" | "output"): Record<s
   return resolveRef(refOf(tool, kind));
 }
 
-// Each `$defs` entry is self-contained (no `$ref` of its own), so it compiles alone. The whole
-// document does not go to Ajv: Ajv reads a root `id` as draft-04's schema id and refuses it.
+// The whole document goes to Ajv, so an output is validated through the tool's own `$ref`.
 const ajv = new Ajv2020({ strict: false, allErrors: true });
-const validators = new Map<string, ReturnType<typeof ajv.compile>>();
+ajv.addSchema(CONTRACT);
 function validateOutput(tool: string, value: unknown): void {
-  let validate = validators.get(tool);
-  if (!validate) {
-    validate = ajv.compile(contractSchema(tool, "output"));
-    validators.set(tool, validate);
-  }
+  const validate = ajv.getSchema(new URL(refOf(tool, "output"), CONTRACT.$id).href);
+  if (!validate) throw new Error(`${tool} output schema does not resolve in the contract`);
   if (!validate(value)) {
     throw new Error(`${tool} output fails its schema: ${ajv.errorsText(validate.errors)}`);
   }

@@ -284,7 +284,7 @@ conversations, tasks and files are kernel code.
 
 ### Contract *(proposed, ADR-0076; not yet built)*
 The versioned, language-neutral interface between the kernel and whatever implements a
-capability it consumes: a permanent reverse-DNS id (`ai.nimblebrain.conversations`), a
+capability it consumes: a permanent reverse-DNS name (`ai.nimblebrain.conversations`), a
 `major.minor` version, a cardinality (`singleton` or `additive`), its tools with their
 visibility (public or private), JSON Schemas per tool, error codes (one JSON document per
 version, at the URL its `$id` states), the rule that every

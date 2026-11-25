@@ -3,7 +3,7 @@
   "$id": "https://schemas.nimblebrain.ai/contracts/conversations/v1/contract.json",
   "title": "Conversations contract",
   "description": "The ai.nimblebrain.conversations contract: its identity, version, cardinality, tools with their visibility and schemas, and the closed list of errors. Every tool error is a tools/call result with isError: true whose first text content is JSON {code, error}. A private tool's code is from errors.private. A public tool's code, and the answer to a tool name the server does not have, is from errors.public, and its error begins with that entry's prefix. Beyond the prefix, error is diagnostic. A request refused before any tool runs is the transport's answer and outside this list.",
-  "id": "ai.nimblebrain.conversations",
+  "contract": "ai.nimblebrain.conversations",
   "version": "1.0",
   "cardinality": "singleton",
   "tools": {

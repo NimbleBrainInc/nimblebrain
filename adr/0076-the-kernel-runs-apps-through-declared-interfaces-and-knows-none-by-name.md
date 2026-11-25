@@ -162,7 +162,8 @@ accept only `host`; any other caller is refused (`forbidden`) and nothing change
 
 **A contract is versioned, language-neutral and independent of any implementation**:
 
-- one JSON document per version, `contract.json`: its permanent reverse-DNS id, its
+- one JSON document per version, `contract.json`: its permanent reverse-DNS name
+  (`contract`, the name `implements[].contract` uses), its
   version, its cardinality, its tools with their visibility (public or private), each
   tool's input and output JSON Schema (draft 2020-12, bundled in `$defs`), and its closed
   list of errors;
@@ -175,9 +176,9 @@ checks a host's agent-facing surface, where the public tools must be served and 
 private tools absent. Generated types
 for a language are packaging, never the contract.
 
-- **Identity is not location.** The id (`ai.nimblebrain.conversations`) is permanent.
+- **Identity is not location.** The name (`ai.nimblebrain.conversations`) is permanent.
   Where the document lives is its `$id`, stated in the document, never derived from the
-  id. Under NimbleBrain's domain it is
+  name. Under NimbleBrain's domain it is
   `https://schemas.nimblebrain.ai/contracts/<short-name>/v<major>/contract.json` (this
   one is `…/contracts/conversations/v1/contract.json`); a third party's contract lives on
   its own domain in the same shape. The URL names the major; a minor that only adds is

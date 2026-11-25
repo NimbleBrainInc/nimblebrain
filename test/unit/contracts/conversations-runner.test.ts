@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import Ajv2020 from "ajv/dist/2020.js";
 import {
   checkAbsent,
   checkCursorWalk,
@@ -18,6 +21,33 @@ function contractTools(names: readonly string[] = PUBLIC_TOOLS): ListedTool[] {
     outputSchema: contractSchema(name, "output"),
   }));
 }
+
+const DOCUMENT = JSON.parse(
+  readFileSync(
+    resolve(import.meta.dir, "../../../schemas/contracts/conversations/v1/contract.json"),
+    "utf-8",
+  ),
+) as { $id: string; contract: string; $defs: Record<string, unknown> };
+
+describe("the contract document", () => {
+  test("names the contract in `contract` and states its own URL in `$id`", () => {
+    expect(DOCUMENT.contract).toBe("ai.nimblebrain.conversations");
+    expect(DOCUMENT.$id).toBe(
+      "https://schemas.nimblebrain.ai/contracts/conversations/v1/contract.json",
+    );
+  });
+
+  test("compiles whole in Ajv 2020, and each $defs entry resolves by its URL", () => {
+    const ajv = new Ajv2020({ strict: false });
+    expect(() => ajv.compile(DOCUMENT)).not.toThrow();
+    for (const key of Object.keys(DOCUMENT.$defs)) {
+      expect(ajv.getSchema(`${DOCUMENT.$id}#/$defs/${key}`)).toBeFunction();
+    }
+    const deleteOutput = ajv.getSchema(`${DOCUMENT.$id}#/$defs/delete_output`);
+    expect(deleteOutput?.({ deleted: true })).toBe(true);
+    expect(deleteOutput?.({ deleted: 1 })).toBe(false);
+  });
+});
 
 describe("the contract's tools", () => {
   test("are split into public and private by the contract document", () => {

@@ -16,7 +16,7 @@ export interface ContractError {
 }
 
 export const CONTRACT = {
-  /** Where the document is served. Stated, never derived from `id`. */
+  /** Where the document is served. Stated, never derived from `contract`. */
   $id: "https://schemas.nimblebrain.ai/contracts/conversations/v1/contract.json",
   title: "Conversations contract",
   description:
@@ -27,7 +27,8 @@ export const CONTRACT = {
     "name the server does not have, is from errors.public, and its error begins with that " +
     "entry's prefix. Beyond the prefix, error is diagnostic. A request refused before any tool " +
     "runs is the transport's answer and outside this list.",
-  id: "ai.nimblebrain.conversations",
+  /** The contract's identity, the name a plugin's `implements[].contract` uses. */
+  contract: "ai.nimblebrain.conversations",
   version: "1.0",
   cardinality: "singleton",
   tools: {

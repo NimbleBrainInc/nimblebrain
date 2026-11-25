@@ -18,7 +18,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 ```json
 { "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.nimblebrain.ai/contracts/conversations/v1/contract.json",
-  "id": "ai.nimblebrain.conversations", "version": "1.0", "cardinality": "singleton",
+  "contract": "ai.nimblebrain.conversations", "version": "1.0", "cardinality": "singleton",
   "tools": { "list": { "visibility": "public",
                        "input": { "$ref": "#/$defs/list_input" },
                        "output": { "$ref": "#/$defs/list_output" } }, "…": {} },
@@ -26,10 +26,10 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
   "$defs": { "list_input": {}, "list_output": {}, "…": {} } }
 ```
 
-- **`id`** is the contract's identity: a permanent reverse-DNS name. A contract is matched by
-  its id, never by a URL.
-- **`$id` is where the document lives.** It is stated in the document, never derived from the
-  id. Under NimbleBrain's domain a contract is served at
+- **`contract`** is the contract's identity: a permanent reverse-DNS name, the same name a
+  plugin's `implements[].contract` uses. A contract is matched by this name, never by a URL.
+- **`$id` is where the document lives.** It is stated in the document, never derived from
+  `contract`. Under NimbleBrain's domain a contract is served at
   `https://schemas.nimblebrain.ai/contracts/<short-name>/v<major>/contract.json`; a third
   party's contract lives on its own domain in the same shape.
 - **`version`** is `major.minor` (§9).
