@@ -1,4 +1,4 @@
-# The conversations contract, `ai.nimblebrain.conversations` 1.1
+# The conversations contract, `ai.nimblebrain.conversations` 1.0
 
 An implementation of this contract stores a deployment's chat history and serves it to the
 people and agents that read it. The **host** (the NimbleBrain runtime) persists every chat turn
@@ -18,7 +18,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 ```json
 { "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.nimblebrain.ai/contracts/conversations/v1/contract.json",
-  "contract": "ai.nimblebrain.conversations", "version": "1.1", "cardinality": "singleton",
+  "contract": "ai.nimblebrain.conversations", "version": "1.0", "cardinality": "singleton",
   "tools": { "list": { "visibility": "public",
                        "input": { "$ref": "#/$defs/list_input" },
                        "output": { "$ref": "#/$defs/list_output" } }, "…": {} },
@@ -50,12 +50,11 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 | `update` | public | Retitle a conversation |
 | `stats` | public | Token usage over a period |
 | `export` | public | A conversation as Markdown or JSON |
-| `create_workspace` | private | Hold a workspace, so conversations can be created in it |
 | `create` | private | Create a conversation |
 | `events` | private | One page of a conversation's stored events, in order |
 | `append_events` | private | Append events to a conversation |
 | `delete` | private | Delete a conversation |
-| `delete_workspace` | private | Delete every owner's conversations in a workspace and release it |
+| `delete_workspace` | private | Delete every owner's conversations in a workspace |
 
 ## 2. Scope and principal
 
@@ -77,9 +76,8 @@ whose conversations are read and written.
 2. **A call with no scope reads and writes nothing.** A call that reaches the server with no
    workspace or no owner fails `scope_missing`. A transport MAY refuse such a request before
    any tool runs; that refusal is the transport's and outside the contract's errors.
-3. **`create_workspace` and `delete_workspace` address the workspace, not an owner**: each
-   ignores the scope's owner, and `delete_workspace` is the one call that crosses owners, removing
-   every owner's conversations in the scope's workspace.
+3. **`delete_workspace` is the one call that crosses owners**: it removes every owner's
+   conversations in the scope's workspace and ignores the scope's owner.
 4. **A call MAY carry the conversation it is made inside.** Inside a chat, the context names
    the current conversation; an omitted `id` (or `"current"`) on `get`, `update` and `export`
    means that one. Outside a chat there is none, and the call fails
@@ -141,15 +139,19 @@ page MAY appear on later pages or be absent.
 `messageCount` counts user messages plus completed runs. Cost is never stored or returned; the
 host prices it.
 
-**Workspaces.** The host owns workspaces; an implementation holds one from `create_workspace`
-until `delete_workspace` releases it. `create_workspace` is idempotent and answers `created`,
-whether the workspace was not held before. `delete_workspace` removes every owner's
-conversations in the workspace, releases it, is idempotent, and answers what it removed.
+**Workspaces are the host's.** The implementation never decides whether a workspace exists;
+the host does. Every dimension of the host context is a fact the host verified, so a workspace
+the host stamps exists, and the implementation creates whatever storage it needs for it on
+first use. A workspace it holds nothing for reads as one with no conversations: `list` and
+`search` answer empty, `events` an empty page, `get`, `update` and `export`
+`conversation_not_found`, `delete` `false`. Keeping conversations out of a deleted workspace is
+the host's invariant: it stamps only a workspace it verified exists.
 
-**Writes.** `create` refuses an `id` already stored in scope (`conversation_exists`) and a
-workspace the implementation does not hold (`workspace_not_found`), so a late write never
-brings back a deleted workspace. `update` records the new title as a `metadata.title` event.
-`delete` answers whether it removed something.
+**Writes.** `create` refuses an `id` already stored in scope (`conversation_exists`).
+`update` records the new title as a `metadata.title` event. `delete` answers whether it
+removed something. `delete_workspace` purges every owner's conversations in the workspace and
+any storage held for it, is idempotent, and answers what it removed. A later `create` in that
+workspace makes its storage again.
 
 ## 5. Results and the screen
 
@@ -174,7 +176,7 @@ The document's `errors` is the closed list. A failed call writes nothing.
 
 - **Private tools**: `isError: true`, text JSON `{ code, error }`. `code` is one of
   `forbidden`, `invalid_input`, `scope_missing`, `conversation_not_found`,
-  `conversation_exists`, `workspace_not_found`, `conversation_corrupted`, `internal_error`.
+  `conversation_exists`, `conversation_corrupted`, `internal_error`.
   `error` is diagnostic only.
 - **Public tools, and a tool name the server does not have**: `isError: true`, text JSON
   `{ code, error }`. `code` is one of `conversation_not_found`, `no_current_conversation`,
@@ -187,7 +189,7 @@ The document's `errors` is the closed list. A failed call writes nothing.
 
 ## 7. Idempotency
 
-**Idempotency keys are absent in 1.x.** No call carries one. A host that retries an
+**Idempotency keys are absent in 1.0.** No call carries one. A host that retries an
 `append_events` whose answer it did not receive may append the batch twice, so a host does not
 retry an append blindly. `create` with an explicit `id` is the one naturally idempotent write:
 a repeat fails `conversation_exists`. `delete` and `delete_workspace` are idempotent by their

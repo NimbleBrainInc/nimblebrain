@@ -1441,8 +1441,13 @@ export class Runtime {
     if (resolved) this._boundServers = await startBoundServers(resolved, events);
     const conversations = this._boundServers.get(CONVERSATIONS_CONTRACT);
     if (!conversations) return {};
+    const workDir = resolveWorkDir(this.config);
     this._contractConversations = createContractConversations(conversations.call, {
       logLevel: this.config.logging?.level ?? "normal",
+      // Identity and scope are the kernel's: the plugin creates storage for any
+      // workspace the kernel stamps, so the kernel stamps only a live one.
+      assertWorkspace: ({ workspaceId, ownerId }) =>
+        assertWorkspaceRootExists(workspaceConversationsDir(workDir, workspaceId, ownerId)),
     });
     return { conversations: conversations.source };
   }
@@ -4454,10 +4459,6 @@ export class Runtime {
   workspaceConversationStore(wsId: string, ownerId: string): ConversationEventStore {
     const dir = workspaceConversationsDir(resolveWorkDir(this.config), wsId, ownerId);
     if (this._contractConversations) {
-      // A deleted workspace gets no store, as the filesystem store's own
-      // constructor refuses one; the plugin is asked to hold a workspace only
-      // while the kernel's is live.
-      assertWorkspaceRootExists(dir);
       return this._contractConversations.forScope({ workspaceId: wsId, ownerId }, () =>
         this.announceIdentitySourceChange("conversations", ownerId),
       );

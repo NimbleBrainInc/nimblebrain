@@ -1,13 +1,13 @@
 # Conversations plugin
 
 Chat history for NimbleBrain: an [Agent Plugins](https://agent-plugins.org) 1.0.0 plugin with
-one MCP server that implements the `ai.nimblebrain.conversations` 1.1 contract
+one MCP server that implements the `ai.nimblebrain.conversations` 1.0 contract
 ([`contracts/conversations/CONTRACT.md`](../../contracts/conversations/CONTRACT.md)) on the
 local filesystem.
 
 - **Public tools** (people and agents): `list`, `get`, `search`, `update`, `stats`, `export`.
-- **Private tools** (the host only): `create_workspace`, `create`, `events`, `append_events`,
-  `delete`, `delete_workspace`. Any other caller gets `forbidden`.
+- **Private tools** (the host only): `create`, `events`, `append_events`, `delete`,
+  `delete_workspace`. Any other caller gets `forbidden`.
 - **Screen**: `ui://conversations/browser`.
 
 ## Run it
@@ -54,15 +54,14 @@ resource is a placeholder page.
 <data>/workspaces/<workspaceId>/conversations/<ownerId>/<conversationId>.jsonl
 ```
 
-Line 1 is the conversation's header and every later line one event. A workspace is held when
-its directory exists: `create_workspace` makes `<data>/workspaces/<workspaceId>/`, and
-`delete_workspace` removes it with its conversations. The layout matches the NimbleBrain
-runtime's under its work directory.
+Line 1 is the conversation's header and every later line one event. A workspace the host
+stamps exists: its directories are made on the first `create` there, and `delete_workspace`
+purges them.
+The layout matches the NimbleBrain runtime's under its work directory.
 
 ## Check it
 
 ```bash
-mkdir -p ./data/workspaces/ws_0123456789abcdef ./data/workspaces/ws_fedcba9876543210
 bun --no-env-file contracts/conversations/runner/conformance.ts \
   --server http://127.0.0.1:8080/mcp --header "authorization=Bearer change-me" \
   --carriage meta --workspace ws_0123456789abcdef --owner user_1 \

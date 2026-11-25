@@ -58,7 +58,7 @@ function writeConversations(base: string, dir = "conversations", name = "convers
           implements: [
             {
               contract: CONVERSATIONS,
-              version: "1.1",
+              version: "1.0",
               server: "store",
             },
           ],
@@ -111,17 +111,10 @@ describe("resolvePlugins", () => {
     expect(resolved.bindings).toEqual([
       {
         contract: CONVERSATIONS,
-        version: "1.1",
+        version: "1.0",
         plugin: "conversations",
         server: "store",
-        privateTools: [
-          "create_workspace",
-          "create",
-          "events",
-          "append_events",
-          "delete",
-          "delete_workspace",
-        ],
+        privateTools: ["create", "events", "append_events", "delete", "delete_workspace"],
       },
     ]);
   });
@@ -253,7 +246,7 @@ describe("resolvePlugins", () => {
       dataDir: "/d",
     });
     expect(errorsOf(result)).toEqual([
-      "old (ai.nimblebrain.conversations): version 0.9 does not meet 1.1, the version this runtime consumes (same major, minor at least)",
+      "old (ai.nimblebrain.conversations): version 0.9 does not meet 1.0, the version this runtime consumes (same major, minor at least)",
     ]);
   });
 });
@@ -265,7 +258,7 @@ describe("server names are the plugin's own", () => {
       name: "conversations",
       extensions: {
         "ai.nimblebrain": {
-          implements: [{ contract: CONVERSATIONS, version: "1.1", server: "__proto__" }],
+          implements: [{ contract: CONVERSATIONS, version: "1.0", server: "__proto__" }],
         },
       },
     });

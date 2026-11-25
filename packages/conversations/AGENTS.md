@@ -1,7 +1,7 @@
 # Conversations plugin
 
 Scope: `packages/conversations/`. The built-in implementation of the conversations contract
-(`contracts/conversations/CONTRACT.md`, `ai.nimblebrain.conversations` 1.1): an Agent Plugin
+(`contracts/conversations/CONTRACT.md`, `ai.nimblebrain.conversations` 1.0): an Agent Plugin
 with one MCP server, on the local filesystem. How to run it standalone is in `README.md`.
 
 ## Boundaries
@@ -53,12 +53,16 @@ with one MCP server, on the local filesystem. How to run it standalone is in `RE
 - **The path is the scope.** A call opens only its scope's owner partition of its scope's
   workspace. Scope ids must each be one path segment, or the call has no scope. A file whose
   header names another owner or id reads as absent.
-- **A workspace is held when its directory exists.** `create_workspace` makes it;
-  `delete_workspace` removes the conversation files, then the workspace directory when nothing
-  else is in it (a directory shared with a runtime's own workspace keeps its other content).
-  `create` makes `conversations/<ownerId>/` one level at a time inside an existing workspace
-  directory, so a write after the workspace is released fails `workspace_not_found` instead of
-  bringing it back.
+- **The plugin never decides whether a workspace exists; the host does.** Every dimension of
+  the host context is a fact the host verified, so a workspace it stamps exists: `create` makes
+  `conversations/<ownerId>/` (and the workspace directory above it) on first use, and a
+  workspace with no storage reads as one with no conversations.
+- **`delete_workspace` purges.** It removes every owner's conversations and the workspace's
+  `conversations/` directory, then the workspace directory if nothing else is in it (a
+  runtime's own workspace in a shared directory keeps its other content). A `create` after a
+  purge simply makes the storage again. That is correct: the host is the authority on which
+  workspaces exist, and it keeps conversations out of a deleted workspace by never stamping
+  one.
 - **`seq` is position:** the place of an event among the lines after line 1 that are objects
   with a string `ts` and `type`. Lines are only appended, so a `seq` never changes and has no
   gaps. A torn line is no event; the next append starts on a new line.

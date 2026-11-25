@@ -52,7 +52,6 @@ import {
   type ConversationStore,
   isPathSegment,
   type Scope,
-  WorkspaceNotFoundError,
 } from "./store.ts";
 
 export const SERVER_NAME = "conversations";
@@ -141,9 +140,6 @@ const PUBLIC: Record<string, Handler> = {
 const EVENTS_PAGE = 1000;
 
 const PRIVATE: Record<string, Handler> = {
-  create_workspace: async (store, scope) => ({
-    created: await store.createWorkspace(scope.workspaceId),
-  }),
   create: async (store, scope, args) => ({
     conversation: await store.create(scope, args as Checked),
   }),
@@ -174,7 +170,6 @@ function privateFailure(err: unknown): ToolErrorResult {
     return toolError("conversation_not_found", `no conversation ${err.message} in scope`);
   }
   if (err instanceof ConversationExistsError) return toolError("conversation_exists", err.message);
-  if (err instanceof WorkspaceNotFoundError) return toolError("workspace_not_found", err.message);
   if (err instanceof CorruptConversationError) {
     return toolError(
       "conversation_corrupted",

@@ -111,7 +111,6 @@ describe("transport-verified dimensions", () => {
 describe("the principal rule", () => {
   test("takes visibility from the contract document", () => {
     expect(toolsOf(CONTRACT, "private")).toEqual([
-      "create_workspace",
       "create",
       "events",
       "append_events",

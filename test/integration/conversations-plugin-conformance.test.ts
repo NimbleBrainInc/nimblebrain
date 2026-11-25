@@ -20,7 +20,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
@@ -80,15 +80,10 @@ function serve(dir: string, extra: string[] = []): Subprocess<"ignore", "pipe", 
 }
 
 beforeAll(async () => {
+  // Empty data directories: a workspace the host stamps exists, and the plugin makes its
+  // storage on first use.
   dataDir = mkdtempSync(join(tmpdir(), "conversations-plugin-"));
-  // Workspaces exist when their directories do; the plugin never creates one.
-  for (const ws of [WORKSPACE, SCRATCH]) {
-    mkdirSync(join(dataDir, "workspaces", ws), { recursive: true });
-  }
   edgeDir = mkdtempSync(join(tmpdir(), "conversations-plugin-edge-"));
-  for (const tenant of ["tenant_a", "tenant_b"]) {
-    mkdirSync(join(edgeDir, "tenants", tenant, "workspaces", WORKSPACE), { recursive: true });
-  }
   proc = serve(dataDir);
   edgeProc = serve(edgeDir, ["--edge"]);
   url = await readListening(proc);
@@ -114,7 +109,7 @@ describe("conversations plugin: the whole contract", () => {
     });
     expect(failures(results)).toEqual([]);
     expect(results.filter((r) => r.status === "skip")).toEqual([]);
-    expect(results.filter((r) => r.status === "pass")).toHaveLength(39);
+    expect(results.filter((r) => r.status === "pass")).toHaveLength(38);
     const names = results.map((r) => r.name);
     for (const name of [
       "every private tool answers a person with forbidden and changes nothing",

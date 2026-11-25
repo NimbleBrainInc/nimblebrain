@@ -29,7 +29,7 @@ export const CONTRACT = {
     "runs is the transport's answer and outside this list.",
   /** The contract's identity, the name a plugin's `implements[].contract` uses. */
   contract: "ai.nimblebrain.conversations",
-  version: "1.1",
+  version: "1.0",
   cardinality: "singleton",
   tools: {
     list: { visibility: "public" },
@@ -38,7 +38,6 @@ export const CONTRACT = {
     update: { visibility: "public" },
     stats: { visibility: "public" },
     export: { visibility: "public" },
-    create_workspace: { visibility: "private" },
     create: { visibility: "private" },
     events: { visibility: "private" },
     append_events: { visibility: "private" },
@@ -99,11 +98,6 @@ export const CONTRACT = {
       {
         code: "conversation_exists",
         meaning: "create named an id already stored in the caller's scope. Nothing was written.",
-      },
-      {
-        code: "workspace_not_found",
-        meaning:
-          "create in a workspace the implementation does not hold: never held by create_workspace, or released by delete_workspace. Nothing was written.",
       },
       {
         code: "conversation_corrupted",

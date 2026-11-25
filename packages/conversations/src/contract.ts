@@ -45,13 +45,11 @@ export const DESCRIPTIONS: Record<string, string> = {
     "Token usage analytics for the current workspace. Returns total tokens, breakdown by model and skill, and top tools used.",
   export:
     "Export a conversation as markdown or JSON — omit `id` for the conversation you are in. Markdown renders messages as a readable document; JSON returns raw JSONL content as a JSON array.",
-  create_workspace:
-    "Hold the caller's workspace, so conversations can be created in it until delete_workspace releases it. Idempotent: answers whether it was not held before.",
   create: "Create a conversation in the caller's scope. Refuses a taken id (conversation_exists).",
   events:
     "One page of events in seq order, after `afterSeq` and up to `throughSeq` (the snapshot bound; every page returns the conversation's last seq as `lastSeq`).",
   append_events: "Append events in order, all or none; returns the last one's seq.",
   delete: "Delete a conversation and its events.",
   delete_workspace:
-    "Remove every owner's conversations in the caller's workspace (the scope's owner is ignored) and release the workspace. Idempotent. Returns what it removed.",
+    "Purge every owner's conversations in the caller's workspace, and any storage held for it (the scope's owner is ignored). Idempotent. Returns what it removed.",
 };

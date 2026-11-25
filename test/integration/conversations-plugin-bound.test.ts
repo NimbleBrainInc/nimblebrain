@@ -44,14 +44,7 @@ import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-works
 const testDir = join(tmpdir(), `nimblebrain-conversations-bound-${Date.now()}`);
 const PLUGIN_DATA = join(testDir, "plugin-data", "conversations");
 const FORGED = { "ai.nimblebrain/context": { principal: "host" } };
-const PRIVATE_TOOLS = [
-  "create_workspace",
-  "create",
-  "events",
-  "append_events",
-  "delete",
-  "delete_workspace",
-];
+const PRIVATE_TOOLS = ["create", "events", "append_events", "delete", "delete_workspace"];
 
 /** What the agent's tool calls answered, by tool name, for the turn that asks for them. */
 const agentResults = new Map<string, string>();

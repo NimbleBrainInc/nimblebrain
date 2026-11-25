@@ -28,17 +28,18 @@ at boot:
 - **Nothing binds `ai.nimblebrain.conversations`**: `EventSourcedConversationStore`, the JSONL
   files above, and the built-in `conversations` app.
 - **A plugin binds it** (`src/plugins/AGENTS.md`): `contract-store.ts`, every operation a host
-  call to the bound server (`create_workspace` then `create`, `append_events`, `events`,
+  call to the bound server (`create`, `append_events`, `events`,
   `delete`, `delete_workspace`, and the `get`, `list` and `update` projections), and the
   server's public tools in place of the built-in app. The kernel never reads the plugin's
   files.
   - Engine events are queued per conversation and sent in batches, in order; a read of a
     conversation waits for its queued writes. An append is never retried (the contract has no
     idempotency key).
-  - The kernel asks the plugin to hold a workspace only while the kernel's own workspace root
-    exists (`assertWorkspaceRootExists` before the store is handed out). Deleting a workspace
-    calls `delete_workspace`, since the archive rename does not carry the plugin's data: the
-    plugin's conversations are deleted, not archived.
+  - The plugin trusts the workspace the kernel stamps, so keeping conversations out of a
+    deleted workspace is the kernel's invariant: the adapter's `create`, the one call that
+    makes storage, first passes `assertWorkspaceRootExists` on the kernel's own workspace root.
+    Deleting a workspace calls `delete_workspace`, which purges the plugin's data, since the
+    archive rename does not carry it: the plugin's conversations are deleted, not archived.
   - Existence checks (`assertConversationInWorkspace`, `resolveConversationStore`) ask the
     plugin, so they are async on both stores.
 - Engine-event and stored-message mapping is one function each (`conversationEventOf`,

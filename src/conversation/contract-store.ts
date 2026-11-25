@@ -5,8 +5,8 @@
  * It implements the same {@link ConversationEventStore} the filesystem store
  * does, so turns, history reconstruction, compaction and titles run on it
  * unchanged. Every operation is a call to the bound server under the kernel's
- * own (`host`) principal: records through the private tools (`create_workspace`,
- * `create`, `append_events`, `events`, `delete`, `delete_workspace`), and the
+ * own (`host`) principal: records through the private tools (`create`,
+ * `append_events`, `events`, `delete`, `delete_workspace`), and the
  * projections a public tool already answers (`get` for a conversation's
  * metadata, `list`, `update`).
  *
@@ -18,6 +18,9 @@
  *   next turn reads what the last one wrote.
  * - **A read waits for its conversation's queued writes**, so the runtime reads
  *   what it wrote.
+ * - **The host decides that a workspace exists.** The contract trusts the
+ *   workspace the host stamps, so `create` runs only after the kernel's own
+ *   workspace check.
  * - **An append is never retried**: the contract has no idempotency key, and a
  *   batch whose answer was lost may have landed. A failed queued write is
  *   logged; one the caller awaits (`append`) throws.
@@ -119,6 +122,11 @@ interface WriteQueue {
 }
 
 export interface ContractConversationsOptions {
+  /**
+   * Throws when the kernel's workspace is gone. Called before every `create`,
+   * the one call that makes storage in the plugin.
+   */
+  assertWorkspace: (scope: ContractScope) => void;
   /** Logging verbosity: "debug" persists full request data, as the filesystem store does. */
   logLevel?: "normal" | "debug";
 }
@@ -136,9 +144,10 @@ export interface ContractConversations {
 
 export function createContractConversations(
   call: ContractCall,
-  opts: ContractConversationsOptions = {},
+  opts: ContractConversationsOptions,
 ): ContractConversations {
   const debug = opts.logLevel === "debug";
+  const { assertWorkspace } = opts;
   const queues = new Map<string, WriteQueue>();
 
   /** Send what is pending for one conversation, as one batch. */
@@ -233,9 +242,9 @@ export function createContractConversations(
       },
 
       async create(options: CreateConversationOptions) {
-        // The kernel's workspace is live (its caller checked); the plugin holds
-        // it from here until the workspace is deleted.
-        await call("create_workspace", {}, scope);
+        // The plugin trusts the workspace the host stamps, so the host stamps
+        // only a live one: a deleted workspace gets no conversation.
+        assertWorkspace(scope);
         const out = await call(
           "create",
           {
