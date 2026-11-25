@@ -141,6 +141,9 @@ const PUBLIC: Record<string, Handler> = {
 const EVENTS_PAGE = 1000;
 
 const PRIVATE: Record<string, Handler> = {
+  create_workspace: async (store, scope) => ({
+    created: await store.createWorkspace(scope.workspaceId),
+  }),
   create: async (store, scope, args) => ({
     conversation: await store.create(scope, args as Checked),
   }),

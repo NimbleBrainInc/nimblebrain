@@ -10,9 +10,11 @@
  * - **The path is the scope.** Every call opens the one owner partition of the one
  *   workspace its scope names; nothing resolves an id across partitions. A conversation in
  *   another partition is never opened, so it answers as one that does not exist.
- * - **A workspace exists when its directory does.** The plugin never creates
- *   `<data>/workspaces/<workspaceId>/`: whoever provisions workspaces does. `create` in a
- *   workspace with no directory fails, so a late write never brings a deleted one back.
+ * - **A workspace is held when its directory exists.** `create_workspace` makes
+ *   `<data>/workspaces/<workspaceId>/`, and `delete_workspace` removes it once its
+ *   conversations are gone (only when nothing else is in it, so a directory shared with a
+ *   runtime's own workspace is left alone). `create` in a workspace with no directory fails,
+ *   so a late write never brings a deleted one back.
  * - **`seq` is position.** An event's `seq` is its place among the file's event lines
  *   (lines after line 1 that are objects with a string `ts` and `type`), from 1. Lines are
  *   only appended, so a `seq` never changes. A torn line is not an event and has no `seq`.
@@ -340,7 +342,15 @@ export function createStore(dataDir: string) {
     });
   }
 
-  /** Remove every owner's conversations in a workspace; returns what was removed. */
+  /** Hold a workspace; whether it was not held before. */
+  async function createWorkspace(workspaceId: string): Promise<boolean> {
+    const dir = workspaceDir(workspaceId);
+    if (existsSync(dir)) return false;
+    await mkdir(dir, { recursive: true });
+    return true;
+  }
+
+  /** Remove every owner's conversations in a workspace and release it; returns what was removed. */
   async function removeWorkspace(
     workspaceId: string,
   ): Promise<Array<{ id: string; ownerId: string }>> {
@@ -367,8 +377,20 @@ export function createStore(dataDir: string) {
       await rmdir(dir).catch(() => {});
     }
     await rmdir(convDir).catch(() => {});
+    await rmdir(workspaceDir(workspaceId)).catch(() => {});
     return removed;
   }
 
-  return { root, find, list, create, append, events, load, remove, removeWorkspace };
+  return {
+    root,
+    find,
+    list,
+    createWorkspace,
+    create,
+    append,
+    events,
+    load,
+    remove,
+    removeWorkspace,
+  };
 }

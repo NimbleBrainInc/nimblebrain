@@ -33,10 +33,17 @@ describe("the built-in conversations plugin", () => {
     expect(resolved.bindings).toEqual([
       {
         contract: "ai.nimblebrain.conversations",
-        version: "1.0",
+        version: "1.1",
         plugin: "conversations",
         server: "conversations",
-        privateTools: ["create", "events", "append_events", "delete", "delete_workspace"],
+        privateTools: [
+          "create_workspace",
+          "create",
+          "events",
+          "append_events",
+          "delete",
+          "delete_workspace",
+        ],
       },
     ]);
   });

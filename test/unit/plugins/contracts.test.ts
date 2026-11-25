@@ -59,10 +59,11 @@ function writeDoc(dir: string, name: string, major: string, body: unknown): void
 describe("loadContracts", () => {
   test("reads the repository's contract documents: conversations today", () => {
     const conversations = loadContracts().get("ai.nimblebrain.conversations");
-    expect(conversations).toMatchObject({ version: "1.0", cardinality: "singleton" });
+    expect(conversations).toMatchObject({ version: "1.1", cardinality: "singleton" });
     expect(conversations?.privateTools.sort()).toEqual([
       "append_events",
       "create",
+      "create_workspace",
       "delete",
       "delete_workspace",
       "events",

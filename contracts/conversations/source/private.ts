@@ -41,6 +41,10 @@ export const CreatedConversation = Type.Object({
 
 /** Every private tool: name → input and output schema. */
 export const PRIVATE_SCHEMAS = {
+  create_workspace: {
+    input: Type.Object({}),
+    output: Type.Object({ created: Type.Boolean() }),
+  },
   create: {
     input: Type.Object({
       id: Type.Optional(ConversationId),
@@ -81,6 +85,9 @@ export type PrivateToolName = keyof typeof PRIVATE_SCHEMAS;
 
 /** One-line descriptions a server publishes for its private tools in `tools/list`. */
 export const PRIVATE_DESCRIPTIONS: Record<PrivateToolName, string> = {
+  create_workspace:
+    "Hold the caller's workspace, so conversations can be created in it until delete_workspace " +
+    "releases it. Idempotent: answers whether it was not held before.",
   create: "Create a conversation in the caller's scope. Refuses a taken id (conversation_exists).",
   events:
     "One page of events in seq order, after `afterSeq` and up to `throughSeq` (the snapshot " +
@@ -89,5 +96,5 @@ export const PRIVATE_DESCRIPTIONS: Record<PrivateToolName, string> = {
   delete: "Delete a conversation and its events.",
   delete_workspace:
     "Remove every owner's conversations in the caller's workspace (the scope's owner is " +
-    "ignored). Idempotent. Returns what it removed.",
+    "ignored) and release the workspace. Idempotent. Returns what it removed.",
 };

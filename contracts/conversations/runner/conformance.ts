@@ -511,6 +511,7 @@ async function fullForbidden(c: FullCtx): Promise<void> {
     "every private tool answers a person with forbidden and changes nothing",
     async () => {
       const before = (await okCall(host, "list", { limit: 1 })).totalCount;
+      expectForbidden(await person.call("create_workspace", {}), "create_workspace");
       expectForbidden(await person.call("create", { model: MODEL }), "create");
       expectForbidden(await person.call("events", { id: c.id }), "events");
       const append = { id: c.id, events: turn("intruder", "no", 100, "run_x") };
@@ -589,6 +590,22 @@ async function fullWalls(c: FullCtx, other: Conn, elsewhere: Conn): Promise<void
       privateCode(await elsewhere.call("create", { model: MODEL })),
       "workspace_not_found",
       "code",
+    );
+  });
+  await h.run("create_workspace holds a workspace until delete_workspace releases it", async () => {
+    eq((await okCall(elsewhere, "create_workspace", {})).created, true, "first hold");
+    eq((await okCall(elsewhere, "create_workspace", {})).created, false, "idempotent");
+    const id = await createdId(elsewhere);
+    const out = await okCall(elsewhere, "delete_workspace", {});
+    eq(
+      (out.deleted as Array<{ id: string }>).map((d) => d.id),
+      [id],
+      "deleted",
+    );
+    eq(
+      privateCode(await elsewhere.call("create", { model: MODEL })),
+      "workspace_not_found",
+      "released",
     );
   });
 }

@@ -114,7 +114,7 @@ describe("conversations plugin: the whole contract", () => {
     });
     expect(failures(results)).toEqual([]);
     expect(results.filter((r) => r.status === "skip")).toEqual([]);
-    expect(results.filter((r) => r.status === "pass")).toHaveLength(38);
+    expect(results.filter((r) => r.status === "pass")).toHaveLength(39);
     const names = results.map((r) => r.name);
     for (const name of [
       "every private tool answers a person with forbidden and changes nothing",
