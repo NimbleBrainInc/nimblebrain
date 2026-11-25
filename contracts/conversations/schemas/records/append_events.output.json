@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/records/append_events.output.json",
+  "type": "object",
+  "required": [
+    "lastSeq"
+  ],
+  "properties": {
+    "lastSeq": {
+      "type": "integer"
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "id": "ai.nimblebrain.conversations",
+  "version": "1.0",
+  "cardinality": "singleton",
+  "roles": {
+    "app": { "visibility": "public" },
+    "records": { "visibility": "private" }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/app/update.input.json",
+  "required": [
+    "title"
+  ],
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "Conversation ID. Omit it (or pass \"current\") to address the conversation this call is happening inside; required from outside a chat.",
+      "type": "string"
+    },
+    "title": {
+      "description": "New title for the conversation.",
+      "type": "string"
+    }
+  }
+}

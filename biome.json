@@ -41,6 +41,7 @@
   },
   "files": {
     "includes": [
+      "contracts/**/*.ts",
       "src/**",
       "web/src/**",
       "web/test/**",
@@ -58,11 +59,20 @@
   },
   "overrides": [
     {
-      "includes": ["scripts/**", "src/**", "web/src/**", "test/**", "web/test/**", "packages/cli/**"],
+      "includes": [
+        "contracts/**",
+        "scripts/**",
+        "src/**",
+        "web/src/**",
+        "test/**",
+        "web/test/**",
+        "packages/cli/**"
+      ],
       "plugins": ["./biome-plugins/double-cast.grit"]
     },
     {
       "includes": [
+        "contracts/**",
         "scripts/**",
         "src/**",
         "web/src/**",
@@ -75,6 +85,26 @@
     {
       "includes": ["src/**/*.ts", "!src/api/app.ts"],
       "plugins": ["./biome-plugins/router-use.grit"]
+    },
+    {
+      "includes": ["contracts/**/*.ts", "!contracts/*/scripts/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/src/**"],
+                    "message": "A contract depends on nothing in src/ at runtime: its runner and sources read only the contract's own files. Only the emitter (scripts/) reads an authoring source under src/ (contracts/AGENTS.md)."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
     },
     {
       "includes": ["src/**/*.ts"],

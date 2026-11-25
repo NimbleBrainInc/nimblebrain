@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/contracts/ai.nimblebrain.conversations/1/errors.json",
+  "title": "Conversations contract errors",
+  "description": "The closed list of errors the contract defines. A records tool error is a tools/call result with isError: true whose first text content is JSON {code, error}, code from `records`. An app tool error is a tools/call result with isError: true whose first text content is JSON {error}, the message beginning with the `prefix` of one entry in `app`; the app carries no code on the wire in 1.0. `error` text is diagnostic beyond what is stated here. A request refused before any tool runs (no or invalid credential, a connection with no scope) is the transport's answer and outside this list.",
+  "records": [
+    {
+      "code": "invalid_input",
+      "meaning": "The arguments do not match the tool's input schema. Nothing was written."
+    },
+    {
+      "code": "unknown_tool",
+      "meaning": "No records tool by that name."
+    },
+    {
+      "code": "scope_missing",
+      "meaning": "The call reached the server with no workspace or no owner in its scope. Nothing was read or written."
+    },
+    {
+      "code": "conversation_not_found",
+      "meaning": "append_events named a conversation absent from the caller's scope: another owner's, another workspace's and a missing one answer alike. Nothing was written. Reads answer null or an empty page instead."
+    },
+    {
+      "code": "conversation_exists",
+      "meaning": "create named an id already stored in the caller's scope. Nothing was written."
+    },
+    {
+      "code": "workspace_not_found",
+      "meaning": "create in a workspace the implementation holds nothing for (deleted, or never created). Nothing was written."
+    },
+    {
+      "code": "conversation_corrupted",
+      "meaning": "The stored conversation cannot be read."
+    },
+    {
+      "code": "internal_error",
+      "meaning": "Anything else. The error text is diagnostic only."
+    }
+  ],
+  "app": [
+    {
+      "kind": "conversation_not_found",
+      "prefix": "Conversation not found: ",
+      "meaning": "get, update or export named a conversation outside the caller's scope or absent; the id named follows the prefix."
+    },
+    {
+      "kind": "no_current_conversation",
+      "prefix": "No conversation in scope.",
+      "meaning": "id was omitted, or \"current\", on a call made outside a chat."
+    },
+    {
+      "kind": "scope_missing",
+      "prefix": "[conversations] no ",
+      "meaning": "tools/call reached the app with no workspace or no authenticated identity in its scope."
+    },
+    {
+      "kind": "invalid_input",
+      "prefix": "Invalid arguments for ",
+      "meaning": "The arguments do not match the tool's input schema; the tool name follows the prefix, quoted. Nothing was written."
+    },
+    {
+      "kind": "unknown_tool",
+      "prefix": "Unknown tool ",
+      "meaning": "No app tool by that name."
+    }
+  ]
+}
