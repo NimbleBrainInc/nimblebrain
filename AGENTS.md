@@ -91,6 +91,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`src/platform/tasks/AGENTS.md`](./src/platform/tasks/AGENTS.md) | Task storage, run data retention, per-run membership gate, run results, how the scheduler uses run admission, budget, per-run caps, run assessment and the connected judge, batches (driver, budget account, stop rule, restart) |
 | [`src/runtime/AGENTS.md`](./src/runtime/AGENTS.md) | Run admission at the run-start door: slots, queue, fair share, leases; spend accounts reserved before each model call |
 | [`src/execution/AGENTS.md`](./src/execution/AGENTS.md) | The agent runtime seam behind the door: what a runtime receives and emits, capabilities the door checks, the generic ACP runtime and its drivers, the tool projection |
+| [`src/providers/AGENTS.md`](./src/providers/AGENTS.md) | Providers (ADR-0076): the interface is the contract, a conformance suite per interface, the filesystem implementation ships, `multiProcess` |
 | [`src/workspace/AGENTS.md`](./src/workspace/AGENTS.md) | Workspace roots and `assertWorkspaceRootExists`, write authorization, opaque ids, provisioning the first workspace |
 | [`src/orchestrator/AGENTS.md`](./src/orchestrator/AGENTS.md) | The workspace wall: tool-name shape as scope, `routeToolCall`, name parsing, skill walling |
 | [`src/tools/AGENTS.md`](./src/tools/AGENTS.md) | `CredentialStore`, credential refs, OAuth records, credential ownership; long-running (task-augmented) MCP tools |
@@ -164,6 +165,7 @@ src/
 │   ├── catalog/   what can be installed — server detail, curated entries, schemas
 │   ├── providers/ who brokers auth and session (providers/<vendor>/ behind the seam)
 │   └── gateways/  hosted-MCP vendors that broker nothing and take one account key
+├── providers/     Infrastructure the kernel uses and no agent calls: interfaces plus local implementations (see providers/AGENTS.md)
 ├── platform/      The kernel's own apps — in-process MCP servers, one directory each (see platform/AGENTS.md)
 ├── tools/         System tool definitions (search, status, manage)
 ├── identity/      Auth adapters (dev, oidc, workos)
