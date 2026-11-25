@@ -118,7 +118,7 @@ function appPrefix(kind: string): string {
 }
 
 /** A role's committed schema for one tool, without `$schema` / `$id` (as it travels in tools/list). */
-function contractSchema(role: string, tool: string, kind: "input" | "output") {
+export function contractSchema(role: string, tool: string, kind: "input" | "output") {
   const raw = JSON.parse(
     readFileSync(resolve(CONTRACT_DIR, "schemas", role, `${tool}.${kind}.json`), "utf-8"),
   ) as Record<string, unknown>;
@@ -173,7 +173,7 @@ interface CallResult {
   content?: Array<{ type: string; text?: string }>;
 }
 
-interface ListedTool {
+export interface ListedTool {
   name: string;
   description?: string;
   inputSchema: unknown;
@@ -296,17 +296,33 @@ function harness(role: CaseResult["role"], opts: RunnerOptions, results: CaseRes
   };
 }
 
-async function checkToolList(
+/**
+ * Every contract tool is listed with the contract's schemas. A server MAY serve more than the
+ * contract (CONTRACT.md §1), so tools outside it are neither required nor checked.
+ */
+export function checkToolList(
   tools: ListedTool[],
   role: "app" | "records",
   names: readonly string[],
-): Promise<void> {
-  eq(tools.map((t) => t.name).sort(), [...names].sort(), "tool names");
-  for (const t of tools) {
+): void {
+  const listed = new Set(tools.map((t) => t.name));
+  const missing = names.filter((n) => !listed.has(n));
+  assert(missing.length === 0, `missing contract tools: ${missing.join(", ")}`);
+  const contractNames = new Set(names);
+  for (const t of tools.filter((x) => contractNames.has(x.name))) {
     eq(t.inputSchema, contractSchema(role, t.name, "input"), `${t.name} inputSchema`);
     eq(t.outputSchema, contractSchema(role, t.name, "output"), `${t.name} outputSchema`);
     assert(t.description && t.description.length > 0, `${t.name} has no description`);
   }
+}
+
+/**
+ * A cursor walk never repeats a conversation and never skips one that existed when the first
+ * page was read (CONTRACT.md §3). Conversations created later are not constrained.
+ */
+export function checkCursorWalk(seen: readonly string[], existing: readonly string[]): void {
+  eq(seen.length, new Set(seen).size, "a conversation was listed twice");
+  for (const id of existing) assert(seen.includes(id), `${id} skipped`);
 }
 
 // ── Records role ─────────────────────────────────────────────────────────
@@ -494,12 +510,8 @@ async function recordsLifecycle(c: RecordsCtx): Promise<void> {
       seen.push(...(page.items as Array<{ id: string }>).map((x) => x.id));
       next = page.nextCursor;
     }
-    eq(seen.length, new Set(seen).size, "a conversation was listed twice");
-    for (const id of [...made, c.id]) assert(seen.includes(id), `${id} skipped`);
-    assert(
-      !seen.includes(inserted),
-      "a conversation created after the first page appeared behind the cursor",
-    );
+    // A conversation created after the first page MAY appear or be absent (CONTRACT.md §3).
+    checkCursorWalk(seen, [...made, c.id]);
     for (const id of [...made, inserted]) await c.okCall(rec, "delete", { id });
   });
   await h.run("delete removes it; a second delete answers false", async () => {
@@ -590,7 +602,8 @@ async function appSurface(c: AppCtx): Promise<void> {
     checkToolList(await c.listTools(app), "app", APP_TOOLS),
   );
   await h.run("read-only tools are annotated readOnlyHint", async () => {
-    for (const t of await c.listTools(app)) {
+    const contract = new Set<string>(APP_TOOLS);
+    for (const t of (await c.listTools(app)).filter((x) => contract.has(x.name))) {
       eq(t.annotations?.readOnlyHint === true, t.name !== "update", `${t.name} readOnlyHint`);
     }
   });
