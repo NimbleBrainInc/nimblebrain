@@ -24,6 +24,13 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["contracts/**/*.ts", "src/**/*.ts", "instrument/**/*.ts", "scripts/**/*.ts"],
+  "include": [
+    "contracts/**/*.ts",
+    "packages/server-sdk/**/*.ts",
+    "packages/conversations/**/*.ts",
+    "src/**/*.ts",
+    "instrument/**/*.ts",
+    "scripts/**/*.ts"
+  ],
   "exclude": ["node_modules", "src/platform/*/ui"]
 }

@@ -86,7 +86,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 
 | Guide | Covers |
 |---|---|
-| [`contracts/AGENTS.md`](./contracts/AGENTS.md) | Contracts the kernel consumes: spec and tooling, no runtime dependency on `src/`, one emitted document per version, `emit:contracts` and `check:contracts`, versioning in each `CONTRACT.md` |
+| [`contracts/AGENTS.md`](./contracts/AGENTS.md) | Contracts the kernel consumes: spec and tooling, no runtime dependency on `src/`, one emitted document per version, `emit:contracts` and `check:contracts`, versioning in each `CONTRACT.md`, the host context every contract call carries (`host-context/CONTEXT.md`) |
 | [`schemas/AGENTS.md`](./schemas/AGENTS.md) | The published schema tree: mirrors `schemas.nimblebrain.ai`, every file authored or emitted with `--check`, `/<thing>/v<major>/` paths, runtime validation reads from here |
 | [`src/plugins/AGENTS.md`](./src/plugins/AGENTS.md) | One manifest format for catalog and system plugins, the one reader, the additive published extension (`emit:plugin-extension`, `check:plugin-extension`), system as an operator decision, the contract registry, the boot check |
 | [`src/platform/AGENTS.md`](./src/platform/AGENTS.md) | Authoring platform apps and their tools: MCP-native sources, strict input schemas, update tools as patches where `null` clears, named output types, `ui://` MIME type |
@@ -108,6 +108,8 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`web/AGENTS.md`](./web/AGENTS.md) | Web shell: gating workspace writes, forms that save as they change and notices, shell rules, chat panel workspace scope, main-area views |
 | [`test/conformance/AGENTS.md`](./test/conformance/AGENTS.md) | The MCP conformance suite against `/mcp/<wsId>`: what it measures, the per-version baselines, the pin, where it runs in CI |
 | [`web/src/bridge/AGENTS.md`](./web/src/bridge/AGENTS.md) | MCP App Bridge rules: iframe scoping, handshake gate, notification relay, host capabilities |
+| [`packages/server-sdk/AGENTS.md`](./packages/server-sdk/AGENTS.md) | The TypeScript server SDK, counterpart of `nimblebrain-server-sdk` (Python): reading the host context, transport-verified dimensions, tool errors, the principal rule, reading a contract document; no dependencies, the contract document decides |
+| [`packages/conversations/AGENTS.md`](./packages/conversations/AGENTS.md) | The built-in conversations plugin: never imports the kernel, call order, context per transport, filesystem layout, `seq`, cursors, the screen, its conformance and parity tests |
 | [`packages/cli/AGENTS.md`](./packages/cli/AGENTS.md) | The `nimblebrain` CLI (`npx nimblebrain`): setup and running, plus a thin client of the local instance's API (`mcp add`), Node 20 with no dependencies, the `{ok, error, fix}` JSON contract, the model key never in output, never touching an install it did not make |
 
 ## Conventions
@@ -183,6 +185,11 @@ src/
 ├── cli/           Process entry: the serve HTTP API server (dev tooling is in scripts/)
 └── files/         File context extraction
 web/               Vite + React + TypeScript SPA (separate package.json)
+packages/
+├── server-sdk/    The TypeScript server SDK: host context, tool errors, the principal rule (see server-sdk/AGENTS.md)
+├── conversations/ The built-in conversations plugin: one MCP server implementing the contract on the local filesystem (see conversations/AGENTS.md)
+├── cli/           The `nimblebrain` CLI (see cli/AGENTS.md)
+└── server-sdk-py/ The Python Server SDK
 ```
 
 ## Key Entry Points

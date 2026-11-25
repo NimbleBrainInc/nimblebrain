@@ -14,27 +14,27 @@
  * Modes.
  *   --server <url>          the implementation's MCP endpoint. Without --public-only
  *                           every tool is checked, public and private, under several
- *                           scopes and both principals; --carriage must be headers or
- *                           meta. An implementation is conformant when this passes.
+ *                           scopes and both principals; --carriage must be meta. An
+ *                           implementation is conformant when this passes.
  *   --public-only           check only the public tools, as a person, and that no
  *                           private tool is listed or answers a call. This is how a
  *                           host's agent-facing surface (its /mcp/<wsId> door) is
  *                           checked: private tools must be absent there.
  *
  * Transport options. These say how this runner reaches an implementation; they
- * are not part of the contract (CONTRACT.md §3: scope and principal are carried
- * by the call's authenticated context, and how is the transport's business).
- *   --header <k=v>          an extra header on every request (repeatable)
+ * are not part of the contract. Scope and principal are the host context
+ * (contracts/host-context/CONTEXT.md), which this runner states as the host does.
+ *   --header <k=v>          an extra header on every request (repeatable), such as the
+ *                           host's credential for an HTTP server
  *   --bearer-env <VAR>      send `Authorization: Bearer $VAR`; the value is never printed
  *   --carriage <c>          how this runner states each call's scope and principal:
  *                             none     the connection itself fixes both (a URL and a
  *                                      credential, such as a runtime's /mcp/<wsId>,
  *                                      whose principal is a person); the default. Cases
  *                                      that need a second scope skip. --public-only only.
- *                             headers  x-nb-workspace-id / x-nb-owner-id /
- *                                      x-nb-conversation-id / x-nb-principal headers
- *                             meta     params._meta["ai.nimblebrain/scope"] =
- *                                      { workspaceId, ownerId, conversationId?, principal }
+ *                             meta     the host context on each call,
+ *                                      params._meta["ai.nimblebrain/context"] =
+ *                                      { principal, workspaceId?, ownerId?, conversationId? }
  *   --workspace <id>        the scope's workspace (required unless carriage is none)
  *   --owner <id>            the scope's owner (required unless carriage is none)
  *   --protocol-version <v>  pin this MCP revision instead of negotiating
@@ -61,7 +61,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 
 // ── Options and results ──────────────────────────────────────────────────
 
-export type Carriage = "none" | "headers" | "meta";
+export type Carriage = "none" | "meta";
 export type Principal = "host" | "person";
 
 export interface RunnerOptions {
@@ -95,7 +95,7 @@ const CONTRACT_PATH = resolve(
   import.meta.dir,
   "../../../schemas/contracts/conversations/v1/contract.json",
 );
-const SCOPE_META_KEY = "ai.nimblebrain/scope";
+const HOST_CONTEXT_META_KEY = "ai.nimblebrain/context";
 const UI_URI = "ui://conversations/browser";
 const MCP_APP_MIME = "text/html;profile=mcp-app";
 const MODEL = "anthropic:claude-sonnet-5-5";
@@ -221,20 +221,10 @@ interface Conn {
   close(): Promise<void>;
 }
 
-function contextHeaders(carriage: Carriage, ctx: Context): Record<string, string> {
-  if (carriage !== "headers") return {};
-  const h: Record<string, string> = {};
-  if (ctx.workspace) h["x-nb-workspace-id"] = ctx.workspace;
-  if (ctx.owner) h["x-nb-owner-id"] = ctx.owner;
-  if (ctx.conversation) h["x-nb-conversation-id"] = ctx.conversation;
-  if (ctx.principal) h["x-nb-principal"] = ctx.principal;
-  return h;
-}
-
 function contextMeta(carriage: Carriage, ctx: Context): Record<string, unknown> | undefined {
   if (carriage !== "meta") return undefined;
   return {
-    [SCOPE_META_KEY]: {
+    [HOST_CONTEXT_META_KEY]: {
       ...(ctx.workspace ? { workspaceId: ctx.workspace } : {}),
       ...(ctx.owner ? { ownerId: ctx.owner } : {}),
       ...(ctx.conversation ? { conversationId: ctx.conversation } : {}),
@@ -246,7 +236,7 @@ function contextMeta(carriage: Carriage, ctx: Context): Record<string, unknown> 
 async function connect(opts: RunnerOptions, ctx: Context): Promise<Conn> {
   const carriage = opts.carriage ?? "none";
   const prefix = opts.toolPrefix ?? "";
-  const headers = { ...(opts.headers ?? {}), ...contextHeaders(carriage, ctx) };
+  const headers = opts.headers ?? {};
   const meta = contextMeta(carriage, ctx);
   const client = new Client(
     { name: "conversations-contract-conformance", version: "1.0.0" },
@@ -899,8 +889,8 @@ export async function runConformance(opts: RunnerOptions): Promise<CaseResult[]>
   }
   if (!opts.publicOnly && carriage === "none") {
     throw new Error(
-      "the whole contract states several scopes and both principals: use --carriage headers " +
-        "or meta, or check a host's door with --public-only",
+      "the whole contract states several scopes and both principals: use --carriage meta, " +
+        "or check a host's door with --public-only",
     );
   }
   const results: CaseResult[] = [];
@@ -930,8 +920,8 @@ function parseArgs(argv: string[]): RunnerOptions {
     headers.authorization = `Bearer ${token}`;
   }
   const carriage = one("carriage") ?? "none";
-  if (carriage !== "none" && carriage !== "headers" && carriage !== "meta") {
-    throw new Error(`--carriage must be none, headers or meta, got ${carriage}`);
+  if (carriage !== "none" && carriage !== "meta") {
+    throw new Error(`--carriage must be none or meta, got ${carriage}`);
   }
   return {
     server: one("server"),

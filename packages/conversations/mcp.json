@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "conversations": {
+      "type": "stdio",
+      "command": "./bin/nb-conversations",
+      "args": ["--data-dir", "${PLUGIN_DATA}"]
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@nimblebrain/conversations",
+  "version": "0.1.0",
+  "description": "The conversations plugin (Agent Plugins 1.0): one MCP server implementing ai.nimblebrain.conversations on the local filesystem.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "nb-conversations": "bin/nb-conversations"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.3.0",
+    "ajv": "^8.18.0"
+  },
+  "scripts": {
+    "start": "bun --no-env-file src/main.ts"
+  }
+}

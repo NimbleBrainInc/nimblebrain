@@ -1,0 +1,11 @@
+{
+  "name": "@nimblebrain/server-sdk",
+  "version": "0.1.0",
+  "description": "The TypeScript server SDK for NimbleBrain plugin servers: reading the host context, contract tool errors, the principal rule, and reading a contract document.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

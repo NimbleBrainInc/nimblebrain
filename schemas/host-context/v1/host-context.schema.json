@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/host-context/v1/host-context.schema.json",
+  "title": "NimbleBrain host context",
+  "description": "The authenticated context a NimbleBrain host stamps on every request it sends to a plugin server, at params._meta[\"ai.nimblebrain/context\"]: who is calling and the scope the call is walled to. The host sets it and overwrites any value a caller supplied. A server believes it only from an authenticated host transport. A value that fails this schema is no context: the call names no principal, so it is not host, and has no scope. Normative rules: contracts/host-context/CONTEXT.md in the NimbleBrain repository.",
+  "type": "object",
+  "required": ["principal"],
+  "properties": {
+    "principal": {
+      "description": "Who is calling: host, the host's own code, or person, a user directly or through an agent or an app.",
+      "type": "string",
+      "enum": ["host", "person"]
+    },
+    "workspaceId": {
+      "description": "The workspace the call is walled to. Absent when the call is made outside any workspace.",
+      "type": "string",
+      "minLength": 1
+    },
+    "ownerId": {
+      "description": "The verified identity whose records the call reads and writes. Absent when no identity is in scope.",
+      "type": "string",
+      "minLength": 1
+    },
+    "conversationId": {
+      "description": "The conversation the call is made inside, when it is made during a chat turn. Absent outside a chat.",
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
