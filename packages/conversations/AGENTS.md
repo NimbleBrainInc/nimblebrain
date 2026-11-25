@@ -52,6 +52,11 @@ with one MCP server, on the local filesystem. How to run it standalone is in `RE
 - **`seq` is position:** the place of an event among the lines after line 1 that are objects
   with a string `ts` and `type`. Lines are only appended, so a `seq` never changes and has no
   gaps. A torn line is no event; the next append starts on a new line.
+- **A projection never makes a raw operation fail.** Event payloads are opaque, so every
+  projection (`display.ts`, the scan's summary, search) reads each field as the shape it
+  expects and skips anything else. An event the summary cannot fold still counts for `seq`;
+  `events`, `append_events`, `delete` and `delete_workspace` never depend on a projection, and
+  a public read leaves out what it could not project.
 - **One process owns a data directory.** Writes to one conversation are serialized in-process;
   a batch is one append. Two processes writing one directory are not serialized, and a crash
   mid-append can leave the batch's complete lines written and a torn last line.
@@ -75,5 +80,7 @@ with one MCP server, on the local filesystem. How to run it standalone is in `RE
   `no private tool is listed`, which holds a host's agent-facing door, not an implementation.
 - `test/unit/plugins/conversations-plugin-parity.test.ts` compares every public read with the
   built-in app's for the same files and for the same events.
+- `test/unit/plugins/conversations-plugin-payloads.test.ts` appends schema-valid payloads no
+  projection expects and checks every raw operation and public read still answers.
 - `test/unit/plugins/builtin-conversations.test.ts` resolves this directory as a builtin system
   plugin and checks its contract binding.

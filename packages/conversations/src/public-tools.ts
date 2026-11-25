@@ -5,7 +5,12 @@
  */
 
 import { ToolCallError } from "../../plugin-sdk/src/index.ts";
-import { type DisplayMessage, type DisplayToolCall, projectConversation } from "./display.ts";
+import {
+  type DisplayMessage,
+  type DisplayToolCall,
+  isRecord,
+  projectConversation,
+} from "./display.ts";
 import { CorruptConversationError, summaryOf } from "./scan.ts";
 import {
   ConversationNotFoundError,
@@ -274,12 +279,13 @@ function extractSnippet(text: string, at: number, length: number): string {
 /** A line's message text: its `content` text parts, or the raw line when it has none. */
 function lineText(line: string): string {
   try {
-    const msg = JSON.parse(line) as { content?: unknown };
-    if (typeof msg.content === "string") return msg.content;
-    if (Array.isArray(msg.content)) {
-      return msg.content
-        .filter((b: { type?: string; text?: string }) => b.type === "text" && b.text)
-        .map((b: { text: string }) => b.text)
+    const msg: unknown = JSON.parse(line);
+    const content = isRecord(msg) ? msg.content : undefined;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content
+        .filter(isRecord)
+        .flatMap((b) => (b.type === "text" && typeof b.text === "string" && b.text ? [b.text] : []))
         .join(" ");
     }
   } catch {

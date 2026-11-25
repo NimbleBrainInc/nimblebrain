@@ -110,7 +110,7 @@ function foldEvent(scan: Scan, parsed: Record<string, unknown>): void {
   if (parsed.type === "user.message") {
     scan.userMessages++;
     if (!scan.preview && Array.isArray(parsed.content)) {
-      scan.preview = extractText(parsed.content as Parameters<typeof extractText>[0]);
+      scan.preview = extractText(parsed.content);
     }
   } else if (parsed.type === "run.start" && runId) {
     scan.runStarts.push(runId);
@@ -130,9 +130,15 @@ function foldLine(scan: Scan, line: string): boolean {
     return false;
   }
   if (!isStoredEvent(parsed)) return true;
+  // The event counts whatever its payload: a summary that cannot read it leaves it out,
+  // and never fails the scan that `seq`, `append_events` and `delete` stand on.
   scan.events++;
-  foldEvent(scan, parsed as Record<string, unknown>);
-  if (parsed.ts && parsed.type) accumulateEventMetrics(parsed as ReadEvent, scan.metrics);
+  try {
+    foldEvent(scan, parsed as Record<string, unknown>);
+    if (parsed.ts && parsed.type) accumulateEventMetrics(parsed as ReadEvent, scan.metrics);
+  } catch {
+    // projection skipped for this event
+  }
   return true;
 }
 

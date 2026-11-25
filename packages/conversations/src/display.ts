@@ -79,13 +79,8 @@ export interface DisplayMessage {
 
 // ── Stored events, as this projection reads them ───────────────────────────
 
-interface ContentPart {
-  type: string;
-  text?: string;
-  toolCallId?: string;
-  toolName?: string;
-  input?: unknown;
-}
+/** One part of a stored content list: opaque, read field by field. */
+type ContentPart = Record<string, unknown>;
 
 interface Usage {
   inputTokens: number;
@@ -197,11 +192,12 @@ const isSkillsLoaded = is<SkillsLoadedEvent>("skills.loaded");
 const isRunDone = is<RunDoneEvent>("run.done");
 const isRunError = is<RunErrorEvent>("run.error");
 
-/** An event line as this projection reads it: JSON with a non-empty `ts` and `type`. */
+/** An event line as this projection reads it: JSON with a non-empty string `ts` and `type`. */
 export function parseEventLine(line: string): ReadEvent | null {
   try {
     const parsed = JSON.parse(line) as { ts?: unknown; type?: unknown };
-    if (!parsed || typeof parsed !== "object") return null;
+    if (!isRecord(parsed)) return null;
+    if (typeof parsed.ts !== "string" || typeof parsed.type !== "string") return null;
     if (!parsed.ts || !parsed.type) return null;
     return parsed as ReadEvent;
   } catch {
@@ -209,11 +205,23 @@ export function parseEventLine(line: string): ReadEvent | null {
   }
 }
 
-export function extractText(content: ContentPart[] | undefined): string {
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((p) => p.type === "text" && p.text)
-    .map((p) => p.text as string)
+// ── Reading opaque payloads ────────────────────────────────────────────────
+// Event payloads are opaque: every field a projection reads may be any JSON value. These
+// read a field as the shape a projection expects, and as absent when it is anything else.
+
+export function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+/** A content list's parts that are objects; anything else in it, or no list, is none. */
+const partsOf = (content: unknown): ContentPart[] =>
+  Array.isArray(content) ? content.filter(isRecord) : [];
+const usageOf = (usage: unknown): Partial<Usage> => (isRecord(usage) ? usage : {});
+
+export function extractText(content: unknown): string {
+  return partsOf(content)
+    .map((p) => (p.type === "text" && typeof p.text === "string" ? p.text : ""))
     .join("");
 }
 
@@ -239,14 +247,12 @@ export const emptyMetrics = (): DerivedMetrics => ({
  */
 export function accumulateEventMetrics(evt: ReadEvent, acc: DerivedMetrics): void {
   acc.lastEventTs = evt.ts;
-  if (isLlmResponse(evt)) {
-    acc.totalInputTokens += evt.usage?.inputTokens ?? 0;
-    acc.totalOutputTokens += evt.usage?.outputTokens ?? 0;
-    acc.lastModel = evt.model;
-  } else if (isAuxUsage(evt)) {
-    acc.totalInputTokens += evt.usage?.inputTokens ?? 0;
-    acc.totalOutputTokens += evt.usage?.outputTokens ?? 0;
+  if (isLlmResponse(evt) || isAuxUsage(evt)) {
+    const usage = usageOf(evt.usage);
+    acc.totalInputTokens += num(usage.inputTokens);
+    acc.totalOutputTokens += num(usage.outputTokens);
   }
+  if (isLlmResponse(evt)) acc.lastModel = str(evt.model) ?? acc.lastModel;
 }
 
 // ── Reconstruction ─────────────────────────────────────────────────────────
@@ -258,8 +264,8 @@ function buildUserMessage(evt: UserMessageEvent): DisplayMessage {
     content: text,
     blocks: text ? [{ type: "text", text }] : [],
     timestamp: evt.ts,
-    ...(evt.userId ? { userId: evt.userId } : {}),
-    ...(evt.files && evt.files.length > 0 ? { files: evt.files } : {}),
+    ...(str(evt.userId) ? { userId: evt.userId } : {}),
+    ...(Array.isArray(evt.files) && evt.files.length > 0 ? { files: evt.files } : {}),
     ...(evt.pluginRequestAnswer ? { pluginRequestAnswer: evt.pluginRequestAnswer } : {}),
   };
 }
@@ -274,16 +280,20 @@ function reconstruct(events: ReadEvent[]): DisplayMessage[] {
   const messages: DisplayMessage[] = [];
   for (let i = 0; i < events.length; ) {
     const evt = events[i]!;
-    if (isUserMessage(evt)) {
-      messages.push(buildUserMessage(evt));
-      i++;
-    } else if (isRunStart(evt)) {
-      const [msg, next] = collectRun(events, i, evt.runId);
-      if (msg) messages.push(msg);
-      i = next;
-    } else {
-      i++;
+    // A message that cannot be projected is left out; the events after it still are.
+    try {
+      if (isUserMessage(evt)) {
+        messages.push(buildUserMessage(evt));
+      } else if (isRunStart(evt)) {
+        const [msg, next] = collectRun(events, i, evt.runId);
+        if (msg) messages.push(msg);
+        i = next;
+        continue;
+      }
+    } catch {
+      // skipped: the next event is read on its own
     }
+    i++;
   }
   return messages;
 }
@@ -301,16 +311,17 @@ interface RunScan {
 }
 
 function projectSkillsLoaded(evt: SkillsLoadedEvent): DisplaySkillsContext | undefined {
-  const skills: DisplaySkill[] = (evt.skills ?? [])
+  const entries = Array.isArray(evt.skills) ? evt.skills.filter(isRecord) : [];
+  const skills: DisplaySkill[] = entries
     .filter(
       (s): s is { id: string; name: string } & NonNullable<typeof s> =>
-        typeof s?.id === "string" && typeof s.name === "string",
+        typeof s.id === "string" && typeof s.name === "string",
     )
     .map((s) => ({
       id: s.id,
       name: s.name,
-      ...(s.connector ? { connector: s.connector } : {}),
-      scope: s.scope ?? "org",
+      ...(typeof s.connector === "string" ? { connector: s.connector } : {}),
+      scope: str(s.scope) ?? "org",
       tokens: typeof s.tokens === "number" ? s.tokens : 0,
       loadedBy: typeof s.loadedBy === "string" ? s.loadedBy : "",
       reason: typeof s.reason === "string" ? s.reason : "",
@@ -329,7 +340,7 @@ type RunBoundary =
 
 function classifyRunBoundary(inner: ReadEvent, runId: string): RunBoundary | null {
   if (isRunDone(inner) && inner.runId === runId) {
-    return { kind: "terminal", endTs: inner.ts, stopReason: inner.stopReason };
+    return { kind: "terminal", endTs: inner.ts, stopReason: str(inner.stopReason) };
   }
   if (isRunError(inner) && inner.runId === runId) {
     return { kind: "terminal", endTs: inner.ts, stopReason: "error" };
@@ -343,8 +354,8 @@ function collectRunContent(inner: ReadEvent, runId: string, into: RunScan): void
   if (isLlmResponse(inner) && inner.runId === runId) {
     into.llmResponses.push(inner);
   } else if (isToolStart(inner) && inner.runId === runId) {
-    if (inner.input !== undefined) into.toolInputs.set(inner.id, inner.input);
-  } else if (isToolDone(inner) && inner.runId === runId) {
+    if (inner.input !== undefined && str(inner.id)) into.toolInputs.set(inner.id, inner.input);
+  } else if (isToolDone(inner) && inner.runId === runId && str(inner.id)) {
     into.toolDones.set(inner.id, inner);
   } else if (isSkillsLoaded(inner) && inner.runId === runId) {
     into.skillsLoaded = projectSkillsLoaded(inner);
@@ -408,24 +419,24 @@ function parseToolInput(input: unknown): Record<string, unknown> {
 }
 
 function buildToolCall(tc: ContentPart, scan: RunScan): DisplayToolCall {
-  const toolCallId = tc.toolCallId ?? "";
+  const toolCallId = str(tc.toolCallId) ?? "";
   const done = scan.toolDones.get(toolCallId);
   const input = parseToolInput(scan.toolInputs.get(toolCallId) ?? tc.input);
-  const ok = done?.ok ?? true;
-  const name = tc.toolName ?? "";
+  const ok = typeof done?.ok === "boolean" ? done.ok : true;
+  const name = str(tc.toolName) ?? "";
   const appName = extractAppName(name);
-  const text = done ? done.output : "";
+  const text = str(done?.output) ?? "";
   return {
     id: toolCallId,
     name,
     ...(appName ? { appName } : {}),
     status: ok ? "done" : "error",
     ok,
-    ms: done?.ms ?? 0,
+    ms: num(done?.ms),
     input,
     result: { content: text ? [{ type: "text", text }] : [], isError: !ok },
-    ...(done?.resourceUri ? { resourceUri: done.resourceUri } : {}),
-    ...(done?.resourceLinks && done.resourceLinks.length > 0
+    ...(str(done?.resourceUri) ? { resourceUri: done?.resourceUri } : {}),
+    ...(Array.isArray(done?.resourceLinks) && done.resourceLinks.length > 0
       ? { resourceLinks: done.resourceLinks }
       : {}),
   };
@@ -435,10 +446,10 @@ function buildRunBlocks(scan: RunScan): { blocks: DisplayBlock[]; toolCalls: Dis
   const blocks: DisplayBlock[] = [];
   const toolCalls: DisplayToolCall[] = [];
   for (const llm of scan.llmResponses) {
-    const parts: ContentPart[] = Array.isArray(llm.content) ? llm.content : [];
+    const parts = partsOf(llm.content);
     const reasoning = parts
       .filter((c) => c.type === "reasoning")
-      .map((c) => c.text ?? "")
+      .map((c) => str(c.text) ?? "")
       .join("");
     if (reasoning) blocks.push({ type: "reasoning", text: reasoning });
     const text = extractText(parts);
@@ -446,7 +457,7 @@ function buildRunBlocks(scan: RunScan): { blocks: DisplayBlock[]; toolCalls: Dis
     // A call held for its tool's guidance ran nothing; its re-issue is the one shown.
     const calls = parts
       .filter(
-        (c) => c.type === "tool-call" && scan.toolDones.get(c.toolCallId ?? "")?.held !== true,
+        (c) => c.type === "tool-call" && scan.toolDones.get(str(c.toolCallId) ?? "")?.held !== true,
       )
       .map((tc) => buildToolCall(tc, scan));
     if (calls.length > 0) {
@@ -466,14 +477,14 @@ function sumRunUsage(llmResponses: LlmResponseEvent[]): DisplayUsage {
   let llmMs = 0;
   let model = "";
   for (const llm of llmResponses) {
-    const usage: Partial<Usage> = llm.usage ?? {};
-    inputTokens += usage.inputTokens ?? 0;
-    outputTokens += usage.outputTokens ?? 0;
-    cacheRead += Math.max(usage.cacheReadTokens ?? 0, 0);
-    cacheWrite += Math.max(usage.cacheWriteTokens ?? 0, 0);
-    reasoning += Math.max(usage.reasoningTokens ?? 0, 0);
-    llmMs += llm.llmMs ?? 0;
-    model = llm.model;
+    const usage = usageOf(llm.usage);
+    inputTokens += num(usage.inputTokens);
+    outputTokens += num(usage.outputTokens);
+    cacheRead += Math.max(num(usage.cacheReadTokens), 0);
+    cacheWrite += Math.max(num(usage.cacheWriteTokens), 0);
+    reasoning += Math.max(num(usage.reasoningTokens), 0);
+    llmMs += num(llm.llmMs);
+    model = str(llm.model) ?? model;
   }
   return {
     inputTokens,
@@ -596,7 +607,13 @@ export function projectConversation(
   const events = eventLines.map(parseEventLine).filter((e): e is ReadEvent => e !== null);
   const messages = reconstruct(events);
   const metrics = emptyMetrics();
-  for (const e of events) accumulateEventMetrics(e, metrics);
+  for (const e of events) {
+    try {
+      accumulateEventMetrics(e, metrics);
+    } catch {
+      // an event whose totals cannot be read adds none
+    }
+  }
   if (!runActive) settleTrailingRun(messages);
   return {
     meta: metaOf(header, metrics, titleOf(events)),
