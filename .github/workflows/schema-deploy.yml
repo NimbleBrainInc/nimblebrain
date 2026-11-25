@@ -48,7 +48,7 @@ env:
   BUCKET: schemas.nimblebrain.ai
   # Short, revalidating TTL — NOT immutable. A `v<major>/` path takes additive
   # minors in place (new optional fields), so consumers must be able to pick
-  # up changes; immutable caching here is what stranded a schema before.
+  # up changes.
   CACHE_CONTROL: 'public, max-age=300, must-revalidate'
   # `<legacy key> <file under schemas/>`, one per line. Existing configs and
   # manifests point at these keys, so each is served as a copy of its file.
