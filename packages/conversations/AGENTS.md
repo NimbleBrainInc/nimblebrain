@@ -1,0 +1,79 @@
+# Conversations plugin
+
+Scope: `packages/conversations/`. The built-in implementation of the conversations contract
+(`contracts/conversations/CONTRACT.md`, `ai.nimblebrain.conversations` 1.0): an Agent Plugin
+with one MCP server, on the local filesystem. How to run it standalone is in `README.md`.
+
+## Boundaries
+
+- **Never import the kernel.** This package imports only `packages/plugin-sdk` and reads the
+  contract document (`schemas/contracts/conversations/v1/contract.json`). Biome refuses any
+  other import that leaves the package. A plugin depends on contracts; the kernel never imports
+  a plugin, and a plugin never imports the kernel.
+- **The contract document is the interface.** `tools/list` serves each tool's `$defs` schemas
+  from the document unchanged, inputs are validated against them, and visibility comes from it.
+  Changing a tool's shape is a contract change (`contracts/AGENTS.md`), never an edit here.
+- **`plugin.json` and `mcp.json` follow Agent Plugins 1.0.0.** NimbleBrain's declaration is only
+  `extensions["ai.nimblebrain"].implements`. Trust (`system`), presence and location are the
+  operator's (`nimblebrain.json` `plugins`); nothing here sets them. `src/plugins` resolves this
+  directory for `"source": "builtin"`.
+
+## Calls
+
+- **Every `tools/call` is decided in one order** (`src/server.ts`): unknown tool
+  (`unknown_tool`), private tool by anyone but `host` (`forbidden`), arguments against the input
+  schema (`invalid_input`), workspace and owner present (`scope_missing`), then the tool.
+- **The context is the transport's** (`src/main.ts`). stdio: `params._meta["ai.nimblebrain/scope"]`,
+  believed because only the host that started the process holds its pipe. HTTP: every request
+  presents `Authorization: Bearer $NB_CONVERSATIONS_TOKEN` or is refused 401, then the context is
+  `_meta`, else the `x-nb-*` headers. The HTTP door is the host's alone: whoever holds the token
+  states scope and principal.
+- **Errors are `{ code, error }`** from the contract's lists. A public error's text begins with
+  its contract prefix. A public failure with no contract code is a JSON-RPC error.
+- **`active` and a trailing open run.** Whether a reply is generating is the host's to know. A
+  call made inside a conversation (`conversationId` in its context) is made during that
+  conversation's turn, so that conversation reads `active: true` and its trailing run
+  `pending`; every other reads `false` and an unterminated trailing run reads `interrupted`.
+  The host overlays the rest.
+
+## Storage
+
+- **Layout:** `<data>/workspaces/<workspaceId>/conversations/<ownerId>/<conversationId>.jsonl`,
+  line 1 the header `create` wrote, every later line one event as `append_events` received it.
+  It is the runtime's own conversation layout under its work directory, so the plugin given a
+  runtime's work directory reads and writes the same files (`src/store.ts`).
+- **The path is the scope.** A call opens only its scope's owner partition of its scope's
+  workspace. Scope ids must each be one path segment, or the call has no scope. A file whose
+  header names another owner or id reads as absent.
+- **A workspace exists when its directory does, and the plugin never creates one.** `create`
+  makes `conversations/<ownerId>/` one level at a time inside an existing workspace directory,
+  so a write after the workspace is removed fails `workspace_not_found` instead of bringing it
+  back. `delete_workspace` removes the conversation files and leaves the workspace directory.
+- **`seq` is position:** the place of an event among the lines after line 1 that are objects
+  with a string `ts` and `type`. Lines are only appended, so a `seq` never changes and has no
+  gaps. A torn line is no event; the next append starts on a new line.
+- **One process owns a data directory.** Writes to one conversation are serialized in-process;
+  a batch is one append. Two processes writing one directory are not serialized, and a crash
+  mid-append can leave the batch's complete lines written and a torn last line.
+- **Lists read headers through a scan cache** (`src/scan.ts`) that resumes each file where the
+  last read stopped, so a list during a long turn reads only what was appended.
+- **Cursors are positions:** the last row's sort key and id, base64url. The next page is every
+  row after that position in (sort key, id) order, so a conversation created between pages
+  never shifts another.
+
+## The screen
+
+- `ui://conversations/browser` (`text/html;profile=mcp-app`) serves the built HTML at
+  `--screen <file>`, by default `ui/index.html` in this directory, and a placeholder page when
+  that file is absent. The screen's source is not in this package.
+
+## Tests
+
+- `test/integration/conversations-plugin-conformance.test.ts` runs the contract's runner against
+  `bin/nb-conversations --http` in full mode (context in headers and in `_meta`) and public-only
+  mode, and checks the 401 and stdio. Full mode passes every case; public-only fails only
+  `no private tool is listed`, which holds a host's agent-facing door, not an implementation.
+- `test/unit/plugins/conversations-plugin-parity.test.ts` compares every public read with the
+  built-in app's for the same files and for the same events.
+- `test/unit/plugins/builtin-conversations.test.ts` resolves this directory as a builtin system
+  plugin and checks its contract binding.

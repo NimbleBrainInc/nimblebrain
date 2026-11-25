@@ -1,0 +1,5 @@
+#!/usr/bin/env -S bun --no-env-file
+// The plugin's server command (mcp.json): run the server from this package's source.
+import { main } from "../src/main.ts";
+
+await main(process.argv.slice(2));

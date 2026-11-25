@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "conversations",
+  "version": "0.1.0",
+  "description": "Chat history: one MCP server implementing the ai.nimblebrain.conversations contract on the local filesystem.",
+  "author": { "name": "NimbleBrain", "url": "https://nimblebrain.ai" },
+  "license": "Apache-2.0",
+  "keywords": ["conversations", "chat", "history"],
+  "extensions": {
+    "ai.nimblebrain": {
+      "$schema": "https://schemas.nimblebrain.ai/plugin-extension/v1/plugin-extension.schema.json",
+      "implements": [
+        { "contract": "ai.nimblebrain.conversations", "version": "1.0", "server": "conversations" }
+      ]
+    }
+  }
+}
