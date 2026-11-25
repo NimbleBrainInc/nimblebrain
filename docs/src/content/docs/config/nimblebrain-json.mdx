@@ -475,6 +475,8 @@ Run `platform.replicas: 1`. More than one replica is **not supported**: the runt
 - **State goes stale between pods.** A connector installed or removed on one pod, a deactivated user, a changed model config, and live events (including an in-flight chat turn) stay on the pod that saw them.
 - **Sticky routing does not fix this.** Load-balancer cookie affinity pins a browser, not an MCP client or a webhook sender.
 
+A second runtime process on the same work directory fails at boot: the work queue at `{workDir}/queue`, which holds scheduled and Run now task runs, is locked to one process.
+
 ## logging
 
 ```json
@@ -672,7 +674,7 @@ Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight an
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `maxConcurrentRuns` | `integer` | `2` | Unattended runs in flight at once: scheduled, Run now, and event runs, and any other run started without a person in the loop. Chat turns do not take a slot. Range: 1--100. |
-| `maxQueuedRuns` | `integer` | `50` | Run now and event runs held waiting for a slot. A freed slot goes to the waiting run whose workspace holds the fewest slots, oldest first among equals. Beyond it a run is refused and recorded as skipped. `0` refuses at the limit. Range: 0--1000. |
+| `maxQueuedRuns` | `integer` | `50` | Runs held waiting for a slot, in each of two queues: Run now runs on the work queue, and event runs in memory. A freed slot goes first to a waiting event run, to the one whose workspace holds the fewest slots, oldest first among equals. Beyond it a run is refused and recorded as skipped. `0` refuses at the limit. Range: 0--1000. |
 | `maxRunIterations` | `integer` | `50` | Ceiling on one run's agentic iterations. Range: 1--50. |
 | `maxRunInputTokens` | `integer` | none | Ceiling on one run's input tokens, summed over every model call. Unset, there is no ceiling. Range: 1,000--100,000,000. |
 | `maxRunDurationMs` | `integer` (ms) | `600000` | Ceiling on one run's wall-clock time. Range: 10,000--600,000. A chat turn on an external runtime is held to it too, since its model credential lasts no longer. |

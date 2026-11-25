@@ -400,6 +400,9 @@ export async function createTasksSource(
     // The runtime's run admission: task runs share its slots and queue
     // with every other unattended run.
     admission: runtime.getRunAdmission(),
+    // The runtime's work queue: the timer and Run now enqueue to it, and the
+    // scheduler's worker claims from it.
+    queue: runtime.getWorkQueue(),
     onRunRecorded: (owner) => runtime.announceIdentitySourceChange("tasks", owner),
     assess: (task, run, result) => assessRun(task, run, result, { port: judgePort }),
     notifyPoorResult: (task, run) => notifyPoorResult(runtime, task, run),

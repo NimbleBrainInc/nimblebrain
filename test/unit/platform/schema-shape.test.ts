@@ -41,9 +41,11 @@ import { createNotificationsSource } from "../../../src/platform/notifications/s
 import { createSkillsSource } from "../../../src/platform/skills/source.ts";
 import { createTasksSource } from "../../../src/platform/tasks/source.ts";
 import { createUsageSource } from "../../../src/platform/usage/source.ts";
+import type { WorkQueue } from "../../../src/providers/queue/types.ts";
 import { createRunAdmission } from "../../../src/runtime/admission.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import { createSpendBalances } from "../../../src/runtime/spend.ts";
+import { openWorkQueue } from "../../../src/runtime/work-queue.ts";
 import { createCoreToolDefs } from "../../../src/tools/core-source.ts";
 import { defineInProcessApp } from "../../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
@@ -56,6 +58,7 @@ import type { McpSource } from "../../../src/tools/mcp-source.ts";
 // reach during construction.
 
 function makeRuntimeStub(workDir: string): unknown {
+  let workQueue: WorkQueue | undefined;
   return {
     getWorkDir: () => workDir,
     getCurrentIdentity: () => null,
@@ -85,6 +88,8 @@ function makeRuntimeStub(workDir: string): unknown {
     getNotificationsPollConfig: () => resolvePollConfig(),
     getTasksConfig: () => resolveTasksConfig(),
     getRunAdmission: () => createRunAdmission(),
+    // The tasks source hands it to its scheduler; one per stub, in its work dir.
+    getWorkQueue: () => (workQueue ??= openWorkQueue(workDir)),
     getSpendBalances: () => createSpendBalances(),
     getMaxIterations: () => 25,
   };

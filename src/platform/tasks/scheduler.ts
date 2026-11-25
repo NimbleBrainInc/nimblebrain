@@ -3,10 +3,14 @@
  *
  * Uses setTimeout-based timer armed to the next-due job (max 60s wake).
  * Evaluates cron expressions via Croner. Handles interval scheduling,
- * per-task concurrency guards, and exponential backoff. How many runs
- * execute at once, and the queue beyond that, belong to the runtime's run
- * admission (`src/runtime/admission.ts`); the scheduler asks it for a slot and
- * renders its answers as run records.
+ * per-task concurrency guards, and exponential backoff.
+ *
+ * Triggering only enqueues (ADR-0076): the timer puts each due occurrence, and
+ * Run now each requested run, on the runtime's work queue. The worker loop here
+ * claims an item when run admission (`src/runtime/admission.ts`) has a free
+ * slot, decides from the task's own records whether it still runs, and runs it
+ * through the door. How many runs execute at once, and fair share between
+ * workspaces, stay admission's.
  *
  * The scheduler does NOT execute runs directly — it delegates to an
  * executor function injected at construction time.
@@ -17,6 +21,7 @@ import { Cron } from "croner";
 import { taskRunsTotal } from "../../api/metrics.ts";
 import { isRetryable } from "../../engine/retry.ts";
 import { log } from "../../observability/log.ts";
+import { type Claim, LeaseLostError, type WorkQueue } from "../../providers/queue/types.ts";
 import {
   type AdmissionLease,
   type AdmissionRefusal,
@@ -25,6 +30,7 @@ import {
   type RunAdmission,
 } from "../../runtime/admission.ts";
 import { runDetached } from "../../runtime/request-context.ts";
+import { openWorkQueue } from "../../runtime/work-queue.ts";
 import { WorkspaceRootMissingError } from "../../workspace/context.ts";
 import { executionOf, isAssessable, retryGuidance } from "./assessment.ts";
 import {
@@ -32,6 +38,7 @@ import {
   loadAllTasks,
   loadTask,
   readRuns,
+  readRunTicket,
   saveIdempotencyKey,
   saveRunResult,
   saveRunTicket,
@@ -111,6 +118,113 @@ const EVENT_DUPLICATE_ANSWER = {
   "Already running": "a previous run of this task is still in flight",
   "Already queued": "a previous run of this task is still queued",
 } as const;
+
+/** The work item kind of a scheduled occurrence: the timer found the task due. */
+export const SCHEDULED_RUN_KIND = "task.run.scheduled";
+
+/** The work item kind of a requested run: Run now (`tasks__run`), or a poor result's retry. */
+export const REQUESTED_RUN_KIND = "task.run.requested";
+
+/** Every kind the worker claims. */
+const RUN_KINDS = [SCHEDULED_RUN_KIND, REQUESTED_RUN_KIND];
+
+/** How long a claim holds before the queue hands its item out again. */
+const WORK_LEASE_MS = 60_000;
+
+/** How often the worker extends the claims it holds, well inside the lease. */
+const WORK_EXTEND_MS = 20_000;
+
+/**
+ * The worker's backstop poll. An enqueue in this process and every run's end
+ * wake it at once; the poll catches what nothing here announces: a slot freed
+ * by another source's run, and an item's retry time coming due.
+ */
+const WORKER_POLL_MS = 5_000;
+
+/** The occurrence of a due task with no `nextRunAt` (an interval's first run). */
+const UNSEEDED_OCCURRENCE = "unseeded";
+
+/**
+ * A scheduled occurrence on the work queue. `runId` is minted at enqueue, so a
+ * claim can tell from the task's file whether the occurrence's run already
+ * started (`scheduledRunInFlight`) or was recorded (`nextRunAt` moved on).
+ */
+interface ScheduledRunItem {
+  workspaceId: string;
+  ownerId: string;
+  taskId: string;
+  runId: string;
+  /** The task's `nextRunAt` when it was found due. */
+  occurrence: string;
+}
+
+/** A requested run on the work queue: everything it was asked with, so it runs after a restart. */
+interface RequestedRunItem {
+  workspaceId: string;
+  ownerId: string;
+  taskId: string;
+  requested: RequestedRun;
+}
+
+/** A scheduled occurrence's idempotency key: the task's identity and the occurrence instant. */
+export function scheduledItemKey(ownerId: string, taskId: string, occurrence: string): string {
+  return JSON.stringify([SCHEDULED_RUN_KIND, ownerId, taskId, occurrence]);
+}
+
+/**
+ * A requested run's idempotency key: the caller's own key scoped by owner and
+ * task, or the run's id when the caller gave none. The queue keeps a key a day;
+ * the run's key record (`saveIdempotencyKey`) stays the lasting one.
+ */
+export function requestedItemKey(ownerId: string, taskId: string, requested: RequestedRun): string {
+  const name =
+    requested.idempotencyKey !== undefined
+      ? { key: requested.idempotencyKey }
+      : { run: requested.runId };
+  return JSON.stringify([REQUESTED_RUN_KIND, ownerId, taskId, name]);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+/** The claimed payload as a scheduled item, or null when it is not one. */
+function scheduledItemOf(payload: unknown): ScheduledRunItem | null {
+  const p = payload as Partial<ScheduledRunItem> | null;
+  return p &&
+    isString(p.workspaceId) &&
+    isString(p.ownerId) &&
+    isString(p.taskId) &&
+    isString(p.runId) &&
+    isString(p.occurrence)
+    ? (p as ScheduledRunItem)
+    : null;
+}
+
+/** The claimed payload as a requested item, or null when it is not one. */
+function requestedItemOf(payload: unknown): RequestedRunItem | null {
+  const p = payload as Partial<RequestedRunItem> | null;
+  return p &&
+    isString(p.workspaceId) &&
+    isString(p.ownerId) &&
+    isString(p.taskId) &&
+    isString(p.requested?.runId) &&
+    isString(p.requested?.requestedAt)
+    ? (p as RequestedRunItem)
+    : null;
+}
+
+/** The request a ticket records, for a run whose request is not in memory. */
+function requestOfTicket(ticket: RunTicket): RequestedRun {
+  const { run } = ticket;
+  return {
+    runId: ticket.runId,
+    requestedAt: ticket.requestedAt,
+    ...(run.input !== undefined ? { input: run.input } : {}),
+    ...(run.idempotencyKey !== undefined ? { idempotencyKey: run.idempotencyKey } : {}),
+    ...(run.retryOf !== undefined ? { retryOf: run.retryOf } : {}),
+  };
+}
 
 /** Patterns that classify an error message as transient. */
 const TRANSIENT_PATTERNS: RegExp[] = [
@@ -246,10 +360,12 @@ export type Executor = (
 /**
  * What a Run now request became, known as soon as it is made.
  *
- * - `started`: a slot was free and the run is in flight.
- * - `queued`: every slot was busy; the run waits in the runtime's run queue
- *   at `position` (its place in arrival order) and starts when a slot frees
- *   and fair share picks it.
+ * - `started`: a slot is free for it (more free slots than runs waiting ahead
+ *   in this process); the worker claims it from the work queue and starts it
+ *   at once.
+ * - `queued`: every slot is taken; the run waits on the work queue at
+ *   `position` (its place among the runs waiting in this process) and starts
+ *   when a slot frees and the worker claims it.
  * - `refused`: the run did not start, and `run` is the skipped record saying
  *   why (already running or queued, the queue is full, the budget is spent,
  *   the scheduler is stopped).
@@ -296,6 +412,13 @@ export interface SchedulerConfig {
    * provenance workspace. Tasks are workspace-owned (the path is the wall).
    */
   workDir: string;
+  /**
+   * The work queue the timer and Run now enqueue to and the worker claims
+   * from: the runtime's (`Runtime.getWorkQueue`). Default: a filesystem queue
+   * at `{workDir}/queue` that the scheduler opens at `start()` and closes at
+   * `stop()`, for a scheduler run without a runtime (tests).
+   */
+  queue?: WorkQueue;
   /**
    * The run admission every run is admitted through: the runtime's
    * (`Runtime.getRunAdmission`), so task runs share its slots and queue
@@ -688,6 +811,7 @@ export function retireOnce(
 ): void {
   auto.enabled = false;
   auto.nextRunAt = undefined;
+  delete auto.onceQueuedAt;
   auto.onceDone = { at: settledAt, outcome };
   auto.disabledAt = new Date(now).toISOString();
   auto.disabledReason = reason;
@@ -700,6 +824,8 @@ export function retireOnce(
  */
 export function onceMissedWhileDown(auto: Task, now: number): boolean {
   if (!auto.enabled || auto.onceDone || !isOnceSchedule(auto.schedule)) return false;
+  // It fired on time and waits on the work queue for a slot: not missed.
+  if (auto.onceQueuedAt !== undefined && auto.onceQueuedAt === auto.schedule?.at) return false;
   const at = new Date(auto.schedule?.at ?? "").getTime();
   return !Number.isNaN(at) && now - at > ONCE_GRACE_MS;
 }
@@ -1064,12 +1190,54 @@ export class Scheduler {
   private readonly executor: Executor;
   private config: SchedulerConfig;
   /**
-   * Slots and the queue Run now and event runs wait in. In memory only:
-   * `stop()` records each of this scheduler's queued runs as skipped, and a
-   * process that dies without stopping loses them with no record. Scheduled
-   * runs never queue (see `considerForDispatch`).
+   * Slots, fair share, and the in-memory queue event and batch runs wait in.
+   * `stop()` records each of this scheduler's runs waiting there as skipped.
+   * Scheduled and requested runs wait on the work queue instead, and the
+   * worker asks admission for a slot only once it has claimed one.
    */
   private readonly admission: RunAdmission;
+
+  /** The work queue; set from `start()` to `stop()`. */
+  private queue: WorkQueue | null = null;
+  /** The queue this scheduler opened itself (no `config.queue`), closed by `stop()`. */
+  private ownQueue: WorkQueue | null = null;
+  /** Who claims, for an operator reading the queue. */
+  private readonly workerId = `tasks-scheduler:${process.pid}`;
+  /**
+   * Items this process enqueued that no claim has taken yet, by idempotency
+   * key, in enqueue order: `queueView` lists them and positions number them.
+   * `runId` is unknown for an item a stopped process enqueued (a repeat
+   * enqueue keeps the first payload). `requested` marks a Run now, which a
+   * second Run now of the task finds as a duplicate.
+   */
+  private readonly unclaimed = new Map<
+    string,
+    { key: string; runId?: string; requested: boolean }
+  >();
+  /**
+   * Task keys whose due occurrence is on the queue and not yet settled, with
+   * that occurrence: the timer neither arms for nor enqueues them again.
+   */
+  private readonly outstanding = new Map<string, string>();
+  /** Claims this worker holds, by item id, with what settling them clears. */
+  private readonly held = new Map<
+    string,
+    { claim: Claim; taskKey: string; occurrence?: string; runId?: string }
+  >();
+  /** The claim token each queued requested run's ticket is written under (see `writeTicket`). */
+  private readonly ticketTokens = new Map<string, number>();
+  /** Callers waiting on a queued requested run's record, by run id. */
+  private readonly waiters = new Map<
+    string,
+    { resolve: (run: TaskRun | Promise<TaskRun>) => void; reject: (err: unknown) => void }
+  >();
+  /** Scheduled runs in flight, which a tick waits for before it re-arms. */
+  private readonly scheduledRuns = new Set<Promise<unknown>>();
+  /** The worker's pass in progress, and whether another was asked for during it. */
+  private pumping: Promise<void> | null = null;
+  private pumpAgain = false;
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private extendTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(executor: Executor, config: SchedulerConfig) {
     this.executor = executor;
@@ -1125,12 +1293,21 @@ export class Scheduler {
    */
   start(): void {
     if (this.running) return;
+    if (this.config.queue) {
+      this.queue = this.config.queue;
+    } else {
+      this.ownQueue = openWorkQueue(this.config.workDir);
+      this.queue = this.ownQueue;
+    }
     this.running = true;
     this.definitions = this.loadAll();
     this.settleInterruptedRuns();
     this.retireOncesMissedWhileDown();
     this.seedNextRunAt();
+    this.pollTimer = runDetached(() => setInterval(() => this.wake(), WORKER_POLL_MS));
+    this.extendTimer = runDetached(() => setInterval(() => this.extendHeld(), WORK_EXTEND_MS));
     this.armTimer();
+    this.wake();
   }
 
   /**
@@ -1143,47 +1320,54 @@ export class Scheduler {
    * retired as `ran`, not judged missed.
    */
   private settleInterruptedRuns(): void {
+    for (const auto of [...this.definitions.values()]) this.settleInterruptedRun(auto);
+  }
+
+  /**
+   * Record the scheduled run `auto`'s mark names as interrupted, unless this
+   * process is carrying it. Also asked by a claim whose earlier holder started
+   * the occurrence's run (see `takeScheduled`).
+   */
+  private settleInterruptedRun(auto: Task): void {
     const now = new Date().toISOString();
-    for (const auto of [...this.definitions.values()]) {
-      const inFlight = auto.scheduledRunInFlight;
-      // A run this process dispatched is still being recorded (a `start()`
-      // after `stop()` on one scheduler), and its own record clears the mark.
-      if (!inFlight || this.scheduledInFlight.has(inFlight.runId)) continue;
-      const { workspaceId: wsId, ownerId } = auto;
-      if (!wsId || !ownerId) continue;
-      // Inside the try with the write: one task's unreadable run index must
-      // not throw out of `start()`, or the mark it leaves fails every boot.
-      try {
-        // A stop between the record's append and the task's save leaves the
-        // record in the index: settle the task from it rather than append another.
-        const recorded = readRuns(this.config.workDir, wsId, ownerId, auto.id).find(
-          (r) => r.id === inFlight.runId,
-        );
-        const run: TaskRun = recorded ?? {
-          id: inFlight.runId,
-          taskId: auto.id,
-          startedAt: inFlight.startedAt,
-          completedAt: now,
-          status: "failure",
-          inputTokens: 0,
-          outputTokens: 0,
-          toolCalls: 0,
-          iterations: 0,
-          error: INTERRUPTED_RUN_ERROR,
-          trigger: "scheduled",
-        };
-        this.updateAfterRun(auto, run, "scheduled", inFlight.onceAt, {
-          appendRecord: recorded === undefined,
-        });
-        this.runRecorded(auto);
-      } catch (err) {
-        log.warn("[tasks] could not record a scheduled run interrupted by a stop", {
-          taskId: auto.id,
-          workspaceId: auto.workspaceId,
-          runId: inFlight.runId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+    const inFlight = auto.scheduledRunInFlight;
+    // A run this process dispatched is still being recorded (a `start()`
+    // after `stop()` on one scheduler), and its own record clears the mark.
+    if (!inFlight || this.scheduledInFlight.has(inFlight.runId)) return;
+    const { workspaceId: wsId, ownerId } = auto;
+    if (!wsId || !ownerId) return;
+    // Inside the try with the write: one task's unreadable run index must
+    // not throw out of `start()`, or the mark it leaves fails every boot.
+    try {
+      // A stop between the record's append and the task's save leaves the
+      // record in the index: settle the task from it rather than append another.
+      const recorded = readRuns(this.config.workDir, wsId, ownerId, auto.id).find(
+        (r) => r.id === inFlight.runId,
+      );
+      const run: TaskRun = recorded ?? {
+        id: inFlight.runId,
+        taskId: auto.id,
+        startedAt: inFlight.startedAt,
+        completedAt: now,
+        status: "failure",
+        inputTokens: 0,
+        outputTokens: 0,
+        toolCalls: 0,
+        iterations: 0,
+        error: INTERRUPTED_RUN_ERROR,
+        trigger: "scheduled",
+      };
+      this.updateAfterRun(auto, run, "scheduled", inFlight.onceAt, {
+        appendRecord: recorded === undefined,
+      });
+      this.runRecorded(auto);
+    } catch (err) {
+      log.warn("[tasks] could not record a scheduled run interrupted by a stop", {
+        taskId: auto.id,
+        workspaceId: auto.workspaceId,
+        runId: inFlight.runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -1268,11 +1452,16 @@ export class Scheduler {
   stop(): void {
     this.running = false;
     this.clearTimer();
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.extendTimer) clearInterval(this.extendTimer);
+    this.pollTimer = null;
+    this.extendTimer = null;
 
-    // The queue lives in memory, so a queued run cannot outlive the process.
-    // Each of this scheduler's is recorded as skipped while the store is still
-    // reachable (see `leftQueue`), so the run history says it was asked for
-    // and never ran.
+    // Admission's queue lives in memory, so an event or batch run waiting
+    // there cannot outlive the process. Each of this scheduler's is recorded as
+    // skipped while the store is still reachable (see `leftQueue`), so the run
+    // history says it was asked for and never ran. A claimed item waiting there
+    // goes back to the work queue instead (`admitClaimed`).
     this.admission.withdraw((entry) => Scheduler.isOwnKey(entry.key), "stopped");
 
     // Abort all active runs
@@ -1281,6 +1470,22 @@ export class Scheduler {
       this.activeRuns.delete(id);
       this.activeInfo.delete(id);
     }
+
+    // A requested run still on the work queue outlives the process: the next
+    // one runs it. A caller here waiting on it is told it is still queued.
+    for (const [itemKey, entry] of [...this.unclaimed]) {
+      this.unclaimed.delete(itemKey);
+      if (!entry.requested || !entry.runId) continue;
+      const [wsId, ownerId] = entry.key.split("/");
+      const ticket =
+        wsId && ownerId ? readRunTicket(this.config.workDir, wsId, ownerId, entry.runId) : null;
+      if (ticket) this.resolveWaiter(entry.runId, ticket.run);
+    }
+    this.outstanding.clear();
+
+    if (this.ownQueue) void this.ownQueue.close();
+    this.ownQueue = null;
+    this.queue = null;
   }
 
   /**
@@ -1333,6 +1538,18 @@ export class Scheduler {
     // recorded, so its waiter gets an unpersisted skipped record.
     const prefix = `${ADMISSION_KEY_PREFIX}${wsId}/`;
     this.admission.withdraw((entry) => entry.key?.startsWith(prefix) ?? false, WORKSPACE_DELETED);
+    // Its items on the work queue are answered the same way; a claim of one
+    // later finds no task and settles it without writing.
+    for (const [itemKey, entry] of [...this.unclaimed]) {
+      if (!entry.key.startsWith(`${wsId}/`)) continue;
+      this.unclaimed.delete(itemKey);
+      if (entry.runId) {
+        this.resolveWaiter(entry.runId, notStartedRun(entry.key, "the workspace was deleted").run);
+      }
+    }
+    for (const key of [...this.outstanding.keys()]) {
+      if (key.startsWith(`${wsId}/`)) this.outstanding.delete(key);
+    }
     if (dropped === 0) return 0;
     this.clearTimer();
     if (this.running) this.armTimer();
@@ -1342,7 +1559,13 @@ export class Scheduler {
   /**
    * Trigger an immediate run of a specific task, bypassing schedule
    * and backoff checks, and answer at once with what became of it (see
-   * {@link RunNowTicket}). Null when the task is not loaded.
+   * {@link RunNowTicket}). Null when the task is not loaded. A call without a
+   * `requested` gets one minted, so every Run now has an id and a ticket.
+   *
+   * The run is enqueued on the work queue (with its ticket, `queued`, written
+   * in the same turn), and the worker starts it once it claims it with a free
+   * slot. The answer is `started` when a slot is free for it now (no item
+   * waits ahead of it), else `queued` at its place in line.
    *
    * Runs a disabled task. `enabled` decides whether the task fires
    * unattended — from its schedule or from events — and Run now is a person's
@@ -1361,7 +1584,7 @@ export class Scheduler {
     wsId: string,
     ownerId: string,
     taskId: string,
-    requested?: RequestedRun,
+    given?: RequestedRun,
   ): RunNowTicket | null {
     const key = Scheduler.keyOf({ id: taskId, ownerId, workspaceId: wsId });
     const auto = this.definitions.get(key);
@@ -1372,41 +1595,112 @@ export class Scheduler {
       );
       return null;
     }
-
-    // A requested run's record exists before anything can answer for it: its
-    // ticket says queued from here, and every outcome below rewrites it.
-    if (requested) this.openTicket(auto, requested);
+    const requested: RequestedRun = given ?? {
+      runId: newRunId(),
+      requestedAt: new Date().toISOString(),
+    };
 
     const refuse = (reason: string): RunNowTicket => ({
       state: "refused",
       run: this.recordSkipped(auto, reason, "manual", "skipped", requested),
     });
 
-    if (!this.running) return refuse(STOPPED_REASON);
+    const queue = this.queue;
+    if (!this.running || !queue) return refuse(STOPPED_REASON);
     const duplicate = this.duplicateOf(key);
     if (duplicate) return refuse(`${duplicate} (runNow)`);
     const budget = runNowBudgetRefusal(auto, Date.now());
     if (budget) return refuse(budget);
 
-    const input = requestedInput(requested);
-    const admitted = this.admit(key, "manual", input, requested);
-    // Only an admitted run claims its idempotency key: a refused attempt
-    // leaves the key free, so the same call retried later runs.
-    if (requested && admitted.state !== "refused") this.recordKey(auto, requested);
-    if (admitted.state === "started") {
-      const run = this.dispatchRun(auto, "manual", input, admitted.lease, requested);
-      return { state: "started", run: this.trackOpen(key, requested, run) };
+    // The items ahead that a free slot will take start at once; the rest wait.
+    const waiting = Math.max(0, this.getQueuedRunIds().length - this.freeSlots());
+    const startsNow = this.freeSlots() > this.getQueuedRunIds().length;
+    if (!startsNow && waiting >= this.admission.limits.maxQueuedRuns) {
+      return refuse(this.refusalReason("queue_full", "runNow"));
     }
-    if (admitted.state === "refused") return refuse(this.refusalReason(admitted.reason, "runNow"));
-    return {
-      state: "queued",
-      position: admitted.position,
-      run: this.trackOpen(
-        key,
-        requested,
-        admitted.outcome.then((outcome) => outcome.run),
-      ),
-    };
+
+    // The item, then its ticket and key, in one turn: a claim cannot come
+    // between them, and a process that stops after the enqueue leaves an item
+    // a claim runs whether or not its ticket was written.
+    const itemKey = requestedItemKey(ownerId, taskId, requested);
+    const payload: RequestedRunItem = { workspaceId: wsId, ownerId, taskId, requested };
+    const enqueued = queue.enqueue({
+      scope: wsId,
+      kind: REQUESTED_RUN_KIND,
+      payload,
+      idempotencyKey: itemKey,
+    });
+    this.ticketTokens.set(requested.runId, 0);
+    this.openTicket(auto, requested);
+    // An enqueued run claims its idempotency key, as an admitted one did: a
+    // repeat of the call finds this run.
+    this.recordKey(auto, requested);
+    this.unclaimed.set(itemKey, { key, runId: requested.runId, requested: true });
+    const ended = this.trackOpen(key, requested, this.waitFor(requested.runId));
+    enqueued.then(
+      ({ created }) => {
+        // The key already names an item: a repeat this run's key record missed.
+        if (!created)
+          this.refuseEnqueued(
+            auto,
+            itemKey,
+            requested,
+            "an earlier request with this idempotencyKey is already queued",
+          );
+        this.wake();
+      },
+      (err) =>
+        this.refuseEnqueued(
+          auto,
+          itemKey,
+          requested,
+          `the run could not be queued: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+    );
+    if (startsNow) return { state: "started", run: ended };
+    return { state: "queued", position: waiting + 1, run: ended };
+  }
+
+  /** Slots a run asking now would be given at once (none while admission has runs waiting). */
+  private freeSlots(): number {
+    if (!this.admission.hasFreeSlot()) return 0;
+    return this.admission.limits.maxConcurrentRuns - this.admission.inFlight();
+  }
+
+  /** A promise of a queued requested run's record, settled by the worker (`resolveWaiter`). */
+  private waitFor(runId: string): Promise<TaskRun> {
+    return new Promise<TaskRun>((resolve, reject) => {
+      this.waiters.set(runId, { resolve, reject });
+    });
+  }
+
+  /** Settle the caller waiting on a requested run, if one is. */
+  private resolveWaiter(runId: string, run: TaskRun | Promise<TaskRun>): void {
+    const waiter = this.waiters.get(runId);
+    if (!waiter) return;
+    this.waiters.delete(runId);
+    waiter.resolve(run);
+  }
+
+  /** A requested run whose item did not land on the queue: recorded skipped, its waiter told. */
+  private refuseEnqueued(
+    auto: Task,
+    itemKey: string,
+    requested: RequestedRun,
+    reason: string,
+  ): void {
+    this.unclaimed.delete(itemKey);
+    try {
+      this.resolveWaiter(
+        requested.runId,
+        this.recordSkipped(auto, reason, "manual", "skipped", requested),
+      );
+    } catch (err) {
+      this.waiters.get(requested.runId)?.reject(err);
+      this.waiters.delete(requested.runId);
+    } finally {
+      this.ticketTokens.delete(requested.runId);
+    }
   }
 
   /**
@@ -1511,11 +1805,19 @@ export class Scheduler {
     requested: RequestedRun,
     run: TaskRun,
   ): void {
+    // A run the work queue carries writes under its claim's token, and a
+    // ticket a newer claim wrote is left alone (fencing).
+    const token = this.ticketTokens.get(requested.runId);
+    if (token !== undefined && token > 0) {
+      const stored = readRunTicket(this.config.workDir, wsId, ownerId, requested.runId)?.claimToken;
+      if (stored !== undefined && stored > token) return;
+    }
     const ticket: RunTicket = {
       runId: requested.runId,
       taskId,
       requestedAt: requested.requestedAt,
       run: withRequest(run, requested),
+      ...(token !== undefined ? { claimToken: token } : {}),
     };
     saveRunTicket(this.config.workDir, wsId, ownerId, ticket);
   }
@@ -1555,13 +1857,42 @@ export class Scheduler {
   cancelRunById(wsId: string, ownerId: string, runId: string): boolean {
     const prefix = `${wsId}/${ownerId}/`;
     const open = this.openRuns.get(runId);
-    if (open) return open.key.startsWith(prefix) && this.cancelKey(open.key);
+    if (open) {
+      if (!open.key.startsWith(prefix)) return false;
+      return this.cancelKey(open.key, runId) || this.cancelQueuedTicket(wsId, ownerId, runId);
+    }
     const queuedEventKey = this.queuedEventRuns.get(runId);
     if (queuedEventKey) return queuedEventKey.startsWith(prefix) && this.cancelKey(queuedEventKey);
     for (const [key, info] of this.activeInfo) {
       if (info.runId === runId && key.startsWith(prefix)) return this.cancelKey(key);
     }
-    return false;
+    // A run waiting on the work queue that a stopped process asked for.
+    return this.cancelQueuedTicket(wsId, ownerId, runId);
+  }
+
+  /**
+   * Cancel a requested run waiting on the work queue: its ticket is recorded
+   * cancelled now, and the claim of its item finds that record and settles the
+   * item without running it. False when the ticket is not a queued run the
+   * work queue carries.
+   */
+  private cancelQueuedTicket(wsId: string, ownerId: string, runId: string): boolean {
+    const ticket = readRunTicket(this.config.workDir, wsId, ownerId, runId);
+    if (ticket?.run.status !== "queued" || ticket.claimToken === undefined) return false;
+    const key = `${wsId}/${ownerId}/${ticket.taskId}`;
+    const requested = requestOfTicket(ticket);
+    const reason = "Cancelled by user while queued";
+    const auto = this.definitions.get(key);
+    let run: TaskRun;
+    if (auto) {
+      run = this.recordSkipped(auto, reason, "manual", "cancelled", requested);
+    } else {
+      run = notStartedRun(key, reason, "cancelled", requested).run;
+      this.writeTicket(wsId, ownerId, ticket.taskId, requested, run);
+    }
+    this.unclaimed.delete(requestedItemKey(ownerId, ticket.taskId, requested));
+    this.resolveWaiter(runId, run);
+    return true;
   }
 
   /**
@@ -1572,6 +1903,9 @@ export class Scheduler {
    */
   settleLostRun(wsId: string, ownerId: string, ticket: RunTicket): RunTicket {
     if (!isOpenRun(ticket.run) || this.openRuns.has(ticket.runId)) return ticket;
+    // A queued run the work queue carries is not lost with the process: the
+    // claim of its item runs it, or settles its ticket.
+    if (ticket.run.status === "queued" && ticket.claimToken !== undefined) return ticket;
     // A process that recorded the run (result, then index line) and stopped
     // before rewriting the ticket: settle the ticket from that record and
     // write nothing else, so its result and its one line stand.
@@ -1680,12 +2014,20 @@ export class Scheduler {
     return { run: outcome.run };
   }
 
-  /** Whether the task at `key` already has a run holding a slot or waiting for one. */
+  /**
+   * Whether the task at `key` already has a run holding a slot or waiting for
+   * one: at admission, or a Run now on the work queue this process enqueued.
+   * One run per task is this in-process check; the work queue does not
+   * provide it.
+   */
   private duplicateOf(key: string): "Already running" | "Already queued" | null {
     const { key: admissionKey } = Scheduler.admissionOf(key);
     if (this.activeRuns.has(key) || this.admission.isRunning(admissionKey))
       return "Already running";
     if (this.admission.isQueued(admissionKey)) return "Already queued";
+    for (const entry of this.unclaimed.values()) {
+      if (entry.requested && entry.key === key) return "Already queued";
+    }
     return null;
   }
 
@@ -1910,14 +2252,20 @@ export class Scheduler {
     return this.admission.cancel(Scheduler.admissionOf(open.key).key, BATCH_PAUSED);
   }
 
-  /** Abort the run held under `key` (a task's, or a batch run's own), or take it out of the queue. */
-  private cancelKey(key: string): boolean {
+  /**
+   * Abort the run held under `key` (a task's, or a batch run's own), or take it
+   * out of admission's queue. With `runId`, only when the run in flight under
+   * the key is that one: a Run now waiting on the work queue shares its task's
+   * key with whatever run of the task is in flight.
+   */
+  private cancelKey(key: string, runId?: string): boolean {
     const controller = this.activeRuns.get(key);
-    if (controller) {
+    if (controller && (runId === undefined || this.activeInfo.get(key)?.runId === runId)) {
       controller.abort();
       return true;
     }
-    // Recorded as cancelled by `leftQueue`, before this returns.
+    if (controller) return false;
+    // Recorded as cancelled by `leftQueue` (or `admitClaimed`), before this returns.
     return this.admission.cancel(Scheduler.admissionOf(key).key);
   }
 
@@ -1942,12 +2290,26 @@ export class Scheduler {
     this.definitions.delete(`${wsId}/${ownerId}/${taskId}`);
   }
 
-  /** This scheduler's runs waiting for a slot, in arrival order (for inspection/testing). */
+  /**
+   * This scheduler's runs waiting for a slot, by task key (`#<runId>` for a
+   * batch run): those waiting at admission, then the items this process put on
+   * the work queue, in enqueue order.
+   */
   getQueuedRunIds(): string[] {
-    return this.admission
+    return this.queuedEntries().map((entry) => entry.key);
+  }
+
+  /** {@link getQueuedRunIds} with each run's id where this process knows it. */
+  private queuedEntries(): { key: string; runId?: string }[] {
+    const atAdmission = this.admission
       .queued()
       .filter((entry) => Scheduler.isOwnKey(entry.key))
-      .map((entry) => entry.key!.slice(ADMISSION_KEY_PREFIX.length));
+      .map((entry) => ({ key: entry.key!.slice(ADMISSION_KEY_PREFIX.length) }));
+    const onQueue = [...this.unclaimed.values()].map(({ key, runId }) => ({
+      key,
+      ...(runId ? { runId } : {}),
+    }));
+    return [...atAdmission, ...onQueue];
   }
 
   /**
@@ -1981,10 +2343,10 @@ export class Scheduler {
         runId: info.runId,
       });
     }
-    this.getQueuedRunIds().forEach((key, index) => {
-      if (!key.startsWith(prefix)) return;
-      const { taskId, runId } = parse(key);
-      const id = runId ?? runIdByKey.get(key);
+    this.queuedEntries().forEach((entry, index) => {
+      if (!entry.key.startsWith(prefix)) return;
+      const { taskId, runId } = parse(entry.key);
+      const id = runId ?? entry.runId ?? runIdByKey.get(entry.key);
       out.push({ taskId, state: "queued", position: index + 1, ...(id ? { runId: id } : {}) });
     });
     return out;
@@ -2008,16 +2370,6 @@ export class Scheduler {
     if (!this.running) return;
     this.clearTimer();
 
-    // With no free run slot a due task is deferred, not skipped, so it
-    // stays due: arming for it would tick at zero delay and defer it again, in a
-    // loop. Wake on the heartbeat instead. A tick whose own runs free the slots
-    // re-arms when they settle; the heartbeat covers slots held by Run now and
-    // event runs, and by other sources' runs, which no tick waits on.
-    if (!this.admission.hasFreeSlot()) {
-      this.timer = runDetached(() => setTimeout(() => this.onTimer(), MAX_TIMER_MS));
-      return;
-    }
-
     const now = Date.now();
     let minDelay = MAX_TIMER_MS;
 
@@ -2027,6 +2379,10 @@ export class Scheduler {
       // pending first run, and reading it as one would spin the timer at zero
       // delay for as long as such a task exists.
       if (isEventSchedule(auto.schedule)) continue;
+      // Its due occurrence is on the work queue, waiting for a slot: it stays
+      // due until its run is recorded, so arming for it would tick at zero
+      // delay. Settling the item re-arms.
+      if (this.outstanding.has(Scheduler.keyOf(auto))) continue;
       if (!auto.nextRunAt) {
         if (!dueWithoutNextRunAt(auto)) continue;
         // Due immediately
@@ -2047,15 +2403,15 @@ export class Scheduler {
   }
 
   /**
-   * Timer callback. Iterates enabled definitions, checks due + backoff +
-   * concurrency, and dispatches runs. Awaits all dispatched runs before
-   * re-arming to ensure nextRunAt is updated before the next tick.
+   * Timer callback. Enqueues each due occurrence on the work queue, lets the
+   * worker claim what it has slots for, and waits for the scheduled runs in
+   * flight to be recorded before re-arming, so `nextRunAt` has moved on.
    */
   async onTimer(): Promise<void> {
     if (!this.running) return;
 
     const now = Date.now();
-    const dispatched: Promise<TaskRun>[] = [];
+    const enqueued: Promise<unknown>[] = [];
 
     for (const auto of byNextRunAt(this.definitions.values())) {
       // One task cannot take the timer down with it. `armTimer()` below
@@ -2069,8 +2425,8 @@ export class Scheduler {
       // dropped as `dropWorkspace` would have; kept, it stays due and the timer
       // re-arms at zero delay.
       try {
-        const run = this.considerForDispatch(auto, now);
-        if (run) dispatched.push(run);
+        const pending = this.enqueueIfDue(auto, now);
+        if (pending) enqueued.push(pending);
       } catch (err) {
         if (err instanceof WorkspaceRootMissingError) {
           this.definitions.delete(Scheduler.keyOf(auto));
@@ -2083,55 +2439,498 @@ export class Scheduler {
       }
     }
 
-    // Wait for all dispatched runs to complete so updateAfterRun sets
-    // nextRunAt before we re-arm. Without this, the timer re-arms with
-    // stale nextRunAt values and fires the same task repeatedly.
-    if (dispatched.length > 0) {
-      await Promise.allSettled(dispatched);
-    }
+    await Promise.allSettled(enqueued);
+    const before = new Set(this.scheduledRuns);
+    await this.drain();
+    // Wait for the scheduled runs this tick started to be recorded, so it
+    // re-arms on the `nextRunAt` each run moved on.
+    const started = [...this.scheduledRuns].filter((run) => !before.has(run));
+    if (started.length > 0) await Promise.allSettled(started);
 
     // Re-arm the timer
     this.armTimer();
   }
 
   /**
-   * Whether `auto` runs on this tick, and the dispatched run when it does.
-   *
-   * Lifted out of {@link onTimer} so that method stays a loop plus the
-   * per-task try/catch that keeps one failure from stopping the sweep;
-   * the predicate chain itself is unchanged.
+   * Put `auto`'s due occurrence on the work queue, once: the timer only
+   * enqueues, and the worker decides when it runs. Null when it is not due or
+   * already on the queue. The occurrence is the task's `nextRunAt`, so the same
+   * occurrence enqueued again (a later tick, the next process) is the same
+   * item.
    */
-  private considerForDispatch(auto: Task, now: number): Promise<TaskRun> | null {
-    if (!auto.enabled) return null;
+  private enqueueIfDue(auto: Task, now: number): Promise<void> | null {
+    const queue = this.queue;
+    if (!queue || !auto.enabled) return null;
     if (!isDue(auto, now)) return null;
     if (isInBackoff(auto, now)) return null;
-
-    // Per-task concurrency guard
+    const { workspaceId: wsId, ownerId } = auto;
+    if (!wsId || !ownerId) return null;
     const key = Scheduler.keyOf(auto);
-    if (this.duplicateOf(key) === "Already running") {
-      this.recordSkipped(auto, "Previous run still active");
+    if (this.outstanding.has(key)) return null;
+
+    const occurrence = auto.nextRunAt ?? UNSEEDED_OCCURRENCE;
+    const runId = newRunId();
+    const itemKey = scheduledItemKey(ownerId, auto.id, occurrence);
+    const payload: ScheduledRunItem = {
+      workspaceId: wsId,
+      ownerId,
+      taskId: auto.id,
+      runId,
+      occurrence,
+    };
+    // Intent before effect: a once's mark lands before its item (see
+    // `markOnceQueued`). A mark that cannot be written throws here, before
+    // anything is enqueued, and the tick logs it.
+    if (isOnceSchedule(auto.schedule)) this.markOnceQueued(auto, occurrence);
+    this.outstanding.set(key, occurrence);
+    this.unclaimed.set(itemKey, { key, runId, requested: false });
+    return queue
+      .enqueue({ scope: wsId, kind: SCHEDULED_RUN_KIND, payload, idempotencyKey: itemKey })
+      .then(
+        ({ created }) => {
+          // A stopped process enqueued it: its payload, and run id, stand.
+          const entry = this.unclaimed.get(itemKey);
+          if (!created && entry) delete entry.runId;
+          this.wake();
+        },
+        (err) => {
+          // A once's mark stays: the occurrence fired, and the next tick (or
+          // the next process) enqueues it again under the same key.
+          this.outstanding.delete(key);
+          this.unclaimed.delete(itemKey);
+          log.warn("[tasks] could not enqueue a due scheduled run", {
+            taskId: auto.id,
+            workspaceId: wsId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        },
+      );
+  }
+
+  /**
+   * Mark that a once's occurrence fired (`onceQueuedAt`), before its item is
+   * enqueued, so a restart after its grace window runs it instead of retiring
+   * it missed. Intent before effect: the mark lands first, and a process that
+   * stops before the enqueue leaves a mark with no item. The next process does
+   * not retire that once; its timer finds the occurrence still due (the mark
+   * leaves `nextRunAt` alone) and enqueues it under the same deterministic key,
+   * which creates the item when it is missing and returns it when it is there,
+   * and the claim's occurrence check lets it run once. A stop before the mark
+   * leaves nothing, and the missed rule stands: the occurrence never fired.
+   * Re-reads the file, as `updateAfterRun` does, to keep concurrent edits.
+   * Throws when the task file cannot be written, so nothing is enqueued.
+   */
+  private markOnceQueued(auto: Task, occurrence: string): void {
+    const { workspaceId: wsId, ownerId } = auto;
+    if (!wsId || !ownerId) return;
+    const fresh = loadTask(this.config.workDir, wsId, ownerId, auto.id);
+    const at = fresh && isOnceSchedule(fresh.schedule) ? fresh.schedule?.at : undefined;
+    // The occurrence is the stored `nextRunAt`; `at` may name the same instant with an offset.
+    if (!fresh || at === undefined || Date.parse(at) !== Date.parse(occurrence)) return;
+    if (fresh.onceDone || fresh.onceQueuedAt === at) return;
+    fresh.workspaceId = wsId;
+    fresh.ownerId = ownerId;
+    fresh.onceQueuedAt = at;
+    saveTask(this.config.workDir, wsId, ownerId, fresh);
+    this.definitions.set(Scheduler.keyOf(fresh), fresh);
+  }
+
+  // -----------------------------------------------------------------------
+  // Worker
+  // -----------------------------------------------------------------------
+
+  /** Ask the worker to claim what it has slots for, now. Passes coalesce. */
+  private wake(): void {
+    if (!this.running || !this.queue) return;
+    if (this.pumping) {
+      this.pumpAgain = true;
+      return;
+    }
+    this.pumping = (async () => {
+      try {
+        do {
+          this.pumpAgain = false;
+          await this.claimWhileFree();
+        } while (this.pumpAgain && this.running);
+      } finally {
+        this.pumping = null;
+      }
+    })();
+  }
+
+  /**
+   * Wake the worker and wait until its passes are done: every due item it had
+   * a slot for is claimed and started. The timer waits on it; so do tests.
+   */
+  async drain(): Promise<void> {
+    this.wake();
+    while (this.pumping) await this.pumping;
+  }
+
+  /**
+   * Claim due items while admission has a free slot, taking each one's slot
+   * (or settling it) in the turn its claim returns, so the next check sees it.
+   */
+  private async claimWhileFree(): Promise<void> {
+    while (this.running && this.admission.hasFreeSlot()) {
+      const claim = await this.claimNext();
+      if (!claim) return;
+      if (!this.running) {
+        this.held.set(claim.id, { claim, taskKey: "" });
+        this.releaseItem(claim.id);
+        return;
+      }
+      this.take(claim);
+    }
+  }
+
+  /** The next due item, or null when none is due or the queue cannot be read. */
+  private async claimNext(): Promise<Claim | null> {
+    const queue = this.queue;
+    if (!queue) return null;
+    try {
+      return await queue.claim({
+        workerId: this.workerId,
+        leaseMs: WORK_LEASE_MS,
+        kinds: RUN_KINDS,
+      });
+    } catch (err) {
+      if (this.running) {
+        log.warn("[tasks] could not claim from the work queue", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
       return null;
     }
+  }
 
-    // The runtime's run slots are shared by every unattended run. A due run
-    // with no free slot is deferred: no run is recorded and `nextRunAt` stays
-    // where it is, so it fires on the first tick with a free slot. The limit is
-    // capacity, not a verdict on the run; skipping would advance a one-shot
-    // cron past its only date and lose the run. `onTimer` walks due runs oldest
-    // first, so deferral is FIFO.
-    //
-    // A deferred scheduled run does not join the run queue (admission is asked
-    // without a waiter): its persisted `nextRunAt` already holds its place,
-    // survives a restart (the in-memory queue does not, and a one-shot cron
-    // would lose its only run), and admits one pending occurrence per
-    // task by construction. Queued runs take a freed slot first, since
-    // admission hands it to them as it frees and the timer ticks later; a free
-    // slot with runs waiting is not offered here.
-    const ticket = this.admission.request(Scheduler.admissionOf(key));
-    if (ticket.state !== "admitted") return null;
+  /**
+   * Decide what a claimed item becomes, from the task's own records: run it,
+   * or settle it without running. Every path settles the item or holds it for
+   * a run.
+   */
+  private take(claim: Claim): void {
+    const mine = this.held.get(claim.id);
+    if (mine) {
+      // This worker's own item, claimed again after its lease ran out under a
+      // stalled event loop: the run goes on here under the newer claim.
+      mine.claim = claim;
+      if (mine.runId && this.ticketTokens.has(mine.runId)) {
+        this.ticketTokens.set(mine.runId, claim.token);
+      }
+      return;
+    }
+    const scheduled = claim.kind === SCHEDULED_RUN_KIND ? scheduledItemOf(claim.payload) : null;
+    const requested = claim.kind === REQUESTED_RUN_KIND ? requestedItemOf(claim.payload) : null;
+    const item = scheduled ?? requested;
+    if (!item) {
+      log.warn("[tasks] settling a work item that is not a task run", {
+        itemId: claim.id,
+        kind: claim.kind,
+      });
+      this.held.set(claim.id, { claim, taskKey: "" });
+      this.settleItem(claim.id);
+      return;
+    }
+    const taskKey = `${item.workspaceId}/${item.ownerId}/${item.taskId}`;
+    try {
+      if (scheduled) {
+        this.unclaimed.delete(
+          scheduledItemKey(scheduled.ownerId, scheduled.taskId, scheduled.occurrence),
+        );
+        this.held.set(claim.id, {
+          claim,
+          taskKey,
+          occurrence: scheduled.occurrence,
+          runId: scheduled.runId,
+        });
+        this.takeScheduled(claim, taskKey, scheduled);
+      } else if (requested) {
+        this.unclaimed.delete(
+          requestedItemKey(requested.ownerId, requested.taskId, requested.requested),
+        );
+        this.held.set(claim.id, { claim, taskKey, runId: requested.requested.runId });
+        this.takeRequested(claim, taskKey, requested);
+      }
+    } catch (err) {
+      // A workspace archived under the item: nothing will run or record it.
+      if (err instanceof WorkspaceRootMissingError) {
+        this.definitions.delete(taskKey);
+        this.settleItem(claim.id);
+      } else {
+        this.retryItem(claim.id, err);
+      }
+      log.warn("[tasks] could not take a claimed work item", {
+        itemId: claim.id,
+        kind: claim.kind,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
-    // The timer waits for its runs to be recorded, not judged.
-    return this.dispatchRun(auto, "scheduled", undefined, ticket.lease, undefined, "recorded");
+  /**
+   * A scheduled occurrence: run it while it is still the task's due
+   * occurrence. One whose run an earlier holder started is recorded
+   * interrupted and never run again; one recorded, rescheduled, or whose task
+   * is gone settles without a run.
+   */
+  private takeScheduled(claim: Claim, key: string, item: ScheduledRunItem): void {
+    const auto = this.definitions.get(key);
+    if (!auto) {
+      this.settleItem(claim.id);
+      return;
+    }
+    if (auto.scheduledRunInFlight?.runId === item.runId) {
+      // The earlier holder stopped under the run (`attempt > 1`); `start()`
+      // settles such a mark first, so this is the case it could not write.
+      this.settleInterruptedRun(auto);
+      this.settleItem(claim.id);
+      return;
+    }
+    // Recorded (its record moved `nextRunAt` on), rescheduled, or retired.
+    if ((auto.nextRunAt ?? UNSEEDED_OCCURRENCE) !== item.occurrence) {
+      this.settleItem(claim.id);
+      return;
+    }
+    if (!auto.enabled) {
+      // Moves `nextRunAt` on, so the occurrence is not owed again.
+      this.recordSkipped(auto, "Disabled while waiting for a run slot");
+      this.settleItem(claim.id);
+      return;
+    }
+    this.admitClaimed(claim, key, (lease) => {
+      const current = this.definitions.get(key) ?? auto;
+      this.runClaimed(claim.id, current, "scheduled", undefined, lease, undefined, item.runId);
+    });
+  }
+
+  /**
+   * A requested run: its ticket says whether it still runs. A run already
+   * recorded (cancelled while queued, or ended) settles; one an earlier holder
+   * started is settled as lost (`settleLostRun`) and never run again; a queued
+   * one runs, and so does one whose ticket was never written.
+   */
+  private takeRequested(claim: Claim, key: string, item: RequestedRunItem): void {
+    const { workspaceId: wsId, ownerId, taskId, requested } = item;
+    const { runId } = requested;
+    let ticket = readRunTicket(this.config.workDir, wsId, ownerId, runId);
+    if (ticket?.claimToken !== undefined && ticket.claimToken > claim.token) {
+      // A newer claim of the item wrote the ticket: this one is superseded.
+      this.held.delete(claim.id);
+      return;
+    }
+    this.ticketTokens.set(runId, claim.token);
+    if (ticket?.run.status === "running" && !this.openRuns.has(runId)) {
+      ticket = this.settleLostRun(wsId, ownerId, ticket);
+    }
+    if (ticket && !isOpenRun(ticket.run)) {
+      this.resolveWaiter(runId, ticket.run);
+      this.settleItem(claim.id);
+      return;
+    }
+    const auto = this.definitions.get(key);
+    const finish = (run: TaskRun) => {
+      this.resolveWaiter(runId, run);
+      this.settleItem(claim.id);
+    };
+    if (!auto) {
+      const outcome = notStartedRun(key, "the task was deleted while queued", "skipped", requested);
+      this.writeTicket(wsId, ownerId, taskId, requested, outcome.run);
+      finish(outcome.run);
+      return;
+    }
+    const budget = runNowBudgetRefusal(auto, Date.now());
+    if (budget) {
+      finish(this.recordSkipped(auto, budget, "manual", "skipped", requested));
+      return;
+    }
+    // A run this process did not ask for (a restart's) is tracked from here,
+    // so a reader never takes its `running` ticket for one a stopped process left.
+    if (!this.waiters.has(runId)) this.trackOpen(key, requested, this.waitFor(runId));
+    this.admitClaimed(
+      claim,
+      key,
+      (lease) => {
+        const current = this.definitions.get(key) ?? auto;
+        this.runClaimed(
+          claim.id,
+          current,
+          "manual",
+          requestedInput(requested),
+          lease,
+          requested,
+          runId,
+        );
+      },
+      requested,
+    );
+  }
+
+  /**
+   * Ask admission for the claimed item's slot. Fair share applies here: an
+   * item that lost the free slot it was claimed for waits in admission's queue
+   * (its claim kept alive by `extendHeld`). A duplicate (the task's run is in
+   * flight or waiting) is recorded skipped, as a Run now refused for it was.
+   */
+  private admitClaimed(
+    claim: Claim,
+    key: string,
+    start: (lease: AdmissionLease) => void,
+    requested?: RequestedRun,
+  ): void {
+    const auto = this.definitions.get(key);
+    const skip = (reason: string, status: "skipped" | "cancelled" = "skipped") => {
+      const live = this.definitions.get(key) ?? auto;
+      if (live) {
+        const run = requested
+          ? this.recordSkipped(live, reason, "manual", status, requested)
+          : this.recordSkipped(live, reason);
+        if (requested) this.resolveWaiter(requested.runId, run);
+      }
+      this.settleItem(claim.id);
+    };
+    const label = requested ? "runNow" : null;
+    const ticket = this.admission.request(Scheduler.admissionOf(key), {
+      admitted: (lease) => start(lease),
+      withdrawn: (reason) => {
+        if (reason === "cancelled") {
+          skip("Cancelled by user while queued", "cancelled");
+          return;
+        }
+        if (reason === WORKSPACE_DELETED) {
+          if (requested)
+            this.resolveWaiter(
+              requested.runId,
+              notStartedRun(key, "the workspace was deleted").run,
+            );
+          this.settleItem(claim.id);
+          return;
+        }
+        // Stopped: the item goes back to the queue for the next process.
+        this.releaseItem(claim.id);
+      },
+    });
+    if (ticket.state === "admitted") {
+      start(ticket.lease);
+      return;
+    }
+    if (ticket.state === "queued") return;
+    if (ticket.reason === "running" || ticket.reason === "queued") {
+      skip(label ? this.refusalReason(ticket.reason, label) : "Previous run still active");
+      return;
+    }
+    if (ticket.reason === "stopped") {
+      this.releaseItem(claim.id);
+      return;
+    }
+    // Admission's queue is full: try the item again once the poll comes round.
+    this.retryItem(claim.id, new Error(this.refusalReason(ticket.reason, "runNow")));
+  }
+
+  /**
+   * Run a claimed item in its slot through `dispatchRun`, settle the item once
+   * the run is recorded, and tell a requested run's caller once it is assessed.
+   */
+  private runClaimed(
+    itemId: string,
+    auto: Task,
+    trigger: "scheduled" | "manual",
+    input: RunInput | undefined,
+    lease: AdmissionLease,
+    requested: RequestedRun | undefined,
+    runId: string,
+  ): void {
+    const recorded = this.dispatchRun(
+      auto,
+      trigger,
+      input,
+      lease,
+      requested,
+      "recorded",
+      undefined,
+      runId,
+    );
+    if (trigger === "scheduled") {
+      this.scheduledRuns.add(recorded);
+      const forget = () => this.scheduledRuns.delete(recorded);
+      recorded.then(forget, forget);
+    }
+    recorded.then(
+      (run) => {
+        this.settleItem(itemId);
+        // `dispatchRun` registered the assessment before it resolved.
+        this.resolveWaiter(runId, this.pendingAssessments.get(run.id) ?? run);
+      },
+      (err) => {
+        // The record did not land: the next claim finds the run started and
+        // records it lost, as a stop under it would leave it.
+        this.retryItem(itemId, err);
+        const waiter = this.waiters.get(runId);
+        this.waiters.delete(runId);
+        waiter?.reject(err);
+      },
+    );
+  }
+
+  /** Settle a held item as done, and re-arm for a task whose occurrence it was. */
+  private settleItem(itemId: string): void {
+    const held = this.held.get(itemId);
+    if (!held) return;
+    this.held.delete(itemId);
+    if (held.runId) this.ticketTokens.delete(held.runId);
+    if (held.occurrence !== undefined && this.outstanding.get(held.taskKey) === held.occurrence) {
+      this.outstanding.delete(held.taskKey);
+      this.armTimer();
+    }
+    this.queue?.complete(held.claim).catch((err) => this.settleFailed(itemId, err));
+  }
+
+  /** Hand a held item back to the queue to be claimed again after the poll interval. */
+  private retryItem(itemId: string, err: unknown): void {
+    const held = this.held.get(itemId);
+    if (!held) return;
+    this.held.delete(itemId);
+    const error = err instanceof Error ? err.message : String(err);
+    const retryAt = new Date(Date.now() + WORKER_POLL_MS).toISOString();
+    this.queue?.fail(held.claim, { error, retryAt }).catch((e) => this.settleFailed(itemId, e));
+  }
+
+  /** Hand a held item that has not started back to the queue, due at once (a stop). */
+  private releaseItem(itemId: string): void {
+    const held = this.held.get(itemId);
+    if (!held) return;
+    this.held.delete(itemId);
+    const retryAt = new Date().toISOString();
+    this.queue
+      ?.fail(held.claim, { error: "released by a stopping worker", retryAt })
+      .catch(() => {});
+  }
+
+  /** A settle the queue refused; the item is claimed again once its lease ends. */
+  private settleFailed(itemId: string, err: unknown): void {
+    if (!this.running) return;
+    log.warn("[tasks] could not settle a work item", {
+      itemId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  /** Extend every claim this worker holds, so a long run keeps its item. */
+  private extendHeld(): void {
+    const queue = this.queue;
+    if (!queue) return;
+    for (const [itemId, held] of this.held) {
+      queue.extend(held.claim, WORK_LEASE_MS).then(
+        (claim) => {
+          if (this.held.get(itemId) === held) held.claim = claim;
+        },
+        (err) => {
+          if (err instanceof LeaseLostError && this.held.get(itemId) === held)
+            this.held.delete(itemId);
+          this.settleFailed(itemId, err);
+        },
+      );
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -2153,7 +2952,7 @@ export class Scheduler {
     requested?: RequestedRun,
     settles: DispatchSettles = "assessed",
     batchRun?: { runKey: string; options: BatchRunOptions },
-    eventRunId?: string,
+    knownRunId?: string,
   ): Promise<TaskRun> {
     const key = batchRun?.runKey ?? Scheduler.keyOf(auto);
     const controller = new AbortController();
@@ -2166,7 +2965,8 @@ export class Scheduler {
     const startedAt = new Date().toISOString();
     // Every run has its id from dispatch, so one in flight is found (and
     // cancelled) by it whatever started it; a requested run brings its own.
-    const runId = requested?.runId ?? eventRunId ?? newRunId();
+    // An event run and a claimed scheduled item bring the id they were given.
+    const runId = requested?.runId ?? knownRunId ?? newRunId();
     this.activeInfo.set(key, { startedAt, trigger, runId });
     // The once occurrence this run is, if any: an `at` edited while it runs is
     // a new occurrence, which the run must not retire.
@@ -2193,6 +2993,8 @@ export class Scheduler {
       this.activeInfo.delete(key);
       this.scheduledInFlight.delete(runId);
       lease.release();
+      // The slot is free: the worker may claim the next item for it.
+      this.wake();
     }
     // After the slot is free and the task is no longer running, so a retry
     // the assessment asks for is an ordinary run.
@@ -2286,10 +3088,20 @@ export class Scheduler {
     return true;
   }
 
-  /** Resolves once every assessment in flight has been recorded. */
+  /**
+   * Resolves once every assessment in flight has been recorded, and every
+   * requested run this process carries has ended: a retry an assessment asked
+   * for is on the work queue until the worker starts it.
+   */
   async assessmentsSettled(): Promise<void> {
-    while (this.pendingAssessments.size > 0) {
-      await Promise.allSettled([...this.pendingAssessments.values()]);
+    for (;;) {
+      await this.drain();
+      const waits = [
+        ...this.pendingAssessments.values(),
+        ...[...this.openRuns.values()].map((open) => open.ended),
+      ];
+      if (waits.length === 0) return;
+      await Promise.allSettled(waits);
     }
   }
 

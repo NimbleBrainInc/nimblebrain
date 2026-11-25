@@ -69,6 +69,16 @@ export interface Task {
   onceDone?: OnceDone;
 
   /**
+   * A once schedule's `at` whose occurrence fired: it came due while the
+   * runtime was running. Written before its work item is enqueued, so it may
+   * name an occurrence whose item is not there yet. `start()` does not retire
+   * such a once as missed; its timer enqueues the occurrence again (the same
+   * key finds or creates the item) and the claim runs it. Cleared when the
+   * once retires.
+   */
+  onceQueuedAt?: string;
+
+  /**
    * Skills every run is given in full, in its system prompt, before its first
    * model call, by catalog name. The run is refused when one is not available.
    */
@@ -617,6 +627,14 @@ export interface RunTicket {
   /** When the run was asked for. */
   requestedAt: string;
   run: TaskRun;
+  /**
+   * Present when the work queue carries the run (a Run now, a retry): 0 until
+   * a worker claims its item, then the token of the claim that last wrote the
+   * ticket. A write under a lower token is refused, so a superseded claim
+   * cannot overwrite the current one's record. Absent on a run held only in
+   * this process's memory (a batch item's), which a restart loses.
+   */
+  claimToken?: number;
 }
 
 // ---------------------------------------------------------------------------

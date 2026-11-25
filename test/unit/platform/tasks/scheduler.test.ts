@@ -30,10 +30,13 @@ import {
   loadOwnerTasks,
   readRunResult,
   readRuns,
+  readRunTicket,
   saveRunResult,
   saveTask,
 } from "../../../../src/platform/tasks/store.ts";
 import type { Task, TaskRun } from "../../../../src/platform/tasks/types.ts";
+import { createFilesystemWorkQueue } from "../../../../src/providers/queue/filesystem.ts";
+import type { WorkQueue } from "../../../../src/providers/queue/types.ts";
 import { createRunAdmission } from "../../../../src/runtime/admission.ts";
 import {
   getRequestContext,
@@ -147,6 +150,21 @@ function createThrowingExecutor(err: unknown): Executor {
 }
 
 /** Create a delayed executor that resolves after a given delay (or never, until signaled). */
+/**
+ * A process's work queue in `workDir`, on a clock `aheadMs` ahead of now: a
+ * later process reads a dead one's claims as expired without waiting out the
+ * lease.
+ */
+function openQueue(workDir: string, aheadMs = 0): WorkQueue {
+  return createFilesystemWorkQueue({
+    dir: join(workDir, "queue"),
+    now: () => Date.now() + aheadMs,
+  });
+}
+
+/** Past any lease the worker takes. */
+const LEASE_EXPIRED_MS = 5 * 60_000;
+
 function createBlockingExecutor(): {
   executor: Executor;
   resolve: (run: TaskRun) => void;
@@ -715,11 +733,12 @@ describe("Scheduler — cron schedule with no next run", () => {
     const { executor, resolve } = createBlockingExecutor();
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
     scheduler.start();
-    scheduler.onTimer();
-    await new Promise((r) => setTimeout(r, 50));
+    // A Run now of the task holds its run slot.
+    scheduler.requestRunNow(WS, OWNER, auto.id);
+    await scheduler.drain();
 
-    // While the first run is still active, the schedule runs out of dates
-    // and the timer still holds a due run, so the next tick skips it.
+    // While that run is active, the schedule runs out of dates and the
+    // occurrence comes due, so the claim finds the task running and skips it.
     const stored = loadDefs(tmpDir).get(auto.id)!;
     saveTask(tmpDir, WS, OWNER, { ...stored, schedule: PAST_YEAR });
     defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
@@ -1456,18 +1475,29 @@ describe("Scheduler — interrupted scheduled runs", () => {
     seedDefs(tmpDir, new Map([[auto.id, auto]]));
 
     // The first process starts the run (start() arms its timer at zero delay)
-    // and dies under it: no stop(), no record.
-    const first = new Scheduler(createBlockingExecutor().executor, { workDir: tmpDir });
+    // and dies under it: no stop(), no record, its claim left on the queue.
+    const firstQueue = openQueue(tmpDir);
+    const first = new Scheduler(createBlockingExecutor().executor, {
+      workDir: tmpDir,
+      queue: firstQueue,
+    });
     first.start();
     await new Promise((r) => setTimeout(r, 20));
     const runId = loadDefs(tmpDir).get(auto.id)!.scheduledRunInFlight!.runId;
     expect(readRuns(tmpDir, WS, OWNER, auto.id)).toHaveLength(0);
+    await firstQueue.close();
 
+    // The next process claims the item again once the lease has run out.
     const executor = createMockExecutor();
-    const second = new Scheduler(executor, { workDir: tmpDir });
+    const second = new Scheduler(executor, {
+      workDir: tmpDir,
+      queue: openQueue(tmpDir, LEASE_EXPIRED_MS),
+    });
     second.start();
     await second.onTimer();
+    await second.drain();
     second.stop();
+    first.stop();
 
     expect(executor).not.toHaveBeenCalled();
     const runs = readRuns(tmpDir, WS, OWNER, auto.id);
@@ -1851,13 +1881,13 @@ describe("Scheduler — skipped runs advance nextRunAt", () => {
     );
     seedDefs(tmpDir, defs);
 
-    // Its first run is held open, so the next tick finds it still active and
-    // takes the `recordSkipped` path.
+    // A Run now of the task is held open, so the claim of the due occurrence
+    // finds it running and takes the `recordSkipped` path.
     const { executor } = createBlockingExecutor();
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
     scheduler.start();
-    scheduler.onTimer();
-    await new Promise((r) => setTimeout(r, 50));
+    scheduler.requestRunNow(WS, OWNER, "auto-ghost");
+    await scheduler.drain();
     rmSync(join(tmpDir, "workspaces", WS), { recursive: true, force: true });
     defOf(scheduler, "auto-ghost")!.nextRunAt = new Date(Date.now() - 1000).toISOString();
 
@@ -2571,11 +2601,12 @@ describe("Scheduler — cron schedule whose next run cannot be computed", () => 
     const { executor, resolve } = createBlockingExecutor();
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
     scheduler.start();
-    scheduler.onTimer();
-    await new Promise((r) => setTimeout(r, 50));
+    // A Run now of the task holds its run slot.
+    scheduler.requestRunNow(WS, OWNER, auto.id);
+    await scheduler.drain();
 
-    // While the first run is still active, the timezone stops resolving and
-    // the timer still holds a due run, so the next tick skips it.
+    // While that run is active, the timezone stops resolving and the
+    // occurrence comes due, so the claim finds the task running and skips it.
     const stored = loadDefs(tmpDir).get(auto.id)!;
     saveTask(tmpDir, WS, OWNER, { ...stored, schedule: BAD_TZ });
     defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
@@ -2710,7 +2741,13 @@ describe("Scheduler — run queue", () => {
     expect(view.filter((e) => e.state === "running")).toHaveLength(1);
     // Positions count this scheduler's whole queue, as tasks__run's do.
     expect(view.filter((e) => e.state === "queued")).toEqual([
-      { taskId: "b", state: "queued", position: 1 },
+      // A Run now asked for without an id is given one.
+      {
+        taskId: "b",
+        state: "queued",
+        position: 1,
+        runId: expect.stringMatching(/^run_[a-f0-9]{12}$/),
+      },
       { taskId: "c", state: "queued", position: 2, runId: "run_cccccccccccc" },
     ]);
     expect(scheduler.queueView(WS, "usr_other").map((e) => [e.taskId, e.state])).toEqual([
@@ -2737,6 +2774,7 @@ describe("Scheduler — run queue", () => {
     const onTimer = spyOn(scheduler, "onTimer");
 
     scheduler.requestRunNow(WS, OWNER, "a");
+    await tick();
     scheduler.requestRunNow(WS, OWNER, "b");
     const third = scheduler.requestRunNow(WS, OWNER, "c");
     await tick();
@@ -2790,6 +2828,7 @@ describe("Scheduler — run queue", () => {
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
+    await tick();
     expect(scheduler.requestRunNow(WS, OWNER, "b")).toMatchObject({ position: 1 });
     expect(scheduler.requestRunNow(WS, OWNER, "c")).toMatchObject({ position: 2 });
     expect(scheduler.requestRunNow(WS, OWNER, "d")).toMatchObject({ position: 3 });
@@ -2814,6 +2853,7 @@ describe("Scheduler — run queue", () => {
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
+    await tick();
     expect(scheduler.requestRunNow(WS, OWNER, "b")?.state).toBe("queued");
     const refused = scheduler.requestRunNow(WS, OWNER, "c");
     if (refused?.state !== "refused") throw new Error("expected refused");
@@ -2839,6 +2879,7 @@ describe("Scheduler — run queue", () => {
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
+    await tick();
     expect(scheduler.requestRunNow(WS, OWNER, "b")?.state).toBe("queued");
     const again = scheduler.requestRunNow(WS, OWNER, "b");
     if (again?.state !== "refused") throw new Error("expected refused");
@@ -2861,6 +2902,7 @@ describe("Scheduler — run queue", () => {
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
+    await tick();
     expect(scheduler.requestRunNow(WS, OWNER, "a")?.state).toBe("refused");
     expect(loadDefs(tmpDir).get("a")?.nextRunAt).toBe(nextRunAt);
 
@@ -2878,6 +2920,7 @@ describe("Scheduler — run queue", () => {
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
+    await tick();
     const runId = "run_bbbbbbbbbbbb";
     const queued = scheduler.requestRunNow(WS, OWNER, "b", {
       runId,
@@ -2899,7 +2942,7 @@ describe("Scheduler — run queue", () => {
     scheduler.stop();
   });
 
-  it("stop records every queued run as skipped", async () => {
+  it("stop leaves a queued Run now on the work queue for the next start, and records a waiting event run skipped", async () => {
     seedEventAnd(["a", "b"]);
     const { executor } = createSlotExecutor();
     const scheduler = new Scheduler(executor, {
@@ -2909,21 +2952,44 @@ describe("Scheduler — run queue", () => {
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
-    const queued = scheduler.requestRunNow(WS, OWNER, "b");
+    await tick();
+    const runId = "run_bbbbbbbbbbbb";
+    const queued = scheduler.requestRunNow(WS, OWNER, "b", {
+      runId,
+      requestedAt: new Date().toISOString(),
+    });
     if (queued?.state !== "queued") throw new Error("expected queued");
     const event = scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" });
     const [queuedEvent] = scheduler.queueView(WS, OWNER).filter((entry) => entry.taskId === "ev");
     expect(queuedEvent?.runId).toMatch(/^run_[a-f0-9]{12}$/);
 
     scheduler.stop();
+    // The Run now is still queued: nothing is recorded, and its ticket says so.
     const run = await queued.run;
-    expect(run.status).toBe("skipped");
-    expect(run.error).toContain("runtime stopped");
-    expect(readRuns(tmpDir, WS, OWNER, "b").map((r) => r.status)).toEqual(["skipped"]);
+    expect(run.status).toBe("queued");
+    expect(readRuns(tmpDir, WS, OWNER, "b")).toEqual([]);
+    const ticket = readRunTicket(tmpDir, WS, OWNER, runId);
+    expect(ticket?.run.status).toBe("queued");
+    // A reader does not take it for a run a stopped process lost.
+    expect(scheduler.settleLostRun(WS, OWNER, ticket!).run.status).toBe("queued");
+    // Admission's queue is in memory: the event run is recorded skipped.
     expect(await event).toMatchObject({ skipped: expect.stringContaining("runtime stopped") });
     const [eventRecord] = readRuns(tmpDir, WS, OWNER, "ev");
     expect(eventRecord?.status).toBe("skipped");
     expect(eventRecord?.id).toBe(queuedEvent?.runId);
+
+    // The next start claims the item and runs it.
+    const next = createMockExecutor();
+    const restarted = new Scheduler(next, { workDir: tmpDir });
+    restarted.start();
+    await restarted.drain();
+    await restarted.runEnded(runId);
+    restarted.stop();
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(readRuns(tmpDir, WS, OWNER, "b").map((r) => [r.id, r.status])).toEqual([
+      [runId, "success"],
+    ]);
+    expect(readRunTicket(tmpDir, WS, OWNER, runId)?.run.status).toBe("success");
   });
 
   it("an event run at the limit queues and runs when a slot frees", async () => {
@@ -2942,6 +3008,7 @@ describe("Scheduler — run queue", () => {
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
+    await tick();
     const outcome = scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" });
     await tick();
     expect(started).toEqual(["a"]);
@@ -2979,6 +3046,7 @@ describe("Scheduler — run queue", () => {
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
+    await tick();
     const outcome = await scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" });
     expect(outcome).toMatchObject({ skipped: expect.stringContaining("run queue was full") });
     const rows = readRuns(tmpDir, WS, OWNER, "ev");
@@ -3001,12 +3069,10 @@ describe("Scheduler — run queue", () => {
   }
 
   it("refused event fires do not count toward the fire ceiling; started ones do", async () => {
-    seedEventAnd(["a", "b"]);
+    seedEventAnd(["a"]);
     const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
-    const scheduler = new Scheduler(executor, {
-      workDir: tmpDir,
-      admission: createRunAdmission({ maxConcurrentRuns: 1, maxQueuedRuns: 1 }),
-    });
+    const admission = createRunAdmission({ maxConcurrentRuns: 1, maxQueuedRuns: 1 });
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, admission });
     scheduler.start();
     const input = { preamble: "x" };
 
@@ -3018,17 +3084,18 @@ describe("Scheduler — run queue", () => {
     releaseOne();
     expect(await first).toMatchObject({ run: { status: "success" } });
 
-    // Refused because the queue is full.
+    // Refused because admission's queue is full: the slot is held, and another
+    // source's run waits in the one place.
     scheduler.requestRunNow(WS, OWNER, "a");
-    const queuedManualId = "run_bbbbbbbbbbbb";
-    scheduler.requestRunNow(WS, OWNER, "b", {
-      runId: queuedManualId,
-      requestedAt: new Date().toISOString(),
-    });
+    await tick();
+    admission.request(
+      { workspaceId: WS, key: "other:waiting" },
+      { admitted: (lease) => lease.release(), withdrawn: () => {} },
+    );
     expect(await scheduler.runFromEvent(WS, OWNER, "ev", input)).toMatchObject({
       skipped: expect.stringContaining("run queue was full"),
     });
-    expect(scheduler.cancelRunById(WS, OWNER, queuedManualId)).toBe(true);
+    expect(admission.cancel("other:waiting")).toBe(true);
 
     // Queued, then cancelled before it started.
     const cancelled = scheduler.runFromEvent(WS, OWNER, "ev", input);
@@ -3076,6 +3143,7 @@ describe("Scheduler — run queue", () => {
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
+    await tick();
     const outcome = scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" });
     expect(scheduler.getQueuedRunIds()).toEqual([`${WS}/${OWNER}/ev`]);
     const [queuedEvent] = scheduler.queueView(WS, OWNER).filter((entry) => entry.taskId === "ev");
@@ -3121,6 +3189,7 @@ describe("Scheduler — run queue", () => {
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
+    await tick();
     const queued = scheduler.requestRunNow(WS, OWNER, "x");
     if (queued?.state !== "queued") throw new Error("expected queued");
     // The window fills while the run waits.
@@ -3148,6 +3217,7 @@ describe("Scheduler — run queue", () => {
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
+    await tick();
     const manual = scheduler.requestRunNow(WS, OWNER, "b");
     if (manual?.state !== "queued") throw new Error("expected queued");
     const event = scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" });
@@ -3663,13 +3733,22 @@ describe("Scheduler — every recorded run has a result", () => {
 
   it("a scheduled run interrupted by a stop has a result once the next process settles it", async () => {
     const auto = seedOne({ schedule: { type: "interval", intervalMs: 3_600_000 } });
-    const first = new Scheduler(createBlockingExecutor().executor, { workDir: tmpDir });
+    const firstQueue = openQueue(tmpDir);
+    const first = new Scheduler(createBlockingExecutor().executor, {
+      workDir: tmpDir,
+      queue: firstQueue,
+    });
     first.start();
     await new Promise((r) => setTimeout(r, 20));
+    await firstQueue.close();
 
-    const second = new Scheduler(createMockExecutor(), { workDir: tmpDir });
+    const second = new Scheduler(createMockExecutor(), {
+      workDir: tmpDir,
+      queue: openQueue(tmpDir),
+    });
     second.start();
     second.stop();
+    first.stop();
 
     const lines = linesWithResults(auto.id);
     expect(lines).toHaveLength(1);

@@ -191,6 +191,8 @@ async function startTask(
 ): Promise<McpTask> {
   const started = await source.startToolAsTask("run", args, { ownerContext: OWNED });
   if (!("task" in started)) throw new Error(`expected a task, got ${JSON.stringify(started)}`);
+  // The run is on the work queue; let the worker claim and start it.
+  await flush();
   return started.task;
 }
 
