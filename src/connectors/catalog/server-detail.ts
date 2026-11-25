@@ -349,7 +349,7 @@ export function getNimbleBrainConnectorMeta(s: ServerDetail): NimbleBrainConnect
 /**
  * Reverse-DNS namespace key for the host-integration `_meta` extension —
  * how a server declares its UI placement in the NimbleBrain host shell.
- * See schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json. Read through
+ * See schemas.nimblebrain.ai/host/v1/host.schema.json. Read through
  * `getNimbleBrainHostMeta` (`host-meta.ts`), never directly: the block is raw
  * catalog JSON.
  */

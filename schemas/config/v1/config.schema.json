@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+  "$id": "https://schemas.nimblebrain.ai/config/v1/config.schema.json",
   "title": "NimbleBrain Configuration",
   "description": "Configuration file for the NimbleBrain agent runtime (nimblebrain.json).",
   "type": "object",
@@ -8,7 +8,7 @@
   "properties": {
     "$schema": {
       "type": "string",
-      "description": "JSON Schema reference URI. Should be \"https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json\"."
+      "description": "JSON Schema reference URI. Should be \"https://schemas.nimblebrain.ai/config/v1/config.schema.json\"."
     },
     "version": {
       "type": "string",

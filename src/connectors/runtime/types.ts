@@ -316,7 +316,7 @@ export function oauthClientSecretRef(
 /**
  * Host manifest metadata at _meta["ai.nimblebrain/host"], as the runtime reads
  * it: camelCase, from `normalizeHostMeta` (`src/connectors/catalog/host-meta.ts`).
- * Every key here is a property of `host-manifest.schema.json`;
+ * Every key here is a property of `schemas/host/v1/host.schema.json`;
  * `test/unit/host-manifest-schema-drift.test.ts` holds the two in step.
  */
 export interface HostManifestMeta {

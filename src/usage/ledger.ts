@@ -34,7 +34,7 @@ import {
 } from "./paths.ts";
 import type { UsageLedgerEntry } from "./types.ts";
 
-/** Config for the durable ledger, mirrored in `nimblebrain-config.schema.json`. */
+/** Config for the durable ledger, mirrored in `schemas/config/v1/config.schema.json`. */
 export interface UsageLedgerConfig {
   /** Default true. False disables the write path entirely; the reader still reads. */
   enabled?: boolean;

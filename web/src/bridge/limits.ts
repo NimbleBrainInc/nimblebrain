@@ -3,7 +3,7 @@
 //
 // An app's SDK keeps its own copy of some of these (a client cannot import a
 // host), so they are named here, apart from the handlers that enforce them, for
-// `web/scripts/gen-host-constants.ts` to publish in `host-constants.json`.
+// `web/scripts/gen-host-constants.ts` to publish in `schemas/host-bridge/v1/constants.json`.
 // The bounds a schema drops a message over (the location trail) stay in
 // `schemas.ts`, and the generator reads them off the schema.
 // ---------------------------------------------------------------------------

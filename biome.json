@@ -52,7 +52,6 @@
       "packages/cli/test/**",
       "!**/dist/**",
       "!web/src/_generated/**",
-      "!web/src/bridge/host-constants.json",
       "!web/src/assets/**"
     ]
   },

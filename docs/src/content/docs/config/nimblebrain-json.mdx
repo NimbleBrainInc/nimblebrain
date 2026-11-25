@@ -35,7 +35,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 
 ```json
 {
-  "$schema": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+  "$schema": "https://schemas.nimblebrain.ai/config/v1/config.schema.json",
   "version": "1",
 
   "models": {
@@ -96,7 +96,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `$schema` | `string` | — | JSON Schema URI. Set to `"https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json"` for editor autocompletion. |
+| `$schema` | `string` | — | JSON Schema URI. Set to `"https://schemas.nimblebrain.ai/config/v1/config.schema.json"` for editor autocompletion. |
 | `version` | `string` | — | Config file version. Must be `"1"`. |
 | `models` | `object` | — | Role-based model slots. See [models](#models). |
 | `modelPolicy` | `object` | — | Which models this organization permits. See [modelPolicy](#modelpolicy). |
@@ -775,7 +775,7 @@ Anonymous, aggregate usage data, with no content, names, error messages or paths
 
 ## Validation
 
-NimbleBrain validates `nimblebrain.json` at startup against the [JSON Schema (draft-07)](https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json) using AJV.
+NimbleBrain validates `nimblebrain.json` at startup against the [JSON Schema (draft-07)](https://schemas.nimblebrain.ai/config/v1/config.schema.json) using AJV.
 
 - **Unknown keys** produce a warning on stderr and are ignored.
 - **Structural errors** (wrong types, missing required fields) throw an error and prevent startup.
@@ -808,7 +808,7 @@ The smallest valid config file:
 
 ```json
 {
-  "$schema": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+  "$schema": "https://schemas.nimblebrain.ai/config/v1/config.schema.json",
   "version": "1"
 }
 ```
