@@ -79,8 +79,12 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   at a `url` is refused at boot until the kernel holds a host credential for it.
 - **One connection per bound server, one `McpSource` (mode `plugin`).** Agents (the
   ToolRouter), the `/mcp/<wsId>` door and the app bridge reach the server through that
-  source, named by the server's `mcp.json` key; the kernel's contract client
-  (`BoundServer.call`) uses the same connection.
+  source; the kernel's contract client (`BoundServer.call`) uses the same connection.
+- **The source name is the kernel's, keyed by contract** (`CONTRACT_SOURCE_NAMES` in
+  `src/tools/identity-sources.ts`, beside the identity-source names it routes). So
+  `conversations__*` is the namespace whichever plugin implements the contract; the
+  implementation's `mcp.json` key only says which server to launch. The contract document
+  carries no host name: how a host exposes the public tools is the host's (`CONTRACT.md` §5).
 - **The host context is stamped in one place: the transport's `send`.** Every request to a
   bound server passes it, after every other `_meta` merge, and it overwrites
   `params._meta["ai.nimblebrain/context"]` (`contracts/host-context/CONTEXT.md`). Never set

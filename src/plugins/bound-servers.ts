@@ -24,6 +24,7 @@ import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotoc
 import type { EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
+import { CONTRACT_SOURCE_NAMES } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ContractBinding } from "./contracts.ts";
 import type { ResolvedPlugins } from "./index.ts";
@@ -154,10 +155,16 @@ async function startBoundServer(
   if (spec?.type !== "stdio") {
     throw new Error(`[plugins] ${name} is not a stdio server the runtime can start`);
   }
+  // The tool namespace is the kernel's, keyed by the contract it consumes; the
+  // implementation's server key only says which server to launch.
+  const sourceName = CONTRACT_SOURCE_NAMES.get(binding.contract);
+  if (!sourceName) {
+    throw new Error(`[plugins] ${name}: the runtime has no source name for ${binding.contract}`);
+  }
   mkdirSync(plugin.dataDir, { recursive: true });
 
   const source = new McpSource(
-    binding.server,
+    sourceName,
     {
       type: "plugin",
       // A minimal environment (the SDK's default: PATH, HOME, USER and the
