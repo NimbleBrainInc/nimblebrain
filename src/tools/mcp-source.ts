@@ -179,6 +179,8 @@ export interface ConnectorMcpContext {
 const NbReadResourceParamsSchema = ReadResourceRequestSchema.shape.params;
 const NbListResourcesParamsSchema = ListResourcesRequestSchema.shape.params;
 
+const NO_HIDDEN_TOOLS: ReadonlySet<string> = new Set();
+
 /** How this runtime names itself to every server it connects to. */
 const CLIENT_INFO: Implementation = { name: "nimblebrain", version: "0.1.0" };
 
@@ -258,6 +260,21 @@ export type McpTransportMode =
        * changes across restarts.
        */
       placements?: PlacementDeclaration[];
+    }
+  | {
+      type: "plugin";
+      /**
+       * Builds a fresh transport to a system plugin's server on each start and
+       * restart. The kernel's plugin binding owns it (`src/plugins/`): it starts
+       * the server's process and stamps every request's host context.
+       */
+      createTransport: () => Transport;
+      /**
+       * Tools this source never lists and refuses to call: the server's private
+       * tools, which only the kernel's own contract client calls, on the
+       * client this source holds. Bare names.
+       */
+      hiddenTools: ReadonlySet<string>;
     };
 
 /**
@@ -845,6 +862,12 @@ export class McpSource implements ToolSource {
       // that retry: the close fires before McpSource catches
       // `UnauthorizedError`, marks the source dead, and HealthMonitor
       // starts restart attempts that fight our own retry.
+    } else if (this.mode.type === "plugin") {
+      // A system plugin's server: the binding starts its process with each
+      // transport, so a restart is a new process. Its close is a crash from the
+      // moment it exists; a close during the handshake fails the start first.
+      this.transport = this.mode.createTransport();
+      this.transport.onclose = () => this.emitSourceCrashed("Plugin server exited");
     } else {
       // In-process: the factory builds a fresh InMemoryTransport pair and an
       // already-connected Server on each call, so restart is a clean slate.
@@ -1963,24 +1986,27 @@ export class McpSource implements ToolSource {
       throw new Error(`McpSource "${this.name}" not started`);
     }
     const client = this.client;
+    const hidden = this.hiddenTools();
     const p = (async () => {
       const response = await client.listTools();
-      return response.tools.map((t) => {
-        const rawExec = (t as { execution?: unknown }).execution;
-        const execution = isExecutionMeta(rawExec)
-          ? { taskSupport: rawExec.taskSupport }
-          : undefined;
-        return {
-          name: `${this.name}__${t.name}`,
-          description: t.description ?? "",
-          inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
-          outputSchema: t.outputSchema as Record<string, unknown> | undefined,
-          source: `mcp:${this.name}`,
-          meta: t._meta as Record<string, unknown> | undefined,
-          annotations: t.annotations,
-          execution,
-        };
-      });
+      return response.tools
+        .filter((t) => !hidden.has(t.name))
+        .map((t) => {
+          const rawExec = (t as { execution?: unknown }).execution;
+          const execution = isExecutionMeta(rawExec)
+            ? { taskSupport: rawExec.taskSupport }
+            : undefined;
+          return {
+            name: `${this.name}__${t.name}`,
+            description: t.description ?? "",
+            inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
+            outputSchema: t.outputSchema as Record<string, unknown> | undefined,
+            source: `mcp:${this.name}`,
+            meta: t._meta as Record<string, unknown> | undefined,
+            annotations: t.annotations,
+            execution,
+          };
+        });
     })();
     this.toolsFetchInFlight = p;
     return p.finally(() => {
@@ -2115,6 +2141,18 @@ export class McpSource implements ToolSource {
     return fresh ?? memo;
   }
 
+  /** Bare names this source never lists and refuses to call (a plugin server's private tools). */
+  private hiddenTools(): ReadonlySet<string> {
+    return this.mode.type === "plugin" ? this.mode.hiddenTools : NO_HIDDEN_TOOLS;
+  }
+
+  /** The answer to a call naming a hidden tool: the same as a tool the server does not have. */
+  private hiddenToolRefusal(toolName: string): string | null {
+    return this.hiddenTools().has(toolName)
+      ? `Tool "${toolName}" is not available on ${this.name}`
+      : null;
+  }
+
   /**
    * Look up the cached tool definition by bare tool name (no source prefix).
    *
@@ -2184,6 +2222,8 @@ export class McpSource implements ToolSource {
     signal?: AbortSignal,
     options?: ToolExecuteOptions,
   ): Promise<ToolResult> {
+    const hidden = this.hiddenToolRefusal(toolName);
+    if (hidden) return { content: textContent(hidden), isError: true };
     // A live client dispatches — even with `dead` set: a stale crash flag over a
     // working transport, or a torn one, both route their throw through recover()
     // (classify → restart only on a connection-down class, never a timeout/auth-loss
@@ -3045,6 +3085,8 @@ export class McpSource implements ToolSource {
       meta?: Record<string, unknown> | null;
     },
   ): Promise<CreateTaskResult> {
+    const hidden = this.hiddenToolRefusal(toolName);
+    if (hidden) throw new Error(hidden);
     const client = this.client;
     if (!client || this.dead) {
       throw new Error(`McpSource "${this.name}" not started`);
