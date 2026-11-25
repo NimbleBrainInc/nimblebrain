@@ -320,6 +320,7 @@
 
 ### Fixed
 
+- **An OAuth connector signs in even when its server answers discovery without a token.** A catalog entry that declares `auth: dcr` or `auth: static`, or a connector with its own OAuth client, now asks to sign in on Connect instead of reading as connected and failing at its first tool call (#2237).
 - **Conversation tools act only within the workspace a call is made in.** Getting, renaming or exporting a conversation by id finds it only in the calling workspace, like listing and search already did.
 - **The conversation list no longer holds every conversation file in memory.** Its index kept each file's whole text alive after reading it, so a workspace with large conversations held roughly twice their size on disk for the life of the process.
 - **Request bodies are limited by bytes received, including chunked bodies.** A JSON request takes up to 1 MB and an upload up to `files.maxTotalSize` however it is sent, and the server refuses any body more than 8 MB past the larger of the two. ([docs](https://docs.nimblebrain.ai/config/nimblebrain-json/#files))
