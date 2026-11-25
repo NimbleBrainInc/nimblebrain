@@ -90,7 +90,7 @@ is refused at load with the file and fields named.
 
 ```json
 "extensions": { "ai.nimblebrain": {
-  "$schema": "https://schemas.nimblebrain.ai/v1/plugin-extension.schema.json",
+  "$schema": "https://schemas.nimblebrain.ai/plugin-extension/v1/plugin-extension.schema.json",
   "implements": [ { "contract": "ai.nimblebrain.conversations", "version": "1.0",
                     "server": "conversations" } ],
   "requires": [ { "contract": "ai.nimblebrain.files", "version": "1.0", "optional": true } ]

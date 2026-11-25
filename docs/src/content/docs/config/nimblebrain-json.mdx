@@ -115,6 +115,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
 | `tasks` | `object` | — | Task run slots, queue, and per-run ceilings. See [tasks](#tasks). |
 | `execution` | `object` | native engine | Which agent runtime executes a run: the native engine, or an agent worker the runtime dials. Experimental. See [execution](#execution). |
+| `plugins` | `object` | — | Agent Plugins the runtime runs as part of the instance, and which are system plugins. Experimental: validated at boot, not yet started. See [plugins](#plugins). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow plain HTTP to `localhost`, `127.0.0.1` and `::1` for remote connectors. Private ranges and cloud-metadata hosts stay refused. Dev only. |
 | `telemetry` | `object` | unset (a person decides) | Usage telemetry, anonymous unless `identify` is set. See [telemetry](#telemetry). |
@@ -734,6 +735,40 @@ What stays with NimbleBrain, whichever runtime runs a turn:
 A worker runtime does not check a run's spend accounts or input-token cap before each model call. When the model gateway says it enforces grants (its `GET /providers` answer carries `"grants": true`), such a run still executes on the worker: the runtime reserves the run's share of each spend account (its balance divided by how many runs may share it, such as a batch's concurrency), writes the smaller of that share and the cap into the run's model credential as a token `grant`, and the gateway refuses the run's calls once its input and output tokens reach it. Otherwise a run that sets either executes on the native runtime, which checks each call, even when `default` names the worker. Chat and every other run execute on the default. Each turn's model credential lasts as long as the turn may run: a task's own duration cap, or for a chat turn `tasks.maxRunDurationMs`, at which the turn is stopped with an error naming the limit. Outside the `dev` identity provider external runtimes need the run key and a `modelGateway`, and the runtime refuses to start without them. On a developer's machine, run a worker on loopback with `NB_AGENT_AUTH=none` and leave out `modelGateway`: it calls its provider with its own key.
 
 A worker holds a turn's connection in memory, so a worker that stops mid-turn (a rollout drains it, it restarts) cuts the turn, as a runtime restart cuts a native one. The run ends with the error `The agent restarted mid-turn, so this turn was cut off. Try again; tool calls made before the cut may already have run.` (type `AgentConnectionLostError`). It is not retried mid-turn, because the tools it called already ran; a task records it as a transient failure.
+
+## plugins
+
+Experimental. The [Agent Plugins](https://agent-plugins.org) the runtime runs as part of the instance, by plugin name. A plugin is a directory with `plugin.json` at its root, its MCP servers in `mcp.json` and its skills in `skills/`, the same format the plugin catalog publishes. NimbleBrain's own declarations sit in the manifest's `extensions["ai.nimblebrain"]`, described by its JSON Schema (`$id` `https://schemas.nimblebrain.ai/plugin-extension/v1/plugin-extension.schema.json`): the contracts the plugin implements, each by the `mcp.json` key of the one server that implements it, and the contracts it requires.
+
+```json
+{
+  "plugins": {
+    "conversations": { "source": "builtin", "system": true },
+    "reports": {
+      "source": "./plugins/reports",
+      "servers": { "reports": { "url": "http://reports.my-namespace.svc/mcp" } }
+    },
+    "tasks": false
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `<name>` | The plugin's name, which its `plugin.json` `name` must equal. `false` turns it off. |
+| `<name>.source` | `builtin` for the plugin of that name shipped with the runtime, or a directory holding its `plugin.json`, relative to this file's directory. |
+| `<name>.system` | Make it a system plugin: one that holds records the runtime relies on and sees other plugins' data by design. Only this field makes one; a plugin cannot declare itself a system plugin. Default `false`. |
+| `<name>.servers.<key>.url` | Reach that server where it already runs instead of starting it, named by its key in the plugin's `mcp.json`. |
+
+At boot the runtime reads every enabled plugin and refuses to start, naming the plugin, file and field, when:
+
+- `plugin.json` or `mcp.json` fails the Agent Plugins 1.0.0 schema or its rules, or the `ai.nimblebrain` extension fails its schema. An unknown top-level field in `plugin.json` is logged and ignored.
+- a contract the plugin implements is below the version the runtime consumes (same major, minor at least), or names a server that is not in the plugin's `mcp.json`;
+- two enabled plugins implement a contract that allows only one;
+- a plugin requires a contract no enabled plugin implements (an `optional` requirement is logged instead);
+- a plugin that is not a system plugin has a `stdio` server with no `url`, since the runtime starts local servers only for system plugins.
+
+The runtime then logs the resolved plugins and contracts. It does not yet start their servers or change how anything is served, so with or without this block the instance behaves the same. Absent, nothing is read.
 
 ## files
 

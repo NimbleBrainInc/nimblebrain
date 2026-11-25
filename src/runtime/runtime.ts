@@ -203,6 +203,7 @@ import type {
   EventWakeRequest,
   TaskEventTrigger,
 } from "../platform/tasks/event-trigger.ts";
+import { checkConfiguredPlugins } from "../plugins/index.ts";
 import type {
   AppStateInfo,
   FocusedAppInfo,
@@ -942,6 +943,14 @@ export class Runtime {
     if (config.configPath && !config.configOverridePath) {
       config = { ...config, configOverridePath: deriveOverridePath(config.configPath) };
     }
+
+    // The operator's plugins (ADR-0076): read, validated and held to their
+    // contracts, so a setup that cannot work refuses the boot here. Nothing is
+    // started or routed from the result yet. No `plugins` block reads nothing.
+    checkConfiguredPlugins(config.plugins, {
+      workDir,
+      ...(config.configPath ? { configPath: config.configPath } : {}),
+    });
 
     const gateway = modelGatewayAccess(config, runKey);
     const resolveModelFn = resolveModel(config, gateway);

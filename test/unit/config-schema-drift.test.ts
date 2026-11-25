@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { AGENT_RUNTIME_CONFIG_KEYS, EXECUTION_CONFIG_KEYS } from "../../src/config/execution.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
+import { PLUGIN_CONFIG_KEYS, PLUGIN_SERVER_CONFIG_KEYS } from "../../src/config/plugins.ts";
 import { SECRETS_CONFIG_KEYS } from "../../src/config/secrets.ts";
 import {
   resolveTasksConfig,
@@ -59,6 +60,14 @@ const schema = JSON.parse(
     execution: SchemaObject & {
       properties: { runtimes: { additionalProperties: SchemaObject } };
     };
+    plugins: {
+      additionalProperties: {
+        oneOf: [
+          unknown,
+          SchemaObject & { properties: { servers: { additionalProperties: SchemaObject } } },
+        ];
+      };
+    };
     connectors: SchemaObject & {
       properties: {
         providers: SchemaObject & {
@@ -107,6 +116,18 @@ describe("config schema ↔ execution config", () => {
     "execution.runtimes.<name>",
     execution.properties.runtimes.additionalProperties,
     AGENT_RUNTIME_CONFIG_KEYS,
+  );
+});
+
+describe("config schema ↔ plugins config", () => {
+  // Plugin names and server names are the operator's, so those maps are open;
+  // one plugin's entry and one server's entry are closed.
+  const entry = schema.properties.plugins.additionalProperties.oneOf[1];
+  expectLockstep("plugins.<name>", entry, PLUGIN_CONFIG_KEYS);
+  expectLockstep(
+    "plugins.<name>.servers.<name>",
+    entry.properties.servers.additionalProperties,
+    PLUGIN_SERVER_CONFIG_KEYS,
   );
 });
 

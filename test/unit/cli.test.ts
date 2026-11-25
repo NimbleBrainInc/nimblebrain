@@ -97,6 +97,7 @@ describe("loadConfig", () => {
       connectors: {},
       notifications: { poll: { intervalMs: 30000 } },
       execution: { default: "native" },
+      plugins: { tasks: false },
       tasks: {},
       files: {},
       brand: { name: "ACME" },

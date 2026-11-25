@@ -11,6 +11,10 @@ import { fakeFetch } from "./fake-fetch.ts";
 
 export const TEST_CATALOG_URL = "https://catalog.test";
 
+/** The `$schema` every Agent Plugins 1.0.0 `plugin.json` carries, as the catalog build writes it. */
+export const AGENT_PLUGINS_MANIFEST_SCHEMA =
+  "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+
 export interface FixturePlugin {
   name: string;
   /** `extensions["ai.nimblebrain"].servers`: key → registry name. */
@@ -61,6 +65,7 @@ export function buildCatalog(
   const entries = plugins.map((plugin) => {
     const files: Record<string, string> = {
       "plugin.json": JSON.stringify({
+        $schema: AGENT_PLUGINS_MANIFEST_SCHEMA,
         name: plugin.name,
         extensions: {
           "ai.nimblebrain": {

@@ -2,6 +2,7 @@ import type { LanguageModelV4 } from "@ai-sdk/provider";
 import type { Brand } from "../brand/index.ts";
 import type { ExecutionConfig } from "../config/execution.ts";
 import type { FeatureFlags } from "../config/features.ts";
+import type { PluginsConfig } from "../config/plugins.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
 import type { TasksConfig } from "../config/tasks.ts";
@@ -264,6 +265,13 @@ export interface RuntimeConfig {
    * installation reaches. See `src/config/execution.ts`.
    */
   execution?: ExecutionConfig;
+
+  /**
+   * The Agent Plugins the operator runs as part of the runtime, and which are
+   * system plugins. Validated at boot; nothing is started from it yet. See
+   * `src/config/plugins.ts`.
+   */
+  plugins?: PluginsConfig;
 
   /**
    * Runtimes an embedder or a test hands the runtime directly, beside those

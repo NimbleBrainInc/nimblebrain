@@ -540,6 +540,55 @@
       },
       "additionalProperties": false
     },
+    "plugins": {
+      "description": "The Agent Plugins this instance runs as part of the runtime, by plugin name: where each comes from, whether it is a system plugin, and where its servers already run. Absent, the runtime runs none. Each plugin's plugin.json is validated against the Agent Plugins 1.0.0 schema and its ai.nimblebrain extension, and the contracts the plugins implement and require are checked, at boot; a plugin that fails refuses the boot with the plugin and field named. Experimental: the runtime loads and checks the plugins and logs the result; it does not yet start their servers.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^(?!.*(?:--|\\.\\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$",
+        "maxLength": 64
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "const": false,
+            "description": "The plugin is off."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "minLength": 1,
+                "description": "builtin for the plugin of this name shipped with the runtime, or a directory holding its plugin.json, relative to this file's directory. The manifest's name must equal the plugin's key here."
+              },
+              "system": {
+                "type": "boolean",
+                "default": false,
+                "description": "A system plugin holds records the kernel relies on and sees other plugins' data by design, and only a system plugin's stdio servers are started by the runtime. Only this field makes a plugin a system plugin; a manifest cannot. Default: false."
+              },
+              "servers": {
+                "type": "object",
+                "description": "Servers of the plugin that already run, so the runtime reaches them instead of starting them, keyed by the server's key in the plugin (its mcp.json key).",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The server's MCP endpoint, reached over Streamable HTTP (http or https)."
+                    }
+                  },
+                  "required": ["url"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": ["source"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
     "tasks": {
       "description": "Guardrails for unattended (task) runs: how many runs the process holds in flight and waiting, across every workspace, the most any one run may spend, and how long an ended run's data is kept. The per-run ceilings bound each task's own caps, and the runtime defaults for caps it leaves unset, at execution time.",
       "type": "object",
