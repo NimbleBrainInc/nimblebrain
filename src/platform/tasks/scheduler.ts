@@ -2478,6 +2478,10 @@ export class Scheduler {
       runId,
       occurrence,
     };
+    // Intent before effect: a once's mark lands before its item (see
+    // `markOnceQueued`). A mark that cannot be written throws here, before
+    // anything is enqueued, and the tick logs it.
+    if (isOnceSchedule(auto.schedule)) this.markOnceQueued(auto, occurrence);
     this.outstanding.set(key, occurrence);
     this.unclaimed.set(itemKey, { key, runId, requested: false });
     return queue
@@ -2487,10 +2491,11 @@ export class Scheduler {
           // A stopped process enqueued it: its payload, and run id, stand.
           const entry = this.unclaimed.get(itemKey);
           if (!created && entry) delete entry.runId;
-          if (isOnceSchedule(auto.schedule)) this.markOnceQueued(auto, occurrence);
           this.wake();
         },
         (err) => {
+          // A once's mark stays: the occurrence fired, and the next tick (or
+          // the next process) enqueues it again under the same key.
           this.outstanding.delete(key);
           this.unclaimed.delete(itemKey);
           log.warn("[tasks] could not enqueue a due scheduled run", {
@@ -2503,38 +2508,31 @@ export class Scheduler {
   }
 
   /**
-   * Mark a once's occurrence as on the queue (`onceQueuedAt`), so a restart
-   * after its grace window runs it instead of retiring it missed.
-   *
-   * Written after the enqueue resolves, so the mark only ever names an
-   * occurrence whose item exists. A process that stops between the two leaves
-   * the item with no mark: `start()` then retires the once missed (its
-   * `nextRunAt` cleared), and the claim finds the occurrence gone and settles
-   * the item without running. That window errs toward today's missed rule,
-   * never toward a mark with nothing behind it. Re-reads the file, as
-   * `updateAfterRun` does, to keep concurrent edits.
+   * Mark that a once's occurrence fired (`onceQueuedAt`), before its item is
+   * enqueued, so a restart after its grace window runs it instead of retiring
+   * it missed. Intent before effect: the mark lands first, and a process that
+   * stops before the enqueue leaves a mark with no item. The next process does
+   * not retire that once; its timer finds the occurrence still due (the mark
+   * leaves `nextRunAt` alone) and enqueues it under the same deterministic key,
+   * which creates the item when it is missing and returns it when it is there,
+   * and the claim's occurrence check lets it run once. A stop before the mark
+   * leaves nothing, and the missed rule stands: the occurrence never fired.
+   * Re-reads the file, as `updateAfterRun` does, to keep concurrent edits.
+   * Throws when the task file cannot be written, so nothing is enqueued.
    */
   private markOnceQueued(auto: Task, occurrence: string): void {
     const { workspaceId: wsId, ownerId } = auto;
     if (!wsId || !ownerId) return;
-    try {
-      const fresh = loadTask(this.config.workDir, wsId, ownerId, auto.id);
-      const at = fresh && isOnceSchedule(fresh.schedule) ? fresh.schedule?.at : undefined;
-      // The occurrence is the stored `nextRunAt`; `at` may name the same instant with an offset.
-      if (!fresh || at === undefined || Date.parse(at) !== Date.parse(occurrence)) return;
-      if (fresh.onceDone || fresh.onceQueuedAt === at) return;
-      fresh.workspaceId = wsId;
-      fresh.ownerId = ownerId;
-      fresh.onceQueuedAt = at;
-      saveTask(this.config.workDir, wsId, ownerId, fresh);
-      this.definitions.set(Scheduler.keyOf(fresh), fresh);
-    } catch (err) {
-      log.warn("[tasks] could not mark a once as queued", {
-        taskId: auto.id,
-        workspaceId: wsId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    const fresh = loadTask(this.config.workDir, wsId, ownerId, auto.id);
+    const at = fresh && isOnceSchedule(fresh.schedule) ? fresh.schedule?.at : undefined;
+    // The occurrence is the stored `nextRunAt`; `at` may name the same instant with an offset.
+    if (!fresh || at === undefined || Date.parse(at) !== Date.parse(occurrence)) return;
+    if (fresh.onceDone || fresh.onceQueuedAt === at) return;
+    fresh.workspaceId = wsId;
+    fresh.ownerId = ownerId;
+    fresh.onceQueuedAt = at;
+    saveTask(this.config.workDir, wsId, ownerId, fresh);
+    this.definitions.set(Scheduler.keyOf(fresh), fresh);
   }
 
   // -----------------------------------------------------------------------

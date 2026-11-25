@@ -69,10 +69,11 @@ export interface Task {
   onceDone?: OnceDone;
 
   /**
-   * A once schedule's `at` whose occurrence is on the work queue: it came due
-   * while the runtime was running and waits for a run slot. Written only after
-   * the item is enqueued, so it never names an occurrence with no item. `start()`
-   * does not retire such a once as missed; its claim runs it. Cleared when the
+   * A once schedule's `at` whose occurrence fired: it came due while the
+   * runtime was running. Written before its work item is enqueued, so it may
+   * name an occurrence whose item is not there yet. `start()` does not retire
+   * such a once as missed; its timer enqueues the occurrence again (the same
+   * key finds or creates the item) and the claim runs it. Cleared when the
    * once retires.
    */
   onceQueuedAt?: string;

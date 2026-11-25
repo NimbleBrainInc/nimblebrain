@@ -495,7 +495,7 @@ describe("a once at restart", () => {
     setSystemTime();
   });
 
-  it("whose occurrence was on the queue runs once after a restart past its grace, and retires ran", async () => {
+  it("marked as fired and on the queue runs once after a restart past its grace, and retires ran", async () => {
     const at = new Date(Date.now() - 1000).toISOString();
     seedTask({ id: "blocker" });
     const once = seedTask({ enabled: true, schedule: { type: "once", at }, nextRunAt: at });
@@ -526,6 +526,48 @@ describe("a once at restart", () => {
     expect(stored.onceDone?.outcome).toBe("ran");
     expect(stored.enabled).toBe(false);
     expect(stored.onceQueuedAt).toBeUndefined();
+  });
+
+  it("marked as fired by a process that stopped before enqueuing it runs once after a restart past its grace, and retires ran", async () => {
+    const at = new Date(Date.now() - 1000).toISOString();
+    // The mark landed and the process stopped before the enqueue: no item.
+    const once = seedTask({
+      enabled: true,
+      schedule: { type: "once", at },
+      nextRunAt: at,
+      onceQueuedAt: at,
+    });
+
+    setSystemTime(new Date(Date.now() + ONCE_GRACE_MS + 60_000));
+    const executor = successExecutor();
+    const scheduler = startScheduler(executor, openQueue());
+    await scheduler.onTimer();
+    await scheduler.drain();
+    await scheduler.onTimer();
+
+    expect(executor).toHaveBeenCalledTimes(1);
+    const runs = readRuns(workDir, WS, OWNER, once.id);
+    expect(runs.map((r) => [r.status, r.trigger])).toEqual([["success", "scheduled"]]);
+    const stored = loadTask(workDir, WS, OWNER, once.id)!;
+    expect(stored.onceDone?.outcome).toBe("ran");
+    expect(stored.onceQueuedAt).toBeUndefined();
+  });
+
+  it("is marked as fired before its item is enqueued, and keeps the mark when the enqueue fails", async () => {
+    const at = new Date(Date.now() + 3_600_000).toISOString();
+    const once = seedTask({ enabled: true, schedule: { type: "once", at }, nextRunAt: at });
+    const queue = openQueue();
+    const scheduler = startScheduler(successExecutor(), queue);
+    // The occurrence comes due, and the queue refuses every write.
+    const past = new Date(Date.now() - 1000).toISOString();
+    const due = { ...once, schedule: { type: "once" as const, at: past }, nextRunAt: past };
+    saveTask(workDir, WS, OWNER, due);
+    scheduler.getDefinitions().set(`${WS}/${OWNER}/${once.id}`, due);
+    await queue.close();
+
+    await scheduler.onTimer();
+    expect(loadTask(workDir, WS, OWNER, once.id)?.onceQueuedAt).toBe(past);
+    expect(readRuns(workDir, WS, OWNER, once.id)).toEqual([]);
   });
 
   it("whose occurrence was never enqueued is still retired missed", async () => {
