@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { InMemoryConversationStore } from "../../src/conversation/memory-store.ts";
 import type { ConversationStore, StoredMessage } from "../../src/conversation/types.ts";
-import { windowMessages } from "../../src/conversation/window.ts";
+import { windowMessages } from "../../src/history/window.ts";
 
 function msg(role: "user" | "assistant", text: string): StoredMessage {
   return { role, content: [{ type: "text", text }], timestamp: new Date().toISOString() };

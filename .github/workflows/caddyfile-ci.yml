@@ -2,7 +2,7 @@ name: Caddyfile CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'next/**']
     paths:
       - "web/Caddyfile"
       - "web/Dockerfile"

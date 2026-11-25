@@ -18,7 +18,7 @@ name: server-sdk-py
 #     week instead of at the next lockfile bump.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'next/**']
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
     types: [checks_requested]

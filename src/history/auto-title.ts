@@ -1,6 +1,6 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import { escapeClosingTags } from "../conversation/escape-closing-tags.ts";
 import { type TokenUsage, tokenUsageFromV4 } from "../usage/types.ts";
-import { escapeClosingTags } from "./escape-closing-tags.ts";
 
 /** Bound the (non-streaming) title call so a stalled provider can't leak a
  *  dangling request. A timeout throws, and the catch below falls back to a

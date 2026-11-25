@@ -10,7 +10,7 @@ import type {
  * Caching is an Anthropic-specific concern (the `anthropic.cacheControl`
  * provider option, the 4-breakpoint budget, the prefix-match semantics), so it
  * is quarantined here — mirroring how reasoning-replay policy is quarantined in
- * `conversation/window.ts::applyReasoningReplayPolicy`. The engine stays
+ * `history/window.ts::applyReasoningReplayPolicy`. The engine stays
  * provider-agnostic: it calls `applyCachePolicy(provider, …)` and never knows
  * which breakpoints were placed.
  *

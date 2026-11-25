@@ -2,12 +2,12 @@ import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
-import { COMPACTION_DEFAULTS } from "../../src/conversation/compaction.ts";
-import { windowMessages } from "../../src/conversation/window.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import { estimateMessageTokens } from "../../src/engine/token-estimate.ts";
 import type { EngineConfig, EngineHooks, ToolSchema } from "../../src/engine/types.ts";
+import { COMPACTION_DEFAULTS } from "../../src/history/compaction.ts";
+import { windowMessages } from "../../src/history/window.ts";
 import { buildMidTurnCompaction, planMidTurnFold } from "../../src/runtime/mid-turn-compaction.ts";
 import { createEchoModel, type EchoModelResponse } from "../helpers/echo-model.ts";
 

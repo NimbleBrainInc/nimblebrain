@@ -168,6 +168,7 @@ src/
 ├── workspace/     Multi-tenant workspace isolation
 ├── skills/        Skill discovery and matching (triggers → keywords)
 ├── conversation/  Message persistence (JSONL, in-memory, event-sourced)
+├── history/       A turn's model context from stored events: reconstruction, compaction, token window, titles
 ├── prompt/        System prompt composition (identity → core → apps → skill)
 ├── model/         LLM provider registry (AI SDK)
 ├── adapters/      EventSink implementations (logs, console, debug, telemetry)

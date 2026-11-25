@@ -16,7 +16,7 @@ export interface FeatureFlags {
    * turns folded into a summary, operator messages retained verbatim — to
    * bound context growth without per-turn cache thrash. Event-sourced stores
    * only; set false to replay the full history every turn. See
-   * `conversation/compaction.ts`.
+   * `history/compaction.ts`.
    */
   compaction?: boolean;
 }

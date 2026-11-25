@@ -1,7 +1,7 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import { escapeClosingTags } from "../conversation/escape-closing-tags.ts";
+import type { HistoryCompactedEvent, StoredMessage } from "../conversation/types.ts";
 import { type TokenUsage, tokenUsageFromV4 } from "../usage/types.ts";
-import { escapeClosingTags } from "./escape-closing-tags.ts";
-import type { HistoryCompactedEvent, StoredMessage } from "./types.ts";
 
 /**
  * History compaction — bound context growth on long conversations without

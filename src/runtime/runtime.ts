@@ -56,17 +56,6 @@ import {
   type ConnectorTeardownOutcome,
   uninstallWorkspaceConnector,
 } from "../connectors/runtime/uninstall.ts";
-import { generateTitle } from "../conversation/auto-title.ts";
-import {
-  compactConversationMessages,
-  planCompaction,
-  summarizeMessages,
-} from "../conversation/compaction.ts";
-import {
-  collectSuppressedSkillNames,
-  extractOperatorTurns,
-  reconstructMessages,
-} from "../conversation/event-reconstructor.ts";
 import {
   type ConversationMutation,
   EventSourcedConversationStore,
@@ -81,11 +70,6 @@ import {
   type ListOptions,
   type StoredMessage,
 } from "../conversation/types.ts";
-import {
-  applyReasoningReplayPolicy,
-  type WindowMessagesResult,
-  windowMessages,
-} from "../conversation/window.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { AdminToolCallPayload } from "../engine/schemas/events.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
@@ -114,6 +98,22 @@ import { workspaceFilesDir } from "../files/paths.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
+import { generateTitle } from "../history/auto-title.ts";
+import {
+  compactConversationMessages,
+  planCompaction,
+  summarizeMessages,
+} from "../history/compaction.ts";
+import {
+  collectSuppressedSkillNames,
+  extractOperatorTurns,
+  reconstructMessages,
+} from "../history/event-reconstructor.ts";
+import {
+  applyReasoningReplayPolicy,
+  type WindowMessagesResult,
+  windowMessages,
+} from "../history/window.ts";
 import type { HookReconcileDeps } from "../hooks/reconcile.ts";
 import { ensureHooksOnRunning } from "../hooks/reconcile.ts";
 import { readHookIdentity } from "../hooks/token.ts";

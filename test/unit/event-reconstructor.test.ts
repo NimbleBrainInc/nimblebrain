@@ -1,9 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import {
-  collectDeliveredSkillNames,
-  deriveUsageMetrics,
-  reconstructMessages,
-} from "../../src/conversation/event-reconstructor.ts";
 import type {
   ConversationEvent,
   LlmResponseEvent,
@@ -15,6 +10,11 @@ import type {
   ToolStartEvent,
   UserMessageEvent,
 } from "../../src/conversation/types.ts";
+import {
+  collectDeliveredSkillNames,
+  deriveUsageMetrics,
+  reconstructMessages,
+} from "../../src/history/event-reconstructor.ts";
 
 type StoredPart = Exclude<StoredMessage["content"], string>[number];
 

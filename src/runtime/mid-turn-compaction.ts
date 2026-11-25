@@ -1,8 +1,8 @@
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
-import { COMPACTION_DEFAULTS, compactionSummaryMessages } from "../conversation/compaction.ts";
-import { groupMessages } from "../conversation/window.ts";
 import { estimateMessageTokens } from "../engine/token-estimate.ts";
 import type { EngineHooks } from "../engine/types.ts";
+import { COMPACTION_DEFAULTS, compactionSummaryMessages } from "../history/compaction.ts";
+import { groupMessages } from "../history/window.ts";
 
 /**
  * Mid-turn history compaction — folding the history a single turn grows.
@@ -29,7 +29,7 @@ import type { EngineHooks } from "../engine/types.ts";
  * 3,593 against a 4,000 budget), but the size is the smaller half; a request
  * pinned at its cap is bounded, it is just bounded by forgetting.
  *
- * It is the same trade `conversation/compaction.ts` makes between turns — a
+ * It is the same trade `history/compaction.ts` makes between turns — a
  * deliberate, infrequent re-anchor instead of per-call windowing — applied
  * within one, and priced for one (see `MID_TURN_TRIGGER_RATIO`).
  *
@@ -109,7 +109,7 @@ export interface MidTurnCompactionDeps {
  * Fold when the history reaches the budget — not before.
  *
  * `windowMessages` returns its input untouched at or below the budget
- * (`conversation/window.ts`), and this hook runs before it in the same
+ * (`history/window.ts`), and this hook runs before it in the same
  * iteration, so a trigger of exactly 1.0 means windowing never drops a group:
  * the fold takes over precisely where dropping would otherwise start, and not a
  * token earlier. Below the budget the request is append-only and reads back
@@ -117,7 +117,7 @@ export interface MidTurnCompactionDeps {
  * summarizer call and a full re-write of the prefix — a trade that needs more
  * iterations to repay than a turn which never reaches its budget has left.
  *
- * The 0.7 `conversation/compaction.ts` triggers on is a different economy: that
+ * The 0.7 `history/compaction.ts` triggers on is a different economy: that
  * fold is persisted, so its one re-anchor amortizes over every later turn. This
  * one is discarded at the end of the turn and has to pay for itself inside it.
  */

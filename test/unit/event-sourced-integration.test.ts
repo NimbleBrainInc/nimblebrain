@@ -2,9 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveUsageMetrics } from "../../src/conversation/event-reconstructor.ts";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
+import { deriveUsageMetrics } from "../../src/history/event-reconstructor.ts";
 import { readConversation } from "../../src/platform/conversations/jsonl-reader.ts";
 import { engineEvent, llmDonePayload, runStartPayload } from "../helpers/engine-events.ts";
 
