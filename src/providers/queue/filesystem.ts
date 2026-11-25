@@ -17,16 +17,19 @@ import {
   type EnqueueResult,
   type FailOptions,
   LeaseLostError,
+  MAX_WORK_PAYLOAD_BYTES,
   WORK_QUEUE_RETENTION_MS,
   type WorkQueue,
 } from "./types.ts";
 
 /**
  * The work queue on the local filesystem: the implementation that ships in the
- * box, for one runtime process (`multiProcess: false`).
+ * box, for one runtime process (`multiProcess: false`). It is durable: a queue
+ * opened again on the directory sees every item as it was.
  *
- * - **One JSON file per item**, `<sha256(idempotencyKey)>.json`, so the key is
- *   the file name and a repeat finds it without an index.
+ * - **One JSON file per item**, named by the SHA-256 of its scope, a NUL, and
+ *   its key, so (scope, key) is the file name and a repeat finds it without an
+ *   index.
  * - **Every write is atomic.** A new item is written to a temp file and
  *   hard-linked to its name, which fails when the name exists, so creation is
  *   exclusive and never leaves a half-written item. A state change writes a
@@ -38,7 +41,9 @@ import {
  *   over. Hosts sharing a volume are outside what the lock can check.
  * - **Holding the lock, the process keeps every item in memory** as well as on
  *   disk, so a claim reads no files. Each method decides and writes in one
- *   synchronous step, so two calls in the process never interleave.
+ *   synchronous step, so two calls in the process never interleave. Claims
+ *   take the earliest due time, ties to the item enqueued first, across every
+ *   scope.
  * - **Terminal items are kept for `WORK_QUEUE_RETENTION_MS`**, then removed by
  *   the next claim's sweep. An enqueue that finds an expired terminal item
  *   under its key replaces it, so the window is exact whether or not a claim
@@ -57,12 +62,23 @@ export interface FilesystemWorkQueueOptions {
 export const LOCK_FILE = "queue.lock";
 const ITEM_FILE = /^[0-9a-f]{64}\.json$/;
 const TEMP_SUFFIX = ".tmp";
+/** RFC 3339 date-time with `Z` or an explicit offset; `Date.parse` checks the values. */
+const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i;
 
 type ItemState = "pending" | "claimed" | "completed" | "failed";
+
+/** How the claim holding `token` was settled, so a repeat of it is recognised. */
+interface Settle {
+  token: number;
+  /** `retry` is a fail with `retryAt`, which leaves the item pending. */
+  outcome: "completed" | "failed" | "retry";
+  retryAt?: string;
+}
 
 /** One item as stored in its file. */
 interface StoredItem {
   id: string;
+  scope: string;
   idempotencyKey: string;
   kind: string;
   payload: unknown;
@@ -77,6 +93,8 @@ interface StoredItem {
   workerId?: string;
   /** When a claimed item's lease expires. */
   leaseUntil?: string;
+  /** The last settle, while no claim has followed it. */
+  settle?: Settle;
   /** When a terminal item settled; retention counts from it. */
   settledAt?: string;
   error?: string;
@@ -85,8 +103,8 @@ interface StoredItem {
 /** Directories a queue in this process holds, so a second open here is refused too. */
 const heldDirs = new Set<string>();
 
-export function itemFileName(idempotencyKey: string): string {
-  return `${createHash("sha256").update(idempotencyKey).digest("hex")}.json`;
+export function itemFileName(scope: string, idempotencyKey: string): string {
+  return `${createHash("sha256").update(`${scope}\0${idempotencyKey}`).digest("hex")}.json`;
 }
 
 function isAlive(pid: number): boolean {
@@ -150,11 +168,24 @@ function requireLeaseMs(leaseMs: number): void {
   }
 }
 
-/** Parse an instant the caller names, or throw. */
+/** Parse an instant the caller names (RFC 3339 with an offset), or throw. */
 function parseInstant(value: string, field: string): number {
-  const ms = typeof value === "string" ? Date.parse(value) : Number.NaN;
-  if (Number.isNaN(ms)) throw new RangeError(`${field} must be an ISO 8601 instant`);
+  const ms = typeof value === "string" && RFC3339.test(value) ? Date.parse(value) : Number.NaN;
+  if (Number.isNaN(ms)) {
+    throw new RangeError(`${field} must be an RFC 3339 date-time with Z or an offset`);
+  }
   return ms;
+}
+
+/** The payload as JSON keeps it, or throw when it is over the limit. */
+function storedPayload(payload: unknown): unknown {
+  const text = JSON.stringify(payload ?? null);
+  if (Buffer.byteLength(text, "utf-8") > MAX_WORK_PAYLOAD_BYTES) {
+    throw new RangeError(
+      `payload is over ${MAX_WORK_PAYLOAD_BYTES} bytes serialized; store the body as a blob and enqueue its reference`,
+    );
+  }
+  return JSON.parse(text);
 }
 
 function iso(ms: number): string {
@@ -181,6 +212,18 @@ function claimOf(item: StoredItem): Claim {
     token: item.token,
     leaseUntil: item.leaseUntil ?? "",
   };
+}
+
+/** Whether `settle` repeats the item's recorded settle by the same claim. */
+function sameSettle(recorded: Settle | undefined, settle: Settle): boolean {
+  return (
+    recorded !== undefined &&
+    recorded.token === settle.token &&
+    recorded.outcome === settle.outcome &&
+    (settle.retryAt === undefined ||
+      (recorded.retryAt !== undefined &&
+        Date.parse(recorded.retryAt) === Date.parse(settle.retryAt)))
+  );
 }
 
 /**
@@ -268,15 +311,12 @@ export function createFilesystemWorkQueue(options: FilesystemWorkQueueOptions): 
   }
 
   /** The due item of an allowed kind with the earliest due time, ties to the first enqueued. */
-  function firstDue(
-    at: number,
-    kinds: string[] | undefined,
-  ): { name: string; item: StoredItem } | null {
-    const allowed = kinds ? new Set(kinds) : null;
+  function firstDue(at: number, kinds: string[]): { name: string; item: StoredItem } | null {
+    const allowed = new Set(kinds);
     let best: { name: string; item: StoredItem; due: number } | null = null;
     for (const [name, item] of items) {
       const due = dueTime(item);
-      if (due === null || due > at || (allowed && !allowed.has(item.kind))) continue;
+      if (due === null || due > at || !allowed.has(item.kind)) continue;
       if (!best || due < best.due || (due === best.due && item.seq < best.item.seq)) {
         best = { name, item, due };
       }
@@ -288,14 +328,38 @@ export function createFilesystemWorkQueue(options: FilesystemWorkQueueOptions): 
     if (closed) throw new Error(`The work queue at ${dir} is closed.`);
   }
 
-  /** The stored item a claim names, while that claim is current; else LeaseLostError. */
+  /** The stored item a claim names, or LeaseLostError("gone"). */
+  function itemOf(claim: Claim): { name: string; item: StoredItem } {
+    for (const [name, item] of items) if (item.id === claim.id) return { name, item };
+    throw new LeaseLostError(claim.id, claim.token, "gone");
+  }
+
+  /** The item while `claim` is current; else LeaseLostError naming why it is lost. */
   function currentHolder(claim: Claim): { name: string; item: StoredItem } {
-    for (const [name, item] of items) {
-      if (item.id !== claim.id) continue;
-      if (item.state === "claimed" && item.token === claim.token) return { name, item };
-      break;
+    const found = itemOf(claim);
+    if (found.item.token !== claim.token) {
+      throw new LeaseLostError(claim.id, claim.token, "superseded");
     }
-    throw new LeaseLostError(claim.id, claim.token);
+    if (found.item.state !== "claimed") {
+      throw new LeaseLostError(claim.id, claim.token, "settled");
+    }
+    return found;
+  }
+
+  /**
+   * Apply `settle` for `claim`: a no-op when it repeats the claim's recorded
+   * settle, a LeaseLostError when the claim is lost, else `write` it.
+   */
+  function settleClaim(
+    claim: Claim,
+    settle: Settle,
+    write: (item: StoredItem) => StoredItem,
+  ): void {
+    const found = itemOf(claim);
+    if (found.item.token === claim.token && sameSettle(found.item.settle, settle)) return;
+    const { name, item } = currentHolder(claim);
+    const { leaseUntil: _lease, ...rest } = item;
+    replace(name, write({ ...rest, settle }));
   }
 
   return {
@@ -303,26 +367,26 @@ export function createFilesystemWorkQueue(options: FilesystemWorkQueueOptions): 
 
     async enqueue(request: EnqueueRequest): Promise<EnqueueResult> {
       requireOpen();
+      requireNonEmpty(request.scope, "scope");
       requireNonEmpty(request.kind, "kind");
       requireNonEmpty(request.idempotencyKey, "idempotencyKey");
       const at = now();
       const dueAt =
-        request.notBefore === undefined
-          ? iso(at)
-          : iso(parseInstant(request.notBefore, "notBefore"));
-      const name = itemFileName(request.idempotencyKey);
+        request.notBefore === undefined ? at : parseInstant(request.notBefore, "notBefore");
+      const payload = storedPayload(request.payload);
+      const name = itemFileName(request.scope, request.idempotencyKey);
       const existing = items.get(name);
       if (existing && !isExpired(existing, at)) return { id: existing.id, created: false };
       const item: StoredItem = {
         id: randomUUID(),
+        scope: request.scope,
         idempotencyKey: request.idempotencyKey,
         kind: request.kind,
-        // Stored as JSON, so what a claim returns is what JSON keeps.
-        payload: JSON.parse(JSON.stringify(request.payload ?? null)),
+        payload,
         state: "pending",
         seq: nextSeq++,
         enqueuedAt: iso(at),
-        dueAt,
+        dueAt: iso(dueAt),
         attempt: 0,
         token: 0,
       };
@@ -335,12 +399,16 @@ export function createFilesystemWorkQueue(options: FilesystemWorkQueueOptions): 
       requireOpen();
       requireNonEmpty(request.workerId, "workerId");
       requireLeaseMs(request.leaseMs);
+      if (!Array.isArray(request.kinds) || request.kinds.length === 0) {
+        throw new TypeError("kinds must name at least one kind");
+      }
       const at = now();
       sweep(at);
       const best = firstDue(at, request.kinds);
       if (!best) return null;
+      const { settle: _settle, ...rest } = best.item;
       const claimed: StoredItem = {
-        ...best.item,
+        ...rest,
         state: "claimed",
         attempt: best.item.attempt + 1,
         token: best.item.token + 1,
@@ -362,23 +430,31 @@ export function createFilesystemWorkQueue(options: FilesystemWorkQueueOptions): 
 
     async complete(claim: Claim): Promise<void> {
       requireOpen();
-      const { name, item } = currentHolder(claim);
-      const { leaseUntil: _lease, ...rest } = item;
-      replace(name, { ...rest, state: "completed", settledAt: iso(now()) });
+      settleClaim(claim, { token: claim.token, outcome: "completed" }, (item) => ({
+        ...item,
+        state: "completed",
+        settledAt: iso(now()),
+      }));
     },
 
     async fail(claim: Claim, failOptions: FailOptions): Promise<void> {
       requireOpen();
-      const retryAt =
-        failOptions.retryAt === undefined ? null : parseInstant(failOptions.retryAt, "retryAt");
-      const { name, item } = currentHolder(claim);
-      const { leaseUntil: _lease, ...rest } = item;
-      replace(
-        name,
-        retryAt === null
-          ? { ...rest, state: "failed", settledAt: iso(now()), error: failOptions.error }
-          : { ...rest, state: "pending", dueAt: iso(retryAt), error: failOptions.error },
-      );
+      if (failOptions.retryAt === undefined) {
+        settleClaim(claim, { token: claim.token, outcome: "failed" }, (item) => ({
+          ...item,
+          state: "failed",
+          settledAt: iso(now()),
+          error: failOptions.error,
+        }));
+        return;
+      }
+      const retryAt = iso(parseInstant(failOptions.retryAt, "retryAt"));
+      settleClaim(claim, { token: claim.token, outcome: "retry", retryAt }, (item) => ({
+        ...item,
+        state: "pending",
+        dueAt: retryAt,
+        error: failOptions.error,
+      }));
     },
 
     async close(): Promise<void> {
