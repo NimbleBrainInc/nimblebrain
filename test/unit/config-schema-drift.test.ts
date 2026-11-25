@@ -24,7 +24,7 @@ import { NOTIFICATIONS_POLL_CONFIG_KEYS } from "../../src/notifications/poll-con
  * Drift guard: the published config schema must stay in lockstep with the
  * runtime's actual config surface.
  *
- * `src/config/nimblebrain-config.schema.json` is the canonical source for
+ * `schemas/config/v1/config.schema.json` is the canonical source for
  * nimblebrain.json validation (the runtime compiles it with AJV at startup) and
  * is published to schemas.nimblebrain.ai by `.github/workflows/schema-deploy.yml`.
  * Every object guarded here uses `additionalProperties: false`, and neither
@@ -44,7 +44,7 @@ interface SchemaObject {
 }
 
 const schema = JSON.parse(
-  readFileSync(resolve(import.meta.dir, "../../src/config/nimblebrain-config.schema.json"), "utf8"),
+  readFileSync(resolve(import.meta.dir, "../../schemas/config/v1/config.schema.json"), "utf8"),
 ) as {
   properties: {
     features: SchemaObject;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import Ajv from "ajv";
-import schema from "../../src/connectors/catalog/schemas/host-manifest.schema.json";
+import schema from "../../schemas/host/v1/host.schema.json";
 import { hostMetaToUiMeta } from "../../src/connectors/runtime/defaults.ts";
 
 // Keys the schema does not define. A catalog that still carries them must

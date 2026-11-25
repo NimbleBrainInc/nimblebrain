@@ -5,7 +5,7 @@ export const WORKDIR_NAME = ".nimblebrain-worktree";
 /** Build the schema-valid config written on the first `dev:worktree` run. */
 export function buildDevWorktreeSeed(worktreeRoot: string, workdir: string) {
   return {
-    $schema: "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+    $schema: "https://schemas.nimblebrain.ai/config/v1/config.schema.json",
     version: "1",
     // `workDir` is relative to the config file; using the basename keeps the
     // workdir co-located with this config (matches the `.environments/*`

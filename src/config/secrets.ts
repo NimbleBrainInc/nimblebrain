@@ -44,7 +44,7 @@ export function credentialStoreBackendName(secrets: SecretsConfig | undefined): 
 // `Record<keyof Required<T>, true>` makes a field added to `SecretsConfig` a
 // *compile* error until it is listed here, and
 // `test/unit/config-schema-drift.test.ts` then fails until it is also declared
-// in `nimblebrain-config.schema.json`. Two mechanical steps, no silent drift
+// in `schemas/config/v1/config.schema.json`. Two mechanical steps, no silent drift
 // between the runtime's typed surface and the published schema.
 
 const SECRETS_FIELDS: Record<keyof Required<SecretsConfig>, true> = {

@@ -60,6 +60,9 @@ RUN set -e; \
     for p in $pids; do wait "$p"; done
 
 COPY --chown=1000:1000 src/ src/
+# The published schemas; the runtime validates nimblebrain.json against
+# schemas/config/v1/config.schema.json.
+COPY --chown=1000:1000 schemas/ schemas/
 # The connector catalog a fresh install starts with: NimbleBrain's catalog of
 # connectors that install with nothing to configure, taken at build. It replaces the
 # repo's example catalog, which .dockerignore keeps out of the image. A deployment
