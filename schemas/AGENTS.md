@@ -8,6 +8,10 @@
   `contracts/conversations/v1/contract.json` is emitted by
   `contracts/conversations/scripts/emit-contract.ts` (`bun run emit:contracts`,
   `bun run check:contracts`).
+  `plugin-extension/v1/plugin-extension.schema.json` (the `ai.nimblebrain` extension of an
+  Agent Plugins manifest) is emitted from `src/plugins/extension.ts` by
+  `scripts/emit-plugin-extension-schema.ts` (`bun run emit:plugin-extension`,
+  `bun run check:plugin-extension`).
 - **Paths are `/<thing>/v<major>/`**: `v` plus the major, never the minor. A minor that only
   adds is served in place, at the same path. A breaking change is a new major directory beside
   the old one, which stays served.

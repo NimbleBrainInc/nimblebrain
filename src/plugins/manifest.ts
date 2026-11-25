@@ -27,6 +27,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ErrorObject, ValidateFunction } from "ajv";
 import Ajv2020 from "ajv/dist/2020";
+import extensionSchema from "../../schemas/plugin-extension/v1/plugin-extension.schema.json";
 import {
   type ContractImplementation,
   type ContractRequirement,
@@ -37,7 +38,6 @@ import {
 } from "./extension.ts";
 import mcpSchema from "./schemas/agent-plugins-1.0.0-mcp.schema.json";
 import pluginSchema from "./schemas/agent-plugins-1.0.0-plugin.schema.json";
-import extensionSchema from "./schemas/plugin-extension.schema.json";
 
 /** The manifest's path inside a plugin. */
 export const PLUGIN_MANIFEST_FILE = "plugin.json";
@@ -174,7 +174,9 @@ export function nimblebrainExtension(manifest: unknown): NimbleBrainExtension {
       const contract = field(item, "contract");
       const version = field(item, "version");
       if (typeof contract !== "string" || typeof version !== "string") return [];
-      return [{ contract, version, servers: stringRecord(field(item, "servers")) }];
+      const server = field(item, "server");
+      if (typeof server !== "string") return [];
+      return [{ contract, version, server }];
     }),
     requires: arrayOf(field(raw, "requires")).flatMap((item) => {
       const contract = field(item, "contract");
@@ -330,7 +332,10 @@ function skillFolders(files: PluginFiles): string[] {
     .sort();
 }
 
-/** The extension's references, which no schema can check: each role names a server of the plugin. */
+/**
+ * The extension's references, which no schema can check: each contract is
+ * implemented once, by a server the plugin's mcp.json declares.
+ */
 function crossCheckExtension(
   extension: NimbleBrainExtension,
   mcpServers: Record<string, PluginServer>,
@@ -347,12 +352,11 @@ function crossCheckExtension(
       });
     }
     seen.add(impl.contract);
-    for (const [role, key] of Object.entries(impl.servers)) {
-      if (key in mcpServers || key in extension.servers) continue;
+    if (!(impl.server in mcpServers)) {
       problems.push({
         file: PLUGIN_MANIFEST_FILE,
-        field: `${at}.implements[${i}].servers.${role}`,
-        message: `"${key}" is not a server of this plugin (a key of mcp.json mcpServers or of the extension's servers)`,
+        field: `${at}.implements[${i}].server`,
+        message: `"${impl.server}" is not a server in mcp.json`,
       });
     }
   });

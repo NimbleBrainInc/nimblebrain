@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.nimblebrain.ai/v1/plugin-extension.schema.json",
+  "$id": "https://schemas.nimblebrain.ai/plugin-extension/v1/plugin-extension.schema.json",
   "title": "NimbleBrain plugin extension",
   "description": "The `ai.nimblebrain` entry of an Agent Plugins 1.0 manifest's `extensions` (plugin.json), and of an AI Catalog entry's. It names the plugin's registry servers, its conversation starters, and the contracts it implements and requires. It declares capabilities, never trust: whether a plugin is a system plugin, and where its servers run, are the operator's (nimblebrain.json `plugins`). Other hosts ignore it. Readers ignore fields they do not know.",
   "type": "object",
   "properties": {
     "$schema": {
-      "const": "https://schemas.nimblebrain.ai/v1/plugin-extension.schema.json",
+      "const": "https://schemas.nimblebrain.ai/plugin-extension/v1/plugin-extension.schema.json",
       "type": "string"
     },
     "servers": {
@@ -27,7 +27,10 @@
       "items": {
         "description": "One conversation starter: something the plugin's tools can do, offered to a person who has the plugin and does not know what to ask.",
         "type": "object",
-        "required": ["title", "text"],
+        "required": [
+          "title",
+          "text"
+        ],
         "properties": {
           "title": {
             "minLength": 1,
@@ -54,7 +57,11 @@
       "items": {
         "description": "A contract this plugin implements. Whether several enabled plugins may implement one contract is the contract's own cardinality, never the plugin's.",
         "type": "object",
-        "required": ["contract", "version", "servers"],
+        "required": [
+          "contract",
+          "version",
+          "server"
+        ],
         "properties": {
           "contract": {
             "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+)+$",
@@ -66,17 +73,10 @@
             "description": "The contract version as \"major.minor\". An implementation at M.m meets a need for N.n when M equals N and m is at least n.",
             "type": "string"
           },
-          "servers": {
-            "minProperties": 1,
-            "description": "Which of this plugin's servers fills each role the contract defines: role name to server key. Every role the contract defines is mapped. A role names a server key, never a server: how a server is started or reached is stated once, in mcp.json (or, for a server named only by its registry name, in that server's registry entry). Which roles are private is the contract's decision, not the plugin's: the host never exposes a private role's server to agents or apps, and connects to it with a credential of its own.",
-            "type": "object",
-            "patternProperties": {
-              "^(.*)$": {
-                "minLength": 1,
-                "description": "A server key of this plugin: a key of mcp.json `mcpServers` (how the server is started or reached), or a key of this extension's `servers` (its registry name).",
-                "type": "string"
-              }
-            }
+          "server": {
+            "minLength": 1,
+            "description": "The key in this plugin's mcp.json `mcpServers` of the one server that implements the contract: it serves the contract's public and private tools. Always an mcp.json key, since mcp.json is where the host learns how to start or reach a server; a server named only by its registry name in `servers` has no address the host can reach at boot. Which tools are private is the contract's decision: the host never offers them to agents, and the server refuses them to any caller but the host.",
+            "type": "string"
           }
         }
       }
@@ -87,7 +87,10 @@
       "items": {
         "description": "A contract (never a plugin) this plugin uses from an enabled plugin that implements it at a compatible version.",
         "type": "object",
-        "required": ["contract", "version"],
+        "required": [
+          "contract",
+          "version"
+        ],
         "properties": {
           "contract": {
             "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+)+$",

@@ -6,7 +6,7 @@ import {
   type ContractDefinition,
   type ContractRegistry,
   checkContracts,
-  implementationProblems,
+  implementationProblem,
   loadContracts,
   parseContractDefinition,
   versionMeets,
@@ -16,50 +16,75 @@ const SINGLETON: ContractDefinition = {
   id: "ai.example.records",
   version: "1.2",
   cardinality: "singleton",
-  roles: { app: { visibility: "public" }, records: { visibility: "private" } },
+  privateTools: ["append"],
 };
 const ADDITIVE: ContractDefinition = {
   id: "ai.example.tools",
   version: "1.0",
   cardinality: "additive",
-  roles: { app: { visibility: "public" } },
+  privateTools: [],
 };
 const REGISTRY: ContractRegistry = new Map([
   [SINGLETON.id, SINGLETON],
   [ADDITIVE.id, ADDITIVE],
 ]);
 
-const records = (version = "1.2") => ({
-  contract: SINGLETON.id,
-  version,
-  servers: { app: "app", records: "records" },
-});
-const tools = { contract: ADDITIVE.id, version: "1.0", servers: { app: "app" } };
+/** A contract document, as `schemas/contracts/<name>/v<major>/contract.json` holds it. */
+function doc(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    $id: "https://schemas.example/contracts/records/v1/contract.json",
+    contract: "ai.example.records",
+    version: "1.2",
+    cardinality: "singleton",
+    tools: { list: { visibility: "public" }, append: { visibility: "private" } },
+    errors: { public: [], private: [] },
+    $defs: {},
+    ...over,
+  };
+}
+
+const records = (version = "1.2") => ({ contract: SINGLETON.id, version, server: "store" });
+const tools = { contract: ADDITIVE.id, version: "1.0", server: "app" };
 
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
+function writeDoc(dir: string, name: string, major: string, body: unknown): void {
+  mkdirSync(join(dir, name, major), { recursive: true });
+  writeFileSync(join(dir, name, major, "contract.json"), JSON.stringify(body));
+}
+
 describe("loadContracts", () => {
-  test("reads the repository's contracts: conversations today", () => {
-    const registry = loadContracts();
-    expect(registry.get("ai.nimblebrain.conversations")).toEqual({
-      id: "ai.nimblebrain.conversations",
-      version: "1.0",
-      cardinality: "singleton",
-      roles: { app: { visibility: "public" }, records: { visibility: "private" } },
-    });
+  test("reads the repository's contract documents: conversations today", () => {
+    const conversations = loadContracts().get("ai.nimblebrain.conversations");
+    expect(conversations).toMatchObject({ version: "1.0", cardinality: "singleton" });
+    expect(conversations?.privateTools.sort()).toEqual([
+      "append_events",
+      "create",
+      "delete",
+      "delete_workspace",
+      "events",
+    ]);
   });
 
-  test("skips a directory with no contract.json, and refuses an id defined twice", () => {
+  test("reads <name>/v<major>/contract.json, and refuses a major the version does not state", () => {
     const dir = mkdtempSync(join(tmpdir(), "contracts-"));
     dirs.push(dir);
-    mkdirSync(join(dir, "notes"));
-    for (const name of ["a", "b"]) {
-      mkdirSync(join(dir, name));
-      writeFileSync(join(dir, name, "contract.json"), JSON.stringify(SINGLETON));
-    }
+    writeDoc(dir, "records", "v1", doc());
+    mkdirSync(join(dir, "notes", "drafts"), { recursive: true });
+    expect([...loadContracts(dir).keys()]).toEqual(["ai.example.records"]);
+
+    writeDoc(dir, "other", "v2", doc({ contract: "ai.example.other" }));
+    expect(() => loadContracts(dir)).toThrow(/version 1\.2 is not major v2/);
+  });
+
+  test("refuses a contract two documents name", () => {
+    const dir = mkdtempSync(join(tmpdir(), "contracts-"));
+    dirs.push(dir);
+    writeDoc(dir, "a", "v1", doc());
+    writeDoc(dir, "b", "v1", doc());
     expect(() => loadContracts(dir)).toThrow(/defined twice/);
   });
 
@@ -69,19 +94,24 @@ describe("loadContracts", () => {
 });
 
 describe("parseContractDefinition", () => {
+  test("reads the name, version, cardinality and private tools", () => {
+    expect(parseContractDefinition(doc(), "c.json")).toEqual(SINGLETON);
+  });
+
   test("names the file and the field it refuses", () => {
-    const ok = { ...SINGLETON };
-    expect(parseContractDefinition(ok, "c.json")).toEqual(SINGLETON);
-    expect(() => parseContractDefinition({ ...ok, version: "1" }, "c.json")).toThrow(
+    expect(() => parseContractDefinition(doc({ contract: "Records" }), "c.json")).toThrow(
+      "c.json: contract must be a reverse-DNS name",
+    );
+    expect(() => parseContractDefinition(doc({ version: "1" }), "c.json")).toThrow(
       'c.json: version must be "major.minor"',
     );
-    expect(() => parseContractDefinition({ ...ok, cardinality: "many" }, "c.json")).toThrow(
+    expect(() => parseContractDefinition(doc({ cardinality: "many" }), "c.json")).toThrow(
       /cardinality/,
     );
-    expect(() => parseContractDefinition({ ...ok, roles: {} }, "c.json")).toThrow(/roles/);
+    expect(() => parseContractDefinition(doc({ tools: {} }), "c.json")).toThrow(/tools/);
     expect(() =>
-      parseContractDefinition({ ...ok, roles: { app: { visibility: "secret" } } }, "c.json"),
-    ).toThrow("c.json: roles.app.visibility");
+      parseContractDefinition(doc({ tools: { list: { visibility: "secret" } } }), "c.json"),
+    ).toThrow("c.json: tools.list.visibility");
   });
 });
 
@@ -96,24 +126,17 @@ describe("versionMeets", () => {
   });
 });
 
-describe("implementationProblems", () => {
-  test("holds an implementation to the contract's version and every role", () => {
-    expect(implementationProblems(records(), SINGLETON)).toEqual([]);
-    expect(
-      implementationProblems(
-        { contract: SINGLETON.id, version: "1.1", servers: { app: "app", typo: "x" } },
-        SINGLETON,
-      ),
-    ).toEqual([
+describe("implementationProblem", () => {
+  test("holds an implementation to the version this runtime consumes", () => {
+    expect(implementationProblem(records(), SINGLETON)).toBeNull();
+    expect(implementationProblem(records("1.1"), SINGLETON)).toBe(
       "version 1.1 does not meet 1.2, the version this runtime consumes (same major, minor at least)",
-      'role "records" is not mapped to a server',
-      'role "typo" is not a role of the contract',
-    ]);
+    );
   });
 });
 
 describe("checkContracts", () => {
-  test("binds each implementation that meets its contract", () => {
+  test("binds each implementation that meets its contract, with the contract's private tools", () => {
     const check = checkContracts(
       [
         { plugin: "store", implements: [records("1.3")], requires: [] },
@@ -127,10 +150,16 @@ describe("checkContracts", () => {
       REGISTRY,
     );
     expect(check.problems).toEqual([]);
-    expect(check.bindings.map((b) => `${b.plugin}:${b.contract}@${b.version}`)).toEqual([
-      "store:ai.example.records@1.3",
-      "a:ai.example.tools@1.0",
-      "b:ai.example.tools@1.0",
+    expect(check.bindings).toEqual([
+      {
+        contract: SINGLETON.id,
+        version: "1.3",
+        plugin: "store",
+        server: "store",
+        privateTools: ["append"],
+      },
+      { contract: ADDITIVE.id, version: "1.0", plugin: "a", server: "app", privateTools: [] },
+      { contract: ADDITIVE.id, version: "1.0", plugin: "b", server: "app", privateTools: [] },
     ]);
   });
 
@@ -151,7 +180,7 @@ describe("checkContracts", () => {
       [
         {
           plugin: "x",
-          implements: [{ contract: "ai.other.thing", version: "3.0", servers: { a: "b" } }],
+          implements: [{ contract: "ai.other.thing", version: "3.0", server: "a" }],
           requires: [],
         },
       ],
@@ -194,7 +223,7 @@ describe("checkContracts", () => {
       [
         {
           plugin: "x",
-          implements: [{ contract: "ai.other.thing", version: "1.4", servers: { a: "b" } }],
+          implements: [{ contract: "ai.other.thing", version: "1.4", server: "a" }],
           requires: [],
         },
         { plugin: "y", implements: [], requires: [{ contract: "ai.other.thing", version: "1.2" }] },

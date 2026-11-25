@@ -568,7 +568,7 @@
               },
               "servers": {
                 "type": "object",
-                "description": "Servers of the plugin that already run, so the runtime reaches them instead of starting them, keyed by a role of a contract the plugin implements or by the server's key in the plugin.",
+                "description": "Servers of the plugin that already run, so the runtime reaches them instead of starting them, keyed by the server's key in the plugin (its mcp.json key).",
                 "additionalProperties": {
                   "type": "object",
                   "properties": {

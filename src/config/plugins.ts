@@ -6,7 +6,7 @@
  * ```json
  * { "plugins": {
  *     "conversations": { "source": "builtin", "system": true,
- *                        "servers": { "records": { "url": "http://records.internal/mcp" } } },
+ *                        "servers": { "conversations": { "url": "http://conversations.internal/mcp" } } },
  *     "reports": { "source": "./plugins/reports" },
  *     "tasks": false } }
  * ```
@@ -38,7 +38,7 @@ export interface PluginConfig {
    * plugins' data by design. Only this field makes one; a manifest cannot.
    */
   system?: boolean;
-  /** By a role of a contract the plugin implements, or by its server key. */
+  /** By the server's key in the plugin (its `mcp.json` key). */
   servers?: Record<string, PluginServerConfig>;
 }
 

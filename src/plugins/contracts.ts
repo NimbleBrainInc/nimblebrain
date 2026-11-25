@@ -2,15 +2,18 @@
  * The contracts this kernel consumes (ADR-0076), and the rules that hold
  * plugins to them.
  *
- * A contract's definition is its `contracts/<dir>/contract.json`: a permanent
- * id, a `major.minor` version, a cardinality, and the roles an implementation
- * fills. The registry is read from those files and names no contract in code.
+ * A contract is one published document per major version,
+ * `schemas/contracts/<name>/v<major>/contract.json`: its permanent name
+ * (`contract`), a `major.minor` version, a cardinality, and its tools, each
+ * public or private. The registry is read from those documents and names no
+ * contract in code.
  *
  * - **Version.** An implementation at `M.m` meets a need for `N.n` when
- *   `M = N` and `m >= n`. The kernel needs the version its `contract.json`
- *   states; a plugin's `requires` states its own.
- * - **Roles.** An implementation maps every role the contract defines to one
- *   of its servers, and no role the contract does not define.
+ *   `M = N` and `m >= n`. The kernel needs the version the document states; a
+ *   plugin's `requires` states its own.
+ * - **Server.** An implementation names the one server that serves the
+ *   contract's tools; that it is a server of the plugin is the manifest
+ *   reader's check.
  * - **Cardinality.** A `singleton` contract has at most one enabled
  *   implementation; an `additive` one may have many.
  *
@@ -22,74 +25,91 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ContractImplementation, ContractRequirement } from "./extension.ts";
 
-/** Where the kernel's contracts live: `contracts/` at the repository root. */
-export const CONTRACTS_DIR = resolve(import.meta.dir, "../../contracts");
+/** Where the kernel's contract documents live: `schemas/contracts/` at the repository root. */
+export const CONTRACTS_DIR = resolve(import.meta.dir, "../../schemas/contracts");
 
 export type Cardinality = "singleton" | "additive";
-export type RoleVisibility = "public" | "private";
 
-/** One contract's `contract.json`. */
+/** What the kernel reads of one contract document. */
 export interface ContractDefinition {
+  /** The contract's permanent name, e.g. `ai.nimblebrain.conversations`. */
   id: string;
   version: string;
   cardinality: Cardinality;
-  roles: Record<string, { visibility: RoleVisibility }>;
+  /** The tools the host never offers to agents, by name. */
+  privateTools: string[];
 }
 
-/** The contracts this kernel consumes, by id. */
+/** The contracts this kernel consumes, by name. */
 export type ContractRegistry = ReadonlyMap<string, ContractDefinition>;
 
 const ID = /^[a-z0-9]+(\.[a-z0-9-]+)+$/;
 const VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 
 /**
- * Read every `<dir>/*\/contract.json`. A directory without one is not a
- * contract and is skipped. Throws on a definition that is malformed or an id
- * two directories share: that is a defect in this repository, not in a plugin.
+ * Read every `<dir>/<name>/v<major>/contract.json`. Throws on a document that
+ * is malformed, sits under a major its version does not state, or names a
+ * contract another document also names: those are defects in this
+ * repository, not in a plugin.
  */
 export function loadContracts(dir: string = CONTRACTS_DIR): ContractRegistry {
   const out = new Map<string, ContractDefinition>();
-  if (!existsSync(dir)) return out;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const file = join(dir, entry.name, "contract.json");
-    if (!entry.isDirectory() || !existsSync(file)) continue;
+  for (const { file, major } of contractFiles(dir)) {
     const def = parseContractDefinition(JSON.parse(readFileSync(file, "utf-8")), file);
+    if (`v${parseVersion(def.version)?.major}` !== major) {
+      throw new Error(`${file}: version ${def.version} is not major ${major}`);
+    }
     if (out.has(def.id)) throw new Error(`${file}: contract ${def.id} is defined twice`);
     out.set(def.id, def);
   }
   return out;
 }
 
-/** Validate one `contract.json`. Throws naming the file and the field. */
+/** Every `<dir>/<name>/v<major>/contract.json`, with the `v<major>` it sits under. */
+function contractFiles(dir: string): Array<{ file: string; major: string }> {
+  if (!existsSync(dir)) return [];
+  const subdirs = (path: string) =>
+    readdirSync(path, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? [e.name] : []));
+  return subdirs(dir).flatMap((name) =>
+    subdirs(join(dir, name))
+      .filter((major) => /^v\d+$/.test(major))
+      .map((major) => ({ file: join(dir, name, major, "contract.json"), major }))
+      .filter(({ file }) => existsSync(file)),
+  );
+}
+
+/** Validate what the kernel reads of one contract document. Throws naming the file and the field. */
 export function parseContractDefinition(raw: unknown, file: string): ContractDefinition {
   const obj = (raw ?? {}) as Record<string, unknown>;
   const fail = (what: string): never => {
     throw new Error(`${file}: ${what}`);
   };
-  if (typeof obj.id !== "string" || !ID.test(obj.id)) fail("id must be a reverse-DNS name");
+  if (typeof obj.contract !== "string" || !ID.test(obj.contract)) {
+    fail("contract must be a reverse-DNS name");
+  }
   if (typeof obj.version !== "string" || !VERSION.test(obj.version)) {
     fail('version must be "major.minor"');
   }
   if (obj.cardinality !== "singleton" && obj.cardinality !== "additive") {
     fail('cardinality must be "singleton" or "additive"');
   }
-  const roles = obj.roles;
-  if (typeof roles !== "object" || roles === null || Object.keys(roles).length === 0) {
-    fail("roles must name at least one role");
+  const tools = obj.tools;
+  if (typeof tools !== "object" || tools === null || Object.keys(tools).length === 0) {
+    fail("tools must name at least one tool");
   }
-  const out: ContractDefinition["roles"] = {};
-  for (const [role, spec] of Object.entries(roles as Record<string, unknown>)) {
+  const privateTools: string[] = [];
+  for (const [tool, spec] of Object.entries(tools as Record<string, unknown>)) {
     const visibility = (spec as { visibility?: unknown } | null)?.visibility;
     if (visibility !== "public" && visibility !== "private") {
-      fail(`roles.${role}.visibility must be "public" or "private"`);
+      fail(`tools.${tool}.visibility must be "public" or "private"`);
     }
-    out[role] = { visibility: visibility as RoleVisibility };
+    if (visibility === "private") privateTools.push(tool);
   }
   return {
-    id: obj.id as string,
+    id: obj.contract as string,
     version: obj.version as string,
     cardinality: obj.cardinality as Cardinality,
-    roles: out,
+    privateTools,
   };
 }
 
@@ -118,8 +138,10 @@ export interface ContractBinding {
   contract: string;
   version: string;
   plugin: string;
-  /** Role → the plugin's server key. */
-  servers: Record<string, string>;
+  /** The plugin's mcp.json key of the server that implements it. */
+  server: string;
+  /** The contract's private tools on that server, which the host never offers to agents. */
+  privateTools: string[];
 }
 
 /** Why a set of plugins cannot run together: the plugin, the contract, and what is wrong. */
@@ -136,30 +158,19 @@ export interface ContractCheck {
   notes: string[];
 }
 
-/** Why one implementation does not meet its contract, one entry per reason. */
-export function implementationProblems(
+/** Why one implementation does not meet its contract, or null when it does. */
+export function implementationProblem(
   impl: ContractImplementation,
   def: ContractDefinition,
-): string[] {
-  const out: string[] = [];
-  if (!versionMeets(impl.version, def.version)) {
-    out.push(
-      `version ${impl.version} does not meet ${def.version}, the version this runtime consumes (same major, minor at least)`,
-    );
-  }
-  for (const role of Object.keys(def.roles)) {
-    if (!(role in impl.servers)) out.push(`role "${role}" is not mapped to a server`);
-  }
-  for (const role of Object.keys(impl.servers)) {
-    if (!(role in def.roles)) out.push(`role "${role}" is not a role of the contract`);
-  }
-  return out;
+): string | null {
+  return versionMeets(impl.version, def.version)
+    ? null
+    : `version ${impl.version} does not meet ${def.version}, the version this runtime consumes (same major, minor at least)`;
 }
 
 /**
  * Hold every enabled plugin's contract declarations to the registry and to
- * each other: each implementation of a consumed contract to its version and
- * roles, each singleton to one implementation, and each requirement to an
+ * each other: each implementation of a consumed contract to its version, each singleton to one implementation, and each requirement to an
  * implementation that meets it.
  */
 export function checkContracts(
@@ -189,14 +200,17 @@ function bindImplementation(
     check.notes.push(`${plugin} implements ${impl.contract}, which this runtime does not consume`);
     return;
   }
-  const why = implementationProblems(impl, def);
-  for (const message of why) check.problems.push({ plugin, contract: impl.contract, message });
-  if (why.length > 0) return;
+  const why = implementationProblem(impl, def);
+  if (why) {
+    check.problems.push({ plugin, contract: impl.contract, message: why });
+    return;
+  }
   check.bindings.push({
     contract: impl.contract,
     version: impl.version,
     plugin,
-    servers: { ...impl.servers },
+    server: impl.server,
+    privateTools: [...def.privateTools],
   });
 }
 

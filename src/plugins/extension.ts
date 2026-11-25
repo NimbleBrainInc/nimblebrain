@@ -1,6 +1,6 @@
 /**
  * The `ai.nimblebrain` extension of an Agent Plugins manifest: the TypeBox
- * authoring source for `schemas/plugin-extension.schema.json`.
+ * authoring source for `schemas/plugin-extension/v1/plugin-extension.schema.json`.
  *
  * The JSON is the published form (its `$id` below) and is what the loader
  * validates against; this file is where it is written, and where its types
@@ -14,10 +14,17 @@
  * fields that an older reader ignores.
  */
 
+import { resolve } from "node:path";
 import { type Static, Type } from "@sinclair/typebox";
 
 export const PLUGIN_EXTENSION_SCHEMA_ID =
-  "https://schemas.nimblebrain.ai/v1/plugin-extension.schema.json";
+  "https://schemas.nimblebrain.ai/plugin-extension/v1/plugin-extension.schema.json";
+
+/** Where the published form is kept: `schemas/` mirrors what its `$id` serves. */
+export const PLUGIN_EXTENSION_SCHEMA_FILE = resolve(
+  import.meta.dir,
+  "../../schemas/plugin-extension/v1/plugin-extension.schema.json",
+);
 
 /** The most starters a plugin carries, and the longest title and text. */
 export const MAX_CONVERSATION_STARTERS = 4;
@@ -37,13 +44,6 @@ const ContractVersion = Type.String({
   pattern: CONTRACT_VERSION_PATTERN,
   description:
     'The contract version as "major.minor". An implementation at M.m meets a need for N.n when M equals N and m is at least n.',
-});
-
-/** A server key: the plugin's own name for one of its servers. */
-const ServerKey = Type.String({
-  minLength: 1,
-  description:
-    "A server key of this plugin: a key of mcp.json `mcpServers` (how the server is started or reached), or a key of this extension's `servers` (its registry name).",
 });
 
 export const ConversationStarter = Type.Object(
@@ -70,10 +70,10 @@ export const ContractImplementation = Type.Object(
   {
     contract: ContractId,
     version: ContractVersion,
-    servers: Type.Record(Type.String({ minLength: 1 }), ServerKey, {
-      minProperties: 1,
+    server: Type.String({
+      minLength: 1,
       description:
-        "Which of this plugin's servers fills each role the contract defines: role name to server key. Every role the contract defines is mapped. A role names a server key, never a server: how a server is started or reached is stated once, in mcp.json (or, for a server named only by its registry name, in that server's registry entry). Which roles are private is the contract's decision, not the plugin's: the host never exposes a private role's server to agents or apps, and connects to it with a credential of its own.",
+        "The key in this plugin's mcp.json `mcpServers` of the one server that implements the contract: it serves the contract's public and private tools. Always an mcp.json key, since mcp.json is where the host learns how to start or reach a server; a server named only by its registry name in `servers` has no address the host can reach at boot. Which tools are private is the contract's decision: the host never offers them to agents, and the server refuses them to any caller but the host.",
     }),
   },
   {

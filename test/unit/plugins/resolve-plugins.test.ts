@@ -45,7 +45,7 @@ function writePlugin(
   }
 }
 
-/** A conversations implementation: a remote app and a local records server. */
+/** A conversations implementation: one local server serving the contract's tools. */
 function writeConversations(base: string, dir = "conversations", name = "conversations"): void {
   writePlugin(
     base,
@@ -59,15 +59,14 @@ function writeConversations(base: string, dir = "conversations", name = "convers
             {
               contract: CONVERSATIONS,
               version: "1.0",
-              servers: { app: "app", records: "records" },
+              server: "store",
             },
           ],
         },
       },
     },
     {
-      app: { type: "streamable-http", url: "https://conversations.example/mcp" },
-      records: { type: "stdio", command: "./bin/records", args: ["--data", "${PLUGIN_DATA}"] },
+      store: { type: "stdio", command: "./bin/store", args: ["--data", "${PLUGIN_DATA}"] },
     },
   );
 }
@@ -104,9 +103,9 @@ describe("resolvePlugins", () => {
     const [plugin] = resolved.plugins;
     expect(plugin!.system).toBe(true);
     expect(plugin!.root).toBe(join(base, "plugins/conversations"));
-    expect(plugin!.servers.records!.spec).toMatchObject({
+    expect(plugin!.servers.store!.spec).toMatchObject({
       type: "stdio",
-      command: join(base, "plugins/conversations/bin/records"),
+      command: join(base, "plugins/conversations/bin/store"),
       args: ["--data", "/work/plugin-data/conversations"],
     });
     expect(resolved.bindings).toEqual([
@@ -114,7 +113,8 @@ describe("resolvePlugins", () => {
         contract: CONVERSATIONS,
         version: "1.0",
         plugin: "conversations",
-        servers: { app: "app", records: "records" },
+        server: "store",
+        privateTools: ["create", "events", "append_events", "delete", "delete_workspace"],
       },
     ]);
   });
@@ -127,25 +127,23 @@ describe("resolvePlugins", () => {
       dataDir: "/d",
     });
     expect(errorsOf(notSystem)).toEqual([
-      'conversations (servers.records): server "records" is a stdio server, which the runtime starts only for a system plugin; set "system": true or give it a url',
+      'conversations (servers.store): server "store" is a stdio server, which the runtime starts only for a system plugin; set "system": true or give it a url',
     ]);
 
-    const byRole = resolvePlugins(
+    const byUrl = resolvePlugins(
       {
         conversations: {
           source: "./conversations",
-          servers: { records: { url: "http://records.internal:8080/mcp" } },
+          servers: { store: { url: "http://store.internal:8080/mcp" } },
         },
       },
       CONTRACTS,
       { baseDir: base, dataDir: "/d" },
     );
-    expect(resolvedOf(byRole).plugins[0]!.servers.records!.url).toBe(
-      "http://records.internal:8080/mcp",
-    );
+    expect(resolvedOf(byUrl).plugins[0]!.servers.store!.url).toBe("http://store.internal:8080/mcp");
   });
 
-  test("an operator server entry names a key or a role, once, with an http(s) URL", () => {
+  test("an operator server entry names a server key, with an http(s) URL", () => {
     const base = tmp();
     writeConversations(base);
     const result = resolvePlugins(
@@ -154,8 +152,7 @@ describe("resolvePlugins", () => {
           source: "./conversations",
           system: true,
           servers: {
-            records: { url: "http://a.internal/mcp" },
-            app: { url: "ftp://nope" },
+            store: { url: "ftp://nope" },
             nothing: { url: "https://x.example" },
           },
         },
@@ -164,44 +161,8 @@ describe("resolvePlugins", () => {
       { baseDir: base, dataDir: "/d" },
     );
     expect(errorsOf(result)).toEqual([
-      "conversations (servers.app.url): must be an absolute http or https URL",
-      'conversations (servers.nothing.url): "nothing" is neither a server key of the plugin nor a role of a contract it implements',
-    ]);
-  });
-
-  test("a role and its key both placed is refused", () => {
-    const base = tmp();
-    writePlugin(
-      base,
-      "conversations",
-      {
-        name: "conversations",
-        extensions: {
-          "ai.nimblebrain": {
-            implements: [
-              { contract: CONVERSATIONS, version: "1.0", servers: { app: "app", records: "db" } },
-            ],
-          },
-        },
-      },
-      {
-        app: { type: "streamable-http", url: "https://c.example/mcp" },
-        db: { type: "stdio", command: "db" },
-      },
-    );
-    const result = resolvePlugins(
-      {
-        conversations: {
-          source: "./conversations",
-          system: true,
-          servers: { db: { url: "http://a/mcp" }, records: { url: "http://b/mcp" } },
-        },
-      },
-      CONTRACTS,
-      { baseDir: base, dataDir: "/d" },
-    );
-    expect(errorsOf(result)).toEqual([
-      'conversations (servers.records.url): server "db" is already placed by servers.db',
+      "conversations (servers.store.url): must be an absolute http or https URL",
+      'conversations (servers.nothing.url): "nothing" is not a server of the plugin',
     ]);
   });
 
@@ -274,9 +235,7 @@ describe("resolvePlugins", () => {
         name: "old",
         extensions: {
           "ai.nimblebrain": {
-            implements: [
-              { contract: CONVERSATIONS, version: "0.9", servers: { app: "app", records: "app" } },
-            ],
+            implements: [{ contract: CONVERSATIONS, version: "0.9", server: "app" }],
           },
         },
       },
@@ -312,7 +271,7 @@ describe("checkConfiguredPlugins", () => {
     );
     if (!resolved) throw new Error("expected a resolved set");
     expect(resolved.plugins.map((p) => p.name)).toEqual(["conversations"]);
-    expect(resolved.plugins[0]!.servers.records!.spec).toMatchObject({
+    expect(resolved.plugins[0]!.servers.store!.spec).toMatchObject({
       args: ["--data", "/w/plugin-data/conversations"],
     });
 
@@ -321,6 +280,6 @@ describe("checkConfiguredPlugins", () => {
         { conversations: { source: "./conversations" }, gone: { source: "./gone" } },
         { workDir: "/w", configPath: join(base, "nimblebrain.json") },
       ),
-    ).toThrow(/cannot run:\n {2}- conversations \(servers\.records\).*\n {2}- gone: /);
+    ).toThrow(/cannot run:\n {2}- conversations \(servers\.store\).*\n {2}- gone: /);
   });
 });

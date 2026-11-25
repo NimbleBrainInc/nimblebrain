@@ -738,7 +738,7 @@ A worker holds a turn's connection in memory, so a worker that stops mid-turn (a
 
 ## plugins
 
-Experimental. The [Agent Plugins](https://agent-plugins.org) the runtime runs as part of the instance, by plugin name. A plugin is a directory with `plugin.json` at its root, its MCP servers in `mcp.json` and its skills in `skills/`, the same format the plugin catalog publishes. NimbleBrain's own declarations sit in the manifest's `extensions["ai.nimblebrain"]`, described by its JSON Schema (`$id` `https://schemas.nimblebrain.ai/v1/plugin-extension.schema.json`): the contracts the plugin implements and the server that fills each of their roles, and the contracts it requires.
+Experimental. The [Agent Plugins](https://agent-plugins.org) the runtime runs as part of the instance, by plugin name. A plugin is a directory with `plugin.json` at its root, its MCP servers in `mcp.json` and its skills in `skills/`, the same format the plugin catalog publishes. NimbleBrain's own declarations sit in the manifest's `extensions["ai.nimblebrain"]`, described by its JSON Schema (`$id` `https://schemas.nimblebrain.ai/plugin-extension/v1/plugin-extension.schema.json`): the contracts the plugin implements, each by the `mcp.json` key of the one server that implements it, and the contracts it requires.
 
 ```json
 {
@@ -746,7 +746,7 @@ Experimental. The [Agent Plugins](https://agent-plugins.org) the runtime runs as
     "conversations": { "source": "builtin", "system": true },
     "reports": {
       "source": "./plugins/reports",
-      "servers": { "app": { "url": "http://reports.my-namespace.svc/mcp" } }
+      "servers": { "reports": { "url": "http://reports.my-namespace.svc/mcp" } }
     },
     "tasks": false
   }
@@ -758,12 +758,12 @@ Experimental. The [Agent Plugins](https://agent-plugins.org) the runtime runs as
 | `<name>` | The plugin's name, which its `plugin.json` `name` must equal. `false` turns it off. |
 | `<name>.source` | `builtin` for the plugin of that name shipped with the runtime, or a directory holding its `plugin.json`, relative to this file's directory. |
 | `<name>.system` | Make it a system plugin: one that holds records the runtime relies on and sees other plugins' data by design. Only this field makes one; a plugin cannot declare itself a system plugin. Default `false`. |
-| `<name>.servers.<role or key>.url` | Reach that server where it already runs instead of starting it, named by a role of a contract the plugin implements or by its key in the plugin. |
+| `<name>.servers.<key>.url` | Reach that server where it already runs instead of starting it, named by its key in the plugin's `mcp.json`. |
 
 At boot the runtime reads every enabled plugin and refuses to start, naming the plugin, file and field, when:
 
 - `plugin.json` or `mcp.json` fails the Agent Plugins 1.0.0 schema or its rules, or the `ai.nimblebrain` extension fails its schema. An unknown top-level field in `plugin.json` is logged and ignored.
-- a contract the plugin implements is below the version the runtime consumes (same major, minor at least), leaves a role unmapped, or maps a role to a server the plugin does not have;
+- a contract the plugin implements is below the version the runtime consumes (same major, minor at least), or names a server that is not in the plugin's `mcp.json`;
 - two enabled plugins implement a contract that allows only one;
 - a plugin requires a contract no enabled plugin implements (an `optional` requirement is logged instead);
 - a plugin that is not a system plugin has a `stdio` server with no `url`, since the runtime starts local servers only for system plugins.

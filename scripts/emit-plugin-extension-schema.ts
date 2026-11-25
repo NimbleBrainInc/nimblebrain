@@ -6,32 +6,35 @@
  *   bun --no-env-file scripts/emit-plugin-extension-schema.ts           # write
  *   bun --no-env-file scripts/emit-plugin-extension-schema.ts --check   # verify
  *
- * The JSON (`src/plugins/schemas/plugin-extension.schema.json`) is the
- * published form and the one the loader validates against. `--check` compares
- * it with what the source emits as parsed JSON, so Biome's formatting of the
- * committed file is not drift, and exits 1 when they differ.
+ * The JSON (`schemas/plugin-extension/v1/plugin-extension.schema.json`) is the
+ * published form, served at its `$id`, and the one the loader validates
+ * against. `--check` writes nothing and exits 1 when the committed file is
+ * missing or differs from what the source emits.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
-import { isDeepStrictEqual } from "node:util";
-import { pluginExtensionJsonSchema } from "../src/plugins/extension.ts";
-
-const TARGET = resolve(import.meta.dir, "../src/plugins/schemas/plugin-extension.schema.json");
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, relative } from "node:path";
+import {
+  PLUGIN_EXTENSION_SCHEMA_FILE,
+  pluginExtensionJsonSchema,
+} from "../src/plugins/extension.ts";
 
 function main(): void {
-  const emitted = pluginExtensionJsonSchema();
-  const shown = relative(process.cwd(), TARGET);
+  const text = `${JSON.stringify(pluginExtensionJsonSchema(), null, 2)}\n`;
+  const shown = relative(process.cwd(), PLUGIN_EXTENSION_SCHEMA_FILE);
   if (!process.argv.includes("--check")) {
-    writeFileSync(TARGET, `${JSON.stringify(emitted, null, 2)}\n`);
+    mkdirSync(dirname(PLUGIN_EXTENSION_SCHEMA_FILE), { recursive: true });
+    writeFileSync(PLUGIN_EXTENSION_SCHEMA_FILE, text);
     process.stdout.write(`wrote ${shown}\n`);
     return;
   }
-  const committed = existsSync(TARGET) ? JSON.parse(readFileSync(TARGET, "utf-8")) : null;
-  if (!isDeepStrictEqual(committed, emitted)) {
+  const committed = existsSync(PLUGIN_EXTENSION_SCHEMA_FILE)
+    ? readFileSync(PLUGIN_EXTENSION_SCHEMA_FILE, "utf-8")
+    : null;
+  if (committed !== text) {
     process.stderr.write(
       `${shown} is ${committed === null ? "missing" : "out of date"} with src/plugins/extension.ts. ` +
-        "Run: bun run emit:plugin-extension && bun run format\n",
+        "Run: bun run emit:plugin-extension\n",
     );
     process.exit(1);
   }

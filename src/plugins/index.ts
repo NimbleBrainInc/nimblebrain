@@ -197,8 +197,8 @@ function checkStartable(
 
 /**
  * Every server of a plugin by key, with the operator's URLs applied. An
- * operator entry names a server by its key, or by a role of a contract the
- * plugin implements, which stands for the key that role maps to.
+ * operator entry names a server by its key, the same key `mcp.json`, the
+ * extension's `servers` and `implements[].server` use.
  */
 function placeServers(
   manifest: PluginManifest,
@@ -210,51 +210,13 @@ function placeServers(
   for (const [key, registryName] of Object.entries(manifest.extension.servers)) {
     servers[key] = { ...servers[key], registryName };
   }
-  const roles = roleKeys(manifest);
-  const placedBy = new Map<string, string>();
-  for (const [name, { url }] of Object.entries(overrides)) {
-    const field = `servers.${name}.url`;
-    const key = overrideKey(name, servers, roles, (message) => fail(message, { field }));
-    if (key === undefined) continue;
-    if (placedBy.has(key)) {
-      fail(`server "${key}" is already placed by servers.${placedBy.get(key)}`, { field });
-    } else if (!isHttpUrl(url)) {
-      fail("must be an absolute http or https URL", { field });
-    } else {
-      placedBy.set(key, name);
-      servers[key] = { ...servers[key], url };
-    }
+  for (const [key, { url }] of Object.entries(overrides)) {
+    const field = `servers.${key}.url`;
+    if (!(key in servers)) fail(`"${key}" is not a server of the plugin`, { field });
+    else if (!isHttpUrl(url)) fail("must be an absolute http or https URL", { field });
+    else servers[key] = { ...servers[key], url };
   }
   return servers;
-}
-
-/** Role → the server keys it maps to, across every contract the plugin implements. */
-function roleKeys(manifest: PluginManifest): Map<string, Set<string>> {
-  const roles = new Map<string, Set<string>>();
-  for (const impl of manifest.extension.implements) {
-    for (const [role, key] of Object.entries(impl.servers)) {
-      roles.set(role, new Set([...(roles.get(role) ?? []), key]));
-    }
-  }
-  return roles;
-}
-
-/** The server key an operator entry names: itself when it is a key, else the one key its role maps to. */
-function overrideKey(
-  name: string,
-  servers: Record<string, ResolvedServer>,
-  roles: Map<string, Set<string>>,
-  fail: (message: string) => void,
-): string | undefined {
-  if (name in servers) return name;
-  const keys = roles.get(name);
-  if (keys?.size === 1) return [...keys][0];
-  fail(
-    keys
-      ? `"${name}" is a role of several contracts mapped to different servers; name the server key`
-      : `"${name}" is neither a server key of the plugin nor a role of a contract it implements`,
-  );
-  return undefined;
 }
 
 function isHttpUrl(raw: string): boolean {
@@ -310,7 +272,9 @@ export function checkConfiguredPlugins(
     );
   }
   for (const b of bindings) {
-    log.info(`[plugins] ${b.contract} ${b.version} is implemented by ${b.plugin}`);
+    log.info(
+      `[plugins] ${b.contract} ${b.version} is implemented by ${b.plugin} (server ${b.server})`,
+    );
   }
   for (const note of notes) log.info(`[plugins] ${note}`);
   log.info(`[plugins] validated ${plugins.length} plugin(s); none is started yet`);

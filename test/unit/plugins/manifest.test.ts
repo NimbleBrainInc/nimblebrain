@@ -56,13 +56,10 @@ describe("parsePluginManifest", () => {
           description: "Notes.",
           extensions: {
             "ai.nimblebrain": {
-              $schema: "https://schemas.nimblebrain.ai/v1/plugin-extension.schema.json",
+              $schema:
+                "https://schemas.nimblebrain.ai/plugin-extension/v1/plugin-extension.schema.json",
               implements: [
-                {
-                  contract: "ai.nimblebrain.conversations",
-                  version: "1.0",
-                  servers: { app: "app", records: "records" },
-                },
+                { contract: "ai.nimblebrain.conversations", version: "1.0", server: "records" },
               ],
               requires: [{ contract: "ai.nimblebrain.files", version: "1.0", optional: true }],
             },
@@ -105,11 +102,7 @@ describe("parsePluginManifest", () => {
         conversationStarters: [],
         nimblebrainOnly: false,
         implements: [
-          {
-            contract: "ai.nimblebrain.conversations",
-            version: "1.0",
-            servers: { app: "app", records: "records" },
-          },
+          { contract: "ai.nimblebrain.conversations", version: "1.0", server: "records" },
         ],
         requires: [{ contract: "ai.nimblebrain.files", version: "1.0", optional: true }],
       },
@@ -175,7 +168,7 @@ describe("parsePluginManifest", () => {
               "ai.nimblebrain": {
                 servers: { notes: 3 },
                 conversationStarters: [{ title: "x".repeat(61), text: "t" }],
-                implements: [{ contract: "Not A Contract", version: "1", servers: {} }],
+                implements: [{ contract: "Not A Contract", version: "1", server: "" }],
                 requires: [{ contract: "ai.nimblebrain.files" }],
               },
             },
@@ -191,57 +184,56 @@ describe("parsePluginManifest", () => {
         `${at}.conversationStarters[0].title: must NOT have more than 60 characters`,
         `${at}.implements[0].contract: must match pattern "^[a-z0-9]+(\\.[a-z0-9-]+)+$"`,
         `${at}.implements[0].version: must match pattern "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"`,
-        `${at}.implements[0].servers: must NOT have fewer than 1 properties`,
+        `${at}.implements[0].server: must NOT have fewer than 1 characters`,
         `${at}.requires[0]: must have required property 'version'`,
       ]),
     );
   });
 
-  test("a role must name a server of the plugin: an mcp.json key or an extension server key", () => {
-    const ext = (servers: Record<string, string>) => ({
+  test("an implementation names a server in mcp.json, never one named only by its registry name", () => {
+    const ext = (server: string) => ({
       extensions: {
         "ai.nimblebrain": {
           servers: { brokered: "com.example/brokered" },
-          implements: [{ contract: "ai.example.thing", version: "1.0", servers }],
+          implements: [{ contract: "ai.example.thing", version: "1.0", server }],
         },
       },
     });
     const mcpJson = mcp({ app: { type: "streamable-http", url: "https://x.example/mcp" } });
-    // Both kinds of key resolve.
     expect(() =>
       parsePluginManifest(
         "notes",
-        files({
-          "plugin.json": manifest(ext({ app: "app", other: "brokered" })),
-          "mcp.json": mcpJson,
-        }),
+        files({ "plugin.json": manifest(ext("app")), "mcp.json": mcpJson }),
         PATHS,
       ),
     ).not.toThrow();
-    expect(
-      problemsOf(() =>
-        parsePluginManifest(
-          "notes",
-          files({ "plugin.json": manifest(ext({ records: "nowhere" })), "mcp.json": mcpJson }),
-          PATHS,
+    for (const server of ["nowhere", "brokered"]) {
+      expect(
+        problemsOf(() =>
+          parsePluginManifest(
+            "notes",
+            files({ "plugin.json": manifest(ext(server)), "mcp.json": mcpJson }),
+            PATHS,
+          ),
         ),
-      ),
-    ).toEqual([
-      'plugin.json extensions["ai.nimblebrain"].implements[0].servers.records: "nowhere" is not a server of this plugin (a key of mcp.json mcpServers or of the extension\'s servers)',
-    ]);
+      ).toEqual([
+        `plugin.json extensions["ai.nimblebrain"].implements[0].server: "${server}" is not a server in mcp.json`,
+      ]);
+    }
   });
 
   test("a contract implemented twice is refused", () => {
-    const impl = { contract: "ai.example.thing", version: "1.0", servers: { a: "x" } };
+    const impl = { contract: "ai.example.thing", version: "1.0", server: "x" };
     const problems = problemsOf(() =>
       parsePluginManifest(
         "notes",
         files({
           "plugin.json": manifest({
             extensions: {
-              "ai.nimblebrain": { servers: { x: "com.example/x" }, implements: [impl, impl] },
+              "ai.nimblebrain": { implements: [impl, impl] },
             },
           }),
+          "mcp.json": mcp({ x: { type: "streamable-http", url: "https://x.example/mcp" } }),
         }),
         PATHS,
       ),
@@ -313,7 +305,11 @@ describe("nimblebrainExtension", () => {
             "not a mapping",
           ],
           nimblebrainOnly: "yes",
-          implements: [{ contract: "ai.example.x", version: "1.0", servers: { a: "b", c: 1 } }, {}],
+          implements: [
+            { contract: "ai.example.x", version: "1.0", server: "b" },
+            { contract: "ai.example.y", version: "1.0", server: 1 },
+            {},
+          ],
           requires: [
             { contract: "ai.example.y", version: "1.0", optional: "no" },
             { version: "1.0" },
@@ -325,7 +321,7 @@ describe("nimblebrainExtension", () => {
       servers: { good: "com.example/good" },
       conversationStarters: [{ title: "Trimmed", text: "yes" }],
       nimblebrainOnly: false,
-      implements: [{ contract: "ai.example.x", version: "1.0", servers: { a: "b" } }],
+      implements: [{ contract: "ai.example.x", version: "1.0", server: "b" }],
       requires: [{ contract: "ai.example.y", version: "1.0" }],
     });
   });
