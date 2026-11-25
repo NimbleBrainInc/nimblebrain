@@ -251,6 +251,54 @@ describe("resolvePlugins", () => {
   });
 });
 
+describe("server names are the plugin's own", () => {
+  test("a server named __proto__ survives resolution and binds its contract", () => {
+    const base = tmp();
+    writePlugin(base, "conversations", {
+      name: "conversations",
+      extensions: {
+        "ai.nimblebrain": {
+          implements: [{ contract: CONVERSATIONS, version: "1.0", server: "__proto__" }],
+        },
+      },
+    });
+    // Written as text: an object literal's `__proto__` key sets its prototype instead.
+    writeFileSync(
+      join(base, "conversations", "mcp.json"),
+      `{"$schema":"${MCP_SCHEMA}","mcpServers":{"__proto__":{"type":"stdio","command":"./bin/store"}}}`,
+    );
+    const resolved = resolvedOf(
+      resolvePlugins({ conversations: { source: "./conversations", system: true } }, CONTRACTS, {
+        baseDir: base,
+        dataDir: "/d",
+      }),
+    );
+    const [plugin] = resolved.plugins;
+    expect(Object.keys(plugin!.servers)).toEqual(["__proto__"]);
+    expect(Object.hasOwn(plugin!.servers, "__proto__")).toBe(true);
+    expect(resolved.bindings[0]?.server).toBe("__proto__");
+  });
+
+  test("an operator override naming an inherited name is refused", () => {
+    const base = tmp();
+    writeConversations(base);
+    const result = resolvePlugins(
+      {
+        conversations: {
+          source: "./conversations",
+          system: true,
+          servers: { constructor: { url: "https://example.test/mcp" } },
+        },
+      },
+      CONTRACTS,
+      { baseDir: base, dataDir: "/d" },
+    );
+    expect(errorsOf(result)).toContain(
+      'conversations (servers.constructor.url): "constructor" is not a server of the plugin',
+    );
+  });
+});
+
 describe("checkConfiguredPlugins", () => {
   test("with no plugin enabled it reads nothing, not even the contracts", () => {
     const contracts = new Proxy(new Map(), {

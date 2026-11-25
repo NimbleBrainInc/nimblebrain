@@ -352,7 +352,7 @@ function crossCheckExtension(
       });
     }
     seen.add(impl.contract);
-    if (!(impl.server in mcpServers)) {
+    if (!Object.hasOwn(mcpServers, impl.server)) {
       problems.push({
         file: PLUGIN_MANIFEST_FILE,
         field: `${at}.implements[${i}].server`,
@@ -393,7 +393,7 @@ function readMcpConfig(
         problems.push(schemaProblem(MCP_CONFIG_FILE, "", e));
     }
   }
-  const out: Record<string, PluginServer> = {};
+  const out = nameMap<PluginServer>();
   for (const [key, spec] of Object.entries(objectOf(field(doc, "mcpServers")))) {
     const server = readServer(key, spec, paths, problems);
     if (server) out[key] = server;
@@ -571,8 +571,17 @@ function arrayOf(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+/**
+ * An empty map keyed by names a plugin author chose. It has no prototype, so a key such
+ * as `__proto__` or `constructor` is stored and looked up like any other, and nothing
+ * inherited ever reads as present. Look keys up with `Object.hasOwn`.
+ */
+export function nameMap<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
 function stringRecord(value: unknown): Record<string, string> {
-  const out: Record<string, string> = {};
+  const out = nameMap<string>();
   for (const [key, name] of Object.entries(objectOf(value))) {
     if (typeof name === "string") out[key] = name;
   }
