@@ -135,7 +135,7 @@ export async function handleGet(
 
   // Default: most-recent `limit` messages, with a char-cap safety net.
   const limit = input.limit !== undefined && input.limit >= 0 ? input.limit : DEFAULT_GET_LIMIT;
-  const windowed = conversation.messages.slice(-limit);
+  const windowed = limit === 0 ? [] : conversation.messages.slice(-limit);
   const { messages, droppedOlderMessages, truncated } = selectByCharCap(
     windowed,
     DEFAULT_GET_CHAR_CAP,

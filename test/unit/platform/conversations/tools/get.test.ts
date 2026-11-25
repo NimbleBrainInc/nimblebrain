@@ -176,6 +176,25 @@ describe("conversations__get", () => {
     expect(result.totalMessages).toBe(5);
   });
 
+  it("returns no messages for limit 0, with metadata and totalMessages", async () => {
+    const ts = "2025-01-15T10:00:00.000Z";
+    writeConversation(dir, "conv-limit-zero", {
+      messages: [
+        { role: "user", content: "First", timestamp: ts },
+        { role: "assistant", content: "Second", timestamp: ts },
+        { role: "user", content: "Third", timestamp: ts },
+      ],
+    });
+    await index.build(dir);
+
+    const result = await handleGet({ id: "conv-limit-zero", limit: 0 }, index, SCOPE);
+
+    expect(result.messages).toEqual([]);
+    expect(result.totalMessages).toBe(3);
+    expect(result.metadata.id).toBe("conv-limit-zero");
+    expect(result.truncated).toBeUndefined();
+  });
+
   it("returns isError response for non-existent conversation ID", async () => {
     await index.build(dir);
 

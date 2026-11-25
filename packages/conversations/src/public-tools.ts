@@ -242,7 +242,7 @@ export async function getTool(
     return { metadata, messages: conv.messages, totalMessages: conv.messageCount };
   }
   const limit = input.limit !== undefined && input.limit >= 0 ? input.limit : DEFAULT_GET_LIMIT;
-  const windowed = conv.messages.slice(-limit);
+  const windowed = limit === 0 ? [] : conv.messages.slice(-limit);
   const { messages, droppedOlderMessages, truncated } = selectByCharCap(
     windowed,
     DEFAULT_GET_CHAR_CAP,

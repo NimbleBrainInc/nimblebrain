@@ -367,6 +367,7 @@ async function reads(app: App): Promise<Record<string, unknown>> {
       out[`get ${id} ${expand}`] = await app.call("get", { id, expand });
     }
     out[`get ${id} limit 1`] = await app.call("get", { id, limit: 1 });
+    out[`get ${id} limit 0`] = await app.call("get", { id, limit: 0 });
     out[`get ${id} in its own turn`] = await app.call("get", { id, expand: "full" }, id);
     out[`export ${id} markdown`] = await app.call("export", { id, format: "markdown" });
     out[`export ${id} json`] = await app.call("export", { id, format: "json" });
@@ -452,6 +453,12 @@ describe("conversations plugin parity with the built-in app", () => {
       messages: Array<{ stopReason?: string; pending?: boolean }>;
     };
     expect(trailing.messages.at(-1)).toMatchObject({ stopReason: "interrupted" });
+    const none = sameFiles.plugin[`get ${MINE[0]} limit 0`] as {
+      messages: unknown[];
+      totalMessages: number;
+    };
+    expect(none.messages).toEqual([]);
+    expect(none.totalMessages).toBeGreaterThan(0);
     const live = sameFiles.plugin[`get ${MINE[1]} in its own turn`] as typeof trailing;
     expect(live.messages.at(-1)?.pending).toBe(true);
   });
