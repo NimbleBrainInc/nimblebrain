@@ -67,4 +67,35 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
 - **`checkConfiguredPlugins` is the boot hook.** With no plugin enabled it reads nothing
   (not even the contract documents), so an instance without a `plugins` block boots as
   before. With plugins it validates, logs the resolved set, and throws naming every error.
-  It starts nothing and changes no routing yet.
+  It starts nothing; the runtime starts the bound servers from what it returns.
+
+## Binding a contract's server
+
+- **`bound-servers.ts` starts every binding's server and holds it by contract.** The kernel
+  looks a server up by contract id (`BoundServer` per contract), never by plugin name. A
+  stdio server is started from `mcp.json` with `${PLUGIN_DATA}` at
+  `<workDir>/plugin-data/<name>` (created before the start), the SDK's minimal environment
+  plus the server's own `env`, never the runtime's. A binding whose server the operator placed
+  at a `url` is refused at boot until the kernel holds a host credential for it.
+- **One connection per bound server, one `McpSource` (mode `plugin`).** Agents (the
+  ToolRouter), the `/mcp/<wsId>` door and the app bridge reach the server through that
+  source, named by the server's `mcp.json` key; the kernel's contract client
+  (`BoundServer.call`) uses the same connection.
+- **The host context is stamped in one place: the transport's `send`.** Every request to a
+  bound server passes it, after every other `_meta` merge, and it overwrites
+  `params._meta["ai.nimblebrain/context"]` (`contracts/host-context/CONTEXT.md`). Never set
+  the context anywhere else, and never build a second transport to a bound server.
+- **The principal comes from the call path, not from data.** `host` only inside
+  `BoundServer.call`, whose scope lives in a module-private `AsyncLocalStorage` nothing
+  exports; every other request presents `person`, with the workspace, signed-in identity and
+  turn conversation from the request context. Do not export that scope or add a second way
+  to present `host`.
+- **Private tools are hidden by the source** (`hiddenTools`, from the binding's
+  `privateTools`): left out of `tools/list` and so of every agent listing and the door, and
+  refused by `execute` and `startToolAsTask`. That is tidiness; the server's `forbidden` is
+  the boundary.
+- **Lifecycle.** A server that does not start refuses the boot, naming the contract, plugin
+  and server. One that exits is restarted on the next call that needs it (the kernel's own
+  call, or an agent's through `McpSource` recovery); a call in flight when it exited is not
+  retried. Shutdown settles queued writes, then stops it; a stopped server is never
+  restarted.

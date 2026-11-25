@@ -15,8 +15,11 @@
  * the establishment sequence.
  */
 
-import type { EventSourcedConversationStore } from "../conversation/event-sourced-store.ts";
-import type { Conversation, PluginRequestAnswer } from "../conversation/types.ts";
+import type {
+  Conversation,
+  ConversationEventStore,
+  PluginRequestAnswer,
+} from "../conversation/types.ts";
 import type {
   ConnectorSkillCandidate,
   EventSink,
@@ -78,7 +81,7 @@ export interface RunPrincipal {
 /** The conversation a run belongs to, for runs that have one. */
 export interface RunConversationBinding {
   /** The conversation's own workspace event store. */
-  store: EventSourcedConversationStore;
+  store: ConversationEventStore;
   /** The conversation record, already resolved (or created) by the door. */
   conversation: Conversation;
   /**

@@ -119,7 +119,7 @@ describe("nb__open_app with a conversation URI", () => {
         callerId
           ? stub<NonNullable<ReturnType<Runtime["getCurrentIdentity"]>>>({ id: callerId })
           : null,
-      assertConversationInWorkspace: (id: string, wsId: string, ownerId: string) => {
+      assertConversationInWorkspace: async (id: string, wsId: string, ownerId: string) => {
         if (id !== "conv_mine" || wsId !== "ws_a" || ownerId !== "u_owner") {
           throw new Error("conversation not found");
         }
@@ -156,7 +156,7 @@ function scope(over: Partial<OpenScope> = {}): OpenScope {
   return {
     placements: PLACEMENTS,
     templatesOf: async (name) => templates[name] ?? [],
-    hasConversation: (id) => id === "conv_1",
+    hasConversation: async (id) => id === "conv_1",
     ...over,
   };
 }

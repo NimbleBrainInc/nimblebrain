@@ -57,7 +57,7 @@ export interface OpenScope {
     opts?: { fresh?: boolean },
   ): Promise<readonly { uriTemplate: string; view?: string }[]>;
   /** Whether a conversation is one of the caller's in this workspace. */
-  hasConversation(id: string): boolean;
+  hasConversation(id: string): Promise<boolean>;
 }
 
 /** A placement the user can open: it has a route and sits in the shell's nav. */
@@ -104,7 +104,7 @@ export function openableAppNames(placements: readonly PlacementEntry[]): string[
 export async function resolveOpen(scope: OpenScope, uri: string): Promise<Resolution> {
   const conversationId = uriToConversationId(uri);
   if (conversationId !== null) {
-    return scope.hasConversation(conversationId)
+    return (await scope.hasConversation(conversationId))
       ? { destination: { conversationId } }
       : { error: `No conversation ${uri} in this workspace.` };
   }
@@ -158,11 +158,11 @@ function scopeFor(runtime: Runtime, wsId: string): OpenScope {
         : registry.getSource(serverName);
       return source instanceof McpSource ? source.resourceTemplates(opts) : [];
     },
-    hasConversation(id) {
+    async hasConversation(id) {
       const ownerId = runtime.getCurrentIdentity()?.id;
       if (!ownerId) return false;
       try {
-        runtime.assertConversationInWorkspace(id, wsId, ownerId);
+        await runtime.assertConversationInWorkspace(id, wsId, ownerId);
         return true;
       } catch {
         return false;

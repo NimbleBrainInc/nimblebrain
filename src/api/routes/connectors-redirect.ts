@@ -94,7 +94,11 @@ export interface ReturnTarget {
 
 /** The one check {@link resolveReturnTarget} asks of the runtime: is this the caller's conversation in that workspace. */
 interface ConversationOwnershipCheck {
-  assertConversationInWorkspace(conversationId: string, wsId: string, ownerId: string): void;
+  assertConversationInWorkspace(
+    conversationId: string,
+    wsId: string,
+    ownerId: string,
+  ): Promise<void> | void;
 }
 
 /**
@@ -117,7 +121,7 @@ export async function resolveReturnTarget(
   if (convId === undefined || convId === null) return wsId ? { wsId } : undefined;
   if (!wsId || typeof convId !== "string") return returnTargetNotFound();
   try {
-    runtime.assertConversationInWorkspace(convId, wsId, userId);
+    await runtime.assertConversationInWorkspace(convId, wsId, userId);
   } catch (err) {
     if (err instanceof ConversationNotFoundError) return returnTargetNotFound();
     throw err;

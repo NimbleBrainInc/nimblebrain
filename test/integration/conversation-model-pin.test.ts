@@ -26,9 +26,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import type { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
-import type { ConversationEvent } from "../../src/conversation/types.ts";
+import type { ConversationEvent, ConversationEventStore } from "../../src/conversation/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -113,7 +111,7 @@ async function waitFor(pred: () => boolean, timeoutMs = 5000): Promise<void> {
  * event lands after `chat()` resolves.
  */
 async function waitForAuxUsage(
-  store: EventSourcedConversationStore,
+  store: ConversationEventStore,
   conversationId: string,
   source: string,
   timeoutMs = 5000,

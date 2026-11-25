@@ -55,7 +55,14 @@ describe("the contract's tools", () => {
       ["export", "get", "list", "search", "stats", "update"].sort(),
     );
     expect([...PRIVATE_TOOLS].sort()).toEqual(
-      ["append_events", "create", "delete", "delete_workspace", "events"].sort(),
+      [
+        "append_events",
+        "create",
+        "create_workspace",
+        "delete",
+        "delete_workspace",
+        "events",
+      ].sort(),
     );
   });
 

@@ -194,15 +194,15 @@ function conversationNotFoundResponse(conversationId: string): Response {
  * route (the stream route would otherwise carry it as an error frame) and keeps
  * a refused chat or upload from storing its files.
  */
-function refuseConversationOutsideWorkspace(
+async function refuseConversationOutsideWorkspace(
   runtime: Runtime,
   conversationId: string | undefined,
   workspaceId: string,
   identity: UserIdentity | undefined,
-): Response | null {
+): Promise<Response | null> {
   if (!conversationId) return null;
   try {
-    runtime.assertConversationInWorkspace(
+    await runtime.assertConversationInWorkspace(
       conversationId,
       workspaceId,
       runtime.resolveRequestUserId(identity),
@@ -1631,7 +1631,7 @@ async function parseChatBody(
   }
   const parsed = body as ChatRequestBody;
 
-  const outside = refuseConversationOutsideWorkspace(
+  const outside = await refuseConversationOutsideWorkspace(
     runtime,
     parsed.conversationId,
     workspaceId,
@@ -1764,7 +1764,7 @@ async function parseMultipartChatBody(
   // (`runtime.chat()` stamps the id later; `ingestFiles` gets a "pending"
   // placeholder for the FileEntry until then).
   const convId = (typeof conversationId === "string" && conversationId) || undefined;
-  const outside = refuseConversationOutsideWorkspace(runtime, convId, workspaceId, identity);
+  const outside = await refuseConversationOutsideWorkspace(runtime, convId, workspaceId, identity);
   if (outside) return outside;
   const model = formData.get("model");
 
@@ -2001,7 +2001,7 @@ export async function handleResourceUpload(
 
   // A conversation named here is tagged on the files, so it must be one of the
   // caller's conversations in this workspace — the same rule the chat door keeps.
-  const outside = refuseConversationOutsideWorkspace(
+  const outside = await refuseConversationOutsideWorkspace(
     runtime,
     conversationId ?? undefined,
     workspaceId,
