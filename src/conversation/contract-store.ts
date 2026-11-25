@@ -21,9 +21,16 @@
  * - **The host decides that a workspace exists.** The contract trusts the
  *   workspace the host stamps, so `create` runs only after the kernel's own
  *   workspace check.
+ * - **A write settles with the batch that carried it.** Every caller whose
+ *   events were in a failed batch is rejected with its error; one the caller
+ *   does not await is logged.
  * - **An append is never retried**: the contract has no idempotency key, and a
- *   batch whose answer was lost may have landed. A failed queued write is
- *   logged; one the caller awaits (`append`) throws.
+ *   batch whose answer was lost may have landed.
+ * - **A failed batch closes its conversation's queue.** Every later write to
+ *   that conversation is refused with the same error, so no event lands after
+ *   a gap its writer believes was filled. A completed read of the conversation
+ *   (`load`, `readEvents`, `history`), which shows what was stored, opens it
+ *   again.
  */
 
 import type { EngineEvent } from "../engine/types.ts";
@@ -114,11 +121,19 @@ function summaryOf(r: Record<string, unknown>, scope: ContractScope): Conversati
   };
 }
 
+/** Events queued for one conversation, and the callers waiting on the batch that carries them. */
 interface WriteQueue {
   scope: ContractScope;
   pending: ConversationEvent[];
+  waiters: Array<PromiseWithResolvers<void>>;
   /** Settles after every batch queued so far; never rejects. */
   tail: Promise<void>;
+  /**
+   * Why a batch failed. While set the queue is closed: every write after it is
+   * refused with this error, so nothing lands after a gap a caller believes
+   * was filled. A completed read of the conversation clears it.
+   */
+  failed?: unknown;
 }
 
 export interface ContractConversationsOptions {
@@ -150,37 +165,65 @@ export function createContractConversations(
   const { assertWorkspace } = opts;
   const queues = new Map<string, WriteQueue>();
 
-  /** Send what is pending for one conversation, as one batch. */
+  /**
+   * Send what is pending for one conversation as one batch, and settle every
+   * caller waiting on it with the batch's outcome. A failed batch closes the
+   * queue: what was queued behind it is refused with the same error.
+   */
   async function drain(id: string, q: WriteQueue): Promise<void> {
     const events = q.pending.splice(0);
-    if (events.length === 0) return;
-    await call("append_events", { id, events }, q.scope);
+    const waiters = q.waiters.splice(0);
+    if (waiters.length === 0) return;
+    if (q.failed === undefined) {
+      try {
+        await call("append_events", { id, events }, q.scope);
+      } catch (err) {
+        q.failed = err;
+      }
+    }
+    for (const w of waiters) {
+      if (q.failed === undefined) w.resolve();
+      else w.reject(q.failed);
+    }
   }
 
-  /** Queue events for a conversation; resolves when the batch carrying them has landed. */
+  /**
+   * Queue events for a conversation. Settles with the outcome of the batch that
+   * carries them: every caller in a failed batch rejects with its error, and so
+   * does every write queued after it until a read clears the queue.
+   */
   function enqueue(scope: ContractScope, id: string, events: ConversationEvent[]): Promise<void> {
     for (const e of events) assertNoBinaryPayloads(e, `event(${e.type})`);
     let q = queues.get(id);
     if (!q) {
-      q = { scope, pending: [], tail: Promise.resolve() };
+      q = { scope, pending: [], waiters: [], tail: Promise.resolve() };
       queues.set(id, q);
     }
     const queue = q;
+    if (queue.failed !== undefined) return Promise.reject(queue.failed);
+    const waiter = Promise.withResolvers<void>();
     queue.pending.push(...events);
-    const sent = queue.tail.then(() => drain(id, queue));
-    queue.tail = sent.then(
-      () => undefined,
-      () => undefined,
-    );
+    queue.waiters.push(waiter);
+    queue.tail = queue.tail.then(() => drain(id, queue));
     void queue.tail.then(() => {
-      if (queues.get(id) === queue && queue.pending.length === 0) queues.delete(id);
+      const idle = queue.waiters.length === 0 && queue.failed === undefined;
+      if (queues.get(id) === queue && idle) queues.delete(id);
     });
-    return sent;
+    return waiter.promise;
   }
 
   /** Settle one conversation's queued writes. */
   async function settled(id: string): Promise<void> {
     await queues.get(id)?.tail;
+  }
+
+  /**
+   * A read of the conversation completed after its writes settled: the caller
+   * now sees what was stored, so a closed queue opens again.
+   */
+  function reconciled(id: string): void {
+    const q = queues.get(id);
+    if (q?.failed !== undefined && q.waiters.length === 0) queues.delete(id);
   }
 
   function logFailed(id: string) {
@@ -195,10 +238,12 @@ export function createContractConversations(
     await settled(id);
     try {
       const out = await call("get", { id, expand: "metadata" }, scope);
+      reconciled(id);
       return conversationOf(out.metadata as Record<string, unknown>);
     } catch (err) {
-      if (codeOf(err) === "conversation_not_found") return null;
-      throw err;
+      if (codeOf(err) !== "conversation_not_found") throw err;
+      reconciled(id);
+      return null;
     }
   }
 
@@ -217,7 +262,10 @@ export function createContractConversations(
       throughSeq ??= page.lastSeq as number;
       for (const row of rows) out.push(row.event);
       const last = rows[rows.length - 1];
-      if (!last || last.seq >= throughSeq) return out;
+      if (!last || last.seq >= throughSeq) {
+        reconciled(id);
+        return out;
+      }
       afterSeq = last.seq;
     }
   }
