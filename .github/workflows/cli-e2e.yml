@@ -10,7 +10,7 @@ name: cli-e2e
 # it pulls about 2 GB of images, so it runs only where it can find something.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'next/**']
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'packages/cli/**'

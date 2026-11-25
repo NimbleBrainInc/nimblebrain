@@ -3,7 +3,7 @@
  *
  * Produces display-shaped messages (one per turn, with ordered blocks) —
  * the canonical view for any UI consumer of conversations. The LLM-replay
- * view is a separate projection in src/conversation/event-reconstructor.ts.
+ * view is a separate projection in src/history/event-reconstructor.ts.
  *
  * Types are intentionally self-contained — no imports from the runtime
  * codebase — because this app is deployable independently.
@@ -473,7 +473,7 @@ function classifyRunBoundary(inner: KnownEvent, runId: string): RunBoundary | nu
   // Implicit run end: a foreign user.message or a different run's run.start
   // means this run never closed cleanly (process death / deploy bounce
   // mid-turn before a terminal event). Mirrors the sibling LLM-replay
-  // projection's guard in src/conversation/event-reconstructor.ts. Without
+  // projection's guard in src/history/event-reconstructor.ts. Without
   // this, an orphaned run swallows every subsequent turn and the transcript
   // appears to lose everything after the bounce (NimbleBrain prod incident: a
   // deploy-killed turn hid the next hour of an actively-used conversation on

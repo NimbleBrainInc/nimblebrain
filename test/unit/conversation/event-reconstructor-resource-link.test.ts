@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { reconstructMessages } from "../../../src/conversation/event-reconstructor.ts";
 import type { ConversationEvent } from "../../../src/conversation/types.ts";
+import { reconstructMessages } from "../../../src/history/event-reconstructor.ts";
 
 /**
  * The reconstructor maps user-message content through a user-content-aware

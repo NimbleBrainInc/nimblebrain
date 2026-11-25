@@ -25,7 +25,6 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { Value } from "@sinclair/typebox/value";
 import { isToolEnabled, type ResolvedFeatures } from "../../config/features.ts";
-import { collectDeliveredSkillNames } from "../../conversation/event-reconstructor.ts";
 import type { ConversationEvent } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import {
@@ -34,6 +33,7 @@ import {
   SKILL_SUPPRESSION_META_KEY,
   type ToolResult,
 } from "../../engine/types.ts";
+import { collectDeliveredSkillNames } from "../../history/event-reconstructor.ts";
 import { clearSkillOffs, setSkillOnIn, skillsOffIn } from "../../identity/skills-off-store.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import { log } from "../../observability/log.ts";

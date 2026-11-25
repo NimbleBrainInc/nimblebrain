@@ -31,7 +31,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isToolVisibleToRole } from "../../config/features.ts";
-import { collectSuppressedSkillNames } from "../../conversation/event-reconstructor.ts";
 import {
   CONVERSATION_ID_RE,
   type ContextAssembledEvent,
@@ -40,6 +39,7 @@ import {
 } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
+import { collectSuppressedSkillNames } from "../../history/event-reconstructor.ts";
 import { filterAdmittedTools } from "../../permissions/admin-tools.ts";
 import {
   type ComposedPrompt,

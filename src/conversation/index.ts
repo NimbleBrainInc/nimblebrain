@@ -1,3 +1,4 @@
+export { windowMessages } from "../history/window.ts";
 export { InMemoryConversationStore } from "./memory-store.ts";
 export type {
   Conversation,
@@ -8,4 +9,3 @@ export type {
   ListOptions,
   StoredMessage,
 } from "./types.ts";
-export { windowMessages } from "./window.ts";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
-import { applyReasoningReplayPolicy, windowMessages } from "../../src/conversation/window.ts";
+import { applyReasoningReplayPolicy, windowMessages } from "../../src/history/window.ts";
 
 /** Helper: create an assistant message with reasoning + text blocks. */
 function assistantWithReasoning(

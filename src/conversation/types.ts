@@ -496,7 +496,7 @@ export interface ContextAssembledEvent {
  * event with `ts < compactedThroughTs` is represented by `summary`, and turns at
  * or after it replay verbatim. Multiple compactions can accumulate; reconstruction
  * honors only the most recent (its summary already subsumes the earlier ones).
- * See `conversation/compaction.ts`.
+ * See `history/compaction.ts`.
  */
 export interface HistoryCompactedEvent {
   ts: string;

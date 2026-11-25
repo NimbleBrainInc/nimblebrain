@@ -14,7 +14,7 @@ import type { RecordedCall } from "./recording-model.ts";
  * actually honor the cache) is a separate, real-API concern — not this file.
  *
  * Token counts here are a stable proxy (~4 chars/token, matching the repo's own
- * estimate in `conversation/compaction.ts`), used to compare shapes across
+ * estimate in `history/compaction.ts`), used to compare shapes across
  * steps, NOT to predict a bill. Absolute billed tokens are a real-provider
  * concern.
  */

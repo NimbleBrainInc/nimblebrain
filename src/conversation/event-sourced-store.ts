@@ -23,14 +23,14 @@ import type {
   ToolStartPayload,
 } from "../engine/schemas/events.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
-import { ConversationCorruptedError } from "../runtime/errors.ts";
-import { ensureWorkspaceDir } from "../workspace/context.ts";
-import { assertNoBinaryPayloads } from "./binary-guard.ts";
 import {
   deriveConversationMeta,
   deriveUsageMetrics,
   reconstructMessages,
-} from "./event-reconstructor.ts";
+} from "../history/event-reconstructor.ts";
+import { ConversationCorruptedError } from "../runtime/errors.ts";
+import { ensureWorkspaceDir } from "../workspace/context.ts";
+import { assertNoBinaryPayloads } from "./binary-guard.ts";
 import { ConversationIndex, canAccess } from "./index-cache.ts";
 import { parseConversationPath } from "./paths.ts";
 import {

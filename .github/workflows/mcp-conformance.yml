@@ -13,7 +13,7 @@ name: MCP Conformance
 # outside its paths, and a required check that never reports blocks the merge.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'next/**']
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "src/api/**"

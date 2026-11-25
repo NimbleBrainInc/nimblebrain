@@ -3,7 +3,7 @@ import {
   fallbackTitle,
   generateTitle,
   sanitizeGeneratedTitle,
-} from "../../src/conversation/auto-title.ts";
+} from "../../src/history/auto-title.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 
 describe("fallbackTitle", () => {

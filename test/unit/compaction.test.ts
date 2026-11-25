@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import type {
+  ConversationEvent,
+  HistoryCompactedEvent,
+  StoredMessage,
+} from "../../src/conversation/types.ts";
 import {
   compactConversationMessages,
   compactionSummaryMessages,
@@ -11,13 +16,8 @@ import {
   runCompaction,
   selectRetainedOperatorMessages,
   summarizeMessages,
-} from "../../src/conversation/compaction.ts";
-import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
-import type {
-  ConversationEvent,
-  HistoryCompactedEvent,
-  StoredMessage,
-} from "../../src/conversation/types.ts";
+} from "../../src/history/compaction.ts";
+import { reconstructMessages } from "../../src/history/event-reconstructor.ts";
 import { stub } from "../helpers/stub.ts";
 
 // --- builders --------------------------------------------------------------
