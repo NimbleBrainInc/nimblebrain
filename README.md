@@ -222,7 +222,6 @@ A fully specified example:
   },
   "http":      { "port": 27247, "host": "127.0.0.1" },
   "logging":   { "dir": "~/.nimblebrain/logs", "level": "normal", "retentionDays": 30 },
-  "store":     { "type": "jsonl", "dir": "~/.nimblebrain/conversations" },
   "telemetry": { "enabled": false },
   "files":     { "maxFileSize": 26214400, "maxFilesPerMessage": 10 },
   "features":  { "toolDiscovery": true },
@@ -429,11 +428,10 @@ src/
 │   ├── matcher.ts        Two-phase matching (triggers → keywords)
 │   ├── types.ts          Skill, SkillManifest, SkillMetadata
 │   └── core/             Core skills (always injected, e.g. bootstrap.md)
-├── conversation/         Message persistence
-│   ├── event-sourced-store.ts  Event-sourced store (persists engine events)
-│   ├── memory-store.ts   In-memory (ephemeral)
-│   ├── window.ts         History windowing (sliceHistory)
-│   └── types.ts          ConversationStore interface
+├── conversation/         The kernel's conversation store
+│   ├── contract-store.ts The store over the conversations contract, called on its bound plugin
+│   ├── events.ts         What a turn stores: engine events and messages as conversation events
+│   └── types.ts          ConversationEventStore interface
 ├── prompt/               System prompt composition
 │   └── compose.ts        Multi-layer: identity → core skills → apps → skill
 ├── model/                LLM provider management
@@ -510,8 +508,7 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 
 ### Conversation Storage
 
-- **`InMemoryConversationStore`** — default for programmatic use
-- **`EventSourcedConversationStore`** — the runtime's store: one JSONL file per conversation, a metadata header on line 1 and engine events after it. Append-only after creation. Token totals, cost, and last model derived at read time from `llm.response` events via `deriveUsageMetrics()`. Supports multi-user conversations with ownership, visibility (private/shared), and participant management.
+Conversations are kept by the plugin bound to the conversations contract (`contracts/conversations/CONTRACT.md`), by default the built-in plugin in `packages/conversations`: one JSONL file per conversation under `<workDir>/plugin-data/conversations/`, a header on line 1 and engine events after it, append-only. The runtime writes and reads every turn through the contract (`src/conversation/contract-store.ts`); with no plugin bound (`plugins: { conversations: false }`) chat is off. Each conversation is single-owner and workspace-owned.
 
 User-uploaded files are persisted in the workspace `FileStore` and referenced from `user.message` events as MCP `resource_link` blocks (`{type:"resource_link", uri:"files://<id>", mimeType, name}`) — the conversation log never carries inline bytes. At the `model.doStream` boundary the runtime rehydrates image links to AI SDK V3 `file` parts with bytes loaded from the store, so vision content survives across multi-turn agent loops without inflating the JSONL. Files are also addressable as MCP resources at `files://<id>` (any client can fetch via `resources/read`).
 
@@ -622,7 +619,7 @@ All default to `true`. What `false` does depends on the flag: most withhold a to
 | `fileContext` | File upload, serving, and context extraction | The file endpoints refuse (404, or 415 on a multipart upload) |
 | `userManagement` | Create, update, and delete users | `nb__manage_users` is not registered |
 | `workspaceManagement` | Workspaces and members | `nb__manage_workspaces` is not registered |
-| `compaction` | Folding the oldest turns of a long conversation into a summary at run start | Full history replays every turn (event-sourced stores only) |
+| `compaction` | Folding the oldest turns of a long conversation into a summary at run start | Full history replays every turn |
 
 **Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/workspaces/:wsId/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery` and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
 
@@ -683,7 +680,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | Work directory | `~/.nimblebrain` |
 | HTTP port | 27247 |
 | HTTP host | `127.0.0.1` |
-| Conversation store | JSONL in `~/.nimblebrain/conversations/` |
+| Conversation store | the built-in conversations plugin, JSONL in `~/.nimblebrain/plugin-data/conversations/` |
 | Conversation store (programmatic) | In-memory |
 
 ### Dependencies

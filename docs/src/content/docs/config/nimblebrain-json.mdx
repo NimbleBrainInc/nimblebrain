@@ -742,10 +742,17 @@ A worker holds a turn's connection in memory, so a worker that stops mid-turn (a
 
 Experimental. The [Agent Plugins](https://agent-plugins.org) the runtime runs as part of the instance, by plugin name. A plugin is a directory with `plugin.json` at its root, its MCP servers in `mcp.json` and its skills in `skills/`, the same format the plugin catalog publishes. NimbleBrain's own declarations sit in the manifest's `extensions["ai.nimblebrain"]`, described by its JSON Schema (`$id` `https://schemas.nimblebrain.ai/plugin-extension/v1/plugin-extension.schema.json`): the contracts the plugin implements, each by the `mcp.json` key of the one server that implements it, and the contracts it requires.
 
+With no `plugins` block the runtime runs its default plugins, exactly as if the block said:
+
+```json
+{ "plugins": { "conversations": { "source": "builtin", "system": true } } }
+```
+
+An entry of a default's name replaces it, and `false` turns it off. Other entries run beside the defaults:
+
 ```json
 {
   "plugins": {
-    "conversations": { "source": "builtin", "system": true },
     "reports": {
       "source": "./plugins/reports",
       "servers": { "reports": { "url": "http://reports.my-namespace.svc/mcp" } }
@@ -757,7 +764,7 @@ Experimental. The [Agent Plugins](https://agent-plugins.org) the runtime runs as
 
 | Field | Meaning |
 |---|---|
-| `<name>` | The plugin's name, which its `plugin.json` `name` must equal. `false` turns it off. |
+| `<name>` | The plugin's name, which its `plugin.json` `name` must equal. `false` turns it off, a default included. |
 | `<name>.source` | `builtin` for the plugin of that name shipped with the runtime, or a directory holding its `plugin.json`, relative to this file's directory. |
 | `<name>.system` | Make it a system plugin: one that holds records the runtime relies on and sees other plugins' data by design. Only this field makes one; a plugin cannot declare itself a system plugin. Default `false`. |
 | `<name>.servers.<key>.url` | Reach that server where it already runs instead of starting it, named by its key in the plugin's `mcp.json`. |
@@ -770,9 +777,15 @@ At boot the runtime reads every enabled plugin and refuses to start, naming the 
 - a plugin requires a contract no enabled plugin implements (an `optional` requirement is logged instead);
 - a plugin that is not a system plugin has a `stdio` server with no `url`, since the runtime starts local servers only for system plugins.
 
-The runtime then logs the resolved plugins and contracts, and starts the server of each plugin that implements a contract it consumes. Absent, nothing is read and nothing changes.
+The runtime then logs the resolved plugins and contracts, and starts the server of each plugin that implements a contract it consumes. With every plugin turned off, nothing is read.
 
-- **Conversations** (`ai.nimblebrain.conversations`). With a plugin bound to it, such as `"conversations": { "source": "builtin", "system": true }`, the runtime starts that plugin's server at boot from its `mcp.json`, with the plugin's data directory at `<workDir>/plugin-data/<name>`, and stores every chat turn through it. Its public tools take the place of the built-in `conversations__*` tools, under the same names, and its private tools are never listed or callable by agents, MCP clients or apps. A server that does not start refuses the boot; one that exits is started again for the next call that needs it, and stopped at shutdown. Conversations stored before the plugin was bound stay in the workspace directories and are not read. Binding a server placed at a `url` is refused for now.
+### Conversations and chat
+
+Chat is on exactly when an enabled plugin implements the conversations contract (`ai.nimblebrain.conversations`). By default that is the built-in `conversations` plugin: the runtime starts its server at boot from its `mcp.json`, with the plugin's data directory at `<workDir>/plugin-data/conversations`, and stores every chat turn through it. Its public tools are the `conversations__*` tools, its screen is the Conversations page in the sidebar, which the server places itself, and its private tools are never listed or callable by agents, MCP clients or apps. A server that does not start refuses the boot; one that exits is started again for the next call that needs it, and stopped at shutdown. Deleting a workspace deletes its conversations. Binding a server placed at a `url` is refused for now.
+
+- **Turn chat off** with `"plugins": { "conversations": false }`. The chat API routes (`/v1/workspaces/<wsId>/chat/start`, a conversation's `events` and `cancel`) answer `404` with `"error": "chat_disabled"`, `GET /v1/bootstrap` reports `config.chat: false`, and the web app shows no chat panel, chat button, composer or Conversations page. Apps, tasks, files, connectors and the `/mcp` endpoint work as before.
+- **Use another implementation** of the contract by turning the built-in one off and adding yours, since the contract allows only one: `"plugins": { "conversations": false, "my-conversations": { "source": "./plugins/my-conversations", "system": true } }`.
+- **Conversations stored by a runtime before this plugin kept them** sit under `<workDir>/workspaces/<wsId>/conversations/` and are not read; to keep them, copy each `workspaces/<wsId>/conversations/` directory to the same path under `<workDir>/plugin-data/conversations/` with the runtime stopped.
 
 ## files
 

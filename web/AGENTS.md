@@ -26,6 +26,7 @@ A settings form whose fields stand alone saves each field when its edit is compl
 
 ## Shell rules
 
+- **Chat surfaces render only when the instance offers chat** (`useChatConfigContext().chat`, from the bootstrap's `config.chat`): the docked panel and its push-over, the top bar's Chat button, the palette's chat action, the overview's composer and its conversation and question rows, a `?chat=` deep link, an app's `ui/message` (answered as an error) and a `conversation://` open. The Conversations page is a placement, so it is absent on its own. Gate a new chat surface on the same flag, never on a call that fails.
 - `SlotRenderer` effect depends only on `placementKey` (callbacks via refs, not deps)
 - Shell components must not consume `ChatContext` (use `ChatConfigContext` instead)
 - **The agent moves the screen only from a turn this tab sent and is watching live.** Host UI driven by a tool call (`nb__open_app` → the destination it answers) listens through `chatStore.onToolDone`, which reports a finished call only on a connection `sendTurn` opened, once per call. Never drive UI from a rendered transcript or a resumed stream: history loads, reload re-attaches and other tabs replay the same calls, and each would move someone's screen again.

@@ -36,11 +36,18 @@ its shape.
 
 Register a new app in `index.ts`. Its UI, if it has one, is picked up by
 `build:platform-apps`, `check:platform-apps`, and the image build from the
-`src/platform/*/ui` glob — there is no list to add it to. The typecheck needs
+`src/platform/*/ui` glob — there is no list to add it to. A plugin's screen
+(`packages/<plugin>/ui`, such as the conversations plugin's) is built the same
+way from the `packages/*/ui` glob beside it. The typecheck needs
 two configs in the UI package: `tsconfig.json` for the shipped source (browser
 libs, no Bun types, tests excluded) and `tsconfig.test.json` extending it with
 `types: ["vite/client", "bun"]` so `bun:test` resolves. Copy both from an
 existing app; `scripts/check-platform-apps.ts` says why each exists.
+
+Conversations is not a platform app: it is a plugin the default configuration
+binds (`packages/conversations`, `src/plugins/AGENTS.md`), and the kernel reaches
+it through its contract. A capability a deployment may replace or turn off is a
+plugin, not a directory here.
 
 An app's placements are the `placements:` array passed to `defineInProcessApp`,
 and that is the only copy the runtime reads. Do not add a `manifest.json`

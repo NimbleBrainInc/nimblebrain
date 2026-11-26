@@ -112,7 +112,8 @@ data; both are true at once, and the wall is the second one.
 
 ### Primitive (conversation / file / task)
 Workspace-owned, stored at `workspaces/<wsId>/<primitive>/<ownerId>/`
-(ADR-0003). The path is authoritative; `workspaceId`/`ownerId` on the record are
+(ADR-0003); conversations at that path inside the conversations plugin's data
+directory. The path is authoritative; `workspaceId`/`ownerId` on the record are
 denormalised. Private to the owner by default (ADR-0004). **Active use**
 (resuming a conversation, running a task, reaching the workspace's tools)
 requires **current membership** of the primitive's workspace — checked at session
@@ -138,8 +139,9 @@ fields it defined and never the server's opaque `data`.
 ### Source
 Any tool/resource provider behind the MCP boundary. Every source is one
 `McpSource` over one transport union (ADR-0022): a remote server over HTTPS, or
-one of the kernel's own capabilities — conversations, files, tasks,
-skills — served by a real MCP server on an in-memory linked-pair transport. The
+one of the kernel's own capabilities — files, tasks, skills — served by a real
+MCP server on an in-memory linked-pair transport, or a system plugin's server
+the runtime starts over stdio (conversations). The
 platform's own capabilities are MCP servers to themselves, so nothing above the
 source can tell them apart.
 
@@ -155,8 +157,7 @@ the process, which is what host-owned `_meta` markers are conditioned on
 
 ### Platform app
 One of the kernel's own capabilities, expressed as a source:
-conversations, files, tasks, usage, skills, instructions, hooks,
-notifications, compose. Each is an in-process MCP server the runtime hosts
+files, tasks, usage, skills, instructions, hooks, notifications, compose. Each is an in-process MCP server the runtime hosts
 rather than connects to — there is no URL, no credential, and no connection
 to supervise, so none of what the *Connection* entry below describes applies
 to one.
@@ -272,17 +273,17 @@ plugin into the workspace's registry, so other members gain nothing. It
 replaces ADR-0006's per-connector grant, which is what the runtime enforces
 today.
 
-### System plugin *(proposed, ADR-0076; not yet built)*
+### System plugin *(ADR-0076)*
 A plugin the operator lists as `system` in the instance's configuration: it holds
 records the kernel relies on, such as conversations, and sees data from other plugins by
 design, so a tenant cannot add, remove or replace one. It is an Agent Plugin like any
 other, and implements each contract with one MCP server named in its `mcp.json`: the
 server's **public tools** and screen serve people and agents, and its **private tools**
 serve the kernel. The server refuses a private tool to any principal but `host` (the
-runtime itself), and the runtime never offers private tools to agents. Today
-conversations, tasks and files are kernel code.
+runtime itself), and the runtime never offers private tools to agents. The built-in
+conversations plugin is one, run by default; tasks and files are kernel code.
 
-### Contract *(proposed, ADR-0076; not yet built)*
+### Contract *(ADR-0076)*
 The versioned, language-neutral interface between the kernel and whatever implements a
 capability it consumes: a permanent reverse-DNS name (`ai.nimblebrain.conversations`), a
 `major.minor` version, a cardinality (`singleton` or `additive`), its tools with their
@@ -294,8 +295,8 @@ MCP. The scope and principal are the **host context**, one spec shared by every 
 `params._meta["ai.nimblebrain/context"]` on every request, and a server believes it only
 from an authenticated host transport. A
 plugin declares the contracts it `implements` and `requires`; the kernel names
-contracts, never plugins. Chat is on when an enabled plugin implements the
-conversations contract.
+contracts, never plugins. Chat is on exactly when an enabled plugin implements the
+conversations contract; the default configuration binds the built-in one.
 
 ### Provider *(proposed, ADR-0076; not yet built)*
 Infrastructure the kernel uses and no agent calls: the work queue, pub/sub, leases,
