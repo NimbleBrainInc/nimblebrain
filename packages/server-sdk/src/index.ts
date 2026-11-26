@@ -1,14 +1,10 @@
 export {
   type CallContext,
-  type CallContextResult,
-  CONTEXT_MISMATCH,
-  callContext,
   HOST_CONTEXT_META_KEY,
   type HostContext,
   isHost,
   type Principal,
   readHostContext,
-  type VerifiedDimensions,
 } from "./context.ts";
 export {
   type ContractDocument,

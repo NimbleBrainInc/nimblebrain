@@ -18,6 +18,11 @@ bound to `ai.nimblebrain.conversations` (ADR-0076): by default the built-in plug
   over the plugin in process (`test/helpers/conversation-store.ts`).
 - **`events.ts` is what a turn stores**: one function maps an engine event to its stored event
   (`conversationEventOf`), one a stored message (`messageEvents`).
+- **Per-conversation state is keyed by scope and id, never the id alone** (`conversationKey`
+  in `contract-store.ts`): a conversation id is unique only within its workspace and owner
+  (CONTRACT.md §2). The write queues, the turn lock, the run bus and the SSE viewers of a turn
+  all use it, so a batch is sent only under the scope it was written in and a turn's state is
+  never shared with the same id in another scope.
 - **Writes are queued per conversation and sent in batches**, in order; a read of a
   conversation waits for its queued writes. An append is never retried (the contract has no
   idempotency key). Shutdown flushes the queues before the server stops.
@@ -45,7 +50,7 @@ Every call is walled to one workspace and one owner (the contract's scope), and 
 - **READ is owner-gated within its workspace; RESUME also requires current membership.** `findConversation(wsId, convId, access)` asks only within `access.userId`'s scope of `wsId`, so another owner's conversation is not found either. The HTTP routes that read a conversation sit behind `requireWorkspace`, the membership gate of every `/v1/workspaces/<wsId>/…` route. **Resuming** binds the session's tools/skills/apps to `convWsId`, so it would hand the workspace's tools to someone offboarded from it: `chat()` and `startTurn()` both re-check membership of the conversation's workspace on resume and throw `ConversationWorkspaceAccessDeniedError` (→ `403`) for a non-member. This is a per-**resume** check (once per conversation load, at session establishment), NOT the per-call scan the wall forbids.
 - **There is no cross-workspace listing.** Not an internal primitive, not behind a flag. `listConversations` reads exactly one owner's conversations in one workspace, and both are required arguments.
 - **The kernel decides that a workspace exists.** The plugin trusts the workspace the kernel stamps and makes storage for it on first use, so the adapter's `create`, the one call that makes storage, first passes `assertWorkspaceRootExists` on the kernel's own workspace root.
-- **Deleting a workspace purges its conversations** through the contract's `delete_workspace`, in the deleting identity's request context, before the workspace directory is archived; the plugin's storage is apart from that directory, so the archive does not carry it.
+- **Deleting a workspace archives it first, then purges its conversations** through the contract's `delete_workspace`, in the deleting identity's request context; the plugin's storage is apart from the workspace directory, so the archive does not carry it. Archiving first means no new conversation can be created in it (`create` asserts the workspace root), and the purge waits for any `create` already past that check. A failed purge leaves the workspace deleted and is reported (`purgeError`); deleting the same id again runs the idempotent purge again, since the runtime purges whether or not the store still held the workspace.
 
 | Operation | Use | Never |
 |---|---|---|

@@ -59,6 +59,8 @@ import {
 import {
   CONVERSATIONS_CONTRACT,
   type ContractConversations,
+  type ContractScope,
+  conversationKey,
   createContractConversations,
   overlayListActive,
 } from "../conversation/contract-store.ts";
@@ -596,6 +598,15 @@ export interface WorkspaceDeleteResult {
    * connector uninstalled and every grant revoked.
    */
   deleteError?: string;
+  /**
+   * Why purging the workspace's conversations failed, when it did. The
+   * workspace is already deleted (archived) when the purge runs, so a failed
+   * purge leaves no live workspace; deleting the same id again runs the
+   * idempotent purge again.
+   */
+  purgeError?: string;
+  /** How many conversations the purge removed. */
+  conversationsPurged: number;
 }
 
 /**
@@ -760,8 +771,9 @@ export class Runtime {
    */
   private skillBodyFailures = new Map<string, number>();
   /**
-   * Conversation IDs with an in-flight chat() call. Prevents concurrent runs on
-   * the same conversation.
+   * Conversations with an in-flight chat() call, by {@link conversationKey}
+   * (scope and id: an id is unique only within its scope). Prevents
+   * concurrent runs on the same conversation.
    *
    * Scope: single-process / single-pod. Correct today because each tenant runs
    * with `platform.replicas: 1` — all chat traffic for a conversation lands on
@@ -1418,8 +1430,16 @@ export class Runtime {
       const overlays = new Map([
         [
           CONVERSATIONS_CONTRACT,
-          (tool: string, result: ToolResult) =>
-            overlayListActive(tool, result, (id) => this.isTurnActive(id)),
+          (tool: string, result: ToolResult) => {
+            // The relayed `list` was made in this request's scope, so its rows
+            // are that scope's conversations.
+            const ctx = getRequestContext();
+            const workspaceId = ctx?.workspaceId;
+            const ownerId = ctx?.identity?.id;
+            return overlayListActive(tool, result, (id) =>
+              workspaceId && ownerId ? this.isTurnActive({ workspaceId, ownerId }, id) : false,
+            );
+          },
         ],
       ]);
       this._boundServers = await startBoundServers(resolved, events, overlays);
@@ -1456,14 +1476,22 @@ export class Runtime {
   /** Process a chat message. Optional per-request EventSink for SSE streaming. */
   async chat(request: ChatRequest, requestSink?: EventSink): Promise<ChatResult> {
     const lockedConvId = request.conversationId;
-    if (lockedConvId && this.activeConversations.has(lockedConvId)) {
+    // `_chatInner` refuses a request with no identity or workspace before any
+    // IO, so the empty halves never key a turn that runs.
+    const lockKey = lockedConvId
+      ? conversationKey(
+          { workspaceId: request.workspaceId ?? "", ownerId: request.identity?.id ?? "" },
+          lockedConvId,
+        )
+      : undefined;
+    if (lockedConvId && lockKey && this.activeConversations.has(lockKey)) {
       throw new RunInProgressError(lockedConvId);
     }
-    if (lockedConvId) this.activeConversations.add(lockedConvId);
+    if (lockKey) this.activeConversations.add(lockKey);
     try {
       return await this._chatInner(request, requestSink);
     } finally {
-      if (lockedConvId) this.activeConversations.delete(lockedConvId);
+      if (lockKey) this.activeConversations.delete(lockKey);
     }
   }
 
@@ -1478,26 +1506,37 @@ export class Runtime {
   // Client disconnect does NOT abort; only `cancelTurn` (Stop) does.
   // ===========================================================================
 
-  /** Whether a detached turn is currently generating for this conversation. */
-  isTurnActive(conversationId: string): boolean {
-    return this.runBus.isActive(conversationId);
+  /**
+   * Whether a detached turn is currently generating for this conversation. A
+   * turn is the scope's: the RunBus is keyed by {@link conversationKey}, so the
+   * same id in another workspace or another owner's never shares its state.
+   */
+  isTurnActive(scope: ContractScope, conversationId: string): boolean {
+    return this.runBus.isActive(conversationKey(scope, conversationId));
   }
 
   /** Highest event sequence number for a conversation's current/last run. */
-  turnSeq(conversationId: string): number {
-    return this.runBus.currentSeq(conversationId);
+  turnSeq(scope: ContractScope, conversationId: string): number {
+    return this.runBus.currentSeq(conversationKey(scope, conversationId));
   }
 
   /** Explicitly cancel an in-flight turn (the Stop button). */
-  cancelTurn(conversationId: string): boolean {
-    if (!this.runBus.isActive(conversationId)) return false;
+  cancelTurn(scope: ContractScope, conversationId: string): boolean {
+    const key = conversationKey(scope, conversationId);
+    if (!this.runBus.isActive(key)) return false;
     // Publish the terminal `cancelled` frame to live viewers BEFORE ending the
     // run. `RunBus.cancel` flips status to terminal synchronously, after which
     // `publish` is a no-op — so the engine's own post-abort `cancelled` publish
     // (in startTurn's catch) never reaches the SSE. Without this, the Stop
     // button aborts generation but the UI stays stuck streaming until a reload.
-    this.publishTurnEvent(conversationId, "cancelled", {});
-    return this.runBus.cancel(conversationId);
+    this.publishTurnEvent(key, "cancelled", {});
+    return this.runBus.cancel(key);
+  }
+
+  /** Reserve a turn on the RunBus; throws {@link RunInProgressError} naming the conversation. */
+  private beginTurn(key: string, conversationId: string): AbortSignal {
+    if (this.runBus.isActive(key)) throw new RunInProgressError(conversationId);
+    return this.runBus.begin(key);
   }
 
   /**
@@ -1572,6 +1611,7 @@ export class Runtime {
     // turn acts in. A named conversation must already be there, or this throws
     // before anything shared moves.
     const store = await this.resolveChatStore(request.conversationId, wsId, ownerId);
+    const scope: ContractScope = { workspaceId: wsId, ownerId };
 
     // This door creates conversations too, so its binding resolves under the
     // same context as the chat door's — see `buildTurnContext`.
@@ -1606,43 +1646,44 @@ export class Runtime {
       // state. Reads stay owner-gated.
       await this.assertOwnerIsWorkspaceMember(request.conversationId, wsId, ownerId);
       conversationId = existing.id;
-      signal = this.runBus.begin(conversationId);
+      signal = this.beginTurn(conversationKey(scope, conversationId), conversationId);
     } else {
       conversationId = (await runWithRequestContext(turnCtx, () => store.create(makeCreateOpts())))
         .id;
-      signal = this.runBus.begin(conversationId);
+      signal = this.beginTurn(conversationKey(scope, conversationId), conversationId);
     }
+    const turnKey = conversationKey(scope, conversationId);
 
     // Seed the run stream with the user's message so the turn is
     // self-contained: any viewer (sender, other tab, post-refresh) can
     // reconstruct user + assistant from replay alone, no optimistic client
     // state required.
-    this.publishTurnEvent(conversationId, "user.message", {
+    this.publishTurnEvent(turnKey, "user.message", {
       content: request.message,
       ...(ownerId ? { userId: ownerId } : {}),
       ...(request.pluginRequestAnswer ? { pluginRequestAnswer: request.pluginRequestAnswer } : {}),
       timestamp: new Date().toISOString(),
     });
 
-    const busSink = this.createRunBusSink(conversationId);
+    const busSink = this.createRunBusSink(turnKey);
     // Detached: run to completion regardless of the caller's connection.
     void this.chat({ ...request, workspaceId: wsId, conversationId, signal }, busSink)
       .then((result) => {
         // Publish a terminal `done` carrying the final result so viewers
         // finalize the assistant message, then close the run.
-        this.publishTurnEvent(conversationId, "done", chatResponseBody(result));
-        this.runBus.end(conversationId, "done");
+        this.publishTurnEvent(turnKey, "done", chatResponseBody(result));
+        this.runBus.end(turnKey, "done");
       })
       .catch((err) => {
         if (signal.aborted) {
-          this.publishTurnEvent(conversationId, "cancelled", {});
-          this.runBus.end(conversationId, "cancelled");
+          this.publishTurnEvent(turnKey, "cancelled", {});
+          this.runBus.end(turnKey, "cancelled");
         } else {
-          this.publishTurnEvent(conversationId, "error", {
+          this.publishTurnEvent(turnKey, "error", {
             error: err instanceof ModelAuthError ? err.code : "engine_error",
             message: err instanceof Error ? err.message : String(err),
           });
-          this.runBus.end(conversationId, "error");
+          this.runBus.end(turnKey, "error");
         }
       })
       // The owner's conversation views read `active` from the RunBus on each
@@ -1658,28 +1699,33 @@ export class Runtime {
    * Live fan-out hook for detached-turn events. The API layer sets this to
    * forward each published event to the per-conversation SSE manager so
    * connected viewers tail in real time. Buffering/replay stays in the RunBus;
-   * this is purely the live edge.
+   * this is purely the live edge. `key` is the conversation's
+   * {@link conversationKey}, the key its viewers subscribe under.
    */
-  onTurnEvent?: (conversationId: string, event: BufferedRunEvent) => void;
+  onTurnEvent?: (key: string, event: BufferedRunEvent) => void;
 
   /** Replay snapshot of an in-flight turn for a newly connecting viewer. */
-  getTurnReplay(conversationId: string, afterSeq: number): BufferedRunEvent[] {
-    return this.runBus.bufferedSince(conversationId, afterSeq);
+  getTurnReplay(
+    scope: ContractScope,
+    conversationId: string,
+    afterSeq: number,
+  ): BufferedRunEvent[] {
+    return this.runBus.bufferedSince(conversationKey(scope, conversationId), afterSeq);
   }
 
   /** Publish a frame the runtime builds itself: typed by the conversation stream's catalog. */
   private publishTurnEvent<K extends TurnFrame>(
-    conversationId: string,
+    key: string,
     type: K,
     data: ConversationStreamEvents[K],
   ): void {
-    this.publishToRunBus(conversationId, type, data);
+    this.publishToRunBus(key, type, data);
   }
 
   /** Publish to the RunBus (buffer/replay) and fan out live (SSE viewers). */
-  private publishToRunBus(conversationId: string, type: string, data: unknown): void {
-    const buffered = this.runBus.publish(conversationId, type, data);
-    if (buffered) this.onTurnEvent?.(conversationId, buffered);
+  private publishToRunBus(key: string, type: string, data: unknown): void {
+    const buffered = this.runBus.publish(key, type, data);
+    if (buffered) this.onTurnEvent?.(key, buffered);
   }
 
   /**
@@ -1688,11 +1734,11 @@ export class Runtime {
    * `src/api/schemas/events-drift-guard.ts` holds each forwarded payload to its
    * `ConversationStreamEvents` entry.
    */
-  private createRunBusSink(conversationId: string): EventSink {
+  private createRunBusSink(key: string): EventSink {
     return {
       emit: (event: EngineEvent) => {
         if (!isStreamedRunEvent(event)) return;
-        this.publishToRunBus(conversationId, event.type, event.data);
+        this.publishToRunBus(key, event.type, event.data);
       },
     };
   }
@@ -4630,12 +4676,32 @@ export class Runtime {
     let deleted = false;
     let deleteError: string | undefined;
     try {
-      await this.deleteWorkspaceConversations(wsId);
       deleted = await this.getWorkspaceStore().delete(wsId);
     } catch (err) {
       deleteError = err instanceof Error ? err.message : String(err);
     }
-    return { deleted, connectors, ...(deleteError ? { deleteError } : {}) };
+    if (deleteError) return { deleted, connectors, deleteError, conversationsPurged: 0 };
+
+    // The purge runs after the rename: with the workspace gone no new
+    // conversation can be created in it (`create` asserts the workspace root),
+    // and the purge waits for any create already past that check. It runs
+    // whether or not the store still held the workspace, so deleting an id
+    // again retries a purge that failed; `delete_workspace` is idempotent.
+    return { deleted, connectors, ...(await this.purgeWorkspaceConversations(wsId)) };
+  }
+
+  /** {@link deleteWorkspaceConversations}, with a failure reported rather than thrown. */
+  private async purgeWorkspaceConversations(
+    wsId: string,
+  ): Promise<Pick<WorkspaceDeleteResult, "conversationsPurged" | "purgeError">> {
+    try {
+      return { conversationsPurged: await this.deleteWorkspaceConversations(wsId) };
+    } catch (err) {
+      return {
+        conversationsPurged: 0,
+        purgeError: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   /**
@@ -4643,14 +4709,15 @@ export class Runtime {
    * (the contract's `delete_workspace`), which holds them apart from the
    * workspace's directory, so the archive rename does not carry them. With
    * nothing bound there are none. The contract walls the call by an owner it
-   * ignores; the deleting identity is the verified one.
+   * ignores; the deleting identity is the verified one. Answers how many it
+   * removed.
    */
-  private async deleteWorkspaceConversations(wsId: string): Promise<void> {
-    if (!this._conversations) return;
+  private async deleteWorkspaceConversations(wsId: string): Promise<number> {
+    if (!this._conversations) return 0;
     const ownerId = getRequestContext()?.identity?.id;
     if (!ownerId)
       throw new Error("deleting a workspace's conversations needs a signed-in identity");
-    await this._conversations.deleteWorkspace({ workspaceId: wsId, ownerId });
+    return this._conversations.deleteWorkspace({ workspaceId: wsId, ownerId });
   }
 
   /**

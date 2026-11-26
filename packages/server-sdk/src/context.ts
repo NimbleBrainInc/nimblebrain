@@ -6,8 +6,7 @@
  * exactly what that schema accepts.
  *
  * Reading is not trusting: a server reads the context only from an authenticated host
- * transport (stdio, or HTTP with the host's credential), and passes in any dimension its
- * transport verified itself.
+ * transport (stdio, or HTTP with the host's credential).
  */
 
 /** Who is calling: the host's own code, or a person directly or through an agent or app. */
@@ -23,22 +22,13 @@ export interface HostContext {
 }
 
 /**
- * The context a call is served under. Every field may be absent: a call with no context
- * names no principal and has no scope.
+ * The context a call is served under: the host context it carries, or `{}` when it carries
+ * none. Every field may be absent: a call with no context names no principal and has no scope.
  */
 export type CallContext = Partial<HostContext>;
 
 /** The request metadata key the host context travels under. */
 export const HOST_CONTEXT_META_KEY = "ai.nimblebrain/context";
-
-/** The one error of the host-context spec: the host's word contradicts the transport's. */
-export const CONTEXT_MISMATCH = "context_mismatch";
-
-/** Dimensions a transport verified itself, such as an edge's `x-tenant-id` and `x-workspace-id`. */
-export interface VerifiedDimensions {
-  tenantId?: string;
-  workspaceId?: string;
-}
 
 const OPTIONAL_FIELDS = ["workspaceId", "ownerId", "conversationId"] as const;
 
@@ -60,41 +50,6 @@ export function readHostContext(meta: unknown): HostContext | undefined {
     ctx[field] = value;
   }
   return ctx;
-}
-
-export type CallContextResult =
-  | {
-      ok: true;
-      context: CallContext;
-      /** The tenant the transport verified; a multi-tenant server walls every call by it. */
-      tenantId?: string;
-    }
-  | { ok: false; code: typeof CONTEXT_MISMATCH; error: string };
-
-/**
- * One call's context: the host context in its `_meta`, with the dimensions the transport
- * verified applied. A verified value wins and fills an absent one; a context that names a
- * different value is refused as `context_mismatch`, and the server answers it before any
- * tool runs.
- */
-export function callContext(meta: unknown, verified: VerifiedDimensions = {}): CallContextResult {
-  const context: CallContext = readHostContext(meta) ?? {};
-  const workspaceId = verified.workspaceId;
-  if (workspaceId !== undefined) {
-    if (context.workspaceId !== undefined && context.workspaceId !== workspaceId) {
-      return {
-        ok: false,
-        code: CONTEXT_MISMATCH,
-        error: "the context's workspaceId is not the workspace the transport verified",
-      };
-    }
-    context.workspaceId = workspaceId;
-  }
-  return {
-    ok: true,
-    context,
-    ...(verified.tenantId !== undefined ? { tenantId: verified.tenantId } : {}),
-  };
 }
 
 /** Whether the call is the host's own. A call that names no principal is not. */

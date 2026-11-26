@@ -171,8 +171,10 @@
       "type": "object",
       "properties": {
         "limit": {
-          "description": "Max conversations to return. Default: 20.",
-          "type": "number"
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Max conversations to return, 1 to 200. Default: 20.",
+          "type": "integer"
         },
         "cursor": {
           "description": "Opaque pagination cursor from a previous response.",
@@ -324,8 +326,10 @@
           "description": "How much of the conversation to return. \"metadata\" returns just metadata (no messages). \"messages\" (default) returns metadata + the most recent `limit` messages, capped by a content-size guard. \"full\" returns every message — use only when you genuinely need the entire transcript; long conversations can run hundreds of thousands of tokens."
         },
         "limit": {
-          "description": "Max messages to return when expand is \"messages\" (the default mode). Counted from the end of the conversation. Default: 20. Ignored when expand is \"metadata\" or \"full\".",
-          "type": "number"
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Max messages to return when expand is \"messages\" (the default mode), 0 to 1000. Counted from the end of the conversation. Default: 20. Ignored when expand is \"metadata\" or \"full\".",
+          "type": "integer"
         }
       }
     },
@@ -879,8 +883,10 @@
           "type": "string"
         },
         "limit": {
-          "description": "Max conversations to return. Default: 10.",
-          "type": "number"
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Max conversations to return, 1 to 100. Default: 10.",
+          "type": "integer"
         }
       }
     },
@@ -947,7 +953,8 @@
           "type": "string"
         },
         "title": {
-          "description": "New title for the conversation.",
+          "maxLength": 200,
+          "description": "New title for the conversation, at most 200 characters.",
           "type": "string"
         }
       }

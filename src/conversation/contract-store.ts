@@ -10,7 +10,9 @@
  * `delete_workspace`), and the projections a public tool already answers (`get`
  * for a conversation's metadata, `list`, `update`).
  *
- * - **Writes are queued per conversation and sent in batches.** The engine
+ * - **Writes are queued per conversation and sent in batches.** A queue is
+ *   keyed by the conversation's scope and id ({@link conversationKey}), so a
+ *   batch is only ever sent under the scope its events were written in. The engine
  *   emits events synchronously while it streams; each lands in its
  *   conversation's queue, and the events that arrive while one
  *   `append_events` is in flight go together in the next, in order. The queue
@@ -20,7 +22,8 @@
  *   what it wrote.
  * - **The host decides that a workspace exists.** The contract trusts the
  *   workspace the host stamps, so `create` runs only after the kernel's own
- *   workspace check.
+ *   workspace check. A workspace purge waits for every `create` already past
+ *   that check, so none lands after the purge.
  * - **A write settles with the batch that carried it.** Every caller whose
  *   events were in a failed batch is rejected with its error; one the caller
  *   does not await is logged.
@@ -63,6 +66,16 @@ export const CONVERSATIONS_CONTRACT = "ai.nimblebrain.conversations";
 export interface ContractScope {
   workspaceId: string;
   ownerId: string;
+}
+
+/**
+ * The key of a conversation's per-conversation state: its scope and its id. A
+ * conversation id is unique only within its scope (CONTRACT.md §2), so a map,
+ * queue, lock or bus holding state for one conversation is keyed by all three,
+ * never by the id alone.
+ */
+export function conversationKey(scope: ContractScope, conversationId: string): string {
+  return JSON.stringify([scope.workspaceId, scope.ownerId, conversationId]);
 }
 
 /**
@@ -180,8 +193,13 @@ export interface ContractConversations {
   forScope(scope: ContractScope, onMutate?: () => void): ConversationEventStore;
   /** Whether `id` is one of the scope's conversations. */
   has(scope: ContractScope, id: string): Promise<boolean>;
-  /** Delete every owner's conversations in a workspace and release it. `ownerId` is any verified identity. */
-  deleteWorkspace(scope: ContractScope): Promise<void>;
+  /**
+   * Delete every owner's conversations in a workspace and release it; answers
+   * how many it removed. `ownerId` is any verified identity. Idempotent. Call
+   * it once the workspace is gone from the kernel, so no new `create` passes
+   * the workspace check; it waits for the ones already past it.
+   */
+  deleteWorkspace(scope: ContractScope): Promise<number>;
   /** Settle every queued write. */
   flush(): Promise<void>;
 }
@@ -211,6 +229,8 @@ export function createContractConversations(
 
   const { assertWorkspace } = opts;
   const queues = new Map<string, WriteQueue>();
+  /** Every `create` past the workspace check and not yet answered, with its workspace. */
+  const creating = new Set<{ workspaceId: string; done: Promise<unknown> }>();
 
   /**
    * Send what is pending for one conversation as one batch, and settle every
@@ -241,10 +261,11 @@ export function createContractConversations(
    */
   function enqueue(scope: ContractScope, id: string, events: ConversationEvent[]): Promise<void> {
     for (const e of events) assertNoBinaryPayloads(e, `event(${e.type})`);
-    let q = queues.get(id);
+    const key = conversationKey(scope, id);
+    let q = queues.get(key);
     if (!q) {
       q = { scope, pending: [], waiters: [], tail: Promise.resolve() };
-      queues.set(id, q);
+      queues.set(key, q);
     }
     const queue = q;
     if (queue.failed !== undefined) return Promise.reject(queue.failed);
@@ -254,23 +275,24 @@ export function createContractConversations(
     queue.tail = queue.tail.then(() => drain(id, queue));
     void queue.tail.then(() => {
       const idle = queue.waiters.length === 0 && queue.failed === undefined;
-      if (queues.get(id) === queue && idle) queues.delete(id);
+      if (queues.get(key) === queue && idle) queues.delete(key);
     });
     return waiter.promise;
   }
 
   /** Settle one conversation's queued writes. */
-  async function settled(id: string): Promise<void> {
-    await queues.get(id)?.tail;
+  async function settled(scope: ContractScope, id: string): Promise<void> {
+    await queues.get(conversationKey(scope, id))?.tail;
   }
 
   /**
    * A read of the conversation completed after its writes settled: the caller
    * now sees what was stored, so a closed queue opens again.
    */
-  function reconciled(id: string): void {
-    const q = queues.get(id);
-    if (q?.failed !== undefined && q.waiters.length === 0) queues.delete(id);
+  function reconciled(scope: ContractScope, id: string): void {
+    const key = conversationKey(scope, id);
+    const q = queues.get(key);
+    if (q?.failed !== undefined && q.waiters.length === 0) queues.delete(key);
   }
 
   function logFailed(id: string) {
@@ -282,23 +304,23 @@ export function createContractConversations(
   }
 
   async function load(scope: ContractScope, id: string): Promise<Conversation | null> {
-    await settled(id);
+    await settled(scope, id);
     try {
       const out = await call("get", { id, expand: "metadata" }, scope);
-      reconciled(id);
+      reconciled(scope, id);
       return conversationOf(out.metadata as Record<string, unknown>);
     } catch (err) {
       if (codeOf(err) !== "conversation_not_found") throw err;
       // The public `get` answers a corrupted conversation as absent; `events`
       // tells the two apart, and throws for a corrupted one.
       await call("events", { id, limit: 1 }, scope);
-      reconciled(id);
+      reconciled(scope, id);
       return null;
     }
   }
 
   async function readEvents(scope: ContractScope, id: string): Promise<ConversationEvent[]> {
-    await settled(id);
+    await settled(scope, id);
     const out: ConversationEvent[] = [];
     let afterSeq = 0;
     let throughSeq: number | undefined;
@@ -313,7 +335,7 @@ export function createContractConversations(
       for (const row of rows) out.push(row.event);
       const last = rows[rows.length - 1];
       if (!last || last.seq >= throughSeq) {
-        reconciled(id);
+        reconciled(scope, id);
         return out;
       }
       afterSeq = last.seq;
@@ -343,7 +365,7 @@ export function createContractConversations(
         // The plugin trusts the workspace the host stamps, so the host stamps
         // only a live one: a deleted workspace gets no conversation.
         assertWorkspace(scope);
-        const out = await call(
+        const sent = call(
           "create",
           {
             model: options.model,
@@ -352,6 +374,9 @@ export function createContractConversations(
           },
           scope,
         );
+        const entry = { workspaceId: scope.workspaceId, done: sent.catch(() => {}) };
+        creating.add(entry);
+        const out = await sent.finally(() => creating.delete(entry));
         onMutate?.();
         const created = out.conversation as Record<string, unknown>;
         return {
@@ -389,7 +414,7 @@ export function createContractConversations(
       },
 
       async delete(id: string) {
-        await settled(id);
+        await settled(scope, id);
         const out = await call("delete", { id }, scope);
         onMutate?.();
         return out.deleted === true;
@@ -397,7 +422,7 @@ export function createContractConversations(
 
       async update(id: string, patch: ConversationPatch) {
         if (patch.title !== undefined) {
-          await settled(id);
+          await settled(scope, id);
           try {
             await call("update", { id, title: patch.title }, scope);
           } catch (err) {
@@ -422,8 +447,12 @@ export function createContractConversations(
     forScope,
     has: async (scope, id) => (await load(scope, id)) !== null,
     async deleteWorkspace(scope) {
+      await Promise.all(
+        [...creating].filter((c) => c.workspaceId === scope.workspaceId).map((c) => c.done),
+      );
       await flush();
-      await call("delete_workspace", {}, scope);
+      const out = await call("delete_workspace", {}, scope);
+      return Array.isArray(out.deleted) ? out.deleted.length : 0;
     },
     flush,
   };

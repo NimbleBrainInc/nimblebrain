@@ -16,6 +16,7 @@
  */
 
 import { Hono } from "hono";
+import { conversationKey } from "../../conversation/contract-store.ts";
 import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
 import { ConversationCorruptedError } from "../../runtime/errors.ts";
 import { conversationCorruptedResponse } from "../handlers.ts";
@@ -110,19 +111,20 @@ export function conversationEventRoutes(ctx: AppContext) {
       // Resume point: the client passes the highest sequence number it has
       // already rendered (0 / absent = full replay of the in-flight turn).
       const afterSeq = parseAfterSeq(c.req.query("afterSeq"));
-      const replay = ctx.runtime.getTurnReplay(conversationId, afterSeq);
+      const scope = { workspaceId: c.var.workspaceId, ownerId: callerId };
+      const replay = ctx.runtime.getTurnReplay(scope, conversationId, afterSeq);
 
       // Create the SSE stream. The manager replays the buffered in-flight turn
       // (events with seq > afterSeq) before registering for live fan-out, so a
       // page refresh reconstructs the in-progress assistant message and then
       // tails the rest with no gap or duplication.
       const { stream } = ctx.conversationEventManager.addSubscriber(
-        conversationId,
+        conversationKey(scope, conversationId),
         callerId,
         replay,
         {
-          isActive: ctx.runtime.isTurnActive(conversationId),
-          activeSeq: ctx.runtime.turnSeq(conversationId),
+          isActive: ctx.runtime.isTurnActive(scope, conversationId),
+          activeSeq: ctx.runtime.turnSeq(scope, conversationId),
         },
       );
 

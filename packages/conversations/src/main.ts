@@ -4,7 +4,6 @@
  *   nb-conversations --data-dir <dir>                  MCP over stdio (how mcp.json starts it)
  *   nb-conversations --data-dir <dir> --http <port>    MCP over Streamable HTTP at /mcp
  *       [--host <host>]     the address to listen on (default 127.0.0.1)
- *       [--edge]            behind an edge that verifies the tenant and workspace (fleet mode)
  *   [--screen <file>]       the built ui://conversations/browser HTML
  *                           (default: ui/dist/index.html in the plugin's root)
  *
@@ -13,28 +12,41 @@
  * - stdio: by construction. The host that started the process alone holds its pipe.
  * - HTTP: every request presents `Authorization: Bearer $NB_CONVERSATIONS_TOKEN`, the
  *   credential the operator issues to the host for this server (required to start in HTTP
- *   mode), or is refused 401 before its body is read.
- * - HTTP with `--edge`: the edge in front of the server verifies the host and sets
- *   `x-tenant-id` and `x-workspace-id`, and admits nothing else to it. Those are verified
- *   dimensions: the tenant walls every call (its own data under `<data>/tenants/<tenantId>`),
- *   and a context whose `workspaceId` differs from the verified one is `context_mismatch`. A
- *   request with no verified tenant is refused 400.
+ *   mode, at least 32 characters), or is refused 401 before its body is read. The token is
+ *   `host` on every tool, so the server listens on loopback unless `--host` says otherwise,
+ *   and warns when it does.
  *
  * On stdio, stdout is the protocol; diagnostics go to stderr. In HTTP mode the server
  * prints `listening <url>` once it serves.
  */
 
 import { timingSafeEqual } from "node:crypto";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { buildServer } from "./server.ts";
-import { type ConversationStore, createStore, isPathSegment } from "./store.ts";
+import { createStore } from "./store.ts";
 
 export const TOKEN_ENV = "NB_CONVERSATIONS_TOKEN";
 export const MCP_PATH = "/mcp";
-/** The headers an edge sets from what it verified. */
-export const EDGE_HEADERS = { tenantId: "x-tenant-id", workspaceId: "x-workspace-id" } as const;
+/** The shortest host credential HTTP mode accepts: the token is `host` on every tool. */
+export const MIN_TOKEN_LENGTH = 32;
+/** Where HTTP mode listens unless `--host` names another address. */
+export const DEFAULT_HOST = "127.0.0.1";
+
+/** Why `token` cannot be the host's credential, or null when it can. */
+export function tokenError(token: string | undefined): string | null {
+  if (!token) return `${TOKEN_ENV} is required with --http: it is the host's credential`;
+  if (token.length < MIN_TOKEN_LENGTH) {
+    return `${TOKEN_ENV} must be at least ${MIN_TOKEN_LENGTH} characters: it is the host's credential and is host on every tool (generate one with: openssl rand -hex 32)`;
+  }
+  return null;
+}
+
+/** Whether `hostname` is a loopback address, reachable only from this machine. */
+export function isLoopback(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "::1" || /^127(\.\d{1,3}){3}$/.test(hostname);
+}
 
 function arg(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(`--${name}`);
@@ -65,56 +77,26 @@ export interface HttpServerOptions {
   port: number;
   hostname?: string;
   token: string;
-  /** Fleet mode: believe the edge's verified tenant and workspace headers. */
-  edge?: boolean;
   screenPath?: string;
 }
 
-/** One store per verified tenant, each under its own directory. */
-function tenantStores(dataDir: string): (tenantId: string) => ConversationStore {
-  const stores = new Map<string, ConversationStore>();
-  return (tenantId) => {
-    let store = stores.get(tenantId);
-    if (!store) {
-      store = createStore(join(dataDir, "tenants", tenantId));
-      stores.set(tenantId, store);
-    }
-    return store;
-  };
-}
-
-/** Serve the conversations server over Streamable HTTP at {@link MCP_PATH}. */
+/**
+ * Serve the conversations server over Streamable HTTP at {@link MCP_PATH}. Throws when the
+ * token cannot be the host's credential ({@link tokenError}).
+ */
 export function serveHttp(opts: HttpServerOptions) {
-  const store = opts.edge ? tenantStores(opts.dataDir) : createStore(opts.dataDir);
-  const handler = createMcpHandler(
-    () =>
-      buildServer({
-        store,
-        screenPath: opts.screenPath,
-        ...(opts.edge
-          ? {
-              verifiedOf: (ctx) => {
-                const h = ctx.http?.req?.headers;
-                const workspaceId = h?.get(EDGE_HEADERS.workspaceId) || undefined;
-                return {
-                  tenantId: h?.get(EDGE_HEADERS.tenantId) || undefined,
-                  ...(workspaceId ? { workspaceId } : {}),
-                };
-              },
-            }
-          : {}),
-      }),
-    { onerror: (err) => process.stderr.write(`nb-conversations: ${err.message}\n`) },
-  );
+  const refused = tokenError(opts.token);
+  if (refused) throw new Error(refused);
+  const store = createStore(opts.dataDir);
+  const handler = createMcpHandler(() => buildServer({ store, screenPath: opts.screenPath }), {
+    onerror: (err) => process.stderr.write(`nb-conversations: ${err.message}\n`),
+  });
   return Bun.serve({
     port: opts.port,
-    hostname: opts.hostname ?? "127.0.0.1",
+    hostname: opts.hostname ?? DEFAULT_HOST,
     fetch(req) {
       if (new URL(req.url).pathname !== MCP_PATH) return json(404, { error: "not found" });
       if (!presentsToken(req, opts.token)) return json(401, { error: "unauthorized" });
-      if (opts.edge && !isPathSegment(req.headers.get(EDGE_HEADERS.tenantId) ?? "")) {
-        return json(400, { error: `no verified tenant (${EDGE_HEADERS.tenantId})` });
-      }
       return handler.fetch(req);
     },
   });
@@ -140,15 +122,15 @@ export async function main(argv: string[]): Promise<void> {
   const port = Number(arg(argv, "http"));
   if (!Number.isInteger(port) || port < 0) fail("--http wants a port (0 for any free port)");
   const token = process.env[TOKEN_ENV];
-  if (!token) fail(`${TOKEN_ENV} is required with --http: it is the host's credential`);
-  const server = serveHttp({
-    dataDir,
-    port,
-    hostname: arg(argv, "host"),
-    token,
-    edge: argv.includes("--edge"),
-    screenPath,
-  });
+  const refused = tokenError(token);
+  if (refused || !token) fail(refused ?? `${TOKEN_ENV} is required with --http`);
+  const hostname = arg(argv, "host") ?? DEFAULT_HOST;
+  if (!isLoopback(hostname)) {
+    process.stderr.write(
+      `nb-conversations: warning: listening on ${hostname}, not loopback: anyone who can reach it and holds ${TOKEN_ENV} is host, with every tool, private ones included\n`,
+    );
+  }
+  const server = serveHttp({ dataDir, port, hostname, token, screenPath });
   process.stdout.write(`listening http://${server.hostname}:${server.port}${MCP_PATH}\n`);
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {

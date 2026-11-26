@@ -4,7 +4,6 @@ import { resolve } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import {
   type ContractDocument,
-  callContext,
   contractSchema,
   HOST_CONTEXT_META_KEY,
   isHost,
@@ -73,38 +72,9 @@ describe("the host context", () => {
   });
 
   test("a call that names no principal is not host", () => {
-    const read = callContext(meta({ workspaceId: "ws_1", ownerId: "u" }));
-    expect(read).toEqual({ ok: true, context: {} });
-    if (read.ok) expect(isHost(read.context)).toBe(false);
-    const none = callContext(undefined);
-    if (none.ok) expect(isHost(none.context)).toBe(false);
-  });
-});
-
-describe("transport-verified dimensions", () => {
-  test("a verified workspace wins, and fills a context that has none", () => {
-    expect(callContext(meta({ principal: "host" }), { workspaceId: "ws_v" })).toEqual({
-      ok: true,
-      context: { principal: "host", workspaceId: "ws_v" },
-    });
-    expect(
-      callContext(meta({ principal: "host", workspaceId: "ws_v" }), { workspaceId: "ws_v" }),
-    ).toEqual({ ok: true, context: { principal: "host", workspaceId: "ws_v" } });
-  });
-
-  test("a context that contradicts a verified workspace is refused as context_mismatch", () => {
-    const read = callContext(meta({ principal: "host", workspaceId: "ws_other" }), {
-      workspaceId: "ws_v",
-    });
-    expect(read).toMatchObject({ ok: false, code: "context_mismatch" });
-  });
-
-  test("the verified tenant is returned for the server to wall by, never put in the context", () => {
-    expect(callContext(meta({ principal: "person", ownerId: "u" }), { tenantId: "t1" })).toEqual({
-      ok: true,
-      context: { principal: "person", ownerId: "u" },
-      tenantId: "t1",
-    });
+    expect(readHostContext(meta({ workspaceId: "ws_1", ownerId: "u" }))).toBeUndefined();
+    expect(isHost(readHostContext(meta({ workspaceId: "ws_1", ownerId: "u" })) ?? {})).toBe(false);
+    expect(isHost(readHostContext(undefined) ?? {})).toBe(false);
   });
 });
 

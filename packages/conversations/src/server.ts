@@ -1,10 +1,9 @@
 /**
  * The conversations server: one MCP server serving every tool of the conversations
- * contract and its screen. Each `tools/call` is decided in one order:
+ * contract and its screen. Each `tools/call` is decided in one order, under the host
+ * context it carries (`params._meta["ai.nimblebrain/context"]`,
+ * `contracts/host-context/CONTEXT.md`):
  *
- *   0. its host context (`params._meta["ai.nimblebrain/context"]`) is read, with the
- *      dimensions its transport verified applied; a contradiction is `context_mismatch`, a
- *      JSON-RPC error before any tool runs (`contracts/host-context/CONTEXT.md`);
  *   1. a tool the contract does not name is `unknown_tool`;
  *   2. a private tool called by anyone but the host is `forbidden` (before input and scope);
  *   3. arguments that fail the tool's input schema are `invalid_input`;
@@ -16,23 +15,17 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import {
-  ProtocolError,
-  ProtocolErrorCode,
-  Server,
-  type ServerContext,
-} from "@modelcontextprotocol/server";
+import { ProtocolError, ProtocolErrorCode, Server } from "@modelcontextprotocol/server";
 import {
   type CallContext,
-  callContext,
   contractSchema,
   publicErrorPrefix,
+  readHostContext,
   refuseUnlessAllowed,
   ToolCallError,
   type ToolErrorResult,
   toolError,
   toolVisibility,
-  type VerifiedDimensions,
 } from "../../server-sdk/src/index.ts";
 import { CONTRACT, DESCRIPTIONS, inputError } from "./contract.ts";
 import {
@@ -86,14 +79,7 @@ const SCREEN_PLACEHOLDER =
   "<body><p>The conversations screen is not built. Run: cd packages/conversations/ui &amp;&amp; bun install &amp;&amp; bun run build</p></body></html>";
 
 export interface ServerOptions {
-  /** The store: one, or one per transport-verified tenant (a multi-tenant server). */
-  store: ConversationStore | ((tenantId: string) => ConversationStore);
-  /**
-   * The dimensions this request's transport verified itself; none by default. Every request
-   * that reaches the server came through an authenticated host transport, so its host context
-   * (`params._meta["ai.nimblebrain/context"]`) is the host's word.
-   */
-  verifiedOf?: (ctx: ServerContext) => VerifiedDimensions;
+  store: ConversationStore;
   /** The built screen's HTML file; the placeholder page when absent. */
   screenPath?: string;
 }
@@ -185,8 +171,21 @@ const PRIVATE: Record<string, Handler> = {
   }),
 };
 
+/**
+ * What a caller is told about a failure the contract has no code for. The detail can name
+ * the medium (a path, a file handle), which never crosses the contract (CONTRACT.md §8), so
+ * it goes only to this server's log, on stderr.
+ */
+const INTERNAL_ERROR = "the conversations server failed; its log has the detail";
+
+/** Log an unexpected failure's detail where only the operator reads it. */
+function logInternal(tool: string, err: unknown): void {
+  const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  process.stderr.write(`nb-conversations: ${tool} failed: ${detail}\n`);
+}
+
 /** A private tool's failure as its contract code. */
-function privateFailure(err: unknown): ToolErrorResult {
+function privateFailure(tool: string, err: unknown): ToolErrorResult {
   if (err instanceof ToolCallError) return toolError(err.code, err.message);
   if (err instanceof ConversationNotFoundError) {
     return toolError("conversation_not_found", `no conversation ${err.message} in scope`);
@@ -198,20 +197,22 @@ function privateFailure(err: unknown): ToolErrorResult {
       `the stored conversation cannot be read: ${err.message}`,
     );
   }
-  return toolError("internal_error", err instanceof Error ? err.message : String(err));
+  logInternal(tool, err);
+  return toolError("internal_error", INTERNAL_ERROR);
 }
 
 /**
  * A public tool's failure as its contract code. A failure the contract has no public code
- * for is rethrown, and answers as a JSON-RPC error.
+ * for answers as a JSON-RPC internal error with a fixed message; its detail is logged.
  */
-function publicFailure(err: unknown, args: Args): ToolErrorResult {
+function publicFailure(tool: string, err: unknown, args: Args): ToolErrorResult {
   if (err instanceof ToolCallError) return toolError(err.code, err.message);
   if (err instanceof CorruptConversationError || err instanceof ConversationNotFoundError) {
     const id = typeof args.id === "string" ? args.id : "";
     return toolError("conversation_not_found", notFound(id).message);
   }
-  throw err;
+  logInternal(tool, err);
+  throw new ProtocolError(ProtocolErrorCode.InternalError, INTERNAL_ERROR);
 }
 
 function scopeMissing(visibility: "public" | "private", missing: "workspace" | "owner") {
@@ -258,33 +259,13 @@ export async function callTool(
     const result = (await handler(store, scope, args, ctx)) as Record<string, unknown>;
     return success(result, visibility === "public");
   } catch (err) {
-    return visibility === "private" ? privateFailure(err) : publicFailure(err, args);
+    return visibility === "private" ? privateFailure(name, err) : publicFailure(name, err, args);
   }
 }
 
 function readScreen(path: string | undefined): string {
   if (path && existsSync(path)) return readFileSync(path, "utf-8");
   return SCREEN_PLACEHOLDER;
-}
-
-/** The store a call is served from: the one store, or the verified tenant's. */
-function storeFor(opts: ServerOptions, tenantId: string | undefined): ConversationStore {
-  if (typeof opts.store !== "function") {
-    if (tenantId !== undefined) {
-      throw new ProtocolError(
-        ProtocolErrorCode.InvalidRequest,
-        "this server serves one tenant; the transport named one",
-      );
-    }
-    return opts.store;
-  }
-  if (tenantId === undefined) {
-    throw new ProtocolError(
-      ProtocolErrorCode.InvalidRequest,
-      "this server serves several tenants; the transport verified none",
-    );
-  }
-  return opts.store(tenantId);
 }
 
 /** A conversations server over `store`. One per connection; they share the store. */
@@ -321,16 +302,10 @@ export function buildServer(opts: ServerOptions): Server {
     }),
   }));
 
-  server.setRequestHandler("tools/call", async (request, ctx) => {
-    const verified = opts.verifiedOf?.(ctx) ?? {};
-    const read = callContext(request.params._meta, verified);
-    if (!read.ok) {
-      // The host's word contradicts its transport's: refused before any tool runs.
-      throw new ProtocolError(ProtocolErrorCode.InvalidParams, read.error, { code: read.code });
-    }
-    const store = storeFor(opts, read.tenantId);
+  server.setRequestHandler("tools/call", async (request) => {
+    const context = readHostContext(request.params._meta) ?? {};
     const args = (request.params.arguments ?? {}) as Args;
-    return callTool(store, request.params.name, args, read.context);
+    return callTool(opts.store, request.params.name, args, context);
   });
 
   server.setRequestHandler("resources/list", async () => ({
@@ -345,11 +320,14 @@ export function buildServer(opts: ServerOptions): Server {
         { uri: request.params.uri },
       );
     }
-    return {
-      contents: [
-        { uri: SCREEN_URI, mimeType: MCP_APP_MIME_TYPE, text: readScreen(opts.screenPath) },
-      ],
-    };
+    let text: string;
+    try {
+      text = readScreen(opts.screenPath);
+    } catch (err) {
+      logInternal("resources/read", err);
+      throw new ProtocolError(ProtocolErrorCode.InternalError, INTERNAL_ERROR);
+    }
+    return { contents: [{ uri: SCREEN_URI, mimeType: MCP_APP_MIME_TYPE, text }] };
   });
 
   return server;

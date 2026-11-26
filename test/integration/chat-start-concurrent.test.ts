@@ -19,6 +19,9 @@ import { createMockModel } from "../helpers/mock-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
+/** The scope the dev identity's turns in the test workspace run in. */
+const SCOPE = { workspaceId: TEST_WORKSPACE_ID, ownerId: DEV_IDENTITY.id };
+
 describe("POST /v1/workspaces/:wsId/chat/start — concurrency protection", () => {
   let handle: ServerHandle | null = null;
   let runtime: Runtime | null = null;
@@ -84,7 +87,7 @@ describe("POST /v1/workspaces/:wsId/chat/start — concurrency protection", () =
       body: JSON.stringify({ message: "holding the run", conversationId: convId }),
     });
     expect(first.status).toBe(200);
-    expect(runtime.isTurnActive(convId)).toBe(true);
+    expect(runtime.isTurnActive(SCOPE, convId)).toBe(true);
 
     // A second start on the same conversation is refused with a JSON 409.
     const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
@@ -100,7 +103,7 @@ describe("POST /v1/workspaces/:wsId/chat/start — concurrency protection", () =
 
     // Release the gate and let the held turn finish so teardown is clean.
     release();
-    while (runtime.isTurnActive(convId)) await new Promise((r) => setTimeout(r, 10));
+    while (runtime.isTurnActive(SCOPE, convId)) await new Promise((r) => setTimeout(r, 10));
   });
 
   test("concurrent starts produce exactly one run; the rest are refused with 409", async () => {

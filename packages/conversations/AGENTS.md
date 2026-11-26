@@ -16,6 +16,9 @@ conversations. How to run it standalone is in `README.md`.
 - **The contract document is the interface.** `tools/list` serves each tool's `$defs` schemas
   from the document unchanged, inputs are validated against them, and visibility comes from it.
   Changing a tool's shape is a contract change (`contracts/AGENTS.md`), never an edit here.
+- **A system plugin runs as the runtime's OS user, unconfined**: its server can read and
+  write whatever that user can. Making a plugin a system plugin is the operator's trust
+  decision, so no sandbox is applied here.
 - **`plugin.json` and `mcp.json` follow Agent Plugins 1.0.0.** NimbleBrain's declaration is only
   `extensions["ai.nimblebrain"].implements`. Trust (`system`), presence and location are the
   operator's (`nimblebrain.json` `plugins`); nothing here sets them. `src/plugins` resolves this
@@ -29,18 +32,22 @@ conversations. How to run it standalone is in `README.md`.
 - **It is believed only from an authenticated host transport** (`src/main.ts`). stdio: by
   construction, the pipe the host started. HTTP: every request presents
   `Authorization: Bearer $NB_CONVERSATIONS_TOKEN`, the self-hosted host's credential the operator
-  issues for this server, or is refused 401 before its body is read.
-- **Fleet mode (`--http --edge`)**: an edge verifies the host and sets `x-tenant-id` and
-  `x-workspace-id`. The tenant walls every call (its data under `<data>/tenants/<tenantId>/`, the
-  layout below inside it); a request with no verified tenant is refused 400. A context whose
-  `workspaceId` differs from the verified one is `context_mismatch`, a JSON-RPC error before any
-  tool runs; an absent one takes the verified value.
-- **Every `tools/call` is decided in one order** (`src/server.ts`): the context
-  (`context_mismatch`), unknown tool (`unknown_tool`), private tool by anyone but `host`
+  issues for this server, or is refused 401 before its body is read. The token is at least 32
+  characters or the server refuses to start; it is `host` on every tool, so HTTP mode listens
+  on `127.0.0.1` by default and warns on a non-loopback `--host`.
+- **One server serves one deployment's host.** Hosting it behind a fleet edge, for several
+  tenants, is not supported: it needs its own design (an edge-only credential, the edge
+  stripping any client-sent identity headers, a network policy that admits only the edge), and
+  one bearer token that is `host` for every tenant is not that design. A transport that verifies
+  a dimension itself follows `contracts/host-context/CONTEXT.md` §4.
+- **Every `tools/call` is decided in one order** (`src/server.ts`): unknown tool (`unknown_tool`), private tool by anyone but `host`
   (`forbidden`), arguments against the input schema (`invalid_input`), workspace and owner
   present (`scope_missing`), then the tool.
 - **Errors are `{ code, error }`** from the contract's lists. A public error's text begins with
-  its contract prefix. A public failure with no contract code is a JSON-RPC error.
+  its contract prefix. A public failure with no contract code is a JSON-RPC internal error.
+- **An unexpected failure's detail goes only to stderr.** `internal_error` and the JSON-RPC
+  internal error carry a fixed message; the detail (which can name a path) is logged, since
+  no path crosses the contract (CONTRACT.md §8).
 - **`active` and a trailing open run.** Whether a reply is generating is the host's to know. A
   call made inside a conversation (`conversationId` in its context) is made during that
   conversation's turn, so that conversation reads `active: true` and its trailing run
@@ -54,8 +61,10 @@ conversations. How to run it standalone is in `README.md`.
   (`src/store.ts`). The runtime gives the plugin `<workDir>/plugin-data/conversations` as its
   data directory.
 - **The path is the scope.** A call opens only its scope's owner partition of its scope's
-  workspace. Scope ids must each be one path segment, or the call has no scope. A file whose
-  header names another owner or id reads as absent.
+  workspace. Scope ids must each be one path segment, or the call has no scope. Scope ids are
+  case-sensitive, but on a case-insensitive filesystem (macOS by default) two ids that differ
+  only in case name one directory and share its conversations: a known limit, not enforced
+  here. A file whose header names another owner or id reads as absent.
 - **The plugin never decides whether a workspace exists; the host does.** Every dimension of
   the host context is a fact the host verified, so a workspace it stamps exists: `create` makes
   `conversations/<ownerId>/` (and the workspace directory above it) on first use, and a
@@ -101,7 +110,7 @@ conversations. How to run it standalone is in `README.md`.
 
 - `test/integration/conversations-plugin-conformance.test.ts` runs the contract's runner against
   `bin/nb-conversations --http` in full mode and public-only mode, with the host context in
-  `_meta`, and checks the 401, stdio, and fleet mode (tenant walls, `context_mismatch`). Full mode
+  `_meta`, and checks the 401 and stdio. Full mode
   passes every case; public-only fails only `no private tool is listed`, which holds a host's
   agent-facing door, not an implementation.
 - `test/integration/conversations-plugin-default.test.ts` boots a runtime with no `plugins`

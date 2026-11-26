@@ -14,7 +14,8 @@ Order is the contract — see the file header.
 
 **Deleting a container runs the same teardown as removing each thing it holds.**
 `Runtime.deleteWorkspace` walks `ws.connectors`, calls it for each, and only
-then hands the id to `WorkspaceStore.delete` for the archive-rename. Teardown
+then hands the id to `WorkspaceStore.delete` for the archive-rename, and after
+it purges the workspace's conversations (`src/conversation/AGENTS.md`). Teardown
 runs BEFORE the rename: `on_removing` needs the connector reachable, and the
 credential cleanup needs the credential directory at its live path.
 

@@ -307,7 +307,10 @@ describe("the detached-turn path", () => {
       workspaceId: TEST_WORKSPACE_ID,
       identity: USER,
     });
-    await waitFor(() => !runtime.isTurnActive(conversationId));
+    await waitFor(
+      () =>
+        !runtime.isTurnActive({ workspaceId: TEST_WORKSPACE_ID, ownerId: USER.id }, conversationId),
+    );
 
     expect(await pinOf(conversationId)).toBe(MODEL_A);
 

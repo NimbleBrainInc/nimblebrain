@@ -2,7 +2,10 @@
  * Per-conversation SSE event manager.
  *
  * Tracks subscribers per conversation and fans out the RunBus's sequenced
- * turn events only to the owner's subscriptions on that conversation.
+ * turn events only to the subscriptions on that conversation. A conversation
+ * is addressed by its scoped key (`conversationKey`: workspace, owner and id),
+ * the key the RunBus publishes under, so a subscriber hears only the turns of
+ * its own scope's conversation.
  *
  * Separate from SseEventManager which handles workspace-level events.
  */
@@ -15,7 +18,8 @@ import type { HeartbeatEvent, SubscribedEvent } from "./schemas/events.ts";
 interface ConversationSubscriber {
   id: string;
   userId: string;
-  conversationId: string;
+  /** The conversation's scoped key. */
+  key: string;
   controller: ReadableStreamDefaultController<Uint8Array>;
   closed: boolean;
 }
@@ -72,7 +76,7 @@ export class ConversationEventManager {
    * `event: subscribed`.
    */
   addSubscriber(
-    conversationId: string,
+    key: string,
     userId: string,
     replay?: BufferedRunEvent[],
     meta?: { isActive: boolean; activeSeq: number },
@@ -82,7 +86,7 @@ export class ConversationEventManager {
 
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
-        sub = { id, userId, conversationId, controller, closed: false };
+        sub = { id, userId, key, controller, closed: false };
         // The subscribed frame tells the client whether a turn is in flight
         // (so it can trim a stale in-flight turn from disk history before the
         // RunBus replay rebuilds it) and its current seq.
@@ -121,14 +125,14 @@ export class ConversationEventManager {
    * of the conversation. The seq lets viewers de-duplicate against replay and
    * resume after a reconnect.
    */
-  publishEvent(conversationId: string, event: BufferedRunEvent): void {
+  publishEvent(key: string, event: BufferedRunEvent): void {
     const encoded = frame(event.type, event.data, event.seq);
     for (const [id, sub] of this.subscribers) {
       if (sub.closed) {
         this.subscribers.delete(id);
         continue;
       }
-      if (sub.conversationId !== conversationId) continue;
+      if (sub.key !== key) continue;
       try {
         sub.controller.enqueue(encoded);
       } catch (err) {
