@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type * as acp from "@agentclientprotocol/sdk/unstable";
+import { classifyFailure, TurnFailed } from "./failure.ts";
 import {
   type Account,
   type Backend,
@@ -34,7 +35,9 @@ import {
 /** The name the session's NimbleBrain server is given inside Claude Code. */
 const SERVER = "nimblebrain";
 
-export function createClaudeBackend(opts: { bin?: string; model?: string } = {}): Backend {
+export function createClaudeBackend(
+  opts: { bin?: string; model?: string; log?: string } = {},
+): Backend {
   const bin = opts.bin ?? "claude";
   return {
     id: "claude-code",
@@ -42,7 +45,7 @@ export function createClaudeBackend(opts: { bin?: string; model?: string } = {})
     takesSystemPrompt: true,
     toolsAreNimbleBrainOnly: true,
     preflight: () => claudePreflight(bin),
-    run: (input) => runClaude(bin, opts.model, input),
+    run: (input) => runClaude(bin, opts.model, input, opts.log),
   };
 }
 
@@ -94,7 +97,10 @@ export function claudeAccount(out: string | undefined): Account {
     );
   }
   const plan = status.subscriptionType.charAt(0).toUpperCase() + status.subscriptionType.slice(1);
-  return { describe: `your Claude ${plan} subscription (claude.ai login, no API key)` };
+  return {
+    describe: `your Claude ${plan} subscription (claude.ai login, no API key)`,
+    plan: `Claude ${plan}`,
+  };
 }
 
 /** The print-mode arguments: stream JSON, the session's server only, nothing of the person's. */
@@ -126,6 +132,7 @@ async function runClaude(
   bin: string,
   model: string | undefined,
   input: TurnInput,
+  log?: string,
 ): Promise<TurnResult> {
   const cwd = await mkdtemp(join(tmpdir(), "nb-claude-"));
   const child = spawn(bin, claudeArgs(input, model), {
@@ -141,15 +148,16 @@ async function runClaude(
     stderr = (stderr + d.toString()).slice(-4000);
   });
   const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
-  const failed = spawnFailure(child, "Claude Code");
+  const failed = spawnFailure(child, "claude");
 
   const translate = claudeTranslator(input.emit);
   try {
     const refused = await Promise.race([readClaude(child.stdout, translate, kill), failed]);
     const code = await Promise.race([exited, failed]);
-    if (refused) throw new BackendRefused("api_key", refused);
+    if (refused) throw new TurnFailed("api_key", refused);
     if (input.signal.aborted) return { stopReason: "cancelled", ...translate.totals() };
-    return { stopReason: claudeStop(translate.result(), code, stderr), ...translate.totals() };
+    const stop = claudeStop(translate.result(), translate.apiError(), { code, stderr, log });
+    return { stopReason: stop, ...translate.totals() };
   } finally {
     input.signal.removeEventListener("abort", kill);
     await rm(cwd, { recursive: true, force: true });
@@ -187,17 +195,19 @@ function parseLine(line: string): ClaudeMessage | undefined {
   }
 }
 
-/** The turn's stop reason from Claude Code's `result` line; throws when it failed or never answered. */
+/**
+ * The turn's stop reason from Claude Code's `result` line. Throws why it
+ * failed (`classifyFailure`): an `is_error` result, whose text and the
+ * assistant's `error` field say why, or no result at all, where stderr does.
+ */
 function claudeStop(
   result: ClaudeMessage | undefined,
-  code: number | null,
-  stderr: string,
+  apiError: string | undefined,
+  exit: { code: number | null; stderr: string; log?: string },
 ): acp.StopReason {
-  if (!result) {
-    throw new Error(`Claude Code exited (${code}) without a result: ${stderr.trim().slice(-500)}`);
-  }
-  if (result.is_error && result.subtype === "success") {
-    throw new Error(`Claude Code failed: ${result.result ?? "no detail"}`);
+  if (!result || (result.is_error && result.subtype === "success")) {
+    const text = `${exit.stderr}\n${result?.result ?? ""}`;
+    throw classifyFailure("claude", text, { apiError, exitCode: exit.code, log: exit.log });
   }
   return result.subtype === "error_max_turns" ? "max_turn_requests" : "end_turn";
 }
@@ -222,6 +232,8 @@ interface ClaudeMessage {
   message?: { content?: ClaudeBlock[] };
   result?: string;
   is_error?: boolean;
+  /** On an assistant message the API refused: `authentication_failed`, `rate_limit`, … */
+  error?: string;
   usage?: ClaudeUsage;
   modelUsage?: Record<string, ClaudeModelUsage>;
 }
@@ -252,14 +264,18 @@ interface ClaudeModelUsage {
 /** Claude Code's stream-json lines as ACP session updates, and the turn's usage at the end. */
 export function claudeTranslator(emit: (update: acp.SessionUpdate) => void) {
   let final: ClaudeMessage | undefined;
+  let apiError: string | undefined;
   const translate = (message: ClaudeMessage) => {
     if (message.type === "stream_event") emitDelta(message, emit);
-    else if (message.type === "assistant") emitToolCalls(message, emit);
-    else if (message.type === "user") emitToolResults(message, emit);
+    else if (message.type === "assistant") {
+      if (typeof message.error === "string") apiError = message.error;
+      emitToolCalls(message, emit);
+    } else if (message.type === "user") emitToolResults(message, emit);
     else if (message.type === "result") final = message;
   };
   return Object.assign(translate, {
     result: () => final,
+    apiError: () => apiError,
     totals: () => claudeTotals(final),
   });
 }

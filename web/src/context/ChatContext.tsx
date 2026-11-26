@@ -15,7 +15,7 @@ import { chatStore } from "../hooks/chat-store";
 import type { UseChatReturn } from "../hooks/useChat";
 import { useChat } from "../hooks/useChat";
 import { toWsId } from "../lib/workspace-slug";
-import type { AppContext, ConfigInfo, FileLimits, ToolCallResponse } from "../types";
+import type { AppContext, ConfigInfo, FileLimits, RunsOnInfo, ToolCallResponse } from "../types";
 import { useWorkspaceContext } from "./WorkspaceContext";
 
 // ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ export interface ChatConfigContextValue {
   /** Attachment limits from the bootstrap; instance config, fixed at startup. */
   fileLimits?: FileLimits;
   /** The runtime every turn runs on when it brings its own model (bootstrap `runsOn`). */
-  runsOn?: string;
+  runsOn?: RunsOnInfo;
   currentUserId?: string;
 }
 
@@ -99,7 +99,7 @@ export interface ChatProviderProps {
     availableModels?: ConfigInfo["availableModels"];
     preferences?: ConfigInfo["preferences"];
     fileLimits?: FileLimits;
-    runsOn?: string;
+    runsOn?: RunsOnInfo;
   };
   /** Current user's ID (from bootstrap). */
   currentUserId?: string;

@@ -3,11 +3,36 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useComposerDraft } from "../hooks/useChat";
 import { attachmentLimitHint, attachmentLimitProblem } from "../lib/attachment-limits";
 import { SHORTCUTS, shortcutLabel } from "../lib/shortcuts";
-import type { FileLimits } from "../types";
+import type { FileLimits, RunsOnInfo } from "../types";
 import { FileAttachmentChips } from "./FileAttachmentChips";
 import { ModelPicker, type PickerModel } from "./ModelPicker";
 
 const MAX_TEXTAREA_HEIGHT = 200;
+
+/**
+ * Where every turn runs when the runtime brings its own model, in place of the
+ * model control: its name and plan, or, when its agent did not answer, that it
+ * is not running and what to do.
+ */
+function RunsOnLabel({ runsOn }: { runsOn: RunsOnInfo }) {
+  if (!runsOn.reachable) {
+    return (
+      <span className="px-2 text-xs text-destructive" title={runsOn.problem} role="status">
+        {runsOn.title} isn't running
+      </span>
+    );
+  }
+  const plan = runsOn.plan ? ` · ${runsOn.plan}` : "";
+  return (
+    <span
+      className="px-2 text-xs text-muted-foreground"
+      title={`Every turn runs on ${runsOn.title}${runsOn.plan ? `, billed to your ${runsOn.plan} plan` : ""}. It chooses its own model.`}
+    >
+      {runsOn.title}
+      {plan}
+    </span>
+  );
+}
 
 /**
  * The right-hand cluster of the composer's action row: which model, and go.
@@ -28,7 +53,7 @@ function ComposerActions({
   onStop,
 }: {
   models?: PickerModel[];
-  runsOn?: string;
+  runsOn?: RunsOnInfo;
   boundModel?: string;
   defaultModel?: string;
   pendingModel?: string;
@@ -41,14 +66,7 @@ function ComposerActions({
 }) {
   return (
     <div className="flex items-center gap-1">
-      {runsOn && (
-        <span
-          className="px-2 text-xs text-muted-foreground"
-          title={`Every turn runs on ${runsOn}, which brings its own model`}
-        >
-          Runs on {runsOn}
-        </span>
-      )}
+      {runsOn && <RunsOnLabel runsOn={runsOn} />}
       {models && models.length > 0 && (
         <ModelPicker
           models={models}
@@ -95,7 +113,7 @@ interface MessageInputProps {
   /** Models this deployment offers. Empty hides the control entirely. */
   models?: PickerModel[];
   /** The runtime every turn runs on when it brings its own model; named in place of the model control. */
-  runsOn?: string;
+  runsOn?: RunsOnInfo;
   /** The binding, once the conversation exists. Absent before the first send. */
   boundModel?: string;
   /** What a message sent now would use, when nothing is bound yet. */

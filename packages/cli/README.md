@@ -8,8 +8,10 @@ coding agent to it.
 npx nimblebrain
 ```
 
-It checks the machine, starts NimbleBrain in Docker at `http://127.0.0.1:27246`,
-connects your coding agent to a workspace over MCP, and opens it in your browser
+It checks the machine, asks what runs NimbleBrain's agents (your Claude subscription
+through Claude Code, your ChatGPT plan through Codex, an API key, or a local model
+through Ollama), starts NimbleBrain in Docker at `http://127.0.0.1:27246`, connects your
+coding agent to a workspace over MCP, and opens it in your browser
 (`--no-open` skips that). Run it again any time: on a
 machine that already has NimbleBrain it reports what is there.
 
@@ -24,19 +26,22 @@ later.
 | `doctor` | Check Docker, Compose, architecture, memory and the port; installs nothing |
 | `status` | Version, health, URL and each workspace's MCP URL |
 | `open` | Open the web UI in your default browser |
+| `use [claude\|codex\|api\|local] [model]` | Choose what runs NimbleBrain's agents; with none named, it asks |
 | `key` | Enter the model key at a hidden prompt |
+| `local-model [model]` | Prepare another Ollama model |
 | `up` / `down` | Start or stop it; data survives `down` |
 | `logs` | Recent log lines |
 | `update` | Move to the newest release, keeping data, and refresh your agent's `nimblebrain` skill |
 | `uninstall` | Remove it and its data |
-| `use claude\|codex\|native` | Run NimbleBrain's agents on your Claude or ChatGPT subscription, or on its own engine again |
 | `telemetry [on\|off\|status]` | Whether this install sends anonymous usage data |
 | `mcp add <url>` | Add an MCP server you run on this machine to a workspace (`--name`, `--workspace`) |
 | `mcp list` / `mcp remove <name>` | The servers in a workspace, or remove one |
 
 `--json` makes every command answer one JSON object, `{"ok": true, ...}` or
 `{"ok": false, "error": "<CODE>", "fix": "..."}`, for scripts and coding agents.
-`--yes` takes every default. `--agent claude-code|cursor|codex|none` names the agent to
+`--yes` takes every default, but never chooses for you what runs NimbleBrain's agents:
+`init --use claude|codex|api|local` does, and without it a coding agent gets the
+question to ask you in `model_source`. `--agent claude-code|cursor|codex|none` names the agent to
 connect. `npx nimblebrain help --json` lists every command with the fields it answers, every flag and every error code.
 
 When a newer CLI or NimbleBrain release exists, the CLI says so on stderr after its
@@ -77,9 +82,12 @@ NimbleBrain (Docker) ──ACP──▶ agent worker (this machine) ──runs�
   name reaches the Docker bridge instead, so `use` refuses there for now.
 - **Usage is counted, not priced.** Turns are recorded with their tokens at $0.
 
-`status` shows which runtime is in use and whether its worker runs; `up` starts it again
-after a reboot, and `down` stops it. `use native` goes back to the model key or local
-model. The worker logs to `agent-worker.log` in the install's folder. It needs a
+`status` shows which source is in use and whether its worker answers. The worker is a
+login item (a LaunchAgent for your user, running a copy of the CLI kept in the install's
+folder), so launchd starts it when you log in and again if it crashes; `down` removes it
+and `up` puts it back. `use api` or `use local` goes back to the model key
+or a local model; a saved one stays while you run on a subscription, for runs with a
+spend budget. The worker logs to `agent-worker.log` in the install's folder. It needs a
 NimbleBrain release whose Compose file passes `NB_AGENT_RUNTIME`; `update` brings one.
 
 ## Usage data

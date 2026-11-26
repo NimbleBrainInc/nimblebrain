@@ -107,6 +107,7 @@ import type {
   ToolSchema,
 } from "../engine/types.ts";
 import { CONNECTOR_SKILL_SYNTHETIC, SKILL_ACTIVATED_SYNTHETIC } from "../engine/types.ts";
+import { AgentRuntimeError } from "../execution/agent-runtime-error.ts";
 import { NATIVE_RUNTIME_ID } from "../execution/native-runtime.ts";
 import { type AgentRuntimes, createAgentRuntimes } from "../execution/registry.ts";
 import type { AgentRuntime } from "../execution/types.ts";
@@ -1573,7 +1574,10 @@ export class Runtime {
           this.runBus.end(conversationId, "cancelled");
         } else {
           this.publishTurnEvent(conversationId, "error", {
-            error: err instanceof ModelAuthError ? err.code : "engine_error",
+            error:
+              err instanceof ModelAuthError || err instanceof AgentRuntimeError
+                ? err.code
+                : "engine_error",
             message: err instanceof Error ? err.message : String(err),
           });
           this.runBus.end(conversationId, "error");
@@ -5492,10 +5496,31 @@ export class Runtime {
     return this.getModelSlot("default");
   }
 
-  /** The default runtime's id when it brings its own model, so no turn uses the model slots. */
-  getRuntimeWithOwnModel(): string | undefined {
+  /**
+   * The default runtime when it brings its own model, so no turn uses the
+   * model slots: its name, the plan it bills, and whether its agent answers
+   * now, asked within `PROBE_TIMEOUT_MS`. `undefined` for any other runtime.
+   */
+  async describeRuntimeWithOwnModel(): Promise<RunsOn | undefined> {
     const runtime = this.agentRuntimes.select(this.config.execution?.default);
-    return runtime.capabilities.ownModel ? runtime.id : undefined;
+    if (!runtime.capabilities.ownModel) return undefined;
+    const base = { id: runtime.id, title: runtime.title ?? runtime.id };
+    if (!runtime.probe) return { ...base, reachable: true };
+    try {
+      const described = await Promise.race([
+        runtime.probe(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("probe timed out")), PROBE_TIMEOUT_MS),
+        ),
+      ]);
+      return { ...base, reachable: true, ...(described.plan ? { plan: described.plan } : {}) };
+    } catch (err) {
+      return {
+        ...base,
+        reachable: false,
+        ...(err instanceof AgentRuntimeError ? { problem: err.message } : {}),
+      };
+    }
   }
 
   /**
@@ -6539,6 +6564,22 @@ function warnIfNoModelProvider(
     return;
   }
   log.warn(`[runtime] No model provider is configured: chat fails until ${settings}.`);
+}
+
+/** How long bootstrap waits for a runtime's agent to describe itself. */
+const PROBE_TIMEOUT_MS = 1500;
+
+/** The runtime every turn runs on, as the composer names it (`BootstrapResponse.config.runsOn`). */
+export interface RunsOn {
+  id: string;
+  /** The name a person knows it by (`Claude Code`). */
+  title: string;
+  /** The plan it bills (`Claude Max`), when its agent said. */
+  plan?: string;
+  /** Whether its agent answered just now. */
+  reachable: boolean;
+  /** When it did not: what is wrong and what to do, as the composer shows it. */
+  problem?: string;
 }
 
 /** Initialize work directory env vars and sync core skills. */

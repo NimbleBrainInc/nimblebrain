@@ -6,12 +6,15 @@
 
 import { randomUUID } from "node:crypto";
 import * as acp from "@agentclientprotocol/sdk/unstable";
-import type { Backend } from "./backends/types.ts";
+import { FAILURE_META_KEY, type FailureCode, TurnFailed } from "./backends/failure.ts";
+import { type Backend, BackendRefused, type Refusal } from "./backends/types.ts";
 import type { Bridge } from "./bridge.ts";
 import { log } from "./log.ts";
 
 /** The response key the runtime's driver reads each model call from. */
 export const USAGE_META_KEY = "nimblebrain-subscription/usage";
+/** The `initialize` key the runtime's driver reads the plan from, for the composer: "Claude Max". */
+export const PLAN_META_KEY = "nimblebrain-subscription/plan";
 export const AGENT_VERSION = "0.1.0";
 
 interface Session {
@@ -21,7 +24,11 @@ interface Session {
   turn?: AbortController;
 }
 
-export function createWorkerAgent(backend: Backend, bridge: Bridge): acp.AgentApp {
+/**
+ * `plan` is the short name the sign-in check read at start ("Claude Max",
+ * "ChatGPT"); the runtime shows it beside the CLI's name.
+ */
+export function createWorkerAgent(backend: Backend, bridge: Bridge, plan?: string): acp.AgentApp {
   const sessions = new Map<string, Session>();
   const closeSession = (id: string) => {
     const session = sessions.get(id);
@@ -42,6 +49,7 @@ export function createWorkerAgent(backend: Backend, bridge: Bridge): acp.AgentAp
           : {}),
       },
       agentInfo: { name: `nimblebrain-subscription-${backend.id}`, version: AGENT_VERSION },
+      ...(plan ? { _meta: { [PLAN_META_KEY]: plan } } : {}),
     }))
     .onRequest(acp.methods.agent.session.new, (ctx) => {
       const server = ctx.params.mcpServers.find((s) => "type" in s && s.type === "acp");
@@ -94,9 +102,12 @@ export function createWorkerAgent(backend: Backend, bridge: Bridge): acp.AgentAp
           _meta: { [USAGE_META_KEY]: { calls: result.calls } },
         };
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        log(`turn failed: ${message}`);
-        throw acp.RequestError.internalError(undefined, message);
+        const failure = turnFailure(err, backend.label);
+        log(`turn failed (${failure.code}): ${failure.message}`);
+        throw acp.RequestError.internalError(
+          { [FAILURE_META_KEY]: { code: failure.code, message: failure.message } },
+          `${backend.label} turn failed: ${failure.code}`,
+        );
       } finally {
         if (session.turn === turn) session.turn = undefined;
       }
@@ -113,6 +124,24 @@ export function createWorkerAgent(backend: Backend, bridge: Bridge): acp.AgentAp
         for (const id of [...sessions.keys()]) closeSession(id);
       });
     });
+}
+
+const REFUSAL_FAILURES: Record<Refusal, FailureCode> = {
+  api_key: "api_key",
+  not_signed_in: "signed_out",
+  not_installed: "cli_missing",
+  unreadable: "cli_failed",
+};
+
+/** Why the turn failed, as the runtime shows it: a backend's own class, else `cli_failed`. */
+function turnFailure(err: unknown, label: string): { code: FailureCode; message: string } {
+  if (err instanceof TurnFailed) return { code: err.code, message: err.message };
+  if (err instanceof BackendRefused)
+    return { code: REFUSAL_FAILURES[err.reason], message: err.message };
+  return {
+    code: "cli_failed",
+    message: `${label} could not finish the turn. Check the agent worker's log, then send your message again.`,
+  };
 }
 
 /** The prompt's text: text blocks and embedded text resources, in order. */

@@ -28,6 +28,9 @@ const PULL_TIMEOUT_MS = 60 * 60 * 1000;
 const OLLAMA_START_TIMEOUT_MS = 30_000;
 const CREATE_TIMEOUT_MS = 2 * 60 * 1000;
 
+/** The `.env` names the runtime reads a local model from. */
+export const LOCAL_MODEL_VARS = ["NB_LOCAL_MODEL_URL", "NB_LOCAL_MODEL", "NB_LOCAL_MODEL_CONTEXT"];
+
 /** Whether a release's Compose file passes a local model through to the runtime. */
 export function takesLocalModel(composeText: string): boolean {
   return composeText.includes("NB_LOCAL_MODEL_URL");
@@ -61,7 +64,8 @@ export function numCtxOf(parameters: string | undefined): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
-async function ollamaVersion(deps: Deps): Promise<string | undefined> {
+/** Ollama's version when it answers on this machine, else undefined. */
+export async function ollamaVersion(deps: Deps): Promise<string | undefined> {
   const res = await deps.getJson(`${OLLAMA_URL}/api/version`);
   const version = (res?.body as { version?: unknown } | undefined)?.version;
   return res?.status === 200 && typeof version === "string" ? version : undefined;

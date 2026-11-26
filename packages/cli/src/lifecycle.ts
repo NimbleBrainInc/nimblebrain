@@ -6,7 +6,7 @@ import {
   SERVER_NAME,
   type SkillRefresh,
 } from "./agents.ts";
-import { AGENTS, type Agent, DEFAULT_PORT, type Flags } from "./args.ts";
+import { AGENTS, type Agent, DEFAULT_PORT, type Flags, type Source } from "./args.ts";
 import {
   asksConsent,
   claimWritten,
@@ -35,6 +35,17 @@ import {
 import { openBrowser } from "./open.ts";
 import { compareVersions, runtimeTag } from "./release.ts";
 import { CliError } from "./result.ts";
+import {
+  detectSources,
+  isSubscription,
+  leaveSubscription,
+  type ModelSource,
+  pickSource,
+  type SourceAsk,
+  sourceAsk,
+  sourceOf,
+  startSubscription,
+} from "./source.ts";
 import {
   hasModelIn,
   type InstallState,
@@ -78,7 +89,7 @@ export interface Ctx {
 }
 
 /** A person is there to answer, and did not ask for defaults or machine output. */
-const asks = ({ deps, flags }: Pick<Ctx, "deps" | "flags">) =>
+export const asks = ({ deps, flags }: Pick<Ctx, "deps" | "flags">) =>
   deps.interactive && !flags.yes && !flags.json;
 
 /** `[Y/n]`: Enter or an answer starting with y is yes. */
@@ -139,7 +150,7 @@ export async function init(ctx: Ctx) {
  * nothing; `open` is the command for that.
  */
 async function openWhenDone<
-  T extends { health: string; url: string; model_key: string; local_model: string | null },
+  T extends { health: string; url: string; model_source: { source: unknown } },
 >(ctx: Ctx, result: T): Promise<T & { opened?: boolean }> {
   const { deps, flags } = ctx;
   if (!deps.interactive || flags.json || flags.noOpen) return result;
@@ -222,7 +233,7 @@ async function install(
     envValues(deps, lockedHere(deps) ? undefined : rec.id, consent, asksConsent(composeText)),
   );
   // Asked before the start: the runtime reads `.env` only when its container is created.
-  const ollamaStarted = await prepareModel(ctx, composeText);
+  const { started: ollamaStarted, asked } = await prepareModel(ctx, composeText);
   return carryingStarted(ollamaStarted, async () => {
     const cached = await imagesPresent(deps, imagesOf(composeText, tag));
     deps.say(
@@ -237,8 +248,10 @@ async function install(
     const manual = await connectChosenAgent(ctx, state);
     if (state.agent) rec.record("cli.agent_connected", { agent: state.agent });
 
+    const now = await status(deps, home);
     const result: StatusResult & { manual?: string; ollama_started?: string } = {
-      ...(await status(deps, home)),
+      ...now,
+      model_source: await withAsk(ctx, now.model_source, asked, composeText),
       manual,
       ollama_started: ollamaStarted,
     };
@@ -248,11 +261,30 @@ async function install(
       model_key: result.model_key,
       // A provider's name, never a model's: a local model is reported only as `ollama`.
       provider: localModelOf(finalEnv) ? "ollama" : keyProvider(finalEnv, composeText),
+      model_source: result.model_source.source,
       agent: state.agent ?? null,
     });
     await rec.settle(home, consent);
     return { ...result };
   });
+}
+
+/**
+ * The install's source, and when nothing runs its agents and no person was
+ * asked, the question for an agent to pass on: what this machine offers, the
+ * default, and the command that answers it. As with telemetry, nothing is
+ * chosen for a person who did not see the question.
+ */
+async function withAsk(
+  ctx: Ctx,
+  current: ModelSource,
+  asked: boolean,
+  composeText: string,
+): Promise<ModelSource & Partial<SourceAsk>> {
+  if (current.source !== null || asked) return current;
+  const envText = (await ctx.deps.readText(paths(ctx.home).env)) ?? "";
+  const options = await detectSources(ctx.deps, envText, composeText);
+  return { ...current, ...sourceAsk(options, invocation(ctx.deps, ctx.home)) };
 }
 
 async function confirmStart(ctx: Ctx, tag: string, port: number): Promise<void> {
@@ -305,13 +337,7 @@ export async function up(ctx: Ctx) {
     ollama instanceof CliError
       ? (ollama.detail.ollama_started as string | undefined)
       : ollama?.started;
-  const worker = await restartWorker(deps, home).then(
-    () => undefined,
-    (err: unknown) => {
-      if (err instanceof CliError) return err;
-      throw err;
-    },
-  );
+  const worker = await workerError(restartWorker(deps, home));
   const result = await carryingStarted(started, async () => {
     await start(deps, home, install.port);
     return status(deps, home);
@@ -324,6 +350,17 @@ export async function up(ctx: Ctx) {
 }
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+/** A worker's coded failure, kept for after NimbleBrain itself is up; anything else is thrown. */
+function workerError(started: Promise<void>): Promise<CliError | undefined> {
+  return started.then(
+    () => undefined,
+    (err: unknown) => {
+      if (err instanceof CliError) return err;
+      throw err;
+    },
+  );
+}
 
 export async function down(ctx: Ctx) {
   await requireInstall(ctx.deps, ctx.home);
@@ -365,7 +402,11 @@ export async function update(ctx: Ctx) {
   const order = compareVersions(tag, from);
   if (order === 0) {
     const skill_update = await refreshAgentSkill(deps, install);
-    return { ...(await status(deps, home)), already: true, ...skill_update };
+    const worker = await workerError(restartWorker(deps, home));
+    const result = { ...(await status(deps, home)), already: true, ...skill_update };
+    if (worker)
+      throw worker.with({ ...result }, `NimbleBrain is current, but ${lowerFirst(worker.message)}`);
+    return result;
   }
   if (order < 0) {
     throw new CliError(
@@ -382,7 +423,12 @@ export async function update(ctx: Ctx) {
   await start(deps, home, install.port);
   await writeState(deps, home, { ...install, version: tag.replace(/^v/, "") });
   const skill_update = await refreshAgentSkill(deps, install);
-  return { ...(await status(deps, home)), from, ...skill_update };
+  // The worker's login item runs this CLI's copy with this Node, both of which may have moved.
+  const worker = await workerError(restartWorker(deps, home));
+  const result = { ...(await status(deps, home)), from, ...skill_update };
+  if (worker)
+    throw worker.with({ ...result }, `NimbleBrain was updated, but ${lowerFirst(worker.message)}`);
+  return result;
 }
 
 /** `skill_update` for the answer, when an agent is connected. */
@@ -426,6 +472,8 @@ export async function uninstall(ctx: Ctx) {
     idPath(home),
     worker.record,
     worker.log,
+    worker.bin,
+    worker.binDir,
   ])
     await deps.remove(file);
   await deps.remove(home);
@@ -482,7 +530,7 @@ export async function key(ctx: Ctx) {
   return enterKey(ctx, true);
 }
 
-async function enterKey(ctx: Ctx, restart: boolean) {
+export async function enterKey(ctx: Ctx, restart: boolean) {
   const { deps, flags, home } = ctx;
   const offered = providers((await deps.readText(paths(home).compose)) ?? "");
   const names = Object.keys(offered);
@@ -527,7 +575,10 @@ export async function localModel(ctx: Ctx) {
 }
 
 /** Runs what follows an Ollama start; an error from it still says what started Ollama. */
-async function carryingStarted<T>(started: string | undefined, next: () => Promise<T>): Promise<T> {
+export async function carryingStarted<T>(
+  started: string | undefined,
+  next: () => Promise<T>,
+): Promise<T> {
   try {
     return await next();
   } catch (err) {
@@ -536,25 +587,12 @@ async function carryingStarted<T>(started: string | undefined, next: () => Promi
   }
 }
 
-/** Asks which model NimbleBrain's own agents run on: a local model's name, or undefined for a hosted key. */
-async function chooseModelSource(deps: Deps, home: string): Promise<string | undefined> {
-  deps.say(
-    "NimbleBrain's own agents need a model: a hosted one with your API key, or a local one through Ollama (free, slower; https://docs.nimblebrain.ai/config/local-models/).",
-  );
-  const answer = (await deps.prompt("Model (hosted, local) [hosted]: ")).trim().toLowerCase();
-  if (answer !== "local") return undefined;
-  deps.say(
-    `Using ${DEFAULT_LOCAL_MODEL}. Another model: ${invocation(deps, home)} local-model <model>`,
-  );
-  return DEFAULT_LOCAL_MODEL;
-}
-
 /**
  * Prepares `model` on Ollama (starting Ollama when it is installed but down)
  * and writes its `.env` lines; answers the name the runtime will use and the
  * command that started Ollama, if any.
  */
-async function useLocalModel(
+export async function useLocalModel(
   ctx: Ctx,
   composeText: string,
   model: string,
@@ -583,7 +621,7 @@ async function confirmPull(ctx: Ctx, model: string): Promise<boolean> {
 
 async function chooseAgent(deps: Deps): Promise<Agent> {
   deps.say(
-    "A coding agent you connect can use NimbleBrain's tools. NimbleBrain's own agents still run on the model key above.",
+    "A coding agent you connect can use NimbleBrain's tools. NimbleBrain's own agents still run on what you chose above.",
   );
   const answer = await deps.prompt(`Connect a coding agent? (${AGENTS.join(", ")}) [none]: `);
   return (AGENTS as readonly string[]).includes(answer) ? (answer as Agent) : "none";
@@ -664,23 +702,69 @@ async function writeInstallFiles(
 }
 
 /**
- * Sets up the model before the first start, asking only when `.env` has none
- * (a resume keeps the one chosen before). A saved local model still needs
- * Ollama answering, as `up` does. Returns the Ollama start command it ran.
+ * Sets up what runs NimbleBrain's agents before the first start, since the
+ * runtime reads `.env` only when its container is created: `--use` (or
+ * `--local-model`), else the source `.env` already names (a resume keeps it),
+ * else a person at the terminal picks one. With no person and no `--use`,
+ * nothing is chosen for them. Returns the Ollama start command it ran, and
+ * whether a person was asked.
  */
-async function prepareModel(ctx: Ctx, composeText: string): Promise<string | undefined> {
+async function prepareModel(
+  ctx: Ctx,
+  composeText: string,
+): Promise<{ started?: string; asked: boolean }> {
+  const envText = (await ctx.deps.readText(paths(ctx.home).env)) ?? "";
+  const saved = sourceOf(envText, composeText);
+  const asked = !ctx.flags.use && saved === null && asks(ctx);
+  const source = asked ? await askSource(ctx, envText, composeText) : ctx.flags.use;
+  if (!source) return { started: await resumeSaved(ctx, saved), asked };
+  return { started: await applySource(ctx, source, saved, envText, composeText), asked };
+}
+
+/** The picker; an API key is the one choice an older release offers, and needs no list. */
+async function askSource(ctx: Ctx, envText: string, composeText: string): Promise<Source> {
+  const options = await detectSources(ctx.deps, envText, composeText);
+  return options.some((o) => o.available && o.source !== "api")
+    ? pickSource(ctx.deps, options)
+    : "api";
+}
+
+/**
+ * Puts a new install on `source` before its first start. A choice replaces
+ * what a resumed install saved; on a fresh one there is nothing to clear.
+ * Returns the Ollama start command it ran.
+ */
+async function applySource(
+  ctx: Ctx,
+  source: Source,
+  saved: Source | null,
+  envText: string,
+  composeText: string,
+): Promise<string | undefined> {
   const { deps, flags, home } = ctx;
-  const envText = (await deps.readText(paths(home).env)) ?? "";
-  const saved = localModelOf(envText) !== undefined;
-  const hasModel = saved || hasKey(envText, keyVars(composeText));
-  const local =
-    flags.localModel ??
-    (!hasModel && asks(ctx) && takesLocalModel(composeText)
-      ? await chooseModelSource(deps, home)
-      : undefined);
-  if (local) return (await useLocalModel(ctx, composeText, local)).started;
-  if (saved) return (await ensureOllama(deps, confirmOllamaStart(ctx, true))).started;
-  if (!hasModel && asks(ctx)) await enterKey(ctx, false);
+  const clear = saved !== null && saved !== source;
+  if (isSubscription(source)) {
+    await startSubscription(deps, home, source);
+    return undefined;
+  }
+  if (source === "api") {
+    if (!hasKey(envText, keyVars(composeText)) && deps.interactive) await enterKey(ctx, false);
+    if (clear) await leaveSubscription(deps, home, true);
+    return undefined;
+  }
+  const model = flags.localModel ?? DEFAULT_LOCAL_MODEL;
+  if (!flags.localModel)
+    deps.say(`Using ${model}. Another model: ${invocation(deps, home)} use local <model>`);
+  const { started } = await useLocalModel(ctx, composeText, model);
+  if (clear) await leaveSubscription(deps, home, false);
+  return started;
+}
+
+/** What a resumed install's saved source needs before the start: Ollama answering, or its worker running. */
+async function resumeSaved(ctx: Ctx, saved: Source | null): Promise<string | undefined> {
+  if (saved === "local")
+    return (await ensureOllama(ctx.deps, confirmOllamaStart(ctx, true))).started;
+  if (saved === "claude" || saved === "codex") await restartWorker(ctx.deps, ctx.home);
   return undefined;
 }
 

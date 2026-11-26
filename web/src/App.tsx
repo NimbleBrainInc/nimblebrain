@@ -112,6 +112,7 @@ import type {
   ConfigInfo,
   FileLimits,
   PlacementEntry,
+  RunsOnInfo,
   ToolCallResponse,
 } from "./types";
 import "./index.css";
@@ -242,7 +243,7 @@ function BootstrappedShell({
     availableModels?: ConfigInfo["availableModels"];
     preferences?: { displayName?: string; timezone?: string; locale?: string; theme?: string };
     fileLimits?: FileLimits;
-    runsOn?: string;
+    runsOn?: RunsOnInfo;
   };
   currentUserId: string;
   onLogout: () => void;

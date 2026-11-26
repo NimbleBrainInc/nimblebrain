@@ -1182,7 +1182,7 @@ export async function handleBootstrap(
   const maxIterations = runtime.getMaxIterations();
   const maxInputTokens = runtime.getMaxInputTokens();
   const maxOutputTokens = runtime.getMaxOutputTokens();
-  const runsOn = runtime.getRuntimeWithOwnModel();
+  const runsOn = await runtime.describeRuntimeWithOwnModel();
 
   return json<BootstrapResponse>({
     user: {

@@ -10,9 +10,17 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as acp from "@agentclientprotocol/sdk/unstable";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import type { ConversationEvent } from "../../../src/conversation/types.ts";
 import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
+import {
+  createSubscriptionCliDriver,
+  SUBSCRIPTION_FAILURE_META_KEY,
+  SUBSCRIPTION_PLAN_META_KEY,
+} from "../../../src/execution/acp/drivers/subscription-cli.ts";
+import { createHttpConnection } from "../../../src/execution/acp/http-connection.ts";
+import { AgentRuntimeError } from "../../../src/execution/agent-runtime-error.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import type { RuntimeConfig } from "../../../src/runtime/types.ts";
@@ -158,7 +166,107 @@ describe("a default runtime that brings its own model", () => {
     expect(nativeCalls).toEqual([]);
   });
 
-  test("bootstrap names the runtime instead of offering models", () => {
-    expect(runtime.getRuntimeWithOwnModel()).toBe("own");
+  test("bootstrap names the runtime instead of offering models, and finds it answering", async () => {
+    expect(await runtime.describeRuntimeWithOwnModel()).toEqual({
+      id: "own",
+      title: "own",
+      reachable: true,
+    });
+  });
+});
+
+describe("a subscription runtime's agent, described and failing", () => {
+  const fix = "Start it on this machine with `npx nimblebrain up`, then send your message again.";
+
+  test("the probe reads the plan the agent names at initialize", async () => {
+    const described = createAcpRuntime(
+      "own",
+      createSubscriptionCliDriver("claude-code"),
+      scriptedConnection({
+        script: () => [{ text: "ok" }],
+        initMeta: { [SUBSCRIPTION_PLAN_META_KEY]: "Claude Max" },
+      }),
+    );
+    expect(described.title).toBe("Claude Code");
+    expect(await described.probe?.()).toEqual({ plan: "Claude Max" });
+  });
+
+  test("a worker that does not answer is agent_unreachable, naming the fix", async () => {
+    const dead = createAcpRuntime(
+      "claude-code",
+      createSubscriptionCliDriver("claude-code"),
+      createHttpConnection({ url: "http://127.0.0.1:1/acp", credential: null }),
+    );
+    const err = await dead.probe?.().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AgentRuntimeError);
+    expect((err as AgentRuntimeError).code).toBe("agent_unreachable");
+    expect((err as AgentRuntimeError).message).toBe(`Claude Code isn't answering. ${fix}`);
+  });
+
+  test("a chat on a worker that does not answer fails with that error", async () => {
+    const dir = join(tmpdir(), `nimblebrain-own-dead-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const dead = await Runtime.start({
+      ...config,
+      workDir: dir,
+      agentRuntimes: [
+        createAcpRuntime(
+          "own",
+          createSubscriptionCliDriver("claude-code"),
+          createHttpConnection({ url: "http://127.0.0.1:1/acp", credential: null }),
+        ),
+      ],
+    });
+    try {
+      await provisionTestWorkspace(dead);
+      await dead.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, USER.id, "member");
+      const err = await dead
+        .chat({ message: "hi", workspaceId: TEST_WORKSPACE_ID, identity: USER })
+        .catch((e: unknown) => e);
+      expect((err as AgentRuntimeError).code).toBe("agent_unreachable");
+      const runsOn = await dead.describeRuntimeWithOwnModel();
+      expect(runsOn).toMatchObject({ id: "own", title: "Claude Code", reachable: false });
+      expect(runsOn?.problem).toContain("npx nimblebrain up");
+    } finally {
+      await dead.shutdown();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a failure the agent classifies reaches the chat as agent_<code> with its words", async () => {
+    const signedOut = createAcpRuntime(
+      "own",
+      createSubscriptionCliDriver("claude-code"),
+      scriptedConnection({
+        script: () => [],
+        failTurn: () =>
+          acp.RequestError.internalError(
+            {
+              [SUBSCRIPTION_FAILURE_META_KEY]: {
+                code: "signed_out",
+                message:
+                  "Claude Code is signed out. Run `claude /login`, then send your message again.",
+              },
+            },
+            "claude exited",
+          ),
+      }),
+    );
+    const dir = join(tmpdir(), `nimblebrain-own-signedout-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const rt = await Runtime.start({ ...config, workDir: dir, agentRuntimes: [signedOut] });
+    try {
+      await provisionTestWorkspace(rt);
+      await rt.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, USER.id, "member");
+      const err = await rt
+        .chat({ message: "hi", workspaceId: TEST_WORKSPACE_ID, identity: USER })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AgentRuntimeError);
+      expect((err as AgentRuntimeError).code).toBe("agent_signed_out");
+      expect((err as AgentRuntimeError).message).toContain("claude /login");
+    } finally {
+      await rt.shutdown();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

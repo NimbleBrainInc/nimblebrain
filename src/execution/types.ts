@@ -134,10 +134,24 @@ export interface RunIO {
   billSummary(model: string, usage: TokenUsage, llmMs: number): void;
 }
 
+/** What a runtime's agent says about itself when asked, for a person to read. */
+export interface RuntimeDescription {
+  /** The plan its model calls are billed to (`Claude Max`), when it bills one. */
+  plan?: string;
+}
+
 export interface AgentRuntime {
   /** The name `execution.runtimes` gives it. */
   readonly id: string;
+  /** The name a person knows it by (`Claude Code`); absent, its id. */
+  readonly title?: string;
   readonly capabilities: RuntimeCapabilities;
+  /**
+   * Ask the runtime's agent to describe itself, for a runtime whose agent runs
+   * elsewhere. Rejects when the agent does not answer, so the caller can say
+   * so before a run fails on it.
+   */
+  probe?(): Promise<RuntimeDescription>;
   /**
    * Execute one run to its end. Resolves with the run's outcome; rejects on a
    * failure, after emitting `run.error`, and on cancellation after emitting

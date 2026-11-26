@@ -96,10 +96,12 @@ export interface Machine {
   posts: Array<{ url: string; body: unknown }>;
   /** The runtime's telemetry answer, read from `.env` when it starts, as the real one does. */
   runtimeConsent: "on" | "off" | "undecided";
-  /** Agent workers running, by pid: the port each listens on and its command line. */
-  workers: Map<number, { port: number; command: string }>;
-  /** Every detached start, as one line (`cmd args…`), with the log it writes to and its environment. */
-  spawned: Array<{ line: string; logPath: string; env: NodeJS.ProcessEnv }>;
+  /** Agent workers running, by pid: the port each listens on, its command line, and its login item's label. */
+  workers: Map<number, { port: number; command: string; label?: string }>;
+  /** Every worker launchd started from a login item, as its command line (`node script args…`) and log. */
+  spawned: Array<{ line: string; logPath: string }>;
+  /** Login items loaded into launchd, by label; a pid while its worker runs, else its last exit code. */
+  loaded: Map<string, { pid?: number; lastExit?: number }>;
   /** Ollama's models after the run, by name. */
   ollamaModels: Record<string, OllamaModel>;
   /** Whether Ollama answers. */
@@ -166,10 +168,11 @@ export function machine(opts: MachineOptions = {}): Machine {
     posts: [] as Array<{ url: string; body: unknown }>,
     runtimeConsent: "undecided" as "on" | "off" | "undecided",
     ollamaModels: { ...(opts.ollama?.models ?? {}) } as Record<string, OllamaModel>,
-    workers: new Map(
+    workers: new Map<number, { port: number; command: string; label?: string }>(
       Object.entries(opts.workers ?? {}).map(([pid, w]) => [Number(pid), w] as const),
     ),
-    spawned: [] as Array<{ line: string; logPath: string; env: NodeJS.ProcessEnv }>,
+    spawned: [] as Array<{ line: string; logPath: string }>,
+    loaded: new Map<string, { pid?: number; lastExit?: number }>(),
     ollamaUp: Boolean(opts.ollama && !opts.ollama.down),
   };
   const m = state;
@@ -222,22 +225,8 @@ export function machine(opts: MachineOptions = {}): Machine {
       }
       return res;
     },
-    async spawnDetached(cmd, args, { logPath, env }) {
-      const line = [cmd, ...args].join(" ");
-      m.spawned.push({ line, logPath, env });
-      const port = Number(args[args.indexOf("--port") + 1]);
-      if (opts.worker === "refuses") {
-        m.files.set(logPath, {
-          text: "\n  Not started: Claude Code is not signed in.\n\n",
-          mode: 0o600,
-        });
-        return 4242;
-      }
-      const pid = 4242 + m.workers.size;
-      m.workers.set(pid, { port, command: line });
-      return pid;
-    },
     self: { node: "/usr/local/bin/node", script: "/home/dana/.npm/_npx/1/nimblebrain.js" },
+    uid: 501,
     async launch(cmd, args) {
       m.launched.push([cmd, ...args].join(" "));
       return opts.launch ?? true;
@@ -338,8 +327,61 @@ export function machine(opts: MachineOptions = {}): Machine {
     home: "/home/dana",
     cwd: "/home/dana/src",
   };
-  /** `ps -p <pid> -o command=` and `kill`, as they answer for the agent workers running. */
+  /**
+   * `launchctl bootstrap | bootout | print` for this user's login items, as
+   * launchd answers: a bootstrap reads the plist and starts its worker (or,
+   * with `worker: "refuses"`, the worker writes why to its log and exits 1).
+   */
+  function launchctl(args: string[]): ExecResult | undefined {
+    const [verb, target = "", plistPath] = args;
+    if (verb === "bootstrap" && plistPath) {
+      const text = m.files.get(plistPath)?.text ?? "";
+      const label = text.match(/<key>Label<\/key>\s*<string>([^<]+)<\/string>/)?.[1] ?? "";
+      if (m.loaded.has(label)) return fail("Bootstrap failed: 5: Input/output error", 5);
+      const program = [
+        ...(
+          text.match(/<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/)?.[1] ?? ""
+        ).matchAll(/<string>([^<]*)<\/string>/g),
+      ].map((x) => x[1] ?? "");
+      const logPath =
+        text.match(/<key>StandardOutPath<\/key>\s*<string>([^<]+)<\/string>/)?.[1] ?? "";
+      const line = program.join(" ");
+      m.spawned.push({ line, logPath });
+      if (opts.worker === "refuses") {
+        m.files.set(logPath, {
+          text: "\n  Not started: Claude Code is not signed in.\n\n",
+          mode: 0o600,
+        });
+        m.loaded.set(label, { lastExit: 1 });
+        return ok();
+      }
+      const pid = 4242 + m.spawned.length - 1;
+      const port = Number(program[program.indexOf("--port") + 1]);
+      m.workers.set(pid, { port, command: line, label });
+      m.loaded.set(label, { pid });
+      return ok();
+    }
+    const label = target.split("/").slice(2).join("/");
+    if (verb === "bootout") {
+      if (!m.loaded.delete(label)) return fail("Boot-out failed: 3: No such process", 3);
+      for (const [pid, w] of m.workers) if (w.label === label) m.workers.delete(pid);
+      return ok();
+    }
+    if (verb === "print") {
+      const l = m.loaded.get(label);
+      if (!l) return fail(`Could not find service "${label}"`, 113);
+      return ok(
+        l.pid
+          ? `${label} = {\n\tstate = running\n\tpid = ${l.pid}\n}\n`
+          : `${label} = {\n\tstate = not running\n\tlast exit code = ${l.lastExit ?? 0}\n}\n`,
+      );
+    }
+    return undefined;
+  }
+
+  /** `ps -p <pid> -o command=` and `kill`, as they answer for the agent workers running, and `launchctl`. */
   function workerCommand(args: string[], line: string): ExecResult | undefined {
+    if (line.startsWith("launchctl ")) return launchctl(args);
     const ps = line.match(/^ps -p (\d+) -o command=$/);
     if (ps) {
       const w = m.workers.get(Number(ps[1]));

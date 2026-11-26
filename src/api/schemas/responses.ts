@@ -244,6 +244,19 @@ export interface BootstrapWorkspace {
   unread: number;
 }
 
+/** The runtime every turn runs on, when it brings its own model (`config.runsOn`). */
+export interface RunsOnInfo {
+  id: string;
+  /** The name a person knows it by (`Claude Code`). */
+  title: string;
+  /** The plan it bills (`Claude Max`), when its agent said. */
+  plan?: string;
+  /** Whether its agent answered when the bootstrap asked. */
+  reachable: boolean;
+  /** When it did not: what is wrong and what to do. */
+  problem?: string;
+}
+
 export interface BootstrapResponse {
   user: {
     id: string;
@@ -275,7 +288,7 @@ export interface BootstrapResponse {
      * of offering models no turn would use. Absent when turns run on the
      * models listed here.
      */
-    runsOn?: string;
+    runsOn?: RunsOnInfo;
   };
   version: string;
   buildSha: string | null;

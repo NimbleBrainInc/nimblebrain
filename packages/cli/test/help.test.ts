@@ -80,7 +80,14 @@ describe("help --json", () => {
     );
     const commandNames = help.commands.map((c) => c.name);
     for (const f of help.flags) {
-      const value = f.name === "--port" ? "27300" : f.name === "--telemetry" ? "on" : "none";
+      const value =
+        f.name === "--port"
+          ? "27300"
+          : f.name === "--telemetry"
+            ? "on"
+            : f.name === "--use"
+              ? "api"
+              : "none";
       expect(() => parse(f.takes ? [f.name, value] : [f.name])).not.toThrow();
       for (const c of f.commands ?? []) expect(commandNames).toContain(c);
     }
@@ -174,18 +181,27 @@ describe("help --json", () => {
     // doctor with --json never starts Ollama, so its local checks answer without ollama_started.
     await answers(["doctor"], local);
 
-    // On a Mac signed in to a Claude subscription, `use` answers both ways.
+    // On a Mac signed in to a Claude subscription, with a key and Ollama, `use` answers each source.
     const sub = machine({
       platform: "darwin",
       exec: { "claude auth status --json": ok(CLAUDE_MAX) },
+      ollama: { models: { "gemma4:e4b": { capabilities: ["completion", "tools"] } } },
       files: {
         [`${home}/install.json`]: record(),
-        [`${home}/.env`]: "",
+        [`${home}/.env`]: "ANTHROPIC_API_KEY=sk-test\n",
         [`${home}/docker-compose.yml`]: REPO_COMPOSE,
       },
     });
-    expect(await answers(["use", "claude"], sub)).toEqual(["agent_runtime", "billed_to", "tools"]);
-    expect(await answers(["use", "native"], sub)).toEqual(["agent_runtime"]);
+    const base = ["model_source", "agent_runtime"];
+    expect(await answers(["use", "claude"], sub)).toEqual([...base, "billed_to", "tools"]);
+    expect(await answers(["use", "api"], sub)).toEqual([...base, "provider"]);
+    expect(await answers(["use", "local"], sub)).toEqual([...base, "local_model"]);
+    sub.ollamaUp = false;
+    sub.files.set("/Applications/Ollama.app/Contents/Info.plist", {
+      text: "<plist/>",
+      mode: 0o644,
+    });
+    expect(await answers(["use", "local"], sub)).toContain("ollama_started");
   });
 
   test("lists every error code the CLI raises, with its fix and exit code", async () => {

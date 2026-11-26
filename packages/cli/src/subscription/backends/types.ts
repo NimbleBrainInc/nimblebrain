@@ -7,6 +7,7 @@
 
 import type { ChildProcess } from "node:child_process";
 import type * as acp from "@agentclientprotocol/sdk/unstable";
+import { classifyFailure, cliMissing, type Vendor } from "./failure.ts";
 
 /** Token counts, in NimbleBrain's usage shape (`src/usage/types.ts`). */
 export interface TokenUsage {
@@ -29,6 +30,8 @@ export interface ReportedCall {
 export interface Account {
   /** One line for a person: "Claude Max subscription (claude.ai login)". */
   describe: string;
+  /** The plan alone, for a person: "Claude Max", "ChatGPT". */
+  plan: string;
 }
 
 export interface TurnInput {
@@ -100,14 +103,19 @@ export function emptyUsage(): TokenUsage {
 }
 
 /**
- * Rejects when `child` could not be started (a missing or unrunnable binary),
- * so a turn that races it fails instead of waiting on output that never comes.
- * Never resolves; handled here, so a failure after the turn ended is not unhandled.
+ * Rejects when `child` could not be started: `cli_missing` when its binary is
+ * not found, else `cli_failed`, so a turn that races it fails instead of
+ * waiting on output that never comes. Never resolves; handled here, so a
+ * failure after the turn ended is not unhandled.
  */
-export function spawnFailure(child: ChildProcess, label: string): Promise<never> {
+export function spawnFailure(child: ChildProcess, vendor: Vendor): Promise<never> {
   const failed = new Promise<never>((_, reject) => {
-    child.once("error", (err) =>
-      reject(new Error(`${label} could not be started: ${err.message}`)),
+    child.once("error", (err: NodeJS.ErrnoException) =>
+      reject(
+        err.code === "ENOENT"
+          ? cliMissing(vendor)
+          : classifyFailure(vendor, `could not be started: ${err.message}`),
+      ),
     );
   });
   failed.catch(() => {});

@@ -77,6 +77,8 @@ export const ERRORS = {
     "Run NimbleBrain on your subscription from macOS for now. On Linux, NimbleBrain's container reaches this machine over the Docker bridge, not 127.0.0.1, and the agent worker listens on 127.0.0.1 only. `npx nimblebrain key` gives NimbleBrain a model key instead.",
   PLATFORM_UNSUPPORTED:
     "Run NimbleBrain on your subscription from macOS for now. `npx nimblebrain key` gives NimbleBrain a model key instead.",
+  MODEL_KEY_MISSING:
+    "Run `npx nimblebrain key` in your own terminal to enter a model key, then run this again.",
   AGENT_WORKER_FAILED:
     "Read agent-worker.log in the install's folder (its path is in log) for why the agent worker stopped, then run this again.",
 } as const;

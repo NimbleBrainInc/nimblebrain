@@ -89,6 +89,7 @@ export function agentConnection(
 ): AcpConnection {
   return {
     async open(run) {
+      if (!run) throw new Error("the stdio agent is started per run");
       const childEnv = agentEnvironment(config, run, env);
       const root = await mkdtemp(join(tmpdir(), "nb-agent-"));
       try {

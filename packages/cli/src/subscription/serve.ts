@@ -1,7 +1,8 @@
 /**
  * The agent worker's process: `nimblebrain __agent-worker <claude|codex>
- * [--port <n>] [--model <id>]`. `use` starts it detached, its output in
- * `<home>/agent-worker.log`; run in the foreground, it serves a source
+ * [--port <n>] [--model <id>] [--log <path>]`. `use` has launchd start it (a
+ * login item), its output in `<home>/agent-worker.log`, which `--log` names
+ * so a failed turn can point at it; run in the foreground, it serves a source
  * checkout's `bun run dev` the same way.
  *
  * It is not a command. It never answers in the CLI's JSON contract: it runs
@@ -20,7 +21,7 @@ import { serveWorker } from "./worker.ts";
 
 function usage(): never {
   process.stderr.write(
-    `usage: nimblebrain ${WORKER_COMMAND} <claude|codex> [--port <n>] [--model <id>]\n` +
+    `usage: nimblebrain ${WORKER_COMMAND} <claude|codex> [--port <n>] [--model <id>] [--log <path>]\n` +
       "Runs NimbleBrain's agent turns on the Claude Code or Codex you are signed in to,\n" +
       "billed to your subscription, never an API key. `npx nimblebrain use` starts it for you.\n",
   );
@@ -36,8 +37,8 @@ function parse(argv: string[]): { backend: Backend; port: number } {
   }
   const [which, ...extra] = parsed.positionals;
   if (extra.length > 0) usage();
-  const model = parsed.values.model;
-  const opts = model ? { model } : {};
+  const { model, log: logPath } = parsed.values;
+  const opts = { ...(model ? { model } : {}), ...(logPath ? { log: logPath } : {}) };
   const backend =
     which === "claude"
       ? createClaudeBackend(opts)
@@ -52,7 +53,7 @@ function parse(argv: string[]): { backend: Backend; port: number } {
 function parseWorkerArgs(argv: string[]) {
   return parseArgs({
     args: argv,
-    options: { port: { type: "string" }, model: { type: "string" } },
+    options: { port: { type: "string" }, model: { type: "string" }, log: { type: "string" } },
     allowPositionals: true,
     strict: true,
   });
@@ -80,7 +81,7 @@ export async function serveAgentWorker(argv: string[]): Promise<void> {
 async function start(backend: Backend, port: number): Promise<void> {
   const account = await backend.preflight();
   const stripped = API_KEY_VARIABLES.filter((k) => process.env[k]);
-  const worker = await serveWorker(backend, port);
+  const worker = await serveWorker(backend, port, account.plan);
 
   const lines = [
     "",

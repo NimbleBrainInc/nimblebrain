@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, constants, openSync } from "node:fs";
+import { constants } from "node:fs";
 import { access, chmod, mkdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
@@ -20,18 +20,10 @@ export interface Deps {
    * failed. Never throws.
    */
   launch(cmd: string, args: string[]): Promise<boolean>;
-  /**
-   * Start a long-running program detached from this run, so it outlives it
-   * (the agent worker), its stdout and stderr appended to `logPath` (created
-   * with mode 600). The pid, or undefined when it could not start. Never throws.
-   */
-  spawnDetached(
-    cmd: string,
-    args: string[],
-    opts: { logPath: string; env: NodeJS.ProcessEnv },
-  ): Promise<number | undefined>;
   /** How this CLI runs: the Node binary and this CLI's own file, to start it again as another process. */
   self: { node: string; script: string };
+  /** This user's id, which names their launchd domain (`gui/<uid>`) for the worker's login item. */
+  uid: number;
   /** Whether a program is on `PATH`, found without running it. */
   which(cmd: string): Promise<boolean>;
   /** Whether nothing on this machine listens on `127.0.0.1:<port>`. */
@@ -135,25 +127,8 @@ export function realDeps(): Deps {
         });
       });
     },
-    async spawnDetached(cmd, args, { logPath, env }) {
-      let fd: number | undefined;
-      try {
-        await mkdir(dirname(logPath), { recursive: true, mode: 0o700 });
-        fd = openSync(logPath, "a", 0o600);
-        const child = spawn(cmd, args, { detached: true, stdio: ["ignore", fd, fd], env });
-        const pid = await new Promise<number | undefined>((resolve) => {
-          child.once("error", () => resolve(undefined));
-          child.once("spawn", () => resolve(child.pid));
-        });
-        child.unref();
-        return pid;
-      } catch {
-        return undefined;
-      } finally {
-        if (fd !== undefined) closeSync(fd);
-      }
-    },
     self: { node: process.execPath, script: resolve(process.argv[1] ?? "") },
+    uid: process.getuid?.() ?? 0,
     async which(cmd) {
       const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE").split(";") : [""];
       for (const dir of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {

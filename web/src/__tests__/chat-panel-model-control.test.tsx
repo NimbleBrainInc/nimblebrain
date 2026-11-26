@@ -82,7 +82,10 @@ const AVAILABLE = {
 let container: HTMLDivElement;
 let root: ReturnType<typeof ReactDOMClient.createRoot>;
 
-async function mountPanel(convId?: string, runsOn?: string): Promise<void> {
+async function mountPanel(
+  convId?: string,
+  runsOn?: { id: string; title: string; plan?: string; reachable: boolean; problem?: string },
+): Promise<void> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = ReactDOMClient.createRoot(container);
@@ -155,16 +158,31 @@ describe("the composer's model control", () => {
 });
 
 describe("ChatPanel model control on a runtime that brings its own model", () => {
-  test("names the runtime and offers no model, before and after a binding", async () => {
-    await mountPanel(undefined, "claude-code");
+  const CLAUDE = { id: "claude-code", title: "Claude Code", plan: "Claude Max", reachable: true };
+
+  test("names the runtime and its plan and offers no model, before and after a binding", async () => {
+    await mountPanel(undefined, CLAUDE);
     expect(modelControl()).toBeNull();
-    expect(container.textContent).toContain("Runs on claude-code");
+    expect(container.textContent).toContain("Claude Code · Claude Max");
     act(() => root.unmount());
     container.remove();
 
     mockConversationModel = "anthropic:claude-sonnet-5";
-    await mountPanel("conv_existing", "claude-code");
+    await mountPanel("conv_existing", CLAUDE);
     expect(modelControl()).toBeNull();
-    expect(container.textContent).toContain("Runs on claude-code");
+    expect(container.textContent).toContain("Claude Code · Claude Max");
+  });
+
+  test("says the runtime is not running, with the fix on hover, when its agent did not answer", async () => {
+    await mountPanel(undefined, {
+      id: "claude-code",
+      title: "Claude Code",
+      reachable: false,
+      problem: "Claude Code isn't answering. Start it on this machine with `npx nimblebrain up`.",
+    });
+    expect(modelControl()).toBeNull();
+    const status = container.querySelector('[role="status"]');
+    expect(status?.textContent).toBe("Claude Code isn't running");
+    expect(status?.getAttribute("title")).toContain("npx nimblebrain up");
   });
 });

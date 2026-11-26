@@ -8,8 +8,10 @@ import { Aside } from '@astrojs/starlight/components';
 A local NimbleBrain can run every turn on the coding agent you already pay for: Claude Code on a Claude Pro or Max subscription, or Codex on a ChatGPT plan. No model key is needed.
 
 ```bash
-npx nimblebrain use claude    # or: use codex, use native
+npx nimblebrain use claude    # or: use codex
 ```
+
+`npx nimblebrain` offers it when it asks what runs NimbleBrain's agents, and marks it when Claude Code or Codex is already signed in. `use api` or `use local` moves back to an API key or a local model ([What runs the agents](/cli/nimblebrain/#what-runs-the-agents)).
 
 <Aside type="caution" title="Experimental, and local only">
 This is for one person's NimbleBrain on their own machine: the runtime accepts it only under the `dev` adapter in [`instance.json`](/config/instance-json/). A subscription is yours, so it never backs an instance other people sign in to.
@@ -17,7 +19,7 @@ This is for one person's NimbleBrain on their own machine: the runtime accepts i
 
 ## How it works
 
-`use` starts a small worker on your machine, on `127.0.0.1`. For each turn, NimbleBrain hands the turn to the worker over the [Agent Client Protocol](https://agentclientprotocol.com), and the worker runs the vendor's own CLI, unmodified and signed in as you:
+`use claude` or `use codex` starts a small worker on your machine, on `127.0.0.1`. For each turn, NimbleBrain hands the turn to the worker over the [Agent Client Protocol](https://agentclientprotocol.com), and the worker runs the vendor's own CLI, unmodified and signed in as you:
 
 - **Claude Code** runs `claude -p` with none of its built-in tools, none of your settings, hooks, plugins or `CLAUDE.md`, and only one MCP server: your NimbleBrain workspace.
 - **Codex** runs `codex exec`, ignoring your `config.toml`, with your NimbleBrain workspace as its only MCP server. It keeps a read-only shell, which Codex cannot turn off; each command it runs shows in the turn.
@@ -42,11 +44,27 @@ Usage still counts against your plan's own limits, and NimbleBrain records each 
 | The conversation's title, and the summary that folds a long history | Yes: they run on the same agent | — |
 | A run with a spend budget (a budgeted task or batch) | — | Yes: it runs on NimbleBrain's own engine, which can hold it to the budget |
 
-The chat composer shows **Runs on claude-code** (or codex) in place of the model picker: the agent chooses its own model, so a model chosen there would not be used.
+The chat composer shows what every turn runs on in place of the model picker, such as **Claude Code · Claude Max** or **Codex · ChatGPT**: the agent chooses its own model, so a model chosen there would not be used. When the worker does not answer, it says **Claude Code isn't running**, with the fix on hover.
+
+## When a turn fails
+
+A turn on a worker that is not running fails with "Claude Code isn't answering. Start it on this machine with `npx nimblebrain up`, then send your message again." (`agent_unreachable`). When the worker answers but the CLI cannot finish the turn, the chat shows why, in words that name the fix:
+
+| Chat error | Means | Fix |
+|---|---|---|
+| `agent_signed_out` | Claude Code's or Codex's sign-in expired or is gone. The chat offers no retry, since a retry fails the same way. | Run `claude /login`, or `codex login` and choose Sign in with ChatGPT, in a terminal, then send the message again. |
+| `agent_plan_limit` | Your plan's usage limit is reached. The message says when it resets when the CLI says so. | Send it again once it resets, or move to an API key with `npx nimblebrain use api`. |
+| `agent_api_key` | Claude Code reported an API key as its source, so the turn was stopped before it billed one. | Remove that key from the environment Claude Code reads, or run `claude /login`. |
+| `agent_cli_missing` | The worker could not find `claude` or `codex`. | Install it, sign in, then run `npx nimblebrain use claude` (or `codex`) again. |
+| `agent_cli_failed` | The CLI stopped for another reason. The message gives its last line, without any credential. | Read `agent-worker.log` in the install's folder, then send the message again. |
+
+## After a reboot
+
+`use` installs the worker as a login item: a LaunchAgent for your user only, `~/Library/LaunchAgents/ai.nimblebrain.agent-worker.<project>.plist`, running a copy of the CLI kept in the install's folder. launchd starts the worker when you log in, as Docker Desktop starts NimbleBrain, and starts it again within half a minute if it crashes. `down` removes the item, since Docker does not start a stopped NimbleBrain at login either, and `up` puts it back; `use api`, `use local` and `uninstall` remove it too.
 
 ## Limits
 
-- macOS with Docker Desktop only for now. On Linux the container reaches the host over the Docker bridge, not `127.0.0.1`, and `use` answers `HOST_LOOPBACK_UNREACHABLE`. On Windows the worker's process management is not supported, and `use` answers `PLATFORM_UNSUPPORTED`.
+- macOS with Docker Desktop only for now. On Linux the container reaches the host over the Docker bridge, not `127.0.0.1`, and `use` answers `HOST_LOOPBACK_UNREACHABLE`. Anywhere else `use` answers `PLATFORM_UNSUPPORTED`: the worker runs as a launchd login item.
 - A Codex turn carries Codex's own instructions and tool schemas, roughly 100k input tokens even for a short turn, most of them cached.
-- The worker holds each turn's connection. `down` stops it and `up` restarts it; a turn running when it stops is cut off, as when NimbleBrain itself restarts.
+- The worker holds each turn's connection. A turn running when it stops (a crash, `down`, `use api`) is cut off, as when NimbleBrain itself restarts.
 - Codex's MCP client speaks an older protocol revision than `/mcp/<workspaceId>` serves, so connecting Codex to NimbleBrain as a tool (`init --agent codex`) gives it no tools. Running NimbleBrain's turns on Codex, as here, is not affected: the worker serves the tools to Codex itself.

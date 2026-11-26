@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { run } from "../src/main.ts";
 import { ERRORS, FIX_VARIANTS } from "../src/result.ts";
+import { defaultSource, detectSources, pickerLines } from "../src/source.ts";
 import { WORKER_COMMAND } from "../src/subscription/command.ts";
 import {
   CLAUDE_MAX,
@@ -17,18 +18,28 @@ const ENV = `${HOME}/.env`;
 const RECORD = `${HOME}/agent-worker.json`;
 const LOG = `${HOME}/agent-worker.log`;
 const CLAUDE_STATUS = "claude auth status --json";
+const BUNDLE = "/home/dana/.npm/_npx/1/nimblebrain.js";
+const LABEL = "ai.nimblebrain.agent-worker.nimblebrain-local-0a1b2c";
+const PLIST = `/home/dana/Library/LaunchAgents/${LABEL}.plist`;
+const BIN = `${HOME}/bin/nimblebrain.js`;
 const CODEX_STATUS = "codex login status";
 
 /** A ready install on a Mac, its Compose file the repo's (which takes the agent runtime). */
 function mac(opts: MachineOptions = {}) {
   return machine({
     platform: "darwin",
-    exec: { [CLAUDE_STATUS]: ok(CLAUDE_MAX), [CODEX_STATUS]: ok("Logged in using ChatGPT\n") },
     ...opts,
+    exec: {
+      [CLAUDE_STATUS]: ok(CLAUDE_MAX),
+      [CODEX_STATUS]: ok("Logged in using ChatGPT\n"),
+      ...opts.exec,
+    },
     files: {
       [`${HOME}/install.json`]: record(),
       [ENV]: "COMPOSE_PROJECT_NAME=nimblebrain-local-0a1b2c\nANTHROPIC_API_KEY=sk-test\n",
       [`${HOME}/docker-compose.yml`]: REPO_COMPOSE,
+      // The published CLI file npx runs, which the login item copies into the home.
+      [BUNDLE]: "// nimblebrain 0.9.0\n",
       ...opts.files,
     },
   });
@@ -48,34 +59,44 @@ describe("use claude", () => {
     expect(code).toBe(0);
     expect(body).toEqual({
       ok: true,
+      model_source: { source: "claude", label: "your Claude Max subscription through Claude Code" },
       agent_runtime: {
         name: "claude-code",
-        worker: { running: true, pid: 4242, url: "http://127.0.0.1:27290/acp", log: LOG },
+        worker: {
+          running: true,
+          pid: 4242,
+          url: "http://127.0.0.1:27290/acp",
+          log: LOG,
+          login_item: PLIST,
+        },
       },
       billed_to: "your Claude Max subscription (claude.ai login, no API key)",
       tools: "only your NimbleBrain workspace's tools",
     });
-    // This CLI's own file, run by this Node, with the hidden worker command; its output to the log.
+    // launchd runs the home's copy of this CLI with this Node and the hidden worker command; its output to the log.
     expect(m.spawned).toEqual([
       {
-        line: `/usr/local/bin/node /home/dana/.npm/_npx/1/nimblebrain.js ${WORKER_COMMAND} claude --port 27290`,
+        line: `/usr/local/bin/node ${BIN} ${WORKER_COMMAND} claude --port 27290 --log ${LOG}`,
         logPath: LOG,
-        env: m.deps.env,
       },
     ]);
+    expect(m.calls).toContain(`$ launchctl bootstrap gui/501 ${PLIST}`);
     expect(envOf(m)).toContain("NB_AGENT_RUNTIME=claude-code\n");
     expect(envOf(m)).toContain("NB_AGENT_RUNTIME_URL=http://host.docker.internal:27290/acp\n");
     // The key entered with `key` stays.
     expect(envOf(m)).toContain("ANTHROPIC_API_KEY=sk-test\n");
     expect(m.files.get(ENV)?.mode).toBe(0o600);
     expect(JSON.parse(m.files.get(RECORD)?.text ?? "{}")).toEqual({
-      pid: 4242,
       port: 27290,
       agent: "claude-code",
+      plan: "Claude Max",
+      label: LABEL,
     });
     expect(m.files.get(RECORD)?.mode).toBe(0o600);
     // `up -d` recreates the container, which is what makes it read `.env` again; after the worker answers.
-    expect(m.calls.at(-1)).toBe(`${HOME}$ docker compose up -d --no-build`);
+    expect(m.calls.findLast((c) => c.includes("docker"))).toBe(
+      `${HOME}$ docker compose up -d --no-build`,
+    );
     expect(m.healthy).toBe(true);
   });
 
@@ -91,7 +112,7 @@ describe("use claude", () => {
   test("--port moves the worker, and the URL the runtime dials with it", async () => {
     const { body, m } = await json(["use", "claude", "--port", "28000"]);
     expect(body.agent_runtime.worker.url).toBe("http://127.0.0.1:28000/acp");
-    expect(m.spawned[0]?.line).toEndWith("--port 28000");
+    expect(m.spawned[0]?.line).toContain("--port 28000 ");
     expect(envOf(m)).toContain("NB_AGENT_RUNTIME_URL=http://host.docker.internal:28000/acp\n");
   });
 
@@ -211,8 +232,8 @@ describe("use refuses", () => {
     expect(envOf(m)).not.toContain("NB_AGENT_RUNTIME");
   });
 
-  test("without a runtime, or with another one, as a usage error", async () => {
-    for (const argv of [["use"], ["use", "gemini"]]) {
+  test("without a source and no person to ask, or with another one, as a usage error", async () => {
+    for (const argv of [["use"], ["use", "gemini"], ["use", "native"], ["use", "claude", "m"]]) {
       const { body, code } = await json(argv);
       expect(code).toBe(2);
       expect(body).toMatchObject({ error: "USAGE" });
@@ -227,18 +248,302 @@ describe("use refuses", () => {
   });
 });
 
-describe("use native", () => {
-  test("stops the worker, clears the runtime from .env, and recreates the runtime", async () => {
-    const m = mac();
+const GEMMA = { capabilities: ["completion", "tools"] };
+const LOCAL_ENV =
+  "NB_LOCAL_MODEL_URL=http://host.docker.internal:11434/v1\nNB_LOCAL_MODEL=nimblebrain-gemma4-e4b\nNB_LOCAL_MODEL_CONTEXT=32768\n";
+
+describe("use api", () => {
+  test("leaves the subscription and the local model for the saved key, and recreates the runtime", async () => {
+    const m = mac({ files: { [ENV]: `ANTHROPIC_API_KEY=sk-test\n${LOCAL_ENV}` } });
     await json(["use", "claude"], m);
-    const { body, code } = await json(["use", "native"], m);
+    const { body, code } = await json(["use", "api"], m);
     expect(code).toBe(0);
-    expect(body).toEqual({ ok: true, agent_runtime: { name: "native", worker: null } });
+    expect(body).toEqual({
+      ok: true,
+      model_source: { source: "api", label: "an API key (anthropic)" },
+      agent_runtime: { name: "native", worker: null },
+      provider: "anthropic",
+    });
     expect(m.workers.size).toBe(0);
     expect(m.files.get(RECORD)).toBeUndefined();
     expect(envOf(m)).toContain("NB_AGENT_RUNTIME=\n");
     expect(envOf(m)).toContain("NB_AGENT_RUNTIME_URL=\n");
-    expect(m.calls.at(-1)).toBe(`${HOME}$ docker compose up -d --no-build`);
+    expect(envOf(m)).toContain("NB_LOCAL_MODEL=\n");
+    expect(envOf(m)).toContain("ANTHROPIC_API_KEY=sk-test\n");
+    expect(m.calls.findLast((c) => c.includes("docker"))).toBe(
+      `${HOME}$ docker compose up -d --no-build`,
+    );
+  });
+
+  test("with no key and no terminal, is MODEL_KEY_MISSING and changes nothing", async () => {
+    const m = mac({ files: { [ENV]: "COMPOSE_PROJECT_NAME=nimblebrain-local-0a1b2c\n" } });
+    await json(["use", "claude"], m);
+    const before = envOf(m);
+    const calls = m.calls.length;
+    const { body, code } = await json(["use", "api"], m);
+    expect(code).toBe(1);
+    expect(body).toMatchObject({ ok: false, error: "MODEL_KEY_MISSING" });
+    expect(body.fix).toBe(ERRORS.MODEL_KEY_MISSING);
+    expect(body.fix).toContain("`npx nimblebrain key`");
+    expect(envOf(m)).toBe(before);
+    expect(m.workers.size).toBe(1);
+    expect(m.calls.slice(calls).some((c) => c.includes("compose up") || c.includes("kill"))).toBe(
+      false,
+    );
+  });
+
+  test("with no key at a terminal, asks for one at the hidden prompt", async () => {
+    const m = mac({
+      interactive: true,
+      answers: ["", "sk-typed"],
+      files: { [ENV]: "COMPOSE_PROJECT_NAME=nimblebrain-local-0a1b2c\n" },
+    });
+    const { stdout, code } = await run(["use", "api"], m.deps);
+    expect(code).toBe(0);
+    expect(m.asked[1]).toStartWith("ANTHROPIC_API_KEY");
+    expect(envOf(m)).toContain("ANTHROPIC_API_KEY=sk-typed\n");
+    expect(stdout).not.toContain("sk-typed");
+    expect(stdout).toContain("NimbleBrain's agents now run on an API key (anthropic).");
+  });
+});
+
+describe("use local", () => {
+  test("prepares the default model, leaves the subscription, and keeps the key", async () => {
+    const m = mac({ ollama: { models: { "gemma4:e4b": GEMMA } } });
+    await json(["use", "claude"], m);
+    const { body, code } = await json(["use", "local"], m);
+    expect(code).toBe(0);
+    expect(body).toEqual({
+      ok: true,
+      model_source: {
+        source: "local",
+        label: "a local model (nimblebrain-gemma4-e4b) through Ollama",
+      },
+      agent_runtime: { name: "native", worker: null },
+      local_model: "nimblebrain-gemma4-e4b",
+    });
+    expect(m.workers.size).toBe(0);
+    expect(envOf(m)).toContain("NB_AGENT_RUNTIME=\n");
+    expect(envOf(m)).toContain("NB_LOCAL_MODEL=nimblebrain-gemma4-e4b\n");
+    expect(envOf(m)).toContain("ANTHROPIC_API_KEY=sk-test\n");
+    expect(m.calls.findLast((c) => c.includes("docker"))).toBe(
+      `${HOME}$ docker compose up -d --no-build`,
+    );
+  });
+
+  test("takes the model to run, as local-model does", async () => {
+    const m = mac({ ollama: { models: { "qwen3:8b": GEMMA } } });
+    const { body } = await json(["use", "local", "qwen3:8b"], m);
+    expect(body.local_model).toBe("nimblebrain-qwen3-8b");
+  });
+
+  test("keeps a saved local model rather than preparing another", async () => {
+    const m = mac({
+      ollama: { models: { "nimblebrain-gemma4-e4b": GEMMA } },
+      files: { [ENV]: LOCAL_ENV },
+    });
+    await json(["use", "claude"], m);
+    const { body } = await json(["use", "local"], m);
+    expect(body.local_model).toBe("nimblebrain-gemma4-e4b");
+    expect(m.posts.some((p) => p.url.endsWith("/api/create"))).toBe(false);
+  });
+
+  test("an Ollama that does not answer is LOCAL_MODEL_UNREACHABLE, and the subscription stays", async () => {
+    const m = mac();
+    await json(["use", "claude"], m);
+    const { body } = await json(["use", "local"], m);
+    expect(body.error).toBe("LOCAL_MODEL_UNREACHABLE");
+    expect(m.workers.size).toBe(1);
+    expect(envOf(m)).toContain("NB_AGENT_RUNTIME=claude-code\n");
+  });
+});
+
+describe("what this machine offers", () => {
+  const detect = (m: ReturnType<typeof mac>) => detectSources(m.deps, envOf(m), REPO_COMPOSE);
+
+  test("a signed-in Claude subscription is found, named by its plan, and is the default", async () => {
+    const options = await detect(mac({ ollama: { models: {} } }));
+    expect(options.map((o) => [o.source, o.available, o.detected])).toEqual([
+      ["claude", true, true],
+      ["codex", true, true],
+      ["api", true, true],
+      ["local", true, true],
+    ]);
+    expect(options[0]?.label).toBe("Your Claude Max subscription, through Claude Code");
+    expect(options[2]?.note).toBe("your anthropic key is saved");
+    expect(options[3]?.note).toBe("Ollama is running");
+    expect(defaultSource(options)).toBe("claude");
+  });
+
+  test("the default is Codex when only it is signed in, else an API key", async () => {
+    const codexOnly = await detect(mac({ exec: { [CLAUDE_STATUS]: ok("{}") } }));
+    expect(codexOnly[0]).toMatchObject({ detected: false, note: "not signed in" });
+    expect(defaultSource(codexOnly)).toBe("codex");
+    const neither = await detect(
+      mac({ exec: { [CLAUDE_STATUS]: missing(), [CODEX_STATUS]: ok("Not logged in\n") } }),
+    );
+    expect(neither[0]?.note).toBe("Claude Code is not installed");
+    expect(defaultSource(neither)).toBe("api");
+  });
+
+  test("off macOS, neither subscription is offered, and neither CLI is run", async () => {
+    const m = mac({ platform: "linux" });
+    const options = await detect(m);
+    expect(options.slice(0, 2).map((o) => [o.available, o.note])).toEqual([
+      [false, "macOS only for now"],
+      [false, "macOS only for now"],
+    ]);
+    expect(defaultSource(options)).toBe("api");
+    expect(m.calls).toEqual([]);
+    expect(pickerLines(options).filter((l) => l.startsWith("  Not here:"))).toHaveLength(2);
+  });
+});
+
+describe("use with no source", () => {
+  test("asks a person, listing what is found, and Enter takes the signed-in Claude subscription", async () => {
+    const m = mac({ interactive: true, answers: [""], ollama: { models: {} } });
+    const { code } = await run(["use"], m.deps);
+    expect(code).toBe(0);
+    expect(m.said.slice(0, 5)).toEqual([
+      "How should NimbleBrain's agents run?",
+      "  1) Your Claude Max subscription, through Claude Code              (signed in)",
+      "  2) Your ChatGPT plan, through Codex                               (signed in)",
+      "  3) An API key for a hosted model (Anthropic, OpenAI, Google, …)   (your anthropic key is saved)",
+      "  4) A local model through Ollama                                   (Ollama is running)",
+    ]);
+    expect(m.asked).toEqual(["Choose 1-4, or claude, codex, api, local [1]: "]);
+    expect(envOf(m)).toContain("NB_AGENT_RUNTIME=claude-code\n");
+  });
+
+  test.each([["2"], ["codex"], [" Codex "]])("takes %p as Codex", async (answer) => {
+    const m = mac({ interactive: true, answers: [answer] });
+    await run(["use"], m.deps);
+    expect(envOf(m)).toContain("NB_AGENT_RUNTIME=codex\n");
+  });
+
+  test("asks again after an answer that is neither a number nor a name", async () => {
+    const m = mac({ interactive: true, answers: ["9", "api"] });
+    const { code } = await run(["use"], m.deps);
+    expect(code).toBe(0);
+    expect(m.asked).toHaveLength(2);
+    expect(m.said).toContain('"9" is not one of them.');
+    expect(envOf(m)).not.toContain("NB_AGENT_RUNTIME=claude-code");
+  });
+
+  test("never chooses under --yes or --json, even at a terminal", async () => {
+    for (const flag of ["--yes", "--json"]) {
+      const m = mac({ interactive: true });
+      const { stdout, code } = await run(["use", flag, "--json"], m.deps);
+      expect(code).toBe(2);
+      expect(JSON.parse(stdout)).toMatchObject({ error: "USAGE" });
+      expect(JSON.parse(stdout).message).toContain("claude, codex, api or local");
+      expect(m.asked).toEqual([]);
+      expect(m.spawned).toEqual([]);
+    }
+  });
+});
+
+describe("init and the source", () => {
+  const fresh = (opts: MachineOptions = {}) =>
+    machine({
+      platform: "darwin",
+      env: { NIMBLEBRAIN_TAG: "v0.73.0" },
+      exec: { [CLAUDE_STATUS]: ok(CLAUDE_MAX), [CODEX_STATUS]: ok("Logged in using ChatGPT\n") },
+      ...opts,
+    });
+
+  test("--use claude starts the worker and writes .env before the one first start", async () => {
+    const m = fresh();
+    const envAtStart: string[] = [];
+    const exec = m.deps.exec;
+    m.deps.exec = async (cmd, args, o) => {
+      if (args.join(" ").startsWith("compose up")) envAtStart.push(m.files.get(ENV)?.text ?? "");
+      return exec(cmd, args, o);
+    };
+    const { body, code } = await json(["--yes", "--use", "claude", "--agent", "none"], m);
+    expect(code).toBe(0);
+    expect(envAtStart).toHaveLength(1);
+    expect(envAtStart[0]).toContain("NB_AGENT_RUNTIME=claude-code\n");
+    expect(m.spawned).toHaveLength(1);
+    expect(body.model_source).toEqual({
+      source: "claude",
+      label: "your Claude Max subscription through Claude Code",
+    });
+    expect(body.agent_runtime.worker.running).toBe(true);
+  });
+
+  test("under --yes without --use, chooses nothing and hands the question on", async () => {
+    const m = fresh();
+    const { body, code } = await json(["--yes", "--agent", "none"], m);
+    expect(code).toBe(0);
+    expect(m.asked).toEqual([]);
+    expect(m.spawned).toEqual([]);
+    expect(envOf(m)).not.toContain("NB_AGENT_RUNTIME");
+    expect(body.model_key).toBe("missing");
+    expect(body.model_source).toMatchObject({
+      source: null,
+      label: null,
+      ask: "How should NimbleBrain's agents run?",
+      default: "claude",
+      set: "npx nimblebrain use claude|codex|api|local",
+    });
+    expect(body.model_source.options.map((o: { source: string }) => o.source)).toEqual([
+      "claude",
+      "codex",
+      "api",
+      "local",
+    ]);
+    expect(body.model_source.options[0]).toMatchObject({ detected: true, note: "signed in" });
+  });
+
+  test("a person at the terminal takes the default with Enter: the signed-in Claude subscription", async () => {
+    const m = fresh({ interactive: true, answers: ["", "", "none"] });
+    const { stdout, code } = await run([], m.deps);
+    expect(code).toBe(0);
+    expect(m.asked[1]).toBe("Choose 1-4, or claude, codex, api, local [1]: ");
+    expect(m.asked.some((q) => q.includes("API_KEY"))).toBe(false);
+    expect(stdout).toContain(
+      "agents run on: your Claude Max subscription through Claude Code (agent worker 4242",
+    );
+    expect(stdout).not.toContain("Next: choose");
+  });
+
+  test("--use and --local-model disagree as a usage error", async () => {
+    const { body, code } = await json(["--use", "api", "--local-model", "gemma4:e4b"], fresh());
+    expect(code).toBe(2);
+    expect(body.error).toBe("USAGE");
+  });
+});
+
+describe("status names the source", () => {
+  test.each([
+    ["ANTHROPIC_API_KEY=sk-test\n", "api", "an API key (anthropic)"],
+    [
+      `ANTHROPIC_API_KEY=sk-test\n${LOCAL_ENV}`,
+      "local",
+      "a local model (nimblebrain-gemma4-e4b) through Ollama",
+    ],
+    ["", null, null],
+  ] as const)("%p is %p", async (envText, source, label) => {
+    const m = mac({ files: { [ENV]: envText } });
+    expect((await json(["status"], m)).body.model_source).toEqual({ source, label });
+    const { stdout } = await run(["status"], m.deps);
+    expect(stdout).toContain(
+      `agents run on: ${label ?? "nothing yet (choose with npx nimblebrain use)"}`,
+    );
+  });
+
+  test("a subscription wins over a saved key, and is named with its plan while its worker runs", async () => {
+    const m = mac();
+    await json(["use", "claude"], m);
+    expect((await json(["status"], m)).body.model_source).toEqual({
+      source: "claude",
+      label: "your Claude Max subscription through Claude Code",
+    });
+    const { stdout } = await run(["status"], m.deps);
+    expect(stdout).toContain(
+      "agents run on: your Claude Max subscription through Claude Code (agent worker 4242 at http://127.0.0.1:27290/acp)",
+    );
   });
 });
 
@@ -252,7 +557,13 @@ describe("the worker across the install's life", () => {
     await json(["use", "claude"], m);
     expect((await json(["status"], m)).body.agent_runtime).toEqual({
       name: "claude-code",
-      worker: { running: true, pid: 4242, url: "http://127.0.0.1:27290/acp", log: LOG },
+      worker: {
+        running: true,
+        pid: 4242,
+        url: "http://127.0.0.1:27290/acp",
+        log: LOG,
+        login_item: PLIST,
+      },
     });
     m.workers.clear();
     expect((await json(["status"], m)).body.agent_runtime.worker).toEqual({
@@ -260,6 +571,7 @@ describe("the worker across the install's life", () => {
       pid: null,
       url: "http://127.0.0.1:27290/acp",
       log: LOG,
+      login_item: PLIST,
     });
     const { stdout } = await run(["status"], m.deps);
     expect(stdout).toContain("its agent worker is stopped (start it with npx nimblebrain up)");
@@ -271,7 +583,7 @@ describe("the worker across the install's life", () => {
     m.workers.clear();
     const { body, code } = await json(["up"], m);
     expect(code).toBe(0);
-    expect(m.spawned.at(-1)?.line).toEndWith(`${WORKER_COMMAND} claude --port 28000`);
+    expect(m.spawned.at(-1)?.line).toContain(`${WORKER_COMMAND} claude --port 28000 `);
     expect(body.agent_runtime.worker.running).toBe(true);
   });
 
@@ -316,5 +628,105 @@ describe("the worker across the install's life", () => {
     expect(m.workers.size).toBe(0);
     expect(m.files.has(RECORD)).toBe(false);
     expect(m.files.has(LOG)).toBe(false);
+  });
+});
+
+describe("the worker's login item", () => {
+  const plistOf = (m: ReturnType<typeof mac>) => m.files.get(PLIST)?.text ?? "";
+
+  test("use installs a LaunchAgent that starts the worker at login and after a crash", async () => {
+    const m = mac({
+      env: {
+        PATH: "/opt/homebrew/bin:/usr/bin",
+        ANTHROPIC_API_KEY: "sk-shell",
+        HOME: "/home/dana",
+      },
+    });
+    await json(["use", "claude"], m);
+    const text = plistOf(m);
+    expect(text).toContain(`<key>Label</key>\n    <string>${LABEL}</string>`);
+    expect(text).toContain("<key>RunAtLoad</key>\n    <true/>");
+    expect(text).toContain("<key>SuccessfulExit</key>\n      <false/>");
+    expect(text).toContain(`<key>StandardOutPath</key>\n    <string>${LOG}</string>`);
+    expect(text).toContain(`<key>StandardErrorPath</key>\n    <string>${LOG}</string>`);
+    // launchd's own PATH would not find claude; never a key in a file anyone on this account reads.
+    expect(text).toContain("<key>PATH</key>\n      <string>/opt/homebrew/bin:/usr/bin</string>");
+    expect(text).not.toContain("sk-shell");
+    expect(text).not.toContain(".npm/_npx");
+    // npx's cache is cleaned, so the item runs a copy of this CLI in the home.
+    expect(m.files.get(BIN)).toEqual({ text: "// nimblebrain 0.9.0\n", mode: 0o600 });
+    expect(m.calls.some((c) => c.includes("sudo"))).toBe(false);
+  });
+
+  test("its text says the worker starts at login", async () => {
+    const { stdout } = await run(["use", "claude"], mac().deps);
+    expect(stdout).toContain(
+      `starts at login: ${PLIST} (launchd starts the worker when you log in, and again if it crashes)`,
+    );
+  });
+
+  test("use api, use local, down and uninstall remove it; up puts it back", async () => {
+    const m = mac({
+      ollama: { models: { "gemma4:e4b": { capabilities: ["completion", "tools"] } } },
+    });
+    for (const off of [["use", "api"], ["use", "local"], ["down"]]) {
+      await json(["use", "claude"], m);
+      expect(m.loaded.has(LABEL)).toBe(true);
+      const { code } = await json(off, m);
+      expect(code).toBe(0);
+      expect(m.loaded.has(LABEL)).toBe(false);
+      expect(m.files.has(PLIST)).toBe(false);
+      expect(m.workers.size).toBe(0);
+    }
+    await json(["up"], m);
+    expect(m.loaded.has(LABEL)).toBe(true);
+    await json(["uninstall", "--yes"], m);
+    expect(m.loaded.has(LABEL)).toBe(false);
+    expect(m.files.has(PLIST)).toBe(false);
+    expect(m.files.has(BIN)).toBe(false);
+  });
+
+  test("up leaves a current, answering worker alone, and reinstalls one whose Node moved", async () => {
+    const m = mac();
+    await json(["use", "claude"], m);
+    const loads = () => m.calls.filter((c) => c.includes("launchctl bootstrap")).length;
+    await json(["up"], m);
+    expect(loads()).toBe(1);
+    m.deps.self = { ...m.deps.self, node: "/home/dana/.nvm/versions/node/v24.1.0/bin/node" };
+    await json(["up"], m);
+    expect(loads()).toBe(2);
+    expect(plistOf(m)).toContain("<string>/home/dana/.nvm/versions/node/v24.1.0/bin/node</string>");
+    expect(m.workers.size).toBe(1);
+  });
+
+  test("update refreshes it with the newer CLI file", async () => {
+    const m = mac({ tags: ["v0.73.0"] });
+    await json(["use", "claude"], m);
+    m.files.set(BUNDLE, { text: "// nimblebrain 0.9.1\n", mode: 0o644 });
+    const { code } = await json(["update"], m);
+    expect(code).toBe(0);
+    expect(m.files.get(BIN)?.text).toBe("// nimblebrain 0.9.1\n");
+    expect(m.loaded.has(LABEL)).toBe(true);
+  });
+
+  test("a worker that exits before answering is removed again, with its last log line", async () => {
+    const m = mac({ worker: "refuses" });
+    const { body } = await json(["use", "claude"], m);
+    expect(body).toMatchObject({ error: "AGENT_WORKER_FAILED", log: LOG });
+    expect(body.message).toContain("Not started: Claude Code is not signed in.");
+    expect(m.loaded.has(LABEL)).toBe(false);
+    expect(m.files.has(PLIST)).toBe(false);
+  });
+
+  test("status judges the worker by its /healthz, not by a pid", async () => {
+    const m = mac();
+    await json(["use", "claude"], m);
+    // launchd restarted it under another pid: still running.
+    const [[pid, w] = [0, { port: 0, command: "" }]] = [...m.workers];
+    m.workers.delete(pid);
+    m.workers.set(5000, w);
+    m.loaded.set(LABEL, { pid: 5000 });
+    const { body } = await json(["status"], m);
+    expect(body.agent_runtime.worker).toMatchObject({ running: true, pid: 5000 });
   });
 });

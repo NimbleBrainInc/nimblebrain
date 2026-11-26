@@ -22,12 +22,12 @@ export const COMMAND_SPECS = {
   key: { args: [], description: "Enter the model key at a hidden prompt" },
   "local-model": {
     args: ["[model]"],
-    description: `Run NimbleBrain's agents on a model served by Ollama (default ${DEFAULT_LOCAL_MODEL})`,
+    description: `Prepare a model served by Ollama for NimbleBrain's agents (default ${DEFAULT_LOCAL_MODEL})`,
   },
   use: {
-    args: ["<claude|codex|native>"],
+    args: ["[claude|codex|api|local]", "[model]"],
     description:
-      "Run NimbleBrain's agents on your Claude or ChatGPT subscription through Claude Code or Codex on this machine, or on its own engine again (native)",
+      "Choose what runs NimbleBrain's agents: claude (your Claude subscription), codex (your ChatGPT plan), api (an API key) or local (an Ollama model); asks when none is named",
   },
   telemetry: {
     args: ["[on|off|status]"],
@@ -54,6 +54,17 @@ export const COMMANDS = Object.keys(COMMAND_SPECS) as Command[];
 const TELEMETRY_ARGS = ["on", "off", "status"];
 
 export const AGENTS = ["claude-code", "cursor", "codex", "none"] as const;
+
+/**
+ * What runs NimbleBrain's agents, the one question `init` asks and `use`
+ * answers afterwards: the person's Claude subscription through Claude Code,
+ * their ChatGPT plan through Codex, an API key, or a local model through Ollama.
+ */
+export const SOURCES = ["claude", "codex", "api", "local"] as const;
+export type Source = (typeof SOURCES)[number];
+
+/** `claude, codex, api or local`, for messages. */
+export const SOURCE_LIST = `${SOURCES.slice(0, -1).join(", ")} or ${SOURCES.at(-1)}`;
 export type Agent = (typeof AGENTS)[number];
 
 export interface Flags {
@@ -66,6 +77,8 @@ export interface Flags {
   provider?: string;
   /** `--local-model <model>`: run NimbleBrain's agents on this Ollama model instead of a hosted key. */
   localModel?: string;
+  /** `--use <source>`: what `init` runs NimbleBrain's agents on, without asking. */
+  use?: Source;
   runtime?: string;
   /** `--telemetry on|off`: an answer a person already gave. */
   telemetry?: "on" | "off";
@@ -133,10 +146,17 @@ export const FLAG_SPECS = {
       "The model provider for key (default anthropic); the installed release decides which it takes, and key lists them",
     commands: ["key"],
   },
+  use: {
+    type: "string",
+    takes: SOURCES.join("|"),
+    description:
+      "What runs NimbleBrain's agents, as use takes it; without it (or --local-model), init asks a person, or leaves it unchosen and returns the question in model_source.ask",
+    commands: ["init"],
+  },
   "local-model": {
     type: "string",
     takes: "model",
-    description: "Run on this Ollama model instead of a hosted key",
+    description: "Run on this Ollama model (implies --use local)",
     commands: ["init"],
   },
   runtime: {
@@ -209,6 +229,7 @@ export function parse(argv: string[]): Parsed {
     agent = values.agent as Agent;
   }
   const telemetry = telemetryFlag(values.telemetry);
+  const use = useFlag(values.use, values["local-model"]);
   const flags: Flags = {
     json,
     yes: values.yes === true,
@@ -217,6 +238,7 @@ export function parse(argv: string[]): Parsed {
     home: values.home,
     provider: values.provider,
     localModel: values["local-model"],
+    use,
     runtime: values.runtime,
     telemetry,
     noOpen: values["no-open"] === true,
@@ -237,6 +259,19 @@ export function parse(argv: string[]): Parsed {
   };
 }
 
+/** `--use`, checked; `--local-model` means local, so it takes no other. */
+function useFlag(value: string | undefined, localModel: string | undefined): Source | undefined {
+  if (value === undefined) return localModel === undefined ? undefined : "local";
+  if (!(SOURCES as readonly string[]).includes(value))
+    throw new CliError("USAGE", `--use must be ${SOURCE_LIST}, not "${value}".`);
+  if (localModel !== undefined && value !== "local")
+    throw new CliError(
+      "USAGE",
+      `--local-model runs on a local model, so it takes --use local, not "${value}".`,
+    );
+  return value as Source;
+}
+
 function telemetryFlag(value: string | undefined): "on" | "off" | undefined {
   if (value === undefined || value === "on" || value === "off") return value;
   throw new CliError("USAGE", `--telemetry must be on or off, not "${value}".`);
@@ -255,14 +290,15 @@ export type McpSubcommand = keyof typeof MCP_SUBCOMMANDS;
 
 /**
  * The command named, checked with its arguments: `telemetry` takes one (on, off
- * or status), `local-model` a model, `use` a runtime (checked by `use`), `mcp`
- * a subcommand and that subcommand's operand; nothing else takes any.
+ * or status), `local-model` a model, `use` a source and, for local, a model
+ * (checked by `use`), `mcp` a subcommand and that subcommand's operand;
+ * nothing else takes any.
  */
 function command(name: string, positionals: string[]): Command {
   if (!(COMMANDS as readonly string[]).includes(name))
     throw new CliError("USAGE", `Unknown command "${name}".`);
   if (name === "mcp") return mcpCommand(positionals);
-  const maxArgs = name === "telemetry" || name === "local-model" || name === "use" ? 2 : 1;
+  const maxArgs = name === "use" ? 3 : name === "telemetry" || name === "local-model" ? 2 : 1;
   if (positionals.length > maxArgs)
     throw new CliError("USAGE", `Unexpected argument "${positionals[maxArgs]}".`);
   const arg = positionals[1];

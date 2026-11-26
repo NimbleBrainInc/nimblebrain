@@ -40,11 +40,12 @@ export interface Worker {
   stop(): Promise<void>;
 }
 
-export async function serveWorker(backend: Backend, port: number): Promise<Worker> {
+/** `plan` is what the sign-in check named, which the worker reports at `initialize`. */
+export async function serveWorker(backend: Backend, port: number, plan?: string): Promise<Worker> {
   const hostname = "127.0.0.1";
   let base = "";
   const bridge = createBridge(() => base);
-  const acpServer = new AcpServer({ createAgent: () => createWorkerAgent(backend, bridge) });
+  const acpServer = new AcpServer({ createAgent: () => createWorkerAgent(backend, bridge, plan) });
   const acpHandler = createNodeHttpHandler(acpServer);
 
   const route = async (req: IncomingMessage, res: ServerResponse) => {

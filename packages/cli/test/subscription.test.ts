@@ -10,14 +10,17 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type * as acp from "@agentclientprotocol/sdk/unstable";
+import * as acp from "@agentclientprotocol/sdk/unstable";
+import { createWorkerAgent, PLAN_META_KEY } from "../src/subscription/agent.ts";
 import { createClaudeBackend } from "../src/subscription/backends/claude.ts";
 import { createCodexBackend } from "../src/subscription/backends/codex.ts";
 import {
-  type Backend,
-  BackendRefused,
-  type TurnInput,
-} from "../src/subscription/backends/types.ts";
+  FAILURE_META_KEY,
+  redact,
+  resetOf,
+  TurnFailed,
+} from "../src/subscription/backends/failure.ts";
+import type { Backend, TurnInput } from "../src/subscription/backends/types.ts";
 import { createBridge } from "../src/subscription/bridge.ts";
 import { serveWorker } from "../src/subscription/worker.ts";
 
@@ -138,8 +141,8 @@ describe("the Claude Code backend", () => {
       () => undefined,
       (e: unknown) => e,
     );
-    expect(err).toBeInstanceOf(BackendRefused);
-    expect((err as BackendRefused).reason).toBe("api_key");
+    expect(err).toBeInstanceOf(TurnFailed);
+    expect((err as TurnFailed).code).toBe("api_key");
     expect(updates).toEqual([]);
   });
 
@@ -156,7 +159,8 @@ describe("the Claude Code backend", () => {
   test("fails a turn whose binary cannot start", async () => {
     const { input } = turn();
     const run = createClaudeBackend({ bin: join(dir, "no-such-claude") }).run(input);
-    await expect(run).rejects.toThrow("Claude Code could not be started");
+    await expect(run).rejects.toMatchObject({ code: "cli_missing" });
+    await expect(run).rejects.toThrow("https://claude.com/claude-code");
   });
 });
 
@@ -192,12 +196,14 @@ describe("the Codex backend", () => {
     const { input } = turn();
     const run = createCodexBackend({ bin: fakeBin(CODEX_TURN.slice(0, 3)).bin }).run(input);
     await expect(run).rejects.toThrow("without finishing the turn");
+    await expect(run).rejects.toMatchObject({ code: "cli_failed" });
   });
 
   test("fails a turn whose binary cannot start", async () => {
     const { input } = turn();
     const run = createCodexBackend({ bin: join(dir, "no-such-codex") }).run(input);
-    await expect(run).rejects.toThrow("Codex could not be started");
+    await expect(run).rejects.toMatchObject({ code: "cli_missing" });
+    await expect(run).rejects.toThrow("npm i -g @openai/codex");
   });
 });
 
@@ -219,7 +225,7 @@ describe("the worker", () => {
     label: "Fake",
     takesSystemPrompt: true,
     toolsAreNimbleBrainOnly: true,
-    preflight: async () => ({ describe: "fake" }),
+    preflight: async () => ({ describe: "fake", plan: "Fake" }),
     run: async () => ({
       stopReason: "end_turn",
       usage: { inputTokens: 0, outputTokens: 0 },
@@ -294,5 +300,210 @@ describe("the bridge", () => {
     } finally {
       http.close();
     }
+  });
+});
+
+/**
+ * Turn failures, from what the CLIs print. The signed-out lines are what
+ * `claude -p --output-format stream-json` (2.1) and `codex exec --json`
+ * (0.162) print with an empty CLAUDE_CONFIG_DIR / CODEX_HOME.
+ */
+describe("why a turn failed", () => {
+  const CLAUDE_SIGNED_OUT = [
+    { type: "system", subtype: "init", apiKeySource: "none" },
+    {
+      type: "assistant",
+      error: "authentication_failed",
+      is_api_error_message: true,
+      message: { content: [{ type: "text", text: "Not logged in · Please run /login" }] },
+    },
+    {
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      terminal_reason: "api_error",
+      result: "Not logged in · Please run /login",
+    },
+  ];
+  const CODEX_401 =
+    "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses";
+
+  const failure = async (backend: Backend) => {
+    const err = await backend.run(turn().input).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    return err as { code: string; message: string };
+  };
+
+  test("Claude Code signed out is signed_out, naming claude /login", async () => {
+    const f = await failure(createClaudeBackend({ bin: fakeBin(CLAUDE_SIGNED_OUT, "exit 1").bin }));
+    expect(f.code).toBe("signed_out");
+    expect(f.message).toContain("`claude /login`");
+  });
+
+  test("Claude Code at its plan's limit is plan_limit, with the reset time", async () => {
+    const lines = [
+      { type: "system", subtype: "init", apiKeySource: "none" },
+      { type: "assistant", error: "rate_limit", message: { content: [] } },
+      {
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        result: "You’ve hit your limit · resets 3pm (Pacific/Honolulu)",
+      },
+    ];
+    const f = await failure(createClaudeBackend({ bin: fakeBin(lines, "exit 1").bin }));
+    expect(f.code).toBe("plan_limit");
+    expect(f.message).toContain(
+      "Your Claude plan has reached its usage limit (it resets 3pm (Pacific/Honolulu))",
+    );
+  });
+
+  test("a Claude turn that would bill an API key is api_key", async () => {
+    const lines = [{ type: "system", subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" }];
+    const f = await failure(createClaudeBackend({ bin: fakeBin(lines, "exec sleep 30").bin }));
+    expect(f.code).toBe("api_key");
+    expect(f.message).toContain("source: ANTHROPIC_API_KEY");
+  });
+
+  test("anything else is cli_failed: its exit, its last line without secrets, and the log", async () => {
+    const tail = `echo 'starting' >&2\necho 'boom: Bearer abc.def ANTHROPIC_API_KEY=sk-ant-0123456789abcdef' >&2\nexit 3`;
+    const backend = createClaudeBackend({ bin: fakeBin([], tail).bin, log: "/h/agent-worker.log" });
+    const f = await failure(backend);
+    expect(f.code).toBe("cli_failed");
+    expect(f.message).toStartWith("Claude Code exited (3) without finishing the turn: boom:");
+    expect(f.message).toContain("Check /h/agent-worker.log");
+    expect(f.message).not.toContain("abc.def");
+    expect(f.message).not.toContain("sk-ant-0123456789abcdef");
+  });
+
+  test("Codex signed out (401) is signed_out, naming codex login", async () => {
+    const events = [
+      { type: "turn.started" },
+      { type: "error", message: `Reconnecting... 1/5 (${CODEX_401})` },
+      { type: "turn.failed", error: { message: CODEX_401 } },
+    ];
+    const f = await failure(createCodexBackend({ bin: fakeBin(events, "exit 1").bin }));
+    expect(f.code).toBe("signed_out");
+    expect(f.message).toContain("`codex login`");
+  });
+
+  test("Codex at its plan's limit is plan_limit, with when to try again", async () => {
+    const limit =
+      "You’ve hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again in 2 hours 5 minutes.";
+    const events = [{ type: "turn.failed", error: { message: limit } }];
+    const f = await failure(createCodexBackend({ bin: fakeBin(events, "exit 1").bin }));
+    expect(f.code).toBe("plan_limit");
+    expect(f.message).toContain(
+      "ChatGPT plan has reached its usage limit (try again in 2 hours 5 minutes)",
+    );
+  });
+
+  test("a Codex turn that completes after a retried error succeeded", async () => {
+    const events = [
+      { type: "error", message: "Reconnecting... 1/5 (stream disconnected)" },
+      { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+    ];
+    const result = await createCodexBackend({ bin: fakeBin(events).bin }).run(turn().input);
+    expect(result.stopReason).toBe("end_turn");
+  });
+
+  test("reset times read in each CLI's words, and secrets never survive", () => {
+    expect(resetOf("Claude AI usage limit reached|1700000000")).toStartWith("it resets ");
+    expect(resetOf("try again at 3:05 PM.")).toBe("try again at 3:05 PM");
+    expect(resetOf("no time here")).toBeUndefined();
+    expect(redact("token eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJ4In0.sig and sk-proj-abcdefghij")).toBe(
+      "token [redacted] and [redacted]",
+    );
+  });
+});
+
+describe("the worker's ACP agent", () => {
+  const fake = (run: Backend["run"]): Backend => ({
+    id: "claude-code",
+    label: "Claude Code",
+    takesSystemPrompt: true,
+    toolsAreNimbleBrainOnly: true,
+    preflight: async () => ({ describe: "fake", plan: "Claude Max" }),
+    run,
+  });
+
+  async function connect(backend: Backend) {
+    const agent = createWorkerAgent(
+      backend,
+      createBridge(() => "http://127.0.0.1:1"),
+      "Claude Max",
+    );
+    const connection = acp.client({ name: "test" }).connect(agent);
+    const init = await connection.agent.request(acp.methods.agent.initialize, {
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: {},
+    });
+    const { sessionId } = await connection.agent.request(acp.methods.agent.session.new, {
+      cwd: "/",
+      mcpServers: [{ type: "acp", serverId: "s1", name: "nimblebrain" } as acp.McpServer],
+    });
+    return { connection, init, sessionId };
+  }
+
+  test("names its plan at initialize", async () => {
+    const { connection, init } = await connect(
+      fake(async () => ({
+        stopReason: "end_turn",
+        usage: { inputTokens: 0, outputTokens: 0 },
+        calls: [],
+      })),
+    );
+    expect(init._meta?.[PLAN_META_KEY]).toBe("Claude Max");
+    expect(init.agentInfo?.name).toBe("nimblebrain-subscription-claude-code");
+    connection.close();
+  });
+
+  test("a failed turn carries {code, message} for the runtime", async () => {
+    const { connection, sessionId } = await connect(
+      fake(async () => {
+        throw new TurnFailed(
+          "signed_out",
+          "Claude Code is signed out. Run `claude /login` in a terminal, then send your message again.",
+        );
+      }),
+    );
+    const err = await connection.agent
+      .request(acp.methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: "text", text: "hi" }],
+      })
+      .then(
+        () => undefined,
+        (e: unknown) => e as { data?: Record<string, unknown> },
+      );
+    expect(err?.data?.[FAILURE_META_KEY]).toEqual({
+      code: "signed_out",
+      message:
+        "Claude Code is signed out. Run `claude /login` in a terminal, then send your message again.",
+    });
+    connection.close();
+  });
+
+  test("an unexpected error is cli_failed, saying nothing of its internals", async () => {
+    const { connection, sessionId } = await connect(
+      fake(async () => {
+        throw new Error("internal path /secret/thing");
+      }),
+    );
+    const err = await connection.agent
+      .request(acp.methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: "text", text: "hi" }],
+      })
+      .then(
+        () => undefined,
+        (e: unknown) => e as { data?: Record<string, unknown> },
+      );
+    const f = err?.data?.[FAILURE_META_KEY] as { code: string; message: string };
+    expect(f.code).toBe("cli_failed");
+    expect(f.message).not.toContain("/secret/thing");
+    connection.close();
   });
 });

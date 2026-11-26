@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type * as acp from "@agentclientprotocol/sdk/unstable";
+import { classifyFailure } from "./failure.ts";
 import {
   type Account,
   type Backend,
@@ -31,7 +32,9 @@ import {
 
 const SERVER = "nimblebrain";
 
-export function createCodexBackend(opts: { bin?: string; model?: string } = {}): Backend {
+export function createCodexBackend(
+  opts: { bin?: string; model?: string; log?: string } = {},
+): Backend {
   const bin = opts.bin ?? "codex";
   return {
     id: "codex",
@@ -39,7 +42,7 @@ export function createCodexBackend(opts: { bin?: string; model?: string } = {}):
     takesSystemPrompt: false,
     toolsAreNimbleBrainOnly: false,
     preflight: () => codexPreflight(bin),
-    run: (input) => runCodex(bin, opts.model, input),
+    run: (input) => runCodex(bin, opts.model, input, opts.log),
   };
 }
 
@@ -62,7 +65,7 @@ export function codexAccount(out: string | undefined): Account {
     );
   }
   if (/chatgpt/i.test(out))
-    return { describe: "your ChatGPT plan (Sign in with ChatGPT, no API key)" };
+    return { describe: "your ChatGPT plan (Sign in with ChatGPT, no API key)", plan: "ChatGPT" };
   if (/api key/i.test(out)) {
     throw new BackendRefused(
       "api_key",
@@ -79,6 +82,7 @@ async function runCodex(
   bin: string,
   model: string | undefined,
   input: TurnInput,
+  log?: string,
 ): Promise<TurnResult> {
   const cwd = await mkdtemp(join(tmpdir(), "nb-codex-"));
   const args = [
@@ -107,21 +111,17 @@ async function runCodex(
     stderr = (stderr + d.toString()).slice(-4000);
   });
   const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
-  const failed = spawnFailure(child, "Codex");
+  const failed = spawnFailure(child, "codex");
 
   const translate = codexTranslator(input.emit);
   try {
     await Promise.race([readCodex(child.stdout, translate), failed]);
     const code = await Promise.race([exited, failed]);
     if (input.signal.aborted) return { stopReason: "cancelled", ...translate.totals() };
-    const failure = translate.failure();
-    if (failure) throw new Error(`Codex failed: ${failure}`);
-    if (!translate.completed()) {
-      throw new Error(
-        `Codex exited (${code}) without finishing the turn: ${stderr.trim().slice(-500)}`,
-      );
-    }
-    return { stopReason: "end_turn", ...translate.totals() };
+    // A turn that completed after a retried error ("Reconnecting... 1/5") succeeded.
+    if (translate.completed()) return { stopReason: "end_turn", ...translate.totals() };
+    const text = `${stderr}\n${translate.failure() ?? ""}`;
+    throw classifyFailure("codex", text, { exitCode: code, log });
   } finally {
     input.signal.removeEventListener("abort", kill);
     await rm(cwd, { recursive: true, force: true });
@@ -191,7 +191,7 @@ export function codexTranslator(emit: Emit) {
         return;
       case "turn.failed":
       case "error":
-        failed = event.error?.message ?? event.message ?? "unknown error";
+        failed = event.error?.message ?? event.message ?? failed;
         return;
     }
   };

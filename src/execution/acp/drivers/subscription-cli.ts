@@ -14,17 +14,49 @@
  *   identity provider, on one person's machine.
  */
 
-import type { AcpDriver, AcpOutcome, ReportedModelCall } from "../driver.ts";
+import type { AcpAgentFailure, AcpDriver, AcpOutcome, ReportedModelCall } from "../driver.ts";
 
 /** The worker's response key: every model call of the turn. */
 export const SUBSCRIPTION_USAGE_META_KEY = "nimblebrain-subscription/usage";
+/** The worker's `initialize` key: the plan its CLI is signed in to (`Claude Max`). */
+export const SUBSCRIPTION_PLAN_META_KEY = "nimblebrain-subscription/plan";
+/** The worker's `session/prompt` error key: why the turn failed, `{ code, message }`. */
+export const SUBSCRIPTION_FAILURE_META_KEY = "nimblebrain-subscription/failure";
+
+const TITLES = { "claude-code": "Claude Code", codex: "Codex" } as const;
 
 export function createSubscriptionCliDriver(cli: "claude-code" | "codex"): AcpDriver {
   return {
+    title: TITLES[cli],
+    // The worker is the `nimblebrain` CLI's; `up` starts it again.
+    unreachableFix:
+      "Start it on this machine with `npx nimblebrain up`, then send your message again.",
     capabilities: { spendGate: false, ownModel: `${cli}-subscription` },
     toolSurface: cli === "claude-code" ? "projection" : "mixed",
     outcome: subscriptionOutcome,
+    describe: subscriptionDescription,
+    agentFailure: subscriptionFailure,
   };
+}
+
+/** The plan the worker says its CLI bills, from its `initialize` answer. */
+export function subscriptionDescription(init: { _meta?: Record<string, unknown> | null }): {
+  plan?: string;
+} {
+  const plan = init._meta?.[SUBSCRIPTION_PLAN_META_KEY];
+  return typeof plan === "string" && plan.trim() ? { plan: plan.trim() } : {};
+}
+
+/** Why the worker says the turn failed, from its `session/prompt` error's `data`. */
+export function subscriptionFailure(err: unknown): AcpAgentFailure | undefined {
+  const data = (err as { data?: unknown } | null)?.data;
+  if (!data || typeof data !== "object") return undefined;
+  const failure = (data as Record<string, unknown>)[SUBSCRIPTION_FAILURE_META_KEY] as
+    | { code?: unknown; message?: unknown }
+    | undefined;
+  if (typeof failure?.code !== "string" || !/^[a-z_]{1,32}$/.test(failure.code)) return undefined;
+  if (typeof failure.message !== "string" || !failure.message.trim()) return undefined;
+  return { code: failure.code, message: failure.message.trim().slice(0, 500) };
 }
 
 export function subscriptionOutcome(response: {
