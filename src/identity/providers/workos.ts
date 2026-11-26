@@ -17,6 +17,7 @@ import {
   type UserIdentity,
   type VerifiedIdentity,
 } from "../provider.ts";
+import { REFRESH_COOKIE, readSignInCookie, SESSION_COOKIE } from "../session-cookies.ts";
 import type { OrgRole } from "../types.ts";
 import type { User, UserPreferences, UserStore } from "../user.ts";
 
@@ -128,18 +129,8 @@ function extractToken(req: Request): string | null {
   const authHeader = req.headers.get("authorization");
   if (authHeader?.startsWith("Bearer ")) return authHeader.slice(7);
 
-  // Fall back to nb_session cookie (set during auth code flow callback)
-  return cookieValue(req, "nb_session");
-}
-
-function cookieValue(req: Request, name: string): string | null {
-  const cookieHeader = req.headers.get("cookie");
-  if (!cookieHeader) return null;
-  for (const part of cookieHeader.split(";")) {
-    const trimmed = part.trim();
-    if (trimmed.startsWith(`${name}=`)) return trimmed.slice(name.length + 1);
-  }
-  return null;
+  // Fall back to the session cookie (set during auth code flow callback)
+  return readSignInCookie(req, SESSION_COOKIE);
 }
 
 /**
@@ -395,7 +386,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
    * Revoke the WorkOS session behind the request. Without this, AuthKit keeps
    * its own session, and the next sign-in resumes it without asking for
    * credentials. The session id (`sid`) comes from the access token when the
-   * request carries one, and otherwise from a token minted with `nb_refresh`:
+   * request carries one, and otherwise from a token minted with the refresh cookie:
    * the access-token cookie outlives no more than an hour, and a tab left idle
    * longer signs out with the refresh token alone.
    */
@@ -434,12 +425,12 @@ export class WorkosIdentityProvider implements IdentityProvider {
   }
 
   /**
-   * The `sid` of an access token WorkOS mints from the request's `nb_refresh`.
+   * The `sid` of an access token WorkOS mints from the request's refresh cookie.
    * WorkOS returns the token directly, so it needs no signature check. A
    * refresh token WorkOS rejects belongs to a session already over.
    */
   private async sessionIdFromRefreshToken(req: Request): Promise<string | null> {
-    const refreshToken = cookieValue(req, "nb_refresh");
+    const refreshToken = readSignInCookie(req, REFRESH_COOKIE);
     if (!refreshToken) return null;
     try {
       const { accessToken } = await this.refreshToken(refreshToken);

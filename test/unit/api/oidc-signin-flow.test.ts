@@ -1,8 +1,8 @@
 /**
  * The sign-in flow lives in the browser that started it.
  *
- * `GET /v1/auth/authorize` hands the browser an `nb_login` cookie holding the
- * flow's `state` and PKCE verifier, scoped to the callback path. The callback
+ * `GET /v1/auth/authorize` hands the browser a `__Host-nb_login` cookie holding
+ * the flow's `state` and PKCE verifier, which only this host can set. The callback
  * completes only when that cookie's state equals the returned `state`, redeems
  * the code with the cookie's verifier, and clears the cookie on every answer.
  * A callback URL opened in any other browser carries no cookie and is refused,
@@ -57,15 +57,15 @@ function makeProvider(fail = false): { provider: IdentityProvider; exchanges: Ex
   return { provider, exchanges };
 }
 
-function authorize(provider: IdentityProvider, url = `${ORIGIN}/v1/auth/authorize`, secure = true) {
-  return handleOidcAuthorize(new Request(url), provider, secure);
+function authorize(provider: IdentityProvider, url = `${ORIGIN}/v1/auth/authorize`) {
+  return handleOidcAuthorize(new Request(url), provider);
 }
 
-/** The `nb_login=<value>` pair from a response, or undefined. */
+/** The `__Host-nb_login=<value>` pair from a response, or undefined. */
 function flowCookie(res: Response): string | undefined {
   return res.headers
     .getSetCookie()
-    .find((c) => c.startsWith("nb_login="))
+    .find((c) => c.startsWith("__Host-nb_login="))
     ?.split(";")[0];
 }
 
@@ -74,7 +74,6 @@ function callback(provider: IdentityProvider, state: string, cookie?: string, co
   return handleOidcCallback(
     new Request(`${ORIGIN}/v1/auth/callback?code=${code}&state=${state}`, { headers }),
     provider,
-    true,
     APP,
   );
 }
@@ -85,17 +84,17 @@ function stateOf(res: Response): string {
 
 function expectFlowCleared(res: Response): void {
   expect(res.headers.getSetCookie()).toContain(
-    "nb_login=; HttpOnly; SameSite=Lax; Path=/v1/auth/callback; Max-Age=0; Secure",
+    "__Host-nb_login=; HttpOnly; SameSite=Lax; Path=/; Secure; Max-Age=0",
   );
 }
 
 function expectNoSession(res: Response): void {
-  expect(res.headers.getSetCookie().some((c) => c.startsWith("nb_session="))).toBe(false);
-  expect(res.headers.getSetCookie().some((c) => c.startsWith("nb_refresh="))).toBe(false);
+  expect(res.headers.getSetCookie().some((c) => c.startsWith("__Host-nb_session="))).toBe(false);
+  expect(res.headers.getSetCookie().some((c) => c.startsWith("__Host-nb_refresh="))).toBe(false);
 }
 
 describe("GET /v1/auth/authorize", () => {
-  test("sets a callback-scoped nb_login cookie whose state is the one sent to the IdP", async () => {
+  test("sets a host-only __Host-nb_login cookie whose state is the one sent to the IdP", async () => {
     const { provider } = makeProvider();
     const res = await authorize(provider);
 
@@ -106,23 +105,17 @@ describe("GET /v1/auth/authorize", () => {
 
     const [cookie] = res.headers.getSetCookie();
     expect(cookie).toMatch(
-      /^nb_login=[\w-]+\.[\w-]+; HttpOnly; SameSite=Lax; Path=\/v1\/auth\/callback; Max-Age=600; Secure$/,
+      /^__Host-nb_login=[\w-]+\.[\w-]+; HttpOnly; SameSite=Lax; Path=\/; Secure; Max-Age=600$/,
     );
-    const [cookieState] = (flowCookie(res) ?? "").slice("nb_login=".length).split(".");
+    const [cookieState] = (flowCookie(res) ?? "").slice("__Host-nb_login=".length).split(".");
     expect(cookieState).toBe(stateOf(res));
     expect(res.headers.get("cache-control")).toBe("no-store");
-  });
-
-  test("omits Secure when the server does not serve secure cookies", async () => {
-    const { provider } = makeProvider();
-    const res = await authorize(provider, `${ORIGIN}/v1/auth/authorize`, false);
-    expect(res.headers.getSetCookie()[0]).not.toContain("Secure");
   });
 
   test("the cookie's verifier is the one the challenge was derived from", async () => {
     const { provider } = makeProvider();
     const res = await authorize(provider);
-    const [, verifier] = (flowCookie(res) ?? "").slice("nb_login=".length).split(".");
+    const [, verifier] = (flowCookie(res) ?? "").slice("__Host-nb_login=".length).split(".");
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
     const expected = Buffer.from(digest).toString("base64url");
     expect(new URL(res.headers.get("location") ?? "").searchParams.get("code_challenge")).toBe(
@@ -177,10 +170,21 @@ describe("GET /v1/auth/callback", () => {
     expect(exchanges).toEqual([]);
   });
 
+  test("a flow under the unprefixed name is not read", async () => {
+    const { provider, exchanges } = makeProvider();
+    const begin = await authorize(provider);
+    const value = (flowCookie(begin) ?? "").slice("__Host-nb_login=".length);
+    const res = await callback(provider, stateOf(begin), `nb_login=${value}`);
+
+    expect(res.headers.get("location")).toBe(`${APP}?error=auth_failed`);
+    expectNoSession(res);
+    expect(exchanges).toEqual([]);
+  });
+
   test("a malformed cookie is refused", async () => {
     const { provider, exchanges } = makeProvider();
     const begin = await authorize(provider);
-    const res = await callback(provider, stateOf(begin), `nb_login=${stateOf(begin)}`);
+    const res = await callback(provider, stateOf(begin), `__Host-nb_login=${stateOf(begin)}`);
 
     expect(res.headers.get("location")).toBe(`${APP}?error=auth_failed`);
     expectNoSession(res);
@@ -191,15 +195,19 @@ describe("GET /v1/auth/callback", () => {
     const { provider, exchanges } = makeProvider();
     const begin = await authorize(provider);
     const cookie = flowCookie(begin) ?? "";
-    const [, verifier] = cookie.slice("nb_login=".length).split(".");
+    const [, verifier] = cookie.slice("__Host-nb_login=".length).split(".");
     const res = await callback(provider, stateOf(begin), `other=1; ${cookie}`);
 
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe(APP);
     expect(res.headers.get("cache-control")).toBe("no-store");
     const issued = res.headers.getSetCookie();
-    expect(issued.some((c) => c.startsWith("nb_session=token-for-the-code;"))).toBe(true);
-    expect(issued.some((c) => c.startsWith("nb_refresh=refresh-for-the-code;"))).toBe(true);
+    expect(issued).toContain(
+      "__Host-nb_session=token-for-the-code; HttpOnly; SameSite=Lax; Path=/; Secure; Max-Age=3600",
+    );
+    expect(issued).toContain(
+      "__Host-nb_refresh=refresh-for-the-code; HttpOnly; SameSite=Lax; Path=/; Secure; Max-Age=2592000",
+    );
     expectFlowCleared(res);
     expect(exchanges).toEqual([{ code: "the-code", verifier }]);
   });
@@ -222,7 +230,6 @@ describe("GET /v1/auth/callback", () => {
         headers: { cookie: flowCookie(begin) ?? "" },
       }),
       provider,
-      true,
       APP,
     );
     expect(res.headers.get("location")).toBe(`${APP}?error=auth_failed`);
@@ -237,7 +244,6 @@ describe("GET /v1/auth/callback", () => {
         headers: { cookie: flowCookie(begin) ?? "" },
       }),
       provider,
-      true,
       APP,
     );
     expect(res.status).toBe(400);

@@ -7,7 +7,7 @@ import { stub } from "../../helpers/stub.ts";
 /**
  * Unit coverage for `POST /v1/auth/logout`. Sign-out has to clear the browser's
  * cookies whether or not the access token is still valid: once it lapses,
- * `nb_refresh` is the only live credential, and leaving it in place lets the
+ * `__Host-nb_refresh` is the only live credential, and leaving it in place lets the
  * login screen's first bootstrap refresh straight back into a session. It also
  * ends the identity provider's session, or the next sign-in resumes that one.
  */
@@ -37,22 +37,22 @@ async function logout(
   return authRoutes(makeCtx(endSession)).request("/v1/auth/logout", {
     method: "POST",
     headers: {
-      cookie: "nb_session=lapsed-access-token; nb_refresh=live-refresh-token",
+      cookie: "__Host-nb_session=lapsed-access-token; __Host-nb_refresh=live-refresh-token",
       ...headers,
     },
   });
 }
 
 describe("POST /v1/auth/logout", () => {
-  test("clears both session cookies when the access token has lapsed", async () => {
+  test("clears both sign-in cookies when the access token has lapsed", async () => {
     const res = await logout({ "content-type": "application/json" });
 
     expect(res.status).toBe(200);
     const cleared = res.headers.getSetCookie();
-    expect(
-      cleared.filter((c) => c.startsWith("nb_session=;") && c.includes("Max-Age=0")),
-    ).toHaveLength(2);
-    expect(cleared).toContain("nb_refresh=; HttpOnly; SameSite=Lax; Path=/v1/auth; Max-Age=0");
+    expect(cleared).toEqual([
+      "__Host-nb_session=; HttpOnly; SameSite=Lax; Path=/; Secure; Max-Age=0",
+      "__Host-nb_refresh=; HttpOnly; SameSite=Lax; Path=/; Secure; Max-Age=0",
+    ]);
   });
 
   test("ends the identity provider's session for the request's credential", async () => {
@@ -61,7 +61,9 @@ describe("POST /v1/auth/logout", () => {
       seen.push(req.headers.get("cookie") ?? "");
     });
 
-    expect(seen).toEqual(["nb_session=lapsed-access-token; nb_refresh=live-refresh-token"]);
+    expect(seen).toEqual([
+      "__Host-nb_session=lapsed-access-token; __Host-nb_refresh=live-refresh-token",
+    ]);
   });
 
   test("clears the cookies when the provider fails to end its session", async () => {
@@ -71,7 +73,7 @@ describe("POST /v1/auth/logout", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.getSetCookie()).toContain(
-      "nb_refresh=; HttpOnly; SameSite=Lax; Path=/v1/auth; Max-Age=0",
+      "__Host-nb_refresh=; HttpOnly; SameSite=Lax; Path=/; Secure; Max-Age=0",
     );
   });
 

@@ -97,7 +97,7 @@ describe("declared header renames", () => {
     // The connector declares its renames. A browser posting to the hook URL
     // attaches the user's session cookie, which no rename may carry out.
     const headers = build(
-      { cookie: "nb_session=user-session" },
+      { cookie: "__Host-nb_session=user-session" },
       { renames: { cookie: "x-acme-cookie" } },
     );
     expect(headers.get("x-acme-cookie")).toBeNull();

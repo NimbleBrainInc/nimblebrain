@@ -9,8 +9,8 @@ import { readJson } from "../helpers/http.ts";
  * allows that origin, and nothing else changes.
  *
  * The provider here authenticates the way the web app's login does: the
- * `nb_session` cookie, set by the auth-code callback and renewed by
- * `/v1/auth/refresh` from `nb_refresh`. A browser attaches that cookie to a
+ * `__Host-nb_session` cookie, set by the auth-code callback and renewed by
+ * `/v1/auth/refresh` from `__Host-nb_refresh`. A browser attaches that cookie to a
  * form or `text/plain` post from another origin on the same site with no
  * preflight, which is the request the guard exists to refuse. A bearer token
  * stands in for a server caller.
@@ -48,7 +48,7 @@ const PARTNER = "https://partner.example.com";
 /** Another origin on the same site, not allowlisted. */
 const FOREIGN = "https://tenant-a.example.com";
 
-/** The web app's login: `nb_session` authenticates, the auth-code flow and refresh set it. */
+/** The web app's login: `__Host-nb_session` authenticates, the auth-code flow and refresh set it. */
 class CookieSessionProvider extends TestAuthAdapter {
   override readonly capabilities: ProviderCapabilities = {
     authCodeFlow: true,
@@ -72,7 +72,7 @@ class CookieSessionProvider extends TestAuthAdapter {
 
   override async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
     const cookies = req.headers.get("cookie") ?? "";
-    const hasSession = cookies.split(";").some((p) => p.trim() === `nb_session=${SESSION}`);
+    const hasSession = cookies.split(";").some((p) => p.trim() === `__Host-nb_session=${SESSION}`);
     if (!hasSession) return super.verifyRequest(req);
     return super.verifyRequest(
       new Request(req.url, { headers: { authorization: `Bearer ${API_KEY}` } }),
@@ -147,7 +147,10 @@ const FOREIGN_SOURCES: Source[] = [
 ];
 const PARTNER_SOURCE: Source = { site: "cross-site", origin: PARTNER };
 
-function browserHeaders(source: Source, cookie = `nb_session=${SESSION}`): Record<string, string> {
+function browserHeaders(
+  source: Source,
+  cookie = `__Host-nb_session=${SESSION}`,
+): Record<string, string> {
   const headers: Record<string, string> = { "Sec-Fetch-Site": source.site, Cookie: cookie };
   if (source.site === "same-origin") headers.Origin = PUBLIC_ORIGIN;
   if ("origin" in source) headers.Origin = source.origin;
@@ -209,10 +212,11 @@ const GUARDED: Array<{
   },
   {
     name: "POST /v1/auth/refresh",
-    send: (headers) => post("/v1/auth/refresh", { ...headers, Cookie: `nb_refresh=${REFRESH}` }),
+    send: (headers) =>
+      post("/v1/auth/refresh", { ...headers, Cookie: `__Host-nb_refresh=${REFRESH}` }),
     admitted: async (res) => {
       expect(res.status).toBe(200);
-      expect(res.headers.get("set-cookie")).toContain(`nb_session=${SESSION}`);
+      expect(res.headers.get("set-cookie")).toContain(`__Host-nb_session=${SESSION}`);
     },
   },
   {
@@ -220,7 +224,7 @@ const GUARDED: Array<{
     send: (headers) => post("/v1/auth/logout", headers, {}),
     admitted: async (res) => {
       expect(res.status).toBe(200);
-      expect(res.headers.get("set-cookie")).toContain("nb_session=;");
+      expect(res.headers.get("set-cookie")).toContain("__Host-nb_session=;");
     },
   },
   {
@@ -308,7 +312,7 @@ describe("the web app's own flows", () => {
     const state = new URL(authorize.headers.get("location") ?? "").searchParams.get("state");
     expect(state).toBeTruthy();
     const flowCookie = setCookies(authorize)
-      .find((c) => c.startsWith("nb_login="))
+      .find((c) => c.startsWith("__Host-nb_login="))
       ?.split(";")[0];
     expect(flowCookie).toBeTruthy();
 
@@ -320,17 +324,19 @@ describe("the web app's own flows", () => {
     });
     expect(callback.status).toBe(302);
     const issued = setCookies(callback);
-    expect(issued.some((c) => c.startsWith(`nb_session=${SESSION}`))).toBe(true);
-    expect(issued.some((c) => c.startsWith(`nb_refresh=${REFRESH}`))).toBe(true);
+    expect(issued.some((c) => c.startsWith(`__Host-nb_session=${SESSION}`))).toBe(true);
+    expect(issued.some((c) => c.startsWith(`__Host-nb_refresh=${REFRESH}`))).toBe(true);
 
-    // The web app's silent refresh: a same-origin POST carrying nb_refresh.
+    // The web app's silent refresh: a same-origin POST carrying __Host-nb_refresh.
     const refresh = await post("/v1/auth/refresh", {
       "Sec-Fetch-Site": "same-origin",
       Origin: PUBLIC_ORIGIN,
-      Cookie: `nb_refresh=${REFRESH}`,
+      Cookie: `__Host-nb_refresh=${REFRESH}`,
     });
     expect(refresh.status).toBe(200);
-    expect(setCookies(refresh).some((c) => c.startsWith(`nb_session=${SESSION}`))).toBe(true);
+    expect(setCookies(refresh).some((c) => c.startsWith(`__Host-nb_session=${SESSION}`))).toBe(
+      true,
+    );
   });
 
   it("cancels its own turn", async () => {

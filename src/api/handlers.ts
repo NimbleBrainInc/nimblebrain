@@ -18,6 +18,13 @@ import {
 } from "../host-resources/artifacts/index.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { RefreshTokenError } from "../identity/provider.ts";
+import {
+  LOGIN_COOKIE,
+  REFRESH_COOKIE,
+  readSignInCookie,
+  SESSION_COOKIE,
+  signInCookie,
+} from "../identity/session-cookies.ts";
 import { getAvailableModels } from "../model/catalog.ts";
 import { ModelNotQualifiedError } from "../model/model-id.ts";
 import { publicOrigin } from "../oauth/public-origin.ts";
@@ -1287,54 +1294,30 @@ export async function handleLogout(
     }
   }
   const res = json<AuthOkResponse>({ ok: true });
-  // Clear nb_session for both SameSite modes (covers Strict and Lax)
-  res.headers.append("Set-Cookie", "nb_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
-  res.headers.append("Set-Cookie", "nb_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
-  // Clear the provider refresh token
-  res.headers.append("Set-Cookie", "nb_refresh=; HttpOnly; SameSite=Lax; Path=/v1/auth; Max-Age=0");
+  res.headers.append("Set-Cookie", signInCookie(SESSION_COOKIE, "", 0));
+  res.headers.append("Set-Cookie", signInCookie(REFRESH_COOKIE, "", 0));
   return res;
 }
 
 // ── Sign-in flow state (in the browser that started it) ─────────
 
-/**
- * The sign-in flow cookie. It holds `<state>.<verifier>` and is scoped to the
- * callback path, so the browser sends it only when the identity provider
- * returns it there. The server keeps no per-flow state: any process can finish
- * a flow, and a callback opened in a browser that did not start the flow has no
- * cookie and is refused.
- */
-const LOGIN_FLOW_COOKIE = "nb_login";
-const LOGIN_FLOW_PATH = "/v1/auth/callback";
 /** Matches the identity provider's authorization-code lifetime. */
 const LOGIN_FLOW_MAX_AGE_S = 600;
 /** Query marker on the redirect to the canonical authorize URL, so it is followed at most once. */
 const CANONICAL_MARKER = "canonical";
 
-/** Build the `nb_login` Set-Cookie value (adds `Secure` when serving over HTTPS). */
-function loginFlowCookie(value: string, maxAge: number, secure: boolean): string {
-  const parts = [
-    `${LOGIN_FLOW_COOKIE}=${value}`,
-    "HttpOnly",
-    "SameSite=Lax",
-    `Path=${LOGIN_FLOW_PATH}`,
-    `Max-Age=${maxAge}`,
-  ];
-  if (secure) parts.push("Secure");
-  return parts.join("; ");
-}
-
-/** Read the `nb_login` flow from the request Cookie header, or null when absent or malformed. */
+/**
+ * Read the sign-in flow (`<state>.<verifier>`) from the login cookie, or null
+ * when absent or malformed. The server keeps no per-flow state: any process can
+ * finish a flow, and a callback opened in a browser that did not start the flow
+ * has no cookie and is refused.
+ */
 function readLoginFlowCookie(request: Request): { state: string; verifier: string } | null {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  for (const part of cookieHeader.split(";")) {
-    const trimmed = part.trim();
-    if (!trimmed.startsWith(`${LOGIN_FLOW_COOKIE}=`)) continue;
-    const [state, verifier, ...rest] = trimmed.slice(LOGIN_FLOW_COOKIE.length + 1).split(".");
-    if (!state || !verifier || rest.length > 0) return null;
-    return { state, verifier };
-  }
-  return null;
+  const value = readSignInCookie(request, LOGIN_COOKIE);
+  if (value === null) return null;
+  const [state, verifier, ...rest] = value.split(".");
+  if (!state || !verifier || rest.length > 0) return null;
+  return { state, verifier };
 }
 
 /** Constant-time string equality; unequal lengths compare false. */
@@ -1373,11 +1356,11 @@ function base64UrlEncode(bytes: Uint8Array): string {
 
 /**
  * Handle GET /v1/auth/authorize: generate the PKCE pair and the `state`, hand
- * both to the browser in the `nb_login` cookie, and redirect to the identity
+ * both to the browser in the login cookie, and redirect to the identity
  * provider.
  *
- * The flow runs on the canonical origin, where the callback and `nb_session`
- * live. A request on any other host is first sent to the canonical authorize
+ * The flow runs on the canonical origin, where the callback and the session
+ * cookie live. A request on any other host is first sent to the canonical authorize
  * URL, or the cookie would land on a host the callback never sees. The marker
  * on that redirect stops a second hop if the canonical host still does not
  * match (a proxy rewriting `Host`).
@@ -1385,7 +1368,6 @@ function base64UrlEncode(bytes: Uint8Array): string {
 export async function handleOidcAuthorize(
   request: Request,
   provider: IdentityProvider,
-  secureCookies: boolean,
 ): Promise<Response> {
   if (!provider.capabilities.authCodeFlow) {
     return apiError(400, "not_configured", "Auth code flow not configured");
@@ -1418,40 +1400,15 @@ export async function handleOidcAuthorize(
   const res = redirectTo(authUrl.toString());
   res.headers.append(
     "Set-Cookie",
-    loginFlowCookie(`${state}.${codeVerifier}`, LOGIN_FLOW_MAX_AGE_S, secureCookies),
+    signInCookie(LOGIN_COOKIE, `${state}.${codeVerifier}`, LOGIN_FLOW_MAX_AGE_S),
   );
   return res;
 }
 
-/** Build the `nb_session` Set-Cookie value (adds `Secure` when serving over HTTPS). */
-function sessionCookie(accessToken: string, secure: boolean): string {
-  const parts = [`nb_session=${accessToken}`, "HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=3600"];
-  if (secure) parts.push("Secure");
-  return parts.join("; ");
-}
-
-/** Build the `nb_refresh` Set-Cookie value (adds `Secure` when serving over HTTPS). */
-function refreshCookie(refreshToken: string, secure: boolean): string {
-  const parts = [
-    `nb_refresh=${refreshToken}`,
-    "HttpOnly",
-    "SameSite=Lax",
-    "Path=/v1/auth",
-    "Max-Age=2592000",
-  ];
-  if (secure) parts.push("Secure");
-  return parts.join("; ");
-}
-
-/** Read the `nb_refresh` token from the request Cookie header, or null. */
-function readRefreshCookie(request: Request): string | null {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  for (const part of cookieHeader.split(";")) {
-    const trimmed = part.trim();
-    if (trimmed.startsWith("nb_refresh=")) return trimmed.slice("nb_refresh=".length);
-  }
-  return null;
-}
+/** The session cookie's lifetime, matching the access token's. */
+const SESSION_MAX_AGE_S = 3600;
+/** The refresh cookie's lifetime. */
+const REFRESH_MAX_AGE_S = 2592000;
 
 /** Map a token-refresh failure to its HTTP response: rejected → 401, transient → 503. */
 function mapOidcRefreshError(err: unknown): Response {
@@ -1482,14 +1439,13 @@ function mapOidcRefreshError(err: unknown): Response {
 
 /**
  * Handle GET /v1/auth/callback: finish the flow only in the browser that
- * started it. The `nb_login` cookie's state must equal the returned `state`,
+ * started it. The login cookie's state must equal the returned `state`,
  * and the code is redeemed with the cookie's verifier. The cookie is single-use:
  * every answer clears it.
  */
 export async function handleOidcCallback(
   request: Request,
   provider: IdentityProvider,
-  secureCookies: boolean,
   appOrigin?: string,
 ): Promise<Response> {
   if (!provider.capabilities.authCodeFlow || !provider.exchangeCode) {
@@ -1502,7 +1458,7 @@ export async function handleOidcCallback(
   const fallbackRedirect = appOrigin ?? url.origin;
   const flow = readLoginFlowCookie(request);
   const clearFlow = (res: Response): Response => {
-    res.headers.append("Set-Cookie", loginFlowCookie("", 0, secureCookies));
+    res.headers.append("Set-Cookie", signInCookie(LOGIN_COOKIE, "", 0));
     res.headers.set("Cache-Control", "no-store");
     return res;
   };
@@ -1534,9 +1490,15 @@ export async function handleOidcCallback(
     const result = await provider.exchangeCode(code, flow.verifier);
 
     const res = redirectTo(fallbackRedirect);
-    res.headers.append("Set-Cookie", sessionCookie(result.accessToken, secureCookies));
+    res.headers.append(
+      "Set-Cookie",
+      signInCookie(SESSION_COOKIE, result.accessToken, SESSION_MAX_AGE_S),
+    );
     if (result.refreshToken) {
-      res.headers.append("Set-Cookie", refreshCookie(result.refreshToken, secureCookies));
+      res.headers.append(
+        "Set-Cookie",
+        signInCookie(REFRESH_COOKIE, result.refreshToken, REFRESH_MAX_AGE_S),
+      );
     }
     return clearFlow(res);
   } catch (err) {
@@ -1551,13 +1513,12 @@ export async function handleOidcCallback(
 export async function handleOidcRefresh(
   request: Request,
   provider: IdentityProvider,
-  secureCookies: boolean,
 ): Promise<Response> {
   if (!provider.capabilities.tokenRefresh || !provider.refreshToken) {
     return apiError(400, "not_configured", "OIDC auth not configured");
   }
 
-  const refreshToken = readRefreshCookie(request);
+  const refreshToken = readSignInCookie(request, REFRESH_COOKIE);
   if (!refreshToken) {
     return apiError(401, "no_refresh_token", "No refresh token");
   }
@@ -1566,10 +1527,16 @@ export async function handleOidcRefresh(
     const result = await provider.refreshToken(refreshToken);
 
     const res = json<AuthOkResponse>({ ok: true });
-    res.headers.set("Set-Cookie", sessionCookie(result.accessToken, secureCookies));
+    res.headers.set(
+      "Set-Cookie",
+      signInCookie(SESSION_COOKIE, result.accessToken, SESSION_MAX_AGE_S),
+    );
 
     if (result.refreshToken) {
-      res.headers.append("Set-Cookie", refreshCookie(result.refreshToken, secureCookies));
+      res.headers.append(
+        "Set-Cookie",
+        signInCookie(REFRESH_COOKIE, result.refreshToken, REFRESH_MAX_AGE_S),
+      );
     }
 
     return res;
