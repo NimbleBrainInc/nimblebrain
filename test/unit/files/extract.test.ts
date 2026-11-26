@@ -1,7 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import * as XLSX from "@e965/xlsx";
 import { extractText as unpdfExtractText } from "unpdf";
 import { extractText } from "../../../src/files/extract.ts";
+import { log } from "../../../src/observability/log.ts";
 import {
   DOCX_MIME,
   docxWithParagraphs,
@@ -212,6 +214,20 @@ async function wholeDocumentPdfText(data: Buffer, maxSize: number): Promise<stri
   return `${Buffer.from(text, "utf-8").subarray(0, maxSize).toString("utf-8")}\n[... truncated at ${Math.round(maxSize / 1024)} KB]`;
 }
 
+/**
+ * Whether the precheck refused `run`'s file, as opposed to a parser failing on
+ * it after inflating it.
+ */
+async function refusedBeforeParsing<T>(run: () => Promise<T>): Promise<boolean> {
+  const info = spyOn(log, "info");
+  try {
+    await run();
+    return info.mock.calls.some(([msg]) => String(msg).includes("not extracted"));
+  } finally {
+    info.mockRestore();
+  }
+}
+
 const REHYDRATE_SUFFIX = { truncatedSuffix: (kb: number) => `\n[... truncated at ${kb} KB]` };
 
 describe("extractText bounds the work by the text it keeps", () => {
@@ -233,25 +249,40 @@ describe("extractText bounds the work by the text it keeps", () => {
     expect(rssMb).toBeLessThan(50);
   });
 
-  // A file that understates its sizes passes the precheck, so the parsers must
-  // refuse to inflate past what was declared.
+  // A file that understates its sizes passes the declared sums, and is refused
+  // when an entry inflates past its declared size, before any parser reads it.
+  // Understating only the large part leaves the small parts parseable.
   for (const where of ["everywhere", "central"] as const) {
-    test(`an XLSX bomb that understates its sizes (${where}) yields no text`, async () => {
-      const bomb = xlsxWithRows(1_000_000, { understate: { size: 1000, where } });
-      const { result, ms, rssMb } = await measured(() => extractText(bomb, XLSX_MIME));
-      expect(result?.text ?? "").toBe("");
-      expect(ms).toBeLessThan(1000);
-      expect(rssMb).toBeLessThan(50);
-    });
+    for (const entry of [undefined, "large part"] as const) {
+      const which = entry ? `${where}, large part only` : where;
+      test(`an XLSX bomb that understates its sizes (${which}) is refused`, async () => {
+        const bomb = xlsxWithRows(1_000_000, {
+          understate: { size: 1000, where, entry: entry && "xl/worksheets/sheet1.xml" },
+        });
+        const { result, rssMb } = await measured(() => extractText(bomb, XLSX_MIME));
+        expect(result).toBeNull();
+        expect(rssMb).toBeLessThan(50);
+        expect(await refusedBeforeParsing(() => extractText(bomb, XLSX_MIME))).toBe(true);
+      });
 
-    test(`a DOCX bomb that understates its sizes (${where}) yields no text`, async () => {
-      const bomb = docxWithParagraphs(1_000_000, { understate: { size: 1000, where } });
-      const { result, ms, rssMb } = await measured(() => extractText(bomb, DOCX_MIME));
-      expect(result).toBeNull();
-      expect(ms).toBeLessThan(1000);
-      expect(rssMb).toBeLessThan(50);
-    });
+      test(`a DOCX bomb that understates its sizes (${which}) is refused`, async () => {
+        const bomb = docxWithParagraphs(1_000_000, {
+          understate: { size: 1000, where, entry: entry && "word/document.xml" },
+        });
+        const { result, rssMb } = await measured(() => extractText(bomb, DOCX_MIME));
+        expect(result).toBeNull();
+        expect(rssMb).toBeLessThan(50);
+        expect(await refusedBeforeParsing(() => extractText(bomb, DOCX_MIME))).toBe(true);
+      });
+    }
   }
+
+  test("a zip whose end record miscounts its entries is refused", async () => {
+    expect(
+      await extractText(docxWithParagraphs(6_000, { entryCount: 0 }), DOCX_MIME, 10_000),
+    ).toBeNull();
+    expect(await extractText(docxWithParagraphs(10, { entryCount: 2 }), DOCX_MIME)).toBeNull();
+  });
 
   // The budget follows maxSize: at 10,000 bytes of text the XML budget is
   // 256 KiB + 128 x 10,000 (XLSX, ~17,500 rows of 88 bytes) and
@@ -277,13 +308,23 @@ describe("extractText bounds the work by the text it keeps", () => {
     expect(result).toBeNull();
   });
 
-  test("XLSX output with sheetRows is the whole sheet's output, truncated", async () => {
+  test("XLSX output is the whole sheet's output, truncated", async () => {
     // 3,000 rows of 40 characters pass a 2,000-byte cap long before the last row.
     const result = await extractText(xlsxWithRows(3_000), XLSX_MIME, 2_000);
     const full = `${"a".repeat(40)}\n`.repeat(3_000).slice(0, -1);
     expect(result?.text).toBe(
       `${full.slice(0, 2_000)}\n[... truncated at 2 KB — use files__read for full content]`,
     );
+  });
+
+  test("a sheet whose data starts far down extracts whole within a small maxSize", async () => {
+    const sheet = XLSX.utils.aoa_to_sheet([["hello"]], { origin: "A100" });
+    sheet["!ref"] = "A100:A100";
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, "S");
+    const data = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
+    expect(XLSX.utils.sheet_to_csv(sheet)).toBe("hello");
+    expect(await extractText(data, XLSX_MIME, 20)).toEqual({ text: "hello", truncated: false });
   });
 
   test("single-page and multi-page PDFs extract exactly as the whole-document read did", async () => {

@@ -1,3 +1,5 @@
+import { promisify } from "node:util";
+import { inflateRaw } from "node:zlib";
 import * as XLSX from "@e965/xlsx";
 import mammoth from "mammoth";
 import { getDocumentProxy } from "unpdf";
@@ -124,7 +126,7 @@ export async function extractText(
   } else if (bare === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
     extractor = () => extractDocx(data, maxSize, options);
   } else if (bare === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
-    extractor = async () => extractXlsx(data, maxSize, options);
+    extractor = () => extractXlsx(data, maxSize, options);
   }
   // Images and everything else: not extractable
   if (!extractor) return null;
@@ -142,23 +144,40 @@ export async function extractText(
   });
 }
 
+const inflateRawAsync = promisify(inflateRaw);
+
 /**
  * True when a zip's central directory declares no more than `xmlBudget`
  * uncompressed bytes of XML parts and `OOXML_MAX_INFLATED_BYTES` in all,
- * across at most `OOXML_MAX_ENTRIES` entries. Reads only the directory, so it
- * costs nothing however large the archive claims to be.
+ * across at most `OOXML_MAX_ENTRIES` entries, and every entry inflates to no
+ * more than its declared size.
  *
- * The declared sizes can be trusted as an upper bound for these parsers: a
- * file that understates an entry's size fails to parse (JSZip, under mammoth,
- * throws on the mismatch) or yields nothing (SheetJS), rather than inflating
- * past the declared size. ZIP64, multi-disk, and malformed directories are
- * refused.
+ * The declared sums are checked first, from the directory alone, so an archive
+ * that declares too much costs nothing. The parsers do not stop at a declared
+ * size (they inflate an entry in full and compare afterwards), so each entry is
+ * then inflated once here with its declared size as the output limit; the
+ * inflate stops at that limit, which the sums above bound. The directory must
+ * fill the space between its offset and the end record, and the end record must
+ * end the file, so every parser reads the same entries this one counted. ZIP64,
+ * multi-disk, malformed directories, and compression methods other than stored
+ * and deflate are refused.
  */
-function ooxmlWithinBudget(data: Buffer, xmlBudget: number): boolean {
+async function ooxmlWithinBudget(data: Buffer, xmlBudget: number): Promise<boolean> {
   const directory = findCentralDirectory(data);
   if (!directory) return false;
-  const sizes = declaredSizes(data, directory);
-  return sizes !== null && sizes.xml <= xmlBudget && sizes.total <= OOXML_MAX_INFLATED_BYTES;
+  const entries = centralEntries(data, directory);
+  if (!entries) return false;
+  let xml = 0;
+  let total = 0;
+  for (const entry of entries) {
+    if (entry.xml) xml += entry.uncompressed;
+    total += entry.uncompressed;
+  }
+  if (xml > xmlBudget || total > OOXML_MAX_INFLATED_BYTES) return false;
+  for (const entry of entries) {
+    if (!(await inflatesWithinDeclared(data, entry))) return false;
+  }
+  return true;
 }
 
 interface CentralDirectory {
@@ -167,8 +186,17 @@ interface CentralDirectory {
   entries: number;
 }
 
+interface CentralEntry {
+  method: number;
+  compressed: number;
+  uncompressed: number;
+  localOffset: number;
+  xml: boolean;
+}
+
 const EOCD_SIZE = 22;
 const CENTRAL_HEADER_SIZE = 46;
+const LOCAL_HEADER_SIZE = 30;
 
 /** Locate the central directory from the end-of-central-directory record. */
 function findCentralDirectory(data: Buffer): CentralDirectory | null {
@@ -183,52 +211,83 @@ function findCentralDirectory(data: Buffer): CentralDirectory | null {
   if (eocd < 0) return null;
   // A ZIP64 locator sits right before the EOCD.
   if (eocd >= 20 && data.readUInt32LE(eocd - 20) === 0x07064b50) return null;
+  if (eocd + EOCD_SIZE + data.readUInt16LE(eocd + 20) !== data.length) return null;
   const multiDisk = data.readUInt16LE(eocd + 4) !== 0 || data.readUInt16LE(eocd + 6) !== 0;
   const entries = data.readUInt16LE(eocd + 10);
   const size = data.readUInt32LE(eocd + 12);
   const offset = data.readUInt32LE(eocd + 16);
-  if (multiDisk || entries === 0xffff || entries > OOXML_MAX_ENTRIES) return null;
-  if (size === 0xffffffff || offset === 0xffffffff || offset + size > eocd) return null;
-  return { offset, end: offset + size, entries };
+  if (multiDisk || entries !== data.readUInt16LE(eocd + 8) || entries > OOXML_MAX_ENTRIES) {
+    return null;
+  }
+  if (offset + size !== eocd) return null;
+  return { offset, end: eocd, entries };
 }
 
-/** Sum the declared uncompressed sizes: XML parts, and every entry. */
-function declaredSizes(
-  data: Buffer,
-  directory: CentralDirectory,
-): { xml: number; total: number } | null {
-  let xml = 0;
-  let total = 0;
+/** The directory's entries, which must fill it exactly. */
+function centralEntries(data: Buffer, directory: CentralDirectory): CentralEntry[] | null {
+  const entries: CentralEntry[] = [];
   let p = directory.offset;
   for (let i = 0; i < directory.entries; i++) {
     if (p + CENTRAL_HEADER_SIZE > directory.end || data.readUInt32LE(p) !== 0x02014b50) {
       return null;
     }
+    const compressed = data.readUInt32LE(p + 20);
     const uncompressed = data.readUInt32LE(p + 24);
-    if (data.readUInt32LE(p + 20) === 0xffffffff || uncompressed === 0xffffffff) return null;
+    if (compressed === 0xffffffff || uncompressed === 0xffffffff) return null;
     const nameStart = p + CENTRAL_HEADER_SIZE;
     const nameEnd = nameStart + data.readUInt16LE(p + 28);
     const next = nameEnd + data.readUInt16LE(p + 30) + data.readUInt16LE(p + 32);
     if (next > directory.end) return null;
     const name = data.toString("latin1", nameStart, nameEnd).toLowerCase();
-    if (name.endsWith(".xml") || name.endsWith(".rels") || name.endsWith(".vml")) {
-      xml += uncompressed;
-    }
-    total += uncompressed;
+    entries.push({
+      method: data.readUInt16LE(p + 10),
+      compressed,
+      uncompressed,
+      localOffset: data.readUInt32LE(p + 42),
+      xml: name.endsWith(".xml") || name.endsWith(".rels") || name.endsWith(".vml"),
+    });
     p = next;
   }
-  return { xml, total };
+  return p === directory.end ? entries : null;
 }
 
-function refuseOversized(kind: string, data: Buffer, xmlBudget: number): boolean {
-  if (ooxmlWithinBudget(data, xmlBudget)) return false;
-  log.info(
-    `[files/extract] ${kind} not extracted: its declared size exceeds the extraction budget`,
-    {
-      bytes: data.length,
-      xmlBudget,
-    },
-  );
+/**
+ * True when the entry's data, read from its local header the way the parsers
+ * read it, yields no more than the directory declares. A deflate stream ends
+ * itself, so inflating from the data's start to the end of the file yields what
+ * any parser gets from it.
+ */
+async function inflatesWithinDeclared(data: Buffer, entry: CentralEntry): Promise<boolean> {
+  const local = entry.localOffset;
+  if (local + LOCAL_HEADER_SIZE > data.length || data.readUInt32LE(local) !== 0x04034b50) {
+    return false;
+  }
+  if (data.readUInt16LE(local + 8) !== entry.method) return false;
+  const start =
+    local + LOCAL_HEADER_SIZE + data.readUInt16LE(local + 26) + data.readUInt16LE(local + 28);
+  if (start > data.length) return false;
+  if (entry.method === 0) {
+    return (
+      entry.compressed <= entry.uncompressed && data.readUInt32LE(local + 18) <= entry.uncompressed
+    );
+  }
+  if (entry.method !== 8) return false;
+  try {
+    const out = await inflateRawAsync(data.subarray(start), {
+      maxOutputLength: Math.max(1, entry.uncompressed),
+    });
+    return out.length <= entry.uncompressed;
+  } catch {
+    return false;
+  }
+}
+
+async function refuseOversized(kind: string, data: Buffer, xmlBudget: number): Promise<boolean> {
+  if (await ooxmlWithinBudget(data, xmlBudget)) return false;
+  log.info(`[files/extract] ${kind} not extracted: its size exceeds the extraction budget`, {
+    bytes: data.length,
+    xmlBudget,
+  });
   return true;
 }
 
@@ -368,7 +427,11 @@ async function extractDocx(
   options: ExtractOptions = {},
 ): Promise<Extracted | null> {
   if (
-    refuseOversized("DOCX", data, OOXML_BASE_XML_BYTES + DOCX_XML_BUDGET_PER_OUTPUT_BYTE * maxSize)
+    await refuseOversized(
+      "DOCX",
+      data,
+      OOXML_BASE_XML_BYTES + DOCX_XML_BUDGET_PER_OUTPUT_BYTE * maxSize,
+    )
   )
     return null;
   try {
@@ -406,30 +469,29 @@ async function extractDocx(
  * is not an escape: npm's `xlsx` stopped at 0.18.5 and is itself unpatched,
  * and a `cdn.sheetjs.com` tarball dependency is invisible to `bun audit` too.
  *
- * `sheetRows` stops the parse after `maxSize + 2` rows. Every CSV row costs at
- * least its newline, so those rows already pass `maxSize`, and the truncated
- * output is byte-identical to parsing the whole sheet. SheetJS still inflates
- * the whole sheet XML, which is why the precheck runs first.
+ * The whole sheet is parsed: the precheck bounds its XML, and a row cap would
+ * count worksheet rows, not CSV rows, so it would drop a sheet whose data
+ * starts below the cap.
  */
-function extractXlsx(
+async function extractXlsx(
   data: Buffer,
   maxSize: number,
   options: ExtractOptions = {},
-): Extracted | null {
+): Promise<Extracted | null> {
   try {
     // Validate XLSX magic bytes (PK zip signature)
     if (data.length < 4 || data[0] !== 0x50 || data[1] !== 0x4b) {
       return null;
     }
     if (
-      refuseOversized(
+      await refuseOversized(
         "XLSX",
         data,
         OOXML_BASE_XML_BYTES + XLSX_XML_BUDGET_PER_OUTPUT_BYTE * maxSize,
       )
     )
       return null;
-    const workbook = XLSX.read(data, { type: "buffer", dense: true, sheetRows: maxSize + 2 });
+    const workbook = XLSX.read(data, { type: "buffer", dense: true });
     const firstSheetName = workbook.SheetNames[0];
     if (!firstSheetName) return null;
     const sheet = workbook.Sheets[firstSheetName];

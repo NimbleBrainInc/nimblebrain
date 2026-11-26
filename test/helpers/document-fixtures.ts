@@ -11,11 +11,13 @@ export const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsh
 
 export interface ZipOptions {
   /**
-   * Write this as every entry's uncompressed size instead of the real one:
-   * `everywhere` in the local and central headers, `central` in the central
-   * directory only.
+   * Write this as every entry's uncompressed size instead of the real one
+   * (only the entry named `entry`, when given): `everywhere` in the local and
+   * central headers, `central` in the central directory only.
    */
-  understate?: { size: number; where: "everywhere" | "central" };
+  understate?: { size: number; where: "everywhere" | "central"; entry?: string };
+  /** Write this as the end record's entry counts instead of the real one. */
+  entryCount?: number;
 }
 
 /** A deflated zip of `entries`, in order. */
@@ -28,7 +30,10 @@ export function buildZip(entries: Record<string, string | Buffer>, options: ZipO
     const deflated = deflateRawSync(raw);
     const nameBytes = Buffer.from(name);
     const crc = Bun.hash.crc32(raw);
-    const lie = options.understate;
+    const lie =
+      options.understate?.entry === undefined || options.understate.entry === name
+        ? options.understate
+        : undefined;
     const localSize = lie?.where === "everywhere" ? lie.size : raw.length;
     const centralSize = lie ? lie.size : raw.length;
 
@@ -61,8 +66,9 @@ export function buildZip(entries: Record<string, string | Buffer>, options: ZipO
   const directory = Buffer.concat(centrals);
   const eocd = Buffer.alloc(22);
   eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(Object.keys(entries).length, 8);
-  eocd.writeUInt16LE(Object.keys(entries).length, 10);
+  const count = options.entryCount ?? Object.keys(entries).length;
+  eocd.writeUInt16LE(count, 8);
+  eocd.writeUInt16LE(count, 10);
   eocd.writeUInt32LE(directory.length, 12);
   eocd.writeUInt32LE(offset, 16);
   return Buffer.concat([...locals, directory, eocd]);
