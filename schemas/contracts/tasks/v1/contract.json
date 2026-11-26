@@ -92,7 +92,7 @@
     },
     "cancel": {
       "visibility": "public",
-      "unattended": "allowed",
+      "unattended": "refused",
       "input": {
         "$ref": "#/$defs/cancel_input"
       },
@@ -192,16 +192,6 @@
         "$ref": "#/$defs/end_run_output"
       }
     },
-    "check_runs": {
-      "visibility": "private",
-      "unattended": "refused",
-      "input": {
-        "$ref": "#/$defs/check_runs_input"
-      },
-      "output": {
-        "$ref": "#/$defs/check_runs_output"
-      }
-    },
     "offer_event": {
       "visibility": "private",
       "unattended": "refused",
@@ -210,16 +200,6 @@
       },
       "output": {
         "$ref": "#/$defs/offer_event_output"
-      }
-    },
-    "expire": {
-      "visibility": "private",
-      "unattended": "refused",
-      "input": {
-        "$ref": "#/$defs/expire_input"
-      },
-      "output": {
-        "$ref": "#/$defs/expire_output"
       }
     },
     "delete_workspace": {
@@ -583,110 +563,51 @@
               "type": "string"
             },
             "schedule": {
-              "oneOf": [
-                {
+              "description": "What fires the task, in the form it was written.",
+              "type": "object",
+              "properties": {
+                "cron": {
+                  "type": "string"
+                },
+                "timezone": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                },
+                "intervalMs": {
+                  "type": "number"
+                },
+                "match": {
                   "type": "object",
-                  "required": [
-                    "cron",
-                    "timezone"
-                  ],
                   "properties": {
-                    "cron": {
-                      "minLength": 1,
-                      "description": "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
+                    "source": {
                       "type": "string"
                     },
-                    "timezone": {
-                      "minLength": 1,
-                      "description": "The IANA timezone the cron is read in. Required with `cron`.",
+                    "name": {
                       "type": "string"
-                    }
-                  }
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "at"
-                  ],
-                  "properties": {
-                    "at": {
-                      "format": "date-time",
-                      "description": "Fires once at this instant.",
+                    },
+                    "level": {
+                      "description": "Known values: info, attention, urgent. Any other is unknown (CONTRACT.md §4).",
                       "type": "string"
                     }
                   }
                 },
-                {
-                  "type": "object",
-                  "required": [
-                    "intervalMs"
-                  ],
-                  "properties": {
-                    "intervalMs": {
-                      "minimum": 60000,
-                      "description": "Recurs every this many ms. Min 60000.",
-                      "type": "integer"
-                    }
-                  }
+                "debounceMs": {
+                  "type": "number"
                 },
-                {
-                  "type": "object",
-                  "required": [
-                    "match"
-                  ],
-                  "properties": {
-                    "match": {
-                      "additionalProperties": false,
-                      "type": "object",
-                      "properties": {
-                        "source": {
-                          "maxLength": 200,
-                          "description": "Exact connector server name. Omit to match every source in this workspace.",
-                          "type": "string"
-                        },
-                        "name": {
-                          "pattern": "^[a-zA-Z0-9._*-]{1,200}$",
-                          "description": "Glob over the event name the server chose. Omit to match every name.",
-                          "type": "string"
-                        },
-                        "level": {
-                          "type": "string",
-                          "enum": [
-                            "info",
-                            "attention",
-                            "urgent"
-                          ],
-                          "description": "Minimum level, not an exact match."
-                        }
-                      }
-                    },
-                    "debounceMs": {
-                      "minimum": 1000,
-                      "maximum": 900000,
-                      "description": "ms that matching notifications coalesce into one run. Default 30000.",
-                      "type": "integer"
-                    },
-                    "maxFiresPerHour": {
-                      "minimum": 1,
-                      "maximum": 60,
-                      "description": "Max runs per hour before the task disables. Default 12.",
-                      "type": "integer"
-                    }
-                  }
+                "maxFiresPerHour": {
+                  "type": "number"
                 }
-              ],
-              "description": "What fires the task, as it was written."
+              }
             },
             "scheduleHuman": {
               "description": "The schedule in words, e.g. \"Weekdays at 8:00 AM HST\".",
               "type": "string"
             },
             "kind": {
-              "type": "string",
-              "enum": [
-                "saved",
-                "oneoff"
-              ]
+              "description": "Known values: saved, oneoff. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "onceDone": {
               "type": "object",
@@ -699,11 +620,8 @@
                   "type": "string"
                 },
                 "outcome": {
-                  "type": "string",
-                  "enum": [
-                    "ran",
-                    "missed"
-                  ]
+                  "description": "Known values: ran, missed. Any other is unknown (CONTRACT.md §4).",
+                  "type": "string"
                 }
               }
             },
@@ -744,14 +662,8 @@
               "type": "string"
             },
             "thinkingEffort": {
-              "type": "string",
-              "enum": [
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-                "max"
-              ]
+              "description": "Known values: low, medium, high, xhigh, max. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "tokenBudget": {
               "type": "object",
@@ -763,11 +675,8 @@
                   "type": "number"
                 },
                 "period": {
-                  "type": "string",
-                  "enum": [
-                    "daily",
-                    "monthly"
-                  ]
+                  "description": "Known values: daily, monthly. Any other is unknown (CONTRACT.md §4).",
+                  "type": "string"
                 }
               }
             },
@@ -802,17 +711,8 @@
               "type": "string"
             },
             "lastRunLabel": {
-              "type": "string",
-              "enum": [
-                "Succeeded",
-                "Poor result",
-                "Needs review",
-                "Failed",
-                "Skipped",
-                "Cancelled",
-                "Queued",
-                "Running"
-              ]
+              "description": "Known values: Succeeded, Poor result, Needs review, Failed, Skipped, Cancelled, Queued, Running. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "nextRunAt": {
               "type": "string"
@@ -1179,110 +1079,51 @@
               "type": "string"
             },
             "schedule": {
-              "oneOf": [
-                {
+              "description": "What fires the task, in the form it was written.",
+              "type": "object",
+              "properties": {
+                "cron": {
+                  "type": "string"
+                },
+                "timezone": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                },
+                "intervalMs": {
+                  "type": "number"
+                },
+                "match": {
                   "type": "object",
-                  "required": [
-                    "cron",
-                    "timezone"
-                  ],
                   "properties": {
-                    "cron": {
-                      "minLength": 1,
-                      "description": "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
+                    "source": {
                       "type": "string"
                     },
-                    "timezone": {
-                      "minLength": 1,
-                      "description": "The IANA timezone the cron is read in. Required with `cron`.",
+                    "name": {
                       "type": "string"
-                    }
-                  }
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "at"
-                  ],
-                  "properties": {
-                    "at": {
-                      "format": "date-time",
-                      "description": "Fires once at this instant.",
+                    },
+                    "level": {
+                      "description": "Known values: info, attention, urgent. Any other is unknown (CONTRACT.md §4).",
                       "type": "string"
                     }
                   }
                 },
-                {
-                  "type": "object",
-                  "required": [
-                    "intervalMs"
-                  ],
-                  "properties": {
-                    "intervalMs": {
-                      "minimum": 60000,
-                      "description": "Recurs every this many ms. Min 60000.",
-                      "type": "integer"
-                    }
-                  }
+                "debounceMs": {
+                  "type": "number"
                 },
-                {
-                  "type": "object",
-                  "required": [
-                    "match"
-                  ],
-                  "properties": {
-                    "match": {
-                      "additionalProperties": false,
-                      "type": "object",
-                      "properties": {
-                        "source": {
-                          "maxLength": 200,
-                          "description": "Exact connector server name. Omit to match every source in this workspace.",
-                          "type": "string"
-                        },
-                        "name": {
-                          "pattern": "^[a-zA-Z0-9._*-]{1,200}$",
-                          "description": "Glob over the event name the server chose. Omit to match every name.",
-                          "type": "string"
-                        },
-                        "level": {
-                          "type": "string",
-                          "enum": [
-                            "info",
-                            "attention",
-                            "urgent"
-                          ],
-                          "description": "Minimum level, not an exact match."
-                        }
-                      }
-                    },
-                    "debounceMs": {
-                      "minimum": 1000,
-                      "maximum": 900000,
-                      "description": "ms that matching notifications coalesce into one run. Default 30000.",
-                      "type": "integer"
-                    },
-                    "maxFiresPerHour": {
-                      "minimum": 1,
-                      "maximum": 60,
-                      "description": "Max runs per hour before the task disables. Default 12.",
-                      "type": "integer"
-                    }
-                  }
+                "maxFiresPerHour": {
+                  "type": "number"
                 }
-              ],
-              "description": "What fires the task, as it was written."
+              }
             },
             "scheduleHuman": {
               "description": "The schedule in words, e.g. \"Weekdays at 8:00 AM HST\".",
               "type": "string"
             },
             "kind": {
-              "type": "string",
-              "enum": [
-                "saved",
-                "oneoff"
-              ]
+              "description": "Known values: saved, oneoff. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "onceDone": {
               "type": "object",
@@ -1295,11 +1136,8 @@
                   "type": "string"
                 },
                 "outcome": {
-                  "type": "string",
-                  "enum": [
-                    "ran",
-                    "missed"
-                  ]
+                  "description": "Known values: ran, missed. Any other is unknown (CONTRACT.md §4).",
+                  "type": "string"
                 }
               }
             },
@@ -1340,14 +1178,8 @@
               "type": "string"
             },
             "thinkingEffort": {
-              "type": "string",
-              "enum": [
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-                "max"
-              ]
+              "description": "Known values: low, medium, high, xhigh, max. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "tokenBudget": {
               "type": "object",
@@ -1359,11 +1191,8 @@
                   "type": "number"
                 },
                 "period": {
-                  "type": "string",
-                  "enum": [
-                    "daily",
-                    "monthly"
-                  ]
+                  "description": "Known values: daily, monthly. Any other is unknown (CONTRACT.md §4).",
+                  "type": "string"
                 }
               }
             },
@@ -1398,17 +1227,8 @@
               "type": "string"
             },
             "lastRunLabel": {
-              "type": "string",
-              "enum": [
-                "Succeeded",
-                "Poor result",
-                "Needs review",
-                "Failed",
-                "Skipped",
-                "Cancelled",
-                "Queued",
-                "Running"
-              ]
+              "description": "Known values: Succeeded, Poor result, Needs review, Failed, Skipped, Cancelled, Queued, Running. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "nextRunAt": {
               "type": "string"
@@ -1525,21 +1345,12 @@
                 "type": "string"
               },
               "scheduleType": {
-                "type": "string",
-                "enum": [
-                  "cron",
-                  "interval",
-                  "event",
-                  "once",
-                  "none"
-                ]
+                "description": "Known values: cron, interval, event, once, none. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "kind": {
-                "type": "string",
-                "enum": [
-                  "saved",
-                  "oneoff"
-                ]
+                "description": "Known values: saved, oneoff. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "onceDone": {
                 "type": "object",
@@ -1552,11 +1363,8 @@
                     "type": "string"
                   },
                   "outcome": {
-                    "type": "string",
-                    "enum": [
-                      "ran",
-                      "missed"
-                    ]
+                    "description": "Known values: ran, missed. Any other is unknown (CONTRACT.md §4).",
+                    "type": "string"
                   }
                 }
               },
@@ -1567,17 +1375,8 @@
                 "type": "string"
               },
               "lastRunLabel": {
-                "type": "string",
-                "enum": [
-                  "Succeeded",
-                  "Poor result",
-                  "Needs review",
-                  "Failed",
-                  "Skipped",
-                  "Cancelled",
-                  "Queued",
-                  "Running"
-                ]
+                "description": "Known values: Succeeded, Poor result, Needs review, Failed, Skipped, Cancelled, Queued, Running. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "nextRunAt": {
                 "type": "string"
@@ -1675,110 +1474,51 @@
               "type": "string"
             },
             "schedule": {
-              "oneOf": [
-                {
+              "description": "What fires the task, in the form it was written.",
+              "type": "object",
+              "properties": {
+                "cron": {
+                  "type": "string"
+                },
+                "timezone": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                },
+                "intervalMs": {
+                  "type": "number"
+                },
+                "match": {
                   "type": "object",
-                  "required": [
-                    "cron",
-                    "timezone"
-                  ],
                   "properties": {
-                    "cron": {
-                      "minLength": 1,
-                      "description": "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
+                    "source": {
                       "type": "string"
                     },
-                    "timezone": {
-                      "minLength": 1,
-                      "description": "The IANA timezone the cron is read in. Required with `cron`.",
+                    "name": {
                       "type": "string"
-                    }
-                  }
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "at"
-                  ],
-                  "properties": {
-                    "at": {
-                      "format": "date-time",
-                      "description": "Fires once at this instant.",
+                    },
+                    "level": {
+                      "description": "Known values: info, attention, urgent. Any other is unknown (CONTRACT.md §4).",
                       "type": "string"
                     }
                   }
                 },
-                {
-                  "type": "object",
-                  "required": [
-                    "intervalMs"
-                  ],
-                  "properties": {
-                    "intervalMs": {
-                      "minimum": 60000,
-                      "description": "Recurs every this many ms. Min 60000.",
-                      "type": "integer"
-                    }
-                  }
+                "debounceMs": {
+                  "type": "number"
                 },
-                {
-                  "type": "object",
-                  "required": [
-                    "match"
-                  ],
-                  "properties": {
-                    "match": {
-                      "additionalProperties": false,
-                      "type": "object",
-                      "properties": {
-                        "source": {
-                          "maxLength": 200,
-                          "description": "Exact connector server name. Omit to match every source in this workspace.",
-                          "type": "string"
-                        },
-                        "name": {
-                          "pattern": "^[a-zA-Z0-9._*-]{1,200}$",
-                          "description": "Glob over the event name the server chose. Omit to match every name.",
-                          "type": "string"
-                        },
-                        "level": {
-                          "type": "string",
-                          "enum": [
-                            "info",
-                            "attention",
-                            "urgent"
-                          ],
-                          "description": "Minimum level, not an exact match."
-                        }
-                      }
-                    },
-                    "debounceMs": {
-                      "minimum": 1000,
-                      "maximum": 900000,
-                      "description": "ms that matching notifications coalesce into one run. Default 30000.",
-                      "type": "integer"
-                    },
-                    "maxFiresPerHour": {
-                      "minimum": 1,
-                      "maximum": 60,
-                      "description": "Max runs per hour before the task disables. Default 12.",
-                      "type": "integer"
-                    }
-                  }
+                "maxFiresPerHour": {
+                  "type": "number"
                 }
-              ],
-              "description": "What fires the task, as it was written."
+              }
             },
             "scheduleHuman": {
               "description": "The schedule in words, e.g. \"Weekdays at 8:00 AM HST\".",
               "type": "string"
             },
             "kind": {
-              "type": "string",
-              "enum": [
-                "saved",
-                "oneoff"
-              ]
+              "description": "Known values: saved, oneoff. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "onceDone": {
               "type": "object",
@@ -1791,11 +1531,8 @@
                   "type": "string"
                 },
                 "outcome": {
-                  "type": "string",
-                  "enum": [
-                    "ran",
-                    "missed"
-                  ]
+                  "description": "Known values: ran, missed. Any other is unknown (CONTRACT.md §4).",
+                  "type": "string"
                 }
               }
             },
@@ -1836,14 +1573,8 @@
               "type": "string"
             },
             "thinkingEffort": {
-              "type": "string",
-              "enum": [
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-                "max"
-              ]
+              "description": "Known values: low, medium, high, xhigh, max. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "tokenBudget": {
               "type": "object",
@@ -1855,11 +1586,8 @@
                   "type": "number"
                 },
                 "period": {
-                  "type": "string",
-                  "enum": [
-                    "daily",
-                    "monthly"
-                  ]
+                  "description": "Known values: daily, monthly. Any other is unknown (CONTRACT.md §4).",
+                  "type": "string"
                 }
               }
             },
@@ -1894,17 +1622,8 @@
               "type": "string"
             },
             "lastRunLabel": {
-              "type": "string",
-              "enum": [
-                "Succeeded",
-                "Poor result",
-                "Needs review",
-                "Failed",
-                "Skipped",
-                "Cancelled",
-                "Queued",
-                "Running"
-              ]
+              "description": "Known values: Succeeded, Poor result, Needs review, Failed, Skipped, Cancelled, Queued, Running. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "nextRunAt": {
               "type": "string"
@@ -1973,29 +1692,12 @@
                 "type": "string"
               },
               "execution": {
-                "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "skipped",
-                  "completed",
-                  "incomplete",
-                  "failed",
-                  "cancelled"
-                ]
+                "description": "Known values: queued, running, skipped, completed, incomplete, failed, cancelled. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "label": {
-                "type": "string",
-                "enum": [
-                  "Succeeded",
-                  "Poor result",
-                  "Needs review",
-                  "Failed",
-                  "Skipped",
-                  "Cancelled",
-                  "Queued",
-                  "Running"
-                ]
+                "description": "Known values: Succeeded, Poor result, Needs review, Failed, Skipped, Cancelled, Queued, Running. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "startedAt": {
                 "type": "string"
@@ -2004,12 +1706,8 @@
                 "type": "string"
               },
               "trigger": {
-                "type": "string",
-                "enum": [
-                  "scheduled",
-                  "manual",
-                  "event"
-                ]
+                "description": "Known values: scheduled, manual, event. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "error": {
                 "type": "string"
@@ -2027,13 +1725,8 @@
                 ],
                 "properties": {
                   "verdict": {
-                    "type": "string",
-                    "enum": [
-                      "pass",
-                      "fail",
-                      "uncertain",
-                      "not_assessed"
-                    ]
+                    "description": "Known values: pass, fail, uncertain, not_assessed. Any other is unknown (CONTRACT.md §4).",
+                    "type": "string"
                   },
                   "reason": {
                     "type": "object",
@@ -2257,8 +1950,7 @@
       "type": "object",
       "required": [
         "runId",
-        "taskId",
-        "execution"
+        "taskId"
       ],
       "properties": {
         "runId": {
@@ -2267,20 +1959,9 @@
         "taskId": {
           "type": "string"
         },
-        "execution": {
-          "const": "queued",
-          "type": "string"
-        },
         "existing": {
           "description": "An earlier call with the same idempotencyKey asked for this run.",
           "type": "boolean"
-        },
-        "enabled": {
-          "type": "boolean"
-        },
-        "message": {
-          "description": "A sentence for the reader.",
-          "type": "string"
         }
       }
     },
@@ -2358,29 +2039,12 @@
               "type": "string"
             },
             "execution": {
-              "type": "string",
-              "enum": [
-                "queued",
-                "running",
-                "skipped",
-                "completed",
-                "incomplete",
-                "failed",
-                "cancelled"
-              ]
+              "description": "Known values: queued, running, skipped, completed, incomplete, failed, cancelled. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "label": {
-              "type": "string",
-              "enum": [
-                "Succeeded",
-                "Poor result",
-                "Needs review",
-                "Failed",
-                "Skipped",
-                "Cancelled",
-                "Queued",
-                "Running"
-              ]
+              "description": "Known values: Succeeded, Poor result, Needs review, Failed, Skipped, Cancelled, Queued, Running. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "startedAt": {
               "type": "string"
@@ -2389,12 +2053,8 @@
               "type": "string"
             },
             "trigger": {
-              "type": "string",
-              "enum": [
-                "scheduled",
-                "manual",
-                "event"
-              ]
+              "description": "Known values: scheduled, manual, event. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "error": {
               "type": "string"
@@ -2412,13 +2072,8 @@
               ],
               "properties": {
                 "verdict": {
-                  "type": "string",
-                  "enum": [
-                    "pass",
-                    "fail",
-                    "uncertain",
-                    "not_assessed"
-                  ]
+                  "description": "Known values: pass, fail, uncertain, not_assessed. Any other is unknown (CONTRACT.md §4).",
+                  "type": "string"
                 },
                 "reason": {
                   "type": "object",
@@ -2720,29 +2375,12 @@
                 "type": "string"
               },
               "execution": {
-                "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "skipped",
-                  "completed",
-                  "incomplete",
-                  "failed",
-                  "cancelled"
-                ]
+                "description": "Known values: queued, running, skipped, completed, incomplete, failed, cancelled. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "label": {
-                "type": "string",
-                "enum": [
-                  "Succeeded",
-                  "Poor result",
-                  "Needs review",
-                  "Failed",
-                  "Skipped",
-                  "Cancelled",
-                  "Queued",
-                  "Running"
-                ]
+                "description": "Known values: Succeeded, Poor result, Needs review, Failed, Skipped, Cancelled, Queued, Running. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "startedAt": {
                 "type": "string"
@@ -2751,12 +2389,8 @@
                 "type": "string"
               },
               "trigger": {
-                "type": "string",
-                "enum": [
-                  "scheduled",
-                  "manual",
-                  "event"
-                ]
+                "description": "Known values: scheduled, manual, event. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "error": {
                 "type": "string"
@@ -2774,13 +2408,8 @@
                 ],
                 "properties": {
                   "verdict": {
-                    "type": "string",
-                    "enum": [
-                      "pass",
-                      "fail",
-                      "uncertain",
-                      "not_assessed"
-                    ]
+                    "description": "Known values: pass, fail, uncertain, not_assessed. Any other is unknown (CONTRACT.md §4).",
+                    "type": "string"
                   },
                   "reason": {
                     "type": "object",
@@ -2950,12 +2579,8 @@
                 "type": "string"
               },
               "trigger": {
-                "type": "string",
-                "enum": [
-                  "scheduled",
-                  "manual",
-                  "event"
-                ]
+                "description": "Known values: scheduled, manual, event. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "batchId": {
                 "type": "string"
@@ -2988,12 +2613,8 @@
                 "type": "string"
               },
               "trigger": {
-                "type": "string",
-                "enum": [
-                  "scheduled",
-                  "manual",
-                  "event"
-                ]
+                "description": "Known values: scheduled, manual, event. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "batchId": {
                 "type": "string"
@@ -3026,12 +2647,8 @@
                 "type": "string"
               },
               "scheduleType": {
-                "type": "string",
-                "enum": [
-                  "cron",
-                  "interval",
-                  "once"
-                ]
+                "description": "Known values: cron, interval, once. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "beyondWindow": {
                 "type": "boolean"
@@ -3071,11 +2688,8 @@
                 "type": "string"
               },
               "scheduleType": {
-                "type": "string",
-                "enum": [
-                  "cron",
-                  "interval"
-                ]
+                "description": "Known values: cron, interval. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "countCapped": {
                 "type": "boolean"
@@ -3183,17 +2797,8 @@
                     "type": "string"
                   },
                   "label": {
-                    "type": "string",
-                    "enum": [
-                      "Succeeded",
-                      "Poor result",
-                      "Needs review",
-                      "Failed",
-                      "Skipped",
-                      "Cancelled",
-                      "Queued",
-                      "Running"
-                    ]
+                    "description": "Known values: Succeeded, Poor result, Needs review, Failed, Skipped, Cancelled, Queued, Running. Any other is unknown (CONTRACT.md §4).",
+                    "type": "string"
                   },
                   "startedAt": {
                     "type": "string"
@@ -3213,17 +2818,8 @@
                       "type": "string"
                     },
                     "label": {
-                      "type": "string",
-                      "enum": [
-                        "Succeeded",
-                        "Poor result",
-                        "Needs review",
-                        "Failed",
-                        "Skipped",
-                        "Cancelled",
-                        "Queued",
-                        "Running"
-                      ]
+                      "description": "Known values: Succeeded, Poor result, Needs review, Failed, Skipped, Cancelled, Queued, Running. Any other is unknown (CONTRACT.md §4).",
+                      "type": "string"
                     },
                     "startedAt": {
                       "type": "string"
@@ -3437,13 +3033,8 @@
               "type": "string"
             },
             "state": {
-              "type": "string",
-              "enum": [
-                "running",
-                "paused",
-                "completed",
-                "cancelled"
-              ]
+              "description": "Known values: running, paused, completed, cancelled. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "counts": {
               "type": "object",
@@ -3543,13 +3134,8 @@
               ],
               "properties": {
                 "reason": {
-                  "type": "string",
-                  "enum": [
-                    "manual",
-                    "budget",
-                    "pass_rate",
-                    "unavailable"
-                  ]
+                  "description": "Known values: manual, budget, pass_rate, unavailable. Any other is unknown (CONTRACT.md §4).",
+                  "type": "string"
                 },
                 "message": {
                   "type": "string"
@@ -3662,13 +3248,8 @@
               "type": "string"
             },
             "state": {
-              "type": "string",
-              "enum": [
-                "running",
-                "paused",
-                "completed",
-                "cancelled"
-              ]
+              "description": "Known values: running, paused, completed, cancelled. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "counts": {
               "type": "object",
@@ -3768,13 +3349,8 @@
               ],
               "properties": {
                 "reason": {
-                  "type": "string",
-                  "enum": [
-                    "manual",
-                    "budget",
-                    "pass_rate",
-                    "unavailable"
-                  ]
+                  "description": "Known values: manual, budget, pass_rate, unavailable. Any other is unknown (CONTRACT.md §4).",
+                  "type": "string"
                 },
                 "message": {
                   "type": "string"
@@ -3817,13 +3393,8 @@
                 "type": "number"
               },
               "state": {
-                "type": "string",
-                "enum": [
-                  "pending",
-                  "queued",
-                  "running",
-                  "done"
-                ]
+                "description": "Known values: pending, queued, running, done. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "runId": {
                 "type": "string"
@@ -3835,38 +3406,16 @@
                 }
               },
               "execution": {
-                "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "skipped",
-                  "completed",
-                  "incomplete",
-                  "failed",
-                  "cancelled"
-                ]
+                "description": "Known values: queued, running, skipped, completed, incomplete, failed, cancelled. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "verdict": {
-                "type": "string",
-                "enum": [
-                  "pass",
-                  "fail",
-                  "uncertain",
-                  "not_assessed"
-                ]
+                "description": "Known values: pass, fail, uncertain, not_assessed. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "label": {
-                "type": "string",
-                "enum": [
-                  "Succeeded",
-                  "Poor result",
-                  "Needs review",
-                  "Failed",
-                  "Skipped",
-                  "Cancelled",
-                  "Queued",
-                  "Running"
-                ]
+                "description": "Known values: Succeeded, Poor result, Needs review, Failed, Skipped, Cancelled, Queued, Running. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "inputSummary": {
                 "type": "string"
@@ -3878,11 +3427,8 @@
                 "type": "string"
               },
               "errorCode": {
-                "type": "string",
-                "enum": [
-                  "exceeds_share"
-                ],
-                "description": "A run of the item with what was left of the batch's budget to itself could not pay for it (its outcome's spendStop was exhausted), so it was settled rather than run again."
+                "description": "A run of the item with what was left of the batch's budget to itself could not pay for it (its outcome's spendStop was exhausted), so it was settled rather than run again. Known values: exceeds_share. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "output": {
                 "type": "object",
@@ -3968,13 +3514,8 @@
                 "type": "string"
               },
               "state": {
-                "type": "string",
-                "enum": [
-                  "running",
-                  "paused",
-                  "completed",
-                  "cancelled"
-                ]
+                "description": "Known values: running, paused, completed, cancelled. Any other is unknown (CONTRACT.md §4).",
+                "type": "string"
               },
               "counts": {
                 "type": "object",
@@ -4074,13 +3615,8 @@
                 ],
                 "properties": {
                   "reason": {
-                    "type": "string",
-                    "enum": [
-                      "manual",
-                      "budget",
-                      "pass_rate",
-                      "unavailable"
-                    ]
+                    "description": "Known values: manual, budget, pass_rate, unavailable. Any other is unknown (CONTRACT.md §4).",
+                    "type": "string"
                   },
                   "message": {
                     "type": "string"
@@ -4165,13 +3701,8 @@
               "type": "string"
             },
             "state": {
-              "type": "string",
-              "enum": [
-                "running",
-                "paused",
-                "completed",
-                "cancelled"
-              ]
+              "description": "Known values: running, paused, completed, cancelled. Any other is unknown (CONTRACT.md §4).",
+              "type": "string"
             },
             "counts": {
               "type": "object",
@@ -4271,13 +3802,8 @@
               ],
               "properties": {
                 "reason": {
-                  "type": "string",
-                  "enum": [
-                    "manual",
-                    "budget",
-                    "pass_rate",
-                    "unavailable"
-                  ]
+                  "description": "Known values: manual, budget, pass_rate, unavailable. Any other is unknown (CONTRACT.md §4).",
+                  "type": "string"
                 },
                 "message": {
                   "type": "string"
@@ -4342,7 +3868,7 @@
           "type": "string"
         },
         "cursor": {
-          "description": "From the previous page's nextCursor.",
+          "description": "From the previous page's nextCursor. A later page repeats the first page's now and until.",
           "type": "string"
         },
         "limit": {
@@ -4357,6 +3883,7 @@
       "type": "object",
       "required": [
         "occurrences",
+        "cancel",
         "nextCursor"
       ],
       "properties": {
@@ -4364,6 +3891,17 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/occurrence"
+          }
+        },
+        "cancel": {
+          "maxItems": 1000,
+          "description": "Runs the host has begun in this workspace that it should stop: each is answered until the host's end_run for it lands. Every page carries the whole list.",
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "The run's id, minted by the implementation.",
+            "type": "string"
           }
         },
         "nextCursor": {
@@ -4458,26 +3996,10 @@
                 }
               }
             },
-            "notify": {
-              "additionalProperties": false,
-              "type": "object",
-              "required": [
-                "grant",
-                "notices"
-              ],
-              "properties": {
-                "grant": {
-                  "minLength": 1,
-                  "maxLength": 4096,
-                  "description": "The grant of the definition the notices concern: names the owner.",
-                  "type": "string"
-                },
-                "notices": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/$defs/notice"
-                  }
-                }
+            "notices": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/notice"
               }
             }
           }
@@ -4487,11 +4009,25 @@
           "type": "object",
           "required": [
             "decision",
+            "runId",
+            "grant",
             "work"
           ],
           "properties": {
             "decision": {
               "const": "run",
+              "type": "string"
+            },
+            "runId": {
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "The run's id, minted by the implementation.",
+              "type": "string"
+            },
+            "grant": {
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "The run grant stored with the definition, verbatim. The host verifies it and takes the run's owner from it.",
               "type": "string"
             },
             "work": {
@@ -4505,11 +4041,17 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "version",
         "runId",
         "token",
         "outcome"
       ],
       "properties": {
+        "version": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "description": "The version of this contract the host consumes. The answer holds nothing that version does not define (CONTRACT.md §15).",
+          "type": "string"
+        },
         "runId": {
           "minLength": 1,
           "maxLength": 128,
@@ -4537,42 +4079,6 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/notice"
-          }
-        }
-      }
-    },
-    "check_runs_input": {
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "runIds"
-      ],
-      "properties": {
-        "runIds": {
-          "maxItems": 1000,
-          "description": "Runs of this workspace the host has in flight.",
-          "type": "array",
-          "items": {
-            "minLength": 1,
-            "maxLength": 128,
-            "description": "The run's id, minted by the implementation.",
-            "type": "string"
-          }
-        }
-      }
-    },
-    "check_runs_output": {
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "stop"
-      ],
-      "properties": {
-        "stop": {
-          "description": "Those of runIds to stop now. Each ends with stopReason cancelled.",
-          "type": "array",
-          "items": {
-            "type": "string"
           }
         }
       }
@@ -4718,57 +4224,29 @@
         }
       ]
     },
-    "expire_input": {
+    "delete_workspace_input": {
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "endedBefore"
+        "version"
       ],
       "properties": {
-        "endedBefore": {
-          "format": "date-time",
-          "description": "Remove what ended before this instant.",
+        "version": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "description": "The version of this contract the host consumes. The answer holds nothing that version does not define (CONTRACT.md §15).",
           "type": "string"
         }
       }
     },
-    "expire_output": {
-      "type": "object",
-      "required": [
-        "removed"
-      ],
-      "properties": {
-        "removed": {
-          "type": "object",
-          "required": [
-            "runs",
-            "tasks"
-          ],
-          "properties": {
-            "runs": {
-              "minimum": 0,
-              "type": "integer"
-            },
-            "tasks": {
-              "minimum": 0,
-              "type": "integer"
-            }
-          }
-        }
-      }
-    },
-    "delete_workspace_input": {
+    "delete_workspace_output": {
       "additionalProperties": false,
       "type": "object",
-      "properties": {}
-    },
-    "delete_workspace_output": {
-      "type": "object",
       "required": [
         "removed"
       ],
       "properties": {
         "removed": {
+          "additionalProperties": false,
           "type": "object",
           "required": [
             "tasks",
@@ -4826,25 +4304,11 @@
           "type": "object",
           "required": [
             "kind",
-            "runId",
-            "grant",
             "prompt"
           ],
           "properties": {
             "kind": {
               "const": "agent",
-              "type": "string"
-            },
-            "runId": {
-              "minLength": 1,
-              "maxLength": 128,
-              "description": "The run's id, minted by the implementation.",
-              "type": "string"
-            },
-            "grant": {
-              "minLength": 1,
-              "maxLength": 4096,
-              "description": "The run grant stored with the definition, returned verbatim. The host verifies it and takes the run's owner from it.",
               "type": "string"
             },
             "prompt": {
@@ -5004,6 +4468,56 @@
             "required": [
               "error"
             ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "stopReason": {
+                "const": "complete"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "error"
+              ]
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "wrapUpLimit"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "stopReason": {
+                "not": {
+                  "const": "spend_limit"
+                }
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "spendAccountId"
+                  ]
+                },
+                {
+                  "required": [
+                    "spendStop"
+                  ]
+                }
+              ]
+            }
           }
         }
       ],

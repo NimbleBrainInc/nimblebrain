@@ -95,19 +95,18 @@ up work under a contract that will run as them unattended.
   workspace and an owner. It never stamps one on a `host` call, on another tool, or on a call
   made inside an unattended run (those tools are refused there), so no run can obtain
   authority for another run.
-- **The grant carries its claims and the id of the key that signed it**: the contract's name,
-  `workspaceId`, `ownerId`, and `kid`. Its encoding is the host's to choose and to change, and
-  it is opaque to the server.
+- **The grant is signed by the host over its claims**: the contract's name, `workspaceId` and
+  `ownerId`. Its format is the host's to choose and to change, and it is opaque to the server.
 - **The server stores it verbatim and returns it verbatim.** It keeps the grant of the latest
   grant-marked call that names a definition with that definition, and gives it back when the
   host runs the definition (the contract says where). It never parses it, never shows it in a
   public output, and never hands it to another server.
 - **The host decides whether it still holds.** Before admitting a run, the host verifies the
-  grant's signature against its keyring, that it names the contract and the workspace of the
-  call, and that its owner is a member of the workspace now; the run acts as that owner. The
-  host keeps retired keys verifying until it revokes them, so rotating a key invalidates
-  nothing. A grant whose key is revoked, or that fails any check, admits nothing. Membership is
-  checked at every run, so a grant needs no expiry.
+  grant's signature with its signing key, that it names the contract and the workspace of the
+  call, and that its owner is a member of the workspace now; the run acts as that owner. A grant
+  that fails any check admits nothing. Membership is checked at every run, so a grant needs no
+  expiry. When the host's signing key changes, every grant signed with the old one fails, and
+  the next grant-marked call that names the definition stores a new one.
 
 ## 7. Unattended calls
 

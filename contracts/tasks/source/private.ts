@@ -13,8 +13,8 @@
  * executes the spec → `end_run` records the outcome. Every instant here is one
  * the host decided (CONTRACT.md §6).
  *
- * What the host reads (`due`, `begin_run`, `end_run` and `offer_event`
- * outputs, and every shared schema) is closed: `additionalProperties: false`
+ * Every private input, every private output and every shared schema is
+ * closed: `additionalProperties: false`
  * at every level, because the host refuses what it does not know (§15).
  */
 
@@ -42,7 +42,10 @@ const RunId = Opaque("The run's id, minted by the implementation.", 128);
 
 const Token = (description: string) => Type.Integer({ minimum: 0, description });
 
-/** The minor of this contract the host consumes, which bounds what the implementation answers. */
+/** A run grant, opaque to the implementation, returned verbatim (CONTRACT.md §9). */
+const Grant = (description: string) => Type.String({ minLength: 1, maxLength: 4096, description });
+
+/** The version of this contract the host consumes, which bounds what the implementation answers. */
 const Version = Type.String({
   pattern: "^1\\.(0|[1-9][0-9]*)$",
   description:
@@ -112,14 +115,6 @@ const SpendAccount = Type.Object(
 const AgentWorkSpec = Type.Object(
   {
     kind: Type.Literal("agent"),
-    runId: RunId,
-    grant: Type.String({
-      minLength: 1,
-      maxLength: 4096,
-      description:
-        "The run grant stored with the definition, returned verbatim. The host verifies it and " +
-        "takes the run's owner from it.",
-    }),
     prompt: Type.String({
       description:
         "The instruction that opens the run. Empty only with `skills`: the run then carries " +
@@ -354,6 +349,17 @@ export const RunOutcome = Type.Object(
         // biome-ignore lint/suspicious/noThenProperty: JSON Schema's if/then keyword.
         then: { required: ["error"] },
       },
+      {
+        if: { properties: { stopReason: { const: "complete" } } },
+        // biome-ignore lint/suspicious/noThenProperty: JSON Schema's if/then keyword.
+        then: { not: { required: ["error"] } },
+        else: { not: { required: ["wrapUpLimit"] } },
+      },
+      {
+        if: { properties: { stopReason: { not: { const: "spend_limit" } } } },
+        // biome-ignore lint/suspicious/noThenProperty: JSON Schema's if/then keyword.
+        then: { not: { anyOf: [{ required: ["spendAccountId"] }, { required: ["spendStop"] }] } },
+      },
     ],
   },
 );
@@ -414,7 +420,12 @@ export const PRIVATE_SCHEMAS = {
         until: Instant(
           "List occurrences due at or before this instant. The host calls due again before it.",
         ),
-        cursor: Type.Optional(Type.String({ description: "From the previous page's nextCursor." })),
+        cursor: Type.Optional(
+          Type.String({
+            description:
+              "From the previous page's nextCursor. A later page repeats the first page's now and until.",
+          }),
+        ),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })),
       },
       CLOSED,
@@ -422,6 +433,12 @@ export const PRIVATE_SCHEMAS = {
     output: Type.Object(
       {
         occurrences: Type.Array(Ref("occurrence", Occurrence)),
+        cancel: Type.Array(RunId, {
+          maxItems: 1000,
+          description:
+            "Runs the host has begun in this workspace that it should stop: each is answered " +
+            "until the host's end_run for it lands. Every page carries the whole list.",
+        }),
         nextCursor: Type.Union([Type.String(), Type.Null()]),
       },
       CLOSED,
@@ -457,28 +474,28 @@ export const PRIVATE_SCHEMAS = {
               },
             ),
           ),
-          notify: Type.Optional(
-            Type.Object(
-              {
-                grant: Type.String({
-                  minLength: 1,
-                  maxLength: 4096,
-                  description: "The grant of the definition the notices concern: names the owner.",
-                }),
-                notices: Notices,
-              },
-              CLOSED,
-            ),
-          ),
+          notices: Type.Optional(Notices),
         },
         CLOSED,
       ),
-      Type.Object({ decision: Type.Literal("run"), work: Ref("work_spec", WorkSpec) }, CLOSED),
+      Type.Object(
+        {
+          decision: Type.Literal("run"),
+          runId: RunId,
+          grant: Grant(
+            "The run grant stored with the definition, verbatim. The host verifies it and takes " +
+              "the run's owner from it.",
+          ),
+          work: Ref("work_spec", WorkSpec),
+        },
+        CLOSED,
+      ),
     ]),
   },
   end_run: {
     input: Type.Object(
       {
+        version: Version,
         runId: RunId,
         token: Token("The token whose begin_run received the run's work spec."),
         outcome: Ref("run_outcome", RunOutcome),
@@ -486,25 +503,6 @@ export const PRIVATE_SCHEMAS = {
       CLOSED,
     ),
     output: Type.Object({ notices: Notices }, CLOSED),
-  },
-  check_runs: {
-    input: Type.Object(
-      {
-        runIds: Type.Array(RunId, {
-          maxItems: 1000,
-          description: "Runs of this workspace the host has in flight.",
-        }),
-      },
-      CLOSED,
-    ),
-    output: Type.Object(
-      {
-        stop: Type.Array(Type.String(), {
-          description: "Those of runIds to stop now. Each ends with stopReason cancelled.",
-        }),
-      },
-      CLOSED,
-    ),
   },
   offer_event: {
     input: Type.Object(
@@ -537,24 +535,21 @@ export const PRIVATE_SCHEMAS = {
       ),
     ]),
   },
-  expire: {
-    input: Type.Object({ endedBefore: Instant("Remove what ended before this instant.") }, CLOSED),
-    output: Type.Object({
-      removed: Type.Object({
-        runs: Type.Integer({ minimum: 0 }),
-        tasks: Type.Integer({ minimum: 0 }),
-      }),
-    }),
-  },
   delete_workspace: {
-    input: Type.Object({}, CLOSED),
-    output: Type.Object({
-      removed: Type.Object({
-        tasks: Type.Integer({ minimum: 0 }),
-        runs: Type.Integer({ minimum: 0 }),
-        batches: Type.Integer({ minimum: 0 }),
-      }),
-    }),
+    input: Type.Object({ version: Version }, CLOSED),
+    output: Type.Object(
+      {
+        removed: Type.Object(
+          {
+            tasks: Type.Integer({ minimum: 0 }),
+            runs: Type.Integer({ minimum: 0 }),
+            batches: Type.Integer({ minimum: 0 }),
+          },
+          CLOSED,
+        ),
+      },
+      CLOSED,
+    ),
   },
 } as const satisfies Record<string, { input: TSchema; output: TSchema }>;
 

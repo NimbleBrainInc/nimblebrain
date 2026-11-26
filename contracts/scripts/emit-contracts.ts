@@ -23,8 +23,9 @@
  *
  * The emitter refuses a source whose schemas and declared tools disagree, a
  * private tool that is not `unattended: "refused"`, a `grant` on a private
- * tool or on one an unattended run may call, and a `$ref` that names no shared
- * schema.
+ * tool or on one an unattended run may call, a `$ref` in a public tool's
+ * schema (public schemas are whole, for every MCP client), a `$ref` that names
+ * no shared schema, and a nested `$defs` in any tool's schema.
  *
  * `--check` writes nothing. It exits 1 when a committed document is missing or
  * differs from what would be emitted, and prints the first differing line.
@@ -63,6 +64,13 @@ export function refsOf(value: unknown): string[] {
   );
 }
 
+/** Whether a JSON value holds `key` as an object key at any depth. */
+export function holdsKey(value: unknown, key: string): boolean {
+  if (Array.isArray(value)) return value.some((v) => holdsKey(v, key));
+  if (value === null || typeof value !== "object") return false;
+  return Object.entries(value).some(([k, v]) => k === key || holdsKey(v, key));
+}
+
 /** The shared schema a `$ref` names, or undefined when it names none. */
 function sharedName(ref: string, shared: Record<string, unknown>): string | undefined {
   const name = ref.startsWith("#/$defs/") ? ref.slice("#/$defs/".length) : undefined;
@@ -71,7 +79,7 @@ function sharedName(ref: string, shared: Record<string, unknown>): string | unde
 
 /** Throw when one tool's entry breaks a rule of the document. */
 function checkTool(source: ContractSource, tool: string, entry: ContractToolEntry): void {
-  const { meta, schemas, shared = {} } = source;
+  const { meta, schemas } = source;
   const { visibility, unattended, grant } = entry;
   const pair = schemas[visibility][tool];
   if (!pair) {
@@ -88,10 +96,28 @@ function checkTool(source: ContractSource, tool: string, entry: ContractToolEntr
     );
   }
   for (const kind of ["input", "output"] as const) {
-    for (const ref of refsOf(JSON.parse(JSON.stringify(pair[kind])))) {
-      if (!sharedName(ref, shared)) {
-        throw new Error(`${meta.contract}: ${tool}'s ${kind} refers to ${ref}, no shared schema`);
-      }
+    checkToolSchema(source, `${tool}'s ${kind}`, visibility, pair[kind]);
+  }
+}
+
+/** Throw when a tool's schema nests `$defs`, or holds a `$ref` it may not. */
+function checkToolSchema(
+  { meta, shared = {} }: ContractSource,
+  what: string,
+  visibility: Visibility,
+  schema: unknown,
+): void {
+  const json: unknown = JSON.parse(JSON.stringify(schema));
+  if (holdsKey(json, "$defs")) {
+    throw new Error(`${meta.contract}: ${what} nests $defs; share a schema instead`);
+  }
+  const refs = refsOf(json);
+  if (visibility === "public" && refs.length > 0) {
+    throw new Error(`${meta.contract}: public ${what} holds a $ref`);
+  }
+  for (const ref of refs) {
+    if (!sharedName(ref, shared)) {
+      throw new Error(`${meta.contract}: ${what} refers to ${ref}, no shared schema`);
     }
   }
 }

@@ -24,11 +24,12 @@ version is one JSON document, emitted to the published tree at
   `contract` is the identity (the name `implements[].contract` uses); the `$id` is where the
   document lives. The document is a valid JSON Schema 2020-12 document and compiles whole.
 - **A tool's schemas are `$defs` entries** named `<tool>_input` and `<tool>_output`, and the
-  tool points at them with `$ref`. A schema several tools share is a `$defs` entry under its
-  own name (`work_spec`), which a tool's schema refers to as `#/$defs/<name>` and which refers
-  to nothing itself. That pointer resolves in the document and in a tool schema listed with the
-  `$defs` it names bundled beside it (the SDK's `contractSchema`), so a listed schema is still
-  whole. Underscores keep each key a plain identifier, so codegen can name a type after it.
+  tool points at them with `$ref`. A schema several private tools share is a `$defs` entry under
+  its own name (`work_spec`), which a private tool's schema refers to as `#/$defs/<name>` and
+  which refers to nothing itself. That pointer resolves in the document and in a tool schema
+  listed with the `$defs` it names bundled beside it (the SDK's `contractSchema`). A public
+  tool's schema holds no `$ref`, and no tool's schema nests `$defs`, so every MCP client reads
+  a public schema whole; the emitter refuses either. Underscores keep each key a plain identifier, so codegen can name a type after it.
 - **One emitter writes every contract.** `scripts/emit-contracts.ts` lists each contract's
   `source/index.ts`; a new contract adds its line there. Edit a source, run
   `bun run emit:contracts`, commit the document. `bun run check:contracts` (in
@@ -47,4 +48,4 @@ version is one JSON document, emitted to the published tree at
 | Contract | Spec | Document | Runner |
 |---|---|---|---|
 | `ai.nimblebrain.conversations` | `conversations/CONTRACT.md` | `schemas/contracts/conversations/v1/contract.json` | `conversations/runner/conformance.ts` |
-| `ai.nimblebrain.tasks` | `tasks/CONTRACT.md` | `schemas/contracts/tasks/v1/contract.json` | none yet (CONTRACT.md §15) |
+| `ai.nimblebrain.tasks` | `tasks/CONTRACT.md` | `schemas/contracts/tasks/v1/contract.json` | none yet (CONTRACT.md §16) |

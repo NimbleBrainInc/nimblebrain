@@ -32,7 +32,7 @@ export const CONTRACT = {
     run: { visibility: "public", unattended: "refused", grant: true },
     run_result: { visibility: "public", unattended: "allowed" },
     runs: { visibility: "public", unattended: "allowed" },
-    cancel: { visibility: "public", unattended: "allowed" },
+    cancel: { visibility: "public", unattended: "refused" },
     upcoming: { visibility: "public", unattended: "allowed" },
     stats: { visibility: "public", unattended: "allowed" },
     run_batch: { visibility: "public", unattended: "refused", grant: true },
@@ -42,9 +42,7 @@ export const CONTRACT = {
     due: { visibility: "private", unattended: "refused" },
     begin_run: { visibility: "private", unattended: "refused" },
     end_run: { visibility: "private", unattended: "refused" },
-    check_runs: { visibility: "private", unattended: "refused" },
     offer_event: { visibility: "private", unattended: "refused" },
-    expire: { visibility: "private", unattended: "refused" },
     delete_workspace: { visibility: "private", unattended: "refused" },
   },
   errors: {

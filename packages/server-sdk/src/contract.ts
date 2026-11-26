@@ -68,7 +68,8 @@ function sharedRefs(value: unknown, into: Set<string> = new Set()): Set<string> 
  * A tool's input or output schema, as a server lists it as the tool's `inputSchema` or
  * `outputSchema`: the `$defs` entry its `$ref` names. When that entry refers to schemas the
  * document shares (`#/$defs/<name>`), they are bundled beside it under the same keys, so the
- * same pointers resolve in the listed schema. One that refers to none is returned as it is.
+ * same pointers resolve in the listed schema. The answer is a copy: changing it changes
+ * nothing in the document.
  */
 export function contractSchema(
   doc: ContractDocument,
@@ -80,7 +81,7 @@ export function contractSchema(
   const schema = key ? doc.$defs[key] : undefined;
   if (!schema) throw new Error(`${doc.contract}: no ${kind} schema for tool "${tool}"`);
   const names = sharedRefs(schema);
-  if (names.size === 0) return schema;
+  if (names.size === 0) return structuredClone(schema);
   const defs: Record<string, Record<string, unknown>> = {};
   for (const name of names) {
     const shared = doc.$defs[name];
@@ -88,7 +89,7 @@ export function contractSchema(
       throw new Error(`${doc.contract}: ${tool}'s ${kind} refers to missing $defs/${name}`);
     defs[name] = shared;
   }
-  return { ...schema, $defs: defs };
+  return structuredClone({ ...schema, $defs: defs });
 }
 
 /** The prefix a public error's text begins with, from the document's `errors.public`. */

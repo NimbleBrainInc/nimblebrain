@@ -100,17 +100,22 @@ describe("the principal rule", () => {
     ]);
     expect(toolVisibility(CONTRACT, "list")).toBe("public");
     expect(toolVisibility(CONTRACT, "toString")).toBeUndefined();
-    expect(contractSchema(CONTRACT, "create", "input")).toBe(CONTRACT.$defs.create_input!);
+    const listed = contractSchema(CONTRACT, "create", "input");
+    expect(listed).toEqual(CONTRACT.$defs.create_input!);
+    expect(listed).not.toBe(CONTRACT.$defs.create_input!);
   });
 
   test("lists a schema that refers to shared $defs with them bundled, so it compiles alone", () => {
     const listed = contractSchema(TASKS, "begin_run", "output");
     expect(Object.keys(listed.$defs as object).sort()).toEqual(["notice", "work_spec"]);
     const validate = new Ajv2020({ strict: false }).compile(listed);
-    const work = { kind: "agent", runId: "run_1", grant: "g", prompt: "Summarize." };
-    expect(validate({ decision: "run", work })).toBe(true);
-    expect(validate({ decision: "run", work: { ...work, extra: 1 } })).toBe(false);
-    expect(contractSchema(TASKS, "list", "input")).toBe(TASKS.$defs.list_input!);
+    const run = { decision: "run", runId: "run_1", grant: "g" };
+    const work = { kind: "agent", prompt: "Summarize." };
+    expect(validate({ ...run, work })).toBe(true);
+    expect(validate({ ...run, work: { ...work, extra: 1 } })).toBe(false);
+    expect(contractSchema(TASKS, "list", "input")).toEqual(TASKS.$defs.list_input!);
+    (listed.$defs as Record<string, Record<string, unknown>>).notice!.title = "changed";
+    expect((TASKS.$defs.notice as Record<string, unknown>).title).not.toBe("changed");
   });
 
   test("refuses a private tool to anyone but the host, and nothing else", () => {

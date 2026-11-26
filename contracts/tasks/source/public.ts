@@ -32,6 +32,18 @@ export function StringEnum<T extends string>(
   return Type.Unsafe<T>({ type: "string", enum: [...values], ...options });
 }
 
+/**
+ * A string in a public output whose known values are listed, never enumerated:
+ * a later minor may add a value, and a client treats one it does not know as
+ * unknown (CONTRACT.md §4).
+ */
+function OpenString(values: readonly string[], options: { description?: string } = {}) {
+  const known = `Known values: ${values.join(", ")}. Any other is unknown (CONTRACT.md §4).`;
+  return Type.String({
+    description: options.description ? `${options.description} ${known}` : known,
+  });
+}
+
 /** Exactly one of several schemas (`oneOf`), typed as their union. */
 export function OneOf<T extends TSchema[]>(
   members: [...T],
@@ -106,68 +118,82 @@ const RouteMatch = Type.Object(
   { additionalProperties: false },
 );
 
-/**
- * The schedule, one shape on input and output: the one key present names what
- * fires the task. Closed on input, open on output.
- */
-function schedule(closed: boolean, description: string) {
-  const options = closed ? { additionalProperties: false } : {};
-  return OneOf(
-    [
-      Type.Object(
-        {
-          cron: Type.String({
-            minLength: 1,
-            description: "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
+/** The schedule as a caller writes it: exactly one form, closed. */
+const ScheduleInput = OneOf(
+  [
+    Type.Object(
+      {
+        cron: Type.String({
+          minLength: 1,
+          description: "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
+        }),
+        timezone: Type.String({
+          minLength: 1,
+          description: "The IANA timezone the cron is read in. Required with `cron`.",
+        }),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object({ at: DateTime("Fires once at this instant.") }, { additionalProperties: false }),
+    Type.Object(
+      {
+        intervalMs: Type.Integer({
+          minimum: 60000,
+          description: "Recurs every this many ms. Min 60000.",
+        }),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        match: RouteMatch,
+        debounceMs: Type.Optional(
+          Type.Integer({
+            minimum: 1000,
+            maximum: 900000,
+            description: "ms that matching notifications coalesce into one run. Default 30000.",
           }),
-          timezone: Type.String({
-            minLength: 1,
-            description: "The IANA timezone the cron is read in. Required with `cron`.",
+        ),
+        maxFiresPerHour: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            maximum: 60,
+            description: "Max runs per hour before the task disables. Default 12.",
           }),
-        },
-        options,
-      ),
-      Type.Object({ at: DateTime("Fires once at this instant.") }, options),
-      Type.Object(
-        {
-          intervalMs: Type.Integer({
-            minimum: 60000,
-            description: "Recurs every this many ms. Min 60000.",
-          }),
-        },
-        options,
-      ),
-      Type.Object(
-        {
-          match: RouteMatch,
-          debounceMs: Type.Optional(
-            Type.Integer({
-              minimum: 1000,
-              maximum: 900000,
-              description: "ms that matching notifications coalesce into one run. Default 30000.",
-            }),
-          ),
-          maxFiresPerHour: Type.Optional(
-            Type.Integer({
-              minimum: 1,
-              maximum: 60,
-              description: "Max runs per hour before the task disables. Default 12.",
-            }),
-          ),
-        },
-        options,
-      ),
-    ],
-    { description },
-  );
-}
-
-const ScheduleInput = schedule(
-  true,
-  "Exactly one of `cron` (with `timezone`), `at`, `intervalMs`, or `match` (fires on routed " +
-    "notifications). Omit to run only on demand.",
+        ),
+      },
+      { additionalProperties: false },
+    ),
+  ],
+  {
+    description:
+      "Exactly one of `cron` (with `timezone`), `at`, `intervalMs`, or `match` (fires on routed " +
+      "notifications). Omit to run only on demand.",
+  },
 );
-const ScheduleOutput = schedule(false, "What fires the task, as it was written.");
+
+/**
+ * The schedule as a read returns it: one open object holding the keys of the
+ * form it was written in. A key a later minor adds is one more optional key.
+ */
+const ScheduleOutput = Type.Object(
+  {
+    cron: Type.Optional(Type.String()),
+    timezone: Type.Optional(Type.String()),
+    at: Type.Optional(Type.String()),
+    intervalMs: Type.Optional(Type.Number()),
+    match: Type.Optional(
+      Type.Object({
+        source: Type.Optional(Type.String()),
+        name: Type.Optional(Type.String()),
+        level: Type.Optional(OpenString(NOTIFICATION_LEVELS)),
+      }),
+    ),
+    debounceMs: Type.Optional(Type.Number()),
+    maxFiresPerHour: Type.Optional(Type.Number()),
+  },
+  { description: "What fires the task, in the form it was written." },
+);
 
 const TokenBudget = Type.Object(
   {
@@ -689,13 +715,13 @@ export const TasksBatchesInput = Type.Object(
 
 const RUN_TRIGGERS = ["scheduled", "manual", "event"] as const;
 
-const TaskRunLabel = StringEnum([...ENDED_LABELS, "Queued", "Running"] as const);
-const TaskRunExecution = StringEnum(EXECUTIONS);
+const TaskRunLabel = OpenString([...ENDED_LABELS, "Queued", "Running"] as const);
+const TaskRunExecution = OpenString(EXECUTIONS);
 
 const TaskTokenBudget = Type.Object({
   maxInputTokens: Type.Optional(Type.Number()),
   maxOutputTokens: Type.Optional(Type.Number()),
-  period: Type.Optional(StringEnum(["daily", "monthly"] as const)),
+  period: Type.Optional(OpenString(["daily", "monthly"] as const)),
 });
 
 /** A stored task, as create, update and status return it. Never carries its run grant. */
@@ -709,9 +735,9 @@ const TaskRecord = Type.Object({
   scheduleHuman: Type.Optional(
     Type.String({ description: 'The schedule in words, e.g. "Weekdays at 8:00 AM HST".' }),
   ),
-  kind: Type.Optional(StringEnum(["saved", "oneoff"] as const)),
+  kind: Type.Optional(OpenString(["saved", "oneoff"] as const)),
   onceDone: Type.Optional(
-    Type.Object({ at: Type.String(), outcome: StringEnum(["ran", "missed"] as const) }),
+    Type.Object({ at: Type.String(), outcome: OpenString(["ran", "missed"] as const) }),
   ),
   skills: Type.Optional(Type.Array(Type.String())),
   allowedTools: Type.Optional(Type.Array(Type.String())),
@@ -721,7 +747,7 @@ const TaskRecord = Type.Object({
   maxInputTokens: Type.Optional(Type.Number()),
   maxRunDurationMs: Type.Optional(Type.Number()),
   model: Type.Optional(Type.String()),
-  thinkingEffort: Type.Optional(StringEnum(THINKING_EFFORTS)),
+  thinkingEffort: Type.Optional(OpenString(THINKING_EFFORTS)),
   tokenBudget: Type.Optional(TaskTokenBudget),
   budgetResetAt: Type.Optional(Type.String()),
   cumulativeInputTokens: Type.Optional(Type.Number()),
@@ -746,10 +772,10 @@ const TaskSummary = Type.Object({
   enabled: Type.Boolean(),
   description: Type.Optional(Type.String()),
   scheduleHuman: Type.Optional(Type.String()),
-  scheduleType: Type.Optional(StringEnum(["cron", "interval", "event", "once", "none"] as const)),
-  kind: Type.Optional(StringEnum(["saved", "oneoff"] as const)),
+  scheduleType: Type.Optional(OpenString(["cron", "interval", "event", "once", "none"] as const)),
+  kind: Type.Optional(OpenString(["saved", "oneoff"] as const)),
   onceDone: Type.Optional(
-    Type.Object({ at: Type.String(), outcome: StringEnum(["ran", "missed"] as const) }),
+    Type.Object({ at: Type.String(), outcome: OpenString(["ran", "missed"] as const) }),
   ),
   runCount: Type.Optional(Type.Number()),
   lastRunAt: Type.Optional(Type.String()),
@@ -767,7 +793,7 @@ const TaskSummary = Type.Object({
  * reserved for judging.
  */
 const TaskRunAssessment = Type.Object({
-  verdict: StringEnum(ASSESSMENT_VERDICTS),
+  verdict: OpenString(ASSESSMENT_VERDICTS),
   reason: Type.Optional(Type.Object({ code: Type.String(), message: Type.String() })),
   schema: Type.Optional(
     Type.Object({ valid: Type.Boolean(), errors: Type.Optional(Type.Array(Type.String())) }),
@@ -787,7 +813,7 @@ const TaskRunView = Type.Object(
     label: TaskRunLabel,
     startedAt: Type.Optional(Type.String()),
     completedAt: Type.Optional(Type.String()),
-    trigger: Type.Optional(StringEnum(RUN_TRIGGERS)),
+    trigger: Type.Optional(OpenString(RUN_TRIGGERS)),
     error: Type.Optional(Type.String()),
     transient: Type.Optional(Type.Boolean()),
     resultPreview: Type.Optional(Type.String()),
@@ -877,7 +903,7 @@ const TaskBatchCounts = Type.Object({
 const TaskBatchView = Type.Object({
   id: Type.String(),
   taskId: Type.String(),
-  state: StringEnum(["running", "paused", "completed", "cancelled"] as const),
+  state: OpenString(["running", "paused", "completed", "cancelled"] as const),
   counts: TaskBatchCounts,
   name: Type.Optional(Type.String()),
   items: Type.Optional(Type.Number()),
@@ -893,7 +919,7 @@ const TaskBatchView = Type.Object({
   stopRuleDisarmed: Type.Optional(Type.Boolean()),
   pause: Type.Optional(
     Type.Object({
-      reason: StringEnum(["manual", "budget", "pass_rate", "unavailable"] as const),
+      reason: OpenString(["manual", "budget", "pass_rate", "unavailable"] as const),
       message: Type.Optional(Type.String()),
       at: Type.Optional(Type.String()),
     }),
@@ -908,17 +934,17 @@ const TaskBatchView = Type.Object({
 
 const TaskBatchItemView = Type.Object({
   index: Type.Number(),
-  state: StringEnum(["pending", "queued", "running", "done"] as const),
+  state: OpenString(["pending", "queued", "running", "done"] as const),
   runId: Type.Optional(Type.String()),
   previousRunIds: Type.Optional(Type.Array(Type.String())),
   execution: Type.Optional(TaskRunExecution),
-  verdict: Type.Optional(StringEnum(ASSESSMENT_VERDICTS)),
+  verdict: Type.Optional(OpenString(ASSESSMENT_VERDICTS)),
   label: Type.Optional(TaskRunLabel),
   inputSummary: Type.Optional(Type.String()),
   costUsd: Type.Optional(Type.Number()),
   error: Type.Optional(Type.String()),
   errorCode: Type.Optional(
-    StringEnum(["exceeds_share"] as const, {
+    OpenString(["exceeds_share"] as const, {
       description:
         "A run of the item with what was left of the batch's budget to itself could not pay for " +
         "it (its outcome's spendStop was exhausted), so it was settled rather than run again.",
@@ -980,14 +1006,11 @@ export const TasksRunsOutput = Type.Object({
 export const TasksRunOutput = Type.Object({
   runId: Type.String(),
   taskId: Type.String(),
-  execution: Type.Literal("queued"),
   existing: Type.Optional(
     Type.Boolean({
       description: "An earlier call with the same idempotencyKey asked for this run.",
     }),
   ),
-  enabled: Type.Optional(Type.Boolean()),
-  message: Message,
 });
 
 /**
@@ -1035,7 +1058,7 @@ export const TasksUpcomingOutput = Type.Object({
       runId: Type.String(),
       taskName: Type.Optional(Type.String()),
       startedAt: Type.Optional(Type.String()),
-      trigger: Type.Optional(StringEnum(RUN_TRIGGERS)),
+      trigger: Type.Optional(OpenString(RUN_TRIGGERS)),
       batchId: Type.Optional(Type.String()),
       batchIndex: Type.Optional(Type.Number()),
     }),
@@ -1046,7 +1069,7 @@ export const TasksUpcomingOutput = Type.Object({
       runId: Type.Optional(Type.String({ description: "Absent until the run has an id." })),
       taskName: Type.Optional(Type.String()),
       queuedAt: Type.Optional(Type.String()),
-      trigger: Type.Optional(StringEnum(RUN_TRIGGERS)),
+      trigger: Type.Optional(OpenString(RUN_TRIGGERS)),
       batchId: Type.Optional(Type.String()),
       batchIndex: Type.Optional(Type.Number()),
     }),
@@ -1057,7 +1080,7 @@ export const TasksUpcomingOutput = Type.Object({
       at: Type.String(),
       taskName: Type.Optional(Type.String()),
       scheduleHuman: Type.Optional(Type.String()),
-      scheduleType: Type.Optional(StringEnum(["cron", "interval", "once"] as const)),
+      scheduleType: Type.Optional(OpenString(["cron", "interval", "once"] as const)),
       beyondWindow: Type.Optional(Type.Boolean()),
     }),
   ),
@@ -1071,7 +1094,7 @@ export const TasksUpcomingOutput = Type.Object({
         first: Type.String(),
         taskName: Type.Optional(Type.String()),
         scheduleHuman: Type.Optional(Type.String()),
-        scheduleType: Type.Optional(StringEnum(["cron", "interval"] as const)),
+        scheduleType: Type.Optional(OpenString(["cron", "interval"] as const)),
         countCapped: Type.Optional(Type.Boolean()),
         last: Type.Optional(Type.String()),
       }),
