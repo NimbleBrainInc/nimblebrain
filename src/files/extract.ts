@@ -158,9 +158,11 @@ const inflateRawAsync = promisify(inflateRaw);
  * then inflated once here with its declared size as the output limit; the
  * inflate stops at that limit, which the sums above bound. The directory must
  * fill the space between its offset and the end record, and the end record must
- * end the file, so every parser reads the same entries this one counted. ZIP64,
- * multi-disk, malformed directories, and compression methods other than stored
- * and deflate are refused.
+ * end the file, so every parser reads the same entries this one counted. A
+ * parser may size its output buffer from the local header, so a local size
+ * above the directory's is refused too. ZIP64 (in the end records or an extra
+ * field), multi-disk, malformed directories, and compression methods other than
+ * stored and deflate are refused.
  */
 async function ooxmlWithinBudget(data: Buffer, xmlBudget: number): Promise<boolean> {
   const directory = findCentralDirectory(data);
@@ -236,8 +238,9 @@ function centralEntries(data: Buffer, directory: CentralDirectory): CentralEntry
     if (compressed === 0xffffffff || uncompressed === 0xffffffff) return null;
     const nameStart = p + CENTRAL_HEADER_SIZE;
     const nameEnd = nameStart + data.readUInt16LE(p + 28);
-    const next = nameEnd + data.readUInt16LE(p + 30) + data.readUInt16LE(p + 32);
-    if (next > directory.end) return null;
+    const extraEnd = nameEnd + data.readUInt16LE(p + 30);
+    const next = extraEnd + data.readUInt16LE(p + 32);
+    if (next > directory.end || hasZip64Extra(data, nameEnd, extraEnd)) return null;
     const name = data.toString("latin1", nameStart, nameEnd).toLowerCase();
     entries.push({
       method: data.readUInt16LE(p + 10),
@@ -263,9 +266,10 @@ async function inflatesWithinDeclared(data: Buffer, entry: CentralEntry): Promis
     return false;
   }
   if (data.readUInt16LE(local + 8) !== entry.method) return false;
-  const start =
-    local + LOCAL_HEADER_SIZE + data.readUInt16LE(local + 26) + data.readUInt16LE(local + 28);
-  if (start > data.length) return false;
+  if (data.readUInt32LE(local + 22) > entry.uncompressed) return false;
+  const extra = local + LOCAL_HEADER_SIZE + data.readUInt16LE(local + 26);
+  const start = extra + data.readUInt16LE(local + 28);
+  if (start > data.length || hasZip64Extra(data, extra, start)) return false;
   if (entry.method === 0) {
     return (
       entry.compressed <= entry.uncompressed && data.readUInt32LE(local + 18) <= entry.uncompressed
@@ -280,6 +284,17 @@ async function inflatesWithinDeclared(data: Buffer, entry: CentralEntry): Promis
   } catch {
     return false;
   }
+}
+
+/**
+ * True when the extra field in `data[start, end)` holds a ZIP64 record, whose
+ * sizes a parser reads in place of the header's.
+ */
+function hasZip64Extra(data: Buffer, start: number, end: number): boolean {
+  for (let p = start; p + 4 <= end; p += 4 + data.readUInt16LE(p + 2)) {
+    if (data.readUInt16LE(p) === 0x0001) return true;
+  }
+  return false;
 }
 
 async function refuseOversized(kind: string, data: Buffer, xmlBudget: number): Promise<boolean> {

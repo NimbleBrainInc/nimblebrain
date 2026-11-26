@@ -235,18 +235,18 @@ describe("extractText bounds the work by the text it keeps", () => {
   // parsing one in full took seconds and gigabytes.
   test("a 1M-row XLSX bomb is refused before parsing", async () => {
     const bomb = xlsxWithRows(1_000_000);
-    const { result, ms, rssMb } = await measured(() => extractText(bomb, XLSX_MIME));
+    const { result, rssMb } = await measured(() => extractText(bomb, XLSX_MIME));
     expect(result).toBeNull();
-    expect(ms).toBeLessThan(100);
     expect(rssMb).toBeLessThan(50);
+    expect(await refusedBeforeParsing(() => extractText(bomb, XLSX_MIME))).toBe(true);
   });
 
   test("a 1M-paragraph DOCX bomb is refused before parsing", async () => {
     const bomb = docxWithParagraphs(1_000_000);
-    const { result, ms, rssMb } = await measured(() => extractText(bomb, DOCX_MIME));
+    const { result, rssMb } = await measured(() => extractText(bomb, DOCX_MIME));
     expect(result).toBeNull();
-    expect(ms).toBeLessThan(100);
     expect(rssMb).toBeLessThan(50);
+    expect(await refusedBeforeParsing(() => extractText(bomb, DOCX_MIME))).toBe(true);
   });
 
   // A file that understates its sizes passes the declared sums, and is refused
@@ -276,6 +276,19 @@ describe("extractText bounds the work by the text it keeps", () => {
       });
     }
   }
+
+  // SheetJS sizes an entry's output buffer from the local header.
+  test("a local header declaring more than the directory is refused before parsing", async () => {
+    const data = xlsxWithRows(1);
+    data.writeUInt32LE(128 * 1024 * 1024, 22);
+    const alloc = spyOn(Buffer, "allocUnsafe");
+    try {
+      expect(await refusedBeforeParsing(() => extractText(data, XLSX_MIME, 20))).toBe(true);
+      expect(alloc.mock.calls.every(([size]) => size < 1024 * 1024)).toBe(true);
+    } finally {
+      alloc.mockRestore();
+    }
+  });
 
   test("a zip whose end record miscounts its entries is refused", async () => {
     expect(
