@@ -171,8 +171,21 @@ const PRIVATE: Record<string, Handler> = {
   }),
 };
 
+/**
+ * What a caller is told about a failure the contract has no code for. The detail can name
+ * the medium (a path, a file handle), which never crosses the contract (CONTRACT.md §8), so
+ * it goes only to this server's log, on stderr.
+ */
+const INTERNAL_ERROR = "the conversations server failed; its log has the detail";
+
+/** Log an unexpected failure's detail where only the operator reads it. */
+function logInternal(tool: string, err: unknown): void {
+  const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  process.stderr.write(`nb-conversations: ${tool} failed: ${detail}\n`);
+}
+
 /** A private tool's failure as its contract code. */
-function privateFailure(err: unknown): ToolErrorResult {
+function privateFailure(tool: string, err: unknown): ToolErrorResult {
   if (err instanceof ToolCallError) return toolError(err.code, err.message);
   if (err instanceof ConversationNotFoundError) {
     return toolError("conversation_not_found", `no conversation ${err.message} in scope`);
@@ -184,20 +197,22 @@ function privateFailure(err: unknown): ToolErrorResult {
       `the stored conversation cannot be read: ${err.message}`,
     );
   }
-  return toolError("internal_error", err instanceof Error ? err.message : String(err));
+  logInternal(tool, err);
+  return toolError("internal_error", INTERNAL_ERROR);
 }
 
 /**
  * A public tool's failure as its contract code. A failure the contract has no public code
- * for is rethrown, and answers as a JSON-RPC error.
+ * for answers as a JSON-RPC internal error with a fixed message; its detail is logged.
  */
-function publicFailure(err: unknown, args: Args): ToolErrorResult {
+function publicFailure(tool: string, err: unknown, args: Args): ToolErrorResult {
   if (err instanceof ToolCallError) return toolError(err.code, err.message);
   if (err instanceof CorruptConversationError || err instanceof ConversationNotFoundError) {
     const id = typeof args.id === "string" ? args.id : "";
     return toolError("conversation_not_found", notFound(id).message);
   }
-  throw err;
+  logInternal(tool, err);
+  throw new ProtocolError(ProtocolErrorCode.InternalError, INTERNAL_ERROR);
 }
 
 function scopeMissing(visibility: "public" | "private", missing: "workspace" | "owner") {
@@ -244,7 +259,7 @@ export async function callTool(
     const result = (await handler(store, scope, args, ctx)) as Record<string, unknown>;
     return success(result, visibility === "public");
   } catch (err) {
-    return visibility === "private" ? privateFailure(err) : publicFailure(err, args);
+    return visibility === "private" ? privateFailure(name, err) : publicFailure(name, err, args);
   }
 }
 

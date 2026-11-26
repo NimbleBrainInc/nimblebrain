@@ -39,7 +39,10 @@ conversations. How to run it standalone is in `README.md`.
   (`forbidden`), arguments against the input schema (`invalid_input`), workspace and owner
   present (`scope_missing`), then the tool.
 - **Errors are `{ code, error }`** from the contract's lists. A public error's text begins with
-  its contract prefix. A public failure with no contract code is a JSON-RPC error.
+  its contract prefix. A public failure with no contract code is a JSON-RPC internal error.
+- **An unexpected failure's detail goes only to stderr.** `internal_error` and the JSON-RPC
+  internal error carry a fixed message; the detail (which can name a path) is logged, since
+  no path crosses the contract (CONTRACT.md §8).
 - **`active` and a trailing open run.** Whether a reply is generating is the host's to know. A
   call made inside a conversation (`conversationId` in its context) is made during that
   conversation's turn, so that conversation reads `active: true` and its trailing run
