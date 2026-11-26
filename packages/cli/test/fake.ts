@@ -58,6 +58,13 @@ export function record(
   });
 }
 
+/** `claude auth status --json` for a person signed in to a Claude Max subscription. */
+export const CLAUDE_MAX = JSON.stringify({
+  loggedIn: true,
+  authMethod: "claude.ai",
+  subscriptionType: "max",
+});
+
 export const GB = 1024 ** 3;
 export const ok = (stdout = ""): ExecResult => ({ code: 0, stdout, stderr: "", missing: false });
 export const missing = (): ExecResult => ({ code: null, stdout: "", stderr: "", missing: true });
@@ -78,6 +85,8 @@ export interface Machine {
   launched: string[];
   /** The environment each `docker compose` call got. */
   composeEnvs: NodeJS.ProcessEnv[];
+  /** The environment each program run with one got, by its command line. */
+  execEnvs: Array<{ line: string; env: NodeJS.ProcessEnv }>;
   said: string[];
   /** Each question the CLI put to the person, in order. */
   asked: string[];
@@ -87,6 +96,10 @@ export interface Machine {
   posts: Array<{ url: string; body: unknown }>;
   /** The runtime's telemetry answer, read from `.env` when it starts, as the real one does. */
   runtimeConsent: "on" | "off" | "undecided";
+  /** Agent workers running, by pid: the port each listens on and its command line. */
+  workers: Map<number, { port: number; command: string }>;
+  /** Every detached start, as one line (`cmd args…`), with the log it writes to and its environment. */
+  spawned: Array<{ line: string; logPath: string; env: NodeJS.ProcessEnv }>;
   /** Ollama's models after the run, by name. */
   ollamaModels: Record<string, OllamaModel>;
   /** Whether Ollama answers. */
@@ -122,6 +135,14 @@ export interface MachineOptions {
   platform?: NodeJS.Platform;
   /** Programs on `PATH` (`which`); default none. */
   programs?: string[];
+  /**
+   * What an agent worker does once started: `listens` (default) answers health
+   * on its port; `refuses` writes why to its log and exits, as one that is not
+   * signed in does.
+   */
+  worker?: "listens" | "refuses";
+  /** Agent workers already running when the run starts, by pid. */
+  workers?: Record<number, { port: number; command: string }>;
   /** The CLI's npm `latest`; absent, the registry does not answer. */
   npmLatest?: string;
 }
@@ -138,12 +159,17 @@ export function machine(opts: MachineOptions = {}): Machine {
     calls: [] as string[],
     launched: [] as string[],
     composeEnvs: [] as NodeJS.ProcessEnv[],
+    execEnvs: [] as Array<{ line: string; env: NodeJS.ProcessEnv }>,
     said: [] as string[],
     asked: [] as string[],
     healthy: false,
     posts: [] as Array<{ url: string; body: unknown }>,
     runtimeConsent: "undecided" as "on" | "off" | "undecided",
     ollamaModels: { ...(opts.ollama?.models ?? {}) } as Record<string, OllamaModel>,
+    workers: new Map(
+      Object.entries(opts.workers ?? {}).map(([pid, w]) => [Number(pid), w] as const),
+    ),
+    spawned: [] as Array<{ line: string; logPath: string; env: NodeJS.ProcessEnv }>,
     ollamaUp: Boolean(opts.ollama && !opts.ollama.down),
   };
   const m = state;
@@ -164,7 +190,8 @@ export function machine(opts: MachineOptions = {}): Machine {
       // The standalone `docker-compose` is the same program as the plugin; it drives the same instance.
       const composeLine = line.replace(/^docker-compose /, "docker compose ");
       if (composeLine.startsWith("docker compose ") && o.env) m.composeEnvs.push(o.env);
-      const res = exec[line] ?? ok();
+      if (o.env) m.execEnvs.push({ line, env: o.env });
+      const res = exec[line] ?? workerCommand(args, line) ?? ok();
       if (res.code === 0 && composeLine.startsWith("docker compose up")) {
         m.healthy = true;
         if (m.runtimeConsent === "undecided") {
@@ -195,6 +222,22 @@ export function machine(opts: MachineOptions = {}): Machine {
       }
       return res;
     },
+    async spawnDetached(cmd, args, { logPath, env }) {
+      const line = [cmd, ...args].join(" ");
+      m.spawned.push({ line, logPath, env });
+      const port = Number(args[args.indexOf("--port") + 1]);
+      if (opts.worker === "refuses") {
+        m.files.set(logPath, {
+          text: "\n  Not started: Claude Code is not signed in.\n\n",
+          mode: 0o600,
+        });
+        return 4242;
+      }
+      const pid = 4242 + m.workers.size;
+      m.workers.set(pid, { port, command: line });
+      return pid;
+    },
+    self: { node: "/usr/local/bin/node", script: "/home/dana/.npm/_npx/1/nimblebrain.js" },
     async launch(cmd, args) {
       m.launched.push([cmd, ...args].join(" "));
       return opts.launch ?? true;
@@ -202,6 +245,11 @@ export function machine(opts: MachineOptions = {}): Machine {
     which: async (cmd) => (opts.programs ?? []).includes(cmd),
     portFree: async () => opts.portFree ?? true,
     async getText(url) {
+      const health = url.match(/^http:\/\/127\.0\.0\.1:(\d+)\/healthz$/);
+      if (health) {
+        const listening = [...m.workers.values()].some((w) => w.port === Number(health[1]));
+        return listening ? { status: 200, body: "ok" } : undefined;
+      }
       if (url.endsWith("info/refs?service=git-upload-pack")) {
         // Git's ref advertisement: a peeled `^{}` line follows each annotated tag.
         const refs = (opts.tags ?? []).flatMap((t) => [
@@ -290,6 +338,21 @@ export function machine(opts: MachineOptions = {}): Machine {
     home: "/home/dana",
     cwd: "/home/dana/src",
   };
+  /** `ps -p <pid> -o command=` and `kill`, as they answer for the agent workers running. */
+  function workerCommand(args: string[], line: string): ExecResult | undefined {
+    const ps = line.match(/^ps -p (\d+) -o command=$/);
+    if (ps) {
+      const w = m.workers.get(Number(ps[1]));
+      return w ? ok(`${w.command}\n`) : fail("", 1);
+    }
+    const kill = line.match(/^kill -(TERM|KILL) (\d+)$/);
+    if (kill) {
+      const pid = Number(args[1]);
+      return m.workers.delete(pid) ? ok() : fail("no such process");
+    }
+    return undefined;
+  }
+
   /** Ollama's API, as the real one answers the calls the CLI makes. */
   function ollama(url: string, body: unknown): { status: number; body: unknown } | undefined {
     if (!opts.ollama || !m.ollamaUp) return undefined;

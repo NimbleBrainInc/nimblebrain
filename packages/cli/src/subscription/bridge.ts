@@ -54,24 +54,28 @@ export function createBridge(baseUrl: () => string): Bridge {
       const binding = bindings.get(token);
       if (!binding) return reply(res, 404);
       // No server-initiated stream: every answer rides its POST.
-      if (req.method === "GET") return reply(res, 405);
       if (req.method === "DELETE") return reply(res, 200);
       if (req.method !== "POST") return reply(res, 405);
-      let body: JsonRpcMessage | JsonRpcMessage[];
-      try {
-        body = JSON.parse(await readBody(req)) as JsonRpcMessage | JsonRpcMessage[];
-      } catch {
-        return reply(res, 400);
-      }
-      const messages = Array.isArray(body) ? body : [body];
-      const answers = (await Promise.all(messages.map((m) => relay(binding, m)))).filter(
-        (a): a is Record<string, unknown> => a !== undefined,
-      );
-      if (answers.length === 0) return reply(res, 202);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(Array.isArray(body) ? answers : answers[0]));
+      return post(binding, req, res);
     },
   };
+}
+
+/** A POST of one MCP message or a batch: each relayed, the answers on the response. */
+async function post(binding: Binding, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: JsonRpcMessage | JsonRpcMessage[];
+  try {
+    body = JSON.parse(await readBody(req)) as JsonRpcMessage | JsonRpcMessage[];
+  } catch {
+    return reply(res, 400);
+  }
+  const messages = Array.isArray(body) ? body : [body];
+  const answers = (await Promise.all(messages.map((m) => relay(binding, m)))).filter(
+    (a): a is Record<string, unknown> => a !== undefined,
+  );
+  if (answers.length === 0) return reply(res, 202);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify(Array.isArray(body) ? answers : answers[0]));
 }
 
 /** One MCP message to the runtime; a request's answer, or nothing for a notification. */

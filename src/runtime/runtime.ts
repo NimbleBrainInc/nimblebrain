@@ -1170,6 +1170,7 @@ export class Runtime {
       connectionCredential: runKey ? () => runKey.mintConnectionCredential() : null,
       dev: identityProvider instanceof DevIdentityProvider,
     });
+    warnIfNoModelProvider(config, gateway, agentRuntimes.select(config.execution?.default));
     const rt = new Runtime(
       resolveModelFn,
       agentRuntimes,
@@ -5491,6 +5492,12 @@ export class Runtime {
     return this.getModelSlot("default");
   }
 
+  /** The default runtime's id when it brings its own model, so no turn uses the model slots. */
+  getRuntimeWithOwnModel(): string | undefined {
+    const runtime = this.agentRuntimes.select(this.config.execution?.default);
+    return runtime.capabilities.ownModel ? runtime.id : undefined;
+  }
+
   /**
    * Compact a conversation's history at run start when it has outgrown its
    * budget — fold the oldest turns into a summary so the prefix re-anchors once
@@ -6509,13 +6516,29 @@ function resolveModel(
   // Only the providers the config names are built; with none, every model
   // fails naming the settings that configure one. The runtime still starts, so
   // an install can come up first and be given its key afterwards.
-  if (!gateway && Object.keys(config.providers ?? {}).length === 0) {
-    log.warn(
-      "[runtime] No model provider is configured: chat fails until nimblebrain.json sets providers " +
-        `(providers.local for a model server you run) or the environment holds a provider key (${Object.values(MODEL_PROVIDER_KEY_ENV).join(", ")}).`,
-    );
-  }
   return buildModelResolver({ providers: config.providers }, gateway);
+}
+
+/**
+ * Say at boot when no model provider is configured, and what fails because of
+ * it. A default runtime that brings its own model (`ownModel`) runs every turn
+ * and the door's own model work without one; only a run it cannot hold (a
+ * spend budget, ADR-0062) needs the native engine, and so a provider.
+ */
+function warnIfNoModelProvider(
+  config: RuntimeConfig,
+  gateway: ModelGatewayAccess | undefined,
+  defaultRuntime: AgentRuntime,
+): void {
+  if (config.languageModel || gateway || Object.keys(config.providers ?? {}).length > 0) return;
+  const settings = `nimblebrain.json sets providers (providers.local for a model server you run) or the environment holds a provider key (${Object.values(MODEL_PROVIDER_KEY_ENV).join(", ")})`;
+  if (defaultRuntime.capabilities.ownModel) {
+    log.info(
+      `[runtime] No model provider is configured: every turn runs on ${defaultRuntime.id}, which brings its own model. A run with a spend budget runs on the native engine and fails until ${settings}.`,
+    );
+    return;
+  }
+  log.warn(`[runtime] No model provider is configured: chat fails until ${settings}.`);
 }
 
 /** Initialize work directory env vars and sync core skills. */

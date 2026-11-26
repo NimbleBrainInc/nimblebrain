@@ -8,6 +8,11 @@
  * go to a sink that keeps only the model the agent reported, and the caller
  * bills its usage as the door's own (`aux.usage`), as it does for a native
  * call.
+ *
+ * It takes no admission slot and no spend account: it is the same work as the
+ * native call it replaces, which the door makes for the turn that caused it
+ * (a chat is not admitted, and the door's own model calls are not checked,
+ * `src/runtime/AGENTS.md`). Only where it executes changes.
  */
 
 import type { Complete } from "../conversation/completion.ts";

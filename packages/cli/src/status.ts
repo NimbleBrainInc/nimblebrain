@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { type AgentRuntimeState, agentRuntimeState } from "./agent-worker.ts";
 import { skillInstalled } from "./agents.ts";
 import type { Agent } from "./args.ts";
 import { hasKey, hostLoopback, keyVars } from "./compose.ts";
@@ -91,6 +92,8 @@ export interface StatusResult {
   host_loopback: boolean;
   /** The local model NimbleBrain's agents run on (`npx nimblebrain local-model`), or null for a hosted key. */
   local_model: string | null;
+  /** The runtime NimbleBrain's agents run on (`npx nimblebrain use`), and its worker on this machine. */
+  agent_runtime: AgentRuntimeState;
   telemetry: TelemetryField;
 }
 
@@ -138,6 +141,7 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
     model_key: modelKey,
     host_loopback: hostLoopback(composeText),
     local_model: localModelOf(envText) ?? null,
+    agent_runtime: await agentRuntimeState(deps, home),
     telemetry: await currentTelemetry(deps, home, url),
   };
 }

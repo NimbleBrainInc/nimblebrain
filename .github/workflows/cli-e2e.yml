@@ -43,6 +43,10 @@ jobs:
           # The floor the CLI declares in packages/cli/package.json.
           node-version: 20
 
+      - name: Install the code the CLI bundles
+        # The build resolves the agent worker's ACP SDK from the root install.
+        run: bun install --frozen-lockfile
+
       - name: Build the CLI
         working-directory: packages/cli
         run: bun run build

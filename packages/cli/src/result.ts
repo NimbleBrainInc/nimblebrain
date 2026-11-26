@@ -67,6 +67,16 @@ export const ERRORS = {
   NAME_IS_CATALOG_ENTRY: "Pass another name with --name; this one belongs to a catalog connector.",
   REQUEST_FAILED:
     "Run `npx nimblebrain logs` and look at the last error line, then run this again.",
+  AGENT_CLI_MISSING:
+    "Install the agent's own CLI (Claude Code or Codex) and sign in to your subscription with it, then run this again.",
+  AGENT_NOT_SIGNED_IN:
+    "Sign the agent's CLI in to your Claude or ChatGPT subscription, then run this again.",
+  AGENT_BILLS_API_KEY:
+    "Sign the agent's CLI in to your Claude or ChatGPT subscription instead of an API key, then run this again.",
+  HOST_LOOPBACK_UNREACHABLE:
+    "Run NimbleBrain on your subscription from macOS for now. On Linux, NimbleBrain's container reaches this machine over the Docker bridge, not 127.0.0.1, and the agent worker listens on 127.0.0.1 only. `npx nimblebrain key` gives NimbleBrain a model key instead.",
+  AGENT_WORKER_FAILED:
+    "Read agent-worker.log in the install's folder (its path is in log) for why the agent worker stopped, then run this again.",
 } as const;
 
 export type ErrorCode = keyof typeof ERRORS;
@@ -92,6 +102,21 @@ export const FIX_VARIANTS = {
       "Restart Colima with more memory: `colima stop && colima start --memory 4`, then run this again.",
     docker_desktop:
       "In Docker Desktop, open Settings > Resources, set Memory to at least 2 GB, apply, then run this again.",
+  },
+  AGENT_CLI_MISSING: {
+    claude:
+      "Install or update Claude Code (https://claude.com/claude-code), run `claude` and sign in with your Claude account, then run this again.",
+    codex:
+      "Install or update Codex with `npm i -g @openai/codex`, run `codex login` and choose Sign in with ChatGPT, then run this again.",
+  },
+  AGENT_NOT_SIGNED_IN: {
+    claude: "Run `claude`, sign in with your Claude account, then run this again.",
+    codex: "Run `codex login`, choose Sign in with ChatGPT, then run this again.",
+  },
+  AGENT_BILLS_API_KEY: {
+    claude: "Run `claude /login`, choose your Claude subscription, then run this again.",
+    codex:
+      "Run `codex logout`, then `codex login` and choose Sign in with ChatGPT, then run this again.",
   },
   LOCAL_MODEL_UNREACHABLE: {
     brew_install:

@@ -1,3 +1,4 @@
+import { restartWorker, stopWorker, workerPaths } from "./agent-worker.ts";
 import {
   connectAgent,
   installSkill,
@@ -286,7 +287,9 @@ async function connectChosenAgent(ctx: Ctx, state: InstallState): Promise<string
  * Starts NimbleBrain. On a local model, Ollama is checked first and started
  * when it is installed but down (after a reboot, say); NimbleBrain starts
  * either way, and an Ollama still down ends `up` with `LOCAL_MODEL_UNREACHABLE`
- * carrying the status, since every agent's message would fail.
+ * carrying the status, since every agent's message would fail. On a
+ * subscription runtime (`use`), its agent worker is started the same way when
+ * it is not running, and one that cannot start ends `up` with its own error.
  */
 export async function up(ctx: Ctx) {
   const { deps, home } = ctx;
@@ -302,13 +305,21 @@ export async function up(ctx: Ctx) {
     ollama instanceof CliError
       ? (ollama.detail.ollama_started as string | undefined)
       : ollama?.started;
+  const worker = await restartWorker(deps, home).then(
+    () => undefined,
+    (err: unknown) => {
+      if (err instanceof CliError) return err;
+      throw err;
+    },
+  );
   const result = await carryingStarted(started, async () => {
     await start(deps, home, install.port);
     return status(deps, home);
   });
-  if (ollama instanceof CliError) {
-    throw ollama.with({ ...result }, `NimbleBrain is running, but ${lowerFirst(ollama.message)}`);
-  }
+  const running = (err: CliError) =>
+    err.with({ ...result }, `NimbleBrain is running, but ${lowerFirst(err.message)}`);
+  if (ollama instanceof CliError) throw running(ollama);
+  if (worker) throw running(worker);
   return { ...result, ollama_started: ollama?.started };
 }
 
@@ -316,6 +327,8 @@ const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 export async function down(ctx: Ctx) {
   await requireInstall(ctx.deps, ctx.home);
+  // `.env` keeps the agent runtime, so `up` starts its worker again.
+  await stopWorker(ctx.deps, ctx.home);
   if (!(await claimWritten(ctx.deps, ctx.home))) return { ok: true as const, health: "down" };
   const res = await compose(ctx.deps, ctx.home, ["down"]);
   if (res.code !== 0) throw startError(res);
@@ -398,6 +411,7 @@ export async function uninstall(ctx: Ctx) {
     const answer = await deps.prompt("Remove NimbleBrain and every conversation in it? [y/N] ");
     if (!/^y/i.test(answer)) throw new CliError("CANCELLED", "Nothing was removed.");
   }
+  await stopWorker(deps, home);
   if (await claimWritten(deps, home)) {
     const res = await compose(deps, home, ["down", "-v", "--rmi", "all"], START_TIMEOUT_MS);
     if (res.code !== 0) throw startError(res);
@@ -405,7 +419,14 @@ export async function uninstall(ctx: Ctx) {
   if (install.agent === "claude-code")
     await deps.exec("claude", ["mcp", "remove", "-s", "user", SERVER_NAME]);
   if (install.agent === "codex") await deps.exec("codex", ["mcp", "remove", SERVER_NAME]);
-  for (const file of [...Object.values(paths(home)), reportPath(home), idPath(home)])
+  const worker = workerPaths(home);
+  for (const file of [
+    ...Object.values(paths(home)),
+    reportPath(home),
+    idPath(home),
+    worker.record,
+    worker.log,
+  ])
     await deps.remove(file);
   await deps.remove(home);
   return { ok: true as const, removed: true };
@@ -582,7 +603,8 @@ async function imagesPresent(deps: Deps, images: string[]): Promise<boolean> {
   return res.code === 0;
 }
 
-async function start(deps: Deps, home: string, port: number): Promise<void> {
+/** `up -d`, which recreates the runtime's container when `.env` changed, then waits for health. */
+export async function start(deps: Deps, home: string, port: number): Promise<void> {
   const res = await compose(deps, home, ["up", "-d", "--no-build"], START_TIMEOUT_MS);
   if (res.code !== 0) throw await homeNotShared(deps, home, startError(res));
   await waitHealthy(deps, port);

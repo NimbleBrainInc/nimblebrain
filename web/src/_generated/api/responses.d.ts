@@ -226,6 +226,13 @@ export interface BootstrapResponse {
         maxOutputTokens: number;
         /** Attachment limits; absent when file context is off. */
         files?: FileLimits;
+        /**
+         * The runtime every turn runs on, when it brings its own model (a coding
+         * agent's CLI on the person's subscription): the composer names it instead
+         * of offering models no turn would use. Absent when turns run on the
+         * models listed here.
+         */
+        runsOn?: string;
     };
     version: string;
     buildSha: string | null;

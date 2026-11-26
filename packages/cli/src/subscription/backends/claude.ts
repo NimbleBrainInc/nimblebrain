@@ -52,25 +52,43 @@ interface AuthStatus {
   planTier?: string;
 }
 
+/** The command that says how Claude Code is signed in; `claudeAccount` reads its output. */
+export const CLAUDE_STATUS = ["auth", "status", "--json"];
+
 async function claudePreflight(bin: string): Promise<Account> {
-  const out = await capture(bin, ["auth", "status", "--json"]).catch(() => {
+  return claudeAccount(await capture(bin, CLAUDE_STATUS).catch(() => undefined));
+}
+
+/**
+ * The subscription `claude auth status --json` names, or why the turn would
+ * not bill one: `out` undefined means Claude Code is not installed. Only a
+ * claude.ai login with a subscription passes; any other method is an API key.
+ */
+export function claudeAccount(out: string | undefined): Account {
+  if (out === undefined) {
     throw new BackendRefused(
+      "not_installed",
       "Claude Code is not installed. Install it from https://claude.com/claude-code, then run `claude` and sign in.",
     );
-  });
+  }
   let status: AuthStatus;
   try {
     status = JSON.parse(out) as AuthStatus;
   } catch {
-    throw new BackendRefused("Could not read `claude auth status`. Update Claude Code.");
+    throw new BackendRefused(
+      "unreadable",
+      "Could not read `claude auth status`. Update Claude Code.",
+    );
   }
   if (!status.loggedIn) {
     throw new BackendRefused(
+      "not_signed_in",
       "Claude Code is not signed in. Run `claude` and sign in with your Claude account.",
     );
   }
   if (status.authMethod !== "claude.ai" || !status.subscriptionType) {
     throw new BackendRefused(
+      "api_key",
       `Claude Code is signed in with ${status.authMethod ?? "an API key"}, which bills API pricing. Run \`claude /login\` and choose your Claude subscription.`,
     );
   }
@@ -78,10 +96,10 @@ async function claudePreflight(bin: string): Promise<Account> {
   return { describe: `your Claude ${plan} subscription (claude.ai login, no API key)` };
 }
 
-async function runClaude(bin: string, model: string | undefined, input: TurnInput): Promise<TurnResult> {
-  const cwd = await mkdtemp(join(tmpdir(), "nb-claude-"));
+/** The print-mode arguments: stream JSON, the session's server only, nothing of the person's. */
+function claudeArgs(input: TurnInput, model: string | undefined): string[] {
   const mcpConfig = { mcpServers: { [SERVER]: { type: "http", url: input.mcpUrl } } };
-  const args = [
+  return [
     "-p",
     "--output-format",
     "stream-json",
@@ -101,7 +119,19 @@ async function runClaude(bin: string, model: string | undefined, input: TurnInpu
     ...(input.system ? ["--system-prompt", input.system] : []),
     ...(model ? ["--model", model] : []),
   ];
-  const child = spawn(bin, args, { cwd, env: subscriptionEnv(), stdio: ["pipe", "pipe", "pipe"] });
+}
+
+async function runClaude(
+  bin: string,
+  model: string | undefined,
+  input: TurnInput,
+): Promise<TurnResult> {
+  const cwd = await mkdtemp(join(tmpdir(), "nb-claude-"));
+  const child = spawn(bin, claudeArgs(input, model), {
+    cwd,
+    env: subscriptionEnv(),
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   const kill = () => child.kill("SIGTERM");
   input.signal.addEventListener("abort", kill, { once: true });
   child.stdin.end(input.prompt);
@@ -112,46 +142,62 @@ async function runClaude(bin: string, model: string | undefined, input: TurnInpu
   const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
 
   const translate = claudeTranslator(input.emit);
-  let refused: string | undefined;
   try {
-    for await (const line of createInterface({ input: child.stdout })) {
-      if (!line.trim()) continue;
-      let message: ClaudeMessage;
-      try {
-        message = JSON.parse(line) as ClaudeMessage;
-      } catch {
-        continue;
-      }
-      refused ??= apiKeyRefusal(message);
-      if (refused) {
-        kill();
-        break;
-      }
-      translate(message);
-    }
+    const refused = await readClaude(child.stdout, translate, kill);
     const code = await exited;
-    if (refused) throw new BackendRefused(refused);
+    if (refused) throw new BackendRefused("api_key", refused);
     if (input.signal.aborted) return { stopReason: "cancelled", ...translate.totals() };
-    const result = translate.result();
-    if (!result) {
-      throw new Error(`Claude Code exited (${code}) without a result: ${stderr.trim().slice(-500)}`);
-    }
-    if (result.is_error && result.subtype === "success") {
-      throw new Error(`Claude Code failed: ${result.result ?? "no detail"}`);
-    }
-    return {
-      stopReason:
-        result.subtype === "success"
-          ? "end_turn"
-          : result.subtype === "error_max_turns"
-            ? "max_turn_requests"
-            : "end_turn",
-      ...translate.totals(),
-    };
+    return { stopReason: claudeStop(translate.result(), code, stderr), ...translate.totals() };
   } finally {
     input.signal.removeEventListener("abort", kill);
     await rm(cwd, { recursive: true, force: true });
   }
+}
+
+/**
+ * Feeds each stream-json line to `translate`, until the end or a line that
+ * would bill an API key, which kills the turn. That refusal, if any.
+ */
+async function readClaude(
+  stdout: NodeJS.ReadableStream,
+  translate: (message: ClaudeMessage) => void,
+  kill: () => void,
+): Promise<string | undefined> {
+  for await (const line of createInterface({ input: stdout })) {
+    const message = parseLine(line);
+    if (!message) continue;
+    const refused = apiKeyRefusal(message);
+    if (refused) {
+      kill();
+      return refused;
+    }
+    translate(message);
+  }
+  return undefined;
+}
+
+function parseLine(line: string): ClaudeMessage | undefined {
+  if (!line.trim()) return undefined;
+  try {
+    return JSON.parse(line) as ClaudeMessage;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The turn's stop reason from Claude Code's `result` line; throws when it failed or never answered. */
+function claudeStop(
+  result: ClaudeMessage | undefined,
+  code: number | null,
+  stderr: string,
+): acp.StopReason {
+  if (!result) {
+    throw new Error(`Claude Code exited (${code}) without a result: ${stderr.trim().slice(-500)}`);
+  }
+  if (result.is_error && result.subtype === "success") {
+    throw new Error(`Claude Code failed: ${result.result ?? "no detail"}`);
+  }
+  return result.subtype === "error_max_turns" ? "max_turn_requests" : "end_turn";
 }
 
 /**
@@ -205,72 +251,79 @@ interface ClaudeModelUsage {
 export function claudeTranslator(emit: (update: acp.SessionUpdate) => void) {
   let final: ClaudeMessage | undefined;
   const translate = (message: ClaudeMessage) => {
-    if (message.type === "stream_event") {
-      const delta = message.event?.type === "content_block_delta" ? message.event.delta : undefined;
-      if (delta?.type === "text_delta" && delta.text) {
-        emit({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: delta.text } });
-      } else if (delta?.type === "thinking_delta" && delta.thinking) {
-        emit({
-          sessionUpdate: "agent_thought_chunk",
-          content: { type: "text", text: delta.thinking },
-        });
-      }
-      return;
-    }
-    if (message.type === "assistant") {
-      for (const block of message.message?.content ?? []) {
-        if (block.type === "tool_use" && block.id) {
-          emit({
-            sessionUpdate: "tool_call",
-            toolCallId: block.id,
-            title: toolTitle(block.name ?? "tool"),
-            kind: "other",
-            status: "in_progress",
-            rawInput: block.input,
-          });
-        }
-      }
-      return;
-    }
-    if (message.type === "user") {
-      for (const block of message.message?.content ?? []) {
-        if (block.type === "tool_result" && block.tool_use_id) {
-          emit({
-            sessionUpdate: "tool_call_update",
-            toolCallId: block.tool_use_id,
-            status: block.is_error ? "failed" : "completed",
-          });
-        }
-      }
-      return;
-    }
-    if (message.type === "result") final = message;
+    if (message.type === "stream_event") emitDelta(message, emit);
+    else if (message.type === "assistant") emitToolCalls(message, emit);
+    else if (message.type === "user") emitToolResults(message, emit);
+    else if (message.type === "result") final = message;
   };
   return Object.assign(translate, {
     result: () => final,
-    totals: (): { usage: TokenUsage; calls: ReportedCall[] } => {
-      const calls: ReportedCall[] = Object.entries(final?.modelUsage ?? {}).map(([model, u]) => ({
-        model: `claude-code-subscription:${model}`,
-        purpose: "turn",
-        usage: {
-          inputTokens: u.inputTokens ?? 0,
-          outputTokens: u.outputTokens ?? 0,
-          cacheReadTokens: u.cacheReadInputTokens ?? 0,
-          cacheWriteTokens: u.cacheCreationInputTokens ?? 0,
-        },
-      }));
-      const u = final?.usage;
-      const usage: TokenUsage = u
-        ? {
-            inputTokens: u.input_tokens ?? 0,
-            outputTokens: u.output_tokens ?? 0,
-            cacheReadTokens: u.cache_read_input_tokens ?? 0,
-            cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
-          }
-        : emptyUsage();
-      return { usage, calls };
-    },
+    totals: () => claudeTotals(final),
   });
+}
+
+/** A streamed text or thinking delta. */
+function emitDelta(message: ClaudeMessage, emit: (update: acp.SessionUpdate) => void): void {
+  const delta = message.event?.type === "content_block_delta" ? message.event.delta : undefined;
+  if (delta?.type === "text_delta" && delta.text) {
+    emit({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: delta.text } });
+  } else if (delta?.type === "thinking_delta" && delta.thinking) {
+    emit({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: delta.thinking } });
+  }
+}
+
+/** Each tool the assistant called. */
+function emitToolCalls(message: ClaudeMessage, emit: (update: acp.SessionUpdate) => void): void {
+  for (const block of message.message?.content ?? []) {
+    if (block.type !== "tool_use" || !block.id) continue;
+    emit({
+      sessionUpdate: "tool_call",
+      toolCallId: block.id,
+      title: toolTitle(block.name ?? "tool"),
+      kind: "other",
+      status: "in_progress",
+      rawInput: block.input,
+    });
+  }
+}
+
+/** Each tool call's result. */
+function emitToolResults(message: ClaudeMessage, emit: (update: acp.SessionUpdate) => void): void {
+  for (const block of message.message?.content ?? []) {
+    if (block.type !== "tool_result" || !block.tool_use_id) continue;
+    emit({
+      sessionUpdate: "tool_call_update",
+      toolCallId: block.tool_use_id,
+      status: block.is_error ? "failed" : "completed",
+    });
+  }
+}
+
+/** The turn's usage, and each model's calls, from Claude Code's `result` line. */
+function claudeTotals(final: ClaudeMessage | undefined): {
+  usage: TokenUsage;
+  calls: ReportedCall[];
+} {
+  const calls: ReportedCall[] = Object.entries(final?.modelUsage ?? {}).map(([model, u]) => ({
+    model: `claude-code-subscription:${model}`,
+    purpose: "turn",
+    usage: {
+      inputTokens: u.inputTokens ?? 0,
+      outputTokens: u.outputTokens ?? 0,
+      cacheReadTokens: u.cacheReadInputTokens ?? 0,
+      cacheWriteTokens: u.cacheCreationInputTokens ?? 0,
+    },
+  }));
+  const u = final?.usage;
+  const usage: TokenUsage = u
+    ? {
+        inputTokens: u.input_tokens ?? 0,
+        outputTokens: u.output_tokens ?? 0,
+        cacheReadTokens: u.cache_read_input_tokens ?? 0,
+        cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+      }
+    : emptyUsage();
+  return { usage, calls };
 }
 
 /** `mcp__nimblebrain__nb__status` → `nb__status`: the projected tool's own name. */

@@ -15,6 +15,7 @@ import type { DoctorAnswer } from "./main.ts";
 import type { McpAnswers } from "./mcp.ts";
 import type { open } from "./open.ts";
 import type { status } from "./status.ts";
+import type { use } from "./use.ts";
 
 /**
  * What each command's `{ok: true}` answer carries, field by field, as
@@ -23,6 +24,9 @@ import type { status } from "./status.ts";
  * that is not described here, or one described here that no command answers,
  * fails the type-check. A field present only sometimes says when.
  */
+
+const AGENT_RUNTIME =
+  "{name, worker}: the runtime NimbleBrain's agents run on (native, claude-code or codex; use sets it), and the agent worker that serves it as {running, pid, url, log} (null for native): whether it runs, its process id while it does, its ACP URL on 127.0.0.1, and its log file";
 
 /** The fields of every answer that carries an install's state (`status`, `init`, `up`, `update`). */
 const STATE = {
@@ -39,6 +43,7 @@ const STATE = {
   host_loopback:
     "Whether this release can reach a server on this machine; mcp add needs it, update brings it",
   local_model: "The Ollama model NimbleBrain's agents run on, or null for a hosted model key",
+  agent_runtime: AGENT_RUNTIME,
   telemetry:
     "{state, locked?, ask?, set?}: on, off or undecided; locked says why no one can change it here; ask and set, only while undecided, are the question to pass to the person and the command that answers it",
   updates:
@@ -74,6 +79,13 @@ export const ANSWER_FIELDS = {
     ollama_started: OLLAMA_STARTED,
   },
   telemetry: { telemetry: STATE.telemetry },
+  use: {
+    agent_runtime: AGENT_RUNTIME,
+    billed_to:
+      "Who pays for each turn, from the agent CLI's own sign-in, such as your Claude Max subscription; for claude and codex only",
+    tools:
+      "What the agent CLI may call during a turn: your workspace's tools, and for Codex its read-only shell; for claude and codex only",
+  },
   up: { ...STATE, ollama_started: OLLAMA_STARTED },
   down: { health: "down" },
   logs: { lines: "The runtime's last log lines, up to 100" },
@@ -123,6 +135,7 @@ interface Builders {
   key: typeof key;
   "local-model": typeof localModel;
   telemetry: typeof telemetry;
+  use: typeof use;
   up: typeof up;
   down: typeof down;
   logs: typeof logs;

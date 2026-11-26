@@ -1,7 +1,8 @@
 /**
  * The driver for a vendor's own agent CLI (Claude Code, Codex) run as a worker
- * on the person's machine by `packages/subscription-agent`, signed in to their
- * subscription. The CLI calls its vendor with its own login, so:
+ * on the person's machine by the `nimblebrain` CLI (`npx nimblebrain use`,
+ * `packages/cli/src/subscription/`), signed in to their subscription. The CLI
+ * calls its vendor with its own login, so:
  *
  * - It takes no model credential and no gateway route: the run's spend is the
  *   subscription's, which nothing here can cap, so the door gives it no spend

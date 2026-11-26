@@ -5,7 +5,15 @@ import { ANSWER_FIELDS } from "../src/answers.ts";
 import { COMMANDS, FLAG_SPECS, MCP_SUBCOMMANDS, parse } from "../src/args.ts";
 import { run, VERSION } from "../src/main.ts";
 import { ERRORS } from "../src/result.ts";
-import { LOCAL_COMPOSE, type Machine, machine, record } from "./fake.ts";
+import {
+  CLAUDE_MAX,
+  LOCAL_COMPOSE,
+  type Machine,
+  machine,
+  ok,
+  REPO_COMPOSE,
+  record,
+} from "./fake.ts";
 
 interface Help {
   ok: true;
@@ -144,7 +152,7 @@ describe("help --json", () => {
     ];
     for (const argv of runs) await answers(argv, m);
     expect(
-      new Set([...runs.map((a) => (a[0] === "mcp" ? `mcp ${a[1]}` : a[0])), "local-model"]),
+      new Set([...runs.map((a) => (a[0] === "mcp" ? `mcp ${a[1]}` : a[0])), "local-model", "use"]),
     ).toEqual(new Set(help.commands.map((c) => c.name)));
 
     // On a local model: Ollama installed but down, so each command that starts it says so.
@@ -165,6 +173,19 @@ describe("help --json", () => {
     expect(await answers(["local-model", "gemma4:e4b"], local)).toContain("ollama_started");
     // doctor with --json never starts Ollama, so its local checks answer without ollama_started.
     await answers(["doctor"], local);
+
+    // On a Mac signed in to a Claude subscription, `use` answers both ways.
+    const sub = machine({
+      platform: "darwin",
+      exec: { "claude auth status --json": ok(CLAUDE_MAX) },
+      files: {
+        [`${home}/install.json`]: record(),
+        [`${home}/.env`]: "",
+        [`${home}/docker-compose.yml`]: REPO_COMPOSE,
+      },
+    });
+    expect(await answers(["use", "claude"], sub)).toEqual(["agent_runtime", "billed_to", "tools"]);
+    expect(await answers(["use", "native"], sub)).toEqual(["agent_runtime"]);
   });
 
   test("lists every error code the CLI raises, with its fix and exit code", async () => {

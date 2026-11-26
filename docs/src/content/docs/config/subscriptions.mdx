@@ -1,0 +1,52 @@
+---
+title: Run on Your Subscription
+description: Run NimbleBrain's turns on the Claude Code or Codex you are signed in to, billed to your Claude or ChatGPT subscription instead of an API key.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A local NimbleBrain can run every turn on the coding agent you already pay for: Claude Code on a Claude Pro or Max subscription, or Codex on a ChatGPT plan. No model key is needed.
+
+```bash
+npx nimblebrain use claude    # or: use codex, use native
+```
+
+<Aside type="caution" title="Experimental, and local only">
+This is for one person's NimbleBrain on their own machine: the runtime accepts it only under the `dev` adapter in [`instance.json`](/config/instance-json/). A subscription is yours, so it never backs an instance other people sign in to.
+</Aside>
+
+## How it works
+
+`use` starts a small worker on your machine, on `127.0.0.1`. For each turn, NimbleBrain hands the turn to the worker over the [Agent Client Protocol](https://agentclientprotocol.com), and the worker runs the vendor's own CLI, unmodified and signed in as you:
+
+- **Claude Code** runs `claude -p` with none of its built-in tools, none of your settings, hooks, plugins or `CLAUDE.md`, and only one MCP server: your NimbleBrain workspace.
+- **Codex** runs `codex exec`, ignoring your `config.toml`, with your NimbleBrain workspace as its only MCP server. It keeps a read-only shell, which Codex cannot turn off; each command it runs shows in the turn.
+
+Your workspace's tools reach the CLI through the worker: each turn gets a private loopback address, and every tool call the CLI makes there goes back to NimbleBrain over the turn's own connection, through the same workspace wall and permission checks as any other turn. The worker never sees or holds your login: the CLI reads its own sign-in.
+
+## Billed to your subscription, never an API key
+
+The worker checks this, rather than assuming it:
+
+- It removes every API key variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and the like) from the CLI's environment, because Claude Code would otherwise prefer a key it finds there.
+- It refuses to start unless `claude auth status` reports a claude.ai subscription, or `codex login status` reports Sign in with ChatGPT. `use` names the command to fix it: `claude /login`, or `codex logout` and then `codex login`.
+- It stops a Claude turn at once if Claude Code reports any API key as its source.
+
+Usage still counts against your plan's own limits, and NimbleBrain records each turn's tokens under `claude-code-subscription:<model>` or `codex-subscription:codex`, at $0, since your subscription pays for them.
+
+## What runs where
+
+| | On your subscription | Needs a model key |
+|---|---|---|
+| Chat turns, and scheduled tasks without a spend budget | Yes | — |
+| The conversation's title, and the summary that folds a long history | Yes: they run on the same agent | — |
+| A run with a spend budget (a budgeted task or batch) | — | Yes: it runs on NimbleBrain's own engine, which can hold it to the budget |
+
+The chat composer shows **Runs on claude-code** (or codex) in place of the model picker: the agent chooses its own model, so a model chosen there would not be used.
+
+## Limits
+
+- macOS and Windows with Docker Desktop only for now. On Linux the container reaches the host over the Docker bridge, not `127.0.0.1`, and `use` answers `HOST_LOOPBACK_UNREACHABLE`.
+- A Codex turn carries Codex's own instructions and tool schemas, roughly 100k input tokens even for a short turn, most of them cached.
+- The worker holds each turn's connection. `down` stops it and `up` restarts it; a turn running when it stops is cut off, as when NimbleBrain itself restarts.
+- Codex's MCP client speaks an older protocol revision than `/mcp/<workspaceId>` serves, so connecting Codex to NimbleBrain as a tool (`init --agent codex`) gives it no tools. Running NimbleBrain's turns on Codex, as here, is not affected: the worker serves the tools to Codex itself.

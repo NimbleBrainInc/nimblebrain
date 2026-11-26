@@ -526,7 +526,7 @@
               "driver": {
                 "type": "string",
                 "enum": ["nimblebrain-agent", "claude-code", "codex"],
-                "description": "The agent the worker serves, which names the driver that speaks to it. nimblebrain-agent: NimbleBrain's agent loop as a standalone worker. claude-code, codex: that vendor's own CLI on this machine, signed in to the person's subscription (packages/subscription-agent); dev identity provider only."
+                "description": "The agent the worker serves, which names the driver that speaks to it. nimblebrain-agent: NimbleBrain's agent loop as a standalone worker. claude-code, codex: that vendor's own CLI on this machine, signed in to the person's subscription, served by the agent worker `npx nimblebrain use` starts; dev identity provider only."
               },
               "url": {
                 "type": "string",

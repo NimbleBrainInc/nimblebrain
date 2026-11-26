@@ -39,7 +39,8 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `open` | Opens NimbleBrain's web UI (the `url` in `status`) in your default browser. Answers `{"ok": true, "url": "...", "opened": true}`; where no browser can be started (no display, an SSH session, or the opener failed), `opened` is `false` and the URL is there to open by hand. A coding agent runs it when you ask it to open NimbleBrain. It never starts NimbleBrain: when it is stopped, it answers `NOT_RUNNING`. |
 | `key` | Takes the model key at a hidden prompt and restarts NimbleBrain so it takes effect. A person runs this. |
 | `local-model [model]` | Runs NimbleBrain's agents on a model served by Ollama instead of a hosted key: prepares the model (default `gemma4:e4b`) and restarts NimbleBrain. See [On a local model](#on-a-local-model). |
-| `up` / `down` | Starts or stops NimbleBrain. Your data survives `down`. `down` also stops an install whose first start failed. |
+| `use <claude\|codex\|native>` | Runs NimbleBrain's turns on the Claude Code or Codex you are signed in to, billed to your Claude or ChatGPT subscription, or back on NimbleBrain's own engine. See [On your subscription](#on-your-subscription). |
+| `up` / `down` | Starts or stops NimbleBrain. Your data survives `down`. `down` also stops an install whose first start failed. `up` also restarts the subscription worker `use` started; `down` stops it. |
 | `logs` | Recent log lines from the runtime, also after a first start that failed. |
 | `update` | Moves to the newest NimbleBrain release, or the one `--runtime` names, keeping your data, then refreshes the connected agent's `nimblebrain` skill. It never moves backwards. |
 | `uninstall` | Removes the containers, the images, every conversation, and the files `init` wrote. Asks first. Also removes an install whose first start failed. |
@@ -175,6 +176,20 @@ The CLI checks that Ollama answers on `127.0.0.1:11434`. When Ollama is installe
 
 Gemma 4 E4B is the smallest model run end to end on NimbleBrain's tasks (reliable on everyday ones, partial on scheduled tasks); [Local Models](/config/local-models/) lists what has been tested, what failed, and what has not been tried. It needs about 7 GB of memory beside NimbleBrain's 2 GB. On Linux, Ollama listens on `127.0.0.1` by default, which a container cannot reach: set `OLLAMA_HOST=0.0.0.0`. This needs a NimbleBrain release that takes a local model; an older one answers `RUNTIME_UNSUPPORTED`.
 
+## On your subscription
+
+NimbleBrain's turns can run on the coding agent you already pay for, instead of a model key:
+
+```bash
+npx nimblebrain use claude    # Claude Code, on your Claude Pro or Max subscription
+npx nimblebrain use codex     # Codex, on your ChatGPT plan
+npx nimblebrain use native    # back to NimbleBrain's own engine and your model key
+```
+
+`use` checks that the agent's CLI is installed and signed in to a subscription, not an API key: it refuses with `AGENT_CLI_MISSING`, `AGENT_NOT_SIGNED_IN` or `AGENT_BILLS_API_KEY`, and the fix names the command to run. It then starts a small worker on `127.0.0.1` (port 27290 for Claude, 27291 for Codex; `--port` moves it), writes `NB_AGENT_RUNTIME` and `NB_AGENT_RUNTIME_URL` to `.env`, and restarts NimbleBrain so every turn runs on it. The answer says what it bills (`billed_to`) and which tools the agent gets (`tools`); `status` reports `agent_runtime` and whether its worker is running. [Run on your subscription](/config/subscriptions/) explains what the worker does and what stays on NimbleBrain.
+
+This runs on macOS and Windows with Docker Desktop. On Linux the container reaches the host over the Docker bridge, not `127.0.0.1`, so `use` answers `HOST_LOOPBACK_UNREACHABLE`. It needs a NimbleBrain release that takes an agent runtime; an older one answers `RUNTIME_UNSUPPORTED`.
+
 ## When the first start fails
 
 `init` records the install in `install.json` before it writes anything else, with `phase: "starting"`, and sets it to `ready` once NimbleBrain first answers. When the first start fails (`START_FAILED`, `HOME_NOT_SHARED`, `HEALTH_TIMEOUT`, or the run is cut short), the install stays `starting`: `down` stops what was started, `logs` shows why, `status` reports it with `phase: "starting"`, and `uninstall` removes it. The commands that use NimbleBrain (`up`, `update`, `key`, `local-model`, `telemetry`, `open`, every `mcp` command) answer `INSTALL_INCOMPLETE` until it is finished.
@@ -195,4 +210,4 @@ Pass the same `--home` to every command for that install. Every command the CLI 
 
 ## What it writes
 
-Everything lives in `~/.nimblebrain-local`: the installed release's `docker-compose.yml`, downloaded from that release, an `instance.json` naming the `dev` sign-in, a `.env` that only your user can read (the release, the port, and your model key or local model), and `install.json`, the install's record: its Compose project, port, release and phase. Your conversations live in the Docker volume `<project>_workspace`, named after that project. `init` never writes into a home that holds any of these files without a readable `install.json`: that is `NOT_OURS`. A key exported in your shell is not used: `.env` is the only source, so the key you entered with `key` is the one that runs.
+Everything lives in `~/.nimblebrain-local`: the installed release's `docker-compose.yml`, downloaded from that release, an `instance.json` naming the `dev` sign-in, a `.env` that only your user can read (the release, the port, and your model key or local model), and `install.json`, the install's record: its Compose project, port, release and phase. After `use claude` or `use codex`, `agent-worker.json` records the worker's process, port and agent, and `agent-worker.log` holds its log; both are only your user's, and `uninstall` removes them. Your conversations live in the Docker volume `<project>_workspace`, named after that project. `init` never writes into a home that holds any of these files without a readable `install.json`: that is `NOT_OURS`. A key exported in your shell is not used: `.env` is the only source, so the key you entered with `key` is the one that runs.

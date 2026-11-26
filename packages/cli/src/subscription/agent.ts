@@ -4,6 +4,7 @@
  * turns; each prompt carries the whole turn.
  */
 
+import { randomUUID } from "node:crypto";
 import * as acp from "@agentclientprotocol/sdk/unstable";
 import type { Backend } from "./backends/types.ts";
 import type { Bridge } from "./bridge.ts";
@@ -48,7 +49,7 @@ export function createWorkerAgent(backend: Backend, bridge: Bridge): acp.AgentAp
         throw acp.RequestError.invalidParams(undefined, "the session names no acp MCP server");
       }
       const { url, release } = bridge.bind(ctx.client, server.serverId);
-      const sessionId = crypto.randomUUID();
+      const sessionId = randomUUID();
       const system = ctx.params.systemPrompt?.content
         .map((b) => (b.type === "text" ? b.text : ""))
         .join("\n\n");
@@ -71,7 +72,10 @@ export function createWorkerAgent(backend: Backend, bridge: Bridge): acp.AgentAp
           signal: turn.signal,
           emit: (update) =>
             void ctx.client
-              .notify(acp.methods.client.session.update, { sessionId: ctx.params.sessionId, update })
+              .notify(acp.methods.client.session.update, {
+                sessionId: ctx.params.sessionId,
+                update,
+              })
               .catch(() => {}),
         });
         const u = result.usage;

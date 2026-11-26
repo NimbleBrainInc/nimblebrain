@@ -42,22 +42,43 @@ export function createCodexBackend(opts: { bin?: string; model?: string } = {}):
   };
 }
 
+/** The command that says how Codex is signed in; `codexAccount` reads its output. */
+export const CODEX_STATUS = ["login", "status"];
+
 async function codexPreflight(bin: string): Promise<Account> {
-  const out = await capture(bin, ["login", "status"]).catch(() => {
+  return codexAccount(await capture(bin, CODEX_STATUS).catch(() => undefined));
+}
+
+/**
+ * The plan `codex login status` names (its stdout and stderr together), or
+ * why a turn would not bill one: `out` undefined means Codex is not installed.
+ */
+export function codexAccount(out: string | undefined): Account {
+  if (out === undefined) {
     throw new BackendRefused(
+      "not_installed",
       "Codex is not installed. Install it (`npm i -g @openai/codex`), then run `codex login`.",
     );
-  });
-  if (/chatgpt/i.test(out)) return { describe: "your ChatGPT plan (Sign in with ChatGPT, no API key)" };
+  }
+  if (/chatgpt/i.test(out))
+    return { describe: "your ChatGPT plan (Sign in with ChatGPT, no API key)" };
   if (/api key/i.test(out)) {
     throw new BackendRefused(
+      "api_key",
       "Codex is signed in with an API key, which bills API pricing. Run `codex logout`, then `codex login` and choose Sign in with ChatGPT.",
     );
   }
-  throw new BackendRefused("Codex is not signed in. Run `codex login` and choose Sign in with ChatGPT.");
+  throw new BackendRefused(
+    "not_signed_in",
+    "Codex is not signed in. Run `codex login` and choose Sign in with ChatGPT.",
+  );
 }
 
-async function runCodex(bin: string, model: string | undefined, input: TurnInput): Promise<TurnResult> {
+async function runCodex(
+  bin: string,
+  model: string | undefined,
+  input: TurnInput,
+): Promise<TurnResult> {
   const cwd = await mkdtemp(join(tmpdir(), "nb-codex-"));
   const args = [
     "exec",
@@ -101,7 +122,9 @@ async function runCodex(bin: string, model: string | undefined, input: TurnInput
     const failure = translate.failure();
     if (failure) throw new Error(`Codex failed: ${failure}`);
     if (!translate.completed()) {
-      throw new Error(`Codex exited (${code}) without finishing the turn: ${stderr.trim().slice(-500)}`);
+      throw new Error(
+        `Codex exited (${code}) without finishing the turn: ${stderr.trim().slice(-500)}`,
+      );
     }
     return { stopReason: "end_turn", ...translate.totals() };
   } finally {
@@ -134,56 +157,28 @@ interface CodexEvent {
   message?: string;
 }
 
+type Emit = (update: acp.SessionUpdate) => void;
+
+const isToolItem = (item: CodexItem | undefined): item is CodexItem =>
+  item?.type === "mcp_tool_call" || item?.type === "command_execution";
+
 /** `codex exec --json` events as ACP session updates, and the turn's usage at the end. */
-export function codexTranslator(emit: (update: acp.SessionUpdate) => void) {
+export function codexTranslator(emit: Emit) {
   let usage: TokenUsage = emptyUsage();
   let done = false;
   let failed: string | undefined;
-  const toolCall = (item: CodexItem, status: "in_progress" | "completed" | "failed") => {
-    if (!item.id) return;
-    if (status === "in_progress") {
-      emit({
-        sessionUpdate: "tool_call",
-        toolCallId: item.id,
-        title: item.type === "command_execution" ? `shell: ${item.command ?? ""}` : (item.tool ?? "tool"),
-        kind: item.type === "command_execution" ? "execute" : "other",
-        status,
-        rawInput: item.arguments,
-      });
-    } else {
-      emit({ sessionUpdate: "tool_call_update", toolCallId: item.id, status });
-    }
-  };
   const translate = (event: CodexEvent) => {
-    const item = event.item;
     switch (event.type) {
       case "item.started":
-        if (item?.type === "mcp_tool_call" || item?.type === "command_execution") {
-          toolCall(item, "in_progress");
-        }
+        if (isToolItem(event.item)) emitToolCall(event.item, "in_progress", emit);
         return;
       case "item.completed":
-        if (!item) return;
-        if (item.type === "agent_message" && item.text) {
-          emit({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: item.text } });
-        } else if (item.type === "reasoning" && item.text) {
-          emit({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: item.text } });
-        } else if (item.type === "mcp_tool_call" || item.type === "command_execution") {
-          toolCall(item, item.status === "failed" ? "failed" : "completed");
-        }
+        if (event.item) emitCompleted(event.item, emit);
         return;
-      case "turn.completed": {
-        const u = event.usage ?? {};
-        usage = {
-          inputTokens: u.input_tokens ?? 0,
-          outputTokens: u.output_tokens ?? 0,
-          cacheReadTokens: u.cached_input_tokens ?? 0,
-          cacheWriteTokens: 0,
-          reasoningTokens: u.reasoning_output_tokens ?? 0,
-        };
+      case "turn.completed":
+        usage = codexUsage(event.usage);
         done = true;
         return;
-      }
       case "turn.failed":
       case "error":
         failed = event.error?.message ?? event.message ?? "unknown error";
@@ -198,6 +193,49 @@ export function codexTranslator(emit: (update: acp.SessionUpdate) => void) {
       calls: [{ model: "codex-subscription:codex", purpose: "turn" as const, usage }],
     }),
   });
+}
+
+/** A tool call starting, or its end. */
+function emitToolCall(
+  item: CodexItem,
+  status: "in_progress" | "completed" | "failed",
+  emit: Emit,
+): void {
+  if (!item.id) return;
+  if (status !== "in_progress") {
+    emit({ sessionUpdate: "tool_call_update", toolCallId: item.id, status });
+    return;
+  }
+  const shell = item.type === "command_execution";
+  emit({
+    sessionUpdate: "tool_call",
+    toolCallId: item.id,
+    title: shell ? `shell: ${item.command ?? ""}` : (item.tool ?? "tool"),
+    kind: shell ? "execute" : "other",
+    status,
+    rawInput: item.arguments,
+  });
+}
+
+/** A finished item: a message, reasoning, or a tool call's end. */
+function emitCompleted(item: CodexItem, emit: Emit): void {
+  if (item.type === "agent_message" && item.text) {
+    emit({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: item.text } });
+  } else if (item.type === "reasoning" && item.text) {
+    emit({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: item.text } });
+  } else if (isToolItem(item)) {
+    emitToolCall(item, item.status === "failed" ? "failed" : "completed", emit);
+  }
+}
+
+function codexUsage(u: CodexEvent["usage"] = {}): TokenUsage {
+  return {
+    inputTokens: u.input_tokens ?? 0,
+    outputTokens: u.output_tokens ?? 0,
+    cacheReadTokens: u.cached_input_tokens ?? 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: u.reasoning_output_tokens ?? 0,
+  };
 }
 
 function capture(bin: string, args: string[]): Promise<string> {

@@ -29,6 +29,7 @@ import {
   type UpdateCheck,
   updatesField,
 } from "./updates.ts";
+import { use } from "./use.ts";
 
 import { VERSION } from "./version.ts";
 
@@ -104,6 +105,7 @@ export async function run(argv: string[], deps: Deps): Promise<Answer> {
           key,
           telemetry,
           "local-model": localModel,
+          use,
           mcp,
           open,
         };
@@ -214,7 +216,9 @@ function render(result: Ok | Failure, json: boolean, cli: string, command?: stri
     ? statusLines(result, cli, command)
     : command === "open"
       ? openLines(result)
-      : genericLines(result);
+      : command === "use"
+        ? useLines(result)
+        : genericLines(result);
   return { stdout: `${lines.join("\n")}\n`, code };
 }
 
@@ -249,6 +253,7 @@ function statusLines(r: StatusLike, cli: string, command?: string): string[] {
       : `  model key: ${r.model_key === "set" ? "set (NimbleBrain's own agents use it)" : `missing (run ${cli} key)`}`,
   ];
   lines.push(...agentLines(r));
+  lines.push(...agentRuntimeLines(r.agent_runtime, cli));
   if (!r.host_loopback) lines.push(`  servers on this machine: not reachable until ${cli} update`);
   lines.push(telemetryLine(r.telemetry));
   lines.push(`  CLI ${r.cli_version}`);
@@ -278,6 +283,37 @@ function nextStep(r: StatusLike, cli: string, command?: string): string | undefi
     return `Next: finish installing it with ${cli}, or remove it with ${cli} uninstall.`;
   }
   return r.health === "ok" ? undefined : `Next: start it with ${cli} up.`;
+}
+
+const RUNTIME_NAMES: Record<string, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+};
+
+/** Which runtime NimbleBrain's agents run on, when it is not the native engine, and whether its worker runs. */
+function agentRuntimeLines(rt: StatusLike["agent_runtime"], cli: string): string[] {
+  if (rt.name === "native" || !rt.worker) return [];
+  const name = RUNTIME_NAMES[rt.name] ?? rt.name;
+  return [
+    rt.worker.running
+      ? `  agents run on: ${name} on your subscription (agent worker ${rt.worker.pid} at ${rt.worker.url})`
+      : `  agents run on: ${name} on your subscription, but its agent worker is stopped (start it with ${cli} up)`,
+  ];
+}
+
+/** `use`'s answer as a person reads it. */
+function useLines(r: Ok): string[] {
+  const rt = r.agent_runtime as StatusLike["agent_runtime"];
+  if (rt.name === "native" || !rt.worker) {
+    return [
+      "  NimbleBrain's agents run on its own engine again, on this install's model key or local model.",
+    ];
+  }
+  return [
+    `  NimbleBrain's agents now run on ${RUNTIME_NAMES[rt.name] ?? rt.name}, billed to ${String(r.billed_to)}.`,
+    `  tools: ${String(r.tools)}`,
+    `  agent worker: ${rt.worker.pid} at ${rt.worker.url} (this machine only), logging to ${rt.worker.log}`,
+  ];
 }
 
 /** `open`'s answer as a person reads it: the URL either way, so it can be opened by hand. */

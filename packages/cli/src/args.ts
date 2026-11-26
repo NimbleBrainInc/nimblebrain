@@ -24,6 +24,11 @@ export const COMMAND_SPECS = {
     args: ["[model]"],
     description: `Run NimbleBrain's agents on a model served by Ollama (default ${DEFAULT_LOCAL_MODEL})`,
   },
+  use: {
+    args: ["<claude|codex|native>"],
+    description:
+      "Run NimbleBrain's agents on your Claude or ChatGPT subscription through Claude Code or Codex on this machine, or on its own engine again (native)",
+  },
   telemetry: {
     args: ["[on|off|status]"],
     description: "Whether this install sends anonymous usage data",
@@ -112,8 +117,8 @@ export const FLAG_SPECS = {
   port: {
     type: "string",
     takes: "n",
-    description: `Local port (default ${DEFAULT_PORT}; for doctor, the install's own port)`,
-    commands: ["init", "doctor"],
+    description: `Local port (default ${DEFAULT_PORT}; for doctor, the install's own port; for use, the agent worker's, default 27290 for claude and 27291 for codex)`,
+    commands: ["init", "doctor", "use"],
   },
   home: {
     type: "string",
@@ -250,14 +255,14 @@ export type McpSubcommand = keyof typeof MCP_SUBCOMMANDS;
 
 /**
  * The command named, checked with its arguments: `telemetry` takes one (on, off
- * or status), `local-model` a model, `mcp` a subcommand and that subcommand's
- * operand; nothing else takes any.
+ * or status), `local-model` a model, `use` a runtime (checked by `use`), `mcp`
+ * a subcommand and that subcommand's operand; nothing else takes any.
  */
 function command(name: string, positionals: string[]): Command {
   if (!(COMMANDS as readonly string[]).includes(name))
     throw new CliError("USAGE", `Unknown command "${name}".`);
   if (name === "mcp") return mcpCommand(positionals);
-  const maxArgs = name === "telemetry" || name === "local-model" ? 2 : 1;
+  const maxArgs = name === "telemetry" || name === "local-model" || name === "use" ? 2 : 1;
   if (positionals.length > maxArgs)
     throw new CliError("USAGE", `Unexpected argument "${positionals[maxArgs]}".`);
   const arg = positionals[1];

@@ -82,7 +82,7 @@ const AVAILABLE = {
 let container: HTMLDivElement;
 let root: ReturnType<typeof ReactDOMClient.createRoot>;
 
-async function mountPanel(convId?: string): Promise<void> {
+async function mountPanel(convId?: string, runsOn?: string): Promise<void> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = ReactDOMClient.createRoot(container);
@@ -101,6 +101,7 @@ async function mountPanel(convId?: string): Promise<void> {
               configuredProviders: ["anthropic"],
               newConversationModel: "anthropic:claude-sonnet-5",
               availableModels: AVAILABLE,
+              ...(runsOn ? { runsOn } : {}),
             },
             children: React.createElement(ChatPanel, {
               messages: [],
@@ -150,5 +151,20 @@ describe("the composer's model control", () => {
     mockConversationModel = "anthropic:claude-haiku-4-5";
     await mountPanel("conv_existing");
     expect(modelControl()?.textContent).toContain("Haiku 4.5");
+  });
+});
+
+describe("ChatPanel model control on a runtime that brings its own model", () => {
+  test("names the runtime and offers no model, before and after a binding", async () => {
+    await mountPanel(undefined, "claude-code");
+    expect(modelControl()).toBeNull();
+    expect(container.textContent).toContain("Runs on claude-code");
+    act(() => root.unmount());
+    container.remove();
+
+    mockConversationModel = "anthropic:claude-sonnet-5";
+    await mountPanel("conv_existing", "claude-code");
+    expect(modelControl()).toBeNull();
+    expect(container.textContent).toContain("Runs on claude-code");
   });
 });

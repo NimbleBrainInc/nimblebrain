@@ -16,6 +16,7 @@ const MAX_TEXTAREA_HEIGHT = 200;
  */
 function ComposerActions({
   models,
+  runsOn,
   boundModel,
   defaultModel,
   pendingModel,
@@ -27,6 +28,7 @@ function ComposerActions({
   onStop,
 }: {
   models?: PickerModel[];
+  runsOn?: string;
   boundModel?: string;
   defaultModel?: string;
   pendingModel?: string;
@@ -39,6 +41,14 @@ function ComposerActions({
 }) {
   return (
     <div className="flex items-center gap-1">
+      {runsOn && (
+        <span
+          className="px-2 text-xs text-muted-foreground"
+          title={`Every turn runs on ${runsOn}, which brings its own model`}
+        >
+          Runs on {runsOn}
+        </span>
+      )}
       {models && models.length > 0 && (
         <ModelPicker
           models={models}
@@ -84,6 +94,8 @@ interface MessageInputProps {
   conversationKey: string;
   /** Models this deployment offers. Empty hides the control entirely. */
   models?: PickerModel[];
+  /** The runtime every turn runs on when it brings its own model; named in place of the model control. */
+  runsOn?: string;
   /** The binding, once the conversation exists. Absent before the first send. */
   boundModel?: string;
   /** What a message sent now would use, when nothing is bound yet. */
@@ -116,6 +128,7 @@ export function MessageInput({
   onSend,
   conversationKey,
   models,
+  runsOn,
   boundModel,
   defaultModel,
   pendingModel,
@@ -336,6 +349,7 @@ export function MessageInput({
           </div>
           <ComposerActions
             models={models}
+            runsOn={runsOn}
             boundModel={boundModel}
             defaultModel={defaultModel}
             pendingModel={pendingModel}

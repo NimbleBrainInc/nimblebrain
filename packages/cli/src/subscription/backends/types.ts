@@ -64,8 +64,17 @@ export interface Backend {
   run(input: TurnInput): Promise<TurnResult>;
 }
 
+/** Why a backend will not run: each is a different thing for the person to do. */
+export type Refusal = "not_installed" | "not_signed_in" | "api_key" | "unreadable";
+
 /** Thrown for a reason a person can act on; the message says what to do. */
-export class BackendRefused extends Error {}
+export class BackendRefused extends Error {
+  readonly reason: Refusal;
+  constructor(reason: Refusal, message: string) {
+    super(message);
+    this.reason = reason;
+  }
+}
 
 /** The keys a CLI would bill instead of the subscription, removed from every child's environment. */
 export const API_KEY_VARIABLES = [
@@ -76,10 +85,10 @@ export const API_KEY_VARIABLES = [
   "CODEX_API_KEY",
 ];
 
-/** The worker's environment without any API key, so the CLI falls back to its own login. */
-export function subscriptionEnv(): Record<string, string> {
+/** `env` (default the worker's own) without any API key, so the CLI falls back to its own login. */
+export function subscriptionEnv(from: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(from)) {
     if (value !== undefined && !API_KEY_VARIABLES.includes(key)) env[key] = value;
   }
   return env;

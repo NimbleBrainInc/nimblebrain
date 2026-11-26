@@ -32,6 +32,15 @@ services:
       - NB_LOCAL_MODEL_URL=${NB_LOCAL_MODEL_URL:-}
       - NB_LOCAL_MODEL=${NB_LOCAL_MODEL:-}
       - NB_LOCAL_MODEL_CONTEXT=${NB_LOCAL_MODEL_CONTEXT:-}
+      # Your own Claude Code or Codex instead of a model key
+      # (`npx nimblebrain use claude` or `use codex` sets these): the runtime
+      # every turn runs on, and the agent worker on this machine it dials, at
+      # host.docker.internal below. The runtime takes them only with the `dev`
+      # adapter in instance.json, since the subscription is one person's;
+      # under any other adapter it refuses to start. A nimblebrain.json that
+      # sets `execution` wins over them.
+      - NB_AGENT_RUNTIME=${NB_AGENT_RUNTIME:-}
+      - NB_AGENT_RUNTIME_URL=${NB_AGENT_RUNTIME_URL:-}
       # A name that reaches this machine from inside the container, so a local
       # install can connect to an MCP server you run on the host
       # (`npx nimblebrain mcp add http://127.0.0.1:8000/mcp`). The runtime
