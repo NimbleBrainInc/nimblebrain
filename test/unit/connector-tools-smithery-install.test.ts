@@ -295,7 +295,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
     const result = await buildTool(h).handler({ action: "install", entry: forged, wsId: h.wsId });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain('not a recognized \\"smithery\\" connector');
+    expect((result.structuredContent as { error?: string }).error).toBe("NOT_IN_CATALOG");
     // The broker was never called, so no connection exists at the operator's account.
     expect(calls).toHaveLength(0);
     const ws = await h.workspaceStore.get(h.wsId);

@@ -1039,8 +1039,8 @@ describe("manage_connectors.install", () => {
     // NOT be trusted from the caller-supplied entry — a workspace admin could forge
     // one pointing at an in-cluster .svc with an attacker-chosen audience/scope and
     // exfiltrate a fleet token / reach the fleet rail the SSRF guard protects. The
-    // handler must re-resolve from the server-trusted catalog by id and reject an
-    // entry that isn't there.
+    // install resolves the id against the operator catalog and refuses an id it
+    // does not list.
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "install",
@@ -1062,7 +1062,8 @@ describe("manage_connectors.install", () => {
     });
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(text).toMatch(/not a recognized platform connector/i);
+    expect(structured(result).error).toBe("NOT_IN_CATALOG");
+    expect(text).toContain("not in this instance's catalog");
     // Nothing forged was persisted into workspace.json.
     const ws = await h.workspaceStore.get(h.wsId);
     const connectors = (ws?.connectors ?? []) as Array<{ url?: string }>;
@@ -1219,12 +1220,12 @@ describe("manage_connectors.install", () => {
       action: "install",
       wsId: adminPersonalWsId,
       entry: {
-        id: "com.canva/mcp",
-        name: "Canva",
+        id: "com.notion/mcp",
+        name: "Notion",
         description: "x",
         install: {
           kind: "remote-oauth",
-          url: "https://mcp.canva.com/mcp",
+          url: "https://mcp.notion.com/mcp",
           auth: "dcr",
         },
       },
@@ -1234,7 +1235,7 @@ describe("manage_connectors.install", () => {
     const sn = sc.serverName ?? "";
     expect(sn).not.toContain("/");
     expect(sn).not.toContain(".");
-    expect(sn).toBe("com-canva-mcp");
+    expect(sn).toBe("com-notion-mcp");
     expect(sc.scope).toBe("workspace");
     expect(sc.wsId).toBe(adminPersonalWsId);
 
@@ -1243,7 +1244,7 @@ describe("manage_connectors.install", () => {
     const personalWs = await h.workspaceStore.get(adminPersonalWsId);
     const installed = personalWs?.connectors.find(
       (b): b is Extract<ConnectorRef, { url: string }> =>
-        "url" in b && b.url === "https://mcp.canva.com/mcp",
+        "url" in b && b.url === "https://mcp.notion.com/mcp",
     );
     expect(installed).toBeDefined();
     expect(installed?.oauthScope).toBe("workspace");
@@ -1302,6 +1303,9 @@ describe("manage_connectors.install", () => {
   });
 
   test("refuses an entry whose name belongs to a platform app or the system tools", async () => {
+    // A catalog id is reverse-DNS (`<namespace>/<name>`), so its slug always
+    // carries a `-` and can never equal a reserved name; a bare reserved id is
+    // refused at the catalog lookup, before the reserved-name guard.
     const tool = buildTool(h, ADMIN_USER);
     for (const id of ["usage", "skills", "nb", "conversations"]) {
       const result = await tool.handler({
@@ -1315,8 +1319,7 @@ describe("manage_connectors.install", () => {
         },
       });
       expect(result.isError).toBe(true);
-      const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-      expect(text).toContain("reserved");
+      expect(structured(result).error).toBe("NOT_IN_CATALOG");
       expect(h.lifecycle.getInstance(id, h.wsId)).toBeUndefined();
     }
     expect((await h.workspaceStore.get(h.wsId))?.connectors).toEqual([]);
@@ -1340,6 +1343,63 @@ describe("manage_connectors.install", () => {
     expect(ref?.url).toBe("https://mcp.notion.com/mcp");
   });
 
+  test("a catalog connector is built from its entry alone: forged auth, transport, scopes and params are dropped", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "install",
+      wsId: h.wsId,
+      entry: {
+        id: "com.notion/mcp",
+        name: "Notion",
+        description: "x",
+        install: {
+          kind: "remote-oauth",
+          url: "https://elsewhere.test/mcp",
+          transportType: "sse",
+          // The catalog entry is `dcr`; a forged `provider` block must not reach
+          // the transport.
+          auth: "provider",
+          providerAuth: { provider: "minted", config: { audience: "artifacts" } },
+          requiredScopes: ["admin:everything"],
+          additionalAuthorizationParams: { prompt: "none" },
+        },
+      },
+    });
+    expect(result.isError).toBe(false);
+    const ws = await h.workspaceStore.get(h.wsId);
+    const ref = ws?.connectors.find((r) => r.serverName === "com-notion-mcp");
+    expect(ref?.url).toBe("https://mcp.notion.com/mcp");
+    expect(ref?.transport).toEqual({ type: "streamable-http" });
+    expect(ref && "scopes" in ref ? ref.scopes : undefined).toBeUndefined();
+    expect(
+      ref && "additionalAuthorizationParams" in ref ? ref.additionalAuthorizationParams : undefined,
+    ).toBeUndefined();
+  });
+
+  test("refuses an id the catalog does not list, and a case variant of one it does", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    for (const id of ["example.attacker/mcp", "COM.Notion/mcp"]) {
+      const result = await tool.handler({
+        action: "install",
+        wsId: h.wsId,
+        entry: {
+          id,
+          name: "Looks Official",
+          description: "x",
+          install: {
+            kind: "remote-oauth",
+            url: "https://mcp.attacker.example/mcp",
+            transportType: "streamable-http",
+            auth: "dcr",
+          },
+        },
+      });
+      expect(result.isError).toBe(true);
+      expect(structured(result).error).toBe("NOT_IN_CATALOG");
+    }
+    expect((await h.workspaceStore.get(h.wsId))?.connectors).toEqual([]);
+  });
+
   test("install into a shared workspace records wsId on the structuredContent (audit attribution)", async () => {
     // Audit attribution: every install event must
     // surface the picked `wsId`, NOT the session's active
@@ -1356,10 +1416,10 @@ describe("manage_connectors.install", () => {
       action: "install",
       wsId: ws2.id, // picker names the second workspace
       entry: {
-        id: "com.canva/mcp",
-        name: "Canva",
+        id: "com.notion/mcp",
+        name: "Notion",
         description: "x",
-        install: { kind: "remote-oauth", url: "https://mcp.canva.com/mcp", auth: "dcr" },
+        install: { kind: "remote-oauth", url: "https://mcp.notion.com/mcp", auth: "dcr" },
       },
     });
     expect(result.isError).toBe(false);
