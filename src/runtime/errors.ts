@@ -95,13 +95,14 @@ export class ConversationWorkspaceAccessDeniedError extends ConversationAccessDe
 }
 
 /**
- * Thrown by `executeTask` when a task fires but its owner is no longer a
- * member of the task's provenance workspace. A task runs *as its
- * owner*, walled to the workspace it was created in — so a removed owner must
- * not keep acting in that workspace (the tasks analog of the conversation
- * resume gate). The stable `code` lets the tasks scheduler recognize this
- * outcome and record the run as **skipped** (not a failure — no consecutive-error
- * count, no auto-disable) so the task self-heals if the owner is re-added.
+ * Thrown by `executeTask` when a task fires but its owner is no longer an
+ * active member of the task's provenance workspace: removed from it, or
+ * deactivated. A task runs *as its owner*, walled to the workspace it was
+ * created in — so such an owner must not keep acting in that workspace (the
+ * tasks analog of the conversation resume gate). The stable `code` lets the
+ * tasks scheduler recognize this outcome and record the run as **skipped** (not
+ * a failure — no consecutive-error count, no auto-disable) so the task
+ * self-heals if the owner is re-added or restored.
  */
 export class WorkspaceMembershipRevokedError extends Error {
   readonly code = "workspace_membership_revoked";
@@ -109,7 +110,7 @@ export class WorkspaceMembershipRevokedError extends Error {
     public readonly userId: string,
     public readonly workspaceId: string,
   ) {
-    super(`User ${userId} is no longer a member of workspace ${workspaceId}`);
+    super(`User ${userId} is not an active member of workspace ${workspaceId}`);
     this.name = "WorkspaceMembershipRevokedError";
   }
 }

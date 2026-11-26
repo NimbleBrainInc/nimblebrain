@@ -49,6 +49,9 @@ sole-member by construction, so they never gate.
   the files those sessions reach).
 - Self-healing: re-adding a member restores their automations and resume access
   with no manual re-enable.
+- Deactivation revokes active use the same way: the membership check also
+  refuses a principal whose user record is deactivated (`deletedAt`), and
+  restoring the user brings their runs back with no re-enable.
 - The read carve-out is a deliberate residual: a departed member retains read of
   their own authored bytes. Revoking read too (plus an audited export/transfer
   flow) is a separate data-governance decision, not a security fix — deferred.
