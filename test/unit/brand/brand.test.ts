@@ -105,7 +105,7 @@ describe("brand schema", () => {
   test("brand.colors and brand.fonts list exactly what the Brand type allows", () => {
     const schema = JSON.parse(
       readFileSync(
-        resolve(import.meta.dir, "../../../src/config/nimblebrain-config.schema.json"),
+        resolve(import.meta.dir, "../../../schemas/config/v1/config.schema.json"),
         "utf8",
       ),
     );

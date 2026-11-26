@@ -31,6 +31,8 @@ export const ERRORS = {
   AGENT_UNSUPPORTED: "Pass --agent claude-code, cursor, codex or none.",
   START_FAILED:
     "Run `npx nimblebrain logs` and look at the last error line, then run the command again; `npx nimblebrain` finishes an install whose first start did not.",
+  HOME_NOT_SHARED:
+    "Docker cannot read the install's folder. Share this folder with Docker, or move it into a folder Docker shares and pass that folder with --home, then run this again. To install somewhere else instead, run `npx nimblebrain uninstall` first; it deletes this install's data.",
   NEEDS_TERMINAL:
     "A person runs this in their own terminal; it asks for input no agent should give.",
   CANCELLED: "Nothing was changed. Run the command again to go ahead.",

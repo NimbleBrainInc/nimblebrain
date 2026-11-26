@@ -183,6 +183,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     ...(iconUrl ? { iconUrl } : {}),
     url: remote.url,
     ...connectorMetaAuthFields(meta),
+    ...(meta?.auth !== undefined ? { authDeclared: true } : {}),
     ...(meta?.inBandAuthErrors?.length ? { inBandAuthErrors: meta.inBandAuthErrors } : {}),
     ...categoryField(meta),
     ...(meta?.tags ? { tags: meta.tags } : {}),

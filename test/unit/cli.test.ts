@@ -71,7 +71,7 @@ describe("loadConfig", () => {
     // `version` describe the file and configure nothing.
     const schema = JSON.parse(
       require("node:fs").readFileSync(
-        join(import.meta.dir, "../../src/config/nimblebrain-config.schema.json"),
+        join(import.meta.dir, "../../schemas/config/v1/config.schema.json"),
         "utf-8",
       ),
     ) as { properties: Record<string, unknown> };

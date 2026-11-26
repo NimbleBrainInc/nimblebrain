@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // The host's bridge constants, as one document.
 //
-// `host-constants.json` beside this file states the identifiers and limits an
-// app's SDK has to agree with: the extensions this host declares, the bounds it
-// drops or refuses a message over, the timeout and rate-limit errors it answers, and the theme
+// `schemas/host-bridge/v1/constants.json` at the repo root states the
+// identifiers and limits an app's SDK has to agree with: the extensions this
+// host declares, the bounds it drops or refuses a message over, the timeout and rate-limit errors it answers, and the theme
 // values it sends. `@nimblebrain/synapse` keeps its own copy of each (a client
 // cannot import a host) and tests that copy against the document, so a value
 // changed on one side alone fails a test instead of failing silently in an app.

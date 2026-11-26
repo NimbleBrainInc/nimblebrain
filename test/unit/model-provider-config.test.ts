@@ -27,7 +27,7 @@ interface ProviderSchema {
 }
 
 const schema = JSON.parse(
-  readFileSync(resolve(import.meta.dir, "../../src/config/nimblebrain-config.schema.json"), "utf8"),
+  readFileSync(resolve(import.meta.dir, "../../schemas/config/v1/config.schema.json"), "utf8"),
 ) as { properties: { providers: { properties: Record<string, ProviderSchema> } } };
 
 const providerSchemas = schema.properties.providers.properties;

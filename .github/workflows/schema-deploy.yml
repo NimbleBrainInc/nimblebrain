@@ -1,40 +1,38 @@
 name: Deploy Schemas
 
-# Publishes this repo's canonical JSON schemas, and the host bridge constants
-# document, to schemas.nimblebrain.ai (S3 + CloudFront invalidation) on push to
-# main when one of them changes. This
-# repo is the canonical source; the published URLs are just the artifacts
-# editors and external validators fetch via `$schema` / `$id`.
+# Publishes the `schemas/` tree to schemas.nimblebrain.ai (S3 + CloudFront
+# invalidation) on push to main when anything under it changes. This repo is
+# the canonical source; the published URLs are the artifacts editors and
+# external validators fetch via `$schema` / `$id`.
 #
-#   - src/config/nimblebrain-config.schema.json -> /v1/nimblebrain-config.schema.json
-#   - src/connectors/catalog/schemas/host-manifest.schema.json -> /v1/nimblebrain-host.schema.json
-#     (the `ai.nimblebrain/host` _meta extension — how an MCP server declares
-#      its UI placement in the host shell. PUBLISHED-ONLY: nothing in this repo
-#      validates against it, since the runtime reads that block from a catalog
-#      entry it already trusts rather than gating an install on it. It is the
-#      reference an author and their editor fetch, so it has no local guard
-#      keeping it in step with `HostManifestMeta` — change both together.)
-#   - web/src/bridge/host-constants.json -> /v1/nimblebrain-host-bridge.constants.json
-#     (the app bridge's identifiers and limits, generated from the bridge's own
-#      source by `bun run gen:host-constants` and held in step by
-#      test/unit/bridge/host-constants.test.ts. An SDK that holds copies of these
-#      values tests them against this document. Plain JSON, not a JSON Schema,
-#      so it is served as application/json.)
+# Every file under `schemas/` is served at its path relative to `schemas/`:
+# `schemas/config/v1/config.schema.json` -> /config/v1/config.schema.json. A new
+# file or a new `<thing>/v<major>/` directory publishes with no change here.
+# The guide files (`*.md`) are not published. `schemas/AGENTS.md` has the
+# layout and versioning rules.
 #
-# Auth: GitHub OIDC -> the `github-actions-schemas-deploy` IAM role (defined in
-# infra/terraform/shared). No long-lived AWS keys. The role's S3 write is scoped
-# per object key, so it cannot touch the server schema that shares the bucket.
-# NOTE: the role must be granted EACH S3 key below — adding a file here
-# requires granting its `v1/<name>` key on the role (infra change),
-# or the upload step 403s. Repo vars: SCHEMAS_DEPLOY_ROLE_ARN, SCHEMAS_CF_DISTRIBUTION_ID.
+# Content type follows the name: `*.schema.json` is application/schema+json,
+# any other `*.json` is application/json. Any other extension fails the deploy
+# until a type is added below.
+#
+# Legacy aliases: the flat `/v1/<name>` keys served before the per-thing layout
+# stay served as copies of their files, because `$schema` lines already in
+# users' nimblebrain.json files and authors' manifests point at them. They are
+# listed in LEGACY_ALIASES below and are never removed.
+#
+# Auth: GitHub OIDC -> the schemas deploy IAM role. No long-lived AWS keys.
+# The role needs S3 write on the prefixes this tree publishes: each top-level
+# directory under `schemas/` (today `config/`, `host/`, `host-bridge/`), plus
+# the legacy `v1/` alias keys. Granting a new top-level directory is an infra change outside this
+# repo; until it lands, its upload is refused (403). Nothing else in the bucket
+# is writable by the role. Repo vars: SCHEMAS_DEPLOY_ROLE_ARN,
+# SCHEMAS_CF_DISTRIBUTION_ID.
 
 on:
   push:
     branches: [main]
     paths:
-      - 'src/config/nimblebrain-config.schema.json'
-      - 'src/connectors/catalog/schemas/host-manifest.schema.json'
-      - 'web/src/bridge/host-constants.json'
+      - 'schemas/**'
       - '.github/workflows/schema-deploy.yml'
   workflow_dispatch:
 
@@ -48,22 +46,20 @@ concurrency:
 
 env:
   BUCKET: schemas.nimblebrain.ai
+  # Short, revalidating TTL — NOT immutable. A `v<major>/` path takes additive
+  # minors in place (new optional fields), so consumers must be able to pick
+  # up changes.
+  CACHE_CONTROL: 'public, max-age=300, must-revalidate'
+  # `<legacy key> <file under schemas/>`, one per line. Existing configs and
+  # manifests point at these keys, so each is served as a copy of its file.
+  LEGACY_ALIASES: |
+    v1/nimblebrain-config.schema.json config/v1/config.schema.json
+    v1/nimblebrain-host.schema.json host/v1/host.schema.json
+    v1/nimblebrain-host-bridge.constants.json host-bridge/v1/constants.json
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - file: src/config/nimblebrain-config.schema.json
-            key: v1/nimblebrain-config.schema.json
-            content_type: application/schema+json
-          - file: src/connectors/catalog/schemas/host-manifest.schema.json
-            key: v1/nimblebrain-host.schema.json
-            content_type: application/schema+json
-          - file: web/src/bridge/host-constants.json
-            key: v1/nimblebrain-host-bridge.constants.json
-            content_type: application/json
     steps:
       - uses: actions/checkout@v7
 
@@ -73,23 +69,37 @@ jobs:
           aws-region: us-east-1
 
       - name: Upload to S3
-        # Short, revalidating TTL — NOT immutable. The /v1/ path evolves
-        # additively (new optional fields), so consumers must be able to pick up
-        # changes; immutable caching here is what stranded the schema before.
-        env:
-          FILE: ${{ matrix.file }}
-          KEY: ${{ matrix.key }}
-          CONTENT_TYPE: ${{ matrix.content_type }}
         run: |
-          aws s3 cp "$FILE" "s3://$BUCKET/$KEY" \
-            --content-type "$CONTENT_TYPE" \
-            --cache-control "public, max-age=300, must-revalidate"
+          set -euo pipefail
+          content_type() {
+            case "$1" in
+              *.schema.json) echo "application/schema+json" ;;
+              *.json) echo "application/json" ;;
+              *) echo "no content type for $1; add one to schema-deploy.yml" >&2; return 1 ;;
+            esac
+          }
+          upload() { # <file under schemas/> <key>
+            type="$(content_type "$1")"
+            aws s3 cp "schemas/$1" "s3://$BUCKET/$2" \
+              --content-type "$type" \
+              --cache-control "$CACHE_CONTROL"
+            echo "/$2" >> "$RUNNER_TEMP/paths"
+          }
+          : > "$RUNNER_TEMP/paths"
+          ( cd schemas && find . -type f ! -name '*.md' | sed 's#^\./##' | sort ) |
+            while read -r file; do upload "$file" "$file"; done
+          printf '%s\n' "$LEGACY_ALIASES" | while read -r key file; do
+            [ -n "$key" ] || continue
+            [ -f "schemas/$file" ] || { echo "legacy alias $key: schemas/$file is missing" >&2; exit 1; }
+            upload "$file" "$key"
+          done
 
       - name: Invalidate CloudFront
         env:
           DISTRIBUTION_ID: ${{ vars.SCHEMAS_CF_DISTRIBUTION_ID }}
-          KEY: ${{ matrix.key }}
         run: |
+          set -euo pipefail
+          mapfile -t paths < "$RUNNER_TEMP/paths"
           aws cloudfront create-invalidation \
             --distribution-id "$DISTRIBUTION_ID" \
-            --paths "/$KEY"
+            --paths "${paths[@]}"

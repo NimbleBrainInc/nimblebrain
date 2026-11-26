@@ -1,23 +1,20 @@
-# Published schemas
+# schemas/
 
-`schemas/` is exactly the tree `https://schemas.nimblebrain.ai` serves: a file at
-`schemas/<path>` is served at `https://schemas.nimblebrain.ai/<path>`, and its `$id` says so.
+`schemas/` is exactly the tree served at `https://schemas.nimblebrain.ai`: a file at `schemas/<path>` is served at `/<path>`. `.github/workflows/schema-deploy.yml` publishes every file here on push to `main` (the guide files, `*.md`, excepted), so editing a file ships it.
 
-- **Every file here is authored here or emitted here.** An emitted file has a script that
-  writes it and a `--check` mode in `verify:static` that fails on drift; never edit it by hand.
-  `contracts/conversations/v1/contract.json` is emitted by
-  `contracts/conversations/scripts/emit-contract.ts` (`bun run emit:contracts`,
-  `bun run check:contracts`).
-  `plugin-extension/v1/plugin-extension.schema.json` (the `ai.nimblebrain` extension of an
-  Agent Plugins manifest) is emitted from `src/plugins/extension.ts` by
-  `scripts/emit-plugin-extension-schema.ts` (`bun run emit:plugin-extension`,
-  `bun run check:plugin-extension`).
-  `host-context/v1/host-context.schema.json` (the host context every contract call carries,
-  `contracts/host-context/CONTEXT.md`) is authored here.
-- **Paths are `/<thing>/v<major>/`**: `v` plus the major, never the minor. A minor that only
-  adds is served in place, at the same path. A breaking change is a new major directory beside
-  the old one, which stays served.
-- **A file's `$id` is its served URL, stated in the file.** Nothing derives it from another
-  name.
-- **Runtime code that validates against a published schema reads it from here**, so what is
-  checked is what is served.
+- **Each file is authored here or emitted here by a script.** An emitted file is never edited by hand; its generator has a check (a `--check` mode or a drift test) that fails when the committed file differs from what the source builds.
+- **Paths are `/<thing>/v<major>/<file>`**: `v` plus the major, after the thing (`config/v1/config.schema.json`).
+- **A minor that only adds is served in place.** New optional fields go into the existing `v<major>/` file; its cache is short and revalidating, so readers pick it up. A breaking change (a removed, renamed, or newly required field, or a narrowed type) is a new major directory, `v<major+1>/`, and the old one stays served.
+- **A file's `$id` is its served URL, stated in the file.** Nothing derives it from another name.
+- **Runtime code that validates against a published schema reads it from here**, never from a copy elsewhere in the repo.
+- **Legacy `/v1/<name>` keys are served as aliases by the deploy.** Configs and manifests written before this layout point at them, so the workflow's `LEGACY_ALIASES` copies each one from its file here. Never remove an alias.
+- **A new top-level directory needs the deploy role granted write on its prefix** (an infra change outside this repo) before it merges, or its upload is refused.
+
+| File | What it is | Source |
+|---|---|---|
+| `config/v1/config.schema.json` | The `nimblebrain.json` config schema. The runtime validates against it at startup (`SCHEMA_PATH` in `src/config/index.ts`). | Authored here. In lockstep with `src/config/features.ts`; `test/unit/config-schema-drift.test.ts` fails on drift. |
+| `host/v1/host.schema.json` | The `ai.nimblebrain/host` `_meta` extension: how an MCP server declares its UI placement in the host shell. **Published-only**: nothing validates against it, because the runtime reads that block from a catalog entry it already trusts. Fields are camelCase, the only spelling read; `src/connectors/catalog/host-meta.ts` is the one reader of the raw block, and a block carrying `admin_tools` gates every tool. | Authored here. `test/unit/host-manifest-schema-drift.test.ts` holds it in step with `HostManifestMeta` (`src/connectors/runtime/types.ts`) and `HookDeclaration`; change them together. |
+| `host-bridge/v1/constants.json` | The app bridge's identifiers and limits, which an SDK holding copies of them (`@nimblebrain/synapse`) tests against. Plain JSON, not a JSON Schema. A contract: add fields freely, bump `version` to rename or remove one. | Emitted by `bun run gen:host-constants` from `web/src/bridge/host-constants.ts`; `test/unit/bridge/host-constants.test.ts` fails on drift. |
+| `host-context/v1/host-context.schema.json` | The host context every call to a plugin server carries (`params._meta["ai.nimblebrain/context"]`); the normative rules are `contracts/host-context/CONTEXT.md`. | Authored here. `test/unit/plugins/server-sdk.test.ts` checks the SDK reader against it with shared fixtures. |
+| `plugin-extension/v1/plugin-extension.schema.json` | The `ai.nimblebrain` extension of an Agent Plugins manifest. The plugin loader validates against it. | Emitted from `src/plugins/extension.ts` by `bun run emit:plugin-extension`; `bun run check:plugin-extension` fails on drift. |
+| `contracts/conversations/v1/contract.json` | The conversations contract: identity, version, cardinality, each tool's visibility and schemas (`$defs`), errors. The plugin loader and the conformance runner read it. | Emitted by `bun run emit:contracts` (`contracts/conversations/scripts/emit-contract.ts`); `bun run check:contracts` fails on drift. |

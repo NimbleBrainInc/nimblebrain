@@ -436,6 +436,50 @@ describe("a first start that did not finish", () => {
     expect(body.fix).toContain("`npx nimblebrain` finishes");
   });
 
+  const NO_BIND_SOURCE = `Error response from daemon: invalid mount config for type "bind": bind source path does not exist: ${HOME}/instance.json`;
+
+  test("a home Docker cannot read is HOME_NOT_SHARED, not a pointer at empty logs", async () => {
+    const refusals = [
+      NO_BIND_SOURCE,
+      `Error response from daemon: Mounts denied: \nThe path ${HOME}/instance.json is not shared from the host and is not known to Docker.`,
+    ];
+    for (const stderr of refusals) {
+      const m = machine({ env, exec: { "docker compose up -d --no-build": fail(stderr) } });
+      const { body } = await json(["--yes"], m);
+      expect(m.files.has(`${HOME}/instance.json`)).toBe(true);
+      expect(body.error).toBe("HOME_NOT_SHARED");
+      expect(body.fix).not.toContain("logs");
+    }
+  });
+
+  test("on up of a finished install, its fix keeps the data: share or move the folder first", async () => {
+    const m = machine({
+      env,
+      files: {
+        [INSTALL]: record(),
+        [ENV]: "ANTHROPIC_API_KEY=sk-test\n",
+        [`${HOME}/instance.json`]: "{}",
+      },
+      exec: { "docker compose up -d --no-build": fail(NO_BIND_SOURCE) },
+    });
+    const { body } = await json(["up"], m);
+    expect(body.error).toBe("HOME_NOT_SHARED");
+    const fix: string = body.fix;
+    expect(fix.indexOf("Share this folder")).toBeGreaterThan(-1);
+    expect(fix.indexOf("Share this folder")).toBeLessThan(fix.indexOf("npx nimblebrain uninstall"));
+    expect(fix).toContain("deletes this install's data");
+  });
+
+  test("a missing instance.json keeps START_FAILED: the folder is not the cause", async () => {
+    const m = machine({
+      env,
+      files: { [INSTALL]: record(), [ENV]: "ANTHROPIC_API_KEY=sk-test\n" },
+      exec: { "docker compose up -d --no-build": fail(NO_BIND_SOURCE) },
+    });
+    expect(m.files.has(`${HOME}/instance.json`)).toBe(false);
+    expect((await json(["up"], m)).body.error).toBe("START_FAILED");
+  });
+
   test("down, logs, status and uninstall act on it", async () => {
     for (const how of ["START_FAILED", "HEALTH_TIMEOUT"] as const) {
       const m = await unfinished(how);
@@ -453,6 +497,22 @@ describe("a first start that did not finish", () => {
       expect(m.files.has(INSTALL)).toBe(false);
       expect(m.files.has(ENV)).toBe(false);
     }
+  });
+
+  test("status says to finish or remove an install whose first start did not finish", async () => {
+    const next =
+      "Next: finish installing it with npx nimblebrain, or remove it with npx nimblebrain uninstall.";
+    const m = await unfinished("START_FAILED");
+    const { stdout } = await run(["status"], m.deps);
+    expect(stdout).toContain("NimbleBrain v0.73.0: stopped at http://127.0.0.1:27246");
+    expect(stdout).toContain(next);
+
+    // An unfinished install that answers health is still unfinished.
+    const answering = await unfinished("HEALTH_TIMEOUT");
+    answering.healthy = true;
+    const running = (await run(["status"], answering.deps)).stdout;
+    expect(running).toContain("NimbleBrain v0.73.0: running at http://127.0.0.1:27246");
+    expect(running).toContain(next);
   });
 
   test("status on a starting install that answers health still lists no workspace", async () => {
@@ -609,6 +669,15 @@ describe("after install", () => {
     await json(["--yes", "--agent", "claude-code"], m);
     return m;
   }
+
+  test("status says to run up when the install is stopped, and nothing more when it runs", async () => {
+    const m = await installed();
+    expect((await run(["status"], m.deps)).stdout).not.toContain("Next:");
+    await json(["down"], m);
+    const { stdout } = await run(["status"], m.deps);
+    expect(stdout).toContain("stopped at http://127.0.0.1:27246");
+    expect(stdout).toContain("Next: start it with npx nimblebrain up.");
+  });
 
   test("down stops it and keeps data; up starts it", async () => {
     const m = await installed();

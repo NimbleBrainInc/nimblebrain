@@ -152,7 +152,7 @@ export interface ConnectorsConfig {
 // `Record<keyof Required<T>, true>` makes a field added to one of the
 // interfaces above a *compile* error until it is listed here, and
 // `test/unit/config-schema-drift.test.ts` then fails until it is also declared
-// in `nimblebrain-config.schema.json`. Two mechanical steps, no silent drift
+// in `schemas/config/v1/config.schema.json`. Two mechanical steps, no silent drift
 // between the runtime's typed surface and the published schema.
 
 const CONNECTORS_FIELDS: Record<keyof Required<ConnectorsConfig>, true> = {

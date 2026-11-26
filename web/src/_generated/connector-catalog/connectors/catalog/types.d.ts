@@ -83,6 +83,13 @@ export interface ConnectorCatalogEntry {
      * connector. See `NimbleBrainConnectorMeta.auth`.
      */
     auth: ConnectorAuthKind;
+    /**
+     * Set when the entry's `_meta` names `auth` itself; absent when `auth` is the
+     * `dcr` default. An entry that declares `static` or `dcr` (and no secret
+     * headers) is OAuth-only, so its connection never sends a request without a
+     * token; a defaulted entry may be a server that needs no sign-in at all.
+     */
+    authDeclared?: boolean;
     requiredScopes?: string[];
     additionalAuthorizationParams?: Record<string, string>;
     oauthClientSetup?: {

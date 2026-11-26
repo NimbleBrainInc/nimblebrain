@@ -1,6 +1,6 @@
 /**
- * Writes `src/bridge/host-constants.json`, the host's bridge constants as one
- * document, from `src/bridge/host-constants.ts`. Run via
+ * Writes `schemas/host-bridge/v1/constants.json` at the repo root, the host's
+ * bridge constants as one document, from `src/bridge/host-constants.ts`. Run via
  * `bun run gen:host-constants`.
  *
  * The output is committed, and `test/unit/bridge/host-constants.test.ts` at the
@@ -12,6 +12,14 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { serializeHostConstants } from "../src/bridge/host-constants.ts";
 
-const outPath = join(import.meta.dir, "..", "src", "bridge", "host-constants.json");
+const outPath = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "schemas",
+  "host-bridge",
+  "v1",
+  "constants.json",
+);
 writeFileSync(outPath, serializeHostConstants());
 console.log(`wrote ${outPath}`);

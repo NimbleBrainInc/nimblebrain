@@ -11,7 +11,7 @@ import type { RuntimeConfig } from "../runtime/types.ts";
 const DEFAULT_CONFIG_FILE = "nimblebrain.json";
 
 const DEFAULT_CONFIG_CONTENT = {
-  $schema: "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+  $schema: "https://schemas.nimblebrain.ai/config/v1/config.schema.json",
   version: "1",
 };
 
