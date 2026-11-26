@@ -31,8 +31,23 @@ const PluginRequestAnswer = Type.Object({
   answer: Type.Union([Type.Literal("use"), Type.Literal("not_now")]),
 });
 
+/** The most rows one `list` page answers. */
+const LIST_LIMIT_MAX = 200;
+/** The most conversations one `search` answers. */
+const SEARCH_LIMIT_MAX = 100;
+/** The most messages one `get` answers. */
+const GET_LIMIT_MAX = 1000;
+/** The longest title `update` stores; generated titles are far shorter. */
+const TITLE_MAX_LENGTH = 200;
+
 export const ConversationsListInput = Type.Object({
-  limit: Type.Optional(Type.Number({ description: "Max conversations to return. Default: 20." })),
+  limit: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: LIST_LIMIT_MAX,
+      description: `Max conversations to return, 1 to ${LIST_LIMIT_MAX}. Default: 20.`,
+    }),
+  ),
   cursor: Type.Optional(
     Type.String({ description: "Opaque pagination cursor from a previous response." }),
   ),
@@ -77,9 +92,10 @@ export const ConversationsGetInput = Type.Object({
     }),
   ),
   limit: Type.Optional(
-    Type.Number({
-      description:
-        'Max messages to return when expand is "messages" (the default mode). Counted from the end of the conversation. Default: 20. Ignored when expand is "metadata" or "full".',
+    Type.Integer({
+      minimum: 0,
+      maximum: GET_LIMIT_MAX,
+      description: `Max messages to return when expand is "messages" (the default mode), 0 to ${GET_LIMIT_MAX}. Counted from the end of the conversation. Default: 20. Ignored when expand is "metadata" or "full".`,
     }),
   ),
 });
@@ -90,7 +106,13 @@ export const ConversationsSearchInput = Type.Object(
     query: Type.String({
       description: "Search query. Case-insensitive substring match on message content.",
     }),
-    limit: Type.Optional(Type.Number({ description: "Max conversations to return. Default: 10." })),
+    limit: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: SEARCH_LIMIT_MAX,
+        description: `Max conversations to return, 1 to ${SEARCH_LIMIT_MAX}. Default: 10.`,
+      }),
+    ),
   },
   { required: ["query"] },
 );
@@ -99,7 +121,10 @@ export type ConversationsSearchInput = Static<typeof ConversationsSearchInput>;
 export const ConversationsUpdateInput = Type.Object(
   {
     id: Type.Optional(Type.String({ description: CONVERSATION_ID_DESCRIPTION })),
-    title: Type.String({ description: "New title for the conversation." }),
+    title: Type.String({
+      maxLength: TITLE_MAX_LENGTH,
+      description: `New title for the conversation, at most ${TITLE_MAX_LENGTH} characters.`,
+    }),
   },
   { required: ["title"] },
 );

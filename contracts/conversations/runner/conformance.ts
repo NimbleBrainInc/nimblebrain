@@ -806,7 +806,7 @@ async function publicScopeCases(h: Harness, opts: RunnerOptions, fixture: string
   }
   await h.run(SCOPE_CASES[1], () =>
     as({ workspace: opts.workspace, owner: `${opts.owner}_other` }, async (other) => {
-      const l = await okCall(other, "list", { limit: 1000 });
+      const l = await okCall(other, "list", { limit: 200 });
       assert(!(l.conversations as Array<{ id: string }>).some((x) => x.id === fixture), "leaked");
     }),
   );
@@ -820,7 +820,7 @@ async function publicScopeCases(h: Harness, opts: RunnerOptions, fixture: string
 
 async function publicData(h: Harness, conn: Conn, fixture: string, text: string): Promise<void> {
   await h.run("list shows the conversation, not active", async () => {
-    const out = await okCall(conn, "list", { limit: 1000 });
+    const out = await okCall(conn, "list", { limit: 200 });
     const row = (out.conversations as Array<Record<string, unknown>>).find((x) => x.id === fixture);
     assert(row, "not listed");
     eq(row.active, false, "active");
@@ -865,7 +865,7 @@ async function publicData(h: Harness, conn: Conn, fixture: string, text: string)
   await h.run("update retitles; list shows the new title", async () => {
     const out = await okCall(conn, "update", { id: fixture, title: "Retitled by conformance" });
     eq(out.title, "Retitled by conformance", "update result");
-    const l = await okCall(conn, "list", { limit: 1000 });
+    const l = await okCall(conn, "list", { limit: 200 });
     const row = (l.conversations as Array<Record<string, unknown>>).find((x) => x.id === fixture);
     eq(row?.title, "Retitled by conformance", "list title");
   });
