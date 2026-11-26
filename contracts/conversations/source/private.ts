@@ -88,6 +88,6 @@ export const PRIVATE_DESCRIPTIONS: Record<PrivateToolName, string> = {
   append_events: "Append events in order, all or none; returns the last one's seq.",
   delete: "Delete a conversation and its events.",
   delete_workspace:
-    "Remove every owner's conversations in the caller's workspace (the scope's owner is " +
-    "ignored). Idempotent. Returns what it removed.",
+    "Purge every owner's conversations in the caller's workspace, and any storage held for " +
+    "it (the scope's owner is ignored). Idempotent. Returns what it removed.",
 };

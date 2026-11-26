@@ -1,3 +1,5 @@
+import { CONVERSATIONS_CONTRACT } from "../conversation/contract-store.ts";
+
 /**
  * Kernel identity sources — owned by the user, hosted OUTSIDE any workspace.
  *
@@ -18,6 +20,17 @@
  * (`workspaces/<wsId>/tasks/<ownerId>/`); a run fires as its owner.
  */
 export const IDENTITY_SOURCES: ReadonlySet<string> = new Set(["conversations", "files", "tasks"]);
+
+/**
+ * The kernel's own source name for each contract it serves as an identity
+ * source, by contract id. Whichever plugin implements the contract, its server
+ * is registered under this name, so agents, the `/mcp` door and the web shell
+ * see the same `<name>__<tool>` namespace and the identity door routes it.
+ * The implementation's `mcp.json` key only says which server to launch.
+ */
+export const CONTRACT_SOURCE_NAMES: ReadonlyMap<string, string> = new Map([
+  [CONVERSATIONS_CONTRACT, "conversations"],
+]);
 
 /** Whether a source (by name) is a kernel identity source. */
 export function isIdentitySource(name: string): boolean {

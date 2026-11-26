@@ -584,13 +584,21 @@ async function fullWalls(c: FullCtx, other: Conn, elsewhere: Conn): Promise<void
     );
     eq((await okCall(other, "delete", { id: c.id })).deleted, false, "other owner delete");
   });
-  await h.run("create in a workspace with nothing stored is workspace_not_found", async () => {
-    eq(
-      privateCode(await elsewhere.call("create", { model: MODEL })),
-      "workspace_not_found",
-      "code",
-    );
-  });
+  await h.run(
+    "create in a never-seen workspace succeeds: the host's workspace exists",
+    async () => {
+      try {
+        const first = await createdId(elsewhere);
+        await okCall(elsewhere, "get", { id: first, expand: "metadata" });
+        await okCall(elsewhere, "delete_workspace", {});
+        // After a purge the workspace is still the host's: create makes its storage again.
+        const again = await createdId(elsewhere);
+        await okCall(elsewhere, "get", { id: again, expand: "metadata" });
+      } finally {
+        await elsewhere.call("delete_workspace", {});
+      }
+    },
+  );
 }
 
 async function fullLifecycle(c: FullCtx): Promise<void> {
@@ -654,6 +662,13 @@ async function fullDeleteWorkspace(c: FullCtx): Promise<void> {
       const out = await okCall(a, "delete_workspace", {});
       eq((out.deleted as Array<{ id: string }>).map((d) => d.id).sort(), ids.sort(), "deleted");
       eq((await okCall(b, "events", { id: ids[1] })).events, [], "gone");
+      eq((await okCall(a, "list", { limit: 200 })).conversations, [], "listed");
+      eq((await okCall(b, "list", { limit: 200 })).conversations, [], "listed to the other owner");
+      expectPublicError(
+        await b.call("get", { id: ids[1], expand: "metadata" }),
+        "conversation_not_found",
+        ids[1],
+      );
       eq((await okCall(a, "delete_workspace", {})).deleted, [], "idempotent");
     } finally {
       await a.close();

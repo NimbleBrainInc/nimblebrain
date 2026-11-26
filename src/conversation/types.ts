@@ -6,7 +6,7 @@ import type {
   SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
 import type { ResourceLinkInfo } from "../engine/content-helpers.ts";
-import type { ContextAssembledSource, SkillsLoadedEntry } from "../engine/types.ts";
+import type { ContextAssembledSource, EventSink, SkillsLoadedEntry } from "../engine/types.ts";
 import type { PluginRequestAnswer } from "../platform/schemas/plugins.ts";
 
 /** Re-exported for the runtime, which does not import `platform/` (AGENTS.md, Layering). */
@@ -152,6 +152,25 @@ export interface ConversationStore {
     patch: ConversationPatch,
     access?: ConversationAccessContext,
   ): Promise<Conversation | null>;
+}
+
+/**
+ * The store the runtime writes a chat turn through and reads its history from:
+ * a {@link ConversationStore} that also persists the engine's events as they
+ * stream (an `EventSink` aimed at the active conversation) and reads a
+ * conversation's stored events back. The filesystem store implements it
+ * (`event-sourced-store.ts`), and so does the store over a bound conversations
+ * plugin (`contract-store.ts`).
+ */
+export interface ConversationEventStore extends ConversationStore, EventSink {
+  /** Aim the engine events this sink receives at one conversation. */
+  setActiveConversation(id: string): void;
+  /** Append one event to a conversation. A write the caller does not wait for. */
+  appendEvent(id: string, event: ConversationEvent): void;
+  /** Every stored event of a conversation, in order; `[]` when it is not there. */
+  readEvents(id: string): Promise<ConversationEvent[]>;
+  /** Settle every write this store has accepted. */
+  flush(): Promise<void>;
 }
 
 /**

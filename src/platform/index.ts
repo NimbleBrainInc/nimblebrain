@@ -11,6 +11,16 @@ import { createTasksSource } from "./tasks/source.ts";
 import { createUsageSource } from "./usage/source.ts";
 
 /**
+ * Sources a plugin's server provides in place of a built-in app: the server
+ * the operator's plugins bind to the contract that app implements, already
+ * started (`src/plugins/bound-servers.ts`).
+ */
+export interface BoundPlatformSources {
+  /** The server bound to `ai.nimblebrain.conversations`, in place of the built-in conversations app. */
+  conversations?: ToolSource;
+}
+
+/**
  * Create every platform app source, started and ready to register.
  *
  * A platform app is an in-process MCP server (`defineInProcessApp`) that talks
@@ -32,10 +42,11 @@ import { createUsageSource } from "./usage/source.ts";
 export async function createPlatformSources(
   runtime: Runtime,
   eventSink: EventSink,
+  bound: BoundPlatformSources = {},
 ): Promise<ToolSource[]> {
   // Order doesn't matter — placements control UI ordering.
   const sources: ToolSource[] = [
-    await createConversationsSource(runtime, eventSink),
+    bound.conversations ?? (await createConversationsSource(runtime, eventSink)),
     createFilesSource(runtime, eventSink),
     await createTasksSource(runtime, eventSink),
     createUsageSource(runtime, eventSink),
@@ -47,9 +58,9 @@ export async function createPlatformSources(
 
   // start() builds the in-process MCP server + InMemoryTransport pair and
   // runs `initialize`, so the source is ready to serve tools and resources
-  // as soon as this returns.
+  // as soon as this returns. A bound source arrives started.
   for (const src of sources) {
-    await src.start();
+    if (src !== bound.conversations) await src.start();
   }
 
   return sources;

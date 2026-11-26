@@ -54,14 +54,14 @@ resource is a placeholder page.
 <data>/workspaces/<workspaceId>/conversations/<ownerId>/<conversationId>.jsonl
 ```
 
-Line 1 is the conversation's header and every later line one event. A workspace exists when
-its directory does: create `<data>/workspaces/<workspaceId>/` before the first `create` there.
+Line 1 is the conversation's header and every later line one event. A workspace the host
+stamps exists: its directories are made on the first `create` there, and `delete_workspace`
+purges them.
 The layout matches the NimbleBrain runtime's under its work directory.
 
 ## Check it
 
 ```bash
-mkdir -p ./data/workspaces/ws_0123456789abcdef ./data/workspaces/ws_fedcba9876543210
 bun --no-env-file contracts/conversations/runner/conformance.ts \
   --server http://127.0.0.1:8080/mcp --header "authorization=Bearer change-me" \
   --carriage meta --workspace ws_0123456789abcdef --owner user_1 \

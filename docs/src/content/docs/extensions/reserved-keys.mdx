@@ -30,6 +30,14 @@ One more key is set by the host's own components and scoped to a single hop:
 |---|---|---|
 | `ai.nimblebrain/source` | `tools/call`, `resources/read`, and task requests at the [MCP endpoint](/connect/mcp-endpoint/) | Names the server a request is for. A workspace endpoint serves many servers behind one URL, and two servers can use the same resource URI. The app bridge always sets it to the app's own server, whatever the app asks for. A `tools/call` that names a source may reach only that server's tools, and only those whose `ui.visibility` includes `"app"`. It counts as the app's call only under a first-party credential (the web app's own session); a token issued to an external MCP client is treated as an agent's whatever it names, so it never reaches a tool without `"model"`. |
 
+## Host context key
+
+One key sits on the requests the host sends to a system plugin's server:
+
+| Key | Set on | Meaning |
+|---|---|---|
+| `ai.nimblebrain/context` | `params._meta` of every request to a server the host binds to a contract | Who is calling and the scope the call is walled to: `principal` (`host` for the host's own calls, `person` for everything an agent, an MCP client or an app sends), and the `workspaceId`, `ownerId` and `conversationId` the host verified. The host sets it last, after every other `_meta` merge, and overwrites any value a caller supplied, so no caller can claim `host`. Its schema is `https://schemas.nimblebrain.ai/host-context/v1/host-context.schema.json`. |
+
 ## Tool definition key
 
 One key sits on the host's own tool definitions rather than on results:

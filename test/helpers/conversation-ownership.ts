@@ -16,8 +16,8 @@ export interface StoredConversation {
  */
 export function assertConversationInWorkspaceOver(
   conversations: StoredConversation[],
-): (conversationId: string, wsId: string, ownerId: string) => void {
-  return (conversationId, wsId, ownerId) => {
+): (conversationId: string, wsId: string, ownerId: string) => Promise<void> {
+  return async (conversationId, wsId, ownerId) => {
     const found = conversations.some(
       (c) => c.conversationId === conversationId && c.wsId === wsId && c.ownerId === ownerId,
     );

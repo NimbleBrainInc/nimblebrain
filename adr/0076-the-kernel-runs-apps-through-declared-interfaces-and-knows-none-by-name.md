@@ -275,8 +275,10 @@ kernel's `history/`.
   (caches, flows, locks, limits) move onto shared providers. This decision gives them
   their primitives; each still has to be moved.
 - The kernel gains a lifecycle: starting system plugins, checking contracts, ordering
-  by dependency, and surviving a plugin that is down. A plugin that cannot be reached
-  makes its own capabilities unavailable; it never stops the runtime.
+  by dependency, and surviving a plugin that is down. A system plugin whose server does
+  not start at boot refuses the boot, like any setup that cannot work. A plugin that
+  cannot be reached after boot makes its own capabilities unavailable until it is back;
+  it never stops a running runtime.
 - Every call to a system plugin is an MCP call. Locally it reaches a process on the
   same machine; at scale it crosses the network to work that is a file write today.
   Batching a turn's writes keeps the calls per turn few.

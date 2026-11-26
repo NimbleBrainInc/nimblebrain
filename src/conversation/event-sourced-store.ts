@@ -22,7 +22,7 @@ import type {
   ToolProgressPayload,
   ToolStartPayload,
 } from "../engine/schemas/events.ts";
-import type { EngineEvent, EventSink } from "../engine/types.ts";
+import type { EngineEvent } from "../engine/types.ts";
 import {
   deriveConversationMeta,
   deriveUsageMetrics,
@@ -39,9 +39,9 @@ import {
   type Conversation,
   type ConversationAccessContext,
   type ConversationEvent,
+  type ConversationEventStore,
   type ConversationListResult,
   type ConversationPatch,
-  type ConversationStore,
   type CreateConversationOptions,
   type ListOptions,
   type LlmResponseEvent,
@@ -314,6 +314,93 @@ function mapSkillActivated(ts: string, d: SkillActivatedPayload): ConversationEv
   return e;
 }
 
+/**
+ * The conversation event an engine event persists as, or null when it persists
+ * as none. `debug` keeps the full request data (`logging.level: "debug"`).
+ * Every conversation store maps engine events through this one function.
+ */
+export function conversationEventOf(event: EngineEvent, debug: boolean): ConversationEvent | null {
+  if (!CONVERSATION_EVENT_TYPES.has(event.type)) return null;
+  const ts = new Date().toISOString();
+  switch (event.type) {
+    case "run.start":
+      return mapRunStart(ts, event.data, debug);
+    case "llm.done":
+      return mapLlmDone(ts, event.data);
+    case "tool.start":
+      return mapToolStart(ts, event.data, debug);
+    case "tool.done":
+      return mapToolDone(ts, event.data);
+    case "tool.progress":
+      return mapToolProgress(ts, event.data);
+    case "run.done":
+      return mapRunDone(ts, event.data);
+    case "run.error":
+      return mapRunError(ts, event.data);
+    case "execution.bound":
+      return { ts, type: "execution.bound", ...event.data };
+    case "skills.loaded":
+      return mapSkillsLoaded(ts, event.data);
+    case "context.assembled":
+      return mapContextAssembled(ts, event.data);
+    case "connector.skill.injected":
+      return mapConnectorSkillInjected(ts, event.data);
+    case "skill.activated":
+      return mapSkillActivated(ts, event.data);
+    case "skill.not_delivered":
+      return { ts, type: "skill.not_delivered", ...event.data };
+    case "skill.suppression":
+      return mapSkillSuppression(ts, event.data);
+    default:
+      return null;
+  }
+}
+
+/**
+ * The events a stored message persists as: a user message is one
+ * `user.message`; an assistant message with metadata is a synthetic run
+ * (`run.start`, `llm.response`, `run.done`); anything else is none.
+ */
+export function messageEvents(message: StoredMessage): ConversationEvent[] {
+  if (message.role === "user") {
+    return [
+      {
+        ts: message.timestamp,
+        type: "user.message",
+        content: message.content as ConversationEvent extends { content: infer C } ? C : never,
+        ...(message.userId ? { userId: message.userId } : {}),
+        ...(message.metadata?.pluginRequestAnswer
+          ? { pluginRequestAnswer: message.metadata.pluginRequestAnswer }
+          : {}),
+      } as ConversationEvent,
+    ];
+  }
+  if (message.role !== "assistant" || !message.metadata) return [];
+  const runId = `append_${Date.now()}`;
+  const model = message.metadata.model ?? "unknown";
+  const llmResponse: LlmResponseEvent = {
+    ts: message.timestamp,
+    type: "llm.response",
+    runId,
+    model,
+    content: message.content as LlmResponseEvent["content"],
+    usage: message.metadata.usage ?? { inputTokens: 0, outputTokens: 0 },
+    llmMs: message.metadata.llmMs ?? 0,
+    finishReason: synthesizedFinishReason(message),
+  };
+  return [
+    { ts: message.timestamp, type: "run.start", runId, model } as ConversationEvent,
+    llmResponse,
+    {
+      ts: message.timestamp,
+      type: "run.done",
+      runId,
+      stopReason: "complete",
+      totalMs: message.metadata.llmMs ?? 0,
+    } as ConversationEvent,
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
@@ -354,7 +441,7 @@ export interface EventSourcedStoreConfig {
   onMutate?: (change: ConversationMutation) => void;
 }
 
-export class EventSourcedConversationStore implements ConversationStore, EventSink {
+export class EventSourcedConversationStore implements ConversationEventStore {
   private dir: string;
   private logLevel: "normal" | "debug";
   private onMutate?: (change: ConversationMutation) => void;
@@ -386,9 +473,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   /** Map engine events to conversation events and persist. */
   emit(event: EngineEvent): void {
     if (!this.activeConversationId) return;
-    if (!CONVERSATION_EVENT_TYPES.has(event.type)) return;
-
-    const mapped = this.mapEngineEvent(event);
+    const mapped = conversationEventOf(event, this.logLevel === "debug");
     if (!mapped) return;
 
     this.appendEventSync(this.activeConversationId, mapped);
@@ -467,58 +552,9 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
    * `user.message` event, an assistant message a synthetic run.
    */
   async append(conversation: Conversation, message: StoredMessage): Promise<void> {
-    if (message.role === "user") {
-      const event: ConversationEvent = {
-        ts: message.timestamp,
-        type: "user.message",
-        content: message.content as ConversationEvent extends { content: infer C } ? C : never,
-        ...(message.userId ? { userId: message.userId } : {}),
-        ...(message.metadata?.pluginRequestAnswer
-          ? { pluginRequestAnswer: message.metadata.pluginRequestAnswer }
-          : {}),
-      } as ConversationEvent;
-      this.appendEventSync(conversation.id, event);
-      return;
-    }
-
-    if (message.role === "assistant" && message.metadata) {
-      // Create synthetic run bookends + llm.response from assistant metadata.
-      // Route through `appendEventSync` (three calls instead of one batched
-      // `appendFileSync`) so the binary-payload guard covers this path too.
-      // The three events are written in order, terminated by a trailing
-      // newline each — same on-disk shape as the previous batched write.
-      const runId = `append_${Date.now()}`;
-      const runStart: ConversationEvent = {
-        ts: message.timestamp,
-        type: "run.start",
-        runId,
-        model: message.metadata.model ?? "unknown",
-      } as ConversationEvent;
-      const llmResponse: LlmResponseEvent = {
-        ts: message.timestamp,
-        type: "llm.response",
-        runId,
-        model: message.metadata.model ?? "unknown",
-        content: message.content as LlmResponseEvent["content"],
-        usage: message.metadata.usage ?? {
-          inputTokens: 0,
-          outputTokens: 0,
-        },
-        llmMs: message.metadata.llmMs ?? 0,
-        finishReason: synthesizedFinishReason(message),
-      };
-      const runDone: ConversationEvent = {
-        ts: message.timestamp,
-        type: "run.done",
-        runId,
-        stopReason: "complete",
-        totalMs: message.metadata.llmMs ?? 0,
-      } as ConversationEvent;
-
-      this.appendEventSync(conversation.id, runStart);
-      this.appendEventSync(conversation.id, llmResponse);
-      this.appendEventSync(conversation.id, runDone);
-    }
+    // One line per event, each through `appendEventSync`, so the binary-payload
+    // guard covers every one.
+    for (const event of messageEvents(message)) this.appendEventSync(conversation.id, event);
   }
 
   /**
@@ -606,43 +642,6 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   // =========================================================================
   // Private
   // =========================================================================
-
-  private mapEngineEvent(event: EngineEvent): ConversationEvent | null {
-    const ts = new Date().toISOString();
-    const debug = this.logLevel === "debug";
-    switch (event.type) {
-      case "run.start":
-        return mapRunStart(ts, event.data, debug);
-      case "llm.done":
-        return mapLlmDone(ts, event.data);
-      case "tool.start":
-        return mapToolStart(ts, event.data, debug);
-      case "tool.done":
-        return mapToolDone(ts, event.data);
-      case "tool.progress":
-        return mapToolProgress(ts, event.data);
-      case "run.done":
-        return mapRunDone(ts, event.data);
-      case "run.error":
-        return mapRunError(ts, event.data);
-      case "execution.bound":
-        return { ts, type: "execution.bound", ...event.data };
-      case "skills.loaded":
-        return mapSkillsLoaded(ts, event.data);
-      case "context.assembled":
-        return mapContextAssembled(ts, event.data);
-      case "connector.skill.injected":
-        return mapConnectorSkillInjected(ts, event.data);
-      case "skill.activated":
-        return mapSkillActivated(ts, event.data);
-      case "skill.not_delivered":
-        return { ts, type: "skill.not_delivered", ...event.data };
-      case "skill.suppression":
-        return mapSkillSuppression(ts, event.data);
-      default:
-        return null;
-    }
-  }
 
   /** Synchronously append an event line to a conversation file. */
   private appendEventSync(id: string, event: ConversationEvent): void {

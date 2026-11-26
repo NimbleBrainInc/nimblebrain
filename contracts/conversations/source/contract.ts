@@ -100,11 +100,6 @@ export const CONTRACT = {
         meaning: "create named an id already stored in the caller's scope. Nothing was written.",
       },
       {
-        code: "workspace_not_found",
-        meaning:
-          "create in a workspace the implementation holds nothing for (deleted, or never created). Nothing was written.",
-      },
-      {
         code: "conversation_corrupted",
         meaning: "The stored conversation cannot be read.",
       },

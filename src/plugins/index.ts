@@ -9,8 +9,8 @@
  * manifest, what it may do from the operator's entry, and what it must
  * satisfy from the contracts it declares.
  *
- * Today the runtime calls {@link checkConfiguredPlugins} at boot to validate
- * and log the resolved set. Nothing is started and nothing is routed from it.
+ * The runtime calls {@link checkConfiguredPlugins} at boot to validate and log
+ * the resolved set, then starts each binding's server (`bound-servers.ts`).
  */
 
 import { existsSync } from "node:fs";
@@ -55,6 +55,8 @@ export interface ResolvedPlugin {
   name: string;
   /** The plugin's directory, absolute. */
   root: string;
+  /** Its `${PLUGIN_DATA}`: `<dataDir>/<name>`, absolute. */
+  dataDir: string;
   /** The operator's decision; never the manifest's. */
   system: boolean;
   manifest: PluginManifest;
@@ -150,12 +152,10 @@ function resolvePlugin(
     return null;
   }
 
+  const dataDir = join(opts.dataDir, name);
   let manifest: PluginManifest;
   try {
-    manifest = parsePluginManifest(name, readPluginDirectory(root), {
-      root,
-      data: join(opts.dataDir, name),
-    });
+    manifest = parsePluginManifest(name, readPluginDirectory(root), { root, data: dataDir });
   } catch (err) {
     if (!(err instanceof PluginManifestError)) throw err;
     for (const p of err.problems) {
@@ -174,7 +174,7 @@ function resolvePlugin(
   const system = entry.system === true;
   const servers = placeServers(manifest, entry.servers ?? {}, fail);
   checkStartable(servers, system, fail);
-  return { name, root, system, manifest, servers };
+  return { name, root, dataDir, system, manifest, servers };
 }
 
 /**
@@ -246,7 +246,8 @@ export interface CheckConfiguredPluginsOptions {
 
 /**
  * The boot check: resolve the configured plugins, log the resolved set, and
- * throw naming every error when they cannot run together. With no plugin
+ * throw naming every error when they cannot run together. It starts nothing;
+ * the runtime starts each binding's server from what it returns. With no plugin
  * enabled it reads nothing and returns null, so an instance without a
  * `plugins` block boots as it always has.
  */
@@ -278,6 +279,6 @@ export function checkConfiguredPlugins(
     );
   }
   for (const note of notes) log.info(`[plugins] ${note}`);
-  log.info(`[plugins] validated ${plugins.length} plugin(s); none is started yet`);
+  log.info(`[plugins] validated ${plugins.length} plugin(s)`);
   return result.resolved;
 }
