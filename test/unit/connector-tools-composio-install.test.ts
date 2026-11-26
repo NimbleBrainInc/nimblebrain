@@ -151,6 +151,8 @@ function gmailEntry(): import("../../src/connectors/catalog/types.ts").CatalogLi
   };
 }
 
+const DCR_ID = "com.example/dcr";
+
 const ADMIN: UserIdentity = {
   id: "usr_admin",
   email: "admin@test",
@@ -181,6 +183,14 @@ function buildHarness(): Harness {
     join(workDir, "empty-catalog.yaml"),
     [
       "servers:",
+      // A plain DCR entry, for the tests that pin what a composio block on a
+      // non-composio install does.
+      `  - name: ${DCR_ID}`,
+      "    description: A DCR connector",
+      '    version: "1.0.0"',
+      "    remotes:",
+      "      - type: streamable-http",
+      "        url: https://dcr.example.test/mcp",
       `  - name: ${GMAIL_ID}`,
       "    title: Gmail",
       "    description: Read, send, and draft mail",
@@ -466,8 +476,7 @@ describe("manage_connectors.install (composio-auth)", () => {
     const result = await tool.handler({ action: "install", entry: forged, wsId: h.wsId });
 
     expect(result.isError).toBe(true);
-    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(text).toContain('not a recognized "composio" connector');
+    expect((result.structuredContent as { error?: string }).error).toBe("NOT_IN_CATALOG");
     // The broker was never asked, so no session exists at the operator's account.
     expect(composioCalls.createConfig).toBeUndefined();
     const ws = await h.workspaceStore.get(h.wsId);
@@ -489,12 +498,12 @@ describe("manage_connectors.install (composio-auth)", () => {
 
     try {
       const forged = {
-        id: "com.evil/mcp",
-        name: "Evil",
-        description: "Not in the catalog",
+        id: DCR_ID,
+        name: "DCR",
+        description: "A catalog DCR entry with a forged composio block",
         install: {
           kind: "remote-oauth",
-          url: "https://evil.example/mcp",
+          url: "https://dcr.example.test/mcp",
           auth: "dcr",
           composio: { toolkit: "../../../evil-org/evil-repo/main/payload" },
         },
@@ -503,7 +512,7 @@ describe("manage_connectors.install (composio-auth)", () => {
       await buildTool(h).handler({ action: "install", entry: forged, wsId: h.wsId });
 
       // The entry's registry name, as for every connector; the toolkit plays no part.
-      expect(identities).toEqual(["com.evil/mcp"]);
+      expect(identities).toEqual([DCR_ID]);
     } finally {
       lifecycle.syncBoundSkills = realSync;
     }
@@ -627,7 +636,7 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(instance?.ui?.placements?.map((p) => p.resourceUri)).toEqual(["ui://gmail/settings"]);
   });
 
-  test("(f-3) self-heal keeps the orphan's stored host UI when no catalog entry names it", async () => {
+  test("(f-3) an uncatalogued id is refused, and its orphan row is left as it was", async () => {
     const url = "https://uncatalogued.test/mcp";
     const orphanRef: Extract<ConnectorRef, { url: string }> = {
       url,
@@ -651,11 +660,12 @@ describe("manage_connectors.install (composio-auth)", () => {
       wsId: h.wsId,
     });
 
-    expect(result.isError).toBe(false);
-    const instance = h.runtime.getLifecycle().getInstance("com-example-uncatalogued", h.wsId);
-    expect(instance?.ui?.placements?.map((p) => p.resourceUri)).toEqual([
-      "ui://uncatalogued/settings",
-    ]);
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { error?: string }).error).toBe("NOT_IN_CATALOG");
+    expect(
+      h.runtime.getLifecycle().getInstance("com-example-uncatalogued", h.wsId),
+    ).toBeUndefined();
+    expect((await h.workspaceStore.get(h.wsId))?.connectors).toEqual([orphanRef]);
   });
 
   test("install surfaces createComposioSession failures as errResult", async () => {

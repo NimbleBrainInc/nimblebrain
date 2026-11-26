@@ -311,7 +311,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         entry: {
           type: "object",
           description:
-            'CatalogListing to install (required for `install`). The same shape returned by list_directory — server dispatches by entry.install.kind. No id-to-action lookup; the registry that produced the entry is the source of truth for the install payload. On a local install only, `install: { kind: "direct-url", url, serverName? }` adds a server in development by its loopback URL (e.g. http://127.0.0.1:8000/mcp); the server\'s Server Card supplies its title, icon and placements.',
+            "CatalogListing to install (required for `install`). The same shape returned by list_directory. A `remote-oauth` entry is resolved by its exact `id` to this instance's catalog entry, which alone decides what is installed; an id the catalog does not list is refused (NOT_IN_CATALOG). On a local install only, `install: { kind: \"direct-url\", url, serverName? }` adds a server in development by its loopback URL (e.g. http://127.0.0.1:8000/mcp); the server's Server Card supplies its title, icon and placements.",
         },
         wsId: {
           type: "string",
@@ -1381,27 +1381,22 @@ async function handleGetInstalled(
 }
 
 /**
- * Install a connector. Takes the full `CatalogListing` the UI was
- * already showing the user — server dispatches by `entry.install.kind`.
+ * Install a connector. The caller names a connector; the operator's catalog
+ * decides what that install is (ADR-0065, ADR-0068).
  *
- * No id-to-action lookup. The registry that produced the entry IS the
- * source of truth for what to install; the install handler just runs
- * the action. This means:
+ * A `remote-oauth` request is resolved by its exact id to the catalog's own
+ * listing, and the caller's copy of the entry is discarded: url, auth,
+ * transport, scopes and authorization parameters all come from the catalog. An
+ * id the catalog does not list is refused, on every install, local or hosted,
+ * because a URL typed on a local install arrives as `direct-url`, never as a
+ * `remote-oauth` entry. `direct-url` is the only caller-shaped install, and
+ * only the local-install gate admits it.
  *
- *   - Adding a new connector kind = add a case to the switch below
- *     and a registry that emits it.
- *   - No name-collision bugs between catalogs (the "Catalog entry not
- *     found" class of error doesn't exist in this design).
+ * Both checks run before the identity / workspace split, so a personal install
+ * obeys them exactly as a workspace install does.
  *
- * Defense-in-depth on the wire payload: `parseCatalogListing` re-runs
- * the value-shape gate (`isHttpUrl` for remote URLs,
- * reserved-OAuth-params for the install action). The entry came from a client over the tool surface, not
- * directly from a trusted source instance, so trust-but-verify at the
- * dispatch boundary catches a tampered payload regardless of which
- * registry a well-formed analog originally came from.
- *
- * Cross-cutting checks (admin allow-list) apply to every install
- * kind and live above the dispatch.
+ * `parseCatalogListing` still gates the wire payload's shape first, so a
+ * malformed request is refused the same way whatever it names.
  */
 async function handleInstall(
   ctx: ManageConnectorsContext,
@@ -1411,9 +1406,13 @@ async function handleInstall(
   scope: string | undefined,
   grantWsId: string | null,
 ): Promise<ToolResult> {
-  const entry = parseCatalogListing(rawEntry);
-  if (!entry) return errResult("entry with install action is required.");
+  const requested = parseCatalogListing(rawEntry);
+  if (!requested) return errResult("entry with install action is required.");
   if (!identity) return errResult("Authentication required.");
+
+  const resolved = await resolveInstallEntry(ctx, requested);
+  if ("isError" in resolved) return resolved;
+  const entry = resolved;
 
   // Identity-target install: `scope: "identity"` installs a PERSONAL connector on
   // the caller's own identity — no workspace, credentials bound to the user. An
@@ -1442,16 +1441,6 @@ async function handleInstall(
         "default-to-personal fallback inside this tool.",
     );
   }
-  // Adding a server by URL is a local-install capability (ADR-0065), refused
-  // before anything else is looked at everywhere the gate is shut.
-  if (entry.install.kind === "direct-url" && ctx.runtime.getHostLoopback() === null) {
-    return codedErr(
-      "DIRECT_URL_NOT_ALLOWED",
-      "Adding a server by URL is available only on a local install (npx nimblebrain). " +
-        "Connectors on this instance come from its catalog.",
-    );
-  }
-
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
 
@@ -1464,6 +1453,40 @@ async function handleInstall(
     case "direct-url":
       return handleInstallDirectUrl(ctx, wsId, ws, entry.install);
   }
+}
+
+/**
+ * Turn an install request into the install action the runtime will run, or
+ * refuse it.
+ *
+ *   - `direct-url`: adding a server by URL is a local-install capability
+ *     (ADR-0065), refused wherever the local-install gate is shut.
+ *   - `remote-oauth`: the catalog's listing for the requested id, matched
+ *     exactly; `NOT_IN_CATALOG` when it lists none.
+ */
+async function resolveInstallEntry(
+  ctx: ManageConnectorsContext,
+  requested: CatalogListing,
+): Promise<CatalogListing | ToolResult> {
+  if (requested.install.kind === "direct-url") {
+    if (ctx.runtime.getHostLoopback() === null) {
+      return codedErr(
+        "DIRECT_URL_NOT_ALLOWED",
+        "Adding a server by URL is available only on a local install (npx nimblebrain). " +
+          "Connectors on this instance come from its catalog.",
+      );
+    }
+    return requested;
+  }
+  const listing = await ctx.runtime.getConnectorCatalog().listingById(requested.id);
+  if (!listing) {
+    return codedErr(
+      "NOT_IN_CATALOG",
+      `"${requested.id}" is not in this instance's catalog. ` +
+        "Connectors on this instance come from its catalog.",
+    );
+  }
+  return listing;
 }
 
 /**
@@ -1588,12 +1611,10 @@ async function handleInstallIdentity(
     );
   }
 
-  // `validateRemoteOAuthInstall` re-resolves a brokered entry's block from the
-  // trusted catalog — the same bound the workspace path applies, and the reason
-  // the caller's own block never reaches `createSession`. `provider`, and
-  // `static` without an instance OAuth client, are already rejected above. The action
-  // shape is validated upstream by `parseCatalogListing`.
-  const validated = await validateRemoteOAuthInstall(ctx, entry, entry.install);
+  // `entry` is the catalog's own listing (`resolveInstallEntry`), so a brokered
+  // block reaching `createSession` is the operator's. `provider`, and `static`
+  // without an instance OAuth client, are already rejected above.
+  const validated = validateRemoteOAuthInstall(entry, entry.install);
   if ("error" in validated) return errResult(validated.error);
   const action = validated.action;
 
@@ -1986,21 +2007,17 @@ async function handleInstallRemoteOAuth(
     return errResult("invariant violated: handleInstallRemoteOAuth requires remote-oauth entry");
   }
 
-  // Cheap entry-shape validation up front (fail fast, no IO beyond the catalog
-  // lookup a `provider` or brokered install needs), which also re-resolves those
-  // entries' security-critical fields from the server-trusted catalog. The
+  // Cheap completeness check of the catalog's entry up front (fail fast). The
   // expensive remote work — the brokered session create, the client secret
   // read — is deferred until after the dedup check so a duplicate-install click
   // doesn't burn an upstream session.
-  const validated = await validateRemoteOAuthInstall(ctx, entry, entry.install);
+  const validated = validateRemoteOAuthInstall(entry, entry.install);
   if ("error" in validated) return errResult(validated.error);
   const action = validated.action;
 
-  // Host UI placement (sidebar app, etc.) is SERVER-authored metadata. Resolve
-  // it from the operator-trusted catalog by id — never the caller-supplied
-  // entry — so a forged entry can't inject host chrome. Cached by the directory
-  // facade. Undefined when the id isn't a known catalog connector. Placements
-  // are re-validated at registration (`sanitizePlacements`).
+  // Host UI placement (sidebar app, etc.) is SERVER-authored metadata, read
+  // from the operator-trusted catalog entry for this id. Placements are
+  // re-validated at registration (`sanitizePlacements`).
   const trusted = await ctx.runtime.getConnectorCatalog().catalogById(entry.id);
   const trustedUi = trusted?.ui;
 
@@ -2488,9 +2505,9 @@ function validateSecretHeaders(
   entryName: string,
   secretHeaders: Record<string, SecretHeaderRef> | undefined,
 ): { headers?: Record<string, CredentialRef> } | { error: string } {
-  // `undefined`, not an omission: the caller writes this over its own copy, so
-  // an entry declaring nothing must produce a value that ERASES rather than one
-  // that declines to overwrite. See the call site.
+  // `undefined`, not an omission: the call site writes this over the action's
+  // own (labelled) copy, so an entry declaring nothing must produce a value that
+  // ERASES rather than one that declines to overwrite.
   if (!secretHeaders) return { headers: undefined };
   const headers: Record<string, CredentialRef> = {};
   for (const [name, value] of Object.entries(secretHeaders)) {
@@ -2508,80 +2525,41 @@ function validateSecretHeaders(
 }
 
 /**
- * Cheap up-front entry-shape validation. Two kinds of entry have their
- * security-critical fields re-resolved from the SERVER-trusted catalog by id,
- * with the caller's discarded:
+ * Cheap up-front check of a catalog install action's completeness.
  *
- *   - `auth: "provider"` mints a fleet-trusted, workspace-scoped service token
- *     and ships it to the entry's URL, so a workspace admin could otherwise
- *     forge an entry with an arbitrary url + audience/scope and exfiltrate a
- *     fleet token or reach an in-cluster `.svc` the SSRF guard protects.
- *   - **every brokered entry** spends the PLATFORM's broker credential to
- *     create a connection at the operator's account, so the target the provider
- *     is pointed at must come from the operator-published catalog. Otherwise a
- *     workspace admin forges an entry naming any server the broker can reach and
- *     gets a pre-authenticated, eager-started MCP source charged to the
- *     operator. This check IS the bound: a provider may have no incidental one
- *     (Composio happens to need a per-toolkit auth-config id declared first;
- *     Smithery needs nothing).
+ * `entry` is the operator catalog's own listing (`resolveInstallEntry`), so
+ * every field here is operator-authored; nothing from the caller reaches this
+ * point. What remains to check is that the entry carries what its auth kind
+ * needs:
  *
- * Returns the (possibly-rewritten) action, or an error.
+ *   - `static` needs its `oauthClientSetup`.
+ *   - `provider` mints a fleet-trusted, workspace-scoped service token and
+ *     ships it to the entry's URL, so it needs its `providerAuth`, and each
+ *     `secretHeaders` value must be a credential reference.
+ *   - a brokered entry spends the platform's broker credential on the target
+ *     its config block names, so it needs that block.
+ *
+ * Returns the action, or an error.
  */
-async function validateRemoteOAuthInstall(
-  ctx: ManageConnectorsContext,
+function validateRemoteOAuthInstall(
   entry: CatalogListing,
   action: RemoteOAuthInstall,
-): Promise<{ action: RemoteOAuthInstall } | { error: string }> {
+): { action: RemoteOAuthInstall } | { error: string } {
   if (action.auth === "static" && !action.oauthClientSetup) {
     return { error: `"${entry.name}" is static-auth but missing oauthClientSetup config.` };
   }
   if (action.auth === "provider") {
-    const trusted = await ctx.runtime.getConnectorCatalog().catalogById(entry.id);
-    if (trusted?.auth !== "provider" || !trusted.providerAuth) {
-      return {
-        error: `"${entry.name}" is not a recognized platform connector — refusing a provider-auth install from an unverified entry.`,
-      };
+    if (!action.providerAuth) {
+      return { error: `"${entry.name}" is provider-auth but declares no providerAuth.` };
     }
-    const secretHeaders = validateSecretHeaders(entry.name, trusted.secretHeaders);
+    const secretHeaders = validateSecretHeaders(entry.name, action.secretHeaders);
     if ("error" in secretHeaders) return secretHeaders;
-    return {
-      action: {
-        ...action,
-        url: trusted.url,
-        providerAuth: trusted.providerAuth,
-        // Read back from the trusted entry, never the caller's: the header NAME
-        // decides what a fleet-trusted connection sends, and the key decides
-        // which of the workspace's secrets it sends. A forged pair is a workspace
-        // admin choosing both.
-        //
-        // Assigned UNCONDITIONALLY, and that is the whole guard. `...action` above
-        // spreads the caller's own block in first, so a conditional assignment
-        // protects only the case where the trusted entry HAS secretHeaders — and
-        // leaves the caller's copy standing in the case where it has none, which
-        // is the ordinary shape of a fleet connector. Overwriting with `undefined`
-        // is what erases it.
-        secretHeaders: secretHeaders.headers,
-      },
-    };
+    return { action: { ...action, secretHeaders: secretHeaders.headers } };
   }
-  if (isBrokeredAuthKind(action.auth)) {
-    const trusted = await ctx.runtime.getConnectorCatalog().catalogById(entry.id);
-    const config = trusted?.auth === action.auth ? brokeredCatalogConfig(trusted) : undefined;
-    if (!config) {
-      return {
-        error:
-          `"${entry.name}" is not a recognized "${action.auth}" connector — ` +
-          "refusing a brokered install from an unverified entry.",
-      };
-    }
-    // Replace the caller's block with the operator-published one, under the key
-    // the convention puts it at, so the wiring below reads a trusted value.
-    return { action: { ...action, [action.auth]: config } as RemoteOAuthInstall };
+  if (isBrokeredAuthKind(action.auth) && !brokeredCatalogConfig(action)) {
+    return { error: `"${entry.name}" is missing its "${action.auth}" config block.` };
   }
-  // A catalog connector is installed at the URL its entry names, never the
-  // caller's: its grants bind only to a ref at that URL (`catalog/binding.ts`).
-  const trusted = await ctx.runtime.getConnectorCatalog().catalogById(entry.id);
-  return { action: trusted ? { ...action, url: trusted.url } : action };
+  return { action };
 }
 
 /**
@@ -2603,8 +2581,8 @@ async function buildBrokeredWiring(
 ): Promise<BrokeredWiring | { __err: string }> {
   const config = brokeredCatalogConfig(action);
   if (!config) {
-    // Unreachable — `validateRemoteOAuthInstall` re-resolves the block from the
-    // trusted catalog and refuses when there is none. Typed for narrowing.
+    // Unreachable — `validateRemoteOAuthInstall` refuses a brokered entry with
+    // no block. Typed for narrowing.
     return { __err: `"${entryName}" is missing its "${action.auth}" config block.` };
   }
   let session: ManagedSession;
@@ -2709,8 +2687,8 @@ async function loadStaticOAuthClient(
  * `undefined` when the operator declared none for its id.
  *
  * The client is bound, at boot, to the URL the catalog published for the id then.
- * `validateRemoteOAuthInstall` has already replaced the caller's URL with the
- * catalog's current one, so the two differ only when the catalog moved the
+ * The install action is the catalog's current entry
+ * (`resolveInstallEntry`), so the two differ only when the catalog moved the
  * entry since boot; the install is refused until a restart rebinds the client.
  * The resolver checks the same binding on every connect
  * (`resolveStaticOAuthClient`), which is what keeps the operator's secret on the

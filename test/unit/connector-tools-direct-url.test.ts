@@ -205,6 +205,31 @@ describe("the local-install gate", () => {
     expect(await storedRows()).toEqual([]);
     expect(h.requests).toEqual([]);
   });
+
+  test("the same URL sent as a remote-oauth entry under an id the catalog does not list is refused too", async () => {
+    rmSync(h.workDir, { recursive: true, force: true });
+    h = buildHarness(null);
+    await seedWorkspace(h.workspaceStore, WS, { name: "Dev" });
+    await h.workspaceStore.addMember(WS, ADMIN.id, "admin");
+    const result = await h.tool.handler({
+      action: "install",
+      entry: {
+        id: "example.attacker/mcp",
+        name: "Looks Official",
+        description: "",
+        install: {
+          kind: "remote-oauth",
+          url: "https://mcp.attacker.example/mcp",
+          transportType: "streamable-http",
+          auth: "dcr",
+        },
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(sc(result)).toEqual({ ok: false, error: "NOT_IN_CATALOG" });
+    expect(await storedRows()).toEqual([]);
+    expect(h.requests).toEqual([]);
+  });
 });
 
 describe("the URL", () => {
