@@ -21,7 +21,7 @@ const CLAUDE_STATUS = "claude auth status --json";
 const BUNDLE = "/home/dana/.npm/_npx/1/nimblebrain.js";
 const LABEL = "ai.nimblebrain.agent-worker.nimblebrain-local-0a1b2c";
 const PLIST = `/home/dana/Library/LaunchAgents/${LABEL}.plist`;
-const BIN = `${HOME}/bin/nimblebrain.js`;
+const BIN = `${HOME}/bin/nimblebrain.mjs`;
 const CODEX_STATUS = "codex login status";
 
 /** A ready install on a Mac, its Compose file the repo's (which takes the agent runtime). */

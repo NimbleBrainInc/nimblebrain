@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { workerPaths } from "../src/agent-worker.ts";
 
 interface Manifest {
   dependencies?: Record<string, string>;
@@ -28,4 +31,27 @@ describe("the published package is one self-contained file", () => {
       expect({ name, version: root.dependencies?.[name] }).toEqual({ name, version });
     }
   });
+});
+
+describe("the worker's copy of the built file", () => {
+  test("loads as an ES module under a home inside a CommonJS package", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nb-cli-bundle-"));
+    try {
+      const built = await Bun.build({
+        entrypoints: [join(import.meta.dir, "../src/bin.ts")],
+        target: "node",
+        minify: true,
+      });
+      const [out] = built.outputs;
+      if (!built.success || out === undefined) throw new Error("the CLI did not build");
+      writeFileSync(join(dir, "package.json"), '{"type":"commonjs"}\n');
+      const bin = workerPaths(join(dir, "home")).bin;
+      mkdirSync(dirname(bin), { recursive: true });
+      writeFileSync(bin, await out.text());
+      const check = spawnSync("node", ["--check", bin], { encoding: "utf8" });
+      expect({ status: check.status, stderr: check.stderr }).toEqual({ status: 0, stderr: "" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

@@ -70,8 +70,12 @@ export interface AgentRuntimeState {
 export const workerPaths = (home: string) => ({
   record: join(home, "agent-worker.json"),
   log: join(home, "agent-worker.log"),
-  /** The copy of this CLI the login item runs: npx's cache, where it came from, is cleaned. */
-  bin: join(home, "bin", "nimblebrain.js"),
+  /**
+   * The copy of this CLI the login item runs: npx's cache, where it came from, is cleaned.
+   * `.mjs`, because the copy leaves the package that declares it an ES module, and a
+   * `.js` under a home inside a CommonJS package would not load.
+   */
+  bin: join(home, "bin", "nimblebrain.mjs"),
   binDir: join(home, "bin"),
 });
 
