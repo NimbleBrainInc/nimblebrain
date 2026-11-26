@@ -20,6 +20,10 @@ import type { AcpAgentFailure, AcpDriver, AcpOutcome, ReportedModelCall } from "
 export const SUBSCRIPTION_USAGE_META_KEY = "nimblebrain-subscription/usage";
 /** The worker's `initialize` key: the plan its CLI is signed in to (`Claude Max`). */
 export const SUBSCRIPTION_PLAN_META_KEY = "nimblebrain-subscription/plan";
+/** The worker's `initialize` key: the model its turns run on, as a person names it (`Sonnet`). */
+export const SUBSCRIPTION_MODEL_META_KEY = "nimblebrain-subscription/model";
+/** The `session/new` key that marks the door's own model work: `{ purpose: "internal" }`. */
+export const SUBSCRIPTION_SESSION_META_KEY = "nimblebrain-subscription/session";
 /** The worker's `session/prompt` error key: why the turn failed, `{ code, message }`. */
 export const SUBSCRIPTION_FAILURE_META_KEY = "nimblebrain-subscription/failure";
 
@@ -35,6 +39,10 @@ export function createSubscriptionCliDriver(cli: "claude-code" | "codex"): AcpDr
     toolSurface: cli === "claude-code" ? "projection" : "mixed",
     outcome: subscriptionOutcome,
     describe: subscriptionDescription,
+    // The door's own model work runs on the worker's fast model with no tool
+    // connection; a turn carries no marker.
+    sessionMeta: (run) =>
+      run.internal ? { [SUBSCRIPTION_SESSION_META_KEY]: { purpose: "internal" } } : {},
     agentFailure: subscriptionFailure,
   };
 }
@@ -42,9 +50,15 @@ export function createSubscriptionCliDriver(cli: "claude-code" | "codex"): AcpDr
 /** The plan the worker says its CLI bills, from its `initialize` answer. */
 export function subscriptionDescription(init: { _meta?: Record<string, unknown> | null }): {
   plan?: string;
+  model?: string;
 } {
-  const plan = init._meta?.[SUBSCRIPTION_PLAN_META_KEY];
-  return typeof plan === "string" && plan.trim() ? { plan: plan.trim() } : {};
+  const text = (key: string) => {
+    const value = init._meta?.[key];
+    return typeof value === "string" && value.trim() ? value.trim().slice(0, 60) : undefined;
+  };
+  const plan = text(SUBSCRIPTION_PLAN_META_KEY);
+  const model = text(SUBSCRIPTION_MODEL_META_KEY);
+  return { ...(plan ? { plan } : {}), ...(model ? { model } : {}) };
 }
 
 /** Why the worker says the turn failed, from its `session/prompt` error's `data`. */

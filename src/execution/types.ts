@@ -111,6 +111,12 @@ export interface ResolvedRun {
    * run key.
    */
   modelCredential?: string;
+  /**
+   * The door's own model work (a title, a history summary), not a turn: no
+   * tools, one iteration, no conversation (`src/runtime/aux-run.ts`). A
+   * runtime may run it on a cheaper path (a faster model, no tool connection).
+   */
+  internal?: boolean;
 }
 
 /** How a runtime reaches the platform for the length of one run. */
@@ -138,6 +144,8 @@ export interface RunIO {
 export interface RuntimeDescription {
   /** The plan its model calls are billed to (`Claude Max`), when it bills one. */
   plan?: string;
+  /** The model its turns run on, as a person names it (`Sonnet`), when it chooses its own. */
+  model?: string;
 }
 
 export interface AgentRuntime {

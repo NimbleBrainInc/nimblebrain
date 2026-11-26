@@ -55,15 +55,20 @@ export async function generateTitleWith(
   }
 }
 
+/** The transcript the title is written from; a title started before the reply has no assistant part. */
 function formatTitleTranscript(userMessage: string, assistantResponse: string): string {
   return [
     "<conversation-transcript>",
     "<user-message>",
     escapeClosingTags(userMessage.slice(0, 200)),
     "</user-message>",
-    "<assistant-message>",
-    escapeClosingTags(assistantResponse.slice(0, 200)),
-    "</assistant-message>",
+    ...(assistantResponse
+      ? [
+          "<assistant-message>",
+          escapeClosingTags(assistantResponse.slice(0, 200)),
+          "</assistant-message>",
+        ]
+      : []),
     "</conversation-transcript>",
   ].join("\n");
 }

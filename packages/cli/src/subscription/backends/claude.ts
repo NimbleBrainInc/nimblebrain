@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type * as acp from "@agentclientprotocol/sdk/unstable";
+import { modelLabel } from "../command.ts";
 import { classifyFailure, TurnFailed } from "./failure.ts";
 import {
   type Account,
@@ -42,6 +43,7 @@ export function createClaudeBackend(
   return {
     id: "claude-code",
     label: "Claude Code",
+    ...(opts.model ? { modelLabel: modelLabel(opts.model) } : {}),
     takesSystemPrompt: true,
     toolsAreNimbleBrainOnly: true,
     preflight: () => claudePreflight(bin),
@@ -103,9 +105,21 @@ export function claudeAccount(out: string | undefined): Account {
   };
 }
 
-/** The print-mode arguments: stream JSON, the session's server only, nothing of the person's. */
-function claudeArgs(input: TurnInput, model: string | undefined): string[] {
-  const mcpConfig = { mcpServers: { [SERVER]: { type: "http", url: input.mcpUrl } } };
+/** The model an internal session runs on: the door's own work (a title, a summary) needs speed, not depth. */
+export const INTERNAL_MODEL = "haiku";
+
+/**
+ * The print-mode arguments: stream JSON, the session's server only, nothing
+ * of the person's. An internal session gets no server at all (an empty
+ * `--mcp-config` under `--strict-mcp-config`) and the fast model, so it
+ * starts nothing and ends in a couple of seconds.
+ */
+export function claudeArgs(input: TurnInput, model: string | undefined): string[] {
+  const internal = input.purpose === "internal" || input.mcpUrl === undefined;
+  const mcpConfig = internal
+    ? { mcpServers: {} }
+    : { mcpServers: { [SERVER]: { type: "http", url: input.mcpUrl } } };
+  const turnModel = internal ? INTERNAL_MODEL : model;
   return [
     "-p",
     "--output-format",
@@ -117,14 +131,13 @@ function claudeArgs(input: TurnInput, model: string | undefined): string[] {
     "--strict-mcp-config",
     "--tools",
     "",
-    "--allowedTools",
-    `mcp__${SERVER}`,
+    ...(internal ? [] : ["--allowedTools", `mcp__${SERVER}`]),
     "--setting-sources",
     "",
     "--disable-slash-commands",
     "--no-session-persistence",
     ...(input.system ? ["--system-prompt", input.system] : []),
-    ...(model ? ["--model", model] : []),
+    ...(turnModel ? ["--model", turnModel] : []),
   ];
 }
 

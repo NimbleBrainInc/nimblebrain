@@ -1,4 +1,4 @@
-import type { SkillRefresh } from "./agents.ts";
+import { SERVER_NAME, type SkillRefresh } from "./agents.ts";
 import { DEFAULT_PORT, type Parsed, parse, wantsJson } from "./args.ts";
 import { paths, runningHere } from "./compose.ts";
 import { BARE_CLI, type Deps, forInstall, installHome, invocation } from "./deps.ts";
@@ -85,9 +85,11 @@ export async function run(argv: string[], deps: Deps): Promise<Answer> {
         const port = flags.port ?? install?.port ?? DEFAULT_PORT;
         // The install's own running containers hold its port, healthy or not.
         const ours = install?.port === port && (await runningHere(deps, home));
+        // With no install and no --port, the port is the one `init` would take: a busy default moves.
+        const movable = !install && flags.port === undefined;
         // Doctor starts Ollama only when a person at the terminal says yes, never by default.
         const startOllama = confirmOllamaStart({ deps, flags }, false);
-        result = { ...(await doctorInstall(deps, home, port, ours, startOllama)) };
+        result = { ...(await doctorInstall(deps, home, port, ours, movable, startOllama)) };
         break;
       }
       case "status":
@@ -182,9 +184,10 @@ async function doctorInstall(
   home: string,
   port: number,
   ours: boolean,
+  movable: boolean,
   startOllama: (command: string) => Promise<boolean>,
 ) {
-  const machine = await doctor(deps, port, ours);
+  const machine = await doctor(deps, port, ours, movable ? home : undefined);
   const model = localModelOf((await deps.readText(paths(home).env)) ?? "");
   if (!model) return machine;
   try {
@@ -289,7 +292,7 @@ function sourceLine(r: StatusLike, cli: string): string {
   const worker = r.agent_runtime.worker;
   if (!worker) return `  agents run on: ${label}`;
   return worker.running
-    ? `  agents run on: ${label} (agent worker ${worker.pid} at ${worker.url})`
+    ? `  agents run on: ${label}; agent worker ${worker.pid} at ${worker.url}`
     : `  agents run on: ${label}, but its agent worker is stopped (start it with ${cli} up)`;
 }
 
@@ -326,8 +329,10 @@ function agentLines(r: StatusLike): string[] {
   const agent = r.agent.connected;
   if (!agent) return r.manual ? [`  agent: not connected; add it by hand: ${r.manual}`] : [];
   const name = AGENT_NAMES[agent] ?? agent;
+  // The default home's server goes unnamed; another install's says which of the agent's servers it is.
+  const as = r.agent.server && r.agent.server !== SERVER_NAME ? ` as ${r.agent.server}` : "";
   const lines = [
-    `  ${name} can use NimbleBrain's tools (it loads them when its next session starts)`,
+    `  ${name} can use NimbleBrain's tools${as} (it loads them when its next session starts)`,
   ];
   const refresh = r.skill_update && SKILL_REFRESH_LINES[r.skill_update];
   if (refresh) lines.push(`  skill: ${refresh}`);

@@ -11,6 +11,12 @@ A local NimbleBrain can run every turn on the coding agent you already pay for: 
 npx nimblebrain use claude    # or: use codex
 ```
 
+Claude Code's turns run on **Sonnet** unless you name another model, because a chat turn on Sonnet answers faster than on Opus. Choose another with `--model`: an alias (`sonnet`, `opus`, `haiku`) or a full model id, which the worker passes to `claude --model` as it is. Codex runs on its own default model unless you name one your plan offers.
+
+```bash
+npx nimblebrain use claude --model opus
+```
+
 `npx nimblebrain` offers it when it asks what runs NimbleBrain's agents, and marks it when Claude Code or Codex is already signed in. `use api` or `use local` moves back to an API key or a local model ([What runs the agents](/cli/nimblebrain/#what-runs-the-agents)).
 
 <Aside type="caution" title="Experimental, and local only">
@@ -41,10 +47,10 @@ Usage still counts against your plan's own limits, and NimbleBrain records each 
 | | On your subscription | Needs a model key |
 |---|---|---|
 | Chat turns, and scheduled tasks without a spend budget | Yes | — |
-| The conversation's title, and the summary that folds a long history | Yes: they run on the same agent | — |
+| The conversation's title, and the summary that folds a long history | Yes: on the same agent, with no tools attached, and on Claude Code on Haiku, so each takes a couple of seconds | — |
 | A run with a spend budget (a budgeted task or batch) | — | Yes: it runs on NimbleBrain's own engine, which can hold it to the budget |
 
-The chat composer shows what every turn runs on in place of the model picker, such as **Claude Code · Claude Max** or **Codex · ChatGPT**: the agent chooses its own model, so a model chosen there would not be used. When the worker does not answer, it says **Claude Code isn't running**, with the fix on hover.
+The chat composer shows what every turn runs on in place of the model picker, such as **Claude Code (Sonnet) · Claude Max** or **Codex · ChatGPT**: the model is the one `use` chose, so a model chosen in the composer would not be used. Change it with `npx nimblebrain use claude --model <model>`. When the worker does not answer, it says **Claude Code isn't running**, with the fix on hover.
 
 ## When a turn fails
 

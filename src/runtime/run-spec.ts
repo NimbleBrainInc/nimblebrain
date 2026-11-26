@@ -207,6 +207,14 @@ export interface RunSpec {
   /** Per-request event sink (SSE stream, executor tap) joined to the defaults. */
   sink?: EventSink;
   onAbort: RunAbortDisposition;
+  /**
+   * Called once, inside the run's own request context, when the run is
+   * established: past the gate, its opening message recorded, before any
+   * model call. For work the caller starts beside the run (a chat's first
+   * title), so it is attributed and scoped as the run is. It must not throw
+   * or block: the run does not wait for it.
+   */
+  onEstablished?: () => void;
 }
 
 /** A skill an unattended run declared, resolved to its body. */

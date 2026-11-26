@@ -22,13 +22,15 @@ function RunsOnLabel({ runsOn }: { runsOn: RunsOnInfo }) {
       </span>
     );
   }
+  const model = runsOn.model ? ` (${runsOn.model})` : "";
   const plan = runsOn.plan ? ` · ${runsOn.plan}` : "";
   return (
     <span
       className="px-2 text-xs text-muted-foreground"
-      title={`Every turn runs on ${runsOn.title}${runsOn.plan ? `, billed to your ${runsOn.plan} plan` : ""}. It chooses its own model.`}
+      title={`Every turn runs on ${runsOn.title}${runsOn.model ? ` with ${runsOn.model}` : ""}${runsOn.plan ? `, billed to your ${runsOn.plan} plan` : ""}. Change it with npx nimblebrain use.`}
     >
       {runsOn.title}
+      {model}
       {plan}
     </span>
   );

@@ -57,7 +57,28 @@ export function runtimeContextHead(prompt: LanguageModelV4CallOptions["prompt"])
  * The onTextDelta callback is NOT wired (since the engine uses the stream,
  * not the mock's internal signaling). Text deltas are emitted as stream parts.
  */
-export function createMockModel(callFn: MockCallFn): LanguageModelV4 {
+/** The system prompt a conversation's title is written with (`src/conversation/auto-title.ts`). */
+export const TITLE_PROMPT_PREFIX = "Generate a 3-6 word title";
+
+/**
+ * Whether a call writes a conversation's title. The first turn's title runs
+ * beside the turn on the same model, so a scripted model answers it apart from
+ * the turn's script, which it would otherwise consume first.
+ */
+export function isTitleCall(options: LanguageModelV4CallOptions): boolean {
+  const system = options.prompt.find((m) => m.role === "system");
+  return typeof system?.content === "string" && system.content.startsWith(TITLE_PROMPT_PREFIX);
+}
+
+/** The title a scripted model writes, unless the test asked to see title calls. */
+export const TEST_TITLE = "Test Conversation";
+
+export interface MockModelOptions {
+  /** Pass title calls to `callFn` instead of answering them with `TEST_TITLE`. */
+  scriptTitles?: boolean;
+}
+
+export function createMockModel(callFn: MockCallFn, opts: MockModelOptions = {}): LanguageModelV4 {
   return {
     specificationVersion: "v4",
     provider: "mock",
@@ -65,6 +86,14 @@ export function createMockModel(callFn: MockCallFn): LanguageModelV4 {
     supportedUrls: {},
 
     async doGenerate(options) {
+      if (!opts.scriptTitles && isTitleCall(options)) {
+        return {
+          content: [{ type: "text", text: TEST_TITLE }],
+          finishReason: { unified: "stop", raw: "stop" },
+          usage: buildUsage({ content: [{ type: "text", text: TEST_TITLE }] }),
+          warnings: [],
+        };
+      }
       const resp = await callFn(options);
       return {
         content: resp.content,

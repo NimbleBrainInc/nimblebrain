@@ -6,12 +6,27 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as acp from "@agentclientprotocol/sdk/unstable";
-import { createWorkerAgent, PLAN_META_KEY } from "../src/subscription/agent.ts";
+import { entryScript } from "../src/deps.ts";
+import {
+  createWorkerAgent,
+  MODEL_META_KEY,
+  PLAN_META_KEY,
+  SESSION_META_KEY,
+} from "../src/subscription/agent.ts";
 import { createClaudeBackend } from "../src/subscription/backends/claude.ts";
 import { createCodexBackend } from "../src/subscription/backends/codex.ts";
 import {
@@ -55,6 +70,7 @@ function turn(signal = new AbortController().signal) {
   const input: TurnInput = {
     prompt: "hello",
     system: "be brief",
+    purpose: "turn",
     mcpUrl: "http://127.0.0.1:1/mcp/token",
     signal,
     emit: (u) => updates.push(u),
@@ -105,6 +121,31 @@ describe("the Claude Code backend", () => {
       mcpServers: { nimblebrain: { type: "http", url: "http://127.0.0.1:1/mcp/token" } },
     });
     expect(fake.env()).not.toContain("ANTHROPIC_API_KEY");
+  });
+
+  test("a normal turn runs on the chosen model with the session's server allowed", async () => {
+    const fake = fakeBin(CLAUDE_TURN);
+    await createClaudeBackend({ bin: fake.bin, model: "sonnet" }).run(turn().input);
+    const args = fake.args();
+    expect(args[args.indexOf("--model") + 1]).toBe("sonnet");
+    expect(args[args.indexOf("--allowedTools") + 1]).toBe("mcp__nimblebrain");
+  });
+
+  test("an internal run attaches no MCP server and runs on Haiku, whatever the turn model", async () => {
+    const fake = fakeBin(CLAUDE_TURN);
+    const { input } = turn();
+    const { mcpUrl: _, ...rest } = input;
+    await createClaudeBackend({ bin: fake.bin, model: "opus" }).run({
+      ...rest,
+      purpose: "internal",
+    });
+    const args = fake.args();
+    expect(JSON.parse(args[args.indexOf("--mcp-config") + 1] ?? "")).toEqual({ mcpServers: {} });
+    expect(args).toContain("--strict-mcp-config");
+    expect(args[args.indexOf("--tools") + 1]).toBe("");
+    expect(args).not.toContain("--allowedTools");
+    expect(args[args.indexOf("--model") + 1]).toBe("haiku");
+    expect(args.filter((a) => a === "--model")).toHaveLength(1);
   });
 
   test("translates the stream into session updates and usage", async () => {
@@ -190,6 +231,18 @@ describe("the Codex backend", () => {
       stopReason: "end_turn",
       usage: { inputTokens: 7, outputTokens: 2 },
     });
+  });
+
+  test("an internal run names no MCP server and keeps the turn model", async () => {
+    const fake = fakeBin(CODEX_TURN);
+    const { mcpUrl: _, ...rest } = turn().input;
+    await createCodexBackend({ bin: fake.bin, model: "gpt-x" }).run({
+      ...rest,
+      purpose: "internal",
+    });
+    const args = fake.args();
+    expect(args.some((a) => a.startsWith("mcp_servers."))).toBe(false);
+    expect(args[args.indexOf("-m") + 1]).toBe("gpt-x");
   });
 
   test("fails a turn that never completed", async () => {
@@ -447,6 +500,58 @@ describe("the worker's ACP agent", () => {
     return { connection, init, sessionId };
   }
 
+  test("names its turn model at initialize, beside the plan", async () => {
+    const backend = {
+      ...fake(async () => ({
+        stopReason: "end_turn" as const,
+        usage: { inputTokens: 0, outputTokens: 0 },
+        calls: [],
+      })),
+      modelLabel: "Sonnet",
+    };
+    const { connection, init } = await connect(backend);
+    expect(init._meta).toEqual({ [PLAN_META_KEY]: "Claude Max", [MODEL_META_KEY]: "Sonnet" });
+    connection.close();
+  });
+
+  test("an internal session gets no bridge and runs as internal; a normal one gets its server", async () => {
+    const seen: TurnInput[] = [];
+    const backend = fake(async (input) => {
+      seen.push(input);
+      return { stopReason: "end_turn", usage: { inputTokens: 0, outputTokens: 0 }, calls: [] };
+    });
+    const { connection, sessionId } = await connect(backend);
+    const internal = await connection.agent.request(acp.methods.agent.session.new, {
+      cwd: "/",
+      mcpServers: [],
+      _meta: { [SESSION_META_KEY]: { purpose: "internal" } },
+    });
+    for (const id of [sessionId, internal.sessionId])
+      await connection.agent.request(acp.methods.agent.session.prompt, {
+        sessionId: id,
+        prompt: [{ type: "text", text: "hi" }],
+      });
+    expect(seen[0]?.purpose).toBe("turn");
+    expect(seen[0]?.mcpUrl).toStartWith("http://127.0.0.1:1/mcp/");
+    expect(seen[1]?.purpose).toBe("internal");
+    expect(seen[1]?.mcpUrl).toBeUndefined();
+    connection.close();
+  });
+
+  test("a normal session still needs its acp server", async () => {
+    const { connection } = await connect(
+      fake(async () => ({
+        stopReason: "end_turn",
+        usage: { inputTokens: 0, outputTokens: 0 },
+        calls: [],
+      })),
+    );
+    await expect(
+      connection.agent.request(acp.methods.agent.session.new, { cwd: "/", mcpServers: [] }),
+    ).rejects.toBeDefined();
+    connection.close();
+  });
+
   test("names its plan at initialize", async () => {
     const { connection, init } = await connect(
       fake(async () => ({
@@ -505,5 +610,18 @@ describe("the worker's ACP agent", () => {
     expect(f.code).toBe("cli_failed");
     expect(f.message).not.toContain("/secret/thing");
     connection.close();
+  });
+});
+
+describe("the CLI's own file", () => {
+  test("npx's .bin link resolves to the bundle it points at, which the login item copies", () => {
+    const pkg = join(dir, "_npx", "9f", "node_modules");
+    mkdirSync(join(pkg, "nimblebrain", "dist"), { recursive: true });
+    mkdirSync(join(pkg, ".bin"), { recursive: true });
+    const bundle = join(pkg, "nimblebrain", "dist", "nimblebrain.js");
+    writeFileSync(bundle, "// bundle\n");
+    symlinkSync("../nimblebrain/dist/nimblebrain.js", join(pkg, ".bin", "nimblebrain"));
+    expect(entryScript(join(pkg, ".bin", "nimblebrain"))).toBe(realpathSync(bundle));
+    expect(entryScript(join(dir, "missing.js"))).toBe(join(dir, "missing.js"));
   });
 });

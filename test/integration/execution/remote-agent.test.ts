@@ -269,9 +269,14 @@ describe("the door, with the worker configured in execution", () => {
     });
     expect(result.response.length).toBeGreaterThan(0);
 
-    const [authorization] = gateway.authorizations.slice(before);
-    const token = authorization?.replace(/^Bearer /, "") ?? "";
-    const claims = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString());
+    // The turn's credential, not the per-call one the first turn's title
+    // (which runs beside it on the native engine) is minted: the turn's lasts
+    // the run's longest allowed duration.
+    const decoded = gateway.authorizations.slice(before).map((authorization) => {
+      const token = authorization.replace(/^Bearer /, "");
+      return JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString());
+    });
+    const claims = decoded.find((c) => c.exp - c.iat >= 600) ?? decoded[0];
     expect(claims).toMatchObject({
       iss: publicOrigin(),
       aud: "model-gateway",

@@ -130,7 +130,7 @@ export interface AcpDriver {
    */
   readonly unreachableFix?: string;
   /** What the agent said about itself at `initialize`, in its own terms (`_meta`). */
-  describe?(init: acp.InitializeResponse): { plan?: string };
+  describe?(init: acp.InitializeResponse): { plan?: string; model?: string };
   /**
    * The failure the agent classified in its `session/prompt` error, in its
    * own terms, or `undefined` when the error carries none.

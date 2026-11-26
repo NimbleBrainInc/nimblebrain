@@ -18,6 +18,7 @@ import {
   leaveSubscription,
   noSourceNamed,
   pickSource,
+  refuseModelFor,
   type SubscriptionSource,
   startSubscription,
 } from "./source.ts";
@@ -42,8 +43,10 @@ export async function use(ctx: Ctx) {
     throw new CliError("USAGE", `Only use local takes a model, not "${ctx.operand}".`);
   }
   if (named === undefined && !asks(ctx)) throw noSourceNamed();
+  refuseModelFor(ctx.flags.model, named ?? "claude");
   const install = await requireReady(deps, home);
   const source = named ?? (await askSource(ctx));
+  refuseModelFor(ctx.flags.model, source);
   if (isSubscription(source)) return useSubscription(ctx, source, install.port);
   if (source === "api") return useApi(ctx, install.port);
   return useLocal(ctx, install.port);
@@ -62,11 +65,12 @@ async function askSource(ctx: Ctx): Promise<Source> {
 }
 
 async function useSubscription(ctx: Ctx, source: SubscriptionSource, webPort: number) {
-  const { worker, account, runtime } = await startSubscription(
+  const { worker, account, runtime, moved } = await startSubscription(
     ctx.deps,
     ctx.home,
     source,
     ctx.flags.port,
+    ctx.flags.model,
   );
   await start(ctx.deps, ctx.home, webPort);
   return {
@@ -75,6 +79,7 @@ async function useSubscription(ctx: Ctx, source: SubscriptionSource, webPort: nu
     agent_runtime: { name: runtime, worker },
     billed_to: account.describe,
     tools: TOOL_SURFACE[runtime],
+    port_moved: moved,
   };
 }
 

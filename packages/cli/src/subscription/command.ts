@@ -20,3 +20,29 @@ export const TOOL_SURFACE: Record<SubscriptionRuntime, string> = {
   "claude-code": "only your NimbleBrain workspace's tools",
   codex: "your NimbleBrain workspace's tools, plus Codex's read-only shell (it has no off switch)",
 };
+
+/**
+ * The model each runtime's turns run on when `use` names none: Claude Code on
+ * Sonnet, which answers a chat turn faster than Opus, so chat feels quick;
+ * `--model opus` trades that for depth. Codex on its own default (none
+ * passed), since the models it offers change with the person's plan.
+ */
+export const DEFAULT_TURN_MODELS: Record<SubscriptionRuntime, string | undefined> = {
+  "claude-code": "sonnet",
+  codex: undefined,
+};
+
+/** Claude Code's aliases, by the name a person reads. */
+const MODEL_NAMES: Record<string, string> = { sonnet: "Sonnet", opus: "Opus", haiku: "Haiku" };
+
+/** A model as a person reads it: `sonnet` is "Sonnet"; a full id is itself. */
+export function modelLabel(model: string): string {
+  return MODEL_NAMES[model] ?? model;
+}
+
+/**
+ * What a model id may be, as `--model` takes it: an alias or a full id, such
+ * as `opus` or `claude-sonnet-4-5[1m]`. It is passed to the vendor CLI as its
+ * own argument, never through a shell.
+ */
+export const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]*(\[[A-Za-z0-9]+\])?$/;
