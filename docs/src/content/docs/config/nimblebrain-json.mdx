@@ -809,7 +809,7 @@ File upload limits applied when `features.fileContext` is enabled.
 | `maxFileSize` | `integer` (bytes) | 26 MB | Maximum size of a single uploaded file. |
 | `maxTotalSize` | `integer` (bytes) | 100 MB | Maximum total size of all files per message. |
 | `maxFilesPerMessage` | `integer` | 10 | Maximum number of files per chat message. |
-| `maxExtractedTextSize` | `integer` (bytes) | 200 KB | Maximum extracted text size per file. |
+| `maxExtractedTextSize` | `integer` (bytes) | 200 KB | Maximum extracted text size per file. Extraction work scales with it: a larger value lets larger Word and Excel files through. |
 
 An upload to the workspace file store (the Files app, or an app's file picker) is not a chat message: `maxFilesPerMessage` does not apply to it. It takes up to 100 files at a time, each within `maxFileSize` and all together within `maxTotalSize`. The chat composer shows the per-message limits before you send.
 

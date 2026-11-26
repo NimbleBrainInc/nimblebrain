@@ -281,8 +281,7 @@ describe("example-broker — install", () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain("is not a recognized");
-    expect(JSON.stringify(result.content)).toContain(PROVIDER_ID);
+    expect((result.structuredContent as { error?: string }).error).toBe("NOT_IN_CATALOG");
     expect(calls.sessions).toHaveLength(0);
   });
 

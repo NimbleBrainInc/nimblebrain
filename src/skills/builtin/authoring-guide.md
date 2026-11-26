@@ -56,10 +56,7 @@ multi-connector workflow. Default to the connector's instructions.
 Set `loading-strategy` under `metadata.nimblebrain`:
 
 - **`always`**: in context every turn. Only for short, durable rules (voice,
-  identity); it costs context on every call. The user sets it in Skills
-  settings: `skills__create`, `skills__update`, and `skills__restore` refuse a
-  write from you that would leave a skill `always`, so draft the text and ask
-  the user to add it there.
+  identity); it costs context on every call.
 - **`dynamic`**: loaded on demand, by one of:
   - its **`description`**, which the model reads in the catalog. This is the
     main path: say what the skill does **and when to use it**, in the words a
@@ -71,6 +68,16 @@ Set `loading-strategy` under `metadata.nimblebrain`:
     always wrong: use `always` instead.
   - **`triggers`**: exact phrases for must-fire loading. Two to four, specific
     ("compliance review", not "review").
+
+**You write skills on request; the user makes them load on their own.**
+`always`, `tool-affinity` and `triggers` put a skill in front of the model in
+later conversations without that conversation choosing it, so the user sets
+them in Skills settings. `skills__create`, `skills__update` and
+`skills__restore` refuse a write from you that would leave a skill with any of
+them, or change a skill that already has one. Save the skill with a strong
+description and none of the three, then give the user the exact trigger
+phrases or tool-affinity globs to add on the skill's page (or, for `always`,
+the text to add as an always-on skill).
 
 ## Scope and priority
 
@@ -142,5 +149,6 @@ schedule before sending. Do not start the sequence until the proposal is sent.
 3. A `dynamic` description says when to use it.
 4. The body is under 4,000 characters, in second person.
 5. Priority is 11–99.
-6. Show the user the name, how it loads, the change, and any `allowed-tools`;
-   confirm; then suggest a phrase that will load it.
+6. Show the user the name, the change, and any `allowed-tools`; confirm; save
+   it on request; then give them any trigger or tool-affinity to add in Skills
+   settings.

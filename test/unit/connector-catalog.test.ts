@@ -365,3 +365,27 @@ describe("ConnectorCatalog server-name collisions", () => {
     }
   });
 });
+
+describe("ConnectorCatalog.listingById", () => {
+  test("returns the first listing for an exact id, and null for any other spelling", async () => {
+    const catalogDir = freshCatalog();
+    writeStaticCatalog([
+      remoteServer({ name: "io.example/app" }),
+      remoteServer({
+        name: "io.example/app",
+        remotes: [{ type: "streamable-http", url: "https://second.test/mcp" }],
+      }),
+    ]);
+    const directory = new ConnectorCatalog(catalogDir);
+
+    const listing = await directory.listingById("io.example/app");
+    expect(listing?.install).toEqual({
+      kind: "remote-oauth",
+      url: "https://evil.test/mcp",
+      transportType: "streamable-http",
+      auth: "dcr",
+    });
+    expect(await directory.listingById("IO.Example/app")).toBeNull();
+    expect(await directory.listingById("io.example/other")).toBeNull();
+  });
+});
