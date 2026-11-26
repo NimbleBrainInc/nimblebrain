@@ -693,24 +693,190 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     installTestCredentialStore(workDir);
   });
 
-  /** Build a fake fetch that records calls + returns programmable responses. */
-  function makeFetcher(responses: Record<string, { status: number; body?: unknown }>): {
+  /**
+   * Build a fake fetch that records calls + returns programmable responses.
+   * A response with `location` is a redirect, followed the way the platform
+   * `fetch` follows one: unless the request says `redirect: "manual"`, the
+   * fake re-issues it (same method and body) at the target and records that
+   * call too.
+   */
+  function makeFetcher(
+    responses: Record<string, { status: number; body?: unknown; location?: string }>,
+  ): {
     fetch: typeof fetch;
     calls: Array<{ url: string; init?: RequestInit }>;
   } {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetcher = fakeFetch(async (url, init) => {
-      const u = typeof url === "string" ? url : url.toString();
-      calls.push({ url: u, init });
-      const r = responses[u];
-      if (!r) return new Response(null, { status: 404 });
-      const body = r.body !== undefined ? JSON.stringify(r.body) : null;
-      return new Response(body, {
-        status: r.status,
-        headers: { "Content-Type": "application/json" },
-      });
+      let u = typeof url === "string" ? url : url.toString();
+      for (let hop = 0; hop < 10; hop++) {
+        calls.push({ url: u, init });
+        const r = responses[u];
+        if (!r) return new Response(null, { status: 404 });
+        if (r.location !== undefined) {
+          if (init?.redirect !== "manual") {
+            u = new URL(r.location, u).toString();
+            continue;
+          }
+          return new Response(null, { status: r.status, headers: { Location: r.location } });
+        }
+        const body = r.body !== undefined ? JSON.stringify(r.body) : null;
+        return new Response(body, {
+          status: r.status,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error("too many redirects");
     });
     return { fetch: fetcher, calls };
+  }
+
+  /** A provider holding a confidential client and a token pair, as a connected server leaves it. */
+  async function connectedProvider(): Promise<WorkspaceOAuthProvider> {
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+      serverName: "granola",
+      callbackUrl: CALLBACK,
+      allowInsecureRemotes: true,
+    });
+    await p.saveClientInformation({
+      client_id: "test-client",
+      client_secret: "test-secret",
+      redirect_uris: [CALLBACK],
+    });
+    await p.saveTokens({ access_token: "acc-tok", token_type: "Bearer", refresh_token: "ref-tok" });
+    return p;
+  }
+
+  async function storedTokensAfterRevoke(): Promise<unknown> {
+    const p2 = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+      serverName: "granola",
+      callbackUrl: CALLBACK,
+    });
+    return p2.tokens();
+  }
+
+  for (const [label, target] of [
+    ["another origin", "http://localhost:39995/collect"],
+    ["the same origin", "http://localhost:39990/oauth/revoke-v2"],
+  ] as const) {
+    it(`sends a revoke POST once and never to a redirect target on ${label}`, async () => {
+      const p = await connectedProvider();
+      const connectorUrl = "http://localhost:39990/mcp";
+      const { fetch: f, calls } = makeFetcher({
+        "http://localhost:39990/.well-known/oauth-authorization-server": {
+          status: 200,
+          body: { revocation_endpoint: "http://localhost:39990/oauth/revoke" },
+        },
+        "http://localhost:39990/oauth/revoke": { status: 307, location: target },
+        [target]: { status: 200 },
+      });
+
+      const result = await p.revokeAndDeleteTokens({ connectorUrl, fetchImpl: f });
+
+      expect(calls.some((c) => c.url === target)).toBe(false);
+      const posts = calls.filter((c) => c.init?.method === "POST");
+      expect(posts.map((c) => c.url)).toEqual([
+        "http://localhost:39990/oauth/revoke",
+        "http://localhost:39990/oauth/revoke",
+      ]);
+      // The redirect is a failed revoke, and local cleanup still runs.
+      expect(result.revoked).toEqual({ refresh: false, access: false });
+      expect(result.deletedLocal).toBe(true);
+      expect(await storedTokensAfterRevoke()).toBeUndefined();
+    });
+  }
+
+  it("refuses a discovery redirect to a private address and revokes at the connector origin", async () => {
+    const p = await connectedProvider();
+    const connectorUrl = "http://localhost:39990/mcp";
+    const internal = "http://169.254.169.254/latest/meta-data/";
+    const { fetch: f, calls } = makeFetcher({
+      "http://localhost:39990/.well-known/oauth-protected-resource": {
+        status: 302,
+        location: internal,
+      },
+      [internal]: { status: 200, body: { authorization_servers: [] } },
+      "http://localhost:39990/.well-known/oauth-authorization-server": {
+        status: 200,
+        body: { revocation_endpoint: "http://localhost:39990/oauth/revoke" },
+      },
+      "http://localhost:39990/oauth/revoke": { status: 200 },
+    });
+
+    const result = await p.revokeAndDeleteTokens({ connectorUrl, fetchImpl: f });
+
+    expect(calls.some((c) => c.url.startsWith("http://169.254.169.254"))).toBe(false);
+    expect(result.revoked).toEqual({ refresh: true, access: true });
+    expect(result.deletedLocal).toBe(true);
+  });
+
+  it("refuses an AS metadata redirect to another origin", async () => {
+    const p = await connectedProvider();
+    const connectorUrl = "http://localhost:39990/mcp";
+    const elsewhere = "http://localhost:39995/.well-known/oauth-authorization-server";
+    const { fetch: f, calls } = makeFetcher({
+      "http://localhost:39990/.well-known/oauth-authorization-server": {
+        status: 301,
+        location: elsewhere,
+      },
+      [elsewhere]: {
+        status: 200,
+        body: { revocation_endpoint: "http://localhost:39995/oauth/revoke" },
+      },
+    });
+
+    const result = await p.revokeAndDeleteTokens({ connectorUrl, fetchImpl: f });
+
+    expect(calls.some((c) => c.url.startsWith("http://localhost:39995"))).toBe(false);
+    expect(result.revoked).toEqual({});
+    expect(result.deletedLocal).toBe(true);
+    expect(await storedTokensAfterRevoke()).toBeUndefined();
+  });
+
+  it("follows a same-origin discovery redirect", async () => {
+    const p = await connectedProvider();
+    const connectorUrl = "http://localhost:39990/mcp";
+    const { fetch: f } = makeFetcher({
+      "http://localhost:39990/.well-known/oauth-authorization-server": {
+        status: 308,
+        location: "/auth/.well-known/oauth-authorization-server",
+      },
+      "http://localhost:39990/auth/.well-known/oauth-authorization-server": {
+        status: 200,
+        body: { revocation_endpoint: "http://localhost:39990/oauth/revoke" },
+      },
+      "http://localhost:39990/oauth/revoke": { status: 200 },
+    });
+
+    const result = await p.revokeAndDeleteTokens({ connectorUrl, fetchImpl: f });
+
+    expect(result.revoked).toEqual({ refresh: true, access: true });
+  });
+
+  for (const [label, connectorUrl, insecure] of [
+    ["a private address", "https://10.0.0.5/mcp", true],
+    ["plain-http loopback without allowInsecureRemotes", "http://127.0.0.1:39990/mcp", false],
+  ] as const) {
+    it(`sends no discovery request to ${label}, and still deletes locally`, async () => {
+      const p = new WorkspaceOAuthProvider({
+        owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+        serverName: "granola",
+        callbackUrl: CALLBACK,
+        allowInsecureRemotes: insecure,
+      });
+      await p.saveClientInformation({ client_id: "test-client", redirect_uris: [CALLBACK] });
+      await p.saveTokens({ access_token: "acc-tok", token_type: "Bearer", refresh_token: "r" });
+      const { fetch: f, calls } = makeFetcher({});
+
+      const result = await p.revokeAndDeleteTokens({ connectorUrl, fetchImpl: f });
+
+      expect(calls).toEqual([]);
+      expect(result.revoked).toEqual({});
+      expect(result.deletedLocal).toBe(true);
+      expect(await storedTokensAfterRevoke()).toBeUndefined();
+    });
   }
 
   it("returns no-op result when no tokens are stored", async () => {
