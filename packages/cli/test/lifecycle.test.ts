@@ -204,7 +204,7 @@ describe("init", () => {
     expect(stdout).toContain("telemetry: off (no_destination)");
     expect(stdout).not.toContain("undefined");
     expect(stdout).not.toContain("{");
-    expect(m.asked.at(-1)).toStartWith("Connect a coding agent?");
+    expect(m.asked.at(-1)).toBe("Choose 1-4, or claude-code, cursor, codex, none [4]: ");
   });
 
   test("a rerun's summary has no next step and the skill line only when it is missing", async () => {
@@ -650,7 +650,8 @@ describe("a first start that did not finish", () => {
     const { stdout, code } = await run([], m.deps);
     expect(code).toBe(0);
     expect(stdout).toContain("agents run on: an API key (anthropic)");
-    expect(m.asked.some((q) => q.startsWith("Choose "))).toBe(false);
+    // The agent's picker is asked; the model source's is not.
+    expect(m.asked.some((q) => q.includes("api, local"))).toBe(false);
     expect(m.files.get(ENV)?.text).toContain("ANTHROPIC_API_KEY=sk-test");
   });
 

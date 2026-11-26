@@ -42,7 +42,9 @@ later.
 `--yes` takes every default, but never chooses for you what runs NimbleBrain's agents:
 `init --use claude|codex|api|local` does, and without it a coding agent gets the
 question to ask you in `model_source`. `--agent claude-code|cursor|codex|none` names the agent to
-connect. `npx nimblebrain help --json` lists every command with the fields it answers, every flag and every error code.
+connect; at a terminal without it, `init` lists the agents it finds here and defaults to the one
+that also runs NimbleBrain's agents, else the first one found, else none. Without a terminal or
+`--agent`, nothing is connected. `npx nimblebrain help --json` lists every command with the fields it answers, every flag and every error code.
 
 When a newer CLI or NimbleBrain release exists, the CLI says so on stderr after its
 answer (once a day at most; it never updates anything itself).

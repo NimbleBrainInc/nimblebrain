@@ -43,6 +43,8 @@ export interface Deps {
     timeoutMs?: number,
   ): Promise<{ status: number; body: unknown } | undefined>;
   readText(path: string): Promise<string | undefined>;
+  /** Whether a file or folder is at `path`; never throws. */
+  exists(path: string): Promise<boolean>;
   /**
    * Write a file, creating its folder (mode 700). `mode` applies to a new file and to an existing one.
    * The file is replaced whole or not at all, so a run cut short never leaves a record half written.
@@ -177,6 +179,14 @@ export function realDeps(): Deps {
         return await readFile(path, "utf8");
       } catch {
         return undefined;
+      }
+    },
+    async exists(path) {
+      try {
+        await access(path);
+        return true;
+      } catch {
+        return false;
       }
     },
     async writeText(path, text, mode = 0o644) {
