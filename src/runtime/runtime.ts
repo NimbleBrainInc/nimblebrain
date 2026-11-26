@@ -598,6 +598,15 @@ export interface WorkspaceDeleteResult {
    * connector uninstalled and every grant revoked.
    */
   deleteError?: string;
+  /**
+   * Why purging the workspace's conversations failed, when it did. The
+   * workspace is already deleted (archived) when the purge runs, so a failed
+   * purge leaves no live workspace; deleting the same id again runs the
+   * idempotent purge again.
+   */
+  purgeError?: string;
+  /** How many conversations the purge removed. */
+  conversationsPurged: number;
 }
 
 /**
@@ -4667,12 +4676,32 @@ export class Runtime {
     let deleted = false;
     let deleteError: string | undefined;
     try {
-      await this.deleteWorkspaceConversations(wsId);
       deleted = await this.getWorkspaceStore().delete(wsId);
     } catch (err) {
       deleteError = err instanceof Error ? err.message : String(err);
     }
-    return { deleted, connectors, ...(deleteError ? { deleteError } : {}) };
+    if (deleteError) return { deleted, connectors, deleteError, conversationsPurged: 0 };
+
+    // The purge runs after the rename: with the workspace gone no new
+    // conversation can be created in it (`create` asserts the workspace root),
+    // and the purge waits for any create already past that check. It runs
+    // whether or not the store still held the workspace, so deleting an id
+    // again retries a purge that failed; `delete_workspace` is idempotent.
+    return { deleted, connectors, ...(await this.purgeWorkspaceConversations(wsId)) };
+  }
+
+  /** {@link deleteWorkspaceConversations}, with a failure reported rather than thrown. */
+  private async purgeWorkspaceConversations(
+    wsId: string,
+  ): Promise<Pick<WorkspaceDeleteResult, "conversationsPurged" | "purgeError">> {
+    try {
+      return { conversationsPurged: await this.deleteWorkspaceConversations(wsId) };
+    } catch (err) {
+      return {
+        conversationsPurged: 0,
+        purgeError: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   /**
@@ -4680,14 +4709,15 @@ export class Runtime {
    * (the contract's `delete_workspace`), which holds them apart from the
    * workspace's directory, so the archive rename does not carry them. With
    * nothing bound there are none. The contract walls the call by an owner it
-   * ignores; the deleting identity is the verified one.
+   * ignores; the deleting identity is the verified one. Answers how many it
+   * removed.
    */
-  private async deleteWorkspaceConversations(wsId: string): Promise<void> {
-    if (!this._conversations) return;
+  private async deleteWorkspaceConversations(wsId: string): Promise<number> {
+    if (!this._conversations) return 0;
     const ownerId = getRequestContext()?.identity?.id;
     if (!ownerId)
       throw new Error("deleting a workspace's conversations needs a signed-in identity");
-    await this._conversations.deleteWorkspace({ workspaceId: wsId, ownerId });
+    return this._conversations.deleteWorkspace({ workspaceId: wsId, ownerId });
   }
 
   /**

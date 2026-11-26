@@ -51,6 +51,7 @@ function makeCtx(): ManageWorkspacesContext {
       deleteWorkspace: async (wsId: string) => ({
         deleted: await store.delete(wsId),
         connectors: [],
+        conversationsPurged: 0,
       }),
       getConnectorCatalog: () =>
         stub<ConnectorCatalog>({
@@ -400,6 +401,40 @@ describe("nb__manage_workspaces", () => {
       }
     });
 
+    test("a failed purge says the workspace is deleted and how to retry the purge", async () => {
+      const created = parseResult(await tool.handler({ action: "create", name: "Purge" })) as {
+        workspace: { id: string };
+      };
+      tool = createManageWorkspacesTool({
+        ...makeCtx(),
+        runtime: stub<Runtime>({
+          deleteWorkspace: async () => ({
+            deleted: true,
+            connectors: [],
+            conversationsPurged: 0,
+            purgeError: "the conversations plugin is not running",
+          }),
+        }),
+      });
+      const result = await tool.handler({ action: "delete", workspaceId: created.workspace.id });
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain(`Deleted workspace ${created.workspace.id}.`);
+      expect(resultText(result)).toContain("not purged");
+      expect(resultText(result)).toContain("again to retry the purge");
+    });
+
+    test("deleting an already deleted workspace again reports the conversations it purged", async () => {
+      tool = createManageWorkspacesTool({
+        ...makeCtx(),
+        runtime: stub<Runtime>({
+          deleteWorkspace: async () => ({ deleted: false, connectors: [], conversationsPurged: 2 }),
+        }),
+      });
+      const result = await tool.handler({ action: "delete", workspaceId: "ws_0123456789abcdef" });
+      expect(result.isError).toBe(false);
+      expect(resultText(result)).toContain("Purged 2 conversations");
+    });
+
     test("an archive failure names the teardown that already ran, not a no-op", async () => {
       const created = parseResult(await tool.handler({ action: "create", name: "Stuck" })) as {
         workspace: { id: string };
@@ -411,6 +446,7 @@ describe("nb__manage_workspaces", () => {
           deleteWorkspace: async () => ({
             deleted: false,
             deleteError: "EEXIST: file already exists",
+            conversationsPurged: 0,
             connectors: [
               { serverName: "com-example-alpha", ok: true, secrets: { deleted: [], failed: [] } },
             ],
@@ -611,6 +647,7 @@ describe("nb__manage_workspaces", () => {
         runtime: stub<Runtime>({
           deleteWorkspace: async (wsId: string) => ({
             deleted: await store.delete(wsId),
+            conversationsPurged: 0,
             connectors: [
               { serverName: "com-example-alpha", ok: true, secrets: { deleted: [], failed: [] } },
               {

@@ -138,3 +138,31 @@ describe("a conversation id is keyed by its scope", () => {
     }
   });
 });
+
+describe("a workspace purge", () => {
+  test("waits for a create already past the workspace check before it purges", async () => {
+    const calls: string[] = [];
+    const answer = Promise.withResolvers<void>();
+    const call: ContractCall = async (tool) => {
+      calls.push(tool);
+      if (tool === "create") {
+        await answer.promise;
+        calls.push("create answered");
+        return {
+          conversation: { id: CONV.id, createdAt: "", updatedAt: "", model: "m", ownerId: "u_1" },
+        };
+      }
+      if (tool === "delete_workspace") return { deleted: [{ id: CONV.id, ownerId: "u_1" }] };
+      throw new Error(`unexpected ${tool}`);
+    };
+    const conversations = createContractConversations(call, { assertWorkspace: () => {} });
+    const created = conversations.forScope(SCOPE).create({ model: "m", ownerId: "u_1" });
+    const purged = conversations.deleteWorkspace(SCOPE);
+    await Bun.sleep(5);
+    expect(calls).toEqual(["create"]);
+    answer.resolve();
+    await created;
+    expect(await purged).toBe(1);
+    expect(calls).toEqual(["create", "create answered", "delete_workspace"]);
+  });
+});

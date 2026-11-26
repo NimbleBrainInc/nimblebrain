@@ -453,7 +453,8 @@ async function handleDelete(
     // about connectors. Per-connector failures come back in `connectors` rather
     // than as a throw — one unreachable vendor must not strand the workspace
     // half-deleted.
-    const { deleted, connectors, deleteError } = await ctx.runtime.deleteWorkspace(workspaceId);
+    const { deleted, connectors, deleteError, purgeError, conversationsPurged } =
+      await ctx.runtime.deleteWorkspace(workspaceId);
     // The archive step failed AFTER the teardown, which is not reversible.
     // Saying only "failed" would describe a no-op; the connectors are gone and
     // the operator has to know that to act.
@@ -480,21 +481,27 @@ async function handleDelete(
         isError: true,
       };
     }
-    if (!deleted) {
-      return {
-        content: textContent(`Workspace not found: ${workspaceId}`),
-        isError: true,
-      };
-    }
+    // The workspace is gone before its conversations are purged, so a failed
+    // purge leaves no live workspace; the same delete runs the purge again.
+    const purgeNote = purgeError
+      ? ` Its conversations were not purged: ${purgeError}. Delete ${workspaceId} again to retry the purge.`
+      : "";
+    if (!deleted) return alreadyDeleted(workspaceId, purgeNote, purgeError, conversationsPurged);
 
     const failed = connectors.filter((c) => !c.ok || c.revokeError);
-    const data = { deleted: true, workspaceId, connectors };
+    const data = {
+      deleted: true,
+      workspaceId,
+      connectors,
+      conversationsPurged,
+      ...(purgeError ? { purgeError } : {}),
+    };
     return {
       content: textContent(
-        `Deleted workspace ${workspaceId}.${describeConnectorTeardown(connectors.length, failed)}`,
+        `Deleted workspace ${workspaceId}.${describeConnectorTeardown(connectors.length, failed)}${purgeNote}`,
       ),
       structuredContent: data,
-      isError: false,
+      isError: purgeError !== undefined,
     };
   } catch (err) {
     return {
@@ -504,6 +511,36 @@ async function handleDelete(
       isError: true,
     };
   }
+}
+
+/**
+ * The answer to deleting an id the store no longer holds: not found, unless
+ * the purge that runs for it anyway failed or removed conversations an earlier
+ * delete left behind.
+ */
+function alreadyDeleted(
+  workspaceId: string,
+  purgeNote: string,
+  purgeError: string | undefined,
+  conversationsPurged: number,
+): ToolResult {
+  if (purgeError) {
+    return {
+      content: textContent(`Workspace ${workspaceId} is already deleted.${purgeNote}`),
+      structuredContent: { deleted: false, workspaceId, connectors: [], purgeError },
+      isError: true,
+    };
+  }
+  if (conversationsPurged > 0) {
+    return {
+      content: textContent(
+        `Workspace ${workspaceId} is already deleted. Purged ${conversationsPurged} conversation${conversationsPurged === 1 ? "" : "s"} left in it.`,
+      ),
+      structuredContent: { deleted: false, workspaceId, connectors: [], conversationsPurged },
+      isError: false,
+    };
+  }
+  return { content: textContent(`Workspace not found: ${workspaceId}`), isError: true };
 }
 
 /**
