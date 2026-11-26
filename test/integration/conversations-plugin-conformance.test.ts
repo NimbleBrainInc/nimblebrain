@@ -32,7 +32,7 @@ import {
 } from "../../contracts/conversations/runner/conformance.ts";
 
 const BIN = resolve(import.meta.dir, "../../packages/conversations/bin/nb-conversations");
-const TOKEN = "conformance-token";
+const TOKEN = "conformance-token-0123456789abcdef0123";
 const WORKSPACE = "ws_a1a1a1a1a1a1a1a1";
 const SCRATCH = "ws_b2b2b2b2b2b2b2b2";
 const OWNER = "usr_conformance";
@@ -199,6 +199,54 @@ describe("conversations plugin: the public-only mode", () => {
     );
     expect(results.filter((r) => r.status === "skip")).toEqual([]);
   }, 60_000);
+});
+
+/** Start the server in HTTP mode with `token`, and read how it exits. */
+async function startWith(token: string | undefined, extra: string[] = []) {
+  const dir = mkdtempSync(join(tmpdir(), "conversations-plugin-token-"));
+  const p = spawn(["bun", "--no-env-file", BIN, "--data-dir", dir, "--http", "0", ...extra], {
+    env: {
+      PATH: process.env.PATH ?? "",
+      ...(token !== undefined ? { NB_CONVERSATIONS_TOKEN: token } : {}),
+    },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return { p, dir };
+}
+
+describe("conversations plugin: HTTP mode's credential and address", () => {
+  it.each([
+    ["no token", undefined, "is required"],
+    ["an empty token", "", "is required"],
+    ["a 31-character token", "x".repeat(31), "at least 32 characters"],
+  ])(
+    "refuses to start with %s",
+    async (_name, token, message) => {
+      const { p, dir } = await startWith(token);
+      try {
+        expect(await p.exited).toBe(2);
+        expect(await new Response(p.stderr).text()).toContain(message);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
+
+  it("listens on loopback by default, and warns when told to listen elsewhere", async () => {
+    expect(new URL(url).hostname).toBe("127.0.0.1");
+    const { p, dir } = await startWith("y".repeat(32), ["--host", "0.0.0.0"]);
+    try {
+      expect(await readListening(p)).toContain("0.0.0.0");
+      p.kill();
+      await p.exited;
+      expect(await new Response(p.stderr).text()).toContain("not loopback");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
 
 describe("conversations plugin: transports", () => {

@@ -32,13 +32,15 @@ Each request carries the host context
 Over Streamable HTTP, at `/mcp`. Every request presents the host's credential:
 
 ```bash
-NB_CONVERSATIONS_TOKEN=change-me \
+NB_CONVERSATIONS_TOKEN=$(openssl rand -hex 32) \
   packages/conversations/bin/nb-conversations --data-dir ./data --http 8080 [--host 127.0.0.1]
 ```
 
-`NB_CONVERSATIONS_TOKEN` is the credential the operator issues to the host for this server: a
-request without `Authorization: Bearer $NB_CONVERSATIONS_TOKEN` is refused with 401. The context
-is the same `params._meta["ai.nimblebrain/context"]`.
+`NB_CONVERSATIONS_TOKEN` is the credential the operator issues to the host for this server, at
+least 32 characters (the server refuses to start otherwise): a request without
+`Authorization: Bearer $NB_CONVERSATIONS_TOKEN` is refused with 401. The token is `host` on every
+tool, private ones included, so the server listens on `127.0.0.1` unless `--host` names another
+address, and warns when it does. The context is the same `params._meta["ai.nimblebrain/context"]`.
 
 The screen is `ui/`, its own package: `cd ui && bun install && bun run build` writes
 `ui/dist/index.html`, which the server serves as `ui://conversations/browser`. `--screen <file>`
@@ -60,7 +62,7 @@ directory.
 
 ```bash
 bun --no-env-file contracts/conversations/runner/conformance.ts \
-  --server http://127.0.0.1:8080/mcp --header "authorization=Bearer change-me" \
+  --server http://127.0.0.1:8080/mcp --header "authorization=Bearer $NB_CONVERSATIONS_TOKEN" \
   --carriage meta --workspace ws_0123456789abcdef --owner user_1 \
   --scratch-workspace ws_fedcba9876543210
 ```

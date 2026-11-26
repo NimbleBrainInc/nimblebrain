@@ -12,7 +12,9 @@
  * - stdio: by construction. The host that started the process alone holds its pipe.
  * - HTTP: every request presents `Authorization: Bearer $NB_CONVERSATIONS_TOKEN`, the
  *   credential the operator issues to the host for this server (required to start in HTTP
- *   mode), or is refused 401 before its body is read.
+ *   mode, at least 32 characters), or is refused 401 before its body is read. The token is
+ *   `host` on every tool, so the server listens on loopback unless `--host` says otherwise,
+ *   and warns when it does.
  *
  * On stdio, stdout is the protocol; diagnostics go to stderr. In HTTP mode the server
  * prints `listening <url>` once it serves.
@@ -27,6 +29,24 @@ import { createStore } from "./store.ts";
 
 export const TOKEN_ENV = "NB_CONVERSATIONS_TOKEN";
 export const MCP_PATH = "/mcp";
+/** The shortest host credential HTTP mode accepts: the token is `host` on every tool. */
+export const MIN_TOKEN_LENGTH = 32;
+/** Where HTTP mode listens unless `--host` names another address. */
+export const DEFAULT_HOST = "127.0.0.1";
+
+/** Why `token` cannot be the host's credential, or null when it can. */
+export function tokenError(token: string | undefined): string | null {
+  if (!token) return `${TOKEN_ENV} is required with --http: it is the host's credential`;
+  if (token.length < MIN_TOKEN_LENGTH) {
+    return `${TOKEN_ENV} must be at least ${MIN_TOKEN_LENGTH} characters: it is the host's credential and is host on every tool (generate one with: openssl rand -hex 32)`;
+  }
+  return null;
+}
+
+/** Whether `hostname` is a loopback address, reachable only from this machine. */
+export function isLoopback(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "::1" || /^127(\.\d{1,3}){3}$/.test(hostname);
+}
 
 function arg(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(`--${name}`);
@@ -60,15 +80,20 @@ export interface HttpServerOptions {
   screenPath?: string;
 }
 
-/** Serve the conversations server over Streamable HTTP at {@link MCP_PATH}. */
+/**
+ * Serve the conversations server over Streamable HTTP at {@link MCP_PATH}. Throws when the
+ * token cannot be the host's credential ({@link tokenError}).
+ */
 export function serveHttp(opts: HttpServerOptions) {
+  const refused = tokenError(opts.token);
+  if (refused) throw new Error(refused);
   const store = createStore(opts.dataDir);
   const handler = createMcpHandler(() => buildServer({ store, screenPath: opts.screenPath }), {
     onerror: (err) => process.stderr.write(`nb-conversations: ${err.message}\n`),
   });
   return Bun.serve({
     port: opts.port,
-    hostname: opts.hostname ?? "127.0.0.1",
+    hostname: opts.hostname ?? DEFAULT_HOST,
     fetch(req) {
       if (new URL(req.url).pathname !== MCP_PATH) return json(404, { error: "not found" });
       if (!presentsToken(req, opts.token)) return json(401, { error: "unauthorized" });
@@ -97,14 +122,15 @@ export async function main(argv: string[]): Promise<void> {
   const port = Number(arg(argv, "http"));
   if (!Number.isInteger(port) || port < 0) fail("--http wants a port (0 for any free port)");
   const token = process.env[TOKEN_ENV];
-  if (!token) fail(`${TOKEN_ENV} is required with --http: it is the host's credential`);
-  const server = serveHttp({
-    dataDir,
-    port,
-    hostname: arg(argv, "host"),
-    token,
-    screenPath,
-  });
+  const refused = tokenError(token);
+  if (refused || !token) fail(refused ?? `${TOKEN_ENV} is required with --http`);
+  const hostname = arg(argv, "host") ?? DEFAULT_HOST;
+  if (!isLoopback(hostname)) {
+    process.stderr.write(
+      `nb-conversations: warning: listening on ${hostname}, not loopback: anyone who can reach it and holds ${TOKEN_ENV} is host, with every tool, private ones included\n`,
+    );
+  }
+  const server = serveHttp({ dataDir, port, hostname, token, screenPath });
   process.stdout.write(`listening http://${server.hostname}:${server.port}${MCP_PATH}\n`);
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {

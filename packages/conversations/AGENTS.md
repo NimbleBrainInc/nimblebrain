@@ -29,7 +29,9 @@ conversations. How to run it standalone is in `README.md`.
 - **It is believed only from an authenticated host transport** (`src/main.ts`). stdio: by
   construction, the pipe the host started. HTTP: every request presents
   `Authorization: Bearer $NB_CONVERSATIONS_TOKEN`, the self-hosted host's credential the operator
-  issues for this server, or is refused 401 before its body is read.
+  issues for this server, or is refused 401 before its body is read. The token is at least 32
+  characters or the server refuses to start; it is `host` on every tool, so HTTP mode listens
+  on `127.0.0.1` by default and warns on a non-loopback `--host`.
 - **One server serves one deployment's host.** Hosting it behind a fleet edge, for several
   tenants, is not supported: it needs its own design (an edge-only credential, the edge
   stripping any client-sent identity headers, a network policy that admits only the edge), and
