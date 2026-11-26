@@ -28,6 +28,7 @@
     "contracts/**/*.ts",
     "packages/server-sdk/**/*.ts",
     "packages/conversations/**/*.ts",
+    "packages/tasks/**/*.ts",
     "src/**/*.ts",
     "instrument/**/*.ts",
     "scripts/**/*.ts"

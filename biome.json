@@ -53,6 +53,7 @@
       "packages/cli/test/**",
       "packages/server-sdk/**/*.ts",
       "packages/conversations/**/*.ts",
+      "packages/tasks/**/*.ts",
       "!**/dist/**",
       "!web/src/_generated/**",
       "!web/src/assets/**"
@@ -69,7 +70,8 @@
         "web/test/**",
         "packages/cli/**",
         "packages/server-sdk/**",
-        "packages/conversations/**"
+        "packages/conversations/**",
+        "packages/tasks/**"
       ],
       "plugins": ["./biome-plugins/double-cast.grit"]
     },
@@ -83,7 +85,8 @@
         "test/**",
         "packages/cli/**",
         "packages/server-sdk/**",
-        "packages/conversations/**"
+        "packages/conversations/**",
+        "packages/tasks/**"
       ],
       "plugins": ["./biome-plugins/never-cast.grit"]
     },
@@ -147,6 +150,30 @@
                   {
                     "group": ["../../../**"],
                     "message": "A plugin never imports the kernel: packages/conversations imports only packages/server-sdk and reads the contract document (packages/conversations/AGENTS.md)."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/tasks/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["../../**", "!../../server-sdk/src/*.ts"],
+                    "message": "A plugin never imports the kernel: packages/tasks imports only packages/server-sdk and reads the contract document (packages/tasks/AGENTS.md)."
+                  },
+                  {
+                    "group": ["../../../**"],
+                    "message": "A plugin never imports the kernel: packages/tasks imports only packages/server-sdk and reads the contract document (packages/tasks/AGENTS.md)."
                   }
                 ]
               }

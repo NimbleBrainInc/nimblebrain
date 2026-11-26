@@ -108,8 +108,9 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`web/AGENTS.md`](./web/AGENTS.md) | Web shell: gating workspace writes, forms that save as they change and notices, shell rules, chat panel workspace scope, main-area views |
 | [`test/conformance/AGENTS.md`](./test/conformance/AGENTS.md) | The MCP conformance suite against `/mcp/<wsId>`: what it measures, the per-version baselines, the pin, where it runs in CI |
 | [`web/src/bridge/AGENTS.md`](./web/src/bridge/AGENTS.md) | MCP App Bridge rules: iframe scoping, handshake gate, notification relay, host capabilities |
-| [`packages/server-sdk/AGENTS.md`](./packages/server-sdk/AGENTS.md) | The TypeScript server SDK, counterpart of `nimblebrain-server-sdk` (Python): reading the host context, tool errors, the principal rule, reading a contract document; no dependencies, the contract document decides |
+| [`packages/server-sdk/AGENTS.md`](./packages/server-sdk/AGENTS.md) | The TypeScript server SDK, counterpart of `nimblebrain-server-sdk` (Python): reading the host context, tool errors, the principal rule, reading a contract document, host metadata on the handshake; no dependencies, the contract document decides |
 | [`packages/conversations/AGENTS.md`](./packages/conversations/AGENTS.md) | The built-in conversations plugin (bound by default): never imports the kernel, call order, context per transport, filesystem layout, `seq`, cursors, the screen and its build, its host metadata, its conformance tests |
+| [`packages/tasks/AGENTS.md`](./packages/tasks/AGENTS.md) | The tasks plugin (not bound yet): call order, the clock rule, occurrences, fencing, grants, the change hint, the transactional filesystem layout, retention, the screen, parity with today's tasks app and every difference, its tests |
 | [`packages/cli/AGENTS.md`](./packages/cli/AGENTS.md) | The `nimblebrain` CLI (`npx nimblebrain`): setup and running, plus a thin client of the local instance's API (`mcp add`) and the agent worker `use` starts, one self-contained file on Node 20, the `{ok, error, fix}` JSON contract, the model key never in output, never touching an install it did not make |
 
 ## Conventions
@@ -188,6 +189,7 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 packages/
 ├── server-sdk/    The TypeScript server SDK: host context, tool errors, the principal rule (see server-sdk/AGENTS.md)
 ├── conversations/ The built-in conversations plugin, bound by default: one MCP server implementing the contract on the local filesystem, and its screen (ui/) (see conversations/AGENTS.md)
+├── tasks/         The tasks plugin, not bound yet: one MCP server implementing the tasks contract on the local filesystem, and its screen (ui/) (see tasks/AGENTS.md)
 ├── cli/           The `nimblebrain` CLI (see cli/AGENTS.md)
 └── server-sdk-py/ The Python Server SDK
 ```
