@@ -202,7 +202,6 @@ function makeApp(lifecycle: StubLifecycle, workDir = "/tmp/nb-test"): Hono<AppEn
             })
           : null,
     }),
-    secureCookies: true,
   });
 
   const app = new Hono<AppEnv>();

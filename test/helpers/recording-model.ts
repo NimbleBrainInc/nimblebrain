@@ -4,6 +4,7 @@ import type {
   LanguageModelV4FunctionTool,
   LanguageModelV4Message,
 } from "@ai-sdk/provider";
+import { isTitleCall } from "./mock-model.ts";
 
 /**
  * One captured model call: the exact prompt + tools the engine sent to the
@@ -51,7 +52,9 @@ export function recordingModel(inner: LanguageModelV4): RecordingModel {
   const model: LanguageModelV4 = {
     ...inner,
     doGenerate(opts) {
-      record(opts);
+      // The first turn's title runs beside the turn on the same model; it is
+      // not one of the turn's iterations.
+      if (!isTitleCall(opts)) record(opts);
       return inner.doGenerate(opts);
     },
     doStream(opts) {

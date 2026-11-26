@@ -42,11 +42,26 @@ later.
 `--yes` takes every default, but never chooses for you what runs NimbleBrain's agents:
 `init --use claude|codex|api|local` does, and without it a coding agent gets the
 question to ask you in `model_source`. `--agent claude-code|cursor|codex|none` names the agent to
-connect. `npx nimblebrain help --json` lists every command with the fields it answers, every flag and every error code.
+connect; at a terminal without it, `init` lists the agents it finds here and defaults to the one
+that also runs NimbleBrain's agents, else the first one found, else none. Without a terminal or
+`--agent`, nothing is connected. `npx nimblebrain help --json` lists every command with the fields it answers, every flag and every error code.
 
 When a newer CLI or NimbleBrain release exists, the CLI says so on stderr after its
 answer (once a day at most; it never updates anything itself).
 `NIMBLEBRAIN_NO_UPDATE_CHECK=1` turns that off.
+
+## A second install
+
+```bash
+npx nimblebrain --home ~/.nimblebrain-beta --runtime vX.Y.Z-rc.N
+```
+
+Each `--home` is its own install, beside the one you use every day. When port 27246 is
+taken, the new install takes the next free port 100 on (27346, 27446, …), says what holds
+it, and keeps that port for every later command. Your coding agent gets it under its own
+name, `nimblebrain-<folder>` (here `nimblebrain-beta`), beside `nimblebrain`, and its
+`uninstall` removes only that one. Pass the same `--home` to every command for it; a port
+you pass with `--port` is used as given, or refused when it is taken.
 
 ## Your Claude or ChatGPT subscription instead of a model key
 
@@ -82,12 +97,19 @@ NimbleBrain (Docker) ──ACP──▶ agent worker (this machine) ──runs�
   name reaches the Docker bridge instead, so `use` refuses there for now.
 - **Usage is counted, not priced.** Turns are recorded with their tokens at $0.
 
+Claude Code's turns run on Sonnet, which answers a chat turn faster than Opus; pick
+another with `use claude --model opus` (or `haiku`, or a full model id). Codex runs on its
+own default unless `--model` names one. A conversation's title and history summary run
+with no tools, and on Claude Code on Haiku, so they take a couple of seconds.
+
 `status` shows which source is in use and whether its worker answers. The worker is a
 login item (a LaunchAgent for your user, running a copy of the CLI kept in the install's
 folder), so launchd starts it when you log in and again if it crashes; `down` removes it
 and `up` puts it back. `use api` or `use local` goes back to the model key
 or a local model; a saved one stays while you run on a subscription, for runs with a
-spend budget. The worker logs to `agent-worker.log` in the install's folder. It needs a
+spend budget. The worker logs to `agent-worker.log` in the install's folder, one `timeline` line per turn
+saying where its time went (start, the model request, the first token, retries, the plan's
+rate limit), never its text; a turn that shows nothing for 15 seconds tells you it is waiting. It needs a
 NimbleBrain release whose Compose file passes `NB_AGENT_RUNTIME`; `update` brings one.
 
 ## Usage data

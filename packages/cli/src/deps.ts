@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { constants } from "node:fs";
+import { constants, realpathSync } from "node:fs";
 import { access, chmod, mkdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
@@ -20,12 +20,16 @@ export interface Deps {
    * failed. Never throws.
    */
   launch(cmd: string, args: string[]): Promise<boolean>;
-  /** How this CLI runs: the Node binary and this CLI's own file, to start it again as another process. */
+  /**
+   * How this CLI runs: the Node binary and this CLI's own file, its links
+   * resolved (npx runs a `.bin/nimblebrain` link to the package's bundle), to
+   * start it again as another process.
+   */
   self: { node: string; script: string };
   /** This user's id, which names their launchd domain (`gui/<uid>`) for the worker's login item. */
   uid: number;
-  /** Whether a program is on `PATH`, found without running it. */
-  which(cmd: string): Promise<boolean>;
+  /** Where a program is on `PATH` (the first match), found without running it; undefined when it is not there. */
+  which(cmd: string): Promise<string | undefined>;
   /** Whether nothing on this machine listens on `127.0.0.1:<port>`. */
   portFree(port: number): Promise<boolean>;
   /** A GET with a timeout; never throws, a connection failure is `undefined`. */
@@ -39,6 +43,8 @@ export interface Deps {
     timeoutMs?: number,
   ): Promise<{ status: number; body: unknown } | undefined>;
   readText(path: string): Promise<string | undefined>;
+  /** Whether a file or folder is at `path`; never throws. */
+  exists(path: string): Promise<boolean>;
   /**
    * Write a file, creating its folder (mode 700). `mode` applies to a new file and to an existing one.
    * The file is replaced whole or not at all, so a run cut short never leaves a record half written.
@@ -127,21 +133,22 @@ export function realDeps(): Deps {
         });
       });
     },
-    self: { node: process.execPath, script: resolve(process.argv[1] ?? "") },
+    self: { node: process.execPath, script: entryScript(process.argv[1] ?? "") },
     uid: process.getuid?.() ?? 0,
     async which(cmd) {
       const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE").split(";") : [""];
       for (const dir of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
         for (const ext of exts) {
+          const path = join(dir, cmd + ext);
           try {
-            await access(join(dir, cmd + ext), constants.X_OK);
-            return true;
+            await access(path, constants.X_OK);
+            return path;
           } catch {
             // Not in this folder; try the next.
           }
         }
       }
-      return false;
+      return undefined;
     },
     portFree(port) {
       return new Promise((resolve) => {
@@ -172,6 +179,14 @@ export function realDeps(): Deps {
         return await readFile(path, "utf8");
       } catch {
         return undefined;
+      }
+    },
+    async exists(path) {
+      try {
+        await access(path);
+        return true;
+      } catch {
+        return false;
       }
     },
     async writeText(path, text, mode = 0o644) {
@@ -207,6 +222,20 @@ export function realDeps(): Deps {
     home: homedir(),
     cwd: process.cwd(),
   };
+}
+
+/**
+ * This CLI's own file, from the path it was started by: absolute, its links
+ * resolved, so the npx cache's `.bin/nimblebrain` link names the bundle it
+ * points at. The path as given when it cannot be resolved.
+ */
+export function entryScript(argv1: string): string {
+  const path = resolve(argv1);
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 /**
@@ -303,10 +332,13 @@ export function typeHidden(
  * give, and a printed `--home` must work from any folder.
  */
 export function installHome(deps: Deps, flag?: string): string {
-  return resolve(
-    deps.cwd,
-    flag ?? deps.env.NIMBLEBRAIN_HOME ?? join(deps.home, ".nimblebrain-local"),
-  );
+  const named = flag ?? deps.env.NIMBLEBRAIN_HOME;
+  return named === undefined ? defaultHome(deps) : resolve(deps.cwd, named);
+}
+
+/** The home with no `--home` and no `NIMBLEBRAIN_HOME`: the install a bare command acts on. */
+export function defaultHome(deps: Deps): string {
+  return resolve(deps.cwd, join(deps.home, ".nimblebrain-local"));
 }
 
 /**
@@ -320,7 +352,7 @@ export function installHome(deps: Deps, flag?: string): string {
 export const BARE_CLI = "npx nimblebrain";
 
 export function invocation(deps: Deps, home: string): string {
-  const fallback = resolve(deps.cwd, join(deps.home, ".nimblebrain-local"));
+  const fallback = defaultHome(deps);
   if (home === fallback && installHome(deps) === fallback) return BARE_CLI;
   return `${BARE_CLI} --home ${shellQuote(home)}`;
 }

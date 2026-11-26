@@ -92,14 +92,7 @@ describe("what nb__status reports about the running model", () => {
       identityProvider: devProvider,
       events: [sink],
       languageModel: createEchoModel({
-        responses: [
-          ...statusThenReply("call_1"),
-          // The auto-title call lands between the two turns and draws from
-          // this same queue; without a slot of its own it would eat turn 2's
-          // tool call.
-          { text: "A title" },
-          ...statusThenReply("call_2"),
-        ],
+        responses: [...statusThenReply("call_1"), ...statusThenReply("call_2")],
       }),
       logging: { disabled: true },
       workDir,
@@ -118,8 +111,8 @@ describe("what nb__status reports about the running model", () => {
       const first = statusOutput(events, "call_1");
       expect(first).toContain(`Running on: ${PINNED}`);
 
-      // Let the title generation take its queue slot before turn 2, so the
-      // second turn's tool call is not racing it.
+      // Let the first turn's title finish before turn 2, so its write does not
+      // race the second turn.
       await waitForTitle(runtime, conv.conversationId);
 
       // The scenario that produced the wrong answer: the default moves while
@@ -209,8 +202,6 @@ describe("what nb__status reports about the running model", () => {
         responses: [
           // Turn 1 binds the conversation, before the default moves.
           { text: "hello" },
-          // Auto-title takes the next slot.
-          { text: "A title" },
           // Turn 2 asks, after the default has moved away from the pin.
           {
             text: "checking",

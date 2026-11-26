@@ -102,6 +102,8 @@ export interface Machine {
   spawned: Array<{ line: string; logPath: string }>;
   /** Login items loaded into launchd, by label; a pid while its worker runs, else its last exit code. */
   loaded: Map<string, { pid?: number; lastExit?: number }>;
+  /** The servers registered in Claude Code and Codex, by name: `mcp add` adds one, `mcp remove` removes it. */
+  servers: { claude: Set<string>; codex: Set<string> };
   /** Ollama's models after the run, by name. */
   ollamaModels: Record<string, OllamaModel>;
   /** Whether Ollama answers. */
@@ -116,6 +118,12 @@ export interface MachineOptions {
   env?: NodeJS.ProcessEnv;
   files?: Record<string, string>;
   portFree?: boolean;
+  /** Ports something already holds; every other port is free (unless `portFree` is false). */
+  busyPorts?: number[];
+  /** Ports where a NimbleBrain web UI answers `/` (its page title names it). */
+  nimblebrainAt?: number[];
+  /** Servers already registered in Claude Code and Codex, by name. */
+  servers?: { claude?: string[]; codex?: string[] };
   /** Override for the instance's answers to `/v1/*`. */
   workspaces?: Array<{ id: string; name: string }>;
   tags?: string[];
@@ -174,6 +182,10 @@ export function machine(opts: MachineOptions = {}): Machine {
     spawned: [] as Array<{ line: string; logPath: string }>,
     loaded: new Map<string, { pid?: number; lastExit?: number }>(),
     ollamaUp: Boolean(opts.ollama && !opts.ollama.down),
+    servers: {
+      claude: new Set(opts.servers?.claude ?? []),
+      codex: new Set(opts.servers?.codex ?? []),
+    },
   };
   const m = state;
   const exec: Record<string, ExecResult> = {
@@ -231,9 +243,16 @@ export function machine(opts: MachineOptions = {}): Machine {
       m.launched.push([cmd, ...args].join(" "));
       return opts.launch ?? true;
     },
-    which: async (cmd) => (opts.programs ?? []).includes(cmd),
-    portFree: async () => opts.portFree ?? true,
+    which: async (cmd) =>
+      (opts.programs ?? []).includes(cmd) ? `/opt/homebrew/bin/${cmd}` : undefined,
+    portFree: async (port) => (opts.portFree ?? true) && !(opts.busyPorts ?? []).includes(port),
     async getText(url) {
+      const page = url.match(/^http:\/\/127\.0\.0\.1:(\d+)\/$/);
+      if (page) {
+        return (opts.nimblebrainAt ?? []).includes(Number(page[1]))
+          ? { status: 200, body: "<!doctype html><title>NimbleBrain</title>" }
+          : undefined;
+      }
       const health = url.match(/^http:\/\/127\.0\.0\.1:(\d+)\/healthz$/);
       if (health) {
         const listening = [...m.workers.values()].some((w) => w.port === Number(health[1]));
@@ -298,6 +317,8 @@ export function machine(opts: MachineOptions = {}): Machine {
       };
     },
     readText: async (path) => m.files.get(path)?.text,
+    // A folder exists when a file is in it.
+    exists: async (path) => [...m.files.keys()].some((f) => f === path || f.startsWith(`${path}/`)),
     async writeText(path, text, mode = 0o644) {
       m.files.set(path, { text, mode });
     },
@@ -382,6 +403,8 @@ export function machine(opts: MachineOptions = {}): Machine {
   /** `ps -p <pid> -o command=` and `kill`, as they answer for the agent workers running, and `launchctl`. */
   function workerCommand(args: string[], line: string): ExecResult | undefined {
     if (line.startsWith("launchctl ")) return launchctl(args);
+    const mcp = line.match(/^(claude|codex) mcp (add|remove|get) /);
+    if (mcp) return agentServers(mcp[1] as "claude" | "codex", mcp[2] ?? "", args);
     const ps = line.match(/^ps -p (\d+) -o command=$/);
     if (ps) {
       const w = m.workers.get(Number(ps[1]));
@@ -393,6 +416,28 @@ export function machine(opts: MachineOptions = {}): Machine {
       return m.workers.delete(pid) ? ok() : fail("no such process");
     }
     return undefined;
+  }
+
+  /**
+   * `claude mcp` and `codex mcp`, as each agent's CLI keeps its servers: `get`
+   * fails for a name it does not have, `add` and `remove` change the set.
+   */
+  function agentServers(agent: "claude" | "codex", verb: string, args: string[]): ExecResult {
+    const set = m.servers[agent];
+    const name =
+      verb === "add"
+        ? agent === "claude"
+          ? (args.at(-2) ?? "")
+          : (args[2] ?? "")
+        : (args.at(-1) ?? "");
+    if (verb === "get")
+      return set.has(name) ? ok(name) : fail(`No MCP server found with name: ${name}`);
+    if (verb === "add") {
+      if (set.has(name)) return fail(`MCP server ${name} already exists`);
+      set.add(name);
+      return ok();
+    }
+    return set.delete(name) ? ok() : fail(`No MCP server found with name: ${name}`);
   }
 
   /** Ollama's API, as the real one answers the calls the CLI makes. */

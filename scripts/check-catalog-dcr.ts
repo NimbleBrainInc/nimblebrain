@@ -56,6 +56,7 @@
  * OAuth app for the workspace) is workspace-state, not catalog-rot.
  */
 
+import { randomBytes } from "node:crypto";
 import {
   type AuthorizationServerMetadata,
   discoverOAuthServerInfo,
@@ -409,7 +410,10 @@ async function probeAuthorize(
       metadata: discovered.metadata,
       clientInformation: { client_id: clientId },
       redirectUrl: redirectUri,
-      state: "probe",
+      // The shape sign-in sends (`WorkspaceOAuthProvider.state()`): 32 random bytes,
+      // base64url. Some vendors reject a short state as missing, which would fail
+      // an entry real sign-in reaches.
+      state: randomBytes(32).toString("base64url"),
       ...(discovered.scope ? { scope: discovered.scope } : {}),
       ...(discovered.resource ? { resource: discovered.resource } : {}),
     });

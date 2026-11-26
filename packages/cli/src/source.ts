@@ -13,9 +13,15 @@ import { SOURCE_LIST, SOURCES, type Source } from "./args.ts";
 import { hasKey, keyProvider, keyVars, paths, setEnvLines, takesAgentRuntime } from "./compose.ts";
 import type { Deps } from "./deps.ts";
 import { LOCAL_MODEL_VARS, localModelOf, ollamaVersion, takesLocalModel } from "./local-model.ts";
+import { movedLine, movePort, type PortMove } from "./ports.ts";
 import { CliError } from "./result.ts";
 import type { Account } from "./subscription/backends/types.ts";
-import { type SubscriptionRuntime, WORKER_PORTS } from "./subscription/command.ts";
+import {
+  DEFAULT_TURN_MODELS,
+  modelLabel,
+  type SubscriptionRuntime,
+  WORKER_PORTS,
+} from "./subscription/command.ts";
 
 /**
  * What runs NimbleBrain's agents: one question with four answers (`SOURCES`).
@@ -65,6 +71,11 @@ export interface SourceAsk {
 export interface ModelSource {
   source: Source | null;
   label: string | null;
+  /**
+   * The model a subscription's turns run on, as `--model` named it (`sonnet`,
+   * a full id); null for the vendor CLI's own default, or another source.
+   */
+  model: string | null;
 }
 
 /**
@@ -85,14 +96,16 @@ export async function currentSource(deps: Deps, home: string): Promise<ModelSour
   const envText = (await deps.readText(p.env)) ?? "";
   const composeText = (await deps.readText(p.compose)) ?? "";
   const source = sourceOf(envText, composeText);
-  if (source === null) return { source, label: null };
+  if (source === null) return { source, label: null, model: null };
   const detail =
     source === "api"
       ? keyProvider(envText, composeText)
       : source === "local"
         ? localModelOf(envText)
         : await workerPlan(deps, home);
-  return { source, label: sourceLabel(source, detail ?? undefined) };
+  const model = isSubscription(source) ? (agentRuntimeOf(envText).model ?? null) : null;
+  const label = sourceLabel(source, detail ?? undefined);
+  return { source, label: model ? `${label} (${modelLabel(model)})` : label, model };
 }
 
 /** How a person reads a source in use: "your Claude Max subscription through Claude Code". */
@@ -256,6 +269,17 @@ export async function pickSource(deps: Deps, options: SourceOption[]): Promise<S
 }
 
 /** `use` with no source and no person to ask. */
+/** `--model` is a subscription's: refused before anything changes when `source` is not one. */
+export function refuseModelFor(model: string | undefined, source: Source | undefined): void {
+  if (model === undefined || (source !== undefined && isSubscription(source))) return;
+  throw new CliError(
+    "USAGE",
+    source === "local"
+      ? "--model is for claude and codex; a local model is named after use local, or with --local-model."
+      : `--model is for claude and codex${source ? `, not ${source}` : "; pass --use claude or --use codex with it"}.`,
+  );
+}
+
 export function noSourceNamed(): CliError {
   return new CliError("USAGE", `use takes ${SOURCE_LIST}, or asks which at a terminal.`);
 }
@@ -263,15 +287,23 @@ export function noSourceNamed(): CliError {
 /**
  * Puts the install on a subscription: refuses where the worker cannot run,
  * checks the vendor CLI's sign-in, starts the worker, and points `.env` at it.
- * A saved key or local model stays, for the runs that need NimbleBrain's own
- * engine. The caller recreates the runtime's container.
+ * Its turns run on `model`, else the runtime's default (`DEFAULT_TURN_MODELS`:
+ * Sonnet for Claude Code, Codex's own for Codex). A saved key or local model
+ * stays, for the runs that need NimbleBrain's own engine. The caller
+ * recreates the runtime's container.
  */
 export async function startSubscription(
   deps: Deps,
   home: string,
   source: SubscriptionSource,
   port?: number,
-): Promise<{ worker: WorkerState; account: Account; runtime: SubscriptionRuntime }> {
+  model?: string,
+): Promise<{
+  worker: WorkerState;
+  account: Account;
+  runtime: SubscriptionRuntime;
+  moved?: PortMove;
+}> {
   const runtime = SUBSCRIPTION_SOURCES[source];
   const label = SUBSCRIPTION_RUNTIMES[runtime].label;
   if (deps.platform === "linux") {
@@ -295,10 +327,15 @@ export async function startSubscription(
   }
   const account = await preflight(deps, runtime);
   await stopWorker(deps, home);
-  const at = port ?? WORKER_PORTS[runtime];
-  const worker = await startWorker(deps, home, runtime, at, account.plan);
-  await writeAgentRuntime(deps, home, runtime, at);
-  return { worker, account, runtime };
+  // A port a person named is kept, busy or not (`startWorker` refuses a busy one); a busy default moves.
+  const moved =
+    port === undefined ? await movePort(deps, home, WORKER_PORTS[runtime], "worker") : undefined;
+  if (moved) deps.say(movedLine(deps, moved, "the agent worker"));
+  const at = port ?? moved?.to ?? WORKER_PORTS[runtime];
+  const turnModel = model ?? DEFAULT_TURN_MODELS[runtime];
+  const worker = await startWorker(deps, home, runtime, at, account.plan, turnModel);
+  await writeAgentRuntime(deps, home, runtime, at, turnModel);
+  return { worker, account, runtime, moved };
 }
 
 /**
@@ -312,6 +349,7 @@ export async function leaveSubscription(deps: Deps, home: string, dropLocal: boo
   const cleared: Record<string, string> = {
     [AGENT_RUNTIME_ENV.runtime]: "",
     [AGENT_RUNTIME_ENV.url]: "",
+    [AGENT_RUNTIME_ENV.model]: "",
   };
   if (dropLocal) for (const v of LOCAL_MODEL_VARS) cleared[v] = "";
   await deps.writeText(p.env, setEnvLines((await deps.readText(p.env)) ?? "", cleared), 0o600);

@@ -39,12 +39,21 @@ export interface TurnInput {
   prompt: string;
   /** The door's system prompt, for a backend that takes one. */
   system?: string;
-  /** The loopback MCP endpoint that serves this session's NimbleBrain tools. */
-  mcpUrl: string;
+  /**
+   * `turn` for a chat turn or a run; `internal` for the door's own model work
+   * (a conversation's title, a history summary), which needs no tool and runs
+   * on the backend's fast model with no MCP server attached.
+   */
+  purpose: SessionPurpose;
+  /** The loopback MCP endpoint that serves this session's NimbleBrain tools; absent for `internal`. */
+  mcpUrl?: string;
   signal: AbortSignal;
   /** Stream one ACP session update to the runtime. */
   emit(update: acp.SessionUpdate): void;
 }
+
+/** What a session is for, from `session/new`'s `_meta` (`SESSION_META_KEY`); absent is `turn`. */
+export type SessionPurpose = "turn" | "internal";
 
 export interface TurnResult {
   stopReason: acp.StopReason;
@@ -56,6 +65,8 @@ export interface Backend {
   id: "claude-code" | "codex";
   /** For a person: "Claude Code", "Codex". */
   label: string;
+  /** The model its turns run on, as a person reads it ("Sonnet"); absent when the CLI's own default. */
+  modelLabel?: string;
   /** Whether the CLI takes a system prompt that replaces its own. */
   takesSystemPrompt: boolean;
   /**

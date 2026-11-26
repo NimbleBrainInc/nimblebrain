@@ -11,6 +11,12 @@ A local NimbleBrain can run every turn on the coding agent you already pay for: 
 npx nimblebrain use claude    # or: use codex
 ```
 
+Claude Code's turns run on **Sonnet** unless you name another model, because a chat turn on Sonnet answers faster than on Opus. Choose another with `--model`: an alias (`sonnet`, `opus`, `haiku`) or a full model id, which the worker passes to `claude --model` as it is. Codex runs on its own default model unless you name one your plan offers.
+
+```bash
+npx nimblebrain use claude --model opus
+```
+
 `npx nimblebrain` offers it when it asks what runs NimbleBrain's agents, and marks it when Claude Code or Codex is already signed in. `use api` or `use local` moves back to an API key or a local model ([What runs the agents](/cli/nimblebrain/#what-runs-the-agents)).
 
 <Aside type="caution" title="Experimental, and local only">
@@ -41,10 +47,10 @@ Usage still counts against your plan's own limits, and NimbleBrain records each 
 | | On your subscription | Needs a model key |
 |---|---|---|
 | Chat turns, and scheduled tasks without a spend budget | Yes | — |
-| The conversation's title, and the summary that folds a long history | Yes: they run on the same agent | — |
+| The conversation's title, and the summary that folds a long history | Yes: on the same agent, with no tools attached, and on Claude Code on Haiku, so each takes a couple of seconds | — |
 | A run with a spend budget (a budgeted task or batch) | — | Yes: it runs on NimbleBrain's own engine, which can hold it to the budget |
 
-The chat composer shows what every turn runs on in place of the model picker, such as **Claude Code · Claude Max** or **Codex · ChatGPT**: the agent chooses its own model, so a model chosen there would not be used. When the worker does not answer, it says **Claude Code isn't running**, with the fix on hover.
+The chat composer shows what every turn runs on in place of the model picker, such as **Claude Code (Sonnet) · Claude Max** or **Codex · ChatGPT**: the model is the one `use` chose, so a model chosen in the composer would not be used. Change it with `npx nimblebrain use claude --model <model>`. When the worker does not answer, it says **Claude Code isn't running**, with the fix on hover.
 
 ## When a turn fails
 
@@ -57,6 +63,25 @@ A turn on a worker that is not running fails with "Claude Code isn't answering. 
 | `agent_api_key` | Claude Code reported an API key as its source, so the turn was stopped before it billed one. | Remove that key from the environment Claude Code reads, or run `claude /login`. |
 | `agent_cli_missing` | The worker could not find `claude` or `codex`. | Install it, sign in, then run `npx nimblebrain use claude` (or `codex`) again. |
 | `agent_cli_failed` | The CLI stopped for another reason. The message gives its last line, without any credential. | Read `agent-worker.log` in the install's folder, then send the message again. |
+
+## When a turn is slow
+
+When a turn has shown nothing for 15 seconds, the chat shows a waiting line in the agent's thinking, such as "Waiting for Claude Code to start answering (15s)…", and again every 15 seconds until the first text, thinking or tool call. When the CLI reports that it is retrying the model request, the line says so: "Claude Code is retrying the API request (attempt 2 of 10, 30s so far)…". The line is not saved with the conversation. A title or summary the worker makes in the background shows none.
+
+Each turn also leaves one line in `agent-worker.log` in the install's folder, when it ends:
+
+```text
+[19:46:05] timeline turn claude-code sonnet: spawn 0.0 init 0.3 request 0.3 message_start 38.9 first_thinking - first_text 39.0 first_tool - result 39.5 exit 39.6 | events: 12.1 retry 1/10 overloaded 529 next in 0.6s | rate_limit: allowed seven_day 0.27
+```
+
+- The numbers are seconds since the worker started the CLI. `-` is a point the turn never reached.
+- Claude Code: `init` is its first line, `request` when it sent the model request, `message_start` when the model's answer began, then the first thinking, text and tool call, the result, and the process's exit. A long gap between `request` and `message_start` is time spent waiting on the model service, not on NimbleBrain or the worker.
+- Codex: `thread` and `turn` (its `thread.started` and `turn.started`), the first item, the first reasoning, message and tool call, the result, and the exit.
+- `events` lists each retry with its attempt, the error Claude Code names (`overloaded`, `rate_limit`, `server_error`, …) with its HTTP status, and `no_response` when no response came within Claude Code's first-byte window; for Codex, each `Reconnecting… n/m` with its reason, and any other error or notice.
+- `rate_limit` is the plan window Claude Code last reported: its status, which window, and how much of it is used. Codex reports none.
+- `turn` is a chat turn; `internal` is a title or summary, which runs on Haiku for Claude Code.
+
+The line never holds your prompt, the answer, tool calls' arguments or output, or a credential.
 
 ## After a reboot
 

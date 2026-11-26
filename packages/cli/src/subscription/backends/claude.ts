@@ -18,7 +18,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type * as acp from "@agentclientprotocol/sdk/unstable";
+import { modelLabel } from "../command.ts";
 import { classifyFailure, TurnFailed } from "./failure.ts";
+import { startTimeline, type Timeline } from "./timeline.ts";
 import {
   type Account,
   type Backend,
@@ -36,16 +38,17 @@ import {
 const SERVER = "nimblebrain";
 
 export function createClaudeBackend(
-  opts: { bin?: string; model?: string; log?: string } = {},
+  opts: { bin?: string; model?: string; log?: string; noteMs?: number } = {},
 ): Backend {
   const bin = opts.bin ?? "claude";
   return {
     id: "claude-code",
     label: "Claude Code",
+    ...(opts.model ? { modelLabel: modelLabel(opts.model) } : {}),
     takesSystemPrompt: true,
     toolsAreNimbleBrainOnly: true,
     preflight: () => claudePreflight(bin),
-    run: (input) => runClaude(bin, opts.model, input, opts.log),
+    run: (input) => runClaude(bin, opts.model, input, opts.log, opts.noteMs),
   };
 }
 
@@ -103,9 +106,21 @@ export function claudeAccount(out: string | undefined): Account {
   };
 }
 
-/** The print-mode arguments: stream JSON, the session's server only, nothing of the person's. */
-function claudeArgs(input: TurnInput, model: string | undefined): string[] {
-  const mcpConfig = { mcpServers: { [SERVER]: { type: "http", url: input.mcpUrl } } };
+/** The model an internal session runs on: the door's own work (a title, a summary) needs speed, not depth. */
+export const INTERNAL_MODEL = "haiku";
+
+/**
+ * The print-mode arguments: stream JSON, the session's server only, nothing
+ * of the person's. An internal session gets no server at all (an empty
+ * `--mcp-config` under `--strict-mcp-config`) and the fast model, so it
+ * starts nothing and ends in a couple of seconds.
+ */
+export function claudeArgs(input: TurnInput, model: string | undefined): string[] {
+  const internal = isInternal(input);
+  const mcpConfig = internal
+    ? { mcpServers: {} }
+    : { mcpServers: { [SERVER]: { type: "http", url: input.mcpUrl } } };
+  const turnModel = internal ? INTERNAL_MODEL : model;
   return [
     "-p",
     "--output-format",
@@ -117,24 +132,47 @@ function claudeArgs(input: TurnInput, model: string | undefined): string[] {
     "--strict-mcp-config",
     "--tools",
     "",
-    "--allowedTools",
-    `mcp__${SERVER}`,
+    ...(internal ? [] : ["--allowedTools", `mcp__${SERVER}`]),
     "--setting-sources",
     "",
     "--disable-slash-commands",
     "--no-session-persistence",
     ...(input.system ? ["--system-prompt", input.system] : []),
-    ...(model ? ["--model", model] : []),
+    ...(turnModel ? ["--model", turnModel] : []),
   ];
 }
+
+const isInternal = (input: TurnInput) => input.purpose === "internal" || input.mcpUrl === undefined;
+
+/** The points of a Claude turn the timeline times, after `spawn`. */
+export const CLAUDE_MARKS = [
+  "init",
+  "request",
+  "message_start",
+  "first_thinking",
+  "first_text",
+  "first_tool",
+  "result",
+  "exit",
+] as const;
 
 async function runClaude(
   bin: string,
   model: string | undefined,
   input: TurnInput,
   log?: string,
+  noteMs?: number,
 ): Promise<TurnResult> {
   const cwd = await mkdtemp(join(tmpdir(), "nb-claude-"));
+  const timeline = startTimeline({
+    backend: "claude-code",
+    label: "Claude Code",
+    model: isInternal(input) ? INTERNAL_MODEL : model,
+    purpose: input.purpose,
+    marks: CLAUDE_MARKS,
+    emit: input.emit,
+    ...(noteMs ? { noteMs } : {}),
+  });
   const child = spawn(bin, claudeArgs(input, model), {
     cwd,
     env: subscriptionEnv(),
@@ -147,10 +185,15 @@ async function runClaude(
   child.stderr.on("data", (d: Buffer) => {
     stderr = (stderr + d.toString()).slice(-4000);
   });
-  const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
+  const exited = new Promise<number | null>((resolve) =>
+    child.on("close", (code) => {
+      timeline.mark("exit");
+      resolve(code);
+    }),
+  );
   const failed = spawnFailure(child, "claude");
 
-  const translate = claudeTranslator(input.emit);
+  const translate = claudeTranslator(input.emit, timeline);
   try {
     const refused = await Promise.race([readClaude(child.stdout, translate, kill), failed]);
     const code = await Promise.race([exited, failed]);
@@ -159,6 +202,7 @@ async function runClaude(
     const stop = claudeStop(translate.result(), translate.apiError(), { code, stderr, log });
     return { stopReason: stop, ...translate.totals() };
   } finally {
+    timeline.end();
     input.signal.removeEventListener("abort", kill);
     await rm(cwd, { recursive: true, force: true });
   }
@@ -226,9 +270,23 @@ function apiKeyRefusal(message: ClaudeMessage): string | undefined {
 interface ClaudeMessage {
   type: string;
   subtype?: string;
+  /** `system` `status`: `requesting`, `compacting`, … */
+  status?: string | null;
+  /** `system` `api_retry`: Claude Code is retrying the model request. */
+  attempt?: number;
+  max_retries?: number;
+  retry_delay_ms?: number;
+  error_status?: number | null;
+  /** `system` `api_retry`, when no response headers came within the first-byte window. */
+  no_response?: { waited_ms?: number; retry_wait_ms?: number };
+  rate_limit_info?: RateLimitInfo;
   apiKeySource?: string;
   model?: string;
-  event?: { type: string; delta?: { type: string; text?: string; thinking?: string } };
+  event?: {
+    type: string;
+    content_block?: { type?: string };
+    delta?: { type: string; text?: string; thinking?: string };
+  };
   message?: { content?: ClaudeBlock[] };
   result?: string;
   is_error?: boolean;
@@ -236,6 +294,13 @@ interface ClaudeMessage {
   error?: string;
   usage?: ClaudeUsage;
   modelUsage?: Record<string, ClaudeModelUsage>;
+}
+
+interface RateLimitInfo {
+  status?: string;
+  rateLimitType?: string;
+  utilization?: number;
+  unifiedWindows?: Record<string, { utilization?: number }>;
 }
 
 interface ClaudeBlock {
@@ -261,11 +326,15 @@ interface ClaudeModelUsage {
   cacheCreationInputTokens?: number;
 }
 
-/** Claude Code's stream-json lines as ACP session updates, and the turn's usage at the end. */
-export function claudeTranslator(emit: (update: acp.SessionUpdate) => void) {
+/**
+ * Claude Code's stream-json lines as ACP session updates, and the turn's
+ * usage at the end. Each line's timing goes to `timeline` when given.
+ */
+export function claudeTranslator(emit: (update: acp.SessionUpdate) => void, timeline?: Timeline) {
   let final: ClaudeMessage | undefined;
   let apiError: string | undefined;
   const translate = (message: ClaudeMessage) => {
+    if (timeline) timeClaude(message, timeline);
     if (message.type === "stream_event") emitDelta(message, emit);
     else if (message.type === "assistant") {
       if (typeof message.error === "string") apiError = message.error;
@@ -278,6 +347,86 @@ export function claudeTranslator(emit: (update: acp.SessionUpdate) => void) {
     apiError: () => apiError,
     totals: () => claudeTotals(final),
   });
+}
+
+/** System lines that say nothing about where the time went. */
+const QUIET_SYSTEM = new Set(["init", "status", "thinking_tokens"]);
+
+/**
+ * Where a line falls on the turn's timeline: its event names, counts and
+ * codes only, never its text.
+ */
+function timeClaude(message: ClaudeMessage, timeline: Timeline): void {
+  TIMERS[message.type]?.(message, timeline);
+}
+
+type Timer = (message: ClaudeMessage, timeline: Timeline) => void;
+
+const TIMERS: Record<string, Timer> = {
+  system: timeSystem,
+  stream_event: timeStream,
+  assistant(message, timeline) {
+    if (typeof message.error === "string") timeline.event(`api_error ${message.error}`);
+    if (message.message?.content?.some((b) => b.type === "tool_use")) {
+      timeline.mark("first_tool");
+      timeline.output();
+    }
+  },
+  rate_limit_event(message, timeline) {
+    const info = message.rate_limit_info ?? {};
+    const type = info.rateLimitType;
+    const used = info.utilization ?? (type ? info.unifiedWindows?.[type]?.utilization : undefined);
+    timeline.rateLimit([info.status ?? "?", type ?? "?", used ?? "?"].join(" "));
+  },
+  result(message, timeline) {
+    timeline.mark("result");
+    if (message.subtype !== "success" || message.is_error) {
+      timeline.event(`result ${message.subtype ?? "?"}${message.is_error ? " is_error" : ""}`);
+    }
+  },
+};
+
+/** `init`, `status: requesting`, a retry, and any other system line by its subtype. */
+function timeSystem(message: ClaudeMessage, timeline: Timeline): void {
+  const { subtype, status } = message;
+  if (subtype === "init") timeline.mark("init");
+  else if (subtype === "status" && status === "requesting") timeline.mark("request");
+  else if (subtype === "status" && status) timeline.event(`status ${status}`);
+  else if (subtype === "api_retry") {
+    const of = `attempt ${message.attempt ?? "?"} of ${message.max_retries ?? "?"}`;
+    timeline.retry(retryText(message), of);
+  } else if (subtype && !QUIET_SYSTEM.has(subtype)) timeline.event(subtype);
+}
+
+/** The first `message_start`, and the first thinking, text and tool call a person sees. */
+function timeStream(message: ClaudeMessage, timeline: Timeline): void {
+  const e = message.event;
+  const first =
+    e?.type === "content_block_start" && e.content_block?.type === "tool_use"
+      ? "first_tool"
+      : e?.type === "content_block_delta"
+        ? STREAM_FIRSTS[e.delta?.type ?? ""]
+        : undefined;
+  if (e?.type === "message_start") timeline.mark("message_start");
+  if (!first) return;
+  timeline.mark(first);
+  timeline.output();
+}
+
+const STREAM_FIRSTS: Record<string, string> = {
+  thinking_delta: "first_thinking",
+  text_delta: "first_text",
+};
+
+/** `2/10 overloaded 529 in 1.2s`, plus how long no response came, when Claude Code says. */
+function retryText(m: ClaudeMessage): string {
+  const parts = [`${m.attempt ?? "?"}/${m.max_retries ?? "?"}`, m.error ?? "unknown"];
+  if (m.error_status != null) parts.push(String(m.error_status));
+  if (m.no_response?.waited_ms !== undefined)
+    parts.push(`no_response ${(m.no_response.waited_ms / 1000).toFixed(1)}s`);
+  if (m.retry_delay_ms !== undefined)
+    parts.push(`next in ${(m.retry_delay_ms / 1000).toFixed(1)}s`);
+  return parts.join(" ");
 }
 
 /** A streamed text or thinking delta. */

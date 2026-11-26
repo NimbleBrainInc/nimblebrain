@@ -139,7 +139,6 @@ function makeApp(): Hono<AppEnv> {
           : null,
     }),
     authOptions: auth,
-    secureCookies: true,
   });
   const app = new Hono<AppEnv>();
   app.route("/", composioAuthRoutes(ctx));

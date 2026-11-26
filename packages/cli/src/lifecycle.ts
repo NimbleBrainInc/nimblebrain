@@ -1,12 +1,15 @@
+import { defaultAgent, detectAgents, pickAgent } from "./agent-picker.ts";
 import { restartWorker, stopWorker, workerPaths } from "./agent-worker.ts";
 import {
+  chooseServerName,
   connectAgent,
+  disconnectAgent,
   installSkill,
   refreshSkill,
-  SERVER_NAME,
   type SkillRefresh,
+  serverNameOf,
 } from "./agents.ts";
-import { AGENTS, type Agent, DEFAULT_PORT, type Flags, type Source } from "./args.ts";
+import { type Agent, DEFAULT_PORT, type Flags, type Source } from "./args.ts";
 import {
   asksConsent,
   claimWritten,
@@ -33,6 +36,7 @@ import {
   takesLocalModel,
 } from "./local-model.ts";
 import { openBrowser } from "./open.ts";
+import { movedLine, type PortMove } from "./ports.ts";
 import { compareVersions, runtimeTag } from "./release.ts";
 import { CliError } from "./result.ts";
 import {
@@ -41,6 +45,7 @@ import {
   leaveSubscription,
   type ModelSource,
   pickSource,
+  refuseModelFor,
   type SourceAsk,
   sourceAsk,
   sourceOf,
@@ -121,6 +126,7 @@ export function confirmOllamaStart(ctx: Pick<Ctx, "deps" | "flags">, unasked: bo
  */
 export async function init(ctx: Ctx) {
   const { deps, flags, home } = ctx;
+  refuseModelFor(flags.model, flags.use);
   const record = await readInstall(deps, home);
   if (record?.phase === "ready") return { ...(await status(deps, home)), already: true };
 
@@ -192,10 +198,12 @@ async function chooseConsent(ctx: Ctx, record: InstallState | undefined): Promis
 }
 
 /**
- * A fresh install, or the rest of one a `starting` record names. A resumed one
- * keeps its project and takes its port and release from the record unless
- * `--port` or `--runtime` names others; its own running containers hold its
- * port, which the check then passes. Every install file is written again from
+ * A fresh install, or the rest of one a `starting` record names. A fresh one
+ * with no `--port` takes the default port, or the next free one when that is
+ * in use (`movePort`), and records it. A resumed one keeps its project and
+ * takes its port and release from the record unless `--port` or `--runtime`
+ * names others; its own running containers hold its port, which the check
+ * then passes. The coding agent's server name is chosen at the claim too. Every install file is written again from
  * the record, so a resume never depends on what the stopped run left behind.
  */
 async function install(
@@ -206,21 +214,28 @@ async function install(
   begun: number,
 ) {
   const { deps, flags, home } = ctx;
-  const port = flags.port ?? record?.port ?? DEFAULT_PORT;
-  const ours = record?.port === port && (await runningHere(deps, home));
-  await doctor(deps, port, ours);
+  const asked = flags.port ?? record?.port ?? DEFAULT_PORT;
+  const ours = record?.port === asked && (await runningHere(deps, home));
+  // A new install that named no port takes the next free one when the default
+  // is busy; a port a person chose, or a resume's recorded one, is kept or refused.
+  const movable = !record && flags.port === undefined;
+  const { port_moved } = await doctor(deps, asked, ours, movable ? home : undefined);
+  const port = port_moved?.to ?? asked;
   if (!record) await refuseForeign(deps, home);
   const tag =
     record && !flags.runtime ? `v${record.version}` : await runtimeTag(deps, flags.runtime);
   const composeText = await fetchCompose(deps, tag);
+  if (port_moved) deps.say(movedLine(deps, port_moved, "this install"));
   await confirmStart(ctx, tag, port);
 
   // The claim: the record first, so every file after it has an owner.
+  const project = record?.project ?? newProject(home);
   const state: InstallState = {
-    project: record?.project ?? newProject(home),
+    project,
     port,
     version: tag.replace(/^v/, ""),
     phase: "starting",
+    serverName: record?.serverName ?? (await chooseServerName(deps, home, project)),
   };
   await writeState(deps, home, state);
   await writeInstallFiles(
@@ -233,7 +248,7 @@ async function install(
     envValues(deps, lockedHere(deps) ? undefined : rec.id, consent, asksConsent(composeText)),
   );
   // Asked before the start: the runtime reads `.env` only when its container is created.
-  const { started: ollamaStarted, asked } = await prepareModel(ctx, composeText);
+  const { started: ollamaStarted, asked: sourceAsked } = await prepareModel(ctx, composeText);
   return carryingStarted(ollamaStarted, async () => {
     const cached = await imagesPresent(deps, imagesOf(composeText, tag));
     deps.say(
@@ -249,11 +264,16 @@ async function install(
     if (state.agent) rec.record("cli.agent_connected", { agent: state.agent });
 
     const now = await status(deps, home);
-    const result: StatusResult & { manual?: string; ollama_started?: string } = {
+    const result: StatusResult & {
+      manual?: string;
+      ollama_started?: string;
+      port_moved?: PortMove;
+    } = {
       ...now,
-      model_source: await withAsk(ctx, now.model_source, asked, composeText),
+      model_source: await withAsk(ctx, now.model_source, sourceAsked, composeText),
       manual,
       ollama_started: ollamaStarted,
+      port_moved,
     };
     const finalEnv = (await deps.readText(paths(home).env)) ?? "";
     rec.record("cli.init_completed", {
@@ -302,13 +322,17 @@ async function confirmStart(ctx: Ctx, tag: string, port: number): Promise<void> 
  */
 async function connectChosenAgent(ctx: Ctx, state: InstallState): Promise<string | undefined> {
   const { deps, flags, home } = ctx;
-  const agent = flags.agent ?? (asks(ctx) ? await chooseAgent(deps) : undefined);
+  const agent = flags.agent ?? (asks(ctx) ? await chooseAgent(deps, home) : undefined);
   if (!agent || agent === "none") return undefined;
   const first = (await status(deps, home)).workspaces[0];
   if (!first) return undefined;
-  const conn = await connectAgent(deps, agent, first.mcp);
+  const conn = await connectAgent(deps, agent, first.mcp, {
+    name: serverNameOf(state),
+    fallback: state.project,
+  });
   if (conn.connected) {
     state.agent = conn.connected;
+    state.serverName = conn.name;
     await installSkill(deps, conn.connected);
     await writeState(deps, home, state);
   }
@@ -462,9 +486,8 @@ export async function uninstall(ctx: Ctx) {
     const res = await compose(deps, home, ["down", "-v", "--rmi", "all"], START_TIMEOUT_MS);
     if (res.code !== 0) throw startError(res);
   }
-  if (install.agent === "claude-code")
-    await deps.exec("claude", ["mcp", "remove", "-s", "user", SERVER_NAME]);
-  if (install.agent === "codex") await deps.exec("codex", ["mcp", "remove", SERVER_NAME]);
+  // Only the registration this install made, under the name it recorded.
+  if (install.agent) await disconnectAgent(deps, install.agent, serverNameOf(install));
   const worker = workerPaths(home);
   for (const file of [
     ...Object.values(paths(home)),
@@ -619,12 +642,18 @@ async function confirmPull(ctx: Ctx, model: string): Promise<boolean> {
   return yes(await ctx.deps.prompt(`Download ${model} with Ollama? It is several GB. [Y/n] `));
 }
 
-async function chooseAgent(deps: Deps): Promise<Agent> {
-  deps.say(
-    "A coding agent you connect can use NimbleBrain's tools. NimbleBrain's own agents still run on what you chose above.",
+/**
+ * The agent a person picks, its default the one that is also the source just
+ * chosen (`sourceOf`, from the `.env` this run wrote), else the first installed.
+ */
+async function chooseAgent(deps: Deps, home: string): Promise<Agent> {
+  const p = paths(home);
+  const source = sourceOf(
+    (await deps.readText(p.env)) ?? "",
+    (await deps.readText(p.compose)) ?? "",
   );
-  const answer = await deps.prompt(`Connect a coding agent? (${AGENTS.join(", ")}) [none]: `);
-  return (AGENTS as readonly string[]).includes(answer) ? (answer as Agent) : "none";
+  const options = await detectAgents(deps, source);
+  return pickAgent(deps, options, defaultAgent(options, source));
 }
 
 /** The images a release's Compose file names, with its tag filled into `${NIMBLEBRAIN_TAG}`. */
@@ -744,7 +773,7 @@ async function applySource(
   const { deps, flags, home } = ctx;
   const clear = saved !== null && saved !== source;
   if (isSubscription(source)) {
-    await startSubscription(deps, home, source);
+    await startSubscription(deps, home, source, undefined, flags.model);
     return undefined;
   }
   if (source === "api") {
