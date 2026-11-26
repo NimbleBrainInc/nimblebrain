@@ -54,6 +54,18 @@ describe("the web port of a new install", () => {
     );
   });
 
+  test("a stopped install's recorded default is skipped though free, named as that install", async () => {
+    const m = machine({ env, files: daily });
+    const { body } = await json(["--yes", "--home", BETA, "--agent", "none"], m);
+    expect(body.port_moved).toEqual({
+      from: 27246,
+      to: 27346,
+      held_by: "nimblebrain",
+      home: LOCAL,
+    });
+    expect(recordOf(m, BETA).port).toBe(27346);
+  });
+
   test("anything else holding it is another program", async () => {
     const m = machine({ env, busyPorts: [27246] });
     const { body } = await json(["--yes", "--home", BETA], m);
@@ -257,8 +269,25 @@ describe("the agent worker's port", () => {
     );
   });
 
-  test("a free default stays, with no port_moved", async () => {
-    const { body } = await json(["use", "claude", "--home", BETA], mac());
+  test("a stopped worker's recorded default is skipped though free", async () => {
+    const m = mac();
+    const { body } = await json(["use", "claude", "--home", BETA], m);
+    expect(body.port_moved).toEqual({
+      from: 27290,
+      to: 27390,
+      held_by: "agent_worker",
+      home: LOCAL,
+    });
+    expect(JSON.parse(m.files.get(`${BETA}/agent-worker.json`)?.text ?? "").port).toBe(27390);
+  });
+
+  test("a free default no other install recorded stays, with no port_moved", async () => {
+    const m = mac({
+      files: {
+        [`${LOCAL}/agent-worker.json`]: JSON.stringify({ port: 27390, agent: "claude-code" }),
+      },
+    });
+    const { body } = await json(["use", "claude", "--home", BETA], m);
     expect(body.agent_runtime.worker.url).toBe("http://127.0.0.1:27290/acp");
     expect(body.port_moved).toBeUndefined();
   });

@@ -88,11 +88,11 @@ async function holder(
 }
 
 /**
- * The port to use when `from`, a default, may be in use: `from` when it is
- * free, else the first free port `PORT_STEP` on that no other install this CLI
- * can see recorded (a stopped install still owns its port), within
- * `PORT_TRIES`. Undefined when `from` is free. None free is `PORT_IN_USE`,
- * whose fix names `--port`.
+ * The port to use when `from`, a default, may be taken: `from` when it is
+ * free and no other install this CLI can see recorded it (a stopped install
+ * still owns its port), else the first such port `PORT_STEP` on, within
+ * `PORT_TRIES`. Undefined when `from` is usable. None usable is
+ * `PORT_IN_USE`, whose fix names `--port`.
  */
 export async function movePort(
   deps: Deps,
@@ -100,9 +100,9 @@ export async function movePort(
   from: number,
   kind: "web" | "worker",
 ): Promise<PortMove | undefined> {
-  if (await deps.portFree(from)) return undefined;
   const others = await otherInstalls(deps, home);
   const taken = new Set(others.flatMap((o) => [o.web, o.worker]));
+  if (!taken.has(from) && (await deps.portFree(from))) return undefined;
   for (let i = 1; i < PORT_TRIES; i++) {
     const to = from + i * PORT_STEP;
     if (to > 65535) break;
