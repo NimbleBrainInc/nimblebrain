@@ -231,7 +231,7 @@ runs**, runs it, and enforces every limit. Nothing runs except through this flow
 7. **The implementation answers a skip or a run:**
    - `{ decision: "skip", reason, interrupted?, notices? }` for an occurrence that is no longer
      owed (the definition changed, was disabled or deleted, the run was cancelled while queued,
-     a once schedule is past its grace, a budget is spent). It records what its own records
+     a budget is spent). It records what its own records
      need, and the skip settles the item.
    - `{ decision: "run", runId, grant, work }`: the run's id, minted by the implementation, the
      definition's stored grant (§9), and the work spec (§7).
@@ -323,7 +323,9 @@ late, spent, expired, or allowed.
 - **Retention is judged on `due`'s `now`** (§5.1).
 - **Budget periods are UTC calendar days and months**, judged on the host's `now`.
 - **Lateness, backoff and the fire ceiling** are judged on the `now` of the call that decides
-  them.
+  them. A once's lateness is judged only on the `due` that would list it: past its grace
+  there, it is recorded missed and not listed; once listed, it is owed, and `begin_run` never
+  skips it as late however long the host's queue held it.
 - The implementation MAY read its own clock to stamp a record (`createdAt`) and to render a
   public read (`upcoming`'s window, `stats`' default `since`). Neither decides anything.
 - The host's queue alone is the timer: `notBefore` is the only way the implementation delays
@@ -539,10 +541,9 @@ The document's `errors` is the closed list. A failed call writes nothing.
 
 ## 16. Conformance
 
-A conformance runner that speaks only MCP to an implementation and reads only this document
-is the next step, beside this file at `runner/`, as the conversations contract has. An
-implementation is conformant when it holds every rule this file states; the runner will check
-at least:
+The conformance runner (`runner/conformance.ts`) speaks only MCP to an implementation and reads
+only this document. An implementation is conformant when it holds every rule this file states;
+the runner checks at least:
 
 - every tool's schemas, the walls, and the principal rule (each private tool answers a
   `person` with `forbidden`);
@@ -561,7 +562,7 @@ at least:
   and is answered `skip` with `interrupted`;
 - that every answer the host reads is valid against its closed schema at the stated `version`.
 
-Until then the document is held by unit tests: it compiles whole as JSON Schema 2020-12, every
+The document is also held by unit tests: it compiles whole as JSON Schema 2020-12, every
 `$ref` resolves, the shared `$defs` exist and only private tools refer to them, `grant` sits
 only on public tools refused to unattended runs, the outcome's pairings hold, and the input
 schedule is exactly one of its forms.

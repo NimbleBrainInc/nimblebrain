@@ -17,3 +17,4 @@ export {
   type Visibility,
 } from "./contract.ts";
 export { ToolCallError, type ToolErrorBody, type ToolErrorResult, toolError } from "./errors.ts";
+export { declareHostMeta, HOST_META_KEY } from "./handshake.ts";

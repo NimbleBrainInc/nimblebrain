@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "tasks",
+  "version": "0.1.0",
+  "description": "Scheduled and unattended work: one MCP server implementing the ai.nimblebrain.tasks contract on the local filesystem.",
+  "author": { "name": "NimbleBrain", "url": "https://nimblebrain.ai" },
+  "license": "Apache-2.0",
+  "keywords": ["tasks", "schedules", "batches"],
+  "extensions": {
+    "ai.nimblebrain": {
+      "$schema": "https://schemas.nimblebrain.ai/plugin-extension/v1/plugin-extension.schema.json",
+      "implements": [{ "contract": "ai.nimblebrain.tasks", "version": "1.0", "server": "tasks" }]
+    }
+  }
+}
