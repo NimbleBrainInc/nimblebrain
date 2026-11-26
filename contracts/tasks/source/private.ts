@@ -434,9 +434,9 @@ export const PRIVATE_SCHEMAS = {
       {
         occurrences: Type.Array(Ref("occurrence", Occurrence)),
         cancel: Type.Array(RunId, {
-          maxItems: 1000,
           description:
-            "Runs the host has begun in this workspace that it should stop: each is answered " +
+            "Runs the host has begun in this workspace that it should stop, bounded by the runs " +
+            "the host has in flight there, which its admission bounds: each is answered " +
             "until the host's end_run for it lands. Every page carries the whole list.",
         }),
         nextCursor: Type.Union([Type.String(), Type.Null()]),

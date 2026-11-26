@@ -192,6 +192,8 @@ describe("the tasks contract document", () => {
     expect(due(withoutCancel)).toBe(false);
     expect(due({ ...page, occurrences: [{ key: "k", ref: "r", ownerId: "u" }] })).toBe(false);
     expect(due({ ...page, more: true })).toBe(false);
+    const cancel = Array.from({ length: 1001 }, (_, i) => `run_${i}`);
+    expect(due({ ...page, cancel })).toBe(true);
   });
 
   test("every private output is closed", () => {
@@ -279,6 +281,17 @@ describe("the tasks contract document", () => {
     expect(output({ notices: [{ ...notice, link: "ui://tasks/panel" }] })).toBe(false);
   });
 
+  test("runs pages by an opaque cursor, as list does", () => {
+    const input = schema("runs_input");
+    expect(input({ cursor: "opaque", limit: 20 })).toBe(true);
+    expect(input({ before: "2026-01-01T00:00:00Z" })).toBe(false);
+    for (const tool of ["list", "runs"]) {
+      const properties = doc.$defs[`${tool}_output`]?.properties as Record<string, unknown>;
+      expect(properties.nextCursor).toBeDefined();
+      expect(doc.$defs[`${tool}_output`]?.required).toContain("nextCursor");
+    }
+  });
+
   test("a schedule is exactly one of its forms, and a cron names its timezone", () => {
     const create = schema("create_input");
     const make = (s: object) => ({ manifest: { name: "Daily", schedule: s }, body: "Go." });
@@ -305,7 +318,7 @@ describe("the tasks contract document", () => {
 
   test("a public output types a value from a set as a string, so a new value still reads", () => {
     const run = { id: "run_1", taskId: "t", execution: "paused", label: "Paused", startedAt: "a" };
-    expect(schema("runs_output")({ runs: [run] })).toBe(true);
+    expect(schema("runs_output")({ runs: [run], nextCursor: null })).toBe(true);
     const enumTyped = (value: unknown): boolean => {
       if (Array.isArray(value)) return value.some(enumTyped);
       if (value === null || typeof value !== "object") return false;
@@ -322,9 +335,11 @@ describe("the tasks contract document", () => {
     const run = { id: "run_1", taskId: "t", execution: "completed", label: "Succeeded" };
     const ended = { ...run, startedAt: "a", completedAt: "b" };
     const runs = schema("runs_output");
-    expect(runs({ runs: [ended] })).toBe(true);
-    expect(runs({ runs: [run] })).toBe(false);
-    expect(runs({ runs: [{ ...run, execution: "queued", label: "Queued" }] })).toBe(true);
+    expect(runs({ runs: [ended], nextCursor: null })).toBe(true);
+    expect(runs({ runs: [ended] })).toBe(false);
+    expect(runs({ runs: [run], nextCursor: null })).toBe(false);
+    const queued = { ...run, execution: "queued", label: "Queued" };
+    expect(runs({ runs: [queued], nextCursor: "opaque" })).toBe(true);
     expect(schema("run_output")({ runId: "run_1", taskId: "t" })).toBe(true);
     expect(schema("run_output")({ runId: "run_1" })).toBe(false);
     const task = { id: "t", name: "T", enabled: true, prompt: "Go." };

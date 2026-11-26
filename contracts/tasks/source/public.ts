@@ -483,11 +483,12 @@ export const TasksRunsInput = Type.Object(
       }),
     ),
     since: Type.Optional(DateTime("Only runs started at or after this instant.")),
-    before: Type.Optional(
-      DateTime(
-        "Only runs started before this instant. Pass the previous response's `nextBefore` to " +
-          "page back through the history, with or without `taskId`.",
-      ),
+    cursor: Type.Optional(
+      Type.String({
+        description:
+          "Opaque pagination cursor from a previous response's `nextCursor`, with the same " +
+          "filters. Omit for the first page.",
+      }),
     ),
     limit: Type.Optional(
       Type.Integer({ minimum: 1, maximum: 500, description: "Max runs to return. Default 20." }),
@@ -995,7 +996,9 @@ export const TasksStatusOutput = Type.Object({
 
 export const TasksRunsOutput = Type.Object({
   runs: Type.Array(TaskRunView),
-  nextBefore: Type.Optional(Type.String()),
+  nextCursor: Type.Union([Type.String(), Type.Null()], {
+    description: "Pass as `cursor` for the next older page; null on the last.",
+  }),
   total: Type.Optional(Type.Integer()),
 });
 

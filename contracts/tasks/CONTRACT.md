@@ -166,12 +166,19 @@ readable rendering in `content`. Every tool marked `unattended: "allowed"` is an
 | `status` | `task: { id, name, enabled, prompt }`, `recentRuns[]` (a run) |
 | `run` | `runId`, `taskId` |
 | `run_result` | `run`; `result: { completedAt, output }` when present |
-| `runs` | `runs[]` (a run) |
+| `runs` | `runs[]` (a run), `nextCursor` (null on the last page) |
 | `cancel` | `cancelled`, `runId` |
 | `upcoming` | `running[]: { taskId, runId }`, `queued[]: { taskId }`, `scheduled[]: { taskId, at }` |
 | `stats` | `since`, `tasks[]: { taskId, runs, pass, fail }` |
 | `run_batch`, `batch`, `batch_control` | `batch` |
 | `batches` | `batches[]` (a batch) |
+
+**Paging.** `list` and `runs` page by an opaque cursor: a client passes `nextCursor` back as
+`cursor` with the same filters, unchanged, and never builds or parses one. The implementation
+encodes its own position (for `runs`, newest first by `startedAt` with the run's id breaking a
+tie), so a page holds at most `limit` entries and following the cursor never repeats or skips
+an entry that existed when the first page was read; one added later MAY appear or be absent.
+`batch` pages its items by index, which is already a total order.
 
 A **run** requires `id`, `taskId`, `execution` and `label`, plus `startedAt` unless it is
 `queued` and `completedAt` once it has ended; an `assessment`, when present, requires `verdict`.
@@ -254,7 +261,9 @@ runs**, runs it, and enforces every limit. Nothing runs except through this flow
     the host should stop: runs the host has begun (a `begin_run` answered them with a run) and
     whose `end_run` has not landed, never any other id. The implementation lists a cancelled
     run on every `due` until the host's `end_run` for it lands, so a missed answer is repeated,
-    and every page of one listing carries the whole list. Cancelling sends the change hint
+    and every page of one listing carries the whole list. The list has no fixed cap: it is
+    bounded by the runs the host has in flight in the workspace, which the host's own admission
+    bounds, so it is never longer than the host can hold. Cancelling sends the change hint
     (§5.1), so the host calls `due` promptly. The host stops each listed run it holds, and that
     run ends with `stopReason: "cancelled"`. A run not yet begun is cancelled in the
     implementation's own records, and its claim is skipped.
