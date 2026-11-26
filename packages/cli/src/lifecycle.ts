@@ -1,3 +1,4 @@
+import { defaultAgent, detectAgents, pickAgent } from "./agent-picker.ts";
 import { restartWorker, stopWorker, workerPaths } from "./agent-worker.ts";
 import {
   chooseServerName,
@@ -8,7 +9,7 @@ import {
   type SkillRefresh,
   serverNameOf,
 } from "./agents.ts";
-import { AGENTS, type Agent, DEFAULT_PORT, type Flags, type Source } from "./args.ts";
+import { type Agent, DEFAULT_PORT, type Flags, type Source } from "./args.ts";
 import {
   asksConsent,
   claimWritten,
@@ -321,7 +322,7 @@ async function confirmStart(ctx: Ctx, tag: string, port: number): Promise<void> 
  */
 async function connectChosenAgent(ctx: Ctx, state: InstallState): Promise<string | undefined> {
   const { deps, flags, home } = ctx;
-  const agent = flags.agent ?? (asks(ctx) ? await chooseAgent(deps) : undefined);
+  const agent = flags.agent ?? (asks(ctx) ? await chooseAgent(deps, home) : undefined);
   if (!agent || agent === "none") return undefined;
   const first = (await status(deps, home)).workspaces[0];
   if (!first) return undefined;
@@ -641,12 +642,18 @@ async function confirmPull(ctx: Ctx, model: string): Promise<boolean> {
   return yes(await ctx.deps.prompt(`Download ${model} with Ollama? It is several GB. [Y/n] `));
 }
 
-async function chooseAgent(deps: Deps): Promise<Agent> {
-  deps.say(
-    "A coding agent you connect can use NimbleBrain's tools. NimbleBrain's own agents still run on what you chose above.",
+/**
+ * The agent a person picks, its default the one that is also the source just
+ * chosen (`sourceOf`, from the `.env` this run wrote), else the first installed.
+ */
+async function chooseAgent(deps: Deps, home: string): Promise<Agent> {
+  const p = paths(home);
+  const source = sourceOf(
+    (await deps.readText(p.env)) ?? "",
+    (await deps.readText(p.compose)) ?? "",
   );
-  const answer = await deps.prompt(`Connect a coding agent? (${AGENTS.join(", ")}) [none]: `);
-  return (AGENTS as readonly string[]).includes(answer) ? (answer as Agent) : "none";
+  const options = await detectAgents(deps, source);
+  return pickAgent(deps, options, defaultAgent(options, source));
 }
 
 /** The images a release's Compose file names, with its tag filled into `${NIMBLEBRAIN_TAG}`. */

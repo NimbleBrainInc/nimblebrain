@@ -42,7 +42,9 @@ later.
 `--yes` takes every default, but never chooses for you what runs NimbleBrain's agents:
 `init --use claude|codex|api|local` does, and without it a coding agent gets the
 question to ask you in `model_source`. `--agent claude-code|cursor|codex|none` names the agent to
-connect. `npx nimblebrain help --json` lists every command with the fields it answers, every flag and every error code.
+connect; at a terminal without it, `init` lists the agents it finds here and defaults to the one
+that also runs NimbleBrain's agents, else the first one found, else none. Without a terminal or
+`--agent`, nothing is connected. `npx nimblebrain help --json` lists every command with the fields it answers, every flag and every error code.
 
 When a newer CLI or NimbleBrain release exists, the CLI says so on stderr after its
 answer (once a day at most; it never updates anything itself).
@@ -105,7 +107,9 @@ login item (a LaunchAgent for your user, running a copy of the CLI kept in the i
 folder), so launchd starts it when you log in and again if it crashes; `down` removes it
 and `up` puts it back. `use api` or `use local` goes back to the model key
 or a local model; a saved one stays while you run on a subscription, for runs with a
-spend budget. The worker logs to `agent-worker.log` in the install's folder. It needs a
+spend budget. The worker logs to `agent-worker.log` in the install's folder, one `timeline` line per turn
+saying where its time went (start, the model request, the first token, retries, the plan's
+rate limit), never its text; a turn that shows nothing for 15 seconds tells you it is waiting. It needs a
 NimbleBrain release whose Compose file passes `NB_AGENT_RUNTIME`; `update` brings one.
 
 ## Usage data
