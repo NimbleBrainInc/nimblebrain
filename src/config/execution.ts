@@ -16,7 +16,7 @@
 /** One runtime beside the native engine: a worker serving an ACP agent. */
 export interface AgentRuntimeConfig {
   /** The agent the worker serves, which names the driver that speaks to it. */
-  driver: "nimblebrain-agent";
+  driver: "nimblebrain-agent" | "claude-code" | "codex";
   /** The worker's ACP endpoint, dialed over Streamable HTTP. */
   url: string;
 }
