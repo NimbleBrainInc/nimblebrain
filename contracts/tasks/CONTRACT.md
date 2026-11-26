@@ -539,10 +539,9 @@ The document's `errors` is the closed list. A failed call writes nothing.
 
 ## 16. Conformance
 
-A conformance runner that speaks only MCP to an implementation and reads only this document
-is the next step, beside this file at `runner/`, as the conversations contract has. An
-implementation is conformant when it holds every rule this file states; the runner will check
-at least:
+The conformance runner (`runner/conformance.ts`) speaks only MCP to an implementation and reads
+only this document. An implementation is conformant when it holds every rule this file states;
+the runner checks at least:
 
 - every tool's schemas, the walls, and the principal rule (each private tool answers a
   `person` with `forbidden`);
@@ -561,7 +560,7 @@ at least:
   and is answered `skip` with `interrupted`;
 - that every answer the host reads is valid against its closed schema at the stated `version`.
 
-Until then the document is held by unit tests: it compiles whole as JSON Schema 2020-12, every
+The document is also held by unit tests: it compiles whole as JSON Schema 2020-12, every
 `$ref` resolves, the shared `$defs` exist and only private tools refer to them, `grant` sits
 only on public tools refused to unattended runs, the outcome's pairings hold, and the input
 schedule is exactly one of its forms.

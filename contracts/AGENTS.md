@@ -48,4 +48,4 @@ version is one JSON document, emitted to the published tree at
 | Contract | Spec | Document | Runner |
 |---|---|---|---|
 | `ai.nimblebrain.conversations` | `conversations/CONTRACT.md` | `schemas/contracts/conversations/v1/contract.json` | `conversations/runner/conformance.ts` |
-| `ai.nimblebrain.tasks` | `tasks/CONTRACT.md` | `schemas/contracts/tasks/v1/contract.json` | none yet (CONTRACT.md §16) |
+| `ai.nimblebrain.tasks` | `tasks/CONTRACT.md` | `schemas/contracts/tasks/v1/contract.json` | `tasks/runner/conformance.ts` |
