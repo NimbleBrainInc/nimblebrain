@@ -1,6 +1,5 @@
 import type { Static, TSchema } from "@sinclair/typebox";
 import * as Compose from "./compose.ts";
-import * as Conversations from "./conversations.ts";
 import * as Files from "./files.ts";
 import * as ManageTools from "./manage-tools.ts";
 import * as Notifications from "./notifications.ts";
@@ -45,14 +44,6 @@ export const PlatformToolCatalog = {
     run: { input: Tasks.TasksRunInput },
     cancel: { input: Tasks.TasksCancelInput },
     assess: { input: Tasks.TasksAssessInput },
-  },
-  conversations: {
-    list: { input: Conversations.ConversationsListInput },
-    get: { input: Conversations.ConversationsGetInput },
-    search: { input: Conversations.ConversationsSearchInput },
-    update: { input: Conversations.ConversationsUpdateInput },
-    stats: { input: Conversations.ConversationsStatsInput },
-    export: { input: Conversations.ConversationsExportInput },
   },
   notifications: {
     list: { input: Notifications.NotificationsListInput },

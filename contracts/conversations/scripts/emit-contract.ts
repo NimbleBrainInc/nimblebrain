@@ -8,12 +8,9 @@
  *
  * The document is the published contract and is committed under the repo's
  * `schemas/` tree, at the path its `$id` names on `schemas.nimblebrain.ai`
- * (`schemas/contracts/conversations/v1/contract.json`). It is authored in three
- * places: `../source/contract.ts` (identity, version, cardinality, tool
- * visibility, errors), `../source/private.ts` (the private tools' schemas), and
- * `src/platform/schemas/conversations.ts` (the public tools' schemas, which are
- * today's conversations tools). This script is build tooling; it is the one
- * place in `contracts/` that reads an authoring source under `src/`.
+ * (`schemas/contracts/conversations/v1/contract.json`). It is authored in
+ * `../source/`: `contract.ts` (identity, version, cardinality, tool visibility,
+ * errors), `public.ts` and `private.ts` (the tools' schemas).
  *
  * Each tool's input and output schema sits in `$defs` under `<tool>_input` and
  * `<tool>_output`, exactly as it travels in `tools/list` (a JSON round trip,
@@ -27,9 +24,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import type { TSchema } from "@sinclair/typebox";
-import * as App from "../../../src/platform/schemas/conversations.ts";
 import { CONTRACT, type Visibility } from "../source/contract.ts";
 import { PRIVATE_SCHEMAS } from "../source/private.ts";
+import * as Public from "../source/public.ts";
 
 const REPO = resolve(import.meta.dir, "../../..");
 const PUBLISHED_ORIGIN = "https://schemas.nimblebrain.ai/";
@@ -38,12 +35,12 @@ const DRAFT = "https://json-schema.org/draft/2020-12/schema";
 type ToolSchemas = Record<string, { input: TSchema; output: TSchema }>;
 
 const PUBLIC_SCHEMAS: ToolSchemas = {
-  list: { input: App.ConversationsListInput, output: App.ConversationsListOutput },
-  get: { input: App.ConversationsGetInput, output: App.ConversationsGetOutput },
-  search: { input: App.ConversationsSearchInput, output: App.ConversationsSearchOutput },
-  update: { input: App.ConversationsUpdateInput, output: App.ConversationsUpdateOutput },
-  stats: { input: App.ConversationsStatsInput, output: App.ConversationsStatsOutput },
-  export: { input: App.ConversationsExportInput, output: App.ConversationsExportOutput },
+  list: { input: Public.ConversationsListInput, output: Public.ConversationsListOutput },
+  get: { input: Public.ConversationsGetInput, output: Public.ConversationsGetOutput },
+  search: { input: Public.ConversationsSearchInput, output: Public.ConversationsSearchOutput },
+  update: { input: Public.ConversationsUpdateInput, output: Public.ConversationsUpdateOutput },
+  stats: { input: Public.ConversationsStatsInput, output: Public.ConversationsStatsOutput },
+  export: { input: Public.ConversationsExportInput, output: Public.ConversationsExportOutput },
 };
 
 const SOURCES: Record<Visibility, ToolSchemas> = {

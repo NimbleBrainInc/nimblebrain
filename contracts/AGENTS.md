@@ -6,17 +6,13 @@ script that emits the document, and a conformance runner that speaks only MCP. A
 version is one JSON document, emitted to the published tree at
 `schemas/contracts/<short-name>/v<major>/contract.json` (`schemas/AGENTS.md`).
 
-- **A contract depends on nothing in `src/` at runtime.** The runner and anything an
-  implementation loads read only the contract's published document. The one exception is
-  build tooling: `scripts/emit-contract.ts` reads TypeBox authoring sources, including one
-  under `src/` where today's tools are a contract's tools
-  (`src/platform/schemas/conversations.ts` holds the conversations contract's public tools).
-  Biome refuses a `src/` import from any other file here.
+- **A contract depends on nothing in `src/`.** Its sources, its emitter and its runner live
+  in its own directory, and the runner and anything an implementation loads read only the
+  published document. Biome refuses a `src/` import from any file here.
 - **JSON is the published form; TypeBox is authoring source.** The document under `schemas/`
   is the contract and is committed. Its sources live in `source/`: a typed file for the
-  identity, version, cardinality, tool visibility and errors, and TypeBox for the schemas (or,
-  for tools that are today's tools, beside those tools). Never edit the emitted document by
-  hand.
+  identity, version, cardinality, tool visibility and errors, and TypeBox for the schemas.
+  Never edit the emitted document by hand.
 - **The document's `$id` is stated in `source/`, never derived from its `contract` field.**
   `contract` is the identity (the name `implements[].contract` uses); the `$id` is where the
   document lives. The document is a valid JSON Schema 2020-12 document and compiles whole.

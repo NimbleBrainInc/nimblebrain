@@ -1,8 +1,7 @@
 /**
  * The conversations contract's authoring data: everything in the published
  * document except the tools' schemas. `scripts/emit-contract.ts` joins it with
- * the schemas (`private.ts` here, and the public tools' source beside today's
- * tools) into `schemas/contracts/conversations/v1/contract.json`. Nothing at
+ * the schemas (`public.ts` and `private.ts` here) into `schemas/contracts/conversations/v1/contract.json`. Nothing at
  * runtime imports this file.
  */
 

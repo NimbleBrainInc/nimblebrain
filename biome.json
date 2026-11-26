@@ -92,7 +92,7 @@
       "plugins": ["./biome-plugins/router-use.grit"]
     },
     {
-      "includes": ["contracts/**/*.ts", "!contracts/*/scripts/**"],
+      "includes": ["contracts/**/*.ts"],
       "linter": {
         "rules": {
           "style": {
@@ -102,7 +102,7 @@
                 "patterns": [
                   {
                     "group": ["**/src/**"],
-                    "message": "A contract depends on nothing in src/ at runtime: its runner and sources read only the contract's own files. Only the emitter (scripts/) reads an authoring source under src/ (contracts/AGENTS.md)."
+                    "message": "A contract depends on nothing in src/: its sources, emitter and runner read only the contract's own files (contracts/AGENTS.md)."
                   }
                 ]
               }
