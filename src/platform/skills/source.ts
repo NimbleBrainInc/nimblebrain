@@ -50,7 +50,11 @@ import {
   type SkillLoadRow,
 } from "../../skills/load-ledger.ts";
 import { parseSkillContent, parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
-import { resolveLoadingMechanism, type SkillLoadingMechanism } from "../../skills/loading.ts";
+import {
+  type LoadingSignals,
+  resolveLoadingMechanism,
+  type SkillLoadingMechanism,
+} from "../../skills/loading.ts";
 import {
   DEFAULT_LOADING_STRATEGY,
   DEFAULT_SKILL_PRIORITY,
@@ -162,9 +166,11 @@ const SKILLS_CREATE_DESCRIPTION =
   "Create a Layer 3 skill at the given scope (`org`, `workspace`, or `user`). Writes a " +
   "markdown file with YAML frontmatter — `manifest` becomes the frontmatter, `body` is the " +
   "markdown below it. **Confirm with the user before creating org- or workspace-scope " +
-  "skills** — they affect every conversation in that scope. `loadingStrategy: always` is " +
-  "refused here: the user sets always-on skills in Skills settings. Returns the new skill's id " +
-  "(filesystem path).";
+  "skills** — they affect every conversation in that scope. Save it on request (no " +
+  "`loading-strategy: always`, `tool-affinity` or `triggers`): the catalog lists it and you " +
+  "load it when the job needs it. A skill that would load on its own is refused here; the user " +
+  "adds the trigger or tool-affinity in Skills settings, so give them the one you would use. " +
+  "Returns the new skill's id (filesystem path).";
 
 const SKILLS_UPDATE_DESCRIPTION =
   "Update an existing Layer 3 skill. The `id` is the filesystem path returned by `skills__list` " +
@@ -175,8 +181,8 @@ const SKILLS_UPDATE_DESCRIPTION =
   "rule — it keeps everything already there), `replace` overwrites the whole body. Snapshots " +
   "the current version to `_versions/` first; `skills__history` lists those snapshots and " +
   "`skills__restore` puts one back. Connector (Layer 1) skills are not editable. A change that " +
-  "leaves a skill `always` (setting it, or editing one that already is) is refused: the user " +
-  "makes it in Skills settings.";
+  "leaves a skill loading on its own (`always`, `tool-affinity` or `triggers`: setting one, or " +
+  "editing a skill that already has one) is refused: the user makes it in Skills settings.";
 
 // Tool input schemas live in `./schemas/skills.ts` — see the catalog at
 // `./schemas/catalog.ts`. The LLM-facing create/update input is a SUBSET of the
@@ -195,8 +201,8 @@ const SKILLS_HISTORY_DESCRIPTION =
 const SKILLS_RESTORE_DESCRIPTION =
   "Restore a skill's body and manifest from a snapshot listed by `skills__history`. The current " +
   "version is snapshotted first, so a restore is itself undoable. Use this to recover content " +
-  'an over-broad `body_mode: "replace"` discarded. Restoring an `always` version is refused, as ' +
-  "on `skills__update`.";
+  'an over-broad `body_mode: "replace"` discarded. Restoring a version that loads on its own ' +
+  "(`always`, `tool-affinity` or `triggers`) is refused, as on `skills__update`.";
 
 const SKILLS_DELETE_DESCRIPTION =
   "Delete a Layer 3 skill. The `id` is the filesystem path returned by `skills__list`. " +
@@ -779,50 +785,62 @@ function matchesToolAffinityFilter(s: ListedSkill, toolAffinity: string): boolea
 }
 
 /**
- * Resolve every directory a skill is allowed to be read from. Used by
- * `skills__read` to reject path traversal — the requested filesystem path
- * must resolve under one of these roots.
+ * The tier of the skills directory `path` sits in, given `workDir`, or `null`
+ * when it is in none. A Layer 3 skill id names a file in a directory the loader
+ * scans, and only those: `{workDir}/skills/`, `{workDir}/workspaces/<wsId>/skills/`
+ * and `{workDir}/users/<userId>/skills/`. The rest of a workspace or user tree
+ * (its files, conversations, tasks) is not a skill, whatever its contents parse
+ * as, so no skill tool reads or writes there.
  */
-function allowedReadRoots(runtime: Runtime, authoringGuidePath: string): string[] {
-  const workDir = runtime.getWorkDir();
-  return [
-    join(workDir, "skills"),
-    join(workDir, "workspaces"),
-    join(workDir, "users"),
-    ...connectorSkillRoots(authoringGuidePath),
-  ].map((r) => resolve(r));
-}
-
-function isPathUnderAnyRoot(target: string, roots: string[]): boolean {
-  const resolved = resolve(target);
-  return roots.some((root) => resolved === root || resolved.startsWith(`${root}/`));
+function skillTierOfPath(workDir: string, path: string): WritableScope | null {
+  const work = resolve(workDir);
+  const target = resolve(path);
+  if (target.startsWith(`${join(work, "skills")}/`)) return "org";
+  for (const [dir, scope] of [
+    ["workspaces", "workspace"],
+    ["users", "user"],
+  ] as const) {
+    const root = `${join(work, dir)}/`;
+    if (!target.startsWith(root)) continue;
+    // `<owner>/skills/<entry>…`: an owner, the skills dir, and something in it.
+    const [owner, skillsDir, entry] = target.slice(root.length).split("/");
+    return owner && skillsDir === "skills" && entry ? scope : null;
+  }
+  return null;
 }
 
 /**
- * Defend against symlink escape from inside an allowed root. A writer
- * with access to `{workDir}/workspaces/{wsId}/skills/` could drop a
- * symlink (`evil.md` → `/etc/passwd`); `path.resolve()` normalizes `..`
- * but doesn't resolve symlinks, so the lexical under-root check passes.
- * `realpathSync` chases the link before the second under-root check.
+ * Defend against symlink escape from inside a skills directory. A writer with
+ * access to `{workDir}/workspaces/{wsId}/skills/` could drop a symlink
+ * (`evil.md` → `/etc/passwd`, or → a file elsewhere in the workspace tree);
+ * `path.resolve()` normalizes `..` but doesn't resolve symlinks, so the lexical
+ * check passes. `realpathSync` chases the link, and the real path must again
+ * sit in a skills directory or a connector skill root.
  *
- * Roots are real-pathed too, since the work dir itself may pass through a
- * symlink (e.g. macOS tmpdirs live under `/var/folders/...` which is a
+ * The work dir and the connector roots are real-pathed too, since they may pass
+ * through a symlink (e.g. macOS tmpdirs live under `/var/folders/...` which is a
  * symlink into `/private/var/...`).
  *
  * Throws if the realpath escapes; returns the real path on success.
  * Caller has already verified existence (this is the second gate).
  */
-function realPathUnderAnyRootOrThrow(target: string, roots: string[]): string {
+function realPathInSkillDirOrThrow(
+  runtime: Runtime,
+  target: string,
+  authoringGuidePath: string,
+): string {
   const real = realpathSync(target);
-  const realRoots = roots.map((r) => {
+  const realOrSelf = (p: string) => {
     try {
-      return realpathSync(r);
+      return realpathSync(p);
     } catch {
-      return r;
+      return p;
     }
-  });
-  const ok = realRoots.some((root) => real === root || real.startsWith(`${root}/`));
-  if (!ok) {
+  };
+  const inConnectorRoot = connectorSkillRoots(authoringGuidePath)
+    .map(realOrSelf)
+    .some((root) => real === root || real.startsWith(`${root}/`));
+  if (!inConnectorRoot && !skillTierOfPath(realOrSelf(runtime.getWorkDir()), real)) {
     throw new Error(`Skill path "${target}" resolves through a symlink outside allowed roots`);
   }
   return real;
@@ -872,15 +890,10 @@ function assertSymlinkBoundaryOrThrow(
     /* fall back to lexical workDir */
   }
 
-  // Compute realScope from the realpath against the realpath'd workDir.
-  const wsRoot = `${join(realWorkDir, "workspaces")}/`;
-  const userRoot = `${join(realWorkDir, "users")}/`;
-  const orgRoot = `${join(realWorkDir, "skills")}/`;
-  let realScope: WritableScope | "provided";
-  if (real.startsWith(wsRoot)) realScope = "workspace";
-  else if (real.startsWith(userRoot)) realScope = "user";
-  else if (real.startsWith(orgRoot)) realScope = "org";
-  else realScope = "provided";
+  // Compute realScope from the realpath against the realpath'd workDir, with
+  // the same skills-directory rule as `scopeOfPath`: a link out of `skills/`
+  // into the rest of the workspace or user tree is not in any tier.
+  const realScope: WritableScope | "provided" = skillTierOfPath(realWorkDir, real) ?? "provided";
 
   if (realScope !== expectedScope) {
     throw new Error(
@@ -937,17 +950,17 @@ async function readSkillById(
   }
 
   // Treat as filesystem path. Two security gates:
-  //   1. Lexical: the resolved path (.. normalized) sits under an allowed
-  //      root. Cheap; rejects most attacks before any FS access.
-  //   2. Real: realpath chases symlinks and re-checks under-root. Defends
-  //      against symlink escape from inside an allowed dir.
-  const roots = allowedReadRoots(runtime, authoringGuidePath);
-  if (!isPathUnderAnyRoot(id, roots)) {
+  //   1. Lexical: the resolved path (.. normalized) sits in a skills directory
+  //      or a connector skill root. Cheap; rejects most attacks before any FS
+  //      access.
+  //   2. Real: realpath chases symlinks and re-checks. Defends against symlink
+  //      escape from inside a skills directory.
+  if (!scopeOfPath(runtime, id, authoringGuidePath)) {
     throw new Error(unrecognizedIdMessage(id));
   }
 
   if (!existsSync(id)) return null;
-  realPathUnderAnyRootOrThrow(id, roots);
+  realPathInSkillDirOrThrow(runtime, id, authoringGuidePath);
   const skill = parseSkillFile(id);
   if (!skill) return null;
   return buildReadResult(skill, {
@@ -1712,7 +1725,9 @@ function connectorSkillRoots(authoringGuidePath: string): string[] {
 /**
  * Classify a filesystem path into a writable scope (`workspace` / `user` /
  * `org`), the read-only `connector` tier, or `null` if the path doesn't sit
- * under any known skill root.
+ * in any skill directory ({@link skillTierOfPath}). Every skill tool that
+ * takes a path id classifies it here first, so a path outside the skills
+ * directories is an unrecognized id for all of them.
  *
  * Returning `null` for unclassified paths (rather than the previous "treat
  * as connector" fallback) is load-bearing: callers — especially mutation
@@ -1726,11 +1741,9 @@ function scopeOfPath(
   path: string,
   authoringGuidePath: string,
 ): WritableScope | "provided" | null {
-  const work = resolve(runtime.getWorkDir());
+  const tier = skillTierOfPath(runtime.getWorkDir(), path);
+  if (tier) return tier;
   const real = resolve(path);
-  if (real.startsWith(`${join(work, "workspaces")}/`)) return "workspace";
-  if (real.startsWith(`${join(work, "users")}/`)) return "user";
-  if (real.startsWith(`${join(work, "skills")}/`)) return "org";
   for (const root of connectorSkillRoots(authoringGuidePath)) {
     if (real === root || real.startsWith(`${root}/`)) return "provided";
   }
@@ -1999,8 +2012,19 @@ function absorbPastedFrontmatter(
  */
 function loadsNote(mechanism: SkillLoadingMechanism): string {
   return mechanism === "on_request"
-    ? "on request — the model loads it from the catalog when the job needs it; add tool-affinity or a trigger to load it without being asked"
+    ? "on request — the model loads it from the catalog when the job needs it; the user can add tool-affinity or a trigger in Skills settings to load it without being asked"
     : mechanism;
+}
+
+/** How an auto-loading skill reaches the model, in the words a refusal uses. */
+const AUTO_LOAD_REACH: Record<Exclude<SkillLoadingMechanism, "on_request">, string> = {
+  always: "`loading-strategy: always`, every conversation in its scope",
+  tool_affinity: "`tool-affinity`, before its tool's first call in any conversation",
+  trigger: "`triggers`, whenever a message contains one",
+};
+
+function autoLoadReach(mechanism: SkillLoadingMechanism): string {
+  return mechanism === "on_request" ? mechanism : AUTO_LOAD_REACH[mechanism];
 }
 
 /**
@@ -2080,13 +2104,9 @@ async function createSkill(
     ...buildCreateManifest(manifest, ctx, createdBy, now),
     ...pasted.fields,
   };
-  const alwaysOn = alwaysOnWriteRefusal(fullManifest.loadingStrategy, false);
-  if (alwaysOn) return alwaysOn;
+  const autoLoad = autoLoadWriteRefusal(fullManifest, undefined);
+  if (autoLoad) return autoLoad;
 
-  // A `dynamic` skill with neither tool-affinity nor triggers is catalog-only:
-  // it won't auto-load until the catalog ships (P3). We honor that rather than
-  // silently bumping it to `always` — the author can add a trigger/tool-affinity,
-  // or set `loading-strategy: always`, to make it load now.
   const mechanism = resolveLoadingMechanism(fullManifest);
 
   const validation = validateSkill(name, fullManifest, pasted.body);
@@ -2154,42 +2174,48 @@ function buildUpdatePatch(
 }
 
 /**
- * Refuse a write that leaves a skill always-on unless the person made it from
- * the web shell.
+ * Refuse a write that leaves a skill loading on its own unless the person made
+ * it from the web shell.
  *
- * An always-on skill is composed into every later conversation in its scope:
- * a user skill into every workspace that user is in, an org skill into every
- * workspace. That standing guidance is the person's to write (the core skill
- * says so), so a write from the agent — a chat turn, a task run, an MCP client
- * — that would leave the skill always-on is refused, whether it sets the
- * strategy (manifest or pasted frontmatter) or edits a skill that already has
- * it. A write that leaves the skill `dynamic` is unaffected.
+ * A skill that loads without the conversation's model choosing it (always-on,
+ * tool-affinity or a trigger, per {@link resolveLoadingMechanism}) puts its body
+ * in front of the model in later conversations: a user skill in every workspace
+ * that user is in, a workspace skill for every member. Prose that reaches the
+ * model that way is the person's to write, so a write from the agent (a chat
+ * turn, a task run, an MCP client) that would leave the skill anything but
+ * `on_request` is refused, whether it sets the signal (manifest, patch or pasted
+ * frontmatter) or edits a skill that already has one. An on-request skill is
+ * listed in the catalog, and the model chooses whether to load it.
+ *
+ * The verdict comes from the loader's own predicate, so a mechanism added to
+ * `loading.ts` is covered here without a second list.
  *
  * `shellCall` is the signal: only the shell's REST door and an app view's
  * `/mcp` call set it, and a run's context never carries it, so the rule fails
  * closed for any door that does not. It is the same line app-only visibility
  * draws for `set_status`.
  *
- * `wasAlways` picks the message: the agent cannot make a skill always-on, nor
- * change one that already is.
+ * `stored` (the live manifest, absent on create) picks the message: the agent
+ * cannot make a skill load on its own, nor change one that already does.
  */
-function alwaysOnWriteRefusal(
-  resulting: string | undefined,
-  wasAlways: boolean,
+function autoLoadWriteRefusal(
+  resulting: LoadingSignals,
+  stored: LoadingSignals | undefined,
 ): ToolErrorResult | null {
-  if (resulting !== "always") return null;
+  if (resolveLoadingMechanism(resulting) === "on_request") return null;
   if (getRequestContext()?.shellCall) return null;
-  const message = wasAlways
-    ? "Not saved: this skill is always-on, so it loads into every conversation in its scope, " +
-      "and changes to it are made by the user in Skills settings. Give the user the exact change " +
-      "and ask them to make it there."
-    : "Not saved: `loading-strategy: always` loads a skill into every conversation in its scope, " +
-      "so only the user sets it, in Skills settings. Save the skill as `dynamic` (add " +
-      "`tool-affinity` or `triggers` if it should load on its own), or give the user the text " +
-      "and ask them to add it as an always-on skill there.";
+  const message =
+    stored && resolveLoadingMechanism(stored) !== "on_request"
+      ? `Not saved: this skill loads on its own (${autoLoadReach(resolveLoadingMechanism(stored))}), ` +
+        "so changes to it are made by the user in Skills settings. Give the user the exact " +
+        "change and ask them to make it there."
+      : `Not saved: this skill would load on its own (${autoLoadReach(resolveLoadingMechanism(resulting))}), ` +
+        "and only the user sets that, in Skills settings. Save it without `loading-strategy: always`, " +
+        "`tool-affinity` or `triggers` (the catalog lists it and you load it when the job needs it), " +
+        "then give the user the trigger or tool-affinity you would use and ask them to add it there.";
   return {
     content: textContent(message),
-    structuredContent: { error: message, code: "always_on_set_by_user" },
+    structuredContent: { error: message, code: "auto_load_set_by_user" },
     isError: true,
   };
 }
@@ -2349,11 +2375,11 @@ function absorbForUpdate(
 }
 
 /**
- * An update's body ({@link prepareUpdateBody}), then the always-on rule
- * ({@link alwaysOnWriteRefusal}) against the strategy the skill would have
- * after the write: the pasted document's, else the patch's, else the stored
- * one. `set_status` passes `allowStatus` and is exempt: it is app-only and
- * changes only `status`.
+ * An update's body ({@link prepareUpdateBody}), then the auto-load rule
+ * ({@link autoLoadWriteRefusal}) against the manifest the skill would have
+ * after the write: the stored one, overlaid by the patch, overlaid by the
+ * pasted document (the same merge the write does). `set_status` passes
+ * `allowStatus` and is exempt: it is app-only and changes only `status`.
  */
 function prepareUpdateWrite(
   dir: string,
@@ -2364,12 +2390,13 @@ function prepareUpdateWrite(
 ): ReturnType<typeof prepareUpdateBody> {
   const prepared = prepareUpdateBody(dir, name, input.body, mode, input.frontmatter);
   if ("error" in prepared || allowStatus) return prepared;
-  const stored = readSkill(dir, name)?.manifest.loadingStrategy;
-  const resulting =
-    prepared.pasted?.fields.loadingStrategy ??
-    buildUpdatePatch(input.manifest)?.loadingStrategy ??
-    stored;
-  const refusal = alwaysOnWriteRefusal(resulting, stored === "always");
+  const stored = readSkill(dir, name)?.manifest;
+  const resulting: LoadingSignals = {
+    ...stored,
+    ...buildUpdatePatch(input.manifest),
+    ...(prepared.pasted?.fields ?? {}),
+  };
+  const refusal = autoLoadWriteRefusal(resulting, stored);
   return refusal ? { error: refusal } : prepared;
 }
 
@@ -2412,7 +2439,7 @@ async function updateSkillHandler(
   if (refusal) return refusal;
 
   const effectiveMode = bodyMode ?? "replace";
-  // The body is sized, and the always-on rule checked, before the snapshot, so
+  // The body is sized, and the auto-load rule checked, before the snapshot, so
   // a refused update leaves neither a changed file nor a history entry.
   const prepared = prepareUpdateWrite(dir, name, input, effectiveMode, opts.allowStatus === true);
   if ("error" in prepared) return prepared.error;
@@ -2575,11 +2602,8 @@ async function restoreSkillHandler(
 
   const dir = dirname(path);
   const name = (path.split("/").pop() ?? "").replace(/\.md$/, "");
-  const alwaysOn = alwaysOnWriteRefusal(
-    parsed.manifest.loadingStrategy,
-    readSkill(dir, name)?.manifest.loadingStrategy === "always",
-  );
-  if (alwaysOn) return alwaysOn;
+  const autoLoad = autoLoadWriteRefusal(parsed.manifest, readSkill(dir, name)?.manifest);
+  if (autoLoad) return autoLoad;
 
   // Snapshot the CURRENT file before overwriting it, so restoring to the
   // wrong version is itself recoverable — the property whose absence made

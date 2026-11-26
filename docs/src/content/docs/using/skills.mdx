@@ -13,7 +13,7 @@ Every skill declares one loading strategy:
 
 | Strategy | Behavior |
 |----------|----------|
-| `always` | Always composed into the system prompt. For identity, voice, and durable cross-cutting rules. Keep it short — it costs context on every turn. Set by a person in settings, never by the agent (see [Editing a skill](#editing-a-skill)). |
+| `always` | Always composed into the system prompt. For identity, voice, and durable cross-cutting rules. Keep it short — it costs context on every turn. Set by a person in settings, never by the agent (see [Who sets how a skill loads](#who-sets-how-a-skill-loads)). |
 | `dynamic` | Loaded on demand. For task / domain skills. Enters context through one of the activation signals below. |
 
 A `dynamic` skill activates through any of:
@@ -149,7 +149,7 @@ metadata:
 
 ## Guidance for one connector
 
-Guidance a workspace wants the agent to follow when it uses one connector (house rules for a CRM's stages, a brand voice for a document tool) is a **workspace skill bound to the connector's tools**. Create it from **Skills → New skill** (choose **Everyone in** the workspace), or with `skills__create`, and give it a `tool-affinity` matching those tools:
+Guidance a workspace wants the agent to follow when it uses one connector (house rules for a CRM's stages, a brand voice for a document tool) is a **workspace skill bound to the connector's tools**. Create it from **Skills → New skill** (choose **Everyone in** the workspace) and give it a `tool-affinity` matching those tools. The agent can draft it, but the tool patterns are yours to add ([Who sets how a skill loads](#who-sets-how-a-skill-loads)):
 
 ```yaml
 ---
@@ -300,7 +300,11 @@ A skill's page under Skills, and the organization's Skills page in settings, cre
 
 The agent edits a skill with `skills__update`, which takes a patch: a field it leaves out keeps its value, and `null` clears one. A cleared list is removed from the file, and a cleared `loading-strategy` or `priority` returns to its default (`dynamic`, 50). `description` is required, so it takes no `null`.
 
-An always-on skill is written by a person, from a skill's page or the Skills settings. The skills tools refuse any other caller (the agent in a chat or a task, or an MCP client) a write that would leave a skill `always`: a `skills__create`, `skills__update`, or `skills__restore` that sets it (in `manifest` or in a pasted `SKILL.md`), and any change to a skill that already is. The refusal has the code `always_on_set_by_user`, and the agent drafts the text for the person to add. A `dynamic` skill is written from chat as before.
+### Who sets how a skill loads
+
+A skill that loads on its own (`always`, `tool-affinity`, or `triggers`) reaches the model in later conversations without that conversation's model choosing it, so a person sets how it loads, from a skill's page or the Skills settings. The skills tools refuse any other caller (the agent in a chat or a task, or an MCP client) a write that would leave a skill loading on its own: a `skills__create`, `skills__update`, or `skills__restore` that sets one of those fields (in `manifest` or in a pasted `SKILL.md`), and any change to a skill that already has one. The refusal has the code `auto_load_set_by_user`.
+
+The agent can still write a skill that loads on request: the Skill Catalog lists it, and the model loads it when the job needs it. When a skill should load on its own, the agent saves it on request and gives you the trigger phrases or tool patterns to add on the skill's page.
 
 ## Auditing how skills loaded
 
