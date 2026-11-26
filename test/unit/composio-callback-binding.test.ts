@@ -122,7 +122,7 @@ function makeApp(): Hono<AppEnv> {
       }),
     resolveRequestUserId: () => "usr_member",
     getIdentityProvider: () => null,
-    assertConversationInWorkspace: () => {},
+    assertConversationInWorkspace: async () => {},
   });
   const ctx = stub<AppContext>({
     runtime,
