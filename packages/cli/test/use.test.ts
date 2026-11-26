@@ -777,6 +777,88 @@ describe("the worker's login item", () => {
   });
 });
 
+describe("a worker that drains before it lets go of its port", () => {
+  const plistOf = (m: ReturnType<typeof mac>) => m.files.get(PLIST)?.text ?? "";
+  /** On Claude, whose worker holds 27290 for 3 s after launchd stops it. */
+  async function draining(opts: MachineOptions = {}) {
+    const m = mac({ tags: ["v0.73.0"], drainMs: 3_000, ...opts });
+    await json(["use", "claude"], m);
+    return m;
+  }
+
+  test.each([
+    [
+      "update, with a newer CLI file",
+      (m: ReturnType<typeof mac>) =>
+        m.files.set(BUNDLE, { text: "// nimblebrain 0.9.1\n", mode: 0o644 }),
+      ["update"],
+    ],
+    [
+      "up, with a Node that moved",
+      (m: ReturnType<typeof mac>) => {
+        m.deps.self = { ...m.deps.self, node: "/home/dana/.nvm/versions/node/v24.1.0/bin/node" };
+      },
+      ["up"],
+    ],
+    ["use claude again", () => {}, ["use", "claude"]],
+  ] as const)(
+    "%s: waits for it, then starts the new one on the same port",
+    async (_, change, argv) => {
+      const m = await draining();
+      change(m);
+      const { body, code } = await json([...argv], m);
+      expect(code).toBe(0);
+      expect(body.port_moved).toBeUndefined();
+      expect(m.now).toBeGreaterThanOrEqual(3_000);
+      expect(m.spawned.length).toBe(2);
+      expect(m.spawned.at(-1)?.line).toContain("--port 27290 ");
+      expect(m.loaded.has(LABEL)).toBe(true);
+      expect(m.files.has(PLIST)).toBe(true);
+      expect(body.agent_runtime.worker).toMatchObject({ running: true, login_item: PLIST });
+      expect(envOf(m)).toContain("NB_AGENT_RUNTIME_URL=http://host.docker.internal:27290/acp\n");
+    },
+  );
+
+  test.each([
+    ["update", "NimbleBrain was updated, but "],
+    ["up", "NimbleBrain is running, but "],
+  ] as const)(
+    "%s with the port held by something else after the wait is PORT_IN_USE, and puts the login item back",
+    async (command, lead) => {
+      const m = await draining({ tags: ["v0.73.0", "v0.74.0"] });
+      const before = { plist: plistOf(m), record: m.files.get(RECORD)?.text };
+      // A newer CLI file, so the item is replaced; another program takes 27290 once the worker lets go.
+      m.files.set(BUNDLE, { text: "// nimblebrain 0.9.1\n", mode: 0o644 });
+      m.deps.portFree = async (port) => port !== 27290;
+      const { body, code } = await json([command], m);
+      expect(code).toBe(1);
+      expect(body).toMatchObject({ ok: false, error: "PORT_IN_USE", login_item: PLIST });
+      expect(body.message).toStartWith(`${lead}port 27290 on 127.0.0.1 is in use`);
+      expect(body.message).toContain("login item is back as it was");
+      expect(body.fix).toBe(FIX_VARIANTS.PORT_IN_USE.worker);
+      expect(body.fix).toContain("`npx nimblebrain up`");
+      // The item, its record and the copy it runs are as they were, and launchd has it loaded.
+      expect(plistOf(m)).toBe(before.plist);
+      expect(m.files.get(RECORD)?.text).toBe(before.record);
+      expect(m.files.get(BIN)?.text).toBe("// nimblebrain 0.9.0\n");
+      expect(m.loaded.has(LABEL)).toBe(true);
+      expect(envOf(m)).toContain("NB_AGENT_RUNTIME=claude-code\n");
+    },
+  );
+
+  test("use with a busy --port puts the running worker back, and .env still dials it", async () => {
+    const m = await draining({ busyPorts: [28000] });
+    const before = plistOf(m);
+    const { body } = await json(["use", "claude", "--port", "28000"], m);
+    expect(body).toMatchObject({ error: "PORT_IN_USE", login_item: PLIST });
+    expect(body.message).toContain("28000");
+    expect(plistOf(m)).toBe(before);
+    expect(m.loaded.has(LABEL)).toBe(true);
+    expect(m.spawned.at(-1)?.line).toContain("--port 27290 ");
+    expect(envOf(m)).toContain("NB_AGENT_RUNTIME_URL=http://host.docker.internal:27290/acp\n");
+  });
+});
+
 describe("the turn model", () => {
   test("claude runs on Sonnet by default; --model opus is recorded, passed to the worker and reported", async () => {
     const m = mac();

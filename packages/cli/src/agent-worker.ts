@@ -125,6 +125,12 @@ export const SUBSCRIPTION_RUNTIMES: Record<
 const WORKER_START_MS = 20_000;
 /** How long a detached worker from an earlier build may take to end before it is killed. */
 const WORKER_STOP_MS = 5_000;
+/**
+ * How long a stopped worker may hold its port. `launchctl bootout` returns
+ * while the worker still drains its connections; launchd kills a job that has
+ * not exited 20 s after its SIGTERM (`ExitTimeOut`), so by then the port is free.
+ */
+const WORKER_RELEASE_MS = 20_000;
 const POLL_MS = 250;
 
 /** The agent runtime `.env` names, the worker port its URL dials, and the worker's turn model. */
@@ -296,6 +302,78 @@ export async function stopWorker(deps: Deps, home: string): Promise<boolean> {
   return stopped;
 }
 
+/**
+ * Waits until nothing listens on `port`, up to `WORKER_RELEASE_MS`. True once
+ * it is free.
+ */
+async function released(deps: Deps, port: number): Promise<boolean> {
+  for (let waited = 0; waited < WORKER_RELEASE_MS; waited += POLL_MS) {
+    if (await deps.portFree(port)) return true;
+    await deps.sleep(POLL_MS);
+  }
+  return deps.portFree(port);
+}
+
+/** The install's login item and record as they are on disk, so a replacement that cannot listen can put them back. */
+interface Installed {
+  item: LoginItem;
+  plist: string;
+  record?: string;
+  /** The port its worker listens on: the record's, else the one `.env` dials. */
+  port?: number;
+}
+
+async function installedWorker(deps: Deps, home: string): Promise<Installed | undefined> {
+  const item = await installedItem(deps, home);
+  const plistText = item && (await deps.readText(item.path));
+  if (!item || plistText === undefined) return undefined;
+  const port =
+    (await readRecord(deps, home))?.port ??
+    agentRuntimeOf((await deps.readText(paths(home).env)) ?? "").port;
+  return {
+    item,
+    plist: plistText,
+    record: await deps.readText(workerPaths(home).record),
+    ...(port === undefined ? {} : { port }),
+  };
+}
+
+/** Writes the login item and record back as they were and loads the item again. True when launchd took it. */
+async function reinstate(deps: Deps, home: string, was: Installed): Promise<boolean> {
+  await deps.writeText(was.item.path, was.plist, 0o644);
+  if (was.record !== undefined) await deps.writeText(workerPaths(home).record, was.record, 0o600);
+  return bootstrap(deps, was.item);
+}
+
+/**
+ * Stops this install's worker, waits for it to let go of its port, and runs
+ * `start`. A stopped worker still drains for a moment, holding its port, so
+ * its own port is never read as taken by another program before that wait.
+ * When `start` finds a port taken all the same (`PORT_IN_USE`), nothing new
+ * was written yet, so the login item and record go back as they were: the
+ * install is left as it was found, not without its worker.
+ */
+export async function replaceWorker<T>(
+  deps: Deps,
+  home: string,
+  start: () => Promise<T>,
+): Promise<T> {
+  const was = await installedWorker(deps, home);
+  const port = was?.port ?? (await readRecord(deps, home))?.port;
+  const stopped = await stopWorker(deps, home);
+  if (stopped && port !== undefined) await released(deps, port);
+  try {
+    return await start();
+  } catch (err) {
+    if (!(err instanceof CliError) || err.code !== "PORT_IN_USE" || !was) throw err;
+    if (!(await reinstate(deps, home, was))) throw err;
+    throw err.with(
+      { login_item: was.item.path },
+      `${err.message} The agent worker's login item is back as it was; launchd starts its worker again whenever it can listen.`,
+    );
+  }
+}
+
 /** The login item's command: this Node, the home's copy of this CLI, the worker's own arguments. */
 async function workerProgram(
   deps: Deps,
@@ -367,13 +445,16 @@ export async function startWorker(
     return state();
   }
 
-  await stopWorker(deps, home);
-  if (!(await deps.portFree(port))) {
-    throw new CliError(
-      "PORT_IN_USE",
-      `Port ${port} on 127.0.0.1 is in use, so the agent worker cannot listen there.`,
-    );
-  }
+  await replaceWorker(deps, home, async () => {
+    if (!(await deps.portFree(port))) {
+      throw new CliError(
+        "PORT_IN_USE",
+        `Port ${port} on 127.0.0.1 is in use, so the agent worker cannot listen there.`,
+        {},
+        "worker",
+      );
+    }
+  });
   if (copy !== undefined) await deps.writeText(w.bin, copy, 0o600);
   // launchd appends to the log; made here first, so it is this user's alone.
   if ((await deps.readText(w.log)) === undefined) await deps.writeText(w.log, "", 0o600);

@@ -2,6 +2,7 @@ import {
   AGENT_RUNTIME_ENV,
   agentRuntimeOf,
   preflight,
+  replaceWorker,
   SUBSCRIPTION_RUNTIMES,
   startWorker,
   stopWorker,
@@ -326,16 +327,19 @@ export async function startSubscription(
     );
   }
   const account = await preflight(deps, runtime);
-  await stopWorker(deps, home);
-  // A port a person named is kept, busy or not (`startWorker` refuses a busy one); a busy default moves.
-  const moved =
-    port === undefined ? await movePort(deps, home, WORKER_PORTS[runtime], "worker") : undefined;
-  if (moved) deps.say(movedLine(deps, moved, "the agent worker"));
-  const at = port ?? moved?.to ?? WORKER_PORTS[runtime];
-  const turnModel = model ?? DEFAULT_TURN_MODELS[runtime];
-  const worker = await startWorker(deps, home, runtime, at, account.plan, turnModel);
-  await writeAgentRuntime(deps, home, runtime, at, turnModel);
-  return { worker, account, runtime, moved };
+  // This install's own worker is stopped and its port let go before the port is judged, so
+  // its own port never reads as busy; a port still taken puts the old worker back.
+  return replaceWorker(deps, home, async () => {
+    // A port a person named is kept, busy or not (`startWorker` refuses a busy one); a busy default moves.
+    const moved =
+      port === undefined ? await movePort(deps, home, WORKER_PORTS[runtime], "worker") : undefined;
+    if (moved) deps.say(movedLine(deps, moved, "the agent worker"));
+    const at = port ?? moved?.to ?? WORKER_PORTS[runtime];
+    const turnModel = model ?? DEFAULT_TURN_MODELS[runtime];
+    const worker = await startWorker(deps, home, runtime, at, account.plan, turnModel);
+    await writeAgentRuntime(deps, home, runtime, at, turnModel);
+    return { worker, account, runtime, moved };
+  });
 }
 
 /**

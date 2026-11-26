@@ -109,8 +109,8 @@ and `up` puts it back. `use api` or `use local` goes back to the model key
 or a local model; a saved one stays while you run on a subscription, for runs with a
 spend budget. The worker logs to `agent-worker.log` in the install's folder, one `timeline` line per turn
 saying where its time went (start, the model request, the first token, retries, the plan's
-rate limit), never its text; a turn that shows nothing for 15 seconds tells you it is waiting. It needs a
-NimbleBrain release whose Compose file passes `NB_AGENT_RUNTIME`; `update` brings one.
+rate limit), never its text; a turn that shows nothing for 15 seconds tells you it is waiting. It needs
+NimbleBrain v0.87.0 or newer (v0.87.1 for titles and summaries on Haiku); `update` brings it.
 
 ## Usage data
 
