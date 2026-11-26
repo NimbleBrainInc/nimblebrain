@@ -27,6 +27,12 @@ export interface ContractError {
 export interface ContractToolEntry {
   visibility: Visibility;
   unattended: Unattended;
+  /**
+   * The host stamps a run grant into the host context of a `person` call to
+   * this tool (`contracts/host-context/CONTEXT.md`). Only on a public tool
+   * marked `unattended: "refused"`, so no run ever receives one.
+   */
+  grant?: true;
 }
 
 /** Everything a contract document holds except its schemas. */
@@ -39,19 +45,21 @@ export interface ContractMeta {
   contract: string;
   version: string;
   cardinality: "singleton" | "additive";
-  /**
-   * Whether the host stamps a run grant into the host context of every
-   * `person` call to an implementation (`contracts/host-context/CONTEXT.md`).
-   */
-  grants: boolean;
   tools: Readonly<Record<string, ContractToolEntry>>;
   errors: Readonly<Record<Visibility, readonly ContractError[]>>;
 }
 
 export type ToolSchemas = Record<string, { input: TSchema; output: TSchema }>;
 
-/** A contract's whole authoring source: its metadata and each tool's schemas, by visibility. */
+/** A contract's whole authoring source. */
 export interface ContractSource {
   meta: ContractMeta;
+  /** Each tool's input and output schema, by visibility. */
   schemas: Record<Visibility, ToolSchemas>;
+  /**
+   * Named schemas several tools share, emitted as `$defs` entries under these
+   * names. A tool's schema refers to one as `{ "$ref": "#/$defs/<name>" }`; a
+   * shared schema refers to no other.
+   */
+  shared?: Record<string, TSchema>;
 }

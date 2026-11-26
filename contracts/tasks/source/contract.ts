@@ -12,9 +12,9 @@ export const CONTRACT = {
   $id: "https://schemas.nimblebrain.ai/contracts/tasks/v1/contract.json",
   title: "Tasks contract",
   description:
-    "The ai.nimblebrain.tasks contract: its identity, version, cardinality, whether it needs " +
-    "run grants, its tools with their visibility, unattended marking and schemas, and the " +
-    "closed list of errors. Every tool error is a tools/call result with isError: true whose " +
+    "The ai.nimblebrain.tasks contract: its identity, version, cardinality, its tools with " +
+    "their visibility, unattended marking, grant marking and schemas, the schemas tools share, " +
+    "and the closed list of errors. Every tool error is a tools/call result with isError: true whose " +
     "first text content is JSON {code, error}. A private tool's code is from errors.private. " +
     "A public tool's code, and the answer to a tool name the server does not have, is from " +
     "errors.public, and its error begins with that entry's prefix. Beyond the prefix, error is " +
@@ -23,23 +23,22 @@ export const CONTRACT = {
   contract: "ai.nimblebrain.tasks",
   version: "1.0",
   cardinality: "singleton",
-  grants: true,
   tools: {
-    create: { visibility: "public", unattended: "refused" },
-    update: { visibility: "public", unattended: "refused" },
+    create: { visibility: "public", unattended: "refused", grant: true },
+    update: { visibility: "public", unattended: "refused", grant: true },
     delete: { visibility: "public", unattended: "refused" },
     list: { visibility: "public", unattended: "allowed" },
     status: { visibility: "public", unattended: "allowed" },
-    run: { visibility: "public", unattended: "refused" },
+    run: { visibility: "public", unattended: "refused", grant: true },
     run_result: { visibility: "public", unattended: "allowed" },
     runs: { visibility: "public", unattended: "allowed" },
     cancel: { visibility: "public", unattended: "allowed" },
     upcoming: { visibility: "public", unattended: "allowed" },
     stats: { visibility: "public", unattended: "allowed" },
-    run_batch: { visibility: "public", unattended: "refused" },
+    run_batch: { visibility: "public", unattended: "refused", grant: true },
     batch: { visibility: "public", unattended: "allowed" },
     batches: { visibility: "public", unattended: "allowed" },
-    batch_control: { visibility: "public", unattended: "refused" },
+    batch_control: { visibility: "public", unattended: "refused", grant: true },
     due: { visibility: "private", unattended: "refused" },
     begin_run: { visibility: "private", unattended: "refused" },
     end_run: { visibility: "private", unattended: "refused" },
@@ -81,7 +80,7 @@ export const CONTRACT = {
         code: "grant_missing",
         prefix: "No run grant: ",
         meaning:
-          "A call that stores a definition (create, or run or run_batch with a definition) carried no grant in its host context. Nothing was written.",
+          "A tool marked grant was called with no grant in its host context. Nothing was written.",
       },
       {
         code: "unattended_refused",
@@ -120,12 +119,12 @@ export const CONTRACT = {
       {
         code: "scope_missing",
         meaning:
-          "The call reached the server with no workspace in its scope, or (begin_run, end_run, check_runs, offer_event) no owner. Nothing was read or written.",
+          "The call reached the server with no workspace in its scope, or offer_event with no owner. Nothing was read or written.",
       },
       {
         code: "token_stale",
         meaning:
-          "begin_run or end_run carried a token lower than one already recorded for that run: a newer claim holds it. Nothing was written.",
+          "begin_run carried a token lower than one already seen for its ref, or end_run a token other than the one whose begin_run received the run's work spec: another claim holds it. Nothing was written.",
       },
       {
         code: "run_not_found",

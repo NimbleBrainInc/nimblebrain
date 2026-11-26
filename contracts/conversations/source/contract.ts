@@ -28,8 +28,6 @@ export const CONTRACT = {
   contract: "ai.nimblebrain.conversations",
   version: "1.0",
   cardinality: "singleton",
-  /** No conversations tool needs a run grant. */
-  grants: false,
   tools: {
     list: { visibility: "public", unattended: "allowed" },
     get: { visibility: "public", unattended: "allowed" },

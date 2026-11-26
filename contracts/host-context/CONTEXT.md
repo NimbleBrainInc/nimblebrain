@@ -25,7 +25,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 | `workspaceId` | no | the workspace the call is walled to |
 | `ownerId` | no | the verified identity whose records the call reads and writes |
 | `conversationId` | no | the conversation the call is made inside, during a chat turn |
-| `grant` | no | the run grant for the call's workspace and owner, on a `person` call to a contract that declares `grants: true` (§6) |
+| `grant` | no | the run grant for the call's workspace and owner, on a `person` call to a tool its contract marks `grant: true` (§6) |
 | `unattended` | no | `true` when the call is made inside an unattended run, with no person present (§7) |
 
 - **A value that fails the schema is no context.** The call then names no principal and has no
@@ -86,25 +86,28 @@ and it grants nothing: a server walls by workspace and owner whether or not it i
 ## 6. Run grants
 
 A run that no person starts (a scheduled task, a requested run picked up later) still acts
-for a person. The **run grant** is the host's own record that a person, in a workspace, set up
-work under a contract that will run as them unattended.
+for a person. The **run grant** is the host's signed record that a person, in a workspace, set
+up work under a contract that will run as them unattended.
 
-- **A contract declares that it needs grants** with `"grants": true` in its document. The host
-  then stamps `grant` on every `person` call to that contract's server that has a workspace
-  and an owner and is not unattended. It never stamps one on a `host` call, on a call made
-  inside an unattended run, or on a call to a contract that does not declare it, so a run can
-  never set up another run's authority.
-- **The grant is the host's, signed over (the contract's name, `workspaceId`, `ownerId`).** Its
-  format is the host's to choose and to change; it is opaque to the server.
-- **The server stores it verbatim and returns it verbatim.** A server keeps the grant of the
-  call that created or last changed a definition that runs unattended, and gives it back to
-  the host when the host asks to run that definition (the contract says where). It never
-  parses it, never shows it in a public tool's output, and never hands it to another server.
+- **A contract marks the tools that take a grant** with `"grant": true` in the tool's entry of
+  its document. Only a public tool marked `unattended: "refused"` may carry it.
+- **The host stamps `grant` only on a `person` call to a tool marked `grant: true`**, with a
+  workspace and an owner. It never stamps one on a `host` call, on another tool, or on a call
+  made inside an unattended run (those tools are refused there), so no run can obtain
+  authority for another run.
+- **The grant carries its claims and the id of the key that signed it**: the contract's name,
+  `workspaceId`, `ownerId`, and `kid`. Its encoding is the host's to choose and to change, and
+  it is opaque to the server.
+- **The server stores it verbatim and returns it verbatim.** It keeps the grant of the latest
+  grant-marked call that names a definition with that definition, and gives it back when the
+  host runs the definition (the contract says where). It never parses it, never shows it in a
+  public output, and never hands it to another server.
 - **The host decides whether it still holds.** Before admitting a run, the host verifies the
-  grant's signature, that it names the contract, workspace and owner of the run, and that the
-  owner is a member of the workspace now. A grant that fails any of these admits nothing.
-  Because membership is checked at every run, a grant needs no expiry: a removed member's
-  grant stops at once, and works again if they are added back.
+  grant's signature against its keyring, that it names the contract and the workspace of the
+  call, and that its owner is a member of the workspace now; the run acts as that owner. The
+  host keeps retired keys verifying until it revokes them, so rotating a key invalidates
+  nothing. A grant whose key is revoked, or that fails any check, admits nothing. Membership is
+  checked at every run, so a grant needs no expiry.
 
 ## 7. Unattended calls
 

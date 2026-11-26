@@ -19,7 +19,6 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 { "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.nimblebrain.ai/contracts/conversations/v1/contract.json",
   "contract": "ai.nimblebrain.conversations", "version": "1.0", "cardinality": "singleton",
-  "grants": false,
   "tools": { "list": { "visibility": "public", "unattended": "allowed",
                        "input": { "$ref": "#/$defs/list_input" },
                        "output": { "$ref": "#/$defs/list_output" } }, "…": {} },
@@ -41,8 +40,6 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
   `<tool>_output`), and the screen (§5). A server lists the definition itself as the tool's
   `inputSchema` and `outputSchema`, not the `$ref`. It MAY serve more than the contract names; a client ignores what it does not
   know.
-- **`grants`** is `false`: no tool of this contract stores work that runs unattended, so the
-  host stamps no run grant on its calls (host-context spec, §6).
 - **Each tool is `public` or `private`** (§3), **and `allowed` or `refused` unattended**: whether
   a call made inside an unattended run may reach it (host-context spec, §7). Every public tool
   is `allowed`; every private tool is `refused`.

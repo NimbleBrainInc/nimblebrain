@@ -1,7 +1,8 @@
 /**
- * The private tools' schemas: the TypeBox authoring source for the `$defs`
- * entries of every tool `contract.ts` marks private. Only the host calls them
- * (CONTRACT.md §3).
+ * The private tools' schemas, and the named schemas they share (`occurrence`,
+ * `work_spec`, `run_outcome`, `notice`): the TypeBox authoring source for the
+ * `$defs` entries of every tool `contract.ts` marks private. Only the host
+ * calls them (CONTRACT.md §3).
  *
  * `contracts/scripts/emit-contracts.ts` turns this file into JSON, and
  * `--check` fails when the committed document differs. Nothing at runtime
@@ -10,25 +11,28 @@
  * The run flow (CONTRACT.md §5): `due` → the host enqueues each occurrence →
  * a worker claims it → `begin_run` answers a skip or a work spec → the host
  * executes the spec → `end_run` records the outcome. Every instant here is one
- * the host decided (CONTRACT.md §6), as an RFC 3339 date-time with an offset.
+ * the host decided (CONTRACT.md §6).
+ *
+ * What the host reads (`due`, `begin_run`, `end_run` and `offer_event`
+ * outputs, and every shared schema) is closed: `additionalProperties: false`
+ * at every level, because the host refuses what it does not know (§15).
  */
 
-import { type TSchema, Type } from "@sinclair/typebox";
+import { type Static, type TSchema, Type } from "@sinclair/typebox";
 import {
-  AllowedToolsField,
   MaxInputTokensField,
   MaxIterationsField,
   MaxRunDurationField,
-  ModelField,
   NOTIFICATION_LEVELS,
-  SkillsField,
-  STOP_REASONS,
+  OneOf,
   StringEnum,
-  ThinkingEffortField,
+  THINKING_EFFORTS,
 } from "./public.ts";
 
-const Instant = (description: string) =>
-  Type.String({ format: "date-time", minLength: 1, description });
+const CLOSED = { additionalProperties: false } as const;
+
+/** An RFC 3339 date-time with an offset. */
+const Instant = (description: string) => Type.String({ format: "date-time", description });
 
 /** An opaque string the implementation chose; the host passes it back unchanged and never parses it. */
 const Opaque = (description: string, maxLength = 512) =>
@@ -36,21 +40,35 @@ const Opaque = (description: string, maxLength = 512) =>
 
 const RunId = Opaque("The run's id, minted by the implementation.", 128);
 
+const Token = (description: string) => Type.Integer({ minimum: 0, description });
+
+/** The minor of this contract the host consumes, which bounds what the implementation answers. */
+const Version = Type.String({
+  pattern: "^1\\.(0|[1-9][0-9]*)$",
+  description:
+    "The version of this contract the host consumes. The answer holds nothing that version " +
+    "does not define (CONTRACT.md §15).",
+});
+
+/** The names the shared schemas are emitted under in `$defs`. */
+type SharedName = "occurrence" | "work_spec" | "run_outcome" | "notice";
+
+/** A reference to one of the shared schemas below, typed as it. */
+function Ref<T extends TSchema>(name: SharedName, _schema: T) {
+  return Type.Unsafe<Static<T>>({ $ref: `#/$defs/${name}` });
+}
+
 /** The largest serialized `input` a work spec carries, in bytes (64 KiB). */
 export const MAX_RUN_INPUT_BYTES = 64 * 1024;
 
-// ── due ──────────────────────────────────────────────────────────────────
+// ── occurrence ───────────────────────────────────────────────────────────
 
-/** A run the implementation has decided is due, for the host to enqueue. */
+/** A run the implementation has decided is owed, for the host to enqueue. */
 export const Occurrence = Type.Object(
   {
-    ownerId: Type.String({
-      minLength: 1,
-      description: "The owner the run acts for. The host runs it as this owner, in this workspace.",
-    }),
     key: Opaque(
-      "Names the occurrence within the workspace: the host enqueues it under this key, so a " +
-        "repeat of the same occurrence is one item. Stable for as long as the occurrence is due.",
+      "Names the occurrence within the workspace, and its notBefore exactly: the host " +
+        "enqueues it under this key. An occurrence whose time changes is a new key.",
       256,
     ),
     ref: Opaque("What begin_run is called with when the occurrence is claimed."),
@@ -58,13 +76,13 @@ export const Occurrence = Type.Object(
       Instant("Not due before this instant. Absent: due at once (a requested run)."),
     ),
   },
-  { additionalProperties: false },
+  CLOSED,
 );
 
-// ── begin_run ────────────────────────────────────────────────────────────
+// ── work_spec ────────────────────────────────────────────────────────────
 
 /** One spend account a run draws on. Only the implementation knows what its id stands for. */
-export const SpendAccount = Type.Object(
+const SpendAccount = Type.Object(
   {
     id: Opaque(
       "Opaque. Runs naming the same id share one balance while any of them is in flight.",
@@ -72,6 +90,7 @@ export const SpendAccount = Type.Object(
     ),
     unit: StringEnum(["usd", "input_tokens", "output_tokens"] as const),
     remaining: Type.Number({
+      minimum: 0,
       description: "What is left, in `unit`. Read only from the first run in flight to name `id`.",
     }),
     sharedBy: Type.Optional(
@@ -81,16 +100,16 @@ export const SpendAccount = Type.Object(
       }),
     ),
   },
-  { additionalProperties: false },
+  CLOSED,
 );
 
 /**
- * What the host executes for an occurrence: an agent run. The host's door
- * wraps `input` and every `notes` entry in containment, renders the
- * instruction for `outputSchema`, clamps `limits` to the operator's ceilings,
- * enforces `spendAccounts`, and runs at most one run per `exclusiveKey`.
+ * An agent run through the host's door. The door wraps `input` and every
+ * `notes` entry in containment, renders the instruction for `outputSchema`,
+ * lowers `limits` to the operator's ceilings, enforces `spendAccounts` beside
+ * its own, and runs at most one run per `exclusiveKey`.
  */
-export const AgentWorkSpec = Type.Object(
+const AgentWorkSpec = Type.Object(
   {
     kind: Type.Literal("agent"),
     runId: RunId,
@@ -98,8 +117,8 @@ export const AgentWorkSpec = Type.Object(
       minLength: 1,
       maxLength: 4096,
       description:
-        "The run grant the implementation stored with the definition, returned verbatim. The " +
-        "host verifies it before admitting the run.",
+        "The run grant stored with the definition, returned verbatim. The host verifies it and " +
+        "takes the run's owner from it.",
     }),
     prompt: Type.String({
       description:
@@ -126,8 +145,19 @@ export const AgentWorkSpec = Type.Object(
           "The JSON Schema the deliverable must match. The host renders the instruction.",
       }),
     ),
-    allowedTools: Type.Optional(AllowedToolsField),
-    skills: Type.Optional(SkillsField),
+    allowedTools: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        minItems: 1,
+        description: "Tool name globs, opaque to the implementation, matched by the host.",
+      }),
+    ),
+    skills: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        minItems: 1,
+        maxItems: 5,
+        description: "Skill names, opaque to the implementation, resolved by the host.",
+      }),
+    ),
     limits: Type.Optional(
       Type.Object(
         {
@@ -135,19 +165,18 @@ export const AgentWorkSpec = Type.Object(
           maxInputTokens: Type.Optional(MaxInputTokensField),
           maxRunDurationMs: Type.Optional(MaxRunDurationField),
         },
-        {
-          additionalProperties: false,
-          description: "The definition's caps. The host lowers each to its own ceiling.",
-        },
+        { ...CLOSED, description: "The definition's caps. The host lowers each to its ceiling." },
       ),
     ),
-    model: Type.Optional(ModelField),
-    thinkingEffort: Type.Optional(ThinkingEffortField),
+    model: Type.Optional(
+      Type.String({ minLength: 1, description: "provider:model-id or a slot name." }),
+    ),
+    thinkingEffort: Type.Optional(StringEnum(THINKING_EFFORTS)),
     spendAccounts: Type.Optional(Type.Array(SpendAccount, { maxItems: 8 })),
     exclusiveKey: Type.Optional(
       Opaque(
         "At most one run per key is in flight in the workspace. The host refuses a run whose " +
-          "key is taken (outcome not_started, exclusive_busy).",
+          "key is taken (not_started, exclusive_busy).",
         256,
       ),
     ),
@@ -157,13 +186,13 @@ export const AgentWorkSpec = Type.Object(
       }),
     ),
   },
-  { required: ["kind", "runId", "grant", "prompt"], additionalProperties: false },
+  CLOSED,
 );
 
-/** The closed union of work a run may be. 1.0 has only `agent`. */
-export const WorkSpec = Type.Union([AgentWorkSpec]);
+/** The closed union of work a run may be. 1.0 has one kind, `agent`. */
+export const WorkSpec = OneOf([AgentWorkSpec]);
 
-// ── end_run ──────────────────────────────────────────────────────────────
+// ── run_outcome ──────────────────────────────────────────────────────────
 
 /** Why a run did not end `complete`, as the host classified it. */
 export const RUN_ERROR_CODES = [
@@ -172,33 +201,52 @@ export const RUN_ERROR_CODES = [
   "exclusive_busy",
   "tools_unavailable",
   "skills_unavailable",
+  "work_invalid",
+  "spend_limit",
   "model_error",
+  "interrupted",
   "internal",
 ] as const;
 
+/** Why the agent loop stopped. */
+export const STOP_REASONS = [
+  "complete",
+  "max_iterations",
+  "max_input_tokens",
+  "spend_limit",
+  "length",
+  "content_filter",
+  "timeout",
+  "cancelled",
+  "error",
+  "other",
+  "not_started",
+] as const;
+
+/** The stop reasons that come with an `error`. */
+const STOPS_WITH_ERROR = ["error", "other", "not_started"] as const;
+
 /** One tool call a run made, as the host saw it. Never its input or output. */
-export const OutcomeToolCall = Type.Object(
+const OutcomeToolCall = Type.Object(
   {
     name: Type.String({ minLength: 1, description: "The tool's name as the model called it." }),
     ok: Type.Boolean(),
     errorReason: Type.Optional(
-      Type.String({
-        maxLength: 128,
-        description: "Why it failed, when the tool or the host said (`bad_input`, …).",
+      StringEnum(["bad_input", "tool_error", "denied", "timeout", "unavailable"] as const, {
+        description:
+          "Why it failed: rejected for its arguments, answered an error, refused by policy, " +
+          "ran out of time, or could not be reached.",
       }),
-    ),
-    held: Type.Optional(
-      Type.Literal(true, { description: "It did not run: it waited for its tool's guidance." }),
     ),
     ms: Type.Number({ minimum: 0 }),
   },
-  { additionalProperties: false },
+  CLOSED,
 );
 
 /**
- * How a run ended. Every implementation receives it, so it is closed and small:
- * the host reports what only it observed, and the implementation derives
- * everything else (status, label, streaks, notices).
+ * How a run ended. Every implementation receives it, so it is closed and
+ * small: the host reports what only it observed, and the implementation
+ * derives everything else.
  */
 export const RunOutcome = Type.Object(
   {
@@ -209,13 +257,14 @@ export const RunOutcome = Type.Object(
     }),
     stopReason: StringEnum(STOP_REASONS, {
       description:
-        "Why the run stopped. not_started: refused before its first model call (see `error`).",
+        "Why the run stopped. not_started: refused before its first model call. A host " +
+        "shutdown is error with error.code internal and transient true, never cancelled.",
     }),
     wrapUpLimit: Type.Optional(
       StringEnum(["max_iterations", "max_input_tokens"] as const, {
         description:
-          "With stopReason complete: the limit that made the host tell the run to finish, which " +
-          "it did. Its answer may leave work undone.",
+          "With complete: the limit the host told the run to finish at. Its answer may leave " +
+          "work undone.",
       }),
     ),
     error: Type.Optional(
@@ -223,23 +272,22 @@ export const RunOutcome = Type.Object(
         {
           code: StringEnum(RUN_ERROR_CODES),
           transient: Type.Boolean({
-            description:
-              "Whether the same run may succeed later unchanged (an outage, a rate limit).",
+            description: "Whether the same run may succeed later unchanged.",
           }),
           message: Type.Optional(
             Type.String({ maxLength: 2000, description: "Diagnostic, fit to show the owner." }),
           ),
         },
-        { additionalProperties: false },
+        CLOSED,
       ),
     ),
     usage: Type.Object(
       {
         inputTokens: Type.Integer({ minimum: 0 }),
         outputTokens: Type.Integer({ minimum: 0 }),
-        iterations: Type.Integer({ minimum: 0 }),
+        iterations: Type.Optional(Type.Integer({ minimum: 0 })),
       },
-      { additionalProperties: false },
+      CLOSED,
     ),
     costUsd: Type.Number({ minimum: 0, description: "What its model calls cost." }),
     unpricedCalls: Type.Optional(
@@ -249,77 +297,89 @@ export const RunOutcome = Type.Object(
       Type.String({
         minLength: 1,
         description:
-          "With stopReason spend_limit: the account that stopped it, one the spec named or one " +
-          "the host holds (an id the implementation did not name).",
+          "With spend_limit: the account that stopped it, one the spec named or one the host holds.",
       }),
     ),
-    limits: Type.Object(
-      {
-        maxIterations: Type.Integer({ minimum: 1 }),
-        maxInputTokens: Type.Optional(Type.Integer({ minimum: 1 })),
-        maxRunDurationMs: Type.Integer({ minimum: 1 }),
-      },
-      {
-        additionalProperties: false,
-        description: "The caps the run executed under, after the host's ceilings.",
-      },
+    spendStop: Type.Optional(
+      StringEnum(["exhausted", "reserved"] as const, {
+        description:
+          "With spend_limit: exhausted, the account's balance could not pay for another call; " +
+          "reserved, other runs' reservations held what was left.",
+      }),
     ),
-    toolCalls: Type.Array(OutcomeToolCall, { maxItems: 1000 }),
+    limits: Type.Optional(
+      Type.Object(
+        {
+          maxIterations: Type.Optional(Type.Integer({ minimum: 1 })),
+          maxInputTokens: Type.Optional(Type.Integer({ minimum: 1 })),
+          maxRunDurationMs: Type.Optional(Type.Integer({ minimum: 1 })),
+        },
+        { ...CLOSED, description: "The caps the run executed under, after the host's ceilings." },
+      ),
+    ),
+    toolCalls: Type.Array(OutcomeToolCall, {
+      maxItems: 1000,
+      description: "In call order. A call that ran nothing is left out.",
+    }),
     filesWritten: Type.Array(
       Type.Object(
         {
           uri: Type.String({ minLength: 1, description: "Opaque: the host's reference." }),
           name: Type.Optional(Type.String()),
         },
-        { additionalProperties: false },
+        CLOSED,
       ),
       { maxItems: 100, description: "Files the run wrote, as the host recorded them." },
     ),
-    skillsDelivered: Type.Array(
-      Type.Object(
-        {
-          name: Type.String(),
-          loadedBy: StringEnum(["declared", "before_call", "tool_use", "activation"] as const),
-          status: Type.Optional(StringEnum(["fetch_failed", "capped", "renamed_unheld"] as const)),
-        },
-        { additionalProperties: false },
+    skillsDelivered: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            name: Type.String(),
+            loadedBy: Type.String({ description: "Diagnostic: how it reached the run." }),
+            status: Type.Optional(
+              Type.String({ description: "Diagnostic: why it did not arrive whole." }),
+            ),
+          },
+          CLOSED,
+        ),
       ),
     ),
   },
   {
-    required: [
-      "startedAt",
-      "endedAt",
-      "output",
-      "stopReason",
-      "usage",
-      "costUsd",
-      "limits",
-      "toolCalls",
-      "filesWritten",
-      "skillsDelivered",
+    ...CLOSED,
+    allOf: [
+      {
+        if: { properties: { stopReason: { enum: [...STOPS_WITH_ERROR] } } },
+        // biome-ignore lint/suspicious/noThenProperty: JSON Schema's if/then keyword.
+        then: { required: ["error"] },
+      },
     ],
-    additionalProperties: false,
   },
 );
 
-/** Something the host delivers to the run's owner. The implementation keeps no outbox. */
+// ── notice ───────────────────────────────────────────────────────────────
+
+/** Something the host delivers to the owner. The implementation keeps no outbox. */
 export const Notice = Type.Object(
   {
-    id: Opaque("Stable for the event it reports, so a repeated end_run delivers it once.", 256),
+    id: Opaque("Stable for the event it reports, so a repeat is delivered once.", 256),
     title: Type.String({ minLength: 1, maxLength: 200 }),
     body: Type.String({ maxLength: 2000 }),
     level: StringEnum(NOTIFICATION_LEVELS),
-    link: Type.Optional(
-      Type.String({
-        minLength: 1,
-        maxLength: 2048,
-        description: "A resource the notice opens (the implementation's screen).",
-      }),
-    ),
   },
-  { additionalProperties: false },
+  CLOSED,
 );
+
+/** The schemas several tools share, emitted under these names in `$defs`. */
+export const SHARED: Record<SharedName, TSchema> = {
+  occurrence: Occurrence,
+  work_spec: WorkSpec,
+  run_outcome: RunOutcome,
+  notice: Notice,
+};
+
+const Notices = Type.Array(Ref("notice", Notice));
 
 // ── offer_event ──────────────────────────────────────────────────────────
 
@@ -333,70 +393,99 @@ const OfferedEvent = Type.Object(
     title: Type.String(),
     subject: Type.Optional(Type.String()),
     body: Type.Optional(Type.String()),
-    link: Type.Optional(Type.String()),
     receivedAt: Instant("When the host received it."),
   },
-  { additionalProperties: false },
+  CLOSED,
 );
 
 // ── Every private tool ───────────────────────────────────────────────────
+
+/** A closed object at the root of an output, which MCP requires to be `type: "object"`. */
+function ObjectOneOf<T extends TSchema[]>(members: [...T]) {
+  return Type.Unsafe<Static<T[number]>>({ type: "object", oneOf: members });
+}
 
 export const PRIVATE_SCHEMAS = {
   due: {
     input: Type.Object(
       {
-        until: Instant("List occurrences due at or before this instant."),
+        version: Version,
+        now: Instant("The host's now: what new and changed schedules are anchored on."),
+        until: Instant(
+          "List occurrences due at or before this instant. The host calls due again before it.",
+        ),
         cursor: Type.Optional(Type.String({ description: "From the previous page's nextCursor." })),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })),
       },
-      { required: ["until"], additionalProperties: false },
+      CLOSED,
     ),
-    output: Type.Object({
-      occurrences: Type.Array(Occurrence),
-      nextCursor: Type.Union([Type.String(), Type.Null()]),
-    }),
+    output: Type.Object(
+      {
+        occurrences: Type.Array(Ref("occurrence", Occurrence)),
+        nextCursor: Type.Union([Type.String(), Type.Null()]),
+      },
+      CLOSED,
+    ),
   },
   begin_run: {
     input: Type.Object(
       {
+        version: Version,
         ref: Opaque("The occurrence's ref, as due listed it."),
         attempt: Type.Integer({
           minimum: 1,
           description: "The claim's attempt: above 1, an earlier claim may have begun the run.",
         }),
-        token: Type.Integer({
-          minimum: 0,
-          description: "The claim's fencing token, greater than every earlier claim's.",
-        }),
+        token: Token("The claim's fencing token, greater than every earlier claim's of this ref."),
         now: Instant("The host's now: what lateness, budgets and backoff are judged against."),
       },
-      { additionalProperties: false },
+      CLOSED,
     ),
-    output: {
-      ...Type.Unsafe({
-        anyOf: [
-          Type.Object({
-            decision: Type.Literal("skip"),
-            reason: Type.String({ description: "Diagnostic only." }),
-          }),
-          Type.Object({ decision: Type.Literal("run"), work: WorkSpec }),
-        ],
-      }),
-      type: "object",
-    },
+    output: ObjectOneOf([
+      Type.Object(
+        {
+          decision: Type.Literal("skip"),
+          reason: Type.String({ description: "Diagnostic only." }),
+          interrupted: Type.Optional(
+            Type.Object(
+              { runId: RunId, token: Token("The token whose claim received its work spec.") },
+              {
+                ...CLOSED,
+                description:
+                  "An earlier claim's run that began and never ended. The host stops it if it " +
+                  "still runs, and ends it with end_run (interrupted), usage from its metering.",
+              },
+            ),
+          ),
+          notify: Type.Optional(
+            Type.Object(
+              {
+                grant: Type.String({
+                  minLength: 1,
+                  maxLength: 4096,
+                  description: "The grant of the definition the notices concern: names the owner.",
+                }),
+                notices: Notices,
+              },
+              CLOSED,
+            ),
+          ),
+        },
+        CLOSED,
+      ),
+      Type.Object({ decision: Type.Literal("run"), work: Ref("work_spec", WorkSpec) }, CLOSED),
+    ]),
   },
   end_run: {
     input: Type.Object(
       {
         runId: RunId,
-        token: Type.Integer({ minimum: 0, description: "The token begin_run was called with." }),
-        outcome: RunOutcome,
+        token: Token("The token whose begin_run received the run's work spec."),
+        outcome: Ref("run_outcome", RunOutcome),
       },
-      { additionalProperties: false },
+      CLOSED,
     ),
-    output: Type.Object({
-      notices: Type.Array(Notice),
-    }),
+    output: Type.Object({ notices: Notices }, CLOSED),
   },
   check_runs: {
     input: Type.Object(
@@ -406,47 +495,50 @@ export const PRIVATE_SCHEMAS = {
           description: "Runs of this workspace the host has in flight.",
         }),
       },
-      { additionalProperties: false },
+      CLOSED,
     ),
-    output: Type.Object({
-      stop: Type.Array(Type.String(), {
-        description: "Those to stop now (cancelled). Each ends with stopReason cancelled.",
-      }),
-    }),
+    output: Type.Object(
+      {
+        stop: Type.Array(Type.String(), {
+          description: "Those of runIds to stop now. Each ends with stopReason cancelled.",
+        }),
+      },
+      CLOSED,
+    ),
   },
   offer_event: {
     input: Type.Object(
       {
+        version: Version,
         taskId: Type.String({ minLength: 1, description: "The task the route names." }),
         event: OfferedEvent,
         now: Instant("The host's now: what debounce and the fire ceiling are judged against."),
       },
-      { additionalProperties: false },
+      CLOSED,
     ),
-    output: {
-      ...Type.Unsafe({
-        anyOf: [
-          Type.Object({ accepted: Type.Literal(true) }),
-          Type.Object({
-            accepted: Type.Literal(false),
-            outcome: StringEnum(["skipped", "denied"] as const, {
-              description:
-                "skipped: a condition that clears on its own (the task is off, or did not ask " +
-                "for it). denied: a configuration refusal only a person changes.",
-            }),
-            classification: Type.String({ description: "Machine-readable cause." }),
-            reason: Type.String({ description: "One line an operator can act on." }),
+    output: ObjectOneOf([
+      Type.Object(
+        { accepted: Type.Literal(true), notices: Type.Optional(Notices) },
+        { ...CLOSED, description: "Durably recorded before this answer." },
+      ),
+      Type.Object(
+        {
+          accepted: Type.Literal(false),
+          outcome: StringEnum(["skipped", "denied"] as const, {
+            description:
+              "skipped: a condition that clears on its own. denied: a configuration refusal " +
+              "only a person changes.",
           }),
-        ],
-      }),
-      type: "object",
-    },
+          classification: Type.String({ description: "Machine-readable cause. Decides nothing." }),
+          reason: Type.String({ description: "One line an operator can act on." }),
+          notices: Type.Optional(Notices),
+        },
+        CLOSED,
+      ),
+    ]),
   },
   expire: {
-    input: Type.Object(
-      { endedBefore: Instant("Remove what ended before this instant.") },
-      { additionalProperties: false },
-    ),
+    input: Type.Object({ endedBefore: Instant("Remove what ended before this instant.") }, CLOSED),
     output: Type.Object({
       removed: Type.Object({
         runs: Type.Integer({ minimum: 0 }),
@@ -455,7 +547,7 @@ export const PRIVATE_SCHEMAS = {
     }),
   },
   delete_workspace: {
-    input: Type.Object({}, { additionalProperties: false }),
+    input: Type.Object({}, CLOSED),
     output: Type.Object({
       removed: Type.Object({
         tasks: Type.Integer({ minimum: 0 }),

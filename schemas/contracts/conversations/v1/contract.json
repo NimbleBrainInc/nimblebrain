@@ -6,7 +6,6 @@
   "contract": "ai.nimblebrain.conversations",
   "version": "1.0",
   "cardinality": "singleton",
-  "grants": false,
   "tools": {
     "list": {
       "visibility": "public",

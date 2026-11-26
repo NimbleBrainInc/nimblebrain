@@ -9,18 +9,17 @@
  * Shape: `create` takes `{ manifest, body }`; `update` takes `{ taskId,
  * manifest?, body? }` where `manifest` is a patch and `null` clears a field; an
  * inline one-off (`run`, `run_batch`) takes `{ definition: { manifest?, body? } }`.
- * `manifest` carries the stored task's field names and `body` is the prompt.
  * Every tool names a task by `taskId`, a run by `runId` and a batch by `batchId`.
  *
- * Scope (workspace and owner) and principal are never arguments: they are
- * carried by the call's host context (CONTRACT.md §2). Every instant in an
- * output is an RFC 3339 date-time.
+ * Scope and principal are never arguments: they are carried by the call's host
+ * context (CONTRACT.md §2).
  *
- * Inputs are strict (`additionalProperties: false`). Outputs are open: a
- * client ignores fields it does not know.
+ * Inputs are strict (`additionalProperties: false`). Outputs are open, and
+ * require only a core every implementation computes from the contract
+ * (CONTRACT.md §4); every other output field is optional.
  */
 
-import { type Static, type TObject, type TProperties, type TSchema, Type } from "@sinclair/typebox";
+import { type Static, type TSchema, Type } from "@sinclair/typebox";
 
 /**
  * A string enum in the `{ type, enum }` form JSON Schema validators and MCP
@@ -33,17 +32,17 @@ export function StringEnum<T extends string>(
   return Type.Unsafe<T>({ type: "string", enum: [...values], ...options });
 }
 
+/** Exactly one of several schemas (`oneOf`), typed as their union. */
+export function OneOf<T extends TSchema[]>(
+  members: [...T],
+  options: { description?: string } = {},
+) {
+  return Type.Unsafe<Static<T[number]>>({ oneOf: members, ...options });
+}
+
 /** An optional field an update clears with `null`. */
 function clearable<T extends TSchema>(schema: T, description: string) {
   return Type.Optional(Type.Union([schema, Type.Null()], { description }));
-}
-
-/**
- * A tool output that is one of several object shapes. MCP requires an output
- * schema whose root is `type: "object"`, so the union carries that root type.
- */
-function ObjectUnion<T extends TObject[]>(members: [...T]) {
-  return { ...Type.Unsafe<Static<(typeof members)[number]>>({ anyOf: members }), type: "object" };
 }
 
 /** A JSON Schema an author supplies: an open object, since its keywords are the schema language's. */
@@ -61,6 +60,10 @@ const AnyJson = (description: string) => Type.Unsafe<unknown>({ description });
 
 const JsonObject = Type.Record(Type.String(), Type.Unknown());
 
+/** An ISO-8601 date-time with an offset. */
+const DateTime = (description?: string) =>
+  Type.String({ format: "date-time", ...(description ? { description } : {}) });
+
 // ── Shared fields ────────────────────────────────────────────────────────
 
 const TaskIdField = Type.String({
@@ -74,7 +77,7 @@ const RunIdField = Type.String({
 });
 
 const BatchIdField = Type.String({
-  pattern: "^batch_[a-f0-9]{12}$",
+  minLength: 1,
   description: "The batch's id (run_batch returns it).",
 });
 
@@ -93,63 +96,78 @@ const RouteMatch = Type.Object(
     name: Type.Optional(
       Type.String({
         pattern: "^[a-zA-Z0-9._*-]{1,200}$",
-        description:
-          "Glob over the event name the server chose, e.g. `domain.*`. Omit to match every name.",
+        description: "Glob over the event name the server chose. Omit to match every name.",
       }),
     ),
     level: Type.Optional(
       StringEnum(NOTIFICATION_LEVELS, { description: "Minimum level, not an exact match." }),
     ),
   },
-  {
-    additionalProperties: false,
-    description: "Fires on matching notifications routed to this task by an admin.",
-  },
+  { additionalProperties: false },
 );
 
-// The schedule as a caller writes it: the one field present names what fires
-// the task, so there is no separate `type` to get wrong. An implementation
-// stores it in whatever form it likes and returns the typed form
-// (`TaskScheduleSpec`) on reads.
-const Schedule = Type.Object(
-  {
-    cron: Type.Optional(
-      Type.String({
-        description: "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
-      }),
-    ),
-    at: Type.Optional(
-      Type.String({ description: "Fires once at this ISO-8601 time (with an offset)." }),
-    ),
-    intervalMs: Type.Optional(
-      Type.Integer({ minimum: 60000, description: "Recurs every this many ms. Min 60000." }),
-    ),
-    match: Type.Optional(RouteMatch),
-    timezone: Type.Optional(
-      Type.String({ description: "IANA timezone for `cron`. Default: the implementation's." }),
-    ),
-    debounceMs: Type.Optional(
-      Type.Integer({
-        minimum: 1000,
-        maximum: 900000,
-        description:
-          "With `match`: ms that matching notifications coalesce into one run. Default 30000.",
-      }),
-    ),
-    maxFiresPerHour: Type.Optional(
-      Type.Integer({
-        minimum: 1,
-        maximum: 60,
-        description: "With `match`: max runs per hour before the task disables. Default 12.",
-      }),
-    ),
-  },
-  {
-    additionalProperties: false,
-    description:
-      "Exactly one of `cron`, `at`, `intervalMs`, or `match`. Omit to run only on demand.",
-  },
+/**
+ * The schedule, one shape on input and output: the one key present names what
+ * fires the task. Closed on input, open on output.
+ */
+function schedule(closed: boolean, description: string) {
+  const options = closed ? { additionalProperties: false } : {};
+  return OneOf(
+    [
+      Type.Object(
+        {
+          cron: Type.String({
+            minLength: 1,
+            description: "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
+          }),
+          timezone: Type.String({
+            minLength: 1,
+            description: "The IANA timezone the cron is read in. Required with `cron`.",
+          }),
+        },
+        options,
+      ),
+      Type.Object({ at: DateTime("Fires once at this instant.") }, options),
+      Type.Object(
+        {
+          intervalMs: Type.Integer({
+            minimum: 60000,
+            description: "Recurs every this many ms. Min 60000.",
+          }),
+        },
+        options,
+      ),
+      Type.Object(
+        {
+          match: RouteMatch,
+          debounceMs: Type.Optional(
+            Type.Integer({
+              minimum: 1000,
+              maximum: 900000,
+              description: "ms that matching notifications coalesce into one run. Default 30000.",
+            }),
+          ),
+          maxFiresPerHour: Type.Optional(
+            Type.Integer({
+              minimum: 1,
+              maximum: 60,
+              description: "Max runs per hour before the task disables. Default 12.",
+            }),
+          ),
+        },
+        options,
+      ),
+    ],
+    { description },
+  );
+}
+
+const ScheduleInput = schedule(
+  true,
+  "Exactly one of `cron` (with `timezone`), `at`, `intervalMs`, or `match` (fires on routed " +
+    "notifications). Omit to run only on demand.",
 );
+const ScheduleOutput = schedule(false, "What fires the task, as it was written.");
 
 const TokenBudget = Type.Object(
   {
@@ -161,7 +179,7 @@ const TokenBudget = Type.Object(
     ),
     period: Type.Optional(
       StringEnum(["daily", "monthly"] as const, {
-        description: "`daily` or `monthly` reset. Omit for a lifetime total.",
+        description: "A UTC calendar day or month. Omit for a lifetime total.",
       }),
     ),
   },
@@ -174,12 +192,6 @@ const TokenBudget = Type.Object(
 const InputSchemaField = jsonSchemaField("JSON Schema each run's `input` must match.");
 const OutputSchemaField = jsonSchemaField("JSON Schema the deliverable must match.");
 
-const OnPoorResultField = StringEnum(["record", "notify", "retry_once"] as const, {
-  description:
-    "What a deliverable that fails the outputSchema does: record, notify (default), or retry_once.",
-});
-
-/** Run limits: the names a work spec's `limits` uses too. */
 export const MaxIterationsField = Type.Integer({
   minimum: 1,
   maximum: 50,
@@ -196,25 +208,25 @@ export const MaxRunDurationField = Type.Integer({
   description: "Max wall-clock per run, in ms. Default 120000.",
 });
 
-export const AllowedToolsField = Type.Array(Type.String({ minLength: 1 }), {
+const AllowedToolsField = Type.Array(Type.String({ minLength: 1 }), {
   minItems: 1,
   description:
-    "Tools its runs may use: one `<connector>__*` glob per connector. Omit for every tool.",
+    "Tool name globs its runs are narrowed to, matched by the host. Omit for every tool.",
 });
 
-export const SkillsField = Type.Array(Type.String({ minLength: 1 }), {
+const SkillsField = Type.Array(Type.String({ minLength: 1 }), {
   minItems: 1,
   maxItems: 5,
-  description: "Skills each run is given in full, by name.",
+  description: "Skills each run is given in full, by name, matched by the host.",
 });
 
-export const ModelField = Type.String({
+const ModelField = Type.String({
   minLength: 1,
   description: "provider:model-id or a slot name (fast). Omit for the workspace default.",
 });
 
 export const THINKING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
-export const ThinkingEffortField = StringEnum(THINKING_EFFORTS, {
+const ThinkingEffortField = StringEnum(THINKING_EFFORTS, {
   description: "Reasoning depth for its runs. Omit for the workspace setting.",
 });
 
@@ -231,18 +243,13 @@ const DefinitionFields = {
   tokenBudget: Type.Optional(TokenBudget),
   inputSchema: Type.Optional(InputSchemaField),
   outputSchema: Type.Optional(OutputSchemaField),
-  onPoorResult: Type.Optional(OnPoorResultField),
 };
-
-const BodyField = Type.String({
-  description: "The prompt every run starts from: the job, and where to deliver its result.",
-});
 
 const CreateManifest = Type.Object(
   {
     name: Type.String({ minLength: 1, description: "Human-readable name; becomes the id." }),
     description: Type.Optional(Type.String({ description: "What this task does." })),
-    schedule: Type.Optional(Schedule),
+    schedule: Type.Optional(ScheduleInput),
     enabled: Type.Optional(
       Type.Boolean({ description: "Whether its schedule fires. Default true." }),
     ),
@@ -261,13 +268,11 @@ const CreateManifest = Type.Object(
   },
 );
 
-// Update is the create shape as a patch, minus `name` and `kind`. `null` clears
-// a field so its default applies again.
 const UpdateManifest = Type.Object(
   {
     description: clearable(Type.String(), "New description, or null to remove it."),
     schedule: clearable(
-      Schedule,
+      ScheduleInput,
       "null removes it. A new `at` on a task that already fired re-arms and enables it.",
     ),
     enabled: Type.Optional(
@@ -283,7 +288,6 @@ const UpdateManifest = Type.Object(
     tokenBudget: clearable(TokenBudget, "null: no limit."),
     inputSchema: clearable(InputSchemaField, "null: any input."),
     outputSchema: clearable(OutputSchemaField, "null: not checked."),
-    onPoorResult: clearable(OnPoorResultField, "null: the default."),
   },
   {
     additionalProperties: false,
@@ -294,13 +298,13 @@ const UpdateManifest = Type.Object(
 );
 
 /** An inline one-off's definition: create's manifest without identity or trigger. */
-function inlineDefinition<T extends TProperties>(fields: T, what: string) {
+function inlineDefinition(what: string) {
   return Type.Object(
     {
       manifest: Type.Optional(
         Type.Object(
           {
-            ...fields,
+            ...DefinitionFields,
             name: Type.Optional(
               Type.String({
                 minLength: 1,
@@ -334,8 +338,6 @@ function inlineDefinition<T extends TProperties>(fields: T, what: string) {
   );
 }
 
-const { onPoorResult: _batchIgnores, ...BatchDefinitionFields } = DefinitionFields;
-
 const IdempotencyKeyField = Type.String({
   minLength: 1,
   maxLength: 256,
@@ -348,8 +350,13 @@ const IdempotencyKeyField = Type.String({
 // ── Tool inputs ──────────────────────────────────────────────────────────
 
 export const TasksCreateInput = Type.Object(
-  { manifest: CreateManifest, body: BodyField },
-  { required: ["manifest", "body"], additionalProperties: false },
+  {
+    manifest: CreateManifest,
+    body: Type.String({
+      description: "The prompt every run starts from: the job, and where to deliver its result.",
+    }),
+  },
+  { additionalProperties: false },
 );
 
 export const TasksUpdateInput = Type.Object(
@@ -360,20 +367,17 @@ export const TasksUpdateInput = Type.Object(
       Type.String({ description: "New prompt. Omit to keep the current prompt." }),
     ),
   },
-  { required: ["taskId"], additionalProperties: false },
+  { additionalProperties: false },
 );
 
 export const TasksDeleteInput = Type.Object(
   { taskId: TaskIdField },
-  { required: ["taskId"], additionalProperties: false },
+  { additionalProperties: false },
 );
 
 export const TasksListInput = Type.Object(
   {
     enabled: Type.Optional(Type.Boolean({ description: "Filter by enabled status." })),
-    source: Type.Optional(
-      StringEnum(["user", "agent"] as const, { description: "Filter by source." }),
-    ),
     kind: Type.Optional(
       StringEnum(["saved", "oneoff", "all"] as const, {
         description: "Which kind to list. Default `saved`; `oneoff` or `all` to include one-offs.",
@@ -383,8 +387,7 @@ export const TasksListInput = Type.Object(
       Type.Integer({
         minimum: 1,
         maximum: 500,
-        description:
-          "Max tasks to return. Default 100, max 500. The response always reports the unpaged total and whether more remain.",
+        description: "Max tasks to return. Default 100, max 500.",
       }),
     ),
     cursor: Type.Optional(
@@ -408,8 +411,22 @@ export const TasksStatusInput = Type.Object(
       }),
     ),
   },
-  { required: ["taskId"], additionalProperties: false },
+  { additionalProperties: false },
 );
+
+/** How a run ended, or that it has not (ADR-0045). The one status vocabulary. */
+const EXECUTIONS = [
+  "queued",
+  "running",
+  "skipped",
+  "completed",
+  "incomplete",
+  "failed",
+  "cancelled",
+] as const;
+
+/** The executions of a run that has ended. */
+const ENDED_EXECUTIONS = ["skipped", "completed", "incomplete", "failed", "cancelled"] as const;
 
 /** The labels an ended run reads as. */
 const ENDED_LABELS = [
@@ -421,7 +438,7 @@ const ENDED_LABELS = [
   "Cancelled",
 ] as const;
 
-/** The verdicts a run's assessment can hold. `uncertain` is reserved for judging (CONTRACT.md §13). */
+/** The verdicts a run's assessment can hold. `uncertain` is reserved for judging (CONTRACT.md §15). */
 const ASSESSMENT_VERDICTS = ["pass", "fail", "uncertain", "not_assessed"] as const;
 
 export const TasksRunsInput = Type.Object(
@@ -439,15 +456,12 @@ export const TasksRunsInput = Type.Object(
           "Only runs with this verdict. A run with no deliverable has none, and never matches.",
       }),
     ),
-    since: Type.Optional(
-      Type.String({ description: "ISO timestamp — only runs started on or after this time." }),
-    ),
+    since: Type.Optional(DateTime("Only runs started at or after this instant.")),
     before: Type.Optional(
-      Type.String({
-        description:
-          "ISO timestamp — only runs started before this time. Pages back through the run " +
-          "history: pass the previous response's `nextBefore`, with or without `taskId`.",
-      }),
+      DateTime(
+        "Only runs started before this instant. Pass the previous response's `nextBefore` to " +
+          "page back through the history, with or without `taskId`.",
+      ),
     ),
     limit: Type.Optional(
       Type.Integer({ minimum: 1, maximum: 500, description: "Max runs to return. Default 20." }),
@@ -479,9 +493,7 @@ export const TasksUpcomingInput = Type.Object(
 export const TasksStatsInput = Type.Object(
   {
     since: Type.Optional(
-      Type.String({
-        description: "ISO timestamp: count runs started on or after it. Default: 30 days ago.",
-      }),
+      DateTime("Count runs started at or after this instant. Default: 30 days ago."),
     ),
     taskId: Type.Optional(
       Type.String({
@@ -501,7 +513,7 @@ export const TasksRunInput = Type.Object(
         description: "The task to run, as list returns it. Or give `definition`.",
       }),
     ),
-    definition: Type.Optional(inlineDefinition(DefinitionFields, "A one-off to run once")),
+    definition: Type.Optional(inlineDefinition("A one-off to run once")),
     input: Type.Optional(
       AnyJson(
         "JSON input for this run (any JSON value, at most 64 KiB serialized). Checked against " +
@@ -514,24 +526,11 @@ export const TasksRunInput = Type.Object(
   { additionalProperties: false },
 );
 
-export const TasksCancelInput = Type.Object(
-  { runId: RunIdField },
-  { required: ["runId"], additionalProperties: false },
-);
+export const TasksCancelInput = Type.Object({ runId: RunIdField }, { additionalProperties: false });
 
 export const TasksRunResultInput = Type.Object(
-  {
-    runId: RunIdField,
-    taskId: Type.Optional(
-      Type.String({
-        minLength: 1,
-        description:
-          "The run's task. Needed only for a run past the newest 1000 of its task; any other " +
-          "is found by its id alone.",
-      }),
-    ),
-  },
-  { required: ["runId"], additionalProperties: false },
+  { runId: RunIdField },
+  { additionalProperties: false },
 );
 
 export const TasksRunBatchInput = Type.Object(
@@ -542,9 +541,7 @@ export const TasksRunBatchInput = Type.Object(
         description: "The task every item runs, as list returns it. Or give `definition`.",
       }),
     ),
-    definition: Type.Optional(
-      inlineDefinition(BatchDefinitionFields, "The definition every item runs"),
-    ),
+    definition: Type.Optional(inlineDefinition("The definition every item runs")),
     items: Type.Array(AnyJson("One run's JSON input, checked against the task's inputSchema."), {
       minItems: 1,
       maxItems: 10000,
@@ -587,7 +584,6 @@ export const TasksRunBatchInput = Type.Object(
           }),
         },
         {
-          required: ["minPassRate", "afterItems"],
           additionalProperties: false,
           description:
             "Pause the batch when its pass rate collapses. Needs a task with an outputSchema.",
@@ -596,7 +592,7 @@ export const TasksRunBatchInput = Type.Object(
     ),
     idempotencyKey: Type.Optional(IdempotencyKeyField),
   },
-  { required: ["items"], additionalProperties: false },
+  { additionalProperties: false },
 );
 
 export const TasksBatchInput = Type.Object(
@@ -647,7 +643,7 @@ export const TasksBatchInput = Type.Object(
       }),
     ),
   },
-  { required: ["batchId"], additionalProperties: false },
+  { additionalProperties: false },
 );
 
 export const TasksBatchControlInput = Type.Object(
@@ -669,7 +665,7 @@ export const TasksBatchControlInput = Type.Object(
       }),
     ),
   },
-  { required: ["batchId", "action"], additionalProperties: false },
+  { additionalProperties: false },
 );
 
 export const TasksBatchesInput = Type.Object(
@@ -688,36 +684,13 @@ export const TasksBatchesInput = Type.Object(
 );
 
 // ── Records, as outputs carry them ───────────────────────────────────────
-
-/** Why a run's agent loop stopped, as the run record keeps it (the outcome's `stopReason`). */
-export const STOP_REASONS = [
-  "complete",
-  "max_iterations",
-  "max_input_tokens",
-  "spend_limit",
-  "length",
-  "content_filter",
-  "timeout",
-  "cancelled",
-  "error",
-  "other",
-  "not_started",
-] as const;
+//
+// Outputs are open, and each requires only its core (CONTRACT.md §4).
 
 const RUN_TRIGGERS = ["scheduled", "manual", "event"] as const;
 
-const TaskLastRunStatus = StringEnum([
-  "success",
-  "degraded",
-  "failure",
-  "timeout",
-  "skipped",
-] as const);
-
-const TaskOnceDone = Type.Object({
-  at: Type.String(),
-  outcome: StringEnum(["ran", "missed"] as const),
-});
+const TaskRunLabel = StringEnum([...ENDED_LABELS, "Queued", "Running"] as const);
+const TaskRunExecution = StringEnum(EXECUTIONS);
 
 const TaskTokenBudget = Type.Object({
   maxInputTokens: Type.Optional(Type.Number()),
@@ -725,58 +698,73 @@ const TaskTokenBudget = Type.Object({
   period: Type.Optional(StringEnum(["daily", "monthly"] as const)),
 });
 
-const TaskScheduleSpec = Type.Object({
-  type: StringEnum(["cron", "interval", "event", "once"] as const),
-  expression: Type.Optional(Type.String()),
-  timezone: Type.Optional(Type.String()),
-  at: Type.Optional(Type.String()),
-  intervalMs: Type.Optional(Type.Number()),
-  match: Type.Optional(
-    Type.Object({
-      source: Type.Optional(Type.String()),
-      name: Type.Optional(Type.String()),
-      level: Type.Optional(StringEnum(NOTIFICATION_LEVELS)),
-    }),
+/** A stored task, as create, update and status return it. Never carries its run grant. */
+const TaskRecord = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  enabled: Type.Boolean(),
+  prompt: Type.String(),
+  description: Type.Optional(Type.String()),
+  schedule: Type.Optional(ScheduleOutput),
+  scheduleHuman: Type.Optional(
+    Type.String({ description: 'The schedule in words, e.g. "Weekdays at 8:00 AM HST".' }),
   ),
-  debounceMs: Type.Optional(Type.Number()),
-  maxFiresPerHour: Type.Optional(Type.Number()),
+  kind: Type.Optional(StringEnum(["saved", "oneoff"] as const)),
+  onceDone: Type.Optional(
+    Type.Object({ at: Type.String(), outcome: StringEnum(["ran", "missed"] as const) }),
+  ),
+  skills: Type.Optional(Type.Array(Type.String())),
+  allowedTools: Type.Optional(Type.Array(Type.String())),
+  inputSchema: Type.Optional(JsonObject),
+  outputSchema: Type.Optional(JsonObject),
+  maxIterations: Type.Optional(Type.Number()),
+  maxInputTokens: Type.Optional(Type.Number()),
+  maxRunDurationMs: Type.Optional(Type.Number()),
+  model: Type.Optional(Type.String()),
+  thinkingEffort: Type.Optional(StringEnum(THINKING_EFFORTS)),
+  tokenBudget: Type.Optional(TaskTokenBudget),
+  budgetResetAt: Type.Optional(Type.String()),
+  cumulativeInputTokens: Type.Optional(Type.Number()),
+  cumulativeOutputTokens: Type.Optional(Type.Number()),
+  ownerId: Type.Optional(Type.String()),
+  workspaceId: Type.Optional(Type.String()),
+  createdAt: Type.Optional(Type.String()),
+  updatedAt: Type.Optional(Type.String()),
+  runCount: Type.Optional(Type.Number()),
+  consecutiveErrors: Type.Optional(Type.Number()),
+  lastRunAt: Type.Optional(Type.String()),
+  lastRunLabel: Type.Optional(TaskRunLabel),
+  nextRunAt: Type.Optional(Type.String()),
+  disabledAt: Type.Optional(Type.String()),
+  disabledReason: Type.Optional(Type.String()),
 });
 
-const OnPoorResult = StringEnum(["record", "notify", "retry_once"] as const);
-const TaskSourceField = StringEnum(["user", "agent", "bundle"] as const);
-const TaskKindField = StringEnum(["saved", "oneoff"] as const);
-
+/** One row of list. */
 const TaskSummary = Type.Object({
   id: Type.String(),
   name: Type.String(),
-  description: Type.Optional(Type.String()),
-  schedule: Type.String({
-    description:
-      'Human-readable trigger, e.g. "Weekdays at 8:00 AM HST", "Once at …", "Manual only".',
-  }),
-  scheduleType: StringEnum(["cron", "interval", "event", "once", "none"] as const),
-  kind: TaskKindField,
-  onceDone: Type.Optional(TaskOnceDone),
   enabled: Type.Boolean(),
-  source: TaskSourceField,
-  runCount: Type.Number(),
-  lastRunStatus: Type.Union([TaskLastRunStatus, Type.Null()]),
-  lastRunAt: Type.Union([Type.String(), Type.Null()]),
-  nextRunAt: Type.Union([Type.String(), Type.Null()], {
-    description: "When its schedule next fires; null when nothing will.",
-  }),
-  disabledAt: Type.Union([Type.String(), Type.Null()]),
-  disabledReason: Type.Union([Type.String(), Type.Null()]),
-  estimatedCostPerDay: Type.Number(),
+  description: Type.Optional(Type.String()),
+  scheduleHuman: Type.Optional(Type.String()),
+  scheduleType: Type.Optional(StringEnum(["cron", "interval", "event", "once", "none"] as const)),
+  kind: Type.Optional(StringEnum(["saved", "oneoff"] as const)),
+  onceDone: Type.Optional(
+    Type.Object({ at: Type.String(), outcome: StringEnum(["ran", "missed"] as const) }),
+  ),
+  runCount: Type.Optional(Type.Number()),
+  lastRunAt: Type.Optional(Type.String()),
+  lastRunLabel: Type.Optional(TaskRunLabel),
+  nextRunAt: Type.Optional(Type.String()),
+  disabledAt: Type.Optional(Type.String()),
+  disabledReason: Type.Optional(Type.String()),
   inputSchema: Type.Optional(JsonObject),
-  startedVia: Type.Optional(Type.String()),
   promptPreview: Type.Optional(Type.String()),
 });
 
 /**
- * Whether a run's deliverable is acceptable. In 1.0 only the output schema
- * decides it: `pass` (it matched), `fail` (it did not), `not_assessed` (no
- * schema). `uncertain` is reserved for judging, a planned minor.
+ * Whether a run's deliverable is acceptable. In 1.0 the output schema alone
+ * decides it: `pass`, `fail`, or `not_assessed` (no schema). `uncertain` is
+ * reserved for judging.
  */
 const TaskRunAssessment = Type.Object({
   verdict: StringEnum(ASSESSMENT_VERDICTS),
@@ -784,183 +772,93 @@ const TaskRunAssessment = Type.Object({
   schema: Type.Optional(
     Type.Object({ valid: Type.Boolean(), errors: Type.Optional(Type.Array(Type.String())) }),
   ),
-  assessedAt: Type.String(),
+  assessedAt: Type.Optional(Type.String()),
 });
 
-const TaskRunExecution = StringEnum([
-  "queued",
-  "running",
-  "skipped",
-  "completed",
-  "incomplete",
-  "failed",
-  "cancelled",
-] as const);
-
-const TaskRunLabel = StringEnum([...ENDED_LABELS, "Queued", "Running"] as const);
-
-/** A run record with its derived execution and label. */
-const TaskRunView = Type.Object({
-  id: Type.String(),
-  taskId: Type.String(),
-  startedAt: Type.String(),
-  completedAt: Type.Optional(Type.String()),
-  status: StringEnum([
-    "queued",
-    "running",
-    "success",
-    "degraded",
-    "failure",
-    "timeout",
-    "cancelled",
-    "skipped",
-  ] as const),
-  inputTokens: Type.Number(),
-  outputTokens: Type.Number(),
-  toolCalls: Type.Number(),
-  iterations: Type.Number(),
-  error: Type.Optional(Type.String()),
-  transient: Type.Optional(Type.Boolean()),
-  trigger: Type.Optional(StringEnum(RUN_TRIGGERS)),
-  resultPreview: Type.Optional(Type.String()),
-  stopReason: Type.Optional(StringEnum(STOP_REASONS)),
-  spendAccountId: Type.Optional(Type.String()),
-  input: Type.Optional(Type.Unknown()),
-  idempotencyKey: Type.Optional(Type.String()),
-  outputSchemaValid: Type.Optional(Type.Boolean()),
-  outputSchemaErrors: Type.Optional(Type.Array(Type.String())),
-  unrecoveredToolFailures: Type.Optional(Type.Array(Type.String())),
-  assessment: Type.Optional(TaskRunAssessment),
-  retryOf: Type.Optional(Type.String()),
-  batchId: Type.Optional(Type.String()),
-  batchIndex: Type.Optional(Type.Number()),
-  costUsd: Type.Optional(Type.Number()),
-  unpricedCalls: Type.Optional(Type.Integer({ minimum: 1 })),
-  execution: TaskRunExecution,
-  label: TaskRunLabel,
-});
-
-/** One tool call of a run's activity log: what the outcome reported, never its input or output. */
-const RunToolCallRecord = Type.Object({
-  name: Type.String(),
-  ok: Type.Boolean(),
-  errorReason: Type.Optional(Type.String()),
-  held: Type.Optional(Type.Literal(true)),
-  ms: Type.Number(),
-});
-
-/** A file a run wrote, as the host reported it. */
-const RunFileRefRecord = Type.Object({
-  uri: Type.String({ description: "Opaque: the host's reference to the file." }),
-  name: Type.Optional(Type.String()),
-});
-
-const SkillDelivered = Type.Object({
-  name: Type.String(),
-  loadedBy: StringEnum(["declared", "before_call", "tool_use", "activation"] as const),
-  status: Type.Optional(StringEnum(["fetch_failed", "capped", "renamed_unheld"] as const)),
-});
+/**
+ * A run, as every run surface returns it. `startedAt` is present once the run
+ * has started or ended without starting; `completedAt` once it has ended.
+ */
+const TaskRunView = Type.Object(
+  {
+    id: Type.String(),
+    taskId: Type.String(),
+    execution: TaskRunExecution,
+    label: TaskRunLabel,
+    startedAt: Type.Optional(Type.String()),
+    completedAt: Type.Optional(Type.String()),
+    trigger: Type.Optional(StringEnum(RUN_TRIGGERS)),
+    error: Type.Optional(Type.String()),
+    transient: Type.Optional(Type.Boolean()),
+    resultPreview: Type.Optional(Type.String()),
+    assessment: Type.Optional(TaskRunAssessment),
+    unrecoveredToolFailures: Type.Optional(Type.Array(Type.String())),
+    inputTokens: Type.Optional(Type.Number()),
+    outputTokens: Type.Optional(Type.Number()),
+    iterations: Type.Optional(Type.Number()),
+    toolCalls: Type.Optional(Type.Number({ description: "How many tool calls it made." })),
+    costUsd: Type.Optional(Type.Number()),
+    unpricedCalls: Type.Optional(Type.Integer({ minimum: 1 })),
+    spendAccountId: Type.Optional(Type.String()),
+    input: Type.Optional(Type.Unknown()),
+    idempotencyKey: Type.Optional(Type.String()),
+    retryOf: Type.Optional(Type.String()),
+    batchId: Type.Optional(Type.String()),
+    batchIndex: Type.Optional(Type.Number()),
+  },
+  {
+    allOf: [
+      {
+        if: { properties: { execution: { not: { const: "queued" } } } },
+        // biome-ignore lint/suspicious/noThenProperty: JSON Schema's if/then keyword.
+        then: { required: ["startedAt"] },
+      },
+      {
+        if: { properties: { execution: { enum: [...ENDED_EXECUTIONS] } } },
+        // biome-ignore lint/suspicious/noThenProperty: JSON Schema's if/then keyword.
+        then: { required: ["completedAt"] },
+      },
+    ],
+  },
+);
 
 /** A run's whole deliverable and what the host reported of it. */
 const TaskRunResultBody = Type.Object({
   completedAt: Type.String(),
   output: Type.String(),
-  activityLog: Type.Array(RunToolCallRecord),
-  outputFiles: Type.Array(RunFileRefRecord),
-  usage: Type.Object({
-    inputTokens: Type.Number(),
-    outputTokens: Type.Number(),
-    iterations: Type.Number(),
-  }),
-  stopReason: Type.Optional(StringEnum(STOP_REASONS)),
   structured: Type.Optional(Type.Unknown()),
   error: Type.Optional(Type.String()),
-  skillsDelivered: Type.Optional(Type.Array(SkillDelivered)),
-});
-
-const TaskStatusDetail = Type.Object({
-  id: Type.String(),
-  name: Type.String(),
-  description: Type.Optional(Type.String()),
-  prompt: Type.String(),
-  schedule: Type.Optional(TaskScheduleSpec),
-  kind: Type.Optional(TaskKindField),
-  onceDone: Type.Optional(TaskOnceDone),
-  scheduleHuman: Type.String(),
-  timezone: Type.String(),
-  enabled: Type.Boolean(),
-  source: TaskSourceField,
-  ownerId: Type.Optional(Type.String()),
-  workspaceId: Type.Optional(Type.String()),
-  model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-  thinkingEffort: Type.Optional(Type.Union([StringEnum(THINKING_EFFORTS), Type.Null()])),
-  skills: Type.Optional(Type.Array(Type.String())),
-  allowedTools: Type.Optional(Type.Array(Type.String())),
-  inputSchema: Type.Optional(JsonObject),
-  outputSchema: Type.Optional(JsonObject),
-  onPoorResult: Type.Optional(OnPoorResult),
-  maxIterations: Type.Optional(Type.Number()),
-  maxInputTokens: Type.Optional(Type.Number()),
-  maxRunDurationMs: Type.Optional(Type.Number()),
-  runCount: Type.Number(),
-  consecutiveErrors: Type.Number(),
-  cumulativeInputTokens: Type.Number(),
-  cumulativeOutputTokens: Type.Number(),
-  tokenBudget: Type.Union([TaskTokenBudget, Type.Null()]),
-  budgetResetAt: Type.Union([Type.String(), Type.Null()]),
-  lastRunAt: Type.Optional(Type.String()),
-  lastRunStatus: Type.Optional(TaskLastRunStatus),
-  nextRunAt: Type.Optional(Type.String()),
-  disabledAt: Type.Optional(Type.String()),
-  disabledReason: Type.Optional(Type.String()),
-  createdAt: Type.String(),
-  updatedAt: Type.String(),
-  estimatedCostPerRun: Type.Number(),
-  estimatedCostPerDay: Type.Number(),
-  estimatedCostPerMonth: Type.Number(),
-});
-
-/** A stored task, as create and update return it. Never carries its run grant. */
-const TaskRecord = Type.Object({
-  id: Type.String(),
-  name: Type.String(),
-  description: Type.Optional(Type.String()),
-  prompt: Type.String(),
-  schedule: Type.Optional(TaskScheduleSpec),
-  kind: Type.Optional(TaskKindField),
-  onceDone: Type.Optional(TaskOnceDone),
-  skills: Type.Optional(Type.Array(Type.String())),
-  allowedTools: Type.Optional(Type.Array(Type.String())),
-  inputSchema: Type.Optional(JsonObject),
-  outputSchema: Type.Optional(JsonObject),
-  onPoorResult: Type.Optional(OnPoorResult),
-  maxIterations: Type.Optional(Type.Number()),
-  maxInputTokens: Type.Optional(Type.Number()),
-  maxRunDurationMs: Type.Optional(Type.Number()),
-  model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-  thinkingEffort: Type.Optional(Type.Union([StringEnum(THINKING_EFFORTS), Type.Null()])),
-  enabled: Type.Boolean(),
-  ownerId: Type.Optional(Type.String()),
-  workspaceId: Type.Optional(Type.String()),
-  source: TaskSourceField,
-  createdAt: Type.String(),
-  updatedAt: Type.String(),
-  lastRunAt: Type.Optional(Type.String()),
-  lastRunStatus: Type.Optional(TaskLastRunStatus),
-  nextRunAt: Type.Optional(Type.String()),
-  runCount: Type.Number(),
-  consecutiveErrors: Type.Number(),
-  disabledAt: Type.Optional(Type.String()),
-  disabledReason: Type.Optional(Type.String()),
-  cumulativeInputTokens: Type.Number(),
-  cumulativeOutputTokens: Type.Number(),
-  tokenBudget: Type.Optional(TaskTokenBudget),
-  budgetResetAt: Type.Optional(Type.String()),
-});
-
-const ScheduleTimezone = Type.String({
-  description:
-    "The IANA timezone its schedule is read in: the schedule's own, else the implementation's.",
+  activityLog: Type.Optional(
+    Type.Array(
+      Type.Object({
+        name: Type.String(),
+        ok: Type.Boolean(),
+        errorReason: Type.Optional(Type.String()),
+        ms: Type.Optional(Type.Number()),
+      }),
+      { description: "Each tool call the run made, in call order; never its input or output." },
+    ),
+  ),
+  outputFiles: Type.Optional(
+    Type.Array(Type.Object({ uri: Type.String(), name: Type.Optional(Type.String()) })),
+  ),
+  usage: Type.Optional(
+    Type.Object({
+      inputTokens: Type.Optional(Type.Number()),
+      outputTokens: Type.Optional(Type.Number()),
+      iterations: Type.Optional(Type.Number()),
+    }),
+  ),
+  stopReason: Type.Optional(Type.String()),
+  skillsDelivered: Type.Optional(
+    Type.Array(
+      Type.Object({
+        name: Type.String(),
+        loadedBy: Type.Optional(Type.String()),
+        status: Type.Optional(Type.String()),
+      }),
+    ),
+  ),
 });
 
 const TaskBatchCounts = Type.Object({
@@ -976,51 +874,56 @@ const TaskBatchCounts = Type.Object({
   cancelled: Type.Number(),
 });
 
-/** A batch, with the figures derived on read. */
 const TaskBatchView = Type.Object({
   id: Type.String(),
   taskId: Type.String(),
-  workspaceId: Type.String(),
-  ownerId: Type.String(),
-  items: Type.Number(),
-  concurrency: Type.Number(),
+  state: StringEnum(["running", "paused", "completed", "cancelled"] as const),
+  counts: TaskBatchCounts,
+  name: Type.Optional(Type.String()),
+  items: Type.Optional(Type.Number()),
+  done: Type.Optional(Type.Number({ description: "Items with an outcome." })),
+  passRate: Type.Optional(
+    Type.Number({ description: "pass / (pass + fail); absent before either." }),
+  ),
+  concurrency: Type.Optional(Type.Number()),
   sharing: Type.Optional(Type.Number()),
   budgetUsd: Type.Optional(Type.Number()),
+  costUsd: Type.Optional(Type.Number()),
   stopWhen: Type.Optional(Type.Object({ minPassRate: Type.Number(), afterItems: Type.Number() })),
   stopRuleDisarmed: Type.Optional(Type.Boolean()),
-  state: StringEnum(["running", "paused", "completed", "cancelled"] as const),
   pause: Type.Optional(
     Type.Object({
       reason: StringEnum(["manual", "budget", "pass_rate", "unavailable"] as const),
-      message: Type.String(),
-      at: Type.String(),
+      message: Type.Optional(Type.String()),
+      at: Type.Optional(Type.String()),
     }),
   ),
-  counts: TaskBatchCounts,
-  costUsd: Type.Number(),
   idempotencyKey: Type.Optional(Type.String()),
-  name: Type.Optional(Type.String()),
-  startedVia: Type.Optional(Type.String()),
-  createdAt: Type.String(),
-  updatedAt: Type.String(),
+  ownerId: Type.Optional(Type.String()),
+  workspaceId: Type.Optional(Type.String()),
+  createdAt: Type.Optional(Type.String()),
+  updatedAt: Type.Optional(Type.String()),
   completedAt: Type.Optional(Type.String()),
-  createdBy: Type.String(),
-  done: Type.Number(),
-  passRate: Type.Union([Type.Number(), Type.Null()]),
 });
 
 const TaskBatchItemView = Type.Object({
   index: Type.Number(),
-  inputSummary: Type.String(),
   state: StringEnum(["pending", "queued", "running", "done"] as const),
   runId: Type.Optional(Type.String()),
   previousRunIds: Type.Optional(Type.Array(Type.String())),
   execution: Type.Optional(TaskRunExecution),
   verdict: Type.Optional(StringEnum(ASSESSMENT_VERDICTS)),
   label: Type.Optional(TaskRunLabel),
+  inputSummary: Type.Optional(Type.String()),
   costUsd: Type.Optional(Type.Number()),
   error: Type.Optional(Type.String()),
-  errorCode: Type.Optional(StringEnum(["exceeds_share"] as const)),
+  errorCode: Type.Optional(
+    StringEnum(["exceeds_share"] as const, {
+      description:
+        "A run of the item with what was left of the batch's budget to itself could not pay for " +
+        "it (its outcome's spendStop was exhausted), so it was settled rather than run again.",
+    }),
+  ),
   output: Type.Optional(
     Type.Record(
       Type.String(),
@@ -1033,83 +936,82 @@ const TaskBatchItemView = Type.Object({
 
 // ── Tool outputs ─────────────────────────────────────────────────────────
 
-export const TasksCreateOutput = Type.Object({
-  task: TaskRecord,
-  message: Type.String(),
-  timezone: ScheduleTimezone,
-});
+const Message = Type.Optional(Type.String({ description: "A sentence for the reader." }));
+
+export const TasksCreateOutput = Type.Object({ task: TaskRecord, message: Message });
 
 export const TasksUpdateOutput = Type.Object({
   task: TaskRecord,
-  updated: Type.Boolean(),
-  message: Type.String(),
-  timezone: ScheduleTimezone,
+  updated: Type.Optional(Type.Boolean()),
+  message: Message,
 });
 
 export const TasksDeleteOutput = Type.Object({
   deleted: Type.Boolean(),
   id: Type.String(),
-  message: Type.String(),
+  message: Message,
 });
 
 export const TasksListOutput = Type.Object({
   tasks: Type.Array(TaskSummary),
-  total: Type.Integer(),
-  returned: Type.Integer(),
-  nextCursor: Type.Union([Type.String(), Type.Null()]),
-  hasMore: Type.Boolean(),
+  nextCursor: Type.Union([Type.String(), Type.Null()], {
+    description: "Pass as `cursor` for the next page; null on the last.",
+  }),
+  total: Type.Optional(Type.Integer({ description: "Every match, before the page cap." })),
+  hasMore: Type.Optional(Type.Boolean()),
   truncated: Type.Optional(Type.String()),
 });
 
 export const TasksStatusOutput = Type.Object({
-  task: TaskStatusDetail,
+  task: TaskRecord,
   recentRuns: Type.Array(TaskRunView),
 });
 
 export const TasksRunsOutput = Type.Object({
   runs: Type.Array(TaskRunView),
-  total: Type.Integer(),
   nextBefore: Type.Optional(Type.String()),
+  total: Type.Optional(Type.Integer()),
 });
 
 /**
  * `run` answers at once: the run is asked for, and its id is the handle. Its
- * state is read with `run_result`. `existing` is true when an earlier call
- * with the same idempotencyKey asked for this run.
+ * state is read with `run_result`.
  */
 export const TasksRunOutput = Type.Object({
-  status: Type.Literal("queued"),
-  taskId: Type.String(),
   runId: Type.String(),
-  enabled: Type.Boolean(),
-  existing: Type.Optional(Type.Boolean()),
-  message: Type.String(),
+  taskId: Type.String(),
+  execution: Type.Literal("queued"),
+  existing: Type.Optional(
+    Type.Boolean({
+      description: "An earlier call with the same idempotencyKey asked for this run.",
+    }),
+  ),
+  enabled: Type.Optional(Type.Boolean()),
+  message: Message,
 });
 
-export const TasksRunResultOutput = ObjectUnion([
-  Type.Object({
-    status: StringEnum(["queued", "running"] as const),
-    run: TaskRunView,
-    message: Type.String(),
-  }),
-  Type.Object({
-    status: Type.Literal("ended"),
-    run: TaskRunView,
-    result: Type.Optional(TaskRunResultBody),
-  }),
-]);
+/**
+ * One run by id, whatever state it is in: `run.execution` says whether it has
+ * ended. A run still queued or running is an answer, not an error. `result` is
+ * present once it has ended and its result can be read.
+ */
+export const TasksRunResultOutput = Type.Object({
+  run: TaskRunView,
+  result: Type.Optional(TaskRunResultBody),
+  message: Message,
+});
 
 export const TasksCancelOutput = Type.Object({
   cancelled: Type.Boolean(),
   runId: Type.String(),
   taskId: Type.Optional(Type.String()),
-  message: Type.String(),
+  message: Message,
 });
 
 export const TasksRunBatchOutput = Type.Object({
   batch: TaskBatchView,
-  existing: Type.Boolean(),
-  message: Type.String(),
+  existing: Type.Optional(Type.Boolean()),
+  message: Message,
 });
 
 export const TasksBatchOutput = Type.Object({
@@ -1120,62 +1022,71 @@ export const TasksBatchOutput = Type.Object({
 
 export const TasksBatchControlOutput = Type.Object({
   batch: TaskBatchView,
-  message: Type.String(),
-  affected: Type.Integer(),
+  affected: Type.Optional(Type.Integer({ description: "Items the action touched." })),
+  message: Message,
 });
 
-export const TasksBatchesOutput = Type.Object({
-  batches: Type.Array(TaskBatchView),
-});
-
-const TaskUpcomingRun = Type.Object({
-  taskId: Type.String(),
-  taskName: Type.Optional(Type.String()),
-  runId: Type.Optional(Type.String()),
-  state: StringEnum(["running", "queued"] as const),
-  startedAt: Type.Optional(Type.String()),
-  queuedAt: Type.Optional(Type.String()),
-  trigger: Type.Optional(StringEnum(RUN_TRIGGERS)),
-  batchId: Type.Optional(Type.String()),
-  batchIndex: Type.Optional(Type.Number()),
-});
+export const TasksBatchesOutput = Type.Object({ batches: Type.Array(TaskBatchView) });
 
 export const TasksUpcomingOutput = Type.Object({
-  running: Type.Array(TaskUpcomingRun),
-  queued: Type.Array(TaskUpcomingRun),
-  days: Type.Number(),
-  windowEnd: Type.String(),
+  running: Type.Array(
+    Type.Object({
+      taskId: Type.String(),
+      runId: Type.String(),
+      taskName: Type.Optional(Type.String()),
+      startedAt: Type.Optional(Type.String()),
+      trigger: Type.Optional(StringEnum(RUN_TRIGGERS)),
+      batchId: Type.Optional(Type.String()),
+      batchIndex: Type.Optional(Type.Number()),
+    }),
+  ),
+  queued: Type.Array(
+    Type.Object({
+      taskId: Type.String(),
+      runId: Type.Optional(Type.String({ description: "Absent until the run has an id." })),
+      taskName: Type.Optional(Type.String()),
+      queuedAt: Type.Optional(Type.String()),
+      trigger: Type.Optional(StringEnum(RUN_TRIGGERS)),
+      batchId: Type.Optional(Type.String()),
+      batchIndex: Type.Optional(Type.Number()),
+    }),
+  ),
   scheduled: Type.Array(
     Type.Object({
       taskId: Type.String(),
-      taskName: Type.String(),
       at: Type.String(),
-      schedule: Type.String(),
-      scheduleType: StringEnum(["cron", "interval", "once"] as const),
+      taskName: Type.Optional(Type.String()),
+      scheduleHuman: Type.Optional(Type.String()),
+      scheduleType: Type.Optional(StringEnum(["cron", "interval", "once"] as const)),
       beyondWindow: Type.Optional(Type.Boolean()),
     }),
   ),
-  frequent: Type.Array(
-    Type.Object({
-      taskId: Type.String(),
-      taskName: Type.String(),
-      schedule: Type.String(),
-      scheduleType: StringEnum(["cron", "interval"] as const),
-      count: Type.Integer(),
-      countCapped: Type.Optional(Type.Boolean()),
-      first: Type.String(),
-      last: Type.Optional(Type.String()),
-    }),
+  days: Type.Optional(Type.Number()),
+  windowEnd: Type.Optional(Type.String()),
+  frequent: Type.Optional(
+    Type.Array(
+      Type.Object({
+        taskId: Type.String(),
+        count: Type.Integer(),
+        first: Type.String(),
+        taskName: Type.Optional(Type.String()),
+        scheduleHuman: Type.Optional(Type.String()),
+        scheduleType: Type.Optional(StringEnum(["cron", "interval"] as const)),
+        countCapped: Type.Optional(Type.Boolean()),
+        last: Type.Optional(Type.String()),
+      }),
+    ),
   ),
-  events: Type.Array(
-    Type.Object({
-      taskId: Type.String(),
-      taskName: Type.String(),
-      schedule: Type.String(),
-      enabled: Type.Boolean(),
-      maxFiresPerHour: Type.Number(),
-      firesLastHour: Type.Integer(),
-    }),
+  events: Type.Optional(
+    Type.Array(
+      Type.Object({
+        taskId: Type.String(),
+        taskName: Type.Optional(Type.String()),
+        enabled: Type.Optional(Type.Boolean()),
+        maxFiresPerHour: Type.Optional(Type.Number()),
+        firesLastHour: Type.Optional(Type.Integer()),
+      }),
+    ),
   ),
 });
 
@@ -1187,18 +1098,22 @@ export const TasksStatsOutput = Type.Object({
       runs: Type.Integer(),
       pass: Type.Integer(),
       fail: Type.Integer(),
-      uncertain: Type.Integer(),
-      passRate: Type.Union([Type.Number(), Type.Null()]),
-      costUsd: Type.Number(),
+      uncertain: Type.Optional(Type.Integer()),
+      passRate: Type.Optional(Type.Number()),
+      costUsd: Type.Optional(Type.Number()),
       lastRun: Type.Optional(
-        Type.Object({ id: Type.String(), startedAt: Type.String(), label: TaskRunLabel }),
+        Type.Object({
+          id: Type.String(),
+          label: TaskRunLabel,
+          startedAt: Type.Optional(Type.String()),
+        }),
       ),
       recent: Type.Optional(
         Type.Array(
           Type.Object({
             id: Type.String(),
-            startedAt: Type.String(),
             label: TaskRunLabel,
+            startedAt: Type.Optional(Type.String()),
             error: Type.Optional(Type.String()),
           }),
         ),

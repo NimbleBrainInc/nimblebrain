@@ -2,15 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.nimblebrain.ai/contracts/tasks/v1/contract.json",
   "title": "Tasks contract",
-  "description": "The ai.nimblebrain.tasks contract: its identity, version, cardinality, whether it needs run grants, its tools with their visibility, unattended marking and schemas, and the closed list of errors. Every tool error is a tools/call result with isError: true whose first text content is JSON {code, error}. A private tool's code is from errors.private. A public tool's code, and the answer to a tool name the server does not have, is from errors.public, and its error begins with that entry's prefix. Beyond the prefix, error is diagnostic. A request refused before any tool runs is the transport's answer and outside this list. Normative rules: contracts/tasks/CONTRACT.md in the NimbleBrain repository.",
+  "description": "The ai.nimblebrain.tasks contract: its identity, version, cardinality, its tools with their visibility, unattended marking, grant marking and schemas, the schemas tools share, and the closed list of errors. Every tool error is a tools/call result with isError: true whose first text content is JSON {code, error}. A private tool's code is from errors.private. A public tool's code, and the answer to a tool name the server does not have, is from errors.public, and its error begins with that entry's prefix. Beyond the prefix, error is diagnostic. A request refused before any tool runs is the transport's answer and outside this list. Normative rules: contracts/tasks/CONTRACT.md in the NimbleBrain repository.",
   "contract": "ai.nimblebrain.tasks",
   "version": "1.0",
   "cardinality": "singleton",
-  "grants": true,
   "tools": {
     "create": {
       "visibility": "public",
       "unattended": "refused",
+      "grant": true,
       "input": {
         "$ref": "#/$defs/create_input"
       },
@@ -21,6 +21,7 @@
     "update": {
       "visibility": "public",
       "unattended": "refused",
+      "grant": true,
       "input": {
         "$ref": "#/$defs/update_input"
       },
@@ -61,6 +62,7 @@
     "run": {
       "visibility": "public",
       "unattended": "refused",
+      "grant": true,
       "input": {
         "$ref": "#/$defs/run_input"
       },
@@ -121,6 +123,7 @@
     "run_batch": {
       "visibility": "public",
       "unattended": "refused",
+      "grant": true,
       "input": {
         "$ref": "#/$defs/run_batch_input"
       },
@@ -151,6 +154,7 @@
     "batch_control": {
       "visibility": "public",
       "unattended": "refused",
+      "grant": true,
       "input": {
         "$ref": "#/$defs/batch_control_input"
       },
@@ -259,7 +263,7 @@
       {
         "code": "grant_missing",
         "prefix": "No run grant: ",
-        "meaning": "A call that stores a definition (create, or run or run_batch with a definition) carried no grant in its host context. Nothing was written."
+        "meaning": "A tool marked grant was called with no grant in its host context. Nothing was written."
       },
       {
         "code": "unattended_refused",
@@ -293,11 +297,11 @@
       },
       {
         "code": "scope_missing",
-        "meaning": "The call reached the server with no workspace in its scope, or (begin_run, end_run, check_runs, offer_event) no owner. Nothing was read or written."
+        "meaning": "The call reached the server with no workspace in its scope, or offer_event with no owner. Nothing was read or written."
       },
       {
         "code": "token_stale",
-        "meaning": "begin_run or end_run carried a token lower than one already recorded for that run: a newer claim holds it. Nothing was written."
+        "meaning": "begin_run carried a token lower than one already seen for its ref, or end_run a token other than the one whose begin_run received the run's work spec: another claim holds it. Nothing was written."
       },
       {
         "code": "run_not_found",
@@ -315,12 +319,12 @@
   },
   "$defs": {
     "create_input": {
+      "additionalProperties": false,
+      "type": "object",
       "required": [
         "manifest",
         "body"
       ],
-      "additionalProperties": false,
-      "type": "object",
       "properties": {
         "manifest": {
           "required": [
@@ -340,66 +344,103 @@
               "type": "string"
             },
             "schedule": {
-              "additionalProperties": false,
-              "description": "Exactly one of `cron`, `at`, `intervalMs`, or `match`. Omit to run only on demand.",
-              "type": "object",
-              "properties": {
-                "cron": {
-                  "description": "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
-                  "type": "string"
-                },
-                "at": {
-                  "description": "Fires once at this ISO-8601 time (with an offset).",
-                  "type": "string"
-                },
-                "intervalMs": {
-                  "minimum": 60000,
-                  "description": "Recurs every this many ms. Min 60000.",
-                  "type": "integer"
-                },
-                "match": {
+              "oneOf": [
+                {
                   "additionalProperties": false,
-                  "description": "Fires on matching notifications routed to this task by an admin.",
                   "type": "object",
+                  "required": [
+                    "cron",
+                    "timezone"
+                  ],
                   "properties": {
-                    "source": {
-                      "maxLength": 200,
-                      "description": "Exact connector server name. Omit to match every source in this workspace.",
+                    "cron": {
+                      "minLength": 1,
+                      "description": "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
                       "type": "string"
                     },
-                    "name": {
-                      "pattern": "^[a-zA-Z0-9._*-]{1,200}$",
-                      "description": "Glob over the event name the server chose, e.g. `domain.*`. Omit to match every name.",
+                    "timezone": {
+                      "minLength": 1,
+                      "description": "The IANA timezone the cron is read in. Required with `cron`.",
                       "type": "string"
-                    },
-                    "level": {
-                      "type": "string",
-                      "enum": [
-                        "info",
-                        "attention",
-                        "urgent"
-                      ],
-                      "description": "Minimum level, not an exact match."
                     }
                   }
                 },
-                "timezone": {
-                  "description": "IANA timezone for `cron`. Default: the implementation's.",
-                  "type": "string"
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "at"
+                  ],
+                  "properties": {
+                    "at": {
+                      "format": "date-time",
+                      "description": "Fires once at this instant.",
+                      "type": "string"
+                    }
+                  }
                 },
-                "debounceMs": {
-                  "minimum": 1000,
-                  "maximum": 900000,
-                  "description": "With `match`: ms that matching notifications coalesce into one run. Default 30000.",
-                  "type": "integer"
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "intervalMs"
+                  ],
+                  "properties": {
+                    "intervalMs": {
+                      "minimum": 60000,
+                      "description": "Recurs every this many ms. Min 60000.",
+                      "type": "integer"
+                    }
+                  }
                 },
-                "maxFiresPerHour": {
-                  "minimum": 1,
-                  "maximum": 60,
-                  "description": "With `match`: max runs per hour before the task disables. Default 12.",
-                  "type": "integer"
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "match"
+                  ],
+                  "properties": {
+                    "match": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "maxLength": 200,
+                          "description": "Exact connector server name. Omit to match every source in this workspace.",
+                          "type": "string"
+                        },
+                        "name": {
+                          "pattern": "^[a-zA-Z0-9._*-]{1,200}$",
+                          "description": "Glob over the event name the server chose. Omit to match every name.",
+                          "type": "string"
+                        },
+                        "level": {
+                          "type": "string",
+                          "enum": [
+                            "info",
+                            "attention",
+                            "urgent"
+                          ],
+                          "description": "Minimum level, not an exact match."
+                        }
+                      }
+                    },
+                    "debounceMs": {
+                      "minimum": 1000,
+                      "maximum": 900000,
+                      "description": "ms that matching notifications coalesce into one run. Default 30000.",
+                      "type": "integer"
+                    },
+                    "maxFiresPerHour": {
+                      "minimum": 1,
+                      "maximum": 60,
+                      "description": "Max runs per hour before the task disables. Default 12.",
+                      "type": "integer"
+                    }
+                  }
                 }
-              }
+              ],
+              "description": "Exactly one of `cron` (with `timezone`), `at`, `intervalMs`, or `match` (fires on routed notifications). Omit to run only on demand."
             },
             "enabled": {
               "description": "Whether its schedule fires. Default true.",
@@ -416,7 +457,7 @@
             "skills": {
               "minItems": 1,
               "maxItems": 5,
-              "description": "Skills each run is given in full, by name.",
+              "description": "Skills each run is given in full, by name, matched by the host.",
               "type": "array",
               "items": {
                 "minLength": 1,
@@ -441,7 +482,7 @@
             },
             "allowedTools": {
               "minItems": 1,
-              "description": "Tools its runs may use: one `<connector>__*` glob per connector. Omit for every tool.",
+              "description": "Tool name globs its runs are narrowed to, matched by the host. Omit for every tool.",
               "type": "array",
               "items": {
                 "minLength": 1,
@@ -487,7 +528,7 @@
                     "daily",
                     "monthly"
                   ],
-                  "description": "`daily` or `monthly` reset. Omit for a lifetime total."
+                  "description": "A UTC calendar day or month. Omit for a lifetime total."
                 }
               }
             },
@@ -502,15 +543,6 @@
               "properties": {},
               "additionalProperties": true,
               "description": "JSON Schema the deliverable must match."
-            },
-            "onPoorResult": {
-              "type": "string",
-              "enum": [
-                "record",
-                "notify",
-                "retry_once"
-              ],
-              "description": "What a deliverable that fails the outputSchema does: record, notify (default), or retry_once."
             }
           }
         },
@@ -523,9 +555,7 @@
     "create_output": {
       "type": "object",
       "required": [
-        "task",
-        "message",
-        "timezone"
+        "task"
       ],
       "properties": {
         "task": {
@@ -533,15 +563,8 @@
           "required": [
             "id",
             "name",
-            "prompt",
             "enabled",
-            "source",
-            "createdAt",
-            "updatedAt",
-            "runCount",
-            "consecutiveErrors",
-            "cumulativeInputTokens",
-            "cumulativeOutputTokens"
+            "prompt"
           ],
           "properties": {
             "id": {
@@ -550,65 +573,113 @@
             "name": {
               "type": "string"
             },
-            "description": {
-              "type": "string"
+            "enabled": {
+              "type": "boolean"
             },
             "prompt": {
               "type": "string"
             },
+            "description": {
+              "type": "string"
+            },
             "schedule": {
-              "type": "object",
-              "required": [
-                "type"
-              ],
-              "properties": {
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "cron",
-                    "interval",
-                    "event",
-                    "once"
-                  ]
-                },
-                "expression": {
-                  "type": "string"
-                },
-                "timezone": {
-                  "type": "string"
-                },
-                "at": {
-                  "type": "string"
-                },
-                "intervalMs": {
-                  "type": "number"
-                },
-                "match": {
+              "oneOf": [
+                {
                   "type": "object",
+                  "required": [
+                    "cron",
+                    "timezone"
+                  ],
                   "properties": {
-                    "source": {
+                    "cron": {
+                      "minLength": 1,
+                      "description": "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
                       "type": "string"
                     },
-                    "name": {
+                    "timezone": {
+                      "minLength": 1,
+                      "description": "The IANA timezone the cron is read in. Required with `cron`.",
                       "type": "string"
-                    },
-                    "level": {
-                      "type": "string",
-                      "enum": [
-                        "info",
-                        "attention",
-                        "urgent"
-                      ]
                     }
                   }
                 },
-                "debounceMs": {
-                  "type": "number"
+                {
+                  "type": "object",
+                  "required": [
+                    "at"
+                  ],
+                  "properties": {
+                    "at": {
+                      "format": "date-time",
+                      "description": "Fires once at this instant.",
+                      "type": "string"
+                    }
+                  }
                 },
-                "maxFiresPerHour": {
-                  "type": "number"
+                {
+                  "type": "object",
+                  "required": [
+                    "intervalMs"
+                  ],
+                  "properties": {
+                    "intervalMs": {
+                      "minimum": 60000,
+                      "description": "Recurs every this many ms. Min 60000.",
+                      "type": "integer"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "match"
+                  ],
+                  "properties": {
+                    "match": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "maxLength": 200,
+                          "description": "Exact connector server name. Omit to match every source in this workspace.",
+                          "type": "string"
+                        },
+                        "name": {
+                          "pattern": "^[a-zA-Z0-9._*-]{1,200}$",
+                          "description": "Glob over the event name the server chose. Omit to match every name.",
+                          "type": "string"
+                        },
+                        "level": {
+                          "type": "string",
+                          "enum": [
+                            "info",
+                            "attention",
+                            "urgent"
+                          ],
+                          "description": "Minimum level, not an exact match."
+                        }
+                      }
+                    },
+                    "debounceMs": {
+                      "minimum": 1000,
+                      "maximum": 900000,
+                      "description": "ms that matching notifications coalesce into one run. Default 30000.",
+                      "type": "integer"
+                    },
+                    "maxFiresPerHour": {
+                      "minimum": 1,
+                      "maximum": 60,
+                      "description": "Max runs per hour before the task disables. Default 12.",
+                      "type": "integer"
+                    }
+                  }
                 }
-              }
+              ],
+              "description": "What fires the task, as it was written."
+            },
+            "scheduleHuman": {
+              "description": "The schedule in words, e.g. \"Weekdays at 8:00 AM HST\".",
+              "type": "string"
             },
             "kind": {
               "type": "string",
@@ -660,14 +731,6 @@
                 "^(.*)$": {}
               }
             },
-            "onPoorResult": {
-              "type": "string",
-              "enum": [
-                "record",
-                "notify",
-                "retry_once"
-              ]
-            },
             "maxIterations": {
               "type": "number"
             },
@@ -678,88 +741,17 @@
               "type": "number"
             },
             "model": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
             "thinkingEffort": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "low",
-                    "medium",
-                    "high",
-                    "xhigh",
-                    "max"
-                  ]
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "enabled": {
-              "type": "boolean"
-            },
-            "ownerId": {
-              "type": "string"
-            },
-            "workspaceId": {
-              "type": "string"
-            },
-            "source": {
               "type": "string",
               "enum": [
-                "user",
-                "agent",
-                "bundle"
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
               ]
-            },
-            "createdAt": {
-              "type": "string"
-            },
-            "updatedAt": {
-              "type": "string"
-            },
-            "lastRunAt": {
-              "type": "string"
-            },
-            "lastRunStatus": {
-              "type": "string",
-              "enum": [
-                "success",
-                "degraded",
-                "failure",
-                "timeout",
-                "skipped"
-              ]
-            },
-            "nextRunAt": {
-              "type": "string"
-            },
-            "runCount": {
-              "type": "number"
-            },
-            "consecutiveErrors": {
-              "type": "number"
-            },
-            "disabledAt": {
-              "type": "string"
-            },
-            "disabledReason": {
-              "type": "string"
-            },
-            "cumulativeInputTokens": {
-              "type": "number"
-            },
-            "cumulativeOutputTokens": {
-              "type": "number"
             },
             "tokenBudget": {
               "type": "object",
@@ -781,24 +773,70 @@
             },
             "budgetResetAt": {
               "type": "string"
+            },
+            "cumulativeInputTokens": {
+              "type": "number"
+            },
+            "cumulativeOutputTokens": {
+              "type": "number"
+            },
+            "ownerId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "runCount": {
+              "type": "number"
+            },
+            "consecutiveErrors": {
+              "type": "number"
+            },
+            "lastRunAt": {
+              "type": "string"
+            },
+            "lastRunLabel": {
+              "type": "string",
+              "enum": [
+                "Succeeded",
+                "Poor result",
+                "Needs review",
+                "Failed",
+                "Skipped",
+                "Cancelled",
+                "Queued",
+                "Running"
+              ]
+            },
+            "nextRunAt": {
+              "type": "string"
+            },
+            "disabledAt": {
+              "type": "string"
+            },
+            "disabledReason": {
+              "type": "string"
             }
           }
         },
         "message": {
-          "type": "string"
-        },
-        "timezone": {
-          "description": "The IANA timezone its schedule is read in: the schedule's own, else the implementation's.",
+          "description": "A sentence for the reader.",
           "type": "string"
         }
       }
     },
     "update_input": {
+      "additionalProperties": false,
+      "type": "object",
       "required": [
         "taskId"
       ],
-      "additionalProperties": false,
-      "type": "object",
       "properties": {
         "taskId": {
           "minLength": 1,
@@ -825,66 +863,103 @@
               "description": "null removes it. A new `at` on a task that already fired re-arms and enables it.",
               "anyOf": [
                 {
-                  "additionalProperties": false,
-                  "description": "Exactly one of `cron`, `at`, `intervalMs`, or `match`. Omit to run only on demand.",
-                  "type": "object",
-                  "properties": {
-                    "cron": {
-                      "description": "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
-                      "type": "string"
-                    },
-                    "at": {
-                      "description": "Fires once at this ISO-8601 time (with an offset).",
-                      "type": "string"
-                    },
-                    "intervalMs": {
-                      "minimum": 60000,
-                      "description": "Recurs every this many ms. Min 60000.",
-                      "type": "integer"
-                    },
-                    "match": {
+                  "oneOf": [
+                    {
                       "additionalProperties": false,
-                      "description": "Fires on matching notifications routed to this task by an admin.",
                       "type": "object",
+                      "required": [
+                        "cron",
+                        "timezone"
+                      ],
                       "properties": {
-                        "source": {
-                          "maxLength": 200,
-                          "description": "Exact connector server name. Omit to match every source in this workspace.",
+                        "cron": {
+                          "minLength": 1,
+                          "description": "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
                           "type": "string"
                         },
-                        "name": {
-                          "pattern": "^[a-zA-Z0-9._*-]{1,200}$",
-                          "description": "Glob over the event name the server chose, e.g. `domain.*`. Omit to match every name.",
+                        "timezone": {
+                          "minLength": 1,
+                          "description": "The IANA timezone the cron is read in. Required with `cron`.",
                           "type": "string"
-                        },
-                        "level": {
-                          "type": "string",
-                          "enum": [
-                            "info",
-                            "attention",
-                            "urgent"
-                          ],
-                          "description": "Minimum level, not an exact match."
                         }
                       }
                     },
-                    "timezone": {
-                      "description": "IANA timezone for `cron`. Default: the implementation's.",
-                      "type": "string"
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "at"
+                      ],
+                      "properties": {
+                        "at": {
+                          "format": "date-time",
+                          "description": "Fires once at this instant.",
+                          "type": "string"
+                        }
+                      }
                     },
-                    "debounceMs": {
-                      "minimum": 1000,
-                      "maximum": 900000,
-                      "description": "With `match`: ms that matching notifications coalesce into one run. Default 30000.",
-                      "type": "integer"
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "intervalMs"
+                      ],
+                      "properties": {
+                        "intervalMs": {
+                          "minimum": 60000,
+                          "description": "Recurs every this many ms. Min 60000.",
+                          "type": "integer"
+                        }
+                      }
                     },
-                    "maxFiresPerHour": {
-                      "minimum": 1,
-                      "maximum": 60,
-                      "description": "With `match`: max runs per hour before the task disables. Default 12.",
-                      "type": "integer"
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "match"
+                      ],
+                      "properties": {
+                        "match": {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "maxLength": 200,
+                              "description": "Exact connector server name. Omit to match every source in this workspace.",
+                              "type": "string"
+                            },
+                            "name": {
+                              "pattern": "^[a-zA-Z0-9._*-]{1,200}$",
+                              "description": "Glob over the event name the server chose. Omit to match every name.",
+                              "type": "string"
+                            },
+                            "level": {
+                              "type": "string",
+                              "enum": [
+                                "info",
+                                "attention",
+                                "urgent"
+                              ],
+                              "description": "Minimum level, not an exact match."
+                            }
+                          }
+                        },
+                        "debounceMs": {
+                          "minimum": 1000,
+                          "maximum": 900000,
+                          "description": "ms that matching notifications coalesce into one run. Default 30000.",
+                          "type": "integer"
+                        },
+                        "maxFiresPerHour": {
+                          "minimum": 1,
+                          "maximum": 60,
+                          "description": "Max runs per hour before the task disables. Default 12.",
+                          "type": "integer"
+                        }
+                      }
                     }
-                  }
+                  ],
+                  "description": "Exactly one of `cron` (with `timezone`), `at`, `intervalMs`, or `match` (fires on routed notifications). Omit to run only on demand."
                 },
                 {
                   "type": "null"
@@ -901,7 +976,7 @@
                 {
                   "minItems": 1,
                   "maxItems": 5,
-                  "description": "Skills each run is given in full, by name.",
+                  "description": "Skills each run is given in full, by name, matched by the host.",
                   "type": "array",
                   "items": {
                     "minLength": 1,
@@ -950,7 +1025,7 @@
               "anyOf": [
                 {
                   "minItems": 1,
-                  "description": "Tools its runs may use: one `<connector>__*` glob per connector. Omit for every tool.",
+                  "description": "Tool name globs its runs are narrowed to, matched by the host. Omit for every tool.",
                   "type": "array",
                   "items": {
                     "minLength": 1,
@@ -1028,7 +1103,7 @@
                         "daily",
                         "monthly"
                       ],
-                      "description": "`daily` or `monthly` reset. Omit for a lifetime total."
+                      "description": "A UTC calendar day or month. Omit for a lifetime total."
                     }
                   }
                 },
@@ -1064,23 +1139,6 @@
                   "type": "null"
                 }
               ]
-            },
-            "onPoorResult": {
-              "description": "null: the default.",
-              "anyOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "record",
-                    "notify",
-                    "retry_once"
-                  ],
-                  "description": "What a deliverable that fails the outputSchema does: record, notify (default), or retry_once."
-                },
-                {
-                  "type": "null"
-                }
-              ]
             }
           }
         },
@@ -1093,10 +1151,7 @@
     "update_output": {
       "type": "object",
       "required": [
-        "task",
-        "updated",
-        "message",
-        "timezone"
+        "task"
       ],
       "properties": {
         "task": {
@@ -1104,15 +1159,8 @@
           "required": [
             "id",
             "name",
-            "prompt",
             "enabled",
-            "source",
-            "createdAt",
-            "updatedAt",
-            "runCount",
-            "consecutiveErrors",
-            "cumulativeInputTokens",
-            "cumulativeOutputTokens"
+            "prompt"
           ],
           "properties": {
             "id": {
@@ -1121,65 +1169,113 @@
             "name": {
               "type": "string"
             },
-            "description": {
-              "type": "string"
+            "enabled": {
+              "type": "boolean"
             },
             "prompt": {
               "type": "string"
             },
+            "description": {
+              "type": "string"
+            },
             "schedule": {
-              "type": "object",
-              "required": [
-                "type"
-              ],
-              "properties": {
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "cron",
-                    "interval",
-                    "event",
-                    "once"
-                  ]
-                },
-                "expression": {
-                  "type": "string"
-                },
-                "timezone": {
-                  "type": "string"
-                },
-                "at": {
-                  "type": "string"
-                },
-                "intervalMs": {
-                  "type": "number"
-                },
-                "match": {
+              "oneOf": [
+                {
                   "type": "object",
+                  "required": [
+                    "cron",
+                    "timezone"
+                  ],
                   "properties": {
-                    "source": {
+                    "cron": {
+                      "minLength": 1,
+                      "description": "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
                       "type": "string"
                     },
-                    "name": {
+                    "timezone": {
+                      "minLength": 1,
+                      "description": "The IANA timezone the cron is read in. Required with `cron`.",
                       "type": "string"
-                    },
-                    "level": {
-                      "type": "string",
-                      "enum": [
-                        "info",
-                        "attention",
-                        "urgent"
-                      ]
                     }
                   }
                 },
-                "debounceMs": {
-                  "type": "number"
+                {
+                  "type": "object",
+                  "required": [
+                    "at"
+                  ],
+                  "properties": {
+                    "at": {
+                      "format": "date-time",
+                      "description": "Fires once at this instant.",
+                      "type": "string"
+                    }
+                  }
                 },
-                "maxFiresPerHour": {
-                  "type": "number"
+                {
+                  "type": "object",
+                  "required": [
+                    "intervalMs"
+                  ],
+                  "properties": {
+                    "intervalMs": {
+                      "minimum": 60000,
+                      "description": "Recurs every this many ms. Min 60000.",
+                      "type": "integer"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "match"
+                  ],
+                  "properties": {
+                    "match": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "maxLength": 200,
+                          "description": "Exact connector server name. Omit to match every source in this workspace.",
+                          "type": "string"
+                        },
+                        "name": {
+                          "pattern": "^[a-zA-Z0-9._*-]{1,200}$",
+                          "description": "Glob over the event name the server chose. Omit to match every name.",
+                          "type": "string"
+                        },
+                        "level": {
+                          "type": "string",
+                          "enum": [
+                            "info",
+                            "attention",
+                            "urgent"
+                          ],
+                          "description": "Minimum level, not an exact match."
+                        }
+                      }
+                    },
+                    "debounceMs": {
+                      "minimum": 1000,
+                      "maximum": 900000,
+                      "description": "ms that matching notifications coalesce into one run. Default 30000.",
+                      "type": "integer"
+                    },
+                    "maxFiresPerHour": {
+                      "minimum": 1,
+                      "maximum": 60,
+                      "description": "Max runs per hour before the task disables. Default 12.",
+                      "type": "integer"
+                    }
+                  }
                 }
-              }
+              ],
+              "description": "What fires the task, as it was written."
+            },
+            "scheduleHuman": {
+              "description": "The schedule in words, e.g. \"Weekdays at 8:00 AM HST\".",
+              "type": "string"
             },
             "kind": {
               "type": "string",
@@ -1231,14 +1327,6 @@
                 "^(.*)$": {}
               }
             },
-            "onPoorResult": {
-              "type": "string",
-              "enum": [
-                "record",
-                "notify",
-                "retry_once"
-              ]
-            },
             "maxIterations": {
               "type": "number"
             },
@@ -1249,88 +1337,17 @@
               "type": "number"
             },
             "model": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
             "thinkingEffort": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "low",
-                    "medium",
-                    "high",
-                    "xhigh",
-                    "max"
-                  ]
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "enabled": {
-              "type": "boolean"
-            },
-            "ownerId": {
-              "type": "string"
-            },
-            "workspaceId": {
-              "type": "string"
-            },
-            "source": {
               "type": "string",
               "enum": [
-                "user",
-                "agent",
-                "bundle"
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
               ]
-            },
-            "createdAt": {
-              "type": "string"
-            },
-            "updatedAt": {
-              "type": "string"
-            },
-            "lastRunAt": {
-              "type": "string"
-            },
-            "lastRunStatus": {
-              "type": "string",
-              "enum": [
-                "success",
-                "degraded",
-                "failure",
-                "timeout",
-                "skipped"
-              ]
-            },
-            "nextRunAt": {
-              "type": "string"
-            },
-            "runCount": {
-              "type": "number"
-            },
-            "consecutiveErrors": {
-              "type": "number"
-            },
-            "disabledAt": {
-              "type": "string"
-            },
-            "disabledReason": {
-              "type": "string"
-            },
-            "cumulativeInputTokens": {
-              "type": "number"
-            },
-            "cumulativeOutputTokens": {
-              "type": "number"
             },
             "tokenBudget": {
               "type": "object",
@@ -1352,6 +1369,55 @@
             },
             "budgetResetAt": {
               "type": "string"
+            },
+            "cumulativeInputTokens": {
+              "type": "number"
+            },
+            "cumulativeOutputTokens": {
+              "type": "number"
+            },
+            "ownerId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "runCount": {
+              "type": "number"
+            },
+            "consecutiveErrors": {
+              "type": "number"
+            },
+            "lastRunAt": {
+              "type": "string"
+            },
+            "lastRunLabel": {
+              "type": "string",
+              "enum": [
+                "Succeeded",
+                "Poor result",
+                "Needs review",
+                "Failed",
+                "Skipped",
+                "Cancelled",
+                "Queued",
+                "Running"
+              ]
+            },
+            "nextRunAt": {
+              "type": "string"
+            },
+            "disabledAt": {
+              "type": "string"
+            },
+            "disabledReason": {
+              "type": "string"
             }
           }
         },
@@ -1359,20 +1425,17 @@
           "type": "boolean"
         },
         "message": {
-          "type": "string"
-        },
-        "timezone": {
-          "description": "The IANA timezone its schedule is read in: the schedule's own, else the implementation's.",
+          "description": "A sentence for the reader.",
           "type": "string"
         }
       }
     },
     "delete_input": {
+      "additionalProperties": false,
+      "type": "object",
       "required": [
         "taskId"
       ],
-      "additionalProperties": false,
-      "type": "object",
       "properties": {
         "taskId": {
           "minLength": 1,
@@ -1385,8 +1448,7 @@
       "type": "object",
       "required": [
         "deleted",
-        "id",
-        "message"
+        "id"
       ],
       "properties": {
         "deleted": {
@@ -1396,6 +1458,7 @@
           "type": "string"
         },
         "message": {
+          "description": "A sentence for the reader.",
           "type": "string"
         }
       }
@@ -1407,14 +1470,6 @@
         "enabled": {
           "description": "Filter by enabled status.",
           "type": "boolean"
-        },
-        "source": {
-          "type": "string",
-          "enum": [
-            "user",
-            "agent"
-          ],
-          "description": "Filter by source."
         },
         "kind": {
           "type": "string",
@@ -1428,7 +1483,7 @@
         "limit": {
           "minimum": 1,
           "maximum": 500,
-          "description": "Max tasks to return. Default 100, max 500. The response always reports the unpaged total and whether more remain.",
+          "description": "Max tasks to return. Default 100, max 500.",
           "type": "integer"
         },
         "cursor": {
@@ -1441,10 +1496,7 @@
       "type": "object",
       "required": [
         "tasks",
-        "total",
-        "returned",
-        "nextCursor",
-        "hasMore"
+        "nextCursor"
       ],
       "properties": {
         "tasks": {
@@ -1454,18 +1506,7 @@
             "required": [
               "id",
               "name",
-              "schedule",
-              "scheduleType",
-              "kind",
-              "enabled",
-              "source",
-              "runCount",
-              "lastRunStatus",
-              "lastRunAt",
-              "nextRunAt",
-              "disabledAt",
-              "disabledReason",
-              "estimatedCostPerDay"
+              "enabled"
             ],
             "properties": {
               "id": {
@@ -1474,11 +1515,13 @@
               "name": {
                 "type": "string"
               },
+              "enabled": {
+                "type": "boolean"
+              },
               "description": {
                 "type": "string"
               },
-              "schedule": {
-                "description": "Human-readable trigger, e.g. \"Weekdays at 8:00 AM HST\", \"Once at …\", \"Manual only\".",
+              "scheduleHuman": {
                 "type": "string"
               },
               "scheduleType": {
@@ -1517,80 +1560,33 @@
                   }
                 }
               },
-              "enabled": {
-                "type": "boolean"
-              },
-              "source": {
-                "type": "string",
-                "enum": [
-                  "user",
-                  "agent",
-                  "bundle"
-                ]
-              },
               "runCount": {
                 "type": "number"
               },
-              "lastRunStatus": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "enum": [
-                      "success",
-                      "degraded",
-                      "failure",
-                      "timeout",
-                      "skipped"
-                    ]
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
               "lastRunAt": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": "string"
+              },
+              "lastRunLabel": {
+                "type": "string",
+                "enum": [
+                  "Succeeded",
+                  "Poor result",
+                  "Needs review",
+                  "Failed",
+                  "Skipped",
+                  "Cancelled",
+                  "Queued",
+                  "Running"
                 ]
               },
               "nextRunAt": {
-                "description": "When its schedule next fires; null when nothing will.",
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
+                "type": "string"
               },
               "disabledAt": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
+                "type": "string"
               },
               "disabledReason": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "estimatedCostPerDay": {
-                "type": "number"
+                "type": "string"
               },
               "inputSchema": {
                 "type": "object",
@@ -1598,22 +1594,14 @@
                   "^(.*)$": {}
                 }
               },
-              "startedVia": {
-                "type": "string"
-              },
               "promptPreview": {
                 "type": "string"
               }
             }
           }
         },
-        "total": {
-          "type": "integer"
-        },
-        "returned": {
-          "type": "integer"
-        },
         "nextCursor": {
+          "description": "Pass as `cursor` for the next page; null on the last.",
           "anyOf": [
             {
               "type": "string"
@@ -1622,6 +1610,10 @@
               "type": "null"
             }
           ]
+        },
+        "total": {
+          "description": "Every match, before the page cap.",
+          "type": "integer"
         },
         "hasMore": {
           "type": "boolean"
@@ -1632,11 +1624,11 @@
       }
     },
     "status_input": {
+      "additionalProperties": false,
+      "type": "object",
       "required": [
         "taskId"
       ],
-      "additionalProperties": false,
-      "type": "object",
       "properties": {
         "taskId": {
           "minLength": 1,
@@ -1663,22 +1655,8 @@
           "required": [
             "id",
             "name",
-            "prompt",
-            "scheduleHuman",
-            "timezone",
             "enabled",
-            "source",
-            "runCount",
-            "consecutiveErrors",
-            "cumulativeInputTokens",
-            "cumulativeOutputTokens",
-            "tokenBudget",
-            "budgetResetAt",
-            "createdAt",
-            "updatedAt",
-            "estimatedCostPerRun",
-            "estimatedCostPerDay",
-            "estimatedCostPerMonth"
+            "prompt"
           ],
           "properties": {
             "id": {
@@ -1687,65 +1665,113 @@
             "name": {
               "type": "string"
             },
-            "description": {
-              "type": "string"
+            "enabled": {
+              "type": "boolean"
             },
             "prompt": {
               "type": "string"
             },
+            "description": {
+              "type": "string"
+            },
             "schedule": {
-              "type": "object",
-              "required": [
-                "type"
-              ],
-              "properties": {
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "cron",
-                    "interval",
-                    "event",
-                    "once"
-                  ]
-                },
-                "expression": {
-                  "type": "string"
-                },
-                "timezone": {
-                  "type": "string"
-                },
-                "at": {
-                  "type": "string"
-                },
-                "intervalMs": {
-                  "type": "number"
-                },
-                "match": {
+              "oneOf": [
+                {
                   "type": "object",
+                  "required": [
+                    "cron",
+                    "timezone"
+                  ],
                   "properties": {
-                    "source": {
+                    "cron": {
+                      "minLength": 1,
+                      "description": "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
                       "type": "string"
                     },
-                    "name": {
+                    "timezone": {
+                      "minLength": 1,
+                      "description": "The IANA timezone the cron is read in. Required with `cron`.",
                       "type": "string"
-                    },
-                    "level": {
-                      "type": "string",
-                      "enum": [
-                        "info",
-                        "attention",
-                        "urgent"
-                      ]
                     }
                   }
                 },
-                "debounceMs": {
-                  "type": "number"
+                {
+                  "type": "object",
+                  "required": [
+                    "at"
+                  ],
+                  "properties": {
+                    "at": {
+                      "format": "date-time",
+                      "description": "Fires once at this instant.",
+                      "type": "string"
+                    }
+                  }
                 },
-                "maxFiresPerHour": {
-                  "type": "number"
+                {
+                  "type": "object",
+                  "required": [
+                    "intervalMs"
+                  ],
+                  "properties": {
+                    "intervalMs": {
+                      "minimum": 60000,
+                      "description": "Recurs every this many ms. Min 60000.",
+                      "type": "integer"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "match"
+                  ],
+                  "properties": {
+                    "match": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "maxLength": 200,
+                          "description": "Exact connector server name. Omit to match every source in this workspace.",
+                          "type": "string"
+                        },
+                        "name": {
+                          "pattern": "^[a-zA-Z0-9._*-]{1,200}$",
+                          "description": "Glob over the event name the server chose. Omit to match every name.",
+                          "type": "string"
+                        },
+                        "level": {
+                          "type": "string",
+                          "enum": [
+                            "info",
+                            "attention",
+                            "urgent"
+                          ],
+                          "description": "Minimum level, not an exact match."
+                        }
+                      }
+                    },
+                    "debounceMs": {
+                      "minimum": 1000,
+                      "maximum": 900000,
+                      "description": "ms that matching notifications coalesce into one run. Default 30000.",
+                      "type": "integer"
+                    },
+                    "maxFiresPerHour": {
+                      "minimum": 1,
+                      "maximum": 60,
+                      "description": "Max runs per hour before the task disables. Default 12.",
+                      "type": "integer"
+                    }
+                  }
                 }
-              }
+              ],
+              "description": "What fires the task, as it was written."
+            },
+            "scheduleHuman": {
+              "description": "The schedule in words, e.g. \"Weekdays at 8:00 AM HST\".",
+              "type": "string"
             },
             "kind": {
               "type": "string",
@@ -1773,56 +1799,6 @@
                 }
               }
             },
-            "scheduleHuman": {
-              "type": "string"
-            },
-            "timezone": {
-              "type": "string"
-            },
-            "enabled": {
-              "type": "boolean"
-            },
-            "source": {
-              "type": "string",
-              "enum": [
-                "user",
-                "agent",
-                "bundle"
-              ]
-            },
-            "ownerId": {
-              "type": "string"
-            },
-            "workspaceId": {
-              "type": "string"
-            },
-            "model": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "thinkingEffort": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "low",
-                    "medium",
-                    "high",
-                    "xhigh",
-                    "max"
-                  ]
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
             "skills": {
               "type": "array",
               "items": {
@@ -1847,14 +1823,6 @@
                 "^(.*)$": {}
               }
             },
-            "onPoorResult": {
-              "type": "string",
-              "enum": [
-                "record",
-                "notify",
-                "retry_once"
-              ]
-            },
             "maxIterations": {
               "type": "number"
             },
@@ -1864,11 +1832,39 @@
             "maxRunDurationMs": {
               "type": "number"
             },
-            "runCount": {
-              "type": "number"
+            "model": {
+              "type": "string"
             },
-            "consecutiveErrors": {
-              "type": "number"
+            "thinkingEffort": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            "tokenBudget": {
+              "type": "object",
+              "properties": {
+                "maxInputTokens": {
+                  "type": "number"
+                },
+                "maxOutputTokens": {
+                  "type": "number"
+                },
+                "period": {
+                  "type": "string",
+                  "enum": [
+                    "daily",
+                    "monthly"
+                  ]
+                }
+              }
+            },
+            "budgetResetAt": {
+              "type": "string"
             },
             "cumulativeInputTokens": {
               "type": "number"
@@ -1876,52 +1872,38 @@
             "cumulativeOutputTokens": {
               "type": "number"
             },
-            "tokenBudget": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "maxInputTokens": {
-                      "type": "number"
-                    },
-                    "maxOutputTokens": {
-                      "type": "number"
-                    },
-                    "period": {
-                      "type": "string",
-                      "enum": [
-                        "daily",
-                        "monthly"
-                      ]
-                    }
-                  }
-                },
-                {
-                  "type": "null"
-                }
-              ]
+            "ownerId": {
+              "type": "string"
             },
-            "budgetResetAt": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+            "workspaceId": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "runCount": {
+              "type": "number"
+            },
+            "consecutiveErrors": {
+              "type": "number"
             },
             "lastRunAt": {
               "type": "string"
             },
-            "lastRunStatus": {
+            "lastRunLabel": {
               "type": "string",
               "enum": [
-                "success",
-                "degraded",
-                "failure",
-                "timeout",
-                "skipped"
+                "Succeeded",
+                "Poor result",
+                "Needs review",
+                "Failed",
+                "Skipped",
+                "Cancelled",
+                "Queued",
+                "Running"
               ]
             },
             "nextRunAt": {
@@ -1932,37 +1914,54 @@
             },
             "disabledReason": {
               "type": "string"
-            },
-            "createdAt": {
-              "type": "string"
-            },
-            "updatedAt": {
-              "type": "string"
-            },
-            "estimatedCostPerRun": {
-              "type": "number"
-            },
-            "estimatedCostPerDay": {
-              "type": "number"
-            },
-            "estimatedCostPerMonth": {
-              "type": "number"
             }
           }
         },
         "recentRuns": {
           "type": "array",
           "items": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "execution": {
+                      "not": {
+                        "const": "queued"
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "startedAt"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "execution": {
+                      "enum": [
+                        "skipped",
+                        "completed",
+                        "incomplete",
+                        "failed",
+                        "cancelled"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "completedAt"
+                  ]
+                }
+              }
+            ],
             "type": "object",
             "required": [
               "id",
               "taskId",
-              "startedAt",
-              "status",
-              "inputTokens",
-              "outputTokens",
-              "toolCalls",
-              "iterations",
               "execution",
               "label"
             ],
@@ -1973,42 +1972,36 @@
               "taskId": {
                 "type": "string"
               },
+              "execution": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "running",
+                  "skipped",
+                  "completed",
+                  "incomplete",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "enum": [
+                  "Succeeded",
+                  "Poor result",
+                  "Needs review",
+                  "Failed",
+                  "Skipped",
+                  "Cancelled",
+                  "Queued",
+                  "Running"
+                ]
+              },
               "startedAt": {
                 "type": "string"
               },
               "completedAt": {
                 "type": "string"
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "success",
-                  "degraded",
-                  "failure",
-                  "timeout",
-                  "cancelled",
-                  "skipped"
-                ]
-              },
-              "inputTokens": {
-                "type": "number"
-              },
-              "outputTokens": {
-                "type": "number"
-              },
-              "toolCalls": {
-                "type": "number"
-              },
-              "iterations": {
-                "type": "number"
-              },
-              "error": {
-                "type": "string"
-              },
-              "transient": {
-                "type": "boolean"
               },
               "trigger": {
                 "type": "string",
@@ -2018,52 +2011,19 @@
                   "event"
                 ]
               },
-              "resultPreview": {
+              "error": {
                 "type": "string"
               },
-              "stopReason": {
-                "type": "string",
-                "enum": [
-                  "complete",
-                  "max_iterations",
-                  "max_input_tokens",
-                  "spend_limit",
-                  "length",
-                  "content_filter",
-                  "timeout",
-                  "cancelled",
-                  "error",
-                  "other",
-                  "not_started"
-                ]
-              },
-              "spendAccountId": {
-                "type": "string"
-              },
-              "input": {},
-              "idempotencyKey": {
-                "type": "string"
-              },
-              "outputSchemaValid": {
+              "transient": {
                 "type": "boolean"
               },
-              "outputSchemaErrors": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "unrecoveredToolFailures": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
+              "resultPreview": {
+                "type": "string"
               },
               "assessment": {
                 "type": "object",
                 "required": [
-                  "verdict",
-                  "assessedAt"
+                  "verdict"
                 ],
                 "properties": {
                   "verdict": {
@@ -2112,13 +2072,23 @@
                   }
                 }
               },
-              "retryOf": {
-                "type": "string"
+              "unrecoveredToolFailures": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
-              "batchId": {
-                "type": "string"
+              "inputTokens": {
+                "type": "number"
               },
-              "batchIndex": {
+              "outputTokens": {
+                "type": "number"
+              },
+              "iterations": {
+                "type": "number"
+              },
+              "toolCalls": {
+                "description": "How many tool calls it made.",
                 "type": "number"
               },
               "costUsd": {
@@ -2128,30 +2098,21 @@
                 "minimum": 1,
                 "type": "integer"
               },
-              "execution": {
-                "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "skipped",
-                  "completed",
-                  "incomplete",
-                  "failed",
-                  "cancelled"
-                ]
+              "spendAccountId": {
+                "type": "string"
               },
-              "label": {
-                "type": "string",
-                "enum": [
-                  "Succeeded",
-                  "Poor result",
-                  "Needs review",
-                  "Failed",
-                  "Skipped",
-                  "Cancelled",
-                  "Queued",
-                  "Running"
-                ]
+              "input": {},
+              "idempotencyKey": {
+                "type": "string"
+              },
+              "retryOf": {
+                "type": "string"
+              },
+              "batchId": {
+                "type": "string"
+              },
+              "batchIndex": {
+                "type": "number"
               }
             }
           }
@@ -2180,7 +2141,7 @@
                 "skills": {
                   "minItems": 1,
                   "maxItems": 5,
-                  "description": "Skills each run is given in full, by name.",
+                  "description": "Skills each run is given in full, by name, matched by the host.",
                   "type": "array",
                   "items": {
                     "minLength": 1,
@@ -2205,7 +2166,7 @@
                 },
                 "allowedTools": {
                   "minItems": 1,
-                  "description": "Tools its runs may use: one `<connector>__*` glob per connector. Omit for every tool.",
+                  "description": "Tool name globs its runs are narrowed to, matched by the host. Omit for every tool.",
                   "type": "array",
                   "items": {
                     "minLength": 1,
@@ -2251,7 +2212,7 @@
                         "daily",
                         "monthly"
                       ],
-                      "description": "`daily` or `monthly` reset. Omit for a lifetime total."
+                      "description": "A UTC calendar day or month. Omit for a lifetime total."
                     }
                   }
                 },
@@ -2266,15 +2227,6 @@
                   "properties": {},
                   "additionalProperties": true,
                   "description": "JSON Schema the deliverable must match."
-                },
-                "onPoorResult": {
-                  "type": "string",
-                  "enum": [
-                    "record",
-                    "notify",
-                    "retry_once"
-                  ],
-                  "description": "What a deliverable that fails the outputSchema does: record, notify (default), or retry_once."
                 },
                 "name": {
                   "minLength": 1,
@@ -2304,632 +2256,354 @@
     "run_output": {
       "type": "object",
       "required": [
-        "status",
-        "taskId",
         "runId",
-        "enabled",
-        "message"
+        "taskId",
+        "execution"
       ],
       "properties": {
-        "status": {
-          "const": "queued",
+        "runId": {
           "type": "string"
         },
         "taskId": {
           "type": "string"
         },
-        "runId": {
+        "execution": {
+          "const": "queued",
           "type": "string"
+        },
+        "existing": {
+          "description": "An earlier call with the same idempotencyKey asked for this run.",
+          "type": "boolean"
         },
         "enabled": {
           "type": "boolean"
         },
-        "existing": {
-          "type": "boolean"
-        },
         "message": {
+          "description": "A sentence for the reader.",
           "type": "string"
         }
       }
     },
     "run_result_input": {
+      "additionalProperties": false,
+      "type": "object",
       "required": [
         "runId"
       ],
-      "additionalProperties": false,
-      "type": "object",
       "properties": {
         "runId": {
           "minLength": 1,
           "description": "The run's id, as run, runs, or upcoming return it.",
           "type": "string"
-        },
-        "taskId": {
-          "minLength": 1,
-          "description": "The run's task. Needed only for a run past the newest 1000 of its task; any other is found by its id alone.",
-          "type": "string"
         }
       }
     },
     "run_result_output": {
-      "anyOf": [
-        {
+      "type": "object",
+      "required": [
+        "run"
+      ],
+      "properties": {
+        "run": {
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "execution": {
+                    "not": {
+                      "const": "queued"
+                    }
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "startedAt"
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "execution": {
+                    "enum": [
+                      "skipped",
+                      "completed",
+                      "incomplete",
+                      "failed",
+                      "cancelled"
+                    ]
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "completedAt"
+                ]
+              }
+            }
+          ],
           "type": "object",
           "required": [
-            "status",
-            "run",
-            "message"
+            "id",
+            "taskId",
+            "execution",
+            "label"
           ],
           "properties": {
-            "status": {
+            "id": {
+              "type": "string"
+            },
+            "taskId": {
+              "type": "string"
+            },
+            "execution": {
               "type": "string",
               "enum": [
                 "queued",
-                "running"
+                "running",
+                "skipped",
+                "completed",
+                "incomplete",
+                "failed",
+                "cancelled"
               ]
             },
-            "run": {
+            "label": {
+              "type": "string",
+              "enum": [
+                "Succeeded",
+                "Poor result",
+                "Needs review",
+                "Failed",
+                "Skipped",
+                "Cancelled",
+                "Queued",
+                "Running"
+              ]
+            },
+            "startedAt": {
+              "type": "string"
+            },
+            "completedAt": {
+              "type": "string"
+            },
+            "trigger": {
+              "type": "string",
+              "enum": [
+                "scheduled",
+                "manual",
+                "event"
+              ]
+            },
+            "error": {
+              "type": "string"
+            },
+            "transient": {
+              "type": "boolean"
+            },
+            "resultPreview": {
+              "type": "string"
+            },
+            "assessment": {
               "type": "object",
               "required": [
-                "id",
-                "taskId",
-                "startedAt",
-                "status",
-                "inputTokens",
-                "outputTokens",
-                "toolCalls",
-                "iterations",
-                "execution",
-                "label"
+                "verdict"
               ],
               "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "taskId": {
-                  "type": "string"
-                },
-                "startedAt": {
-                  "type": "string"
-                },
-                "completedAt": {
-                  "type": "string"
-                },
-                "status": {
+                "verdict": {
                   "type": "string",
                   "enum": [
-                    "queued",
-                    "running",
-                    "success",
-                    "degraded",
-                    "failure",
-                    "timeout",
-                    "cancelled",
-                    "skipped"
+                    "pass",
+                    "fail",
+                    "uncertain",
+                    "not_assessed"
                   ]
                 },
-                "inputTokens": {
-                  "type": "number"
-                },
-                "outputTokens": {
-                  "type": "number"
-                },
-                "toolCalls": {
-                  "type": "number"
-                },
-                "iterations": {
-                  "type": "number"
-                },
-                "error": {
-                  "type": "string"
-                },
-                "transient": {
-                  "type": "boolean"
-                },
-                "trigger": {
-                  "type": "string",
-                  "enum": [
-                    "scheduled",
-                    "manual",
-                    "event"
-                  ]
-                },
-                "resultPreview": {
-                  "type": "string"
-                },
-                "stopReason": {
-                  "type": "string",
-                  "enum": [
-                    "complete",
-                    "max_iterations",
-                    "max_input_tokens",
-                    "spend_limit",
-                    "length",
-                    "content_filter",
-                    "timeout",
-                    "cancelled",
-                    "error",
-                    "other",
-                    "not_started"
-                  ]
-                },
-                "spendAccountId": {
-                  "type": "string"
-                },
-                "input": {},
-                "idempotencyKey": {
-                  "type": "string"
-                },
-                "outputSchemaValid": {
-                  "type": "boolean"
-                },
-                "outputSchemaErrors": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "unrecoveredToolFailures": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "assessment": {
+                "reason": {
                   "type": "object",
                   "required": [
-                    "verdict",
-                    "assessedAt"
+                    "code",
+                    "message"
                   ],
                   "properties": {
-                    "verdict": {
-                      "type": "string",
-                      "enum": [
-                        "pass",
-                        "fail",
-                        "uncertain",
-                        "not_assessed"
-                      ]
+                    "code": {
+                      "type": "string"
                     },
-                    "reason": {
-                      "type": "object",
-                      "required": [
-                        "code",
-                        "message"
-                      ],
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        }
-                      }
-                    },
-                    "schema": {
-                      "type": "object",
-                      "required": [
-                        "valid"
-                      ],
-                      "properties": {
-                        "valid": {
-                          "type": "boolean"
-                        },
-                        "errors": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        }
-                      }
-                    },
-                    "assessedAt": {
+                    "message": {
                       "type": "string"
                     }
                   }
                 },
-                "retryOf": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "valid"
+                  ],
+                  "properties": {
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "assessedAt": {
                   "type": "string"
-                },
-                "batchId": {
-                  "type": "string"
-                },
-                "batchIndex": {
-                  "type": "number"
-                },
-                "costUsd": {
-                  "type": "number"
-                },
-                "unpricedCalls": {
-                  "minimum": 1,
-                  "type": "integer"
-                },
-                "execution": {
-                  "type": "string",
-                  "enum": [
-                    "queued",
-                    "running",
-                    "skipped",
-                    "completed",
-                    "incomplete",
-                    "failed",
-                    "cancelled"
-                  ]
-                },
-                "label": {
-                  "type": "string",
-                  "enum": [
-                    "Succeeded",
-                    "Poor result",
-                    "Needs review",
-                    "Failed",
-                    "Skipped",
-                    "Cancelled",
-                    "Queued",
-                    "Running"
-                  ]
                 }
               }
             },
-            "message": {
+            "unrecoveredToolFailures": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "inputTokens": {
+              "type": "number"
+            },
+            "outputTokens": {
+              "type": "number"
+            },
+            "iterations": {
+              "type": "number"
+            },
+            "toolCalls": {
+              "description": "How many tool calls it made.",
+              "type": "number"
+            },
+            "costUsd": {
+              "type": "number"
+            },
+            "unpricedCalls": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "spendAccountId": {
               "type": "string"
+            },
+            "input": {},
+            "idempotencyKey": {
+              "type": "string"
+            },
+            "retryOf": {
+              "type": "string"
+            },
+            "batchId": {
+              "type": "string"
+            },
+            "batchIndex": {
+              "type": "number"
             }
           }
         },
-        {
+        "result": {
           "type": "object",
           "required": [
-            "status",
-            "run"
+            "completedAt",
+            "output"
           ],
           "properties": {
-            "status": {
-              "const": "ended",
+            "completedAt": {
               "type": "string"
             },
-            "run": {
+            "output": {
+              "type": "string"
+            },
+            "structured": {},
+            "error": {
+              "type": "string"
+            },
+            "activityLog": {
+              "description": "Each tool call the run made, in call order; never its input or output.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "ok"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "ok": {
+                    "type": "boolean"
+                  },
+                  "errorReason": {
+                    "type": "string"
+                  },
+                  "ms": {
+                    "type": "number"
+                  }
+                }
+              }
+            },
+            "outputFiles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "uri"
+                ],
+                "properties": {
+                  "uri": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "usage": {
               "type": "object",
-              "required": [
-                "id",
-                "taskId",
-                "startedAt",
-                "status",
-                "inputTokens",
-                "outputTokens",
-                "toolCalls",
-                "iterations",
-                "execution",
-                "label"
-              ],
               "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "taskId": {
-                  "type": "string"
-                },
-                "startedAt": {
-                  "type": "string"
-                },
-                "completedAt": {
-                  "type": "string"
-                },
-                "status": {
-                  "type": "string",
-                  "enum": [
-                    "queued",
-                    "running",
-                    "success",
-                    "degraded",
-                    "failure",
-                    "timeout",
-                    "cancelled",
-                    "skipped"
-                  ]
-                },
                 "inputTokens": {
                   "type": "number"
                 },
                 "outputTokens": {
                   "type": "number"
                 },
-                "toolCalls": {
-                  "type": "number"
-                },
                 "iterations": {
                   "type": "number"
-                },
-                "error": {
-                  "type": "string"
-                },
-                "transient": {
-                  "type": "boolean"
-                },
-                "trigger": {
-                  "type": "string",
-                  "enum": [
-                    "scheduled",
-                    "manual",
-                    "event"
-                  ]
-                },
-                "resultPreview": {
-                  "type": "string"
-                },
-                "stopReason": {
-                  "type": "string",
-                  "enum": [
-                    "complete",
-                    "max_iterations",
-                    "max_input_tokens",
-                    "spend_limit",
-                    "length",
-                    "content_filter",
-                    "timeout",
-                    "cancelled",
-                    "error",
-                    "other",
-                    "not_started"
-                  ]
-                },
-                "spendAccountId": {
-                  "type": "string"
-                },
-                "input": {},
-                "idempotencyKey": {
-                  "type": "string"
-                },
-                "outputSchemaValid": {
-                  "type": "boolean"
-                },
-                "outputSchemaErrors": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "unrecoveredToolFailures": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "assessment": {
-                  "type": "object",
-                  "required": [
-                    "verdict",
-                    "assessedAt"
-                  ],
-                  "properties": {
-                    "verdict": {
-                      "type": "string",
-                      "enum": [
-                        "pass",
-                        "fail",
-                        "uncertain",
-                        "not_assessed"
-                      ]
-                    },
-                    "reason": {
-                      "type": "object",
-                      "required": [
-                        "code",
-                        "message"
-                      ],
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        }
-                      }
-                    },
-                    "schema": {
-                      "type": "object",
-                      "required": [
-                        "valid"
-                      ],
-                      "properties": {
-                        "valid": {
-                          "type": "boolean"
-                        },
-                        "errors": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        }
-                      }
-                    },
-                    "assessedAt": {
-                      "type": "string"
-                    }
-                  }
-                },
-                "retryOf": {
-                  "type": "string"
-                },
-                "batchId": {
-                  "type": "string"
-                },
-                "batchIndex": {
-                  "type": "number"
-                },
-                "costUsd": {
-                  "type": "number"
-                },
-                "unpricedCalls": {
-                  "minimum": 1,
-                  "type": "integer"
-                },
-                "execution": {
-                  "type": "string",
-                  "enum": [
-                    "queued",
-                    "running",
-                    "skipped",
-                    "completed",
-                    "incomplete",
-                    "failed",
-                    "cancelled"
-                  ]
-                },
-                "label": {
-                  "type": "string",
-                  "enum": [
-                    "Succeeded",
-                    "Poor result",
-                    "Needs review",
-                    "Failed",
-                    "Skipped",
-                    "Cancelled",
-                    "Queued",
-                    "Running"
-                  ]
                 }
               }
             },
-            "result": {
-              "type": "object",
-              "required": [
-                "completedAt",
-                "output",
-                "activityLog",
-                "outputFiles",
-                "usage"
-              ],
-              "properties": {
-                "completedAt": {
-                  "type": "string"
-                },
-                "output": {
-                  "type": "string"
-                },
-                "activityLog": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "required": [
-                      "name",
-                      "ok",
-                      "ms"
-                    ],
-                    "properties": {
-                      "name": {
-                        "type": "string"
-                      },
-                      "ok": {
-                        "type": "boolean"
-                      },
-                      "errorReason": {
-                        "type": "string"
-                      },
-                      "held": {
-                        "const": true,
-                        "type": "boolean"
-                      },
-                      "ms": {
-                        "type": "number"
-                      }
-                    }
-                  }
-                },
-                "outputFiles": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "required": [
-                      "uri"
-                    ],
-                    "properties": {
-                      "uri": {
-                        "description": "Opaque: the host's reference to the file.",
-                        "type": "string"
-                      },
-                      "name": {
-                        "type": "string"
-                      }
-                    }
-                  }
-                },
-                "usage": {
-                  "type": "object",
-                  "required": [
-                    "inputTokens",
-                    "outputTokens",
-                    "iterations"
-                  ],
-                  "properties": {
-                    "inputTokens": {
-                      "type": "number"
-                    },
-                    "outputTokens": {
-                      "type": "number"
-                    },
-                    "iterations": {
-                      "type": "number"
-                    }
-                  }
-                },
-                "stopReason": {
-                  "type": "string",
-                  "enum": [
-                    "complete",
-                    "max_iterations",
-                    "max_input_tokens",
-                    "spend_limit",
-                    "length",
-                    "content_filter",
-                    "timeout",
-                    "cancelled",
-                    "error",
-                    "other",
-                    "not_started"
-                  ]
-                },
-                "structured": {},
-                "error": {
-                  "type": "string"
-                },
-                "skillsDelivered": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "required": [
-                      "name",
-                      "loadedBy"
-                    ],
-                    "properties": {
-                      "name": {
-                        "type": "string"
-                      },
-                      "loadedBy": {
-                        "type": "string",
-                        "enum": [
-                          "declared",
-                          "before_call",
-                          "tool_use",
-                          "activation"
-                        ]
-                      },
-                      "status": {
-                        "type": "string",
-                        "enum": [
-                          "fetch_failed",
-                          "capped",
-                          "renamed_unheld"
-                        ]
-                      }
-                    }
+            "stopReason": {
+              "type": "string"
+            },
+            "skillsDelivered": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "loadedBy": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
                   }
                 }
               }
             }
           }
+        },
+        "message": {
+          "description": "A sentence for the reader.",
+          "type": "string"
         }
-      ],
-      "type": "object"
+      }
     },
     "runs_input": {
       "additionalProperties": false,
@@ -2963,11 +2637,13 @@
           "description": "Only runs with this verdict. A run with no deliverable has none, and never matches."
         },
         "since": {
-          "description": "ISO timestamp — only runs started on or after this time.",
+          "format": "date-time",
+          "description": "Only runs started at or after this instant.",
           "type": "string"
         },
         "before": {
-          "description": "ISO timestamp — only runs started before this time. Pages back through the run history: pass the previous response's `nextBefore`, with or without `taskId`.",
+          "format": "date-time",
+          "description": "Only runs started before this instant. Pass the previous response's `nextBefore` to page back through the history, with or without `taskId`.",
           "type": "string"
         },
         "limit": {
@@ -2985,23 +2661,54 @@
     "runs_output": {
       "type": "object",
       "required": [
-        "runs",
-        "total"
+        "runs"
       ],
       "properties": {
         "runs": {
           "type": "array",
           "items": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "execution": {
+                      "not": {
+                        "const": "queued"
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "startedAt"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "execution": {
+                      "enum": [
+                        "skipped",
+                        "completed",
+                        "incomplete",
+                        "failed",
+                        "cancelled"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "completedAt"
+                  ]
+                }
+              }
+            ],
             "type": "object",
             "required": [
               "id",
               "taskId",
-              "startedAt",
-              "status",
-              "inputTokens",
-              "outputTokens",
-              "toolCalls",
-              "iterations",
               "execution",
               "label"
             ],
@@ -3012,42 +2719,36 @@
               "taskId": {
                 "type": "string"
               },
+              "execution": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "running",
+                  "skipped",
+                  "completed",
+                  "incomplete",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "enum": [
+                  "Succeeded",
+                  "Poor result",
+                  "Needs review",
+                  "Failed",
+                  "Skipped",
+                  "Cancelled",
+                  "Queued",
+                  "Running"
+                ]
+              },
               "startedAt": {
                 "type": "string"
               },
               "completedAt": {
                 "type": "string"
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "success",
-                  "degraded",
-                  "failure",
-                  "timeout",
-                  "cancelled",
-                  "skipped"
-                ]
-              },
-              "inputTokens": {
-                "type": "number"
-              },
-              "outputTokens": {
-                "type": "number"
-              },
-              "toolCalls": {
-                "type": "number"
-              },
-              "iterations": {
-                "type": "number"
-              },
-              "error": {
-                "type": "string"
-              },
-              "transient": {
-                "type": "boolean"
               },
               "trigger": {
                 "type": "string",
@@ -3057,52 +2758,19 @@
                   "event"
                 ]
               },
-              "resultPreview": {
+              "error": {
                 "type": "string"
               },
-              "stopReason": {
-                "type": "string",
-                "enum": [
-                  "complete",
-                  "max_iterations",
-                  "max_input_tokens",
-                  "spend_limit",
-                  "length",
-                  "content_filter",
-                  "timeout",
-                  "cancelled",
-                  "error",
-                  "other",
-                  "not_started"
-                ]
-              },
-              "spendAccountId": {
-                "type": "string"
-              },
-              "input": {},
-              "idempotencyKey": {
-                "type": "string"
-              },
-              "outputSchemaValid": {
+              "transient": {
                 "type": "boolean"
               },
-              "outputSchemaErrors": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "unrecoveredToolFailures": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
+              "resultPreview": {
+                "type": "string"
               },
               "assessment": {
                 "type": "object",
                 "required": [
-                  "verdict",
-                  "assessedAt"
+                  "verdict"
                 ],
                 "properties": {
                   "verdict": {
@@ -3151,13 +2819,23 @@
                   }
                 }
               },
-              "retryOf": {
-                "type": "string"
+              "unrecoveredToolFailures": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
-              "batchId": {
-                "type": "string"
+              "inputTokens": {
+                "type": "number"
               },
-              "batchIndex": {
+              "outputTokens": {
+                "type": "number"
+              },
+              "iterations": {
+                "type": "number"
+              },
+              "toolCalls": {
+                "description": "How many tool calls it made.",
                 "type": "number"
               },
               "costUsd": {
@@ -3167,48 +2845,39 @@
                 "minimum": 1,
                 "type": "integer"
               },
-              "execution": {
-                "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "skipped",
-                  "completed",
-                  "incomplete",
-                  "failed",
-                  "cancelled"
-                ]
+              "spendAccountId": {
+                "type": "string"
               },
-              "label": {
-                "type": "string",
-                "enum": [
-                  "Succeeded",
-                  "Poor result",
-                  "Needs review",
-                  "Failed",
-                  "Skipped",
-                  "Cancelled",
-                  "Queued",
-                  "Running"
-                ]
+              "input": {},
+              "idempotencyKey": {
+                "type": "string"
+              },
+              "retryOf": {
+                "type": "string"
+              },
+              "batchId": {
+                "type": "string"
+              },
+              "batchIndex": {
+                "type": "number"
               }
             }
           }
         },
-        "total": {
-          "type": "integer"
-        },
         "nextBefore": {
           "type": "string"
+        },
+        "total": {
+          "type": "integer"
         }
       }
     },
     "cancel_input": {
+      "additionalProperties": false,
+      "type": "object",
       "required": [
         "runId"
       ],
-      "additionalProperties": false,
-      "type": "object",
       "properties": {
         "runId": {
           "minLength": 1,
@@ -3221,8 +2890,7 @@
       "type": "object",
       "required": [
         "cancelled",
-        "runId",
-        "message"
+        "runId"
       ],
       "properties": {
         "cancelled": {
@@ -3235,6 +2903,7 @@
           "type": "string"
         },
         "message": {
+          "description": "A sentence for the reader.",
           "type": "string"
         }
       }
@@ -3256,11 +2925,7 @@
       "required": [
         "running",
         "queued",
-        "days",
-        "windowEnd",
-        "scheduled",
-        "frequent",
-        "events"
+        "scheduled"
       ],
       "properties": {
         "running": {
@@ -3269,29 +2934,19 @@
             "type": "object",
             "required": [
               "taskId",
-              "state"
+              "runId"
             ],
             "properties": {
               "taskId": {
                 "type": "string"
               },
-              "taskName": {
-                "type": "string"
-              },
               "runId": {
                 "type": "string"
               },
-              "state": {
-                "type": "string",
-                "enum": [
-                  "running",
-                  "queued"
-                ]
-              },
-              "startedAt": {
+              "taskName": {
                 "type": "string"
               },
-              "queuedAt": {
+              "startedAt": {
                 "type": "string"
               },
               "trigger": {
@@ -3316,27 +2971,17 @@
           "items": {
             "type": "object",
             "required": [
-              "taskId",
-              "state"
+              "taskId"
             ],
             "properties": {
               "taskId": {
                 "type": "string"
               },
-              "taskName": {
-                "type": "string"
-              },
               "runId": {
+                "description": "Absent until the run has an id.",
                 "type": "string"
               },
-              "state": {
-                "type": "string",
-                "enum": [
-                  "running",
-                  "queued"
-                ]
-              },
-              "startedAt": {
+              "taskName": {
                 "type": "string"
               },
               "queuedAt": {
@@ -3359,34 +3004,25 @@
             }
           }
         },
-        "days": {
-          "type": "number"
-        },
-        "windowEnd": {
-          "type": "string"
-        },
         "scheduled": {
           "type": "array",
           "items": {
             "type": "object",
             "required": [
               "taskId",
-              "taskName",
-              "at",
-              "schedule",
-              "scheduleType"
+              "at"
             ],
             "properties": {
               "taskId": {
                 "type": "string"
               },
-              "taskName": {
-                "type": "string"
-              },
               "at": {
                 "type": "string"
               },
-              "schedule": {
+              "taskName": {
+                "type": "string"
+              },
+              "scheduleHuman": {
                 "type": "string"
               },
               "scheduleType": {
@@ -3403,15 +3039,18 @@
             }
           }
         },
+        "days": {
+          "type": "number"
+        },
+        "windowEnd": {
+          "type": "string"
+        },
         "frequent": {
           "type": "array",
           "items": {
             "type": "object",
             "required": [
               "taskId",
-              "taskName",
-              "schedule",
-              "scheduleType",
               "count",
               "first"
             ],
@@ -3419,10 +3058,16 @@
               "taskId": {
                 "type": "string"
               },
+              "count": {
+                "type": "integer"
+              },
+              "first": {
+                "type": "string"
+              },
               "taskName": {
                 "type": "string"
               },
-              "schedule": {
+              "scheduleHuman": {
                 "type": "string"
               },
               "scheduleType": {
@@ -3432,14 +3077,8 @@
                   "interval"
                 ]
               },
-              "count": {
-                "type": "integer"
-              },
               "countCapped": {
                 "type": "boolean"
-              },
-              "first": {
-                "type": "string"
               },
               "last": {
                 "type": "string"
@@ -3452,21 +3091,13 @@
           "items": {
             "type": "object",
             "required": [
-              "taskId",
-              "taskName",
-              "schedule",
-              "enabled",
-              "maxFiresPerHour",
-              "firesLastHour"
+              "taskId"
             ],
             "properties": {
               "taskId": {
                 "type": "string"
               },
               "taskName": {
-                "type": "string"
-              },
-              "schedule": {
                 "type": "string"
               },
               "enabled": {
@@ -3488,7 +3119,8 @@
       "type": "object",
       "properties": {
         "since": {
-          "description": "ISO timestamp: count runs started on or after it. Default: 30 days ago.",
+          "format": "date-time",
+          "description": "Count runs started at or after this instant. Default: 30 days ago.",
           "type": "string"
         },
         "taskId": {
@@ -3516,10 +3148,7 @@
               "taskId",
               "runs",
               "pass",
-              "fail",
-              "uncertain",
-              "passRate",
-              "costUsd"
+              "fail"
             ],
             "properties": {
               "taskId": {
@@ -3538,14 +3167,7 @@
                 "type": "integer"
               },
               "passRate": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
+                "type": "number"
               },
               "costUsd": {
                 "type": "number"
@@ -3554,14 +3176,10 @@
                 "type": "object",
                 "required": [
                   "id",
-                  "startedAt",
                   "label"
                 ],
                 "properties": {
                   "id": {
-                    "type": "string"
-                  },
-                  "startedAt": {
                     "type": "string"
                   },
                   "label": {
@@ -3576,6 +3194,9 @@
                       "Queued",
                       "Running"
                     ]
+                  },
+                  "startedAt": {
+                    "type": "string"
                   }
                 }
               },
@@ -3585,14 +3206,10 @@
                   "type": "object",
                   "required": [
                     "id",
-                    "startedAt",
                     "label"
                   ],
                   "properties": {
                     "id": {
-                      "type": "string"
-                    },
-                    "startedAt": {
                       "type": "string"
                     },
                     "label": {
@@ -3608,6 +3225,9 @@
                         "Running"
                       ]
                     },
+                    "startedAt": {
+                      "type": "string"
+                    },
                     "error": {
                       "type": "string"
                     }
@@ -3620,11 +3240,11 @@
       }
     },
     "run_batch_input": {
+      "additionalProperties": false,
+      "type": "object",
       "required": [
         "items"
       ],
-      "additionalProperties": false,
-      "type": "object",
       "properties": {
         "taskId": {
           "minLength": 1,
@@ -3644,7 +3264,7 @@
                 "skills": {
                   "minItems": 1,
                   "maxItems": 5,
-                  "description": "Skills each run is given in full, by name.",
+                  "description": "Skills each run is given in full, by name, matched by the host.",
                   "type": "array",
                   "items": {
                     "minLength": 1,
@@ -3669,7 +3289,7 @@
                 },
                 "allowedTools": {
                   "minItems": 1,
-                  "description": "Tools its runs may use: one `<connector>__*` glob per connector. Omit for every tool.",
+                  "description": "Tool name globs its runs are narrowed to, matched by the host. Omit for every tool.",
                   "type": "array",
                   "items": {
                     "minLength": 1,
@@ -3715,7 +3335,7 @@
                         "daily",
                         "monthly"
                       ],
-                      "description": "`daily` or `monthly` reset. Omit for a lifetime total."
+                      "description": "A UTC calendar day or month. Omit for a lifetime total."
                     }
                   }
                 },
@@ -3766,13 +3386,13 @@
           "type": "number"
         },
         "stopWhen": {
+          "additionalProperties": false,
+          "description": "Pause the batch when its pass rate collapses. Needs a task with an outputSchema.",
+          "type": "object",
           "required": [
             "minPassRate",
             "afterItems"
           ],
-          "additionalProperties": false,
-          "description": "Pause the batch when its pass rate collapses. Needs a task with an outputSchema.",
-          "type": "object",
           "properties": {
             "minPassRate": {
               "minimum": 0,
@@ -3798,9 +3418,7 @@
     "run_batch_output": {
       "type": "object",
       "required": [
-        "batch",
-        "existing",
-        "message"
+        "batch"
       ],
       "properties": {
         "batch": {
@@ -3808,18 +3426,8 @@
           "required": [
             "id",
             "taskId",
-            "workspaceId",
-            "ownerId",
-            "items",
-            "concurrency",
             "state",
-            "counts",
-            "costUsd",
-            "createdAt",
-            "updatedAt",
-            "createdBy",
-            "done",
-            "passRate"
+            "counts"
           ],
           "properties": {
             "id": {
@@ -3827,42 +3435,6 @@
             },
             "taskId": {
               "type": "string"
-            },
-            "workspaceId": {
-              "type": "string"
-            },
-            "ownerId": {
-              "type": "string"
-            },
-            "items": {
-              "type": "number"
-            },
-            "concurrency": {
-              "type": "number"
-            },
-            "sharing": {
-              "type": "number"
-            },
-            "budgetUsd": {
-              "type": "number"
-            },
-            "stopWhen": {
-              "type": "object",
-              "required": [
-                "minPassRate",
-                "afterItems"
-              ],
-              "properties": {
-                "minPassRate": {
-                  "type": "number"
-                },
-                "afterItems": {
-                  "type": "number"
-                }
-              }
-            },
-            "stopRuleDisarmed": {
-              "type": "boolean"
             },
             "state": {
               "type": "string",
@@ -3872,31 +3444,6 @@
                 "completed",
                 "cancelled"
               ]
-            },
-            "pause": {
-              "type": "object",
-              "required": [
-                "reason",
-                "message",
-                "at"
-              ],
-              "properties": {
-                "reason": {
-                  "type": "string",
-                  "enum": [
-                    "manual",
-                    "budget",
-                    "pass_rate",
-                    "unavailable"
-                  ]
-                },
-                "message": {
-                  "type": "string"
-                },
-                "at": {
-                  "type": "string"
-                }
-              }
             },
             "counts": {
               "type": "object",
@@ -3945,16 +3492,80 @@
                 }
               }
             },
+            "name": {
+              "type": "string"
+            },
+            "items": {
+              "type": "number"
+            },
+            "done": {
+              "description": "Items with an outcome.",
+              "type": "number"
+            },
+            "passRate": {
+              "description": "pass / (pass + fail); absent before either.",
+              "type": "number"
+            },
+            "concurrency": {
+              "type": "number"
+            },
+            "sharing": {
+              "type": "number"
+            },
+            "budgetUsd": {
+              "type": "number"
+            },
             "costUsd": {
               "type": "number"
+            },
+            "stopWhen": {
+              "type": "object",
+              "required": [
+                "minPassRate",
+                "afterItems"
+              ],
+              "properties": {
+                "minPassRate": {
+                  "type": "number"
+                },
+                "afterItems": {
+                  "type": "number"
+                }
+              }
+            },
+            "stopRuleDisarmed": {
+              "type": "boolean"
+            },
+            "pause": {
+              "type": "object",
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "manual",
+                    "budget",
+                    "pass_rate",
+                    "unavailable"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                }
+              }
             },
             "idempotencyKey": {
               "type": "string"
             },
-            "name": {
+            "ownerId": {
               "type": "string"
             },
-            "startedVia": {
+            "workspaceId": {
               "type": "string"
             },
             "createdAt": {
@@ -3965,22 +3576,6 @@
             },
             "completedAt": {
               "type": "string"
-            },
-            "createdBy": {
-              "type": "string"
-            },
-            "done": {
-              "type": "number"
-            },
-            "passRate": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             }
           }
         },
@@ -3988,19 +3583,20 @@
           "type": "boolean"
         },
         "message": {
+          "description": "A sentence for the reader.",
           "type": "string"
         }
       }
     },
     "batch_input": {
+      "additionalProperties": false,
+      "type": "object",
       "required": [
         "batchId"
       ],
-      "additionalProperties": false,
-      "type": "object",
       "properties": {
         "batchId": {
-          "pattern": "^batch_[a-f0-9]{12}$",
+          "minLength": 1,
           "description": "The batch's id (run_batch returns it).",
           "type": "string"
         },
@@ -4055,18 +3651,8 @@
           "required": [
             "id",
             "taskId",
-            "workspaceId",
-            "ownerId",
-            "items",
-            "concurrency",
             "state",
-            "counts",
-            "costUsd",
-            "createdAt",
-            "updatedAt",
-            "createdBy",
-            "done",
-            "passRate"
+            "counts"
           ],
           "properties": {
             "id": {
@@ -4074,42 +3660,6 @@
             },
             "taskId": {
               "type": "string"
-            },
-            "workspaceId": {
-              "type": "string"
-            },
-            "ownerId": {
-              "type": "string"
-            },
-            "items": {
-              "type": "number"
-            },
-            "concurrency": {
-              "type": "number"
-            },
-            "sharing": {
-              "type": "number"
-            },
-            "budgetUsd": {
-              "type": "number"
-            },
-            "stopWhen": {
-              "type": "object",
-              "required": [
-                "minPassRate",
-                "afterItems"
-              ],
-              "properties": {
-                "minPassRate": {
-                  "type": "number"
-                },
-                "afterItems": {
-                  "type": "number"
-                }
-              }
-            },
-            "stopRuleDisarmed": {
-              "type": "boolean"
             },
             "state": {
               "type": "string",
@@ -4119,31 +3669,6 @@
                 "completed",
                 "cancelled"
               ]
-            },
-            "pause": {
-              "type": "object",
-              "required": [
-                "reason",
-                "message",
-                "at"
-              ],
-              "properties": {
-                "reason": {
-                  "type": "string",
-                  "enum": [
-                    "manual",
-                    "budget",
-                    "pass_rate",
-                    "unavailable"
-                  ]
-                },
-                "message": {
-                  "type": "string"
-                },
-                "at": {
-                  "type": "string"
-                }
-              }
             },
             "counts": {
               "type": "object",
@@ -4192,16 +3717,80 @@
                 }
               }
             },
+            "name": {
+              "type": "string"
+            },
+            "items": {
+              "type": "number"
+            },
+            "done": {
+              "description": "Items with an outcome.",
+              "type": "number"
+            },
+            "passRate": {
+              "description": "pass / (pass + fail); absent before either.",
+              "type": "number"
+            },
+            "concurrency": {
+              "type": "number"
+            },
+            "sharing": {
+              "type": "number"
+            },
+            "budgetUsd": {
+              "type": "number"
+            },
             "costUsd": {
               "type": "number"
+            },
+            "stopWhen": {
+              "type": "object",
+              "required": [
+                "minPassRate",
+                "afterItems"
+              ],
+              "properties": {
+                "minPassRate": {
+                  "type": "number"
+                },
+                "afterItems": {
+                  "type": "number"
+                }
+              }
+            },
+            "stopRuleDisarmed": {
+              "type": "boolean"
+            },
+            "pause": {
+              "type": "object",
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "manual",
+                    "budget",
+                    "pass_rate",
+                    "unavailable"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                }
+              }
             },
             "idempotencyKey": {
               "type": "string"
             },
-            "name": {
+            "ownerId": {
               "type": "string"
             },
-            "startedVia": {
+            "workspaceId": {
               "type": "string"
             },
             "createdAt": {
@@ -4212,22 +3801,6 @@
             },
             "completedAt": {
               "type": "string"
-            },
-            "createdBy": {
-              "type": "string"
-            },
-            "done": {
-              "type": "number"
-            },
-            "passRate": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             }
           }
         },
@@ -4237,15 +3810,11 @@
             "type": "object",
             "required": [
               "index",
-              "inputSummary",
               "state"
             ],
             "properties": {
               "index": {
                 "type": "number"
-              },
-              "inputSummary": {
-                "type": "string"
               },
               "state": {
                 "type": "string",
@@ -4299,6 +3868,9 @@
                   "Running"
                 ]
               },
+              "inputSummary": {
+                "type": "string"
+              },
               "costUsd": {
                 "type": "number"
               },
@@ -4309,7 +3881,8 @@
                 "type": "string",
                 "enum": [
                   "exceeds_share"
-                ]
+                ],
+                "description": "A run of the item with what was left of the batch's budget to itself could not pay for it (its outcome's spendStop was exhausted), so it was settled rather than run again."
               },
               "output": {
                 "type": "object",
@@ -4384,18 +3957,8 @@
             "required": [
               "id",
               "taskId",
-              "workspaceId",
-              "ownerId",
-              "items",
-              "concurrency",
               "state",
-              "counts",
-              "costUsd",
-              "createdAt",
-              "updatedAt",
-              "createdBy",
-              "done",
-              "passRate"
+              "counts"
             ],
             "properties": {
               "id": {
@@ -4403,42 +3966,6 @@
               },
               "taskId": {
                 "type": "string"
-              },
-              "workspaceId": {
-                "type": "string"
-              },
-              "ownerId": {
-                "type": "string"
-              },
-              "items": {
-                "type": "number"
-              },
-              "concurrency": {
-                "type": "number"
-              },
-              "sharing": {
-                "type": "number"
-              },
-              "budgetUsd": {
-                "type": "number"
-              },
-              "stopWhen": {
-                "type": "object",
-                "required": [
-                  "minPassRate",
-                  "afterItems"
-                ],
-                "properties": {
-                  "minPassRate": {
-                    "type": "number"
-                  },
-                  "afterItems": {
-                    "type": "number"
-                  }
-                }
-              },
-              "stopRuleDisarmed": {
-                "type": "boolean"
               },
               "state": {
                 "type": "string",
@@ -4448,31 +3975,6 @@
                   "completed",
                   "cancelled"
                 ]
-              },
-              "pause": {
-                "type": "object",
-                "required": [
-                  "reason",
-                  "message",
-                  "at"
-                ],
-                "properties": {
-                  "reason": {
-                    "type": "string",
-                    "enum": [
-                      "manual",
-                      "budget",
-                      "pass_rate",
-                      "unavailable"
-                    ]
-                  },
-                  "message": {
-                    "type": "string"
-                  },
-                  "at": {
-                    "type": "string"
-                  }
-                }
               },
               "counts": {
                 "type": "object",
@@ -4521,16 +4023,80 @@
                   }
                 }
               },
+              "name": {
+                "type": "string"
+              },
+              "items": {
+                "type": "number"
+              },
+              "done": {
+                "description": "Items with an outcome.",
+                "type": "number"
+              },
+              "passRate": {
+                "description": "pass / (pass + fail); absent before either.",
+                "type": "number"
+              },
+              "concurrency": {
+                "type": "number"
+              },
+              "sharing": {
+                "type": "number"
+              },
+              "budgetUsd": {
+                "type": "number"
+              },
               "costUsd": {
                 "type": "number"
+              },
+              "stopWhen": {
+                "type": "object",
+                "required": [
+                  "minPassRate",
+                  "afterItems"
+                ],
+                "properties": {
+                  "minPassRate": {
+                    "type": "number"
+                  },
+                  "afterItems": {
+                    "type": "number"
+                  }
+                }
+              },
+              "stopRuleDisarmed": {
+                "type": "boolean"
+              },
+              "pause": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "manual",
+                      "budget",
+                      "pass_rate",
+                      "unavailable"
+                    ]
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "string"
+                  }
+                }
               },
               "idempotencyKey": {
                 "type": "string"
               },
-              "name": {
+              "ownerId": {
                 "type": "string"
               },
-              "startedVia": {
+              "workspaceId": {
                 "type": "string"
               },
               "createdAt": {
@@ -4541,22 +4107,6 @@
               },
               "completedAt": {
                 "type": "string"
-              },
-              "createdBy": {
-                "type": "string"
-              },
-              "done": {
-                "type": "number"
-              },
-              "passRate": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
               }
             }
           }
@@ -4564,15 +4114,15 @@
       }
     },
     "batch_control_input": {
+      "additionalProperties": false,
+      "type": "object",
       "required": [
         "batchId",
         "action"
       ],
-      "additionalProperties": false,
-      "type": "object",
       "properties": {
         "batchId": {
-          "pattern": "^batch_[a-f0-9]{12}$",
+          "minLength": 1,
           "description": "The batch's id (run_batch returns it).",
           "type": "string"
         },
@@ -4596,9 +4146,7 @@
     "batch_control_output": {
       "type": "object",
       "required": [
-        "batch",
-        "message",
-        "affected"
+        "batch"
       ],
       "properties": {
         "batch": {
@@ -4606,18 +4154,8 @@
           "required": [
             "id",
             "taskId",
-            "workspaceId",
-            "ownerId",
-            "items",
-            "concurrency",
             "state",
-            "counts",
-            "costUsd",
-            "createdAt",
-            "updatedAt",
-            "createdBy",
-            "done",
-            "passRate"
+            "counts"
           ],
           "properties": {
             "id": {
@@ -4625,42 +4163,6 @@
             },
             "taskId": {
               "type": "string"
-            },
-            "workspaceId": {
-              "type": "string"
-            },
-            "ownerId": {
-              "type": "string"
-            },
-            "items": {
-              "type": "number"
-            },
-            "concurrency": {
-              "type": "number"
-            },
-            "sharing": {
-              "type": "number"
-            },
-            "budgetUsd": {
-              "type": "number"
-            },
-            "stopWhen": {
-              "type": "object",
-              "required": [
-                "minPassRate",
-                "afterItems"
-              ],
-              "properties": {
-                "minPassRate": {
-                  "type": "number"
-                },
-                "afterItems": {
-                  "type": "number"
-                }
-              }
-            },
-            "stopRuleDisarmed": {
-              "type": "boolean"
             },
             "state": {
               "type": "string",
@@ -4670,31 +4172,6 @@
                 "completed",
                 "cancelled"
               ]
-            },
-            "pause": {
-              "type": "object",
-              "required": [
-                "reason",
-                "message",
-                "at"
-              ],
-              "properties": {
-                "reason": {
-                  "type": "string",
-                  "enum": [
-                    "manual",
-                    "budget",
-                    "pass_rate",
-                    "unavailable"
-                  ]
-                },
-                "message": {
-                  "type": "string"
-                },
-                "at": {
-                  "type": "string"
-                }
-              }
             },
             "counts": {
               "type": "object",
@@ -4743,16 +4220,80 @@
                 }
               }
             },
+            "name": {
+              "type": "string"
+            },
+            "items": {
+              "type": "number"
+            },
+            "done": {
+              "description": "Items with an outcome.",
+              "type": "number"
+            },
+            "passRate": {
+              "description": "pass / (pass + fail); absent before either.",
+              "type": "number"
+            },
+            "concurrency": {
+              "type": "number"
+            },
+            "sharing": {
+              "type": "number"
+            },
+            "budgetUsd": {
+              "type": "number"
+            },
             "costUsd": {
               "type": "number"
+            },
+            "stopWhen": {
+              "type": "object",
+              "required": [
+                "minPassRate",
+                "afterItems"
+              ],
+              "properties": {
+                "minPassRate": {
+                  "type": "number"
+                },
+                "afterItems": {
+                  "type": "number"
+                }
+              }
+            },
+            "stopRuleDisarmed": {
+              "type": "boolean"
+            },
+            "pause": {
+              "type": "object",
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "manual",
+                    "budget",
+                    "pass_rate",
+                    "unavailable"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                }
+              }
             },
             "idempotencyKey": {
               "type": "string"
             },
-            "name": {
+            "ownerId": {
               "type": "string"
             },
-            "startedVia": {
+            "workspaceId": {
               "type": "string"
             },
             "createdAt": {
@@ -4763,44 +4304,41 @@
             },
             "completedAt": {
               "type": "string"
-            },
-            "createdBy": {
-              "type": "string"
-            },
-            "done": {
-              "type": "number"
-            },
-            "passRate": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             }
           }
         },
-        "message": {
-          "type": "string"
-        },
         "affected": {
+          "description": "Items the action touched.",
           "type": "integer"
+        },
+        "message": {
+          "description": "A sentence for the reader.",
+          "type": "string"
         }
       }
     },
     "due_input": {
-      "required": [
-        "until"
-      ],
       "additionalProperties": false,
       "type": "object",
+      "required": [
+        "version",
+        "now",
+        "until"
+      ],
       "properties": {
+        "version": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "description": "The version of this contract the host consumes. The answer holds nothing that version does not define (CONTRACT.md §15).",
+          "type": "string"
+        },
+        "now": {
+          "format": "date-time",
+          "description": "The host's now: what new and changed schedules are anchored on.",
+          "type": "string"
+        },
         "until": {
           "format": "date-time",
-          "minLength": 1,
-          "description": "List occurrences due at or before this instant.",
+          "description": "List occurrences due at or before this instant. The host calls due again before it.",
           "type": "string"
         },
         "cursor": {
@@ -4815,6 +4353,7 @@
       }
     },
     "due_output": {
+      "additionalProperties": false,
       "type": "object",
       "required": [
         "occurrences",
@@ -4824,38 +4363,7 @@
         "occurrences": {
           "type": "array",
           "items": {
-            "additionalProperties": false,
-            "type": "object",
-            "required": [
-              "ownerId",
-              "key",
-              "ref"
-            ],
-            "properties": {
-              "ownerId": {
-                "minLength": 1,
-                "description": "The owner the run acts for. The host runs it as this owner, in this workspace.",
-                "type": "string"
-              },
-              "key": {
-                "minLength": 1,
-                "maxLength": 256,
-                "description": "Names the occurrence within the workspace: the host enqueues it under this key, so a repeat of the same occurrence is one item. Stable for as long as the occurrence is due.",
-                "type": "string"
-              },
-              "ref": {
-                "minLength": 1,
-                "maxLength": 512,
-                "description": "What begin_run is called with when the occurrence is claimed.",
-                "type": "string"
-              },
-              "notBefore": {
-                "format": "date-time",
-                "minLength": 1,
-                "description": "Not due before this instant. Absent: due at once (a requested run).",
-                "type": "string"
-              }
-            }
+            "$ref": "#/$defs/occurrence"
           }
         },
         "nextCursor": {
@@ -4874,12 +4382,18 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "version",
         "ref",
         "attempt",
         "token",
         "now"
       ],
       "properties": {
+        "version": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "description": "The version of this contract the host consumes. The answer holds nothing that version does not define (CONTRACT.md §15).",
+          "type": "string"
+        },
         "ref": {
           "minLength": 1,
           "maxLength": 512,
@@ -4893,20 +4407,21 @@
         },
         "token": {
           "minimum": 0,
-          "description": "The claim's fencing token, greater than every earlier claim's.",
+          "description": "The claim's fencing token, greater than every earlier claim's of this ref.",
           "type": "integer"
         },
         "now": {
           "format": "date-time",
-          "minLength": 1,
           "description": "The host's now: what lateness, budgets and backoff are judged against.",
           "type": "string"
         }
       }
     },
     "begin_run_output": {
-      "anyOf": [
+      "type": "object",
+      "oneOf": [
         {
+          "additionalProperties": false,
           "type": "object",
           "required": [
             "decision",
@@ -4920,10 +4435,55 @@
             "reason": {
               "description": "Diagnostic only.",
               "type": "string"
+            },
+            "interrupted": {
+              "additionalProperties": false,
+              "description": "An earlier claim's run that began and never ended. The host stops it if it still runs, and ends it with end_run (interrupted), usage from its metering.",
+              "type": "object",
+              "required": [
+                "runId",
+                "token"
+              ],
+              "properties": {
+                "runId": {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "description": "The run's id, minted by the implementation.",
+                  "type": "string"
+                },
+                "token": {
+                  "minimum": 0,
+                  "description": "The token whose claim received its work spec.",
+                  "type": "integer"
+                }
+              }
+            },
+            "notify": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "grant",
+                "notices"
+              ],
+              "properties": {
+                "grant": {
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "description": "The grant of the definition the notices concern: names the owner.",
+                  "type": "string"
+                },
+                "notices": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/notice"
+                  }
+                }
+              }
             }
           }
         },
         {
+          "additionalProperties": false,
           "type": "object",
           "required": [
             "decision",
@@ -4935,171 +4495,11 @@
               "type": "string"
             },
             "work": {
-              "required": [
-                "kind",
-                "runId",
-                "grant",
-                "prompt"
-              ],
-              "additionalProperties": false,
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "const": "agent",
-                  "type": "string"
-                },
-                "runId": {
-                  "minLength": 1,
-                  "maxLength": 128,
-                  "description": "The run's id, minted by the implementation.",
-                  "type": "string"
-                },
-                "grant": {
-                  "minLength": 1,
-                  "maxLength": 4096,
-                  "description": "The run grant the implementation stored with the definition, returned verbatim. The host verifies it before admitting the run.",
-                  "type": "string"
-                },
-                "prompt": {
-                  "description": "The instruction that opens the run. Empty only with `skills`: the run then carries the skills out.",
-                  "type": "string"
-                },
-                "input": {
-                  "description": "The run's JSON input, at most 65536 bytes serialized. Data, never instructions: the host contains it."
-                },
-                "notes": {
-                  "maxItems": 8,
-                  "description": "Context the implementation adds to this run (an event's items, a retry's reason). Contained like `input`.",
-                  "type": "array",
-                  "items": {
-                    "minLength": 1,
-                    "maxLength": 8000,
-                    "type": "string"
-                  }
-                },
-                "outputSchema": {
-                  "type": "object",
-                  "description": "The JSON Schema the deliverable must match. The host renders the instruction."
-                },
-                "allowedTools": {
-                  "minItems": 1,
-                  "description": "Tools its runs may use: one `<connector>__*` glob per connector. Omit for every tool.",
-                  "type": "array",
-                  "items": {
-                    "minLength": 1,
-                    "type": "string"
-                  }
-                },
-                "skills": {
-                  "minItems": 1,
-                  "maxItems": 5,
-                  "description": "Skills each run is given in full, by name.",
-                  "type": "array",
-                  "items": {
-                    "minLength": 1,
-                    "type": "string"
-                  }
-                },
-                "limits": {
-                  "additionalProperties": false,
-                  "description": "The definition's caps. The host lowers each to its own ceiling.",
-                  "type": "object",
-                  "properties": {
-                    "maxIterations": {
-                      "minimum": 1,
-                      "maximum": 50,
-                      "description": "Max model iterations per run. Default 25.",
-                      "type": "integer"
-                    },
-                    "maxInputTokens": {
-                      "minimum": 1000,
-                      "maximum": 1000000,
-                      "description": "Input tokens one run may spend. Omit for no cap.",
-                      "type": "integer"
-                    },
-                    "maxRunDurationMs": {
-                      "minimum": 10000,
-                      "maximum": 600000,
-                      "description": "Max wall-clock per run, in ms. Default 120000.",
-                      "type": "integer"
-                    }
-                  }
-                },
-                "model": {
-                  "minLength": 1,
-                  "description": "provider:model-id or a slot name (fast). Omit for the workspace default.",
-                  "type": "string"
-                },
-                "thinkingEffort": {
-                  "type": "string",
-                  "enum": [
-                    "low",
-                    "medium",
-                    "high",
-                    "xhigh",
-                    "max"
-                  ],
-                  "description": "Reasoning depth for its runs. Omit for the workspace setting."
-                },
-                "spendAccounts": {
-                  "maxItems": 8,
-                  "type": "array",
-                  "items": {
-                    "additionalProperties": false,
-                    "type": "object",
-                    "required": [
-                      "id",
-                      "unit",
-                      "remaining"
-                    ],
-                    "properties": {
-                      "id": {
-                        "minLength": 1,
-                        "maxLength": 256,
-                        "description": "Opaque. Runs naming the same id share one balance while any of them is in flight.",
-                        "type": "string"
-                      },
-                      "unit": {
-                        "type": "string",
-                        "enum": [
-                          "usd",
-                          "input_tokens",
-                          "output_tokens"
-                        ]
-                      },
-                      "remaining": {
-                        "description": "What is left, in `unit`. Read only from the first run in flight to name `id`.",
-                        "type": "number"
-                      },
-                      "sharedBy": {
-                        "minimum": 1,
-                        "description": "The most runs that may draw on it at once (a batch's concurrency).",
-                        "type": "integer"
-                      }
-                    }
-                  }
-                },
-                "exclusiveKey": {
-                  "minLength": 1,
-                  "maxLength": 256,
-                  "description": "At most one run per key is in flight in the workspace. The host refuses a run whose key is taken (outcome not_started, exclusive_busy).",
-                  "type": "string"
-                },
-                "trigger": {
-                  "type": "string",
-                  "enum": [
-                    "scheduled",
-                    "manual",
-                    "event"
-                  ],
-                  "description": "What woke the run, for the host's telemetry. Decides nothing."
-                }
-              }
+              "$ref": "#/$defs/work_spec"
             }
           }
         }
-      ],
-      "type": "object"
+      ]
     },
     "end_run_input": {
       "additionalProperties": false,
@@ -5118,255 +4518,16 @@
         },
         "token": {
           "minimum": 0,
-          "description": "The token begin_run was called with.",
+          "description": "The token whose begin_run received the run's work spec.",
           "type": "integer"
         },
         "outcome": {
-          "required": [
-            "startedAt",
-            "endedAt",
-            "output",
-            "stopReason",
-            "usage",
-            "costUsd",
-            "limits",
-            "toolCalls",
-            "filesWritten",
-            "skillsDelivered"
-          ],
-          "additionalProperties": false,
-          "type": "object",
-          "properties": {
-            "startedAt": {
-              "format": "date-time",
-              "minLength": 1,
-              "description": "When the run started, or was refused when it never started.",
-              "type": "string"
-            },
-            "endedAt": {
-              "format": "date-time",
-              "minLength": 1,
-              "description": "When it ended.",
-              "type": "string"
-            },
-            "output": {
-              "description": "The deliverable: the final answer's text. Empty when none.",
-              "type": "string"
-            },
-            "stopReason": {
-              "type": "string",
-              "enum": [
-                "complete",
-                "max_iterations",
-                "max_input_tokens",
-                "spend_limit",
-                "length",
-                "content_filter",
-                "timeout",
-                "cancelled",
-                "error",
-                "other",
-                "not_started"
-              ],
-              "description": "Why the run stopped. not_started: refused before its first model call (see `error`)."
-            },
-            "wrapUpLimit": {
-              "type": "string",
-              "enum": [
-                "max_iterations",
-                "max_input_tokens"
-              ],
-              "description": "With stopReason complete: the limit that made the host tell the run to finish, which it did. Its answer may leave work undone."
-            },
-            "error": {
-              "additionalProperties": false,
-              "type": "object",
-              "required": [
-                "code",
-                "transient"
-              ],
-              "properties": {
-                "code": {
-                  "type": "string",
-                  "enum": [
-                    "grant_invalid",
-                    "membership_revoked",
-                    "exclusive_busy",
-                    "tools_unavailable",
-                    "skills_unavailable",
-                    "model_error",
-                    "internal"
-                  ]
-                },
-                "transient": {
-                  "description": "Whether the same run may succeed later unchanged (an outage, a rate limit).",
-                  "type": "boolean"
-                },
-                "message": {
-                  "maxLength": 2000,
-                  "description": "Diagnostic, fit to show the owner.",
-                  "type": "string"
-                }
-              }
-            },
-            "usage": {
-              "additionalProperties": false,
-              "type": "object",
-              "required": [
-                "inputTokens",
-                "outputTokens",
-                "iterations"
-              ],
-              "properties": {
-                "inputTokens": {
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                "outputTokens": {
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                "iterations": {
-                  "minimum": 0,
-                  "type": "integer"
-                }
-              }
-            },
-            "costUsd": {
-              "minimum": 0,
-              "description": "What its model calls cost.",
-              "type": "number"
-            },
-            "unpricedCalls": {
-              "minimum": 1,
-              "description": "Model calls with no known rates, not in costUsd.",
-              "type": "integer"
-            },
-            "spendAccountId": {
-              "minLength": 1,
-              "description": "With stopReason spend_limit: the account that stopped it, one the spec named or one the host holds (an id the implementation did not name).",
-              "type": "string"
-            },
-            "limits": {
-              "additionalProperties": false,
-              "description": "The caps the run executed under, after the host's ceilings.",
-              "type": "object",
-              "required": [
-                "maxIterations",
-                "maxRunDurationMs"
-              ],
-              "properties": {
-                "maxIterations": {
-                  "minimum": 1,
-                  "type": "integer"
-                },
-                "maxInputTokens": {
-                  "minimum": 1,
-                  "type": "integer"
-                },
-                "maxRunDurationMs": {
-                  "minimum": 1,
-                  "type": "integer"
-                }
-              }
-            },
-            "toolCalls": {
-              "maxItems": 1000,
-              "type": "array",
-              "items": {
-                "additionalProperties": false,
-                "type": "object",
-                "required": [
-                  "name",
-                  "ok",
-                  "ms"
-                ],
-                "properties": {
-                  "name": {
-                    "minLength": 1,
-                    "description": "The tool's name as the model called it.",
-                    "type": "string"
-                  },
-                  "ok": {
-                    "type": "boolean"
-                  },
-                  "errorReason": {
-                    "maxLength": 128,
-                    "description": "Why it failed, when the tool or the host said (`bad_input`, …).",
-                    "type": "string"
-                  },
-                  "held": {
-                    "description": "It did not run: it waited for its tool's guidance.",
-                    "const": true,
-                    "type": "boolean"
-                  },
-                  "ms": {
-                    "minimum": 0,
-                    "type": "number"
-                  }
-                }
-              }
-            },
-            "filesWritten": {
-              "maxItems": 100,
-              "description": "Files the run wrote, as the host recorded them.",
-              "type": "array",
-              "items": {
-                "additionalProperties": false,
-                "type": "object",
-                "required": [
-                  "uri"
-                ],
-                "properties": {
-                  "uri": {
-                    "minLength": 1,
-                    "description": "Opaque: the host's reference.",
-                    "type": "string"
-                  },
-                  "name": {
-                    "type": "string"
-                  }
-                }
-              }
-            },
-            "skillsDelivered": {
-              "type": "array",
-              "items": {
-                "additionalProperties": false,
-                "type": "object",
-                "required": [
-                  "name",
-                  "loadedBy"
-                ],
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  },
-                  "loadedBy": {
-                    "type": "string",
-                    "enum": [
-                      "declared",
-                      "before_call",
-                      "tool_use",
-                      "activation"
-                    ]
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "fetch_failed",
-                      "capped",
-                      "renamed_unheld"
-                    ]
-                  }
-                }
-              }
-            }
-          }
+          "$ref": "#/$defs/run_outcome"
         }
       }
     },
     "end_run_output": {
+      "additionalProperties": false,
       "type": "object",
       "required": [
         "notices"
@@ -5375,45 +4536,7 @@
         "notices": {
           "type": "array",
           "items": {
-            "additionalProperties": false,
-            "type": "object",
-            "required": [
-              "id",
-              "title",
-              "body",
-              "level"
-            ],
-            "properties": {
-              "id": {
-                "minLength": 1,
-                "maxLength": 256,
-                "description": "Stable for the event it reports, so a repeated end_run delivers it once.",
-                "type": "string"
-              },
-              "title": {
-                "minLength": 1,
-                "maxLength": 200,
-                "type": "string"
-              },
-              "body": {
-                "maxLength": 2000,
-                "type": "string"
-              },
-              "level": {
-                "type": "string",
-                "enum": [
-                  "info",
-                  "attention",
-                  "urgent"
-                ]
-              },
-              "link": {
-                "minLength": 1,
-                "maxLength": 2048,
-                "description": "A resource the notice opens (the implementation's screen).",
-                "type": "string"
-              }
-            }
+            "$ref": "#/$defs/notice"
           }
         }
       }
@@ -5439,13 +4562,14 @@
       }
     },
     "check_runs_output": {
+      "additionalProperties": false,
       "type": "object",
       "required": [
         "stop"
       ],
       "properties": {
         "stop": {
-          "description": "Those to stop now (cancelled). Each ends with stopReason cancelled.",
+          "description": "Those of runIds to stop now. Each ends with stopReason cancelled.",
           "type": "array",
           "items": {
             "type": "string"
@@ -5457,11 +4581,17 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "version",
         "taskId",
         "event",
         "now"
       ],
       "properties": {
+        "version": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "description": "The version of this contract the host consumes. The answer holds nothing that version does not define (CONTRACT.md §15).",
+          "type": "string"
+        },
         "taskId": {
           "minLength": 1,
           "description": "The task the route names.",
@@ -5511,12 +4641,8 @@
             "body": {
               "type": "string"
             },
-            "link": {
-              "type": "string"
-            },
             "receivedAt": {
               "format": "date-time",
-              "minLength": 1,
               "description": "When the host received it.",
               "type": "string"
             }
@@ -5524,15 +4650,17 @@
         },
         "now": {
           "format": "date-time",
-          "minLength": 1,
           "description": "The host's now: what debounce and the fire ceiling are judged against.",
           "type": "string"
         }
       }
     },
     "offer_event_output": {
-      "anyOf": [
+      "type": "object",
+      "oneOf": [
         {
+          "additionalProperties": false,
+          "description": "Durably recorded before this answer.",
           "type": "object",
           "required": [
             "accepted"
@@ -5541,10 +4669,17 @@
             "accepted": {
               "const": true,
               "type": "boolean"
+            },
+            "notices": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/notice"
+              }
             }
           }
         },
         {
+          "additionalProperties": false,
           "type": "object",
           "required": [
             "accepted",
@@ -5563,20 +4698,25 @@
                 "skipped",
                 "denied"
               ],
-              "description": "skipped: a condition that clears on its own (the task is off, or did not ask for it). denied: a configuration refusal only a person changes."
+              "description": "skipped: a condition that clears on its own. denied: a configuration refusal only a person changes."
             },
             "classification": {
-              "description": "Machine-readable cause.",
+              "description": "Machine-readable cause. Decides nothing.",
               "type": "string"
             },
             "reason": {
               "description": "One line an operator can act on.",
               "type": "string"
+            },
+            "notices": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/notice"
+              }
             }
           }
         }
-      ],
-      "type": "object"
+      ]
     },
     "expire_input": {
       "additionalProperties": false,
@@ -5587,7 +4727,6 @@
       "properties": {
         "endedBefore": {
           "format": "date-time",
-          "minLength": 1,
           "description": "Remove what ended before this instant.",
           "type": "string"
         }
@@ -5650,6 +4789,492 @@
               "type": "integer"
             }
           }
+        }
+      }
+    },
+    "occurrence": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "key",
+        "ref"
+      ],
+      "properties": {
+        "key": {
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Names the occurrence within the workspace, and its notBefore exactly: the host enqueues it under this key. An occurrence whose time changes is a new key.",
+          "type": "string"
+        },
+        "ref": {
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "What begin_run is called with when the occurrence is claimed.",
+          "type": "string"
+        },
+        "notBefore": {
+          "format": "date-time",
+          "description": "Not due before this instant. Absent: due at once (a requested run).",
+          "type": "string"
+        }
+      }
+    },
+    "work_spec": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "runId",
+            "grant",
+            "prompt"
+          ],
+          "properties": {
+            "kind": {
+              "const": "agent",
+              "type": "string"
+            },
+            "runId": {
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "The run's id, minted by the implementation.",
+              "type": "string"
+            },
+            "grant": {
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "The run grant stored with the definition, returned verbatim. The host verifies it and takes the run's owner from it.",
+              "type": "string"
+            },
+            "prompt": {
+              "description": "The instruction that opens the run. Empty only with `skills`: the run then carries the skills out.",
+              "type": "string"
+            },
+            "input": {
+              "description": "The run's JSON input, at most 65536 bytes serialized. Data, never instructions: the host contains it."
+            },
+            "notes": {
+              "maxItems": 8,
+              "description": "Context the implementation adds to this run (an event's items, a retry's reason). Contained like `input`.",
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 8000,
+                "type": "string"
+              }
+            },
+            "outputSchema": {
+              "type": "object",
+              "description": "The JSON Schema the deliverable must match. The host renders the instruction."
+            },
+            "allowedTools": {
+              "minItems": 1,
+              "description": "Tool name globs, opaque to the implementation, matched by the host.",
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "skills": {
+              "minItems": 1,
+              "maxItems": 5,
+              "description": "Skill names, opaque to the implementation, resolved by the host.",
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "limits": {
+              "additionalProperties": false,
+              "description": "The definition's caps. The host lowers each to its ceiling.",
+              "type": "object",
+              "properties": {
+                "maxIterations": {
+                  "minimum": 1,
+                  "maximum": 50,
+                  "description": "Max model iterations per run. Default 25.",
+                  "type": "integer"
+                },
+                "maxInputTokens": {
+                  "minimum": 1000,
+                  "maximum": 1000000,
+                  "description": "Input tokens one run may spend. Omit for no cap.",
+                  "type": "integer"
+                },
+                "maxRunDurationMs": {
+                  "minimum": 10000,
+                  "maximum": 600000,
+                  "description": "Max wall-clock per run, in ms. Default 120000.",
+                  "type": "integer"
+                }
+              }
+            },
+            "model": {
+              "minLength": 1,
+              "description": "provider:model-id or a slot name.",
+              "type": "string"
+            },
+            "thinkingEffort": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            "spendAccounts": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "id",
+                  "unit",
+                  "remaining"
+                ],
+                "properties": {
+                  "id": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "description": "Opaque. Runs naming the same id share one balance while any of them is in flight.",
+                    "type": "string"
+                  },
+                  "unit": {
+                    "type": "string",
+                    "enum": [
+                      "usd",
+                      "input_tokens",
+                      "output_tokens"
+                    ]
+                  },
+                  "remaining": {
+                    "minimum": 0,
+                    "description": "What is left, in `unit`. Read only from the first run in flight to name `id`.",
+                    "type": "number"
+                  },
+                  "sharedBy": {
+                    "minimum": 1,
+                    "description": "The most runs that may draw on it at once (a batch's concurrency).",
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "exclusiveKey": {
+              "minLength": 1,
+              "maxLength": 256,
+              "description": "At most one run per key is in flight in the workspace. The host refuses a run whose key is taken (not_started, exclusive_busy).",
+              "type": "string"
+            },
+            "trigger": {
+              "type": "string",
+              "enum": [
+                "scheduled",
+                "manual",
+                "event"
+              ],
+              "description": "What woke the run, for the host's telemetry. Decides nothing."
+            }
+          }
+        }
+      ]
+    },
+    "run_outcome": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "stopReason": {
+                "enum": [
+                  "error",
+                  "other",
+                  "not_started"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ],
+      "type": "object",
+      "required": [
+        "startedAt",
+        "endedAt",
+        "output",
+        "stopReason",
+        "usage",
+        "costUsd",
+        "toolCalls",
+        "filesWritten"
+      ],
+      "properties": {
+        "startedAt": {
+          "format": "date-time",
+          "description": "When the run started, or was refused when it never started.",
+          "type": "string"
+        },
+        "endedAt": {
+          "format": "date-time",
+          "description": "When it ended.",
+          "type": "string"
+        },
+        "output": {
+          "description": "The deliverable: the final answer's text. Empty when none.",
+          "type": "string"
+        },
+        "stopReason": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "max_iterations",
+            "max_input_tokens",
+            "spend_limit",
+            "length",
+            "content_filter",
+            "timeout",
+            "cancelled",
+            "error",
+            "other",
+            "not_started"
+          ],
+          "description": "Why the run stopped. not_started: refused before its first model call. A host shutdown is error with error.code internal and transient true, never cancelled."
+        },
+        "wrapUpLimit": {
+          "type": "string",
+          "enum": [
+            "max_iterations",
+            "max_input_tokens"
+          ],
+          "description": "With complete: the limit the host told the run to finish at. Its answer may leave work undone."
+        },
+        "error": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "code",
+            "transient"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "grant_invalid",
+                "membership_revoked",
+                "exclusive_busy",
+                "tools_unavailable",
+                "skills_unavailable",
+                "work_invalid",
+                "spend_limit",
+                "model_error",
+                "interrupted",
+                "internal"
+              ]
+            },
+            "transient": {
+              "description": "Whether the same run may succeed later unchanged.",
+              "type": "boolean"
+            },
+            "message": {
+              "maxLength": 2000,
+              "description": "Diagnostic, fit to show the owner.",
+              "type": "string"
+            }
+          }
+        },
+        "usage": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "inputTokens",
+            "outputTokens"
+          ],
+          "properties": {
+            "inputTokens": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "outputTokens": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "iterations": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        },
+        "costUsd": {
+          "minimum": 0,
+          "description": "What its model calls cost.",
+          "type": "number"
+        },
+        "unpricedCalls": {
+          "minimum": 1,
+          "description": "Model calls with no known rates, not in costUsd.",
+          "type": "integer"
+        },
+        "spendAccountId": {
+          "minLength": 1,
+          "description": "With spend_limit: the account that stopped it, one the spec named or one the host holds.",
+          "type": "string"
+        },
+        "spendStop": {
+          "type": "string",
+          "enum": [
+            "exhausted",
+            "reserved"
+          ],
+          "description": "With spend_limit: exhausted, the account's balance could not pay for another call; reserved, other runs' reservations held what was left."
+        },
+        "limits": {
+          "additionalProperties": false,
+          "description": "The caps the run executed under, after the host's ceilings.",
+          "type": "object",
+          "properties": {
+            "maxIterations": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxInputTokens": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxRunDurationMs": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        },
+        "toolCalls": {
+          "maxItems": 1000,
+          "description": "In call order. A call that ran nothing is left out.",
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "name",
+              "ok",
+              "ms"
+            ],
+            "properties": {
+              "name": {
+                "minLength": 1,
+                "description": "The tool's name as the model called it.",
+                "type": "string"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "errorReason": {
+                "type": "string",
+                "enum": [
+                  "bad_input",
+                  "tool_error",
+                  "denied",
+                  "timeout",
+                  "unavailable"
+                ],
+                "description": "Why it failed: rejected for its arguments, answered an error, refused by policy, ran out of time, or could not be reached."
+              },
+              "ms": {
+                "minimum": 0,
+                "type": "number"
+              }
+            }
+          }
+        },
+        "filesWritten": {
+          "maxItems": 100,
+          "description": "Files the run wrote, as the host recorded them.",
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "uri"
+            ],
+            "properties": {
+              "uri": {
+                "minLength": 1,
+                "description": "Opaque: the host's reference.",
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "skillsDelivered": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "name",
+              "loadedBy"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "loadedBy": {
+                "description": "Diagnostic: how it reached the run.",
+                "type": "string"
+              },
+              "status": {
+                "description": "Diagnostic: why it did not arrive whole.",
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "notice": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "body",
+        "level"
+      ],
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Stable for the event it reports, so a repeat is delivered once.",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "maxLength": 200,
+          "type": "string"
+        },
+        "body": {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "level": {
+          "type": "string",
+          "enum": [
+            "info",
+            "attention",
+            "urgent"
+          ]
         }
       }
     }

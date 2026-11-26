@@ -12,19 +12,23 @@ version is one JSON document, emitted to the published tree at
   document. Biome refuses a `src/` import from any file here.
 - **JSON is the published form; TypeBox is authoring source.** The document under `schemas/`
   is the contract and is committed. Its sources live in `source/`: `contract.ts` for the
-  identity, version, cardinality, `grants`, each tool's visibility and unattended marking, and
-  the errors; `public.ts` and `private.ts` for the schemas; `index.ts` joining them as one
-  `ContractSource` (`scripts/contract-source.ts`). Never edit the emitted document by hand.
+  identity, version, cardinality, each tool's visibility, unattended and grant marking, and
+  the errors; `public.ts` and `private.ts` for the schemas; `index.ts` joining them, with any
+  schemas tools share, as one `ContractSource` (`scripts/contract-source.ts`). Never edit the emitted document by hand.
 - **Every tool states `visibility` and `unattended`.** `unattended` (`allowed` or `refused`)
   says whether a call made inside an unattended run may reach it; the host reads it from the
-  document, never from a list of its own. A private tool is always `refused`; the emitter
-  refuses anything else.
+  document, never from a list of its own. A private tool is always `refused`. `grant: true`
+  marks a tool the host stamps a run grant on, only ever a public tool refused to unattended
+  runs. The emitter refuses anything else.
 - **The document's `$id` is stated in `source/`, never derived from its `contract` field.**
   `contract` is the identity (the name `implements[].contract` uses); the `$id` is where the
   document lives. The document is a valid JSON Schema 2020-12 document and compiles whole.
-- **A tool's schemas are `$defs` entries** named `<tool>_input` and `<tool>_output`, each
-  self-contained, and the tool points at them with `$ref`. Underscores keep each key a plain
-  identifier, so codegen can name a type after it.
+- **A tool's schemas are `$defs` entries** named `<tool>_input` and `<tool>_output`, and the
+  tool points at them with `$ref`. A schema several tools share is a `$defs` entry under its
+  own name (`work_spec`), which a tool's schema refers to as `#/$defs/<name>` and which refers
+  to nothing itself. That pointer resolves in the document and in a tool schema listed with the
+  `$defs` it names bundled beside it (the SDK's `contractSchema`), so a listed schema is still
+  whole. Underscores keep each key a plain identifier, so codegen can name a type after it.
 - **One emitter writes every contract.** `scripts/emit-contracts.ts` lists each contract's
   `source/index.ts`; a new contract adds its line there. Edit a source, run
   `bun run emit:contracts`, commit the document. `bun run check:contracts` (in

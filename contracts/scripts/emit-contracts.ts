@@ -9,14 +9,22 @@
  * `schemas/` tree, at the path its `$id` names on `schemas.nimblebrain.ai`
  * (`schemas/contracts/<short-name>/v<major>/contract.json`). Each is authored in
  * `contracts/<short-name>/source/`, whose `index.ts` exports a `ContractSource`:
- * the identity, version, cardinality, grants, each tool's visibility and
- * unattended marking, the errors, and the tools' TypeBox schemas by visibility.
+ * the identity, version, cardinality, each tool's visibility, unattended
+ * marking and grant, the errors, the tools' TypeBox schemas by visibility, and
+ * the named schemas tools share.
  *
  * Each tool's input and output schema sits in `$defs` under `<tool>_input` and
- * `<tool>_output`, exactly as it travels in `tools/list` (a JSON round trip,
- * which drops TypeBox's symbol-keyed metadata), and the tool's entry points at
- * it with a `$ref`. Each tool's schema source must match its visibility, and a
- * private tool is always `unattended: "refused"`.
+ * `<tool>_output` (a JSON round trip, which drops TypeBox's symbol-keyed
+ * metadata), and the tool's entry points at it with a `$ref`. A schema several
+ * tools share sits in `$defs` under its own name, and a tool's schema refers to
+ * it as `#/$defs/<name>`: the same pointer resolves in the document and in a
+ * tool schema listed with those `$defs` bundled beside it. A shared schema
+ * refers to nothing.
+ *
+ * The emitter refuses a source whose schemas and declared tools disagree, a
+ * private tool that is not `unattended: "refused"`, a `grant` on a private
+ * tool or on one an unattended run may call, and a `$ref` that names no shared
+ * schema.
  *
  * `--check` writes nothing. It exits 1 when a committed document is missing or
  * differs from what would be emitted, and prints the first differing line.
@@ -26,7 +34,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { SOURCE as CONVERSATIONS } from "../conversations/source/index.ts";
 import { SOURCE as TASKS } from "../tasks/source/index.ts";
-import type { ContractSource, Visibility } from "./contract-source.ts";
+import type { ContractSource, ContractToolEntry, Visibility } from "./contract-source.ts";
 
 /** Every contract this repository publishes. */
 export const SOURCES: readonly ContractSource[] = [CONVERSATIONS, TASKS];
@@ -46,20 +54,54 @@ export function pathOf($id: string): string {
   return join(REPO, "schemas", $id.slice(PUBLISHED_ORIGIN.length));
 }
 
-/** Throw when a source's schemas and its declared tools disagree. */
-function checkSource({ meta, schemas }: ContractSource): void {
-  for (const [tool, { visibility, unattended }] of Object.entries(meta.tools)) {
-    if (!schemas[visibility][tool]) {
-      throw new Error(
-        `${meta.contract}: the contract names ${visibility} tool "${tool}", which has no ${visibility} source`,
-      );
-    }
-    if (visibility === "private" && unattended !== "refused") {
-      throw new Error(`${meta.contract}: private tool "${tool}" must be unattended "refused"`);
+/** Every `$ref` value in a JSON value, in document order. */
+export function refsOf(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(refsOf);
+  if (value === null || typeof value !== "object") return [];
+  return Object.entries(value).flatMap(([k, v]) =>
+    k === "$ref" && typeof v === "string" ? [v] : refsOf(v),
+  );
+}
+
+/** The shared schema a `$ref` names, or undefined when it names none. */
+function sharedName(ref: string, shared: Record<string, unknown>): string | undefined {
+  const name = ref.startsWith("#/$defs/") ? ref.slice("#/$defs/".length) : undefined;
+  return name !== undefined && Object.hasOwn(shared, name) ? name : undefined;
+}
+
+/** Throw when one tool's entry breaks a rule of the document. */
+function checkTool(source: ContractSource, tool: string, entry: ContractToolEntry): void {
+  const { meta, schemas, shared = {} } = source;
+  const { visibility, unattended, grant } = entry;
+  const pair = schemas[visibility][tool];
+  if (!pair) {
+    throw new Error(
+      `${meta.contract}: the contract names ${visibility} tool "${tool}", which has no ${visibility} source`,
+    );
+  }
+  if (visibility === "private" && unattended !== "refused") {
+    throw new Error(`${meta.contract}: private tool "${tool}" must be unattended "refused"`);
+  }
+  if (grant && (visibility !== "public" || unattended !== "refused")) {
+    throw new Error(
+      `${meta.contract}: "${tool}" carries a grant, which only a public tool refused to unattended runs may`,
+    );
+  }
+  for (const kind of ["input", "output"] as const) {
+    for (const ref of refsOf(JSON.parse(JSON.stringify(pair[kind])))) {
+      if (!sharedName(ref, shared)) {
+        throw new Error(`${meta.contract}: ${tool}'s ${kind} refers to ${ref}, no shared schema`);
+      }
     }
   }
-  for (const [visibility, source] of Object.entries(schemas) as [Visibility, object][]) {
-    for (const tool of Object.keys(source)) {
+}
+
+/** Throw when a source's schemas and its declared tools disagree. */
+function checkSource(source: ContractSource): void {
+  const { meta, schemas, shared = {} } = source;
+  for (const [tool, entry] of Object.entries(meta.tools)) checkTool(source, tool, entry);
+  for (const [visibility, tools] of Object.entries(schemas) as [Visibility, object][]) {
+    for (const tool of Object.keys(tools)) {
       if (meta.tools[tool]?.visibility !== visibility) {
         throw new Error(
           `${meta.contract}: the ${visibility} source has "${tool}", which the contract does not mark ${visibility}`,
@@ -67,24 +109,36 @@ function checkSource({ meta, schemas }: ContractSource): void {
       }
     }
   }
+  for (const [name, schema] of Object.entries(shared)) {
+    if (refsOf(JSON.parse(JSON.stringify(schema))).length > 0) {
+      throw new Error(`${meta.contract}: shared schema "${name}" refers to another schema`);
+    }
+  }
 }
 
 /** One contract document, as committed text. */
 export function emit(source: ContractSource): string {
   checkSource(source);
-  const { meta, schemas } = source;
+  const { meta, schemas, shared = {} } = source;
   const tools: Record<string, unknown> = {};
   const defs: Record<string, unknown> = {};
-  for (const [tool, { visibility, unattended }] of Object.entries(meta.tools)) {
+  for (const [tool, { visibility, unattended, grant }] of Object.entries(meta.tools)) {
     const pair = schemas[visibility][tool];
     if (!pair) throw new Error(`${meta.contract}: no schemas for "${tool}"`);
     const entry: Record<string, unknown> = { visibility, unattended };
+    if (grant) entry.grant = true;
     for (const kind of ["input", "output"] as const) {
       const key = defKey(tool, kind);
       entry[kind] = { $ref: `#/$defs/${key}` };
       defs[key] = JSON.parse(JSON.stringify(pair[kind]));
     }
     tools[tool] = entry;
+  }
+  for (const [name, schema] of Object.entries(shared)) {
+    if (Object.hasOwn(defs, name)) {
+      throw new Error(`${meta.contract}: shared schema "${name}" collides with a tool's $defs key`);
+    }
+    defs[name] = JSON.parse(JSON.stringify(schema));
   }
   const doc = {
     $schema: DRAFT,
@@ -94,7 +148,6 @@ export function emit(source: ContractSource): string {
     contract: meta.contract,
     version: meta.version,
     cardinality: meta.cardinality,
-    grants: meta.grants,
     tools,
     errors: meta.errors,
     $defs: defs,

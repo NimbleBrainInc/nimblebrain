@@ -9,6 +9,7 @@ const ROOT = resolve(import.meta.dir, "../../..");
 interface ToolEntry {
   visibility: string;
   unattended: string;
+  grant?: boolean;
   input: { $ref: string };
   output: { $ref: string };
 }
@@ -18,7 +19,6 @@ interface Document {
   contract: string;
   version: string;
   cardinality: string;
-  grants: boolean;
   tools: Record<string, ToolEntry>;
   errors: { public: Array<{ code: string; prefix?: string }>; private: Array<{ code: string }> };
   $defs: Record<string, Record<string, unknown>>;
@@ -31,10 +31,21 @@ const DOCUMENTS = {
   tasks: read("schemas/contracts/tasks/v1/contract.json"),
 };
 
+const SHARED_DEFS = ["notice", "occurrence", "run_outcome", "work_spec"];
+
 function compiler() {
   const ajv = new Ajv2020({ strict: false });
   addFormats(ajv);
   return ajv;
+}
+
+/** Every `$ref` value in a JSON value. */
+function refsOf(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(refsOf);
+  if (value === null || typeof value !== "object") return [];
+  return Object.entries(value).flatMap(([k, v]) =>
+    k === "$ref" && typeof v === "string" ? [v] : refsOf(v),
+  );
 }
 
 describe.each(Object.entries(DOCUMENTS))("the %s contract document", (_name, doc) => {
@@ -46,15 +57,21 @@ describe.each(Object.entries(DOCUMENTS))("the %s contract document", (_name, doc
     }
   });
 
-  test("every tool's $ref resolves to a self-contained object schema", () => {
+  test("every tool's $ref names its object schema, which refers only to shared $defs", () => {
     for (const [tool, entry] of Object.entries(doc.tools)) {
       for (const kind of ["input", "output"] as const) {
         expect(entry[kind].$ref).toBe(`#/$defs/${tool}_${kind}`);
         const schema = doc.$defs[`${tool}_${kind}`];
-        expect(schema).toBeDefined();
         expect(schema?.type).toBe("object");
-        expect(JSON.stringify(schema)).not.toContain('"$ref"');
+        for (const ref of refsOf(schema)) {
+          const name = ref.replace("#/$defs/", "");
+          expect(SHARED_DEFS).toContain(name);
+          expect(doc.$defs[name]).toBeDefined();
+        }
       }
+    }
+    for (const name of SHARED_DEFS) {
+      if (doc.$defs[name]) expect(refsOf(doc.$defs[name])).toEqual([]);
     }
   });
 
@@ -66,8 +83,16 @@ describe.each(Object.entries(DOCUMENTS))("the %s contract document", (_name, doc
     }
   });
 
-  test("states whether it needs run grants, and every public error has a prefix", () => {
-    expect(typeof doc.grants).toBe("boolean");
+  test("a grant sits only on a public tool refused to unattended runs", () => {
+    for (const entry of Object.values(doc.tools)) {
+      if (entry.grant === undefined) continue;
+      expect(entry.grant).toBe(true);
+      expect(entry.visibility).toBe("public");
+      expect(entry.unattended).toBe("refused");
+    }
+  });
+
+  test("every public error has a prefix", () => {
     for (const error of doc.errors.public) expect(error.prefix).toBeString();
   });
 });
@@ -81,22 +106,28 @@ describe("the tasks contract document", () => {
     if (!validate) throw new Error(`no $defs entry ${key}`);
     return validate;
   };
+  const names = (keep: (t: ToolEntry) => boolean) =>
+    Object.entries(doc.tools)
+      .filter(([, t]) => keep(t))
+      .map(([name]) => name)
+      .sort();
 
   test("names the contract and states its own URL", () => {
     expect(doc.contract).toBe("ai.nimblebrain.tasks");
     expect(doc.$id).toBe("https://schemas.nimblebrain.ai/contracts/tasks/v1/contract.json");
     expect(doc.version).toBe("1.0");
     expect(doc.cardinality).toBe("singleton");
-    expect(doc.grants).toBe(true);
+  });
+
+  test("emits its shared schemas as named $defs", () => {
+    for (const name of SHARED_DEFS) expect(doc.$defs[name]).toBeObject();
+    expect(doc.$defs.begin_run_output).toMatchObject({ type: "object" });
+    expect(refsOf(doc.$defs.end_run_input)).toEqual(["#/$defs/run_outcome"]);
   });
 
   test("lets an unattended run read and cancel, and refuses every tool that authors or starts work", () => {
-    const by = (unattended: string) =>
-      Object.entries(doc.tools)
-        .filter(([, t]) => t.visibility === "public" && t.unattended === unattended)
-        .map(([name]) => name)
-        .sort();
-    expect(by("allowed")).toEqual([
+    const pub = (u: string) => names((t) => t.visibility === "public" && t.unattended === u);
+    expect(pub("allowed")).toEqual([
       "batch",
       "batches",
       "cancel",
@@ -107,7 +138,7 @@ describe("the tasks contract document", () => {
       "status",
       "upcoming",
     ]);
-    expect(by("refused")).toEqual([
+    expect(pub("refused")).toEqual([
       "batch_control",
       "create",
       "delete",
@@ -117,12 +148,18 @@ describe("the tasks contract document", () => {
     ]);
   });
 
+  test("stamps a grant on the tools that save or start work", () => {
+    expect(names((t) => t.grant === true)).toEqual([
+      "batch_control",
+      "create",
+      "run",
+      "run_batch",
+      "update",
+    ]);
+  });
+
   test("has the private tools of the run flow", () => {
-    const privateTools = Object.entries(doc.tools)
-      .filter(([, t]) => t.visibility === "private")
-      .map(([name]) => name)
-      .sort();
-    expect(privateTools).toEqual([
+    expect(names((t) => t.visibility === "private")).toEqual([
       "begin_run",
       "check_runs",
       "delete_workspace",
@@ -133,39 +170,119 @@ describe("the tasks contract document", () => {
     ]);
   });
 
+  test("the inputs that bound an answer carry the host's version", () => {
+    for (const tool of ["due", "begin_run", "offer_event"]) {
+      expect((doc.$defs[`${tool}_input`]?.required as string[]) ?? []).toContain("version");
+    }
+    const due = schema("due_input");
+    const at = "2026-01-01T09:00:00.000Z";
+    expect(due({ version: "1.0", now: at, until: at })).toBe(true);
+    expect(due({ version: "2.0", now: at, until: at })).toBe(false);
+    expect(due({ now: at, until: at })).toBe(false);
+  });
+
+  test("an occurrence names no owner, and the host reads closed answers", () => {
+    const due = schema("due_output");
+    expect(due({ occurrences: [{ key: "k", ref: "r" }], nextCursor: null })).toBe(true);
+    expect(due({ occurrences: [{ key: "k", ref: "r", ownerId: "u" }], nextCursor: null })).toBe(
+      false,
+    );
+    expect(due({ occurrences: [], nextCursor: null, more: true })).toBe(false);
+  });
+
   test("begin_run answers a skip or an agent work spec carrying its grant", () => {
     const output = schema("begin_run_output");
     expect(output({ decision: "skip", reason: "disabled" })).toBe(true);
+    expect(
+      output({ decision: "skip", reason: "lost", interrupted: { runId: "run_1", token: 2 } }),
+    ).toBe(true);
     const work = { kind: "agent", runId: "run_1", grant: "g", prompt: "Summarize." };
     expect(output({ decision: "run", work })).toBe(true);
     expect(output({ decision: "run", work: { ...work, kind: "call" } })).toBe(false);
+    expect(output({ decision: "run", work: { ...work, extra: 1 } })).toBe(false);
     const { grant: _grant, ...withoutGrant } = work;
     expect(output({ decision: "run", work: withoutGrant })).toBe(false);
+    const account = { id: "a", unit: "usd", remaining: -1 };
+    expect(output({ decision: "run", work: { ...work, spendAccounts: [account] } })).toBe(false);
   });
 
-  test("end_run takes the closed outcome and refuses a field it does not define", () => {
-    const input = schema("end_run_input");
-    const outcome = {
+  describe("the outcome", () => {
+    const outcome = schema("run_outcome");
+    const base = {
       startedAt: "2026-01-01T09:00:00.000Z",
       endedAt: "2026-01-01T09:01:00.000Z",
       output: "done",
       stopReason: "complete",
-      usage: { inputTokens: 10, outputTokens: 5, iterations: 1 },
+      usage: { inputTokens: 10, outputTokens: 5 },
       costUsd: 0.01,
-      limits: { maxIterations: 25, maxRunDurationMs: 120000 },
       toolCalls: [{ name: "files__write", ok: true, ms: 12 }],
       filesWritten: [{ uri: "files://f1", name: "report.md" }],
-      skillsDelivered: [],
     };
-    expect(input({ runId: "run_1", token: 3, outcome })).toBe(true);
-    expect(input({ runId: "run_1", token: 3, outcome: { ...outcome, stopReason: "paused" } })).toBe(
-      false,
+
+    test("takes the core alone, and refuses a field it does not define", () => {
+      expect(outcome(base)).toBe(true);
+      expect(outcome({ ...base, stopReason: "paused" })).toBe(false);
+      expect(outcome({ ...base, startedAt: "today" })).toBe(false);
+      const withInput = { ...base, toolCalls: [{ name: "x", ok: true, ms: 1, input: {} }] };
+      expect(outcome(withInput)).toBe(false);
+      const held = { ...base, toolCalls: [{ name: "x", ok: false, ms: 1, held: true }] };
+      expect(outcome(held)).toBe(false);
+      const reason = (errorReason: string) => ({
+        ...base,
+        toolCalls: [{ name: "x", ok: false, ms: 1, errorReason }],
+      });
+      expect(outcome(reason("bad_input"))).toBe(true);
+      expect(outcome(reason("workspace_access_denied"))).toBe(false);
+    });
+
+    test("requires an error with error, other and not_started, and with nothing else", () => {
+      const error = { code: "interrupted", transient: true };
+      for (const stopReason of ["error", "other", "not_started"]) {
+        expect(outcome({ ...base, stopReason })).toBe(false);
+        expect(outcome({ ...base, stopReason, error })).toBe(true);
+      }
+      expect(outcome({ ...base, stopReason: "cancelled" })).toBe(true);
+      expect(outcome({ ...base, stopReason: "spend_limit", spendStop: "exhausted" })).toBe(true);
+    });
+  });
+
+  test("end_run takes the outcome by reference and answers closed notices", () => {
+    const output = schema("end_run_output");
+    const notice = { id: "n1", title: "Run failed", body: "", level: "attention" };
+    expect(output({ notices: [notice] })).toBe(true);
+    expect(output({ notices: [{ ...notice, link: "ui://tasks/panel" }] })).toBe(false);
+  });
+
+  test("a schedule is exactly one of its forms, and a cron names its timezone", () => {
+    const create = schema("create_input");
+    const make = (s: object) => ({ manifest: { name: "Daily", schedule: s }, body: "Go." });
+    expect(create(make({ cron: "0 7 * * 1-5", timezone: "Pacific/Honolulu" }))).toBe(true);
+    expect(create(make({ cron: "0 7 * * 1-5" }))).toBe(false);
+    expect(create(make({ at: "2026-01-01T09:00:00Z" }))).toBe(true);
+    expect(create(make({ at: "tomorrow" }))).toBe(false);
+    expect(create(make({ intervalMs: 60000 }))).toBe(true);
+    expect(create(make({ match: { source: "mail" } }))).toBe(true);
+    expect(create(make({ intervalMs: 60000, at: "2026-01-01T09:00:00Z" }))).toBe(false);
+    expect(create(make({}))).toBe(false);
+  });
+
+  test("a public output needs only its core", () => {
+    const run = { id: "run_1", taskId: "t", execution: "completed", label: "Succeeded" };
+    const ended = { ...run, startedAt: "a", completedAt: "b" };
+    const runs = schema("runs_output");
+    expect(runs({ runs: [ended] })).toBe(true);
+    expect(runs({ runs: [run] })).toBe(false);
+    expect(runs({ runs: [{ ...run, execution: "queued", label: "Queued" }] })).toBe(true);
+    expect(schema("run_output")({ runId: "run_1", taskId: "t", execution: "queued" })).toBe(true);
+    const task = { id: "t", name: "T", enabled: true, prompt: "Go." };
+    expect(schema("create_output")({ task })).toBe(true);
+    const counts = Object.fromEntries(
+      ["pending", "queued", "running", "pass", "fail", "uncertain"]
+        .concat(["not_assessed", "failed", "skipped", "cancelled"])
+        .map((k) => [k, 0]),
     );
-    const withInput = { ...outcome, toolCalls: [{ name: "x", ok: true, ms: 1, input: {} }] };
-    expect(input({ runId: "run_1", token: 3, outcome: withInput })).toBe(false);
-    expect(input({ runId: "run_1", token: 3, outcome: { ...outcome, startedAt: "today" } })).toBe(
-      false,
-    );
+    const batch = { id: "b", taskId: "t", state: "running", counts };
+    expect(schema("batch_output")({ batch })).toBe(true);
   });
 
   test("no public output carries a grant", () => {
