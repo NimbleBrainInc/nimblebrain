@@ -4,7 +4,7 @@
  *
  * The emitted document (`schemas/contracts/conversations/v1/contract.json`) is
  * the published contract; this file is where those schemas are written.
- * `scripts/emit-contract.ts` turns it into JSON, and `--check` fails when the
+ * `contracts/scripts/emit-contracts.ts` turns it into JSON, and `--check` fails when the
  * committed document differs. Nothing at runtime imports this file. The public
  * tools are authored beside it, in `public.ts`.
  *

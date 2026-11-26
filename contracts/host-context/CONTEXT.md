@@ -25,11 +25,13 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 | `workspaceId` | no | the workspace the call is walled to |
 | `ownerId` | no | the verified identity whose records the call reads and writes |
 | `conversationId` | no | the conversation the call is made inside, during a chat turn |
+| `grant` | no | the run grant for the call's workspace and owner, on a `person` call to a tool its contract marks `grant: true` (§6) |
+| `unattended` | no | `true` when the call is made inside an unattended run, with no person present (§7) |
 
 - **A value that fails the schema is no context.** The call then names no principal and has no
   scope, and the server answers as its contract says for that.
 - **A call whose context names no principal is not `host`.** Neither is a call with no context.
-- **Readers ignore fields they do not know.** Version 1 only adds optional fields (§6).
+- **Readers ignore fields they do not know.** Version 1 only adds optional fields (§8).
 
 ## 2. The host stamps it
 
@@ -81,7 +83,47 @@ contract MAY read it (to attribute a write to the turn that made it, or to tell 
 live) and otherwise ignores it. It is optional because most calls are not made inside a chat,
 and it grants nothing: a server walls by workspace and owner whether or not it is present.
 
-## 6. Versioning and conformance
+## 6. Run grants
+
+A run that no person starts (a scheduled task, a requested run picked up later) still acts
+for a person. The **run grant** is the host's signed record that a person, in a workspace, set
+up work under a contract that will run as them unattended.
+
+- **A contract marks the tools that take a grant** with `"grant": true` in the tool's entry of
+  its document. Only a public tool marked `unattended: "refused"` may carry it.
+- **The host stamps `grant` only on a `person` call to a tool marked `grant: true`**, with a
+  workspace and an owner. It never stamps one on a `host` call, on another tool, or on a call
+  made inside an unattended run (those tools are refused there), so no run can obtain
+  authority for another run.
+- **The grant is signed by the host over its claims**: the contract's name, `workspaceId` and
+  `ownerId`. Its format is the host's to choose and to change, and it is opaque to the server.
+- **The server stores it verbatim and returns it verbatim.** It keeps the grant of the latest
+  grant-marked call that names a definition with that definition, and gives it back when the
+  host runs the definition (the contract says where). It never parses it, never shows it in a
+  public output, and never hands it to another server.
+- **The host decides whether it still holds.** Before admitting a run, the host verifies the
+  grant's signature with its signing key, that it names the contract and the workspace of the
+  call, and that its owner is a member of the workspace now; the run acts as that owner. A grant
+  that fails any check admits nothing. Membership is checked at every run, so a grant needs no
+  expiry. When the host's signing key changes, every grant signed with the old one fails, and
+  the next grant-marked call that names the definition stores a new one.
+
+## 7. Unattended calls
+
+Each tool of a contract is marked `unattended: "allowed"` or `"refused"` in its document:
+whether a call made inside an unattended run may reach it. A run fires as its owner with no
+person present and often reads untrusted content, so a tool that would let such content
+outlive the run (authoring or starting more runs) is `refused`. A private tool is always
+`refused`; no run reaches one.
+
+- **The host stamps `unattended: true` on every call a run makes**, and refuses a `refused`
+  tool itself before calling the server: it never offers one to the run.
+- **A server refuses a `refused` tool on a call that carries `unattended: true`**, with the
+  error its contract names, and changes nothing. The host's refusal keeps the tool out of
+  view; the server's is the boundary, as for private tools.
+- `unattended` grants nothing: a call without it is walled exactly as one with it.
+
+## 8. Versioning and conformance
 
 - The schema's URL names the major (`…/host-context/v1/…`). Version 1 only adds optional
   fields, served in place. A change to a field's meaning, a newly required field, or a new

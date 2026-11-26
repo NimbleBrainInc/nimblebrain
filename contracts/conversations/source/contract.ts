@@ -1,18 +1,16 @@
 /**
  * The conversations contract's authoring data: everything in the published
- * document except the tools' schemas. `scripts/emit-contract.ts` joins it with
- * the schemas (`public.ts` and `private.ts` here) into `schemas/contracts/conversations/v1/contract.json`. Nothing at
+ * document except the tools' schemas. `contracts/scripts/emit-contracts.ts`
+ * joins it with the schemas (`public.ts` and `private.ts` here, gathered in
+ * `index.ts`) into `schemas/contracts/conversations/v1/contract.json`. Nothing at
  * runtime imports this file.
  */
 
-export type Visibility = "public" | "private";
-
-export interface ContractError {
-  code: string;
-  /** A public error's `error` begins with this text, the text models already read. */
-  prefix?: string;
-  meaning: string;
-}
+import type {
+  ContractError,
+  ContractToolEntry,
+  Visibility,
+} from "../../scripts/contract-source.ts";
 
 export const CONTRACT = {
   /** Where the document is served. Stated, never derived from `contract`. */
@@ -31,18 +29,18 @@ export const CONTRACT = {
   version: "1.0",
   cardinality: "singleton",
   tools: {
-    list: { visibility: "public" },
-    get: { visibility: "public" },
-    search: { visibility: "public" },
-    update: { visibility: "public" },
-    stats: { visibility: "public" },
-    export: { visibility: "public" },
-    create: { visibility: "private" },
-    events: { visibility: "private" },
-    append_events: { visibility: "private" },
-    delete: { visibility: "private" },
-    delete_workspace: { visibility: "private" },
-  } satisfies Record<string, { visibility: Visibility }>,
+    list: { visibility: "public", unattended: "allowed" },
+    get: { visibility: "public", unattended: "allowed" },
+    search: { visibility: "public", unattended: "allowed" },
+    update: { visibility: "public", unattended: "allowed" },
+    stats: { visibility: "public", unattended: "allowed" },
+    export: { visibility: "public", unattended: "allowed" },
+    create: { visibility: "private", unattended: "refused" },
+    events: { visibility: "private", unattended: "refused" },
+    append_events: { visibility: "private", unattended: "refused" },
+    delete: { visibility: "private", unattended: "refused" },
+    delete_workspace: { visibility: "private", unattended: "refused" },
+  } satisfies Record<string, ContractToolEntry>,
   errors: {
     public: [
       {

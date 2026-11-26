@@ -2,7 +2,7 @@
  * The public tools' schemas: the TypeBox authoring source for the `$defs`
  * entries of every tool `contract.ts` marks public.
  *
- * `scripts/emit-contract.ts` turns this file into the published document
+ * `contracts/scripts/emit-contracts.ts` turns this file into the published document
  * (`schemas/contracts/conversations/v1/contract.json`), and `--check` fails when
  * the committed document differs. Nothing at runtime imports this file.
  *

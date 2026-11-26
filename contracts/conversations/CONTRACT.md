@@ -19,7 +19,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 { "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.nimblebrain.ai/contracts/conversations/v1/contract.json",
   "contract": "ai.nimblebrain.conversations", "version": "1.0", "cardinality": "singleton",
-  "tools": { "list": { "visibility": "public",
+  "tools": { "list": { "visibility": "public", "unattended": "allowed",
                        "input": { "$ref": "#/$defs/list_input" },
                        "output": { "$ref": "#/$defs/list_output" } }, "…": {} },
   "errors": { "public": ["…"], "private": ["…"] },
@@ -40,21 +40,23 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
   `<tool>_output`), and the screen (§5). A server lists the definition itself as the tool's
   `inputSchema` and `outputSchema`, not the `$ref`. It MAY serve more than the contract names; a client ignores what it does not
   know.
-- **Each tool is `public` or `private`** (§3):
+- **Each tool is `public` or `private`** (§3), **and `allowed` or `refused` unattended**: whether
+  a call made inside an unattended run may reach it (host-context spec, §7). Every public tool
+  is `allowed`; every private tool is `refused`.
 
-| Tool | Visibility | Operation |
-|---|---|---|
-| `list` | public | One page of the caller's conversations, newest first |
-| `get` | public | One conversation: its metadata and, by `expand`, its messages |
-| `search` | public | The caller's conversations whose messages contain a text |
-| `update` | public | Retitle a conversation |
-| `stats` | public | Token usage over a period |
-| `export` | public | A conversation as Markdown or JSON |
-| `create` | private | Create a conversation |
-| `events` | private | One page of a conversation's stored events, in order |
-| `append_events` | private | Append events to a conversation |
-| `delete` | private | Delete a conversation |
-| `delete_workspace` | private | Delete every owner's conversations in a workspace |
+| Tool | Visibility | Unattended | Operation |
+|---|---|---|---|
+| `list` | public | allowed | One page of the caller's conversations, newest first |
+| `get` | public | allowed | One conversation: its metadata and, by `expand`, its messages |
+| `search` | public | allowed | The caller's conversations whose messages contain a text |
+| `update` | public | allowed | Retitle a conversation |
+| `stats` | public | allowed | Token usage over a period |
+| `export` | public | allowed | A conversation as Markdown or JSON |
+| `create` | private | refused | Create a conversation |
+| `events` | private | refused | One page of a conversation's stored events, in order |
+| `append_events` | private | refused | Append events to a conversation |
+| `delete` | private | refused | Delete a conversation |
+| `delete_workspace` | private | refused | Delete every owner's conversations in a workspace |
 
 ## 2. Scope and principal
 

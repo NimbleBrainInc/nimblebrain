@@ -16,7 +16,13 @@ It covers three things:
   uses.
 - **The principal rule and the contract document**: `refuseUnlessAllowed` refuses a private tool
   to anyone but `host`, before input and scope; `toolVisibility`, `toolsOf`, `contractSchema`
-  and `publicErrorPrefix` read a contract's published `contract.json`.
+  and `publicErrorPrefix` read a contract's published `contract.json`. `contractSchema` returns
+  a tool's schema with the shared `$defs` it refers to bundled beside it, so the schema a
+  server lists compiles on its own.
+- **`grant` and `unattended` are read, never interpreted.** `readHostContext` exposes the run
+  grant as the opaque string the host stamped (a server stores it and returns it verbatim) and
+  `unattended` as a boolean; refusing a tool on an unattended call is the server's, from the
+  contract document's marking.
 
 Rules:
 
