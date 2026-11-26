@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+from mcp.shared.message import ServerMessageMetadata
 from mcp.types import (
     ClientCapabilities,
     InitializeRequestParams,
@@ -36,6 +37,7 @@ class StubCall:
 
     method: str
     params: dict[str, Any]
+    related_request_id: Any = None
 
 
 @dataclass
@@ -50,9 +52,16 @@ class StubSession:
         self,
         request: BaseModel,
         result_type: type[BaseModel],
+        metadata: ServerMessageMetadata | None = None,
     ) -> Any:
         dumped = request.model_dump(by_alias=True, mode="json", exclude_none=True)
-        self.calls.append(StubCall(method=dumped["method"], params=dumped.get("params", {})))
+        self.calls.append(
+            StubCall(
+                method=dumped["method"],
+                params=dumped.get("params", {}),
+                related_request_id=metadata.related_request_id if metadata else None,
+            )
+        )
         if self.next_response is None:
             raise AssertionError(
                 "Test did not configure `stub_session.next_response` before calling SDK."
@@ -62,9 +71,10 @@ class StubSession:
 
 @dataclass
 class StubContext:
-    """Drop-in stub for `fastmcp.Context`. Only `session` is exposed."""
+    """Drop-in stub for `fastmcp.Context`. Only `session` and `request_id` are exposed."""
 
     session: StubSession
+    request_id: str = "req-1"
 
 
 def make_capabilities(

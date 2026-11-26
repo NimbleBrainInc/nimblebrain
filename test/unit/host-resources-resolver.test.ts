@@ -39,10 +39,12 @@ let storeB: FileStore;
 const ctxA: HostResourceContext = {
   workspaceId: "ws_00079598e311c160",
   connectorId: "connector_x",
+  ownerId: "user-a",
 };
 const ctxB: HostResourceContext = {
   workspaceId: "ws_001c32f121060ff3",
   connectorId: "connector_x",
+  ownerId: "user-a",
 };
 
 /**
@@ -88,6 +90,36 @@ afterEach(async () => {
 function makeResolver(): FileBackedHostResourcesResolver {
   return new FileBackedHostResourcesResolver((wsId) => storeForWorkspace(wsId));
 }
+
+describe("FileBackedHostResourcesResolver owner partition", () => {
+  // The owner comes from the context the caller passes (the user the
+  // connector's tool call was made for), never from ambient request context:
+  // the same workspace resolves a different store per `ctx.ownerId`.
+  it("resolves the store for ctx.ownerId, so one user's file is not found for another", async () => {
+    const id = await seedFile(storeA, "mine.txt", "user-a only", "text/plain");
+    const seen: Array<[string, string]> = [];
+    const resolver = new FileBackedHostResourcesResolver((wsId, ownerId) => {
+      seen.push([wsId, ownerId]);
+      return ownerId === "user-a" ? storeA : storeB;
+    });
+    const read = await resolver.read(`files://${id}`, ctxA);
+    expect(textOf(read.contents[0])).toBe("user-a only");
+    const listed = await resolver.list({}, { ...ctxA, ownerId: "user-b" });
+    expect(listed.resources).toEqual([]);
+    let caught: ProtocolError | null = null;
+    try {
+      await resolver.read(`files://${id}`, { ...ctxA, ownerId: "user-b" });
+    } catch (e) {
+      caught = e as ProtocolError;
+    }
+    expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
+    expect(seen).toEqual([
+      ["ws_00079598e311c160", "user-a"],
+      ["ws_00079598e311c160", "user-b"],
+      ["ws_00079598e311c160", "user-b"],
+    ]);
+  });
+});
 
 describe("FileBackedHostResourcesResolver.read", () => {
   it("returns text contents for a text mime", async () => {

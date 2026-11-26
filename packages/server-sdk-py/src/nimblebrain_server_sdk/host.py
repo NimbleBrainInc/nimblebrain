@@ -12,6 +12,7 @@ import builtins
 from typing import Any, Literal, cast
 
 from fastmcp import Context
+from mcp.shared.message import ServerMessageMetadata
 from mcp.types import (
     ClientCapabilities,
     ListResourcesResult,
@@ -205,6 +206,7 @@ class HostResources:
 
         Raises `mcp.shared.exceptions.MCPError` for wire-level errors (match on `.code`):
         - `-32002 Resource not found` (also: cross-workspace lookup)
+        - `-32003 No tool call in scope` (sent outside a tool call)
         - `-32004 Rate limited` (with `retryAfterMs` in `error.data`)
         - `-32005 Response too large` (with `size`, `maxSize`)
         - `-32602 Invalid params` (unsupported scheme)
@@ -216,6 +218,7 @@ class HostResources:
         return await self._ctx.session.send_request(
             cast(ServerRequest, request),
             ReadResourceResult,
+            metadata=self._on_call_stream(),
         )
 
     async def list(
@@ -252,9 +255,21 @@ class HostResources:
         return await self._ctx.session.send_request(
             cast(ServerRequest, request),
             ListResourcesResult,
+            metadata=self._on_call_stream(),
         )
 
     # -- Internals ----------------------------------------------------------
+
+    def _on_call_stream(self) -> ServerMessageMetadata:
+        """Send the request on the stream of the tool call it serves.
+
+        The host answers a host-resources request only on the stream of one of
+        the server's own tool calls, for the user that call was made for. A
+        request sent without a related request id goes on the connection's
+        standalone stream, which belongs to no call, and the host refuses it
+        with `-32003`.
+        """
+        return ServerMessageMetadata(related_request_id=self._ctx.request_id)
 
     def _negotiated_without_back_channel(self) -> bool:
         """True when this request negotiated a protocol era with no back-channel.

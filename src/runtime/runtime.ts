@@ -1037,18 +1037,17 @@ export class Runtime {
     // `Runtime.getConnectorMcpDeps(wsId)`.
     const hostResourcesWorkDir = resolveWorkDir(config);
     // Files are workspace-owned: a connector's `files://` read/list resolves in the
-    // workspace the connector runs in (`ctx.workspaceId`, passed by the resolver)
-    // under the session user's partition. The resolver fires inside the request
-    // context the orchestrator set up for the connector's tool call, so the
-    // identity is in scope here; we resolve it with the same rule `chat()` uses
-    // (`resolveRequestOwnerId`) so reads see exactly the files the agent does.
+    // workspace the connector runs in (`ctx.workspaceId`) under the partition of
+    // the user its tool call was made for (`ctx.ownerId`). McpSource answers a
+    // host-resources request only inside one of the connector's own inline tool
+    // calls and passes that call's owner id (resolved with the same rule `chat()`
+    // uses, `resolveRequestOwnerId`), so reads see exactly the files the agent
+    // does. Identity is never read from ambient context here: a request from the
+    // connection itself has no user.
     // Memoize per (workspace, user) — FileStore is cheap closures today, but
     // per-call construction would leak if it gained state (fd handles, watchers).
     const hostResourcesFileStoreCache = new Map<string, ReturnType<typeof createFileStore>>();
-    const hostResourcesResolver = new FileBackedHostResourcesResolver((wsId: string) => {
-      // Files are workspace-owned: the resolver passes the connector's request
-      // workspace (`ctx.workspaceId`) so a `files://` read resolves there only.
-      const userId = resolveRequestOwnerId(getRequestContext()?.identity);
+    const hostResourcesResolver = new FileBackedHostResourcesResolver((wsId, userId) => {
       const cacheKey = `${wsId}:${userId}`;
       const cached = hostResourcesFileStoreCache.get(cacheKey);
       if (cached) return cached;
