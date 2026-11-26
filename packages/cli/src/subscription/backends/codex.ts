@@ -22,6 +22,7 @@ import {
   type Backend,
   BackendRefused,
   emptyUsage,
+  spawnFailure,
   subscriptionEnv,
   type TokenUsage,
   type TurnInput,
@@ -106,18 +107,12 @@ async function runCodex(
     stderr = (stderr + d.toString()).slice(-4000);
   });
   const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
+  const failed = spawnFailure(child, "Codex");
 
   const translate = codexTranslator(input.emit);
   try {
-    for await (const line of createInterface({ input: child.stdout })) {
-      if (!line.trim()) continue;
-      try {
-        translate(JSON.parse(line) as CodexEvent);
-      } catch {
-        // A line that is not an event is Codex's own logging.
-      }
-    }
-    const code = await exited;
+    await Promise.race([readCodex(child.stdout, translate), failed]);
+    const code = await Promise.race([exited, failed]);
     if (input.signal.aborted) return { stopReason: "cancelled", ...translate.totals() };
     const failure = translate.failure();
     if (failure) throw new Error(`Codex failed: ${failure}`);
@@ -130,6 +125,21 @@ async function runCodex(
   } finally {
     input.signal.removeEventListener("abort", kill);
     await rm(cwd, { recursive: true, force: true });
+  }
+}
+
+/** Feeds each `--json` line to `translate`, until the end. */
+async function readCodex(
+  stdout: NodeJS.ReadableStream,
+  translate: (event: CodexEvent) => void,
+): Promise<void> {
+  for await (const line of createInterface({ input: stdout })) {
+    if (!line.trim()) continue;
+    try {
+      translate(JSON.parse(line) as CodexEvent);
+    } catch {
+      // A line that is not an event is Codex's own logging.
+    }
   }
 }
 

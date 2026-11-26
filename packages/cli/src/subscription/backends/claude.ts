@@ -24,6 +24,7 @@ import {
   BackendRefused,
   emptyUsage,
   type ReportedCall,
+  spawnFailure,
   subscriptionEnv,
   type TokenUsage,
   type TurnInput,
@@ -140,11 +141,12 @@ async function runClaude(
     stderr = (stderr + d.toString()).slice(-4000);
   });
   const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
+  const failed = spawnFailure(child, "Claude Code");
 
   const translate = claudeTranslator(input.emit);
   try {
-    const refused = await readClaude(child.stdout, translate, kill);
-    const code = await exited;
+    const refused = await Promise.race([readClaude(child.stdout, translate, kill), failed]);
+    const code = await Promise.race([exited, failed]);
     if (refused) throw new BackendRefused("api_key", refused);
     if (input.signal.aborted) return { stopReason: "cancelled", ...translate.totals() };
     return { stopReason: claudeStop(translate.result(), code, stderr), ...translate.totals() };

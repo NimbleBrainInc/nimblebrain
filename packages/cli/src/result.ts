@@ -75,6 +75,8 @@ export const ERRORS = {
     "Sign the agent's CLI in to your Claude or ChatGPT subscription instead of an API key, then run this again.",
   HOST_LOOPBACK_UNREACHABLE:
     "Run NimbleBrain on your subscription from macOS for now. On Linux, NimbleBrain's container reaches this machine over the Docker bridge, not 127.0.0.1, and the agent worker listens on 127.0.0.1 only. `npx nimblebrain key` gives NimbleBrain a model key instead.",
+  PLATFORM_UNSUPPORTED:
+    "Run NimbleBrain on your subscription from macOS for now. `npx nimblebrain key` gives NimbleBrain a model key instead.",
   AGENT_WORKER_FAILED:
     "Read agent-worker.log in the install's folder (its path is in log) for why the agent worker stopped, then run this again.",
 } as const;

@@ -176,6 +176,16 @@ describe("use refuses", () => {
     unchanged(m);
   });
 
+  test("on Windows, where the worker cannot be found or stopped without ps and kill", async () => {
+    const m = mac({ platform: "win32" });
+    const { body, code } = await json(["use", "claude"], m);
+    expect(code).toBe(1);
+    expect(body).toMatchObject({ error: "PLATFORM_UNSUPPORTED" });
+    expect(body.fix).toBe(ERRORS.PLATFORM_UNSUPPORTED);
+    expect(m.calls).toEqual([]);
+    unchanged(m);
+  });
+
   test("on a release whose Compose file does not pass the agent runtime", async () => {
     const old = REPO_COMPOSE.replace(/^.*NB_AGENT_RUNTIME.*\n/gm, "");
     const m = mac({ files: { [`${HOME}/docker-compose.yml`]: old } });

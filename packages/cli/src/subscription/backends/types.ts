@@ -5,6 +5,7 @@
  * login, and the backend refuses to run when the CLI would bill an API key.
  */
 
+import type { ChildProcess } from "node:child_process";
 import type * as acp from "@agentclientprotocol/sdk/unstable";
 
 /** Token counts, in NimbleBrain's usage shape (`src/usage/types.ts`). */
@@ -96,4 +97,19 @@ export function subscriptionEnv(from: NodeJS.ProcessEnv = process.env): Record<s
 
 export function emptyUsage(): TokenUsage {
   return { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+}
+
+/**
+ * Rejects when `child` could not be started (a missing or unrunnable binary),
+ * so a turn that races it fails instead of waiting on output that never comes.
+ * Never resolves; handled here, so a failure after the turn ended is not unhandled.
+ */
+export function spawnFailure(child: ChildProcess, label: string): Promise<never> {
+  const failed = new Promise<never>((_, reject) => {
+    child.once("error", (err) =>
+      reject(new Error(`${label} could not be started: ${err.message}`)),
+    );
+  });
+  failed.catch(() => {});
+  return failed;
 }

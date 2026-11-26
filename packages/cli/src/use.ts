@@ -48,6 +48,12 @@ export async function use(ctx: Ctx) {
       `On Linux, NimbleBrain's container cannot reach an agent worker on this machine's 127.0.0.1, so it cannot run on ${SUBSCRIPTION_RUNTIMES[runtime].label} yet.`,
     );
   }
+  if (deps.platform !== "darwin") {
+    throw new CliError(
+      "PLATFORM_UNSUPPORTED",
+      `The agent worker runs on macOS only, so NimbleBrain cannot run on ${SUBSCRIPTION_RUNTIMES[runtime].label} here yet.`,
+    );
+  }
   const composeText = (await deps.readText(paths(home).compose)) ?? "";
   if (!takesAgentRuntime(composeText)) {
     throw new CliError(

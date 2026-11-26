@@ -188,7 +188,7 @@ npx nimblebrain use native    # back to NimbleBrain's own engine and your model 
 
 `use` checks that the agent's CLI is installed and signed in to a subscription, not an API key: it refuses with `AGENT_CLI_MISSING`, `AGENT_NOT_SIGNED_IN` or `AGENT_BILLS_API_KEY`, and the fix names the command to run. It then starts a small worker on `127.0.0.1` (port 27290 for Claude, 27291 for Codex; `--port` moves it), writes `NB_AGENT_RUNTIME` and `NB_AGENT_RUNTIME_URL` to `.env`, and restarts NimbleBrain so every turn runs on it. The answer says what it bills (`billed_to`) and which tools the agent gets (`tools`); `status` reports `agent_runtime` and whether its worker is running. [Run on your subscription](/config/subscriptions/) explains what the worker does and what stays on NimbleBrain.
 
-This runs on macOS and Windows with Docker Desktop. On Linux the container reaches the host over the Docker bridge, not `127.0.0.1`, so `use` answers `HOST_LOOPBACK_UNREACHABLE`. It needs a NimbleBrain release that takes an agent runtime; an older one answers `RUNTIME_UNSUPPORTED`.
+This runs on macOS with Docker Desktop. On Linux the container reaches the host over the Docker bridge, not `127.0.0.1`, so `use` answers `HOST_LOOPBACK_UNREACHABLE`; on any other system it answers `PLATFORM_UNSUPPORTED`, since the CLI finds and stops the worker with `ps` and `kill`. It needs a NimbleBrain release that takes an agent runtime; an older one answers `RUNTIME_UNSUPPORTED`.
 
 ## When the first start fails
 

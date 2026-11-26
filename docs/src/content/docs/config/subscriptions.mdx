@@ -46,7 +46,7 @@ The chat composer shows **Runs on claude-code** (or codex) in place of the model
 
 ## Limits
 
-- macOS and Windows with Docker Desktop only for now. On Linux the container reaches the host over the Docker bridge, not `127.0.0.1`, and `use` answers `HOST_LOOPBACK_UNREACHABLE`.
+- macOS with Docker Desktop only for now. On Linux the container reaches the host over the Docker bridge, not `127.0.0.1`, and `use` answers `HOST_LOOPBACK_UNREACHABLE`. On Windows the worker's process management is not supported, and `use` answers `PLATFORM_UNSUPPORTED`.
 - A Codex turn carries Codex's own instructions and tool schemas, roughly 100k input tokens even for a short turn, most of them cached.
 - The worker holds each turn's connection. `down` stops it and `up` restarts it; a turn running when it stops is cut off, as when NimbleBrain itself restarts.
 - Codex's MCP client speaks an older protocol revision than `/mcp/<workspaceId>` serves, so connecting Codex to NimbleBrain as a tool (`init --agent codex`) gives it no tools. Running NimbleBrain's turns on Codex, as here, is not affected: the worker serves the tools to Codex itself.
