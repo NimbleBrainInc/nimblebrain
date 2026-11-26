@@ -177,7 +177,7 @@ describe("init", () => {
     expect(stdout).not.toContain("sk-typed");
     expect(envAtStart).toHaveLength(1);
     expect(envAtStart[0]).toContain("ANTHROPIC_API_KEY=sk-typed");
-    expect(m.asked[1]).toStartWith("Model (hosted, local)");
+    expect(m.asked[1]).toStartWith("Choose 1-2, or api, local [1]");
   });
 
   test("a person reads a plain summary: what the agent got, a missing skill, what to do next", async () => {
@@ -193,7 +193,7 @@ describe("init", () => {
     const { stdout, code } = await run([], m.deps);
     expect(code).toBe(0);
     expect(stdout).toContain("NimbleBrain v0.73.0: running at http://127.0.0.1:27246");
-    expect(stdout).toContain("model key: set (NimbleBrain's own agents use it)");
+    expect(stdout).toContain("agents run on: an API key (anthropic)");
     expect(stdout).toContain("Claude Code can use NimbleBrain's tools");
     expect(stdout).toContain(
       "skill: not installed; add it with npx skills add nimblebraininc/skills --skill nimblebrain --agent claude-code -g",
@@ -647,8 +647,8 @@ describe("a first start that did not finish", () => {
     });
     const { stdout, code } = await run([], m.deps);
     expect(code).toBe(0);
-    expect(stdout).toContain("model key: set");
-    expect(m.asked.some((q) => q.startsWith("Model ("))).toBe(false);
+    expect(stdout).toContain("agents run on: an API key (anthropic)");
+    expect(m.asked.some((q) => q.startsWith("Choose "))).toBe(false);
     expect(m.files.get(ENV)?.text).toContain("ANTHROPIC_API_KEY=sk-test");
   });
 

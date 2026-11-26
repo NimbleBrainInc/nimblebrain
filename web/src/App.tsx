@@ -112,6 +112,7 @@ import type {
   ConfigInfo,
   FileLimits,
   PlacementEntry,
+  RunsOnInfo,
   ToolCallResponse,
 } from "./types";
 import "./index.css";
@@ -196,6 +197,7 @@ function AuthenticatedApp({
     availableModels: bootstrap.config.availableModels,
     preferences: bootstrap.user.preferences,
     fileLimits: bootstrap.config.files,
+    runsOn: bootstrap.config.runsOn,
   };
 
   // Build session info from bootstrap user data
@@ -241,6 +243,7 @@ function BootstrappedShell({
     availableModels?: ConfigInfo["availableModels"];
     preferences?: { displayName?: string; timezone?: string; locale?: string; theme?: string };
     fileLimits?: FileLimits;
+    runsOn?: RunsOnInfo;
   };
   currentUserId: string;
   onLogout: () => void;

@@ -48,12 +48,12 @@ describe("the install's own commands", () => {
     expect(body).toMatchObject({ ok: true, model_key: "missing" });
     expect(body.telemetry.set).toBe(`${CLI} telemetry on|off`);
     const plain = await run(["--yes", "--home", TRY], machine({ env }).deps);
-    expect(plain.stdout).toContain(`Run ${CLI} key in your own terminal`);
-    expect(plain.stdout).toContain(`or ${CLI} local-model to run one`);
+    expect(plain.stdout).toContain(`Run ${CLI} use in your own terminal`);
+    expect(body.model_source.set).toBe(`${CLI} use claude|codex|api|local`);
     const status = await json(["status", "--home", TRY], m);
     expect(status.body.telemetry.set).toBe(`${CLI} telemetry on|off`);
     const statusText = await run(["status", "--home", TRY], m.deps);
-    expect(statusText.stdout).toContain(`missing (run ${CLI} key)`);
+    expect(statusText.stdout).toContain(`agents run on: nothing yet (choose with ${CLI} use)`);
     expect(statusText.stdout).toContain(`answer with ${CLI} telemetry on|off`);
   });
 

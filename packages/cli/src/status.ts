@@ -1,10 +1,12 @@
 import { join } from "node:path";
+import { type AgentRuntimeState, agentRuntimeState } from "./agent-worker.ts";
 import { skillInstalled } from "./agents.ts";
 import type { Agent } from "./args.ts";
 import { hasKey, hostLoopback, keyVars } from "./compose.ts";
 import type { Deps } from "./deps.ts";
 import { localModelOf } from "./local-model.ts";
 import { CliError } from "./result.ts";
+import { currentSource, type ModelSource } from "./source.ts";
 import { currentTelemetry, type TelemetryField } from "./telemetry.ts";
 import { VERSION } from "./version.ts";
 
@@ -91,6 +93,10 @@ export interface StatusResult {
   host_loopback: boolean;
   /** The local model NimbleBrain's agents run on (`npx nimblebrain local-model`), or null for a hosted key. */
   local_model: string | null;
+  /** What runs NimbleBrain's agents (`npx nimblebrain use`): claude, codex, api, local, or null for nothing yet. */
+  model_source: ModelSource;
+  /** The runtime NimbleBrain's agents run on, and its worker on this machine. */
+  agent_runtime: AgentRuntimeState;
   telemetry: TelemetryField;
 }
 
@@ -138,6 +144,8 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
     model_key: modelKey,
     host_loopback: hostLoopback(composeText),
     local_model: localModelOf(envText) ?? null,
+    model_source: await currentSource(deps, home),
+    agent_runtime: await agentRuntimeState(deps, home),
     telemetry: await currentTelemetry(deps, home, url),
   };
 }
@@ -168,7 +176,7 @@ export async function readWorkspaces(deps: Deps, url: string): Promise<Workspace
     .map((w) => ({ id: w.id, name: w.name, mcp: `${url}/mcp/${w.id}` }));
 }
 
-/** Whether NimbleBrain's own agents have a model: a key, or a local model. */
-export function hasModelIn(r: { model_key: string; local_model: string | null }): boolean {
-  return r.model_key === "set" || r.local_model !== null;
+/** Whether something runs NimbleBrain's agents: a subscription, a key, or a local model. */
+export function hasModelIn(r: { model_source: { source: unknown } }): boolean {
+  return r.model_source.source !== null;
 }

@@ -5,7 +5,15 @@ import { ANSWER_FIELDS } from "../src/answers.ts";
 import { COMMANDS, FLAG_SPECS, MCP_SUBCOMMANDS, parse } from "../src/args.ts";
 import { run, VERSION } from "../src/main.ts";
 import { ERRORS } from "../src/result.ts";
-import { LOCAL_COMPOSE, type Machine, machine, record } from "./fake.ts";
+import {
+  CLAUDE_MAX,
+  LOCAL_COMPOSE,
+  type Machine,
+  machine,
+  ok,
+  REPO_COMPOSE,
+  record,
+} from "./fake.ts";
 
 interface Help {
   ok: true;
@@ -72,7 +80,14 @@ describe("help --json", () => {
     );
     const commandNames = help.commands.map((c) => c.name);
     for (const f of help.flags) {
-      const value = f.name === "--port" ? "27300" : f.name === "--telemetry" ? "on" : "none";
+      const value =
+        f.name === "--port"
+          ? "27300"
+          : f.name === "--telemetry"
+            ? "on"
+            : f.name === "--use"
+              ? "api"
+              : "none";
       expect(() => parse(f.takes ? [f.name, value] : [f.name])).not.toThrow();
       for (const c of f.commands ?? []) expect(commandNames).toContain(c);
     }
@@ -144,7 +159,7 @@ describe("help --json", () => {
     ];
     for (const argv of runs) await answers(argv, m);
     expect(
-      new Set([...runs.map((a) => (a[0] === "mcp" ? `mcp ${a[1]}` : a[0])), "local-model"]),
+      new Set([...runs.map((a) => (a[0] === "mcp" ? `mcp ${a[1]}` : a[0])), "local-model", "use"]),
     ).toEqual(new Set(help.commands.map((c) => c.name)));
 
     // On a local model: Ollama installed but down, so each command that starts it says so.
@@ -165,6 +180,28 @@ describe("help --json", () => {
     expect(await answers(["local-model", "gemma4:e4b"], local)).toContain("ollama_started");
     // doctor with --json never starts Ollama, so its local checks answer without ollama_started.
     await answers(["doctor"], local);
+
+    // On a Mac signed in to a Claude subscription, with a key and Ollama, `use` answers each source.
+    const sub = machine({
+      platform: "darwin",
+      exec: { "claude auth status --json": ok(CLAUDE_MAX) },
+      ollama: { models: { "gemma4:e4b": { capabilities: ["completion", "tools"] } } },
+      files: {
+        [`${home}/install.json`]: record(),
+        [`${home}/.env`]: "ANTHROPIC_API_KEY=sk-test\n",
+        [`${home}/docker-compose.yml`]: REPO_COMPOSE,
+      },
+    });
+    const base = ["model_source", "agent_runtime"];
+    expect(await answers(["use", "claude"], sub)).toEqual([...base, "billed_to", "tools"]);
+    expect(await answers(["use", "api"], sub)).toEqual([...base, "provider"]);
+    expect(await answers(["use", "local"], sub)).toEqual([...base, "local_model"]);
+    sub.ollamaUp = false;
+    sub.files.set("/Applications/Ollama.app/Contents/Info.plist", {
+      text: "<plist/>",
+      mode: 0o644,
+    });
+    expect(await answers(["use", "local"], sub)).toContain("ollama_started");
   });
 
   test("lists every error code the CLI raises, with its fix and exit code", async () => {

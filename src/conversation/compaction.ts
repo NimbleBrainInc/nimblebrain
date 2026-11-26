@@ -1,5 +1,6 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
-import { type TokenUsage, tokenUsageFromV4 } from "../usage/types.ts";
+import type { TokenUsage } from "../usage/types.ts";
+import { type Complete, completeWithModel } from "./completion.ts";
 import { escapeClosingTags } from "./escape-closing-tags.ts";
 import type { HistoryCompactedEvent, StoredMessage } from "./types.ts";
 
@@ -85,7 +86,7 @@ export interface CompactionOptions {
    * agentic loop, so it emits no `llm.response`). The runtime uses this to
    * persist an `aux.usage` event so the fold's cost isn't invisible.
    */
-  onUsage?: (usage: TokenUsage, llmMs: number) => void;
+  onUsage?: (usage: TokenUsage, llmMs: number, model?: string) => void;
 }
 
 /**
@@ -500,12 +501,12 @@ const SUMMARIZE_SYSTEM =
  * compaction as best-effort and falls back to the un-compacted history.
  */
 export async function summarizeMessages(
-  model: LanguageModelV4,
+  model: LanguageModelV4 | Complete,
   messages: readonly SummarizableMessage[],
   opts: {
     maxOutputTokens?: number;
     summarizerContextTokens?: number;
-    onUsage?: (usage: TokenUsage, llmMs: number) => void;
+    onUsage?: (usage: TokenUsage, llmMs: number, model?: string) => void;
     /**
      * Cancel the summarizer call. Composed with the timeout below, so a fold
      * running inside a live turn stops when the turn is cancelled instead of
@@ -519,21 +520,19 @@ export async function summarizeMessages(
     summarizerTranscriptBudgetTokens(opts.summarizerContextTokens),
   );
   const startedAt = Date.now();
-  const result = await model.doGenerate({
-    prompt: [
-      { role: "system", content: SUMMARIZE_SYSTEM },
-      { role: "user", content: [{ type: "text", text: transcript }] },
-    ],
+  const complete = typeof model === "function" ? model : completeWithModel(model);
+  const result = await complete({
+    system: SUMMARIZE_SYSTEM,
+    text: transcript,
     maxOutputTokens: opts.maxOutputTokens ?? SUMMARY_MAX_OUTPUT_TOKENS,
-    abortSignal: opts.signal
+    signal: opts.signal
       ? AbortSignal.any([opts.signal, AbortSignal.timeout(SUMMARY_TIMEOUT_MS)])
       : AbortSignal.timeout(SUMMARY_TIMEOUT_MS),
   });
   // Report usage before the empty-summary guard — the call was billed
   // regardless of whether its output is usable.
-  opts.onUsage?.(tokenUsageFromV4(result.usage), Date.now() - startedAt);
-  const textBlock = result.content.find((b) => b.type === "text");
-  const summary = textBlock?.type === "text" ? textBlock.text.trim() : "";
+  opts.onUsage?.(result.usage, Date.now() - startedAt, result.model);
+  const summary = result.text.trim();
   if (!summary) throw new Error("compaction summary was empty");
   return summary;
 }
@@ -544,7 +543,7 @@ export async function summarizeMessages(
  * caller catches and proceeds with the un-compacted history.
  */
 export async function runCompaction(
-  model: LanguageModelV4,
+  model: LanguageModelV4 | Complete,
   messages: readonly StoredMessage[],
   opts: CompactionOptions,
 ): Promise<CompactionOutcome | null> {
@@ -573,7 +572,7 @@ export async function runCompaction(
  * pre-existing overflow path's job, not a hard error here.
  */
 export async function compactConversationMessages(
-  model: LanguageModelV4,
+  model: LanguageModelV4 | Complete,
   messages: StoredMessage[],
   opts: CompactionOptions & {
     now: string;

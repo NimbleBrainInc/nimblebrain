@@ -10,6 +10,7 @@ import type { AgentRuntimeConfig, ExecutionConfig } from "../config/execution.ts
 import { createAcpRuntime } from "./acp/acp-runtime.ts";
 import type { AcpDriver } from "./acp/driver.ts";
 import { createNimbleBrainAgentDriver } from "./acp/drivers/nimblebrain-agent.ts";
+import { createSubscriptionCliDriver } from "./acp/drivers/subscription-cli.ts";
 import { createHttpConnection } from "./acp/http-connection.ts";
 import { createNativeRuntime, NATIVE_RUNTIME_ID } from "./native-runtime.ts";
 import type { AgentRuntime } from "./types.ts";
@@ -66,7 +67,14 @@ export function createAgentRuntimes(
       credential: deps.connectionCredential,
     });
     const driver = driverFor(entry);
-    assertPoolable(id, driver);
+    if (!deps.dev && isSubscriptionCli(entry)) {
+      throw new Error(
+        `execution.runtimes.${id}: the ${entry.driver} driver bills one person's subscription, so it runs only under the dev identity provider`,
+      );
+    }
+    // A subscription CLI's worker runs on one person's machine as that person,
+    // so under the dev identity provider it is not a shared pool.
+    if (!(deps.dev && isSubscriptionCli(entry))) assertPoolable(id, driver);
     add(
       createAcpRuntime(id, driver, connection, {
         ...(config?.modelGateway ? { modelGateway: config.modelGateway } : {}),
@@ -91,7 +99,19 @@ function driverFor(entry: AgentRuntimeConfig): AcpDriver {
   switch (entry.driver) {
     case "nimblebrain-agent":
       return createNimbleBrainAgentDriver();
+    case "claude-code":
+    case "codex":
+      return createSubscriptionCliDriver(entry.driver);
   }
+}
+
+/**
+ * A vendor's own CLI signed in to a person's subscription. It bills that
+ * subscription, which only that person may use, so it runs only under the dev
+ * identity provider, on their machine.
+ */
+function isSubscriptionCli(entry: AgentRuntimeConfig): boolean {
+  return entry.driver === "claude-code" || entry.driver === "codex";
 }
 
 /**

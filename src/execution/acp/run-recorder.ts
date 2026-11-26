@@ -80,10 +80,11 @@ export interface AcpRunRecorder {
 export function createAcpRunRecorder(
   run: ResolvedRun,
   io: Pick<RunIO, "events" | "billSummary">,
+  /** The model the run is recorded under: the runtime's own, when it brings one. */
+  model: string = run.config.model,
 ): AcpRunRecorder {
   const { events } = io;
   const { runId } = run;
-  const model = run.config.model;
   const started = performance.now();
   let segmentText = "";
   // The run's whole reply, joined the way the engine joins its turns.

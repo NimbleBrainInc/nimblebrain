@@ -133,3 +133,38 @@ describe("a worker pool", () => {
     );
   });
 });
+
+describe("a subscription CLI worker", () => {
+  const cli = (driver: "claude-code" | "codex"): ExecutionConfig => ({
+    default: driver,
+    runtimes: { [driver]: { driver, url: "http://127.0.0.1:27290/acp" } },
+  });
+
+  test("runs only under the dev identity provider, even behind a gateway", () => {
+    expect(() =>
+      createAgentRuntimes({ ...cli("claude-code"), modelGateway: GATEWAY }, [], deps()),
+    ).toThrow(/bills one person's subscription, so it runs only under the dev identity provider/);
+  });
+
+  test("under dev, records its runs under its own model and holds no spend gate", () => {
+    const runtimes = createAgentRuntimes(
+      cli("claude-code"),
+      [],
+      deps({ dev: true, connectionCredential: null }),
+    );
+    expect(runtimes.select("claude-code").capabilities).toMatchObject({
+      spendGate: false,
+      ownModel: "claude-code-subscription",
+      usage: "reported",
+    });
+  });
+
+  test("under dev, Codex boots although it keeps a shell of its own", () => {
+    const runtimes = createAgentRuntimes(
+      cli("codex"),
+      [],
+      deps({ dev: true, connectionCredential: null }),
+    );
+    expect(runtimes.select("codex").capabilities.ownModel).toBe("codex-subscription");
+  });
+});

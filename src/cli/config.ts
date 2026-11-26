@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { loadBrand } from "../brand/index.ts";
+import { agentRuntimeFromEnv } from "../config/agent-runtime.ts";
 import { getValidator } from "../config/index.ts";
 import { localModelFromEnv } from "../config/local-model.ts";
 import { providersFromEnv } from "../config/model-providers.ts";
@@ -241,6 +242,11 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
   const local = localModelFromEnv(config, process.env);
   if (local.providers) config.providers = local.providers as RuntimeConfig["providers"];
   if (local.models) config.models = local.models;
+  // The agent runtime the environment names (`npx nimblebrain use`), unless the
+  // file sets `execution`; see `src/config/agent-runtime.ts`.
+  const agentRuntime = agentRuntimeFromEnv(config.execution, process.env);
+  if (agentRuntime.execution) config.execution = agentRuntime.execution;
+  if (agentRuntime.ignored) log.warn(`[config] ${agentRuntime.ignored}`);
 
   // Contrast is checked here, at load, so a brand that would paint an
   // unreadable interface stops the boot with the failing pair named rather

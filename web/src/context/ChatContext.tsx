@@ -15,7 +15,7 @@ import { chatStore } from "../hooks/chat-store";
 import type { UseChatReturn } from "../hooks/useChat";
 import { useChat } from "../hooks/useChat";
 import { toWsId } from "../lib/workspace-slug";
-import type { AppContext, ConfigInfo, FileLimits, ToolCallResponse } from "../types";
+import type { AppContext, ConfigInfo, FileLimits, RunsOnInfo, ToolCallResponse } from "../types";
 import { useWorkspaceContext } from "./WorkspaceContext";
 
 // ---------------------------------------------------------------------------
@@ -30,6 +30,8 @@ export interface ChatConfigContextValue {
   preferences: ConfigInfo["preferences"];
   /** Attachment limits from the bootstrap; instance config, fixed at startup. */
   fileLimits?: FileLimits;
+  /** The runtime every turn runs on when it brings its own model (bootstrap `runsOn`). */
+  runsOn?: RunsOnInfo;
   currentUserId?: string;
 }
 
@@ -97,6 +99,7 @@ export interface ChatProviderProps {
     availableModels?: ConfigInfo["availableModels"];
     preferences?: ConfigInfo["preferences"];
     fileLimits?: FileLimits;
+    runsOn?: RunsOnInfo;
   };
   /** Current user's ID (from bootstrap). */
   currentUserId?: string;
@@ -232,6 +235,7 @@ export function ChatProvider({
   // Not refreshed by `fetchConfig`: `get_config` does not carry it, and the
   // limits are instance config that does not change while the shell is open.
   const fileLimits = initialConfig?.fileLimits;
+  const runsOn = initialConfig?.runsOn;
 
   // Each `config.changed` starts a fetch, and responses can arrive out of
   // order; only the latest request's answer is applied, so an older read
@@ -292,6 +296,7 @@ export function ChatProvider({
       preferences,
       currentUserId,
       fileLimits,
+      runsOn,
     }),
     [
       configuredProviders,
@@ -301,6 +306,7 @@ export function ChatProvider({
       preferences,
       currentUserId,
       fileLimits,
+      runsOn,
     ],
   );
 

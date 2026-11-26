@@ -167,7 +167,8 @@ function OverviewComposer({
 }) {
   const chat = useChatContext();
   const { fileLimits } = useChatConfigContext();
-  const { models, boundModel, defaultModel, pendingModel, setPendingModel } = useComposerModel();
+  const { models, runsOn, boundModel, defaultModel, pendingModel, setPendingModel } =
+    useComposerModel();
   // A bound conversation's menu offers a new conversation on the chosen model.
   const { newConversation } = chat;
   const newConversationWithModel = useCallback(
@@ -184,6 +185,7 @@ function OverviewComposer({
         onSend={onAsk}
         busy={chat.isStreaming}
         models={models}
+        runsOn={runsOn}
         boundModel={boundModel}
         defaultModel={defaultModel}
         pendingModel={pendingModel}

@@ -11,7 +11,7 @@ import { Aside } from '@astrojs/starlight/components';
 npx nimblebrain
 ```
 
-It checks your machine, starts NimbleBrain in Docker at `http://127.0.0.1:27246`, asks whether NimbleBrain's agents run on a hosted model (your API key) or a local one (see [On a local model](#on-a-local-model)), connects the coding agent you choose to a workspace over MCP, and opens NimbleBrain in your browser (`--no-open` skips that; it never opens one for a coding agent's run). Run it again any time: on a machine that already has NimbleBrain it reports what is there and changes nothing, and after a first start that failed it picks up where that one stopped (see [When the first start fails](#when-the-first-start-fails)).
+It checks your machine, starts NimbleBrain in Docker at `http://127.0.0.1:27246`, asks what runs NimbleBrain's agents (see [What runs the agents](#what-runs-the-agents)), connects the coding agent you choose to a workspace over MCP, and opens NimbleBrain in your browser (`--no-open` skips that; it never opens one for a coding agent's run). Run it again any time: on a machine that already has NimbleBrain it reports what is there and changes nothing, and after a first start that failed it picks up where that one stopped (see [When the first start fails](#when-the-first-start-fails)).
 
 You need Docker with Compose v2 (Docker's `docker compose` plugin, or the standalone `docker-compose` v2 that Homebrew installs), about 2 GB of memory for Docker, and Node.js 20 or later. It runs on `x86_64` and `arm64`, Apple Silicon included.
 
@@ -25,7 +25,7 @@ Tell your agent:
 
 > Install NimbleBrain with `npx nimblebrain`
 
-An agent runs it with `--yes --agent <its name> --json` and reads the result. When no model is set, everything else still starts, the result is `ok: true` with `model_key: "missing"` and `local_model: null`, and the agent asks you to run `npx nimblebrain key` in your own terminal (so the key never passes through the agent) or `npx nimblebrain local-model` to run a model on this machine.
+An agent runs it with `--yes --agent <its name> --json` and reads the result. The agent never decides what runs NimbleBrain's agents unless you named it (`--use`). Everything else still starts, the result is `ok: true` with `model_source.source: null`, and `model_source` carries the question to ask you: `ask`, the `options` this machine offers (each `available` here or not, and `detected` when it is ready now: signed in, a key saved, or Ollama running), the `default` to suggest, and `set`, the command that answers it. With your answer the agent runs `npx nimblebrain use claude`, `codex` or `local`; for an API key you run `npx nimblebrain key` in your own terminal, so the key never passes through the agent.
 
 The agent never decides whether usage data is sent. The result carries `telemetry.state: "undecided"` and the question to ask you; the agent runs `npx nimblebrain telemetry on` or `off` with your answer. See [Telemetry](/using/telemetry/).
 
@@ -35,11 +35,12 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 |---|---|
 | `init` (the default) | Checks the machine, starts NimbleBrain, connects the agent named by `--agent`, and installs the `nimblebrain` skill for it. |
 | `doctor` | Checks Docker, Compose v2, CPU architecture, memory and the port. Installs nothing. |
-| `status` | Version, `phase` (`starting` until the first start comes up, then `ready`), health, URL, each workspace's MCP URL, the connected agent, whether a model key is set, and whether this release can reach a server on your machine (`host_loopback`). |
+| `status` | Version, `phase` (`starting` until the first start comes up, then `ready`), health, URL, each workspace's MCP URL, the connected agent, what runs NimbleBrain's agents (`model_source`, and the subscription worker in `agent_runtime`), whether a model key is set, and whether this release can reach a server on your machine (`host_loopback`). |
 | `open` | Opens NimbleBrain's web UI (the `url` in `status`) in your default browser. Answers `{"ok": true, "url": "...", "opened": true}`; where no browser can be started (no display, an SSH session, or the opener failed), `opened` is `false` and the URL is there to open by hand. A coding agent runs it when you ask it to open NimbleBrain. It never starts NimbleBrain: when it is stopped, it answers `NOT_RUNNING`. |
-| `key` | Takes the model key at a hidden prompt and restarts NimbleBrain so it takes effect. A person runs this. |
-| `local-model [model]` | Runs NimbleBrain's agents on a model served by Ollama instead of a hosted key: prepares the model (default `gemma4:e4b`) and restarts NimbleBrain. See [On a local model](#on-a-local-model). |
-| `up` / `down` | Starts or stops NimbleBrain. Your data survives `down`. `down` also stops an install whose first start failed. |
+| `use [claude\|codex\|api\|local] [model]` | Chooses what runs NimbleBrain's agents: your Claude subscription through Claude Code, your ChatGPT plan through Codex, an API key, or a local model through Ollama (`use local <model>` names the model). With none named, it asks you. See [What runs the agents](#what-runs-the-agents). |
+| `key` | Takes the model key at a hidden prompt and restarts NimbleBrain so it takes effect. A person runs this. It changes the key; `use api` switches to it. |
+| `local-model [model]` | Prepares a model served by Ollama (default `gemma4:e4b`) and restarts NimbleBrain. See [On a local model](#on-a-local-model). It changes the model; `use local` switches to it. |
+| `up` / `down` | Starts or stops NimbleBrain. Your data survives `down`. `down` also stops an install whose first start failed. On a subscription, `down` also stops the worker and removes its login item, and `up` installs it again. |
 | `logs` | Recent log lines from the runtime, also after a first start that failed. |
 | `update` | Moves to the newest NimbleBrain release, or the one `--runtime` names, keeping your data, then refreshes the connected agent's `nimblebrain` skill. It never moves backwards. |
 | `uninstall` | Removes the containers, the images, every conversation, and the files `init` wrote. Asks first. Also removes an install whose first start failed. |
@@ -56,9 +57,10 @@ The agent never decides whether usage data is sent. The result carries `telemetr
 | `--json` | One JSON object on stdout. Progress goes to stderr. |
 | `--yes`, `-y` | Take every default. With no terminal attached, the CLI acts as if this were set and fails rather than wait for input. |
 | `--agent <name>` | `claude-code`, `cursor`, `codex` or `none`. |
-| `--port <n>` | The local port (default `27246`; for `doctor`, the install's own port). |
+| `--port <n>` | The local port (default `27246`; for `doctor`, the install's own port; for `use`, the subscription worker's). |
 | `--provider <name>` | For `key`: `anthropic` (default), `openai`, `google`, `greenpt`, `nebius` or `xai`. The installed release decides which it takes, and `key` lists them. |
-| `--local-model <model>` | For `init`: run on this Ollama model instead of a hosted key, without asking. |
+| `--use <claude\|codex\|api\|local>` | For `init`: what runs NimbleBrain's agents, without asking. Without it, `init` asks you at a terminal, or leaves it unchosen and returns the question in `model_source`. |
+| `--local-model <model>` | For `init`: run on this Ollama model, without asking (the same as `--use local` with that model). |
 | `--home <dir>` | Where the install lives (default `~/.nimblebrain-local`, or `NIMBLEBRAIN_HOME`). Each home is a separate install. See [A second install](#a-second-install). |
 | `--runtime <tag>` | For `init` and `update`: the NimbleBrain release to install, such as `v0.74.0`. Default: the newest release. |
 | `--no-open` | For `init`: do not open the web UI in your browser when it finishes. `init` opens it only for a person at a terminal, after a new install comes up, and never with `--json` or no terminal. |
@@ -93,7 +95,7 @@ It only tells you; nothing updates by itself. It is off when `CI` is set, with `
 
 ## Connecting an agent
 
-`init --agent <name>` registers the workspace's MCP URL, `http://127.0.0.1:27246/mcp/<workspaceId>`, with the agent: through `claude mcp add` for Claude Code, `codex mcp add` for Codex, and `~/.cursor/mcp.json` for Cursor. The local instance needs no login. If the agent's own CLI is not installed, `init` still succeeds and returns `manual`: the exact command or setting to add by hand. An agent loads a new MCP server when its next session starts. `status` reports the skill as the agent has it now, read from the agent's own skills folder, so a skill added later with `npx skills add nimblebraininc/skills --skill nimblebrain --agent <agent> -g` counts. Connecting an agent gives it NimbleBrain's tools; it does not change the model NimbleBrain runs on. NimbleBrain's own agents run on the model key you entered, billed by that provider, or on the local model you chose.
+`init --agent <name>` registers the workspace's MCP URL, `http://127.0.0.1:27246/mcp/<workspaceId>`, with the agent: through `claude mcp add` for Claude Code, `codex mcp add` for Codex, and `~/.cursor/mcp.json` for Cursor. The local instance needs no login. If the agent's own CLI is not installed, `init` still succeeds and returns `manual`: the exact command or setting to add by hand. An agent loads a new MCP server when its next session starts. `status` reports the skill as the agent has it now, read from the agent's own skills folder, so a skill added later with `npx skills add nimblebraininc/skills --skill nimblebrain --agent <agent> -g` counts. Connecting an agent gives it NimbleBrain's tools; it does not change what NimbleBrain's own agents run on, which is what you chose with `use` (or at `init`).
 
 To connect another client by hand, take the MCP URL from `npx nimblebrain status` and follow [Connecting External Clients](/connect/external-clients/).
 
@@ -134,7 +136,10 @@ Every command answers `{"ok": true, ...}` or `{"ok": false, "error": "<CODE>", "
 | `INSTALL_INCOMPLETE` | The install's first start did not finish, so only `down`, `logs`, `status`, `doctor` and `uninstall` act on it. Run `npx nimblebrain` to finish it, or `uninstall` to remove it. |
 | `NETWORK`, `START_FAILED`, `HEALTH_TIMEOUT` | A download failed, Compose could not start it, or it did not become healthy in time. On a first install, read `logs`, then run `npx nimblebrain` again: it finishes the install. |
 | `HOME_NOT_SHARED` | Docker cannot read the install's folder, so it cannot mount the install's files: the home is outside the folders Docker shares with its VM. By default Colima shares only your home folder, and Docker Desktop the folders in its file sharing settings. Share the folder with Docker, or move it into a shared one and pass that folder with `--home`; the install keeps its data either way. `uninstall` deletes the install's data, so run it only to install somewhere else. |
-| `NEEDS_TERMINAL`, `CANCELLED`, `AGENT_UNSUPPORTED`, `USAGE` | `key` needs a person, the action was declined, an unknown agent, or a bad command or flag. |
+| `NEEDS_TERMINAL`, `CANCELLED`, `AGENT_UNSUPPORTED`, `USAGE` | `key` needs a person, the action was declined, an unknown agent, or a bad command or flag (including `use` with nothing named and no one at a terminal to ask). |
+| `MODEL_KEY_MISSING` | `use api` on an install with no model key and no one at a terminal to enter one. Run `npx nimblebrain key` in your own terminal, then `use api` again. |
+| `AGENT_CLI_MISSING`, `AGENT_NOT_SIGNED_IN`, `AGENT_BILLS_API_KEY` | `use claude` or `use codex` (or `init --use`): the agent's CLI is not installed, not signed in, or signed in with an API key. `fix` names that CLI's command. |
+| `HOST_LOOPBACK_UNREACHABLE`, `PLATFORM_UNSUPPORTED`, `AGENT_WORKER_FAILED` | A subscription on Linux or another system that is not macOS, or a worker that stopped before it answered (`log` names its log). |
 | `RUNTIME_UNSUPPORTED` | The release `--runtime` names is older than this CLI supports, or its Compose file cannot be driven. |
 | `LOCAL_MODEL_UNREACHABLE`, `LOCAL_MODEL_MISSING`, `LOCAL_MODEL_NO_TOOLS`, `LOCAL_CONTEXT_SMALL` | Ollama does not answer (it is not installed, starting it was declined, or it did not answer after a start; `fix` names the step for this machine), the model is not on it (or its download was declined or failed), the model cannot call tools, or its context window is below the 32k NimbleBrain needs. |
 | `INTERRUPTED` | The CLI was stopped (a signal, Ctrl-C) before it finished; `exit_code` says how. Check `status`, then run the command again. |
@@ -164,22 +169,73 @@ A flag without `commands` applies to every command. A command's `answer` names e
 
 ## On a local model
 
-NimbleBrain's agents can run on a model served by [Ollama](https://ollama.com) on this machine, with no key and no per-call cost. Install Ollama, then answer `local` when `init` asks, or run:
+NimbleBrain's agents can run on a model served by [Ollama](https://ollama.com) on this machine, with no key and no per-call cost. Install Ollama, then choose the local model when `init` asks, or run:
 
 ```bash
 npx nimblebrain --local-model gemma4:e4b     # a new install
-npx nimblebrain local-model gemma4:e4b       # an install that has one already
+npx nimblebrain use local gemma4:e4b         # an install that runs on something else
+npx nimblebrain local-model qwen3:8b         # another model, on an install already on one
 ```
+
+`use local` with no model keeps the local model already saved, or prepares `gemma4:e4b`.
 
 The CLI checks that Ollama answers on `127.0.0.1:11434`. When Ollama is installed but not running, the CLI asks once and starts it the way it was installed: the macOS app (`open -g -a Ollama`), Homebrew's service (`brew services start ollama`, which also starts it at login), or the Linux service (`systemctl start ollama`, without `sudo`; when that needs `sudo`, the fix says so). It never installs Ollama and never runs `ollama serve` itself: when Ollama is missing, the fix names the install step for this machine (`brew install ollama`, or the download page). `--yes` and a run with no terminal take the default, yes, and the answer carries the command it ran in `ollama_started`. It then downloads the model if it is missing (it asks first), refuses a model that cannot call tools, and creates `nimblebrain-<model>` from it: the same model with a 32k context window, so Ollama never picks a smaller one and cuts the prompt. It then writes `NB_LOCAL_MODEL_URL`, `NB_LOCAL_MODEL` and `NB_LOCAL_MODEL_CONTEXT` to `.env`, and the runtime reaches Ollama at `host.docker.internal`. `up` checks Ollama again before starting NimbleBrain, since a reboot can leave it stopped, and offers to start it the same way; if Ollama stays down, NimbleBrain still starts and `up` answers `LOCAL_MODEL_UNREACHABLE`. `doctor` checks all of this again, and starts Ollama only when a person at the terminal says yes. `status` reports `local_model`.
 
 Gemma 4 E4B is the smallest model run end to end on NimbleBrain's tasks (reliable on everyday ones, partial on scheduled tasks); [Local Models](/config/local-models/) lists what has been tested, what failed, and what has not been tried. It needs about 7 GB of memory beside NimbleBrain's 2 GB. On Linux, Ollama listens on `127.0.0.1` by default, which a container cannot reach: set `OLLAMA_HOST=0.0.0.0`. This needs a NimbleBrain release that takes a local model; an older one answers `RUNTIME_UNSUPPORTED`.
 
+## What runs the agents
+
+One question, asked by `init` and answered again any time with `use`: what runs NimbleBrain's agents?
+
+```bash
+npx nimblebrain use           # asks, listing what this machine offers
+npx nimblebrain use claude    # your Claude Pro or Max subscription, through Claude Code
+npx nimblebrain use codex     # your ChatGPT plan, through Codex
+npx nimblebrain use api       # an API key (Anthropic, OpenAI, Google, …)
+npx nimblebrain use local     # a local model through Ollama
+```
+
+At a terminal, `init` and a bare `use` show one numbered list. The sources this machine can use come first, each with what the CLI found: Claude Code signed in to a subscription (`claude auth status`), Codex signed in with ChatGPT (`codex login status`), a key already saved, or Ollama answering on `127.0.0.1`. The two subscriptions are listed under "Not here" off macOS. Answer with the number or the word; Enter takes the default, which is a signed-in Claude subscription, else a signed-in ChatGPT plan, else an API key:
+
+```text
+How should NimbleBrain's agents run?
+  1) Your Claude Max subscription, through Claude Code              (signed in)
+  2) Your ChatGPT plan, through Codex                               (signed in)
+  3) An API key for a hosted model (Anthropic, OpenAI, Google, …)
+  4) A local model through Ollama                                   (Ollama is running)
+Choose 1-4, or claude, codex, api, local [1]:
+```
+
+With `--yes`, `--json` or no terminal, nothing is chosen for you: `init` returns the question in `model_source`, and a bare `use` answers `USAGE` naming the four. `status` says which is in use, in `model_source` and in one line of its text, such as `agents run on: your Claude Max subscription through Claude Code`.
+
+- `use api` uses the key in `.env`, or asks for one at the hidden prompt; with neither, it answers `MODEL_KEY_MISSING` and changes nothing. It stops the subscription worker and drops a saved local model.
+- `use local` prepares the model as `local-model` does and stops the subscription worker. A saved key stays.
+- `use claude` and `use codex` keep a saved key or local model: a run with a spend budget runs on NimbleBrain's own engine, on that.
+
+### On your subscription
+
+`use claude` and `use codex` check that the agent's CLI is installed and signed in to a subscription, not an API key: it refuses with `AGENT_CLI_MISSING`, `AGENT_NOT_SIGNED_IN` or `AGENT_BILLS_API_KEY`, and the fix names the command to run. It then starts a small worker on `127.0.0.1` (port 27290 for Claude, 27291 for Codex; `--port` moves it), writes `NB_AGENT_RUNTIME` and `NB_AGENT_RUNTIME_URL` to `.env`, and restarts NimbleBrain so every turn runs on it. The answer says what it bills (`billed_to`) and which tools the agent gets (`tools`); `status` reports it in `model_source`, and the worker in `agent_runtime`: running when it answers on its port, with its log and its login item. [Run on your subscription](/config/subscriptions/) explains what the worker does and what stays on NimbleBrain.
+
+The worker is a login item, so it survives a reboot as NimbleBrain does. `use` copies the CLI into `<home>/bin/nimblebrain.mjs` (npx's cache gets cleaned) and installs a LaunchAgent for your user only, `~/Library/LaunchAgents/ai.nimblebrain.agent-worker.<project>.plist`, loaded with `launchctl bootstrap gui/<your uid>` (never `sudo`). launchd starts the worker when you log in, and again within half a minute if it crashes, writing to `agent-worker.log` in the install's folder. The answer names the file in `agent_runtime.worker.login_item`, and the text says the worker starts at login. `up` and `update` refresh it when your Node or the CLI moved (a new npx version, nvm) or the worker is not answering; `down`, `use api`, `use local` and `uninstall` remove it. `down` removes it because Docker does not start a stopped NimbleBrain at login either; `up` puts it back.
+
+In the chat composer, NimbleBrain names what every turn runs on, such as **Claude Code · Claude Max**. When the worker does not answer, the composer says **Claude Code isn't running** (hover for the fix), and a turn fails with "Claude Code isn't answering. Start it on this machine with `npx nimblebrain up`, then send your message again." A turn the CLI could not finish fails with its reason and its fix:
+
+| Chat error | Means | Fix |
+|---|---|---|
+| `agent_signed_out` | The CLI's sign-in expired or is gone. The chat offers no retry. | `claude /login`, or `codex login` and Sign in with ChatGPT, then send the message again. |
+| `agent_plan_limit` | Your plan's usage limit is reached; the message gives the reset time when the CLI does. | Send it again once the limit resets, or `npx nimblebrain use api`. |
+| `agent_api_key` | Claude Code was about to bill an API key instead of your subscription. | Remove that key, or `claude /login`. |
+| `agent_cli_missing` | The worker could not find the CLI. | Install it, sign in, then `npx nimblebrain use claude` (or `codex`). |
+| `agent_cli_failed` | The CLI stopped for another reason; the message gives its last line. | Read `agent-worker.log` in the install's folder, then send the message again. |
+| `agent_unreachable` | The worker did not answer. | `npx nimblebrain up`. |
+
+This runs on macOS with Docker Desktop. On Linux the container reaches the host over the Docker bridge, not `127.0.0.1`, so `use` answers `HOST_LOOPBACK_UNREACHABLE`; on any other system it answers `PLATFORM_UNSUPPORTED`, since the worker runs as a launchd login item. It needs a NimbleBrain release that takes an agent runtime; an older one answers `RUNTIME_UNSUPPORTED`.
+
 ## When the first start fails
 
 `init` records the install in `install.json` before it writes anything else, with `phase: "starting"`, and sets it to `ready` once NimbleBrain first answers. When the first start fails (`START_FAILED`, `HOME_NOT_SHARED`, `HEALTH_TIMEOUT`, or the run is cut short), the install stays `starting`: `down` stops what was started, `logs` shows why, `status` reports it with `phase: "starting"`, and `uninstall` removes it. The commands that use NimbleBrain (`up`, `update`, `key`, `local-model`, `telemetry`, `open`, every `mcp` command) answer `INSTALL_INCOMPLETE` until it is finished.
 
-Run `npx nimblebrain` again to finish it. It keeps the install's project, and its port and release unless you pass `--port` or `--runtime`; writes the install's files again; passes the port check when the port is held by this install's own containers; asks for a model only when none is set, and for telemetry only when you have not answered; then starts NimbleBrain and connects your agent, as a new install does.
+Run `npx nimblebrain` again to finish it. It keeps the install's project, and its port and release unless you pass `--port` or `--runtime`; writes the install's files again; passes the port check when the port is held by this install's own containers; asks what runs NimbleBrain's agents only when nothing is set, and for telemetry only when you have not answered; then starts NimbleBrain and connects your agent, as a new install does.
 
 ## A second install
 
@@ -195,4 +251,4 @@ Pass the same `--home` to every command for that install. Every command the CLI 
 
 ## What it writes
 
-Everything lives in `~/.nimblebrain-local`: the installed release's `docker-compose.yml`, downloaded from that release, an `instance.json` naming the `dev` sign-in, a `.env` that only your user can read (the release, the port, and your model key or local model), and `install.json`, the install's record: its Compose project, port, release and phase. Your conversations live in the Docker volume `<project>_workspace`, named after that project. `init` never writes into a home that holds any of these files without a readable `install.json`: that is `NOT_OURS`. A key exported in your shell is not used: `.env` is the only source, so the key you entered with `key` is the one that runs.
+Everything lives in `~/.nimblebrain-local`: the installed release's `docker-compose.yml`, downloaded from that release, an `instance.json` naming the `dev` sign-in, a `.env` that only your user can read (the release, the port, and your model key or local model), and `install.json`, the install's record: its Compose project, port, release and phase. After `use claude` or `use codex`, `bin/nimblebrain.mjs` is the copy of the CLI its login item runs, `agent-worker.json` records the worker's port, agent, plan and login item, and `agent-worker.log` holds its log; all are only your user's, and `uninstall` removes them with the LaunchAgent in `~/Library/LaunchAgents`. Your conversations live in the Docker volume `<project>_workspace`, named after that project. `init` never writes into a home that holds any of these files without a readable `install.json`: that is `NOT_OURS`. A key exported in your shell is not used: `.env` is the only source, so the key you entered with `key` is the one that runs.
