@@ -3,8 +3,10 @@ import { createHash } from "node:crypto";
 import {
   browserBindingMatches,
   buildFlowCookie,
+  flowCookieName,
   mintBrowserBinding,
   readCookie,
+  readFlowCookie,
 } from "../../src/oauth/flow-binding.ts";
 import {
   _clearAll,
@@ -29,7 +31,9 @@ describe("flow binding", () => {
     const mine = mintBrowserBinding();
     const other = mintBrowserBinding();
     const header = `x=1; ${NAME}=${mine.cookieValue}; y=2`;
-    expect(browserBindingMatches(header, NAME, [other.bindingHash, mine.bindingHash])).toBe(true);
+    expect(browserBindingMatches(header, NAME, false, [other.bindingHash, mine.bindingHash])).toBe(
+      true,
+    );
   });
 
   test("refuses a cookie built from the flow's lookup key", () => {
@@ -37,42 +41,65 @@ describe("flow binding", () => {
     // anyone holding the URL can compute.
     const state = "S".repeat(43);
     const issued = mintBrowserBinding();
-    expect(browserBindingMatches(`${NAME}=${sha(state)}`, NAME, [issued.bindingHash])).toBe(false);
+    expect(browserBindingMatches(`${NAME}=${sha(state)}`, NAME, false, [issued.bindingHash])).toBe(
+      false,
+    );
   });
 
   test("refuses the recorded hash presented as the cookie", () => {
     const issued = mintBrowserBinding();
-    expect(browserBindingMatches(`${NAME}=${issued.bindingHash}`, NAME, [issued.bindingHash])).toBe(
-      false,
-    );
+    expect(
+      browserBindingMatches(`${NAME}=${issued.bindingHash}`, NAME, false, [issued.bindingHash]),
+    ).toBe(false);
   });
 
   test("refuses an absent, empty, malformed or differently named cookie, and an empty binding set", () => {
     const issued = mintBrowserBinding();
     const hashes = [issued.bindingHash];
-    expect(browserBindingMatches(undefined, NAME, hashes)).toBe(false);
-    expect(browserBindingMatches("", NAME, hashes)).toBe(false);
-    expect(browserBindingMatches(`${NAME}=`, NAME, hashes)).toBe(false);
-    expect(browserBindingMatches(`${NAME}=${issued.cookieValue.toUpperCase()}`, NAME, hashes)).toBe(
+    expect(browserBindingMatches(undefined, NAME, false, hashes)).toBe(false);
+    expect(browserBindingMatches("", NAME, false, hashes)).toBe(false);
+    expect(browserBindingMatches(`${NAME}=`, NAME, false, hashes)).toBe(false);
+    expect(
+      browserBindingMatches(`${NAME}=${issued.cookieValue.toUpperCase()}`, NAME, false, hashes),
+    ).toBe(false);
+    expect(browserBindingMatches(`${NAME}=${issued.cookieValue}00`, NAME, false, hashes)).toBe(
       false,
     );
-    expect(browserBindingMatches(`${NAME}=${issued.cookieValue}00`, NAME, hashes)).toBe(false);
-    expect(browserBindingMatches(`other=${issued.cookieValue}`, NAME, hashes)).toBe(false);
-    expect(browserBindingMatches(`${NAME}=${issued.cookieValue}`, NAME, [])).toBe(false);
+    expect(browserBindingMatches(`other=${issued.cookieValue}`, NAME, false, hashes)).toBe(false);
+    expect(browserBindingMatches(`${NAME}=${issued.cookieValue}`, NAME, false, [])).toBe(false);
   });
 
   test("a malformed recorded hash is skipped, never compared", () => {
     const issued = mintBrowserBinding();
     expect(
-      browserBindingMatches(`${NAME}=${issued.cookieValue}`, NAME, ["short", issued.bindingHash]),
+      browserBindingMatches(`${NAME}=${issued.cookieValue}`, NAME, false, [
+        "short",
+        issued.bindingHash,
+      ]),
     ).toBe(true);
   });
 
-  test("buildFlowCookie scopes the cookie to its callback path", () => {
-    expect(buildFlowCookie(NAME, "/v1/cb", "v", 900, false)).toBe(
-      `${NAME}=v; HttpOnly; SameSite=Lax; Path=/v1/cb; Max-Age=900`,
+  test("a Secure flow cookie takes the __Host- name; one that is not keeps the bare name", () => {
+    expect(flowCookieName(NAME, true)).toBe(`__Host-${NAME}`);
+    expect(flowCookieName(NAME, false)).toBe(NAME);
+    expect(buildFlowCookie(NAME, "v", 900, true)).toBe(
+      `__Host-${NAME}=v; HttpOnly; SameSite=Lax; Path=/; Max-Age=900; Secure`,
     );
-    expect(buildFlowCookie(NAME, "/v1/cb", "", 0, true)).toEndWith("Max-Age=0; Secure");
+    expect(buildFlowCookie(NAME, "", 0, false)).toBe(
+      `${NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`,
+    );
+  });
+
+  test("the read names the cookie the write set", () => {
+    const issued = mintBrowserBinding();
+    const prefixed = `__Host-${NAME}=${issued.cookieValue}`;
+    const bare = `${NAME}=${issued.cookieValue}`;
+    expect(readFlowCookie(prefixed, NAME, true)).toBe(issued.cookieValue);
+    expect(readFlowCookie(bare, NAME, true)).toBeNull();
+    expect(readFlowCookie(prefixed, NAME, false)).toBeNull();
+    expect(browserBindingMatches(prefixed, NAME, true, [issued.bindingHash])).toBe(true);
+    expect(browserBindingMatches(bare, NAME, true, [issued.bindingHash])).toBe(false);
+    expect(browserBindingMatches(bare, NAME, false, [issued.bindingHash])).toBe(true);
   });
 
   test("readCookie finds a cookie by exact name", () => {

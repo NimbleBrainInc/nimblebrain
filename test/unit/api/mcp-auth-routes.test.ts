@@ -247,7 +247,7 @@ describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
     expectBoundTo(res, state);
     expect(setCookie!).toContain("HttpOnly");
     expect(setCookie!).toContain("SameSite=Lax");
-    expect(setCookie!).toContain("Path=/v1/mcp-auth/callback");
+    expect(setCookie!).toContain("Path=/;");
     expect(setCookie!).toContain("Max-Age=900");
     // secureCookies=false → no Secure flag
     expect(setCookie!).not.toContain("Secure");
@@ -265,7 +265,46 @@ describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(res.headers.get("Set-Cookie")!).toContain("Secure");
+    const setCookie = res.headers.get("Set-Cookie")!;
+    expect(setCookie).toStartWith("__Host-nb_oauth_state=");
+    expect(setCookie).toContain("Path=/;");
+    expect(setCookie).not.toContain("Domain");
+    expect(setCookie).toEndWith("Secure");
+  });
+
+  test("on a Secure host the callback admits only the __Host- cookie", async () => {
+    const state = "secure-host-state";
+    lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
+    lifecycle.authUrls.set(
+      `granola|${WS_ID}|_workspace`,
+      `https://granola.test/auth?state=${state}`,
+    );
+    const prodApp = makeApp(lifecycle, /* secureCookies */ true);
+
+    const init = await prodApp.request(`http://api.example.com${INITIATE_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "granola" }),
+    });
+    const value = /^__Host-nb_oauth_state=([0-9a-f]{64});/.exec(
+      init.headers.get("Set-Cookie") ?? "",
+    )?.[1];
+    expect(value).toBeDefined();
+    const callbackUrl = `http://api.example.com/v1/mcp-auth/callback?code=c&state=${state}`;
+
+    // The same value under the bare name is not the flow cookie.
+    const bare = await prodApp.request(callbackUrl, {
+      headers: { cookie: `nb_oauth_state=${value}` },
+    });
+    expect(bare.status).toBe(400);
+
+    const res = await prodApp.request(callbackUrl, {
+      headers: { cookie: `__Host-nb_oauth_state=${value}` },
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Set-Cookie")).toBe(
+      "__Host-nb_oauth_state=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0; Secure",
+    );
   });
 
   test("returns { authorizationUrl: null } and no cookie when connected without interactive auth (#679)", async () => {
@@ -1169,7 +1208,7 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
     expect(res.status).toBe(200);
     expect((await readJson<OAuthInitiateResponse>(res)).authorizationUrl).toContain("/authorize");
     expectBoundTo(res, state);
-    expect(res.headers.get("Set-Cookie") ?? "").toContain("Path=/v1/mcp-auth/callback");
+    expect(res.headers.get("Set-Cookie") ?? "").toContain("Path=/;");
   });
 
   test("a returnWorkspaceId the caller belongs to is recorded on the flow", async () => {

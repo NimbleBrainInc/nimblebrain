@@ -13,7 +13,7 @@ import {
   browserBindingMatches,
   buildFlowCookie,
   mintBrowserBinding,
-  readCookie,
+  readFlowCookie,
 } from "../../oauth/flow-binding.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { assertFleetIdentityProvisioned } from "../../oauth/tenant-key-mint.ts";
@@ -48,7 +48,7 @@ import { reinitiateParagraph } from "./oauth-error-page.ts";
  * - `POST /v1/workspaces/:wsId/mcp-auth/initiate` (workspace-authed):
  *   launches an interactive flow. Looks up the captured authorization URL on
  *   the connector's pending Connection, binds the caller's browser to the
- *   flow with a random `nb_oauth_state` cookie scoped to the callback path
+ *   flow with a random `nb_oauth_state` cookie, which only this host can set
  *   (`src/oauth/flow-binding.ts`), and returns the URL the client should
  *   navigate the user's browser to. **POST-only** so a malicious
  *   `<img>` or prefetch can't trigger a flow, and a browser's write from
@@ -214,11 +214,11 @@ export function mcpAuthRoutes(ctx: AppContext) {
     const params = readCallbackParams(c);
     if (isCallbackFailure(params)) {
       if (params.outcome !== "provider_error") return refuse(params);
-      return answerProviderRefusal(c, params);
+      return answerProviderRefusal(c, params, ctx.secureCookies);
     }
     const { code, wireState, iss } = params;
 
-    const state = sessionFlow(c, wireState);
+    const state = sessionFlow(c, wireState, ctx.secureCookies);
     if (isCallbackFailure(state)) return refuse(state);
 
     // Recover the flow's owner *before* resolving (which deletes the registry
@@ -406,13 +406,12 @@ function prepareAuthorization(
 }
 
 const OAUTH_STATE_COOKIE = "nb_oauth_state";
-const CALLBACK_PATH = "/v1/mcp-auth/callback";
 /** Seconds the binding cookie lives: the flow registry's TTL. */
 const BINDING_COOKIE_MAX_AGE = 900;
 
-/** Serialize the `nb_oauth_state` cookie, scoped to the callback path so it is sent only on the return leg. */
+/** Serialize the `nb_oauth_state` flow cookie (`__Host-nb_oauth_state` when `secure`). */
 function buildOAuthStateCookie(value: string, maxAge: number, secure: boolean): string {
-  return buildFlowCookie(OAUTH_STATE_COOKIE, CALLBACK_PATH, value, maxAge, secure);
+  return buildFlowCookie(OAUTH_STATE_COOKIE, value, maxAge, secure);
 }
 
 /**
@@ -552,10 +551,14 @@ function readCallbackParams(
  * The browser binding is checked like a code's before anything is taken or
  * ended, so a callback from a browser the flow did not bind settles nothing.
  */
-function answerProviderRefusal(c: Context<AppEnv>, refusal: CallbackFailure): Response {
+function answerProviderRefusal(
+  c: Context<AppEnv>,
+  refusal: CallbackFailure,
+  secureCookies: boolean,
+): Response {
   const error = c.req.query("error") ?? "";
   const wireState = c.req.query("state");
-  const flow = wireState ? sessionFlow(c, wireState) : null;
+  const flow = wireState ? sessionFlow(c, wireState, secureCookies) : null;
   if (flow === null || isCallbackFailure(flow)) {
     // No flow pending for the state: the provider's refusal is the diagnosis,
     // and it ended nothing.
@@ -580,10 +583,14 @@ function answerProviderRefusal(c: Context<AppEnv>, refusal: CallbackFailure): Re
  * The flow a callback's state names, once the request's cookie is one of the
  * flow's browser bindings; otherwise the check that refused it.
  */
-function sessionFlow(c: Context<AppEnv>, wireState: string): string | CallbackFailure {
+function sessionFlow(
+  c: Context<AppEnv>,
+  wireState: string,
+  secureCookies: boolean,
+): string | CallbackFailure {
   const state = recoverInnerState(c, wireState);
   if (isCallbackFailure(state)) return state;
-  const mismatch = verifyBrowserBinding(c, state);
+  const mismatch = verifyBrowserBinding(c, state, secureCookies);
   if (mismatch) return { ...mismatch, fields: { ...mismatch.fields, flow: flowId(state) } };
   return state;
 }
@@ -671,7 +678,11 @@ function recoverInnerState(c: Context<AppEnv>, wireState: string): string | Call
  * value is a random secret an initiate gave this browser, and the flow holds
  * only its hash.
  */
-function verifyBrowserBinding(c: Context<AppEnv>, state: string): CallbackFailure | null {
+function verifyBrowserBinding(
+  c: Context<AppEnv>,
+  state: string,
+  secureCookies: boolean,
+): CallbackFailure | null {
   const bindings = flowBrowserBindings(state);
   if (!bindings) {
     return {
@@ -684,8 +695,8 @@ function verifyBrowserBinding(c: Context<AppEnv>, state: string): CallbackFailur
     };
   }
   const cookieHeader = c.req.header("cookie");
-  if (!browserBindingMatches(cookieHeader, OAUTH_STATE_COOKIE, bindings)) {
-    const cookieValue = readCookie(cookieHeader, OAUTH_STATE_COOKIE);
+  if (!browserBindingMatches(cookieHeader, OAUTH_STATE_COOKIE, secureCookies, bindings)) {
+    const cookieValue = readFlowCookie(cookieHeader, OAUTH_STATE_COOKIE, secureCookies);
     return {
       outcome: "cookie_mismatch",
       // Whether the state cookie was absent or present-but-wrong separates a

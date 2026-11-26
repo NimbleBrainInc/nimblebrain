@@ -138,7 +138,7 @@ function startFlow(
 /**
  * Minimal AppContext stub. The composio-auth routes touch only the
  * runtime accessor for the connector directory + work dir, plus
- * `secureCookies` for cookie scoping. The workspace-scoped initiate
+ * `secureCookies`, which picks the flow cookie's name and `Secure` flag. The workspace-scoped initiate
  * route also runs `requireWorkspace`: with no identity provider the
  * caller is the dev user, and the stub store lists that user as a
  * member of `STUB_MEMBER_WS` and of no other workspace.
@@ -763,14 +763,14 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
     expect(body.authorizationUrl).toBe("https://connect.composio.dev/link/lk_42");
     expect(body.alreadyConnected).toBeUndefined();
 
-    // Cookie shape: HttpOnly + SameSite=Lax + path-scoped to the
-    // callback. The actual hash value is sha256(nonce); we can't
+    // Cookie shape: HttpOnly + SameSite=Lax + Path=/ (no Domain), the
+    // shape the `__Host-` name a Secure host gives it requires. The actual hash value is sha256(nonce); we can't
     // predict the nonce, so assert structural properties only.
     const setCookie = res.headers.get("set-cookie") ?? "";
     expect(setCookie.includes("nb_composio_state=")).toBe(true);
     expect(setCookie.includes("HttpOnly")).toBe(true);
     expect(setCookie.includes("SameSite=Lax")).toBe(true);
-    expect(setCookie.includes("Path=/v1/composio-auth/callback")).toBe(true);
+    expect(setCookie.includes("Path=/;")).toBe(true);
   });
 
   test("(b) adopt-existing: short-circuits OAuth, writes connection.json, no nonce cookie", async () => {
@@ -1142,7 +1142,7 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     const setCookie = res.headers.get("set-cookie") ?? "";
     expect(setCookie.includes("HttpOnly")).toBe(true);
     expect(setCookie.includes("SameSite=Lax")).toBe(true);
-    expect(setCookie.includes("Path=/v1/composio-auth/callback")).toBe(true);
+    expect(setCookie.includes("Path=/;")).toBe(true);
     const cookieValue = /nb_composio_state=([0-9a-f]{64})/.exec(setCookie)?.[1] ?? "";
     expect(cookieValue).not.toBe(sha256Hex(nonce));
     const flow = peekConnectFlow(nonce);

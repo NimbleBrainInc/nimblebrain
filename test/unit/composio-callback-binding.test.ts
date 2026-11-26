@@ -92,7 +92,7 @@ let installed = true;
 const calls = { state: [] as string[] };
 
 /** Every request authenticates as `usr_member`: role "member" in ws-a. */
-function makeApp(): Hono<AppEnv> {
+function makeApp(secureCookies = false): Hono<AppEnv> {
   const auth = stub<AuthMiddlewareOptions>({
     provider: stub<IdentityProvider>({
       verifyRequest: async () => ({
@@ -139,7 +139,7 @@ function makeApp(): Hono<AppEnv> {
           : null,
     }),
     authOptions: auth,
-    secureCookies: false,
+    secureCookies,
   });
   const app = new Hono<AppEnv>();
   app.route("/", composioAuthRoutes(ctx));
@@ -195,8 +195,10 @@ async function startPersonal(app: Hono<AppEnv>): Promise<{ nonce: string; cookie
 function started(init: Response): { nonce: string; cookie: string } {
   const callbackUrl = (broker.linkArgs[2] as { callbackUrl: string }).callbackUrl;
   const nonce = new URL(callbackUrl).searchParams.get("n") ?? "";
-  const value = /nb_composio_state=([0-9a-f]{64})/.exec(init.headers.get("set-cookie") ?? "")?.[1];
-  return { nonce, cookie: `nb_composio_state=${value}` };
+  const match = /((?:__Host-)?nb_composio_state)=([0-9a-f]{64})/.exec(
+    init.headers.get("set-cookie") ?? "",
+  );
+  return { nonce, cookie: `${match?.[1]}=${match?.[2]}` };
 }
 
 const callback = (nonce: string, query: string) =>
@@ -321,4 +323,26 @@ test("a workspace connect for an installed connector persists only its own accou
   const owner = { type: "workspace" as const, wsId: WS_A };
   expect(await readComposioConnection(dir, owner, CID)).toBeNull();
   expect(calls.state).toEqual([]);
+});
+
+test("on a Secure host only the __Host- cookie this host set completes the flow", async () => {
+  const app = makeApp(/* secureCookies */ true);
+  const { nonce, cookie } = await startPersonal(app);
+  expect(cookie).toStartWith("__Host-nb_composio_state=");
+
+  // The same value under the bare name is not the flow cookie.
+  const bare = await app.request(
+    callback(nonce, "status=success&connected_account_id=ca_linked_own"),
+    { headers: { cookie: cookie.replace("__Host-", "") } },
+  );
+  expect(bare.status).toBe(400);
+
+  const cb = await app.request(
+    callback(nonce, "status=success&connected_account_id=ca_linked_own"),
+    { headers: { cookie } },
+  );
+  expect(cb.status).toBe(302);
+  expect(cb.headers.get("set-cookie")).toBe(
+    "__Host-nb_composio_state=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0; Secure",
+  );
 });

@@ -49,7 +49,7 @@ import {
  * - `POST /v1/workspaces/:wsId/composio-auth/initiate` (workspace-authed):
  *   asks Composio to begin a connection for a connector installed in this
  *   workspace, binds the caller's browser with a random `nb_composio_state`
- *   cookie (`src/oauth/flow-binding.ts`), and returns the redirect URL the
+ *   cookie, which only this host can set (`src/oauth/flow-binding.ts`), and returns the redirect URL the
  *   browser should navigate to. **POST-only**, and a cross-site write under
  *   `/v1/workspaces/` is refused — same posture as the workspace
  *   `mcp-auth/initiate`.
@@ -220,7 +220,7 @@ export function composioAuthRoutes(ctx: AppContext) {
     c.header("Cache-Control", "no-store");
     c.header("Pragma", "no-cache");
 
-    const validated = await validateCallbackParams(c);
+    const validated = await validateCallbackParams(c, ctx.secureCookies);
     if (validated instanceof Response) return validated;
     const { connectedAccountId, status, cid, owner, returnTarget } = validated;
 
@@ -591,7 +591,10 @@ async function initiateFreshComposioConnection(
  * the initiate recorded; the query's id is only a cross-check, and a callback
  * that names another account is refused.
  */
-async function validateCallbackParams(c: Context<AppEnv>): Promise<
+async function validateCallbackParams(
+  c: Context<AppEnv>,
+  secureCookies: boolean,
+): Promise<
   | {
       connectedAccountId: string;
       status: string;
@@ -611,7 +614,9 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
     return errorPage(c, "<h3>Unknown or expired authorization flow.</h3>");
   }
   if (
-    !browserBindingMatches(c.req.header("cookie"), COMPOSIO_STATE_COOKIE, [pending.bindingHash])
+    !browserBindingMatches(c.req.header("cookie"), COMPOSIO_STATE_COOKIE, secureCookies, [
+      pending.bindingHash,
+    ])
   ) {
     return errorPage(c, "<h3>Authorization session mismatch.</h3>");
   }
@@ -747,15 +752,9 @@ async function recoverCallbackSource(
 
 const COMPOSIO_STATE_COOKIE = "nb_composio_state";
 
-/** Build the `nb_composio_state` Set-Cookie value, scoped to the callback path so it is sent only on the return leg. */
+/** Build the `nb_composio_state` flow cookie (`__Host-nb_composio_state` when `secure`). */
 function buildComposioStateCookie(value: string, maxAgeSeconds: number, secure: boolean): string {
-  return buildFlowCookie(
-    COMPOSIO_STATE_COOKIE,
-    "/v1/composio-auth/callback",
-    value,
-    maxAgeSeconds,
-    secure,
-  );
+  return buildFlowCookie(COMPOSIO_STATE_COOKIE, value, maxAgeSeconds, secure);
 }
 
 function escapeHtml(s: string): string {
