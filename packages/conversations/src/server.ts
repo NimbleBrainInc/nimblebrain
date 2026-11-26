@@ -320,11 +320,14 @@ export function buildServer(opts: ServerOptions): Server {
         { uri: request.params.uri },
       );
     }
-    return {
-      contents: [
-        { uri: SCREEN_URI, mimeType: MCP_APP_MIME_TYPE, text: readScreen(opts.screenPath) },
-      ],
-    };
+    let text: string;
+    try {
+      text = readScreen(opts.screenPath);
+    } catch (err) {
+      logInternal("resources/read", err);
+      throw new ProtocolError(ProtocolErrorCode.InternalError, INTERNAL_ERROR);
+    }
+    return { contents: [{ uri: SCREEN_URI, mimeType: MCP_APP_MIME_TYPE, text }] };
   });
 
   return server;

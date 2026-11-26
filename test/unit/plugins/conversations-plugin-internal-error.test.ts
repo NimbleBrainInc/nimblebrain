@@ -5,11 +5,12 @@
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProtocolError } from "@modelcontextprotocol/server";
-import { callTool } from "../../../packages/conversations/src/server.ts";
+import { Client } from "@modelcontextprotocol/client";
+import { InMemoryTransport, ProtocolError } from "@modelcontextprotocol/server";
+import { buildServer, callTool } from "../../../packages/conversations/src/server.ts";
 import { type ConversationStore, createStore } from "../../../packages/conversations/src/store.ts";
 
 const SCOPE = { workspaceId: "ws_c0c0c0c0c0c0c0c0", ownerId: "usr_internal" };
@@ -73,5 +74,29 @@ describe("an internal failure", () => {
     expect(message).not.toContain(dir);
     expect(message).not.toContain("/");
     expect(logged.join("")).toContain(failing);
+  });
+
+  test("a screen that cannot be read answers a JSON-RPC error with no path; the log has the detail", async () => {
+    // A directory where the screen file should be: it exists, and reading it fails.
+    const screenPath = join(dir, "screen-is-a-directory");
+    mkdirSync(screenPath, { recursive: true });
+    const server = buildServer({ store: createStore(dir), screenPath });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: "internal-error-test", version: "1.0.0" });
+    await client.connect(clientTransport);
+    captureStderr();
+    let message = "";
+    try {
+      await client.readResource({ uri: "ui://conversations/browser" });
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    stderr.mockRestore();
+    await client.close();
+    expect(message).not.toBe("");
+    expect(message).not.toContain(dir);
+    expect(message).not.toContain("/");
+    expect(logged.join("")).toContain("resources/read failed");
   });
 });
