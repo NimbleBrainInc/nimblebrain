@@ -286,7 +286,6 @@ function stubCtx(
               : null,
       }),
       authOptions: stub<AuthMiddlewareOptions>({}),
-      secureCookies: true,
     }),
     __lifecycleCalls: calls,
   };

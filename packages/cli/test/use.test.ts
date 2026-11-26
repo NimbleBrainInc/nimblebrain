@@ -59,7 +59,11 @@ describe("use claude", () => {
     expect(code).toBe(0);
     expect(body).toEqual({
       ok: true,
-      model_source: { source: "claude", label: "your Claude Max subscription through Claude Code" },
+      model_source: {
+        source: "claude",
+        label: "your Claude Max subscription through Claude Code (Sonnet)",
+        model: "sonnet",
+      },
       agent_runtime: {
         name: "claude-code",
         worker: {
@@ -76,7 +80,7 @@ describe("use claude", () => {
     // launchd runs the home's copy of this CLI with this Node and the hidden worker command; its output to the log.
     expect(m.spawned).toEqual([
       {
-        line: `/usr/local/bin/node ${BIN} ${WORKER_COMMAND} claude --port 27290 --log ${LOG}`,
+        line: `/usr/local/bin/node ${BIN} ${WORKER_COMMAND} claude --port 27290 --model sonnet --log ${LOG}`,
         logPath: LOG,
       },
     ]);
@@ -91,6 +95,7 @@ describe("use claude", () => {
       agent: "claude-code",
       plan: "Claude Max",
       label: LABEL,
+      model: "sonnet",
     });
     expect(m.files.get(RECORD)?.mode).toBe(0o600);
     // `up -d` recreates the container, which is what makes it read `.env` again; after the worker answers.
@@ -260,7 +265,7 @@ describe("use api", () => {
     expect(code).toBe(0);
     expect(body).toEqual({
       ok: true,
-      model_source: { source: "api", label: "an API key (anthropic)" },
+      model_source: { source: "api", label: "an API key (anthropic)", model: null },
       agent_runtime: { name: "native", worker: null },
       provider: "anthropic",
     });
@@ -318,6 +323,7 @@ describe("use local", () => {
       model_source: {
         source: "local",
         label: "a local model (nimblebrain-gemma4-e4b) through Ollama",
+        model: null,
       },
       agent_runtime: { name: "native", worker: null },
       local_model: "nimblebrain-gemma4-e4b",
@@ -467,7 +473,8 @@ describe("init and the source", () => {
     expect(m.spawned).toHaveLength(1);
     expect(body.model_source).toEqual({
       source: "claude",
-      label: "your Claude Max subscription through Claude Code",
+      label: "your Claude Max subscription through Claude Code (Sonnet)",
+      model: "sonnet",
     });
     expect(body.agent_runtime.worker.running).toBe(true);
   });
@@ -503,7 +510,7 @@ describe("init and the source", () => {
     expect(m.asked[1]).toBe("Choose 1-4, or claude, codex, api, local [1]: ");
     expect(m.asked.some((q) => q.includes("API_KEY"))).toBe(false);
     expect(stdout).toContain(
-      "agents run on: your Claude Max subscription through Claude Code (agent worker 4242",
+      "agents run on: your Claude Max subscription through Claude Code (Sonnet); agent worker 4242",
     );
     expect(stdout).not.toContain("Next: choose");
   });
@@ -526,7 +533,7 @@ describe("status names the source", () => {
     ["", null, null],
   ] as const)("%p is %p", async (envText, source, label) => {
     const m = mac({ files: { [ENV]: envText } });
-    expect((await json(["status"], m)).body.model_source).toEqual({ source, label });
+    expect((await json(["status"], m)).body.model_source).toEqual({ source, label, model: null });
     const { stdout } = await run(["status"], m.deps);
     expect(stdout).toContain(
       `agents run on: ${label ?? "nothing yet (choose with npx nimblebrain use)"}`,
@@ -538,11 +545,12 @@ describe("status names the source", () => {
     await json(["use", "claude"], m);
     expect((await json(["status"], m)).body.model_source).toEqual({
       source: "claude",
-      label: "your Claude Max subscription through Claude Code",
+      label: "your Claude Max subscription through Claude Code (Sonnet)",
+      model: "sonnet",
     });
     const { stdout } = await run(["status"], m.deps);
     expect(stdout).toContain(
-      "agents run on: your Claude Max subscription through Claude Code (agent worker 4242 at http://127.0.0.1:27290/acp)",
+      "agents run on: your Claude Max subscription through Claude Code (Sonnet); agent worker 4242 at http://127.0.0.1:27290/acp",
     );
   });
 });
@@ -658,6 +666,44 @@ describe("the worker's login item", () => {
     expect(m.calls.some((c) => c.includes("sudo"))).toBe(false);
   });
 
+  test("runs the bundle npx's .bin link points at from a copy, and finds the vendor CLI without npx's cache", async () => {
+    // What `Deps.self` holds once npx's `.bin/nimblebrain` link is resolved: the package's bundle.
+    const bundle = "/home/dana/.npm/_npx/9f/node_modules/nimblebrain/dist/nimblebrain.js";
+    const m = mac({
+      programs: ["claude"],
+      files: { [bundle]: "// nimblebrain 0.9.0\n" },
+      env: {
+        PATH: "/home/dana/.npm/_npx/9f/node_modules/.bin:/usr/bin:/opt/homebrew/bin",
+        HOME: "/home/dana",
+      },
+    });
+    m.deps.self = { ...m.deps.self, script: bundle };
+    await json(["use", "claude"], m);
+    expect(m.files.get(BIN)?.text).toBe("// nimblebrain 0.9.0\n");
+    expect(m.spawned[0]?.line).toStartWith(`/usr/local/bin/node ${BIN} `);
+    // The resolved claude's folder first, then the shell's PATH without npx's cache.
+    expect(plistOf(m)).toContain(
+      "<key>PATH</key>\n      <string>/opt/homebrew/bin:/usr/bin</string>",
+    );
+    expect(plistOf(m)).not.toContain("_npx");
+  });
+
+  test("an entry without an extension is copied too; only a source checkout's .ts runs in place", async () => {
+    const entry = "/home/dana/.local/lib/nimblebrain/cli";
+    const m = mac({ files: { [entry]: "// nimblebrain\n" } });
+    m.deps.self = { ...m.deps.self, script: entry };
+    await json(["use", "claude"], m);
+    expect(m.spawned[0]?.line).toStartWith(`/usr/local/bin/node ${BIN} `);
+    const src = mac();
+    src.deps.self = {
+      ...src.deps.self,
+      script: "/home/dana/src/nimblebrain/packages/cli/src/bin.ts",
+    };
+    await json(["use", "claude"], src);
+    expect(src.spawned[0]?.line).toContain("/packages/cli/src/bin.ts __agent-worker");
+    expect(src.files.has(BIN)).toBe(false);
+  });
+
   test("its text says the worker starts at login", async () => {
     const { stdout } = await run(["use", "claude"], mac().deps);
     expect(stdout).toContain(
@@ -728,5 +774,82 @@ describe("the worker's login item", () => {
     m.loaded.set(LABEL, { pid: 5000 });
     const { body } = await json(["status"], m);
     expect(body.agent_runtime.worker).toMatchObject({ running: true, pid: 5000 });
+  });
+});
+
+describe("the turn model", () => {
+  test("claude runs on Sonnet by default; --model opus is recorded, passed to the worker and reported", async () => {
+    const m = mac();
+    const { body } = await json(["use", "claude", "--model", "opus"], m);
+    expect(body.model_source).toEqual({
+      source: "claude",
+      label: "your Claude Max subscription through Claude Code (Opus)",
+      model: "opus",
+    });
+    expect(m.spawned[0]?.line).toContain("--port 27290 --model opus --log");
+    expect(envOf(m)).toContain("NB_AGENT_WORKER_MODEL=opus\n");
+    expect(JSON.parse(m.files.get(RECORD)?.text ?? "{}").model).toBe("opus");
+  });
+
+  test("a full model id passes through as it is", async () => {
+    const m = mac();
+    const { body } = await json(["use", "claude", "--model", "claude-sonnet-4-5[1m]"], m);
+    expect(body.model_source.label).toBe(
+      "your Claude Max subscription through Claude Code (claude-sonnet-4-5[1m])",
+    );
+    expect(m.spawned[0]?.line).toContain("--model claude-sonnet-4-5[1m]");
+  });
+
+  test("codex keeps Codex's own default unless one is named", async () => {
+    const m = mac();
+    const { body } = await json(["use", "codex"], m);
+    expect(body.model_source).toMatchObject({ source: "codex", model: null });
+    expect(m.spawned[0]?.line).not.toContain("--model");
+    const named = mac();
+    await json(["use", "codex", "--model", "gpt-x"], named);
+    expect(named.spawned[0]?.line).toContain("--model gpt-x");
+  });
+
+  test("down then up starts the worker on the same model, from .env", async () => {
+    const m = mac();
+    await json(["use", "claude", "--model", "haiku"], m);
+    await json(["down"], m);
+    expect(m.files.has(RECORD)).toBe(false);
+    await json(["up"], m);
+    expect(m.spawned.at(-1)?.line).toContain("--model haiku");
+    expect((await json(["status"], m)).body.model_source.model).toBe("haiku");
+  });
+
+  test("use api or local empties it", async () => {
+    const m = mac();
+    await json(["use", "claude", "--model", "opus"], m);
+    await json(["use", "api"], m);
+    expect(envOf(m)).toContain("NB_AGENT_WORKER_MODEL=\n");
+  });
+
+  test("init --use claude takes --model too", async () => {
+    const m = mac({ files: { [`${HOME}/install.json`]: record({ phase: "starting" }) } });
+    const { body } = await json(
+      ["--yes", "--use", "claude", "--model", "opus", "--agent", "none"],
+      m,
+    );
+    expect(body.model_source.model).toBe("opus");
+    expect(m.spawned[0]?.line).toContain("--model opus");
+  });
+
+  test("--model with another source, or a name it cannot be, is a usage error before anything changes", async () => {
+    for (const argv of [
+      ["use", "api", "--model", "opus"],
+      ["use", "local", "--model", "opus"],
+      ["use", "claude", "--model", "two words"],
+      ["--yes", "--model", "opus"],
+      ["--yes", "--use", "api", "--model", "opus"],
+    ]) {
+      const m = mac();
+      const { body, code } = await json(argv, m);
+      expect(code).toBe(2);
+      expect(body.error).toBe("USAGE");
+      expect(m.spawned).toEqual([]);
+    }
   });
 });

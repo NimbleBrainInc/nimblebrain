@@ -208,6 +208,8 @@ export interface RunsOnInfo {
     title: string;
     /** The plan it bills (`Claude Max`), when its agent said. */
     plan?: string;
+    /** The model its turns run on (`Sonnet`), when its agent said. */
+    model?: string;
     /** Whether its agent answered when the bootstrap asked. */
     reachable: boolean;
     /** When it did not: what is wrong and what to do. */

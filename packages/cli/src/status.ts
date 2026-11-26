@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { type AgentRuntimeState, agentRuntimeState } from "./agent-worker.ts";
-import { skillInstalled } from "./agents.ts";
+import { serverNameOf, skillInstalled } from "./agents.ts";
 import type { Agent } from "./args.ts";
 import { hasKey, hostLoopback, keyVars } from "./compose.ts";
 import type { Deps } from "./deps.ts";
@@ -30,6 +30,13 @@ export interface InstallState {
    */
   phase: "starting" | "ready";
   agent?: Agent;
+  /**
+   * The name the workspace's server is registered under in the coding agent,
+   * chosen at the claim (`chooseServerName`): `nimblebrain` for the default
+   * home, `nimblebrain-<folder>` for any other. Absent in an older CLI's
+   * record, which registered under `nimblebrain` (`serverNameOf`).
+   */
+  serverName?: string;
 }
 
 /** The home's record; undefined when there is none, or it does not parse as one. */
@@ -46,6 +53,8 @@ export async function readInstall(deps: Deps, home: string): Promise<InstallStat
     ) {
       return undefined;
     }
+    if (state.serverName !== undefined && typeof state.serverName !== "string")
+      delete state.serverName;
     return state as InstallState;
   } catch {
     return undefined;
@@ -87,7 +96,7 @@ export interface StatusResult {
   health: "ok" | "down";
   url: string;
   workspaces: Workspace[];
-  agent: { connected: Agent | null; skill: string | null };
+  agent: { connected: Agent | null; server: string | null; skill: string | null };
   model_key: "set" | "missing";
   /** Whether the installed release can reach a server on this machine (`mcp add`); false until `update`. */
   host_loopback: boolean;
@@ -139,6 +148,7 @@ export async function status(deps: Deps, home: string): Promise<StatusResult> {
     workspaces,
     agent: {
       connected: install.agent ?? null,
+      server: install.agent ? serverNameOf(install) : null,
       skill: install.agent ? await skillInstalled(deps, install.agent) : null,
     },
     model_key: modelKey,

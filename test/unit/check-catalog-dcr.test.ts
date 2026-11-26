@@ -84,14 +84,14 @@ describe("check-catalog-dcr checkEntry at /authorize", () => {
   } as Parameters<typeof checkEntry>[0];
 
   /** A vendor whose discovery and registration succeed; `authorize` answers /authorize. */
-  function vendor(authorize: () => Response): typeof fetch {
+  function vendor(authorize: (url: URL) => Response): typeof fetch {
     return (async (input: string | URL | Request) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.pathname === "/.well-known/oauth-authorization-server") {
         return Response.json(asMetadata("https://mcp.example.com"));
       }
       if (url.pathname === "/register") return Response.json({ client_id: "probe-client" });
-      if (url.pathname === "/authorize") return authorize();
+      if (url.pathname === "/authorize") return authorize(url);
       if (url.pathname === "/mcp") return new Response(null, { status: 401 });
       return new Response("not found", { status: 404 });
     }) as typeof fetch;
@@ -119,6 +119,17 @@ describe("check-catalog-dcr checkEntry at /authorize", () => {
     expect(formatStatus(r)).toBe(
       "✗ FAIL — /authorize rejected our redirect URI: HTTP 400: Invalid redirect URI",
     );
+  });
+
+  test("sends a state the length sign-in sends, so a vendor that rejects a short one passes", async () => {
+    globalThis.fetch = vendor((url) => {
+      const state = url.searchParams.get("state") ?? "";
+      return state.length >= 32
+        ? new Response("login", { status: 200 })
+        : new Response("Missing required OAuth parameters: state", { status: 400 });
+    });
+    const r = await checkEntry(entry, REDIRECT);
+    expect(formatStatus(r)).toBe("✓ ok (DCR + authorize end-to-end)");
   });
 
   test("a login page passes, verified end to end", async () => {

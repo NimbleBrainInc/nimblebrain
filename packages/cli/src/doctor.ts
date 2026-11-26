@@ -1,5 +1,6 @@
 import { daemonVariant, findCompose } from "./compose.ts";
 import type { Deps } from "./deps.ts";
+import { heldByText, movePort, type PortMove } from "./ports.ts";
 import { CliError, type ErrorCode, type FixVariant } from "./result.ts";
 
 /**
@@ -28,6 +29,8 @@ export interface DoctorResult {
   ok: true;
   checks: Check[];
   arch: string;
+  /** The port a new install takes instead of a busy default, when `movableFor` allowed a move. */
+  port_moved?: PortMove;
 }
 
 /**
@@ -38,11 +41,15 @@ export interface DoctorResult {
  *
  * `portInUseByUs` skips the port check when the install on that port is this
  * CLI's own and running: on a rerun the port being taken is the good case.
+ * `movableFor`, the home of a new install that named no port, lets a busy
+ * default move to the next free port (`movePort`) instead of failing; the
+ * check passes on that port and the answer carries `port_moved`.
  */
 export async function doctor(
   deps: Deps,
   port: number,
   portInUseByUs = false,
+  movableFor?: string,
 ): Promise<DoctorResult> {
   const log = recorder();
   await checkDocker(deps, log);
@@ -50,8 +57,13 @@ export async function doctor(
   await checkCompose(deps, log);
   checkArch(facts.arch, log);
   checkMemory(facts, log);
-  await checkPort(deps, port, portInUseByUs, log);
-  return { ok: true, checks: log.checks, arch: facts.arch };
+  const moved = await checkPort(deps, port, portInUseByUs, movableFor, log);
+  return {
+    ok: true,
+    checks: log.checks,
+    arch: facts.arch,
+    ...(moved ? { port_moved: moved } : {}),
+  };
 }
 
 interface Recorder {
@@ -144,10 +156,34 @@ function checkMemory({ memory, kind }: DaemonFacts, log: Recorder): void {
   log.pass("memory", memory > 0 ? gib(memory) : "unknown");
 }
 
-async function checkPort(deps: Deps, port: number, ours: boolean, log: Recorder): Promise<void> {
-  if (ours) return log.pass("port", `${port} (this install)`);
-  if (!(await deps.portFree(port))) log.fail("port", "PORT_IN_USE", `Port ${port} is in use.`);
-  log.pass("port", String(port));
+async function checkPort(
+  deps: Deps,
+  port: number,
+  ours: boolean,
+  movableFor: string | undefined,
+  log: Recorder,
+): Promise<PortMove | undefined> {
+  if (ours) {
+    log.pass("port", `${port} (this install)`);
+    return undefined;
+  }
+  if (movableFor === undefined) {
+    if (!(await deps.portFree(port))) log.fail("port", "PORT_IN_USE", `Port ${port} is in use.`);
+    log.pass("port", String(port));
+    return undefined;
+  }
+  let moved: PortMove | undefined;
+  try {
+    moved = await movePort(deps, movableFor, port, "web");
+  } catch (err) {
+    if (err instanceof CliError) log.fail("port", err.code, err.message);
+    throw err;
+  }
+  log.pass(
+    "port",
+    moved ? `${moved.to} (${port} is in use by ${heldByText(deps, moved)})` : String(port),
+  );
+  return moved;
 }
 
 function parseInfo(stdout: string): DaemonFacts {

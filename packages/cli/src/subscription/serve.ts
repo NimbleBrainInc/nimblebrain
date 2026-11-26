@@ -91,6 +91,7 @@ async function start(backend: Backend, port: number): Promise<void> {
     stripped.length > 0
       ? `  API keys:    ${stripped.join(", ")} set in this shell, and withheld from ${backend.label}`
       : "  API keys:    none, so nothing can bill API pricing",
+    `  Model:       ${backend.modelLabel ?? `${backend.label}'s default`}`,
     `  Tools:       ${TOOL_SURFACE[backend.id]}`,
     `  Listening:   ${worker.acpUrl} (this machine only)`,
     "",

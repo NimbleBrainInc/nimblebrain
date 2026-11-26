@@ -25,7 +25,6 @@ function makeCtx(endSession?: IdentityProvider["endSession"]): AppContext {
       provider,
       eventSink: { emit: () => {} },
     },
-    secureCookies: false,
     appOrigin: "http://localhost",
   });
 }

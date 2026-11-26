@@ -1842,21 +1842,15 @@ export class Runtime {
       // conversation log, and the caller (`startTurn`) tells cancel from error
       // by reading the signal it owns.
       onAbort: "throw",
+      // The first turn's title starts with the turn, from the person's message
+      // alone, and runs beside it (best-effort): the topic is the message's,
+      // so nothing about it waits for the reply. It broadcasts
+      // `conversation.title` on the global SSE, routed by `conversationId`.
+      // Inside the RUN's context even though it outlives the run: the call
+      // bills this conversation, and the context carries that attribution and
+      // the workspace's `models.fast` override, which decides the model.
+      onEstablished: () => this.maybeGenerateTitle(conversation, request, store),
     });
-
-    // Fire-and-forget title generation on the first turn (decoupled from the
-    // turn lifecycle; best-effort). Broadcasts `conversation.title` on the global
-    // SSE — routed to the right conversation by `conversationId` — so delivery is
-    // reliable after the turn ends and across tabs.
-    //
-    // Inside the RUN's context even though it outlives the run: the summarizer
-    // call it forks bills this conversation, and the context is what carries
-    // that attribution — plus the workspace's `models.fast` override, which
-    // decides the model it bills. AsyncLocalStorage propagates into the detached
-    // promise, so the scope holds after this function returns.
-    runWithRequestContext(handle.context, () =>
-      this.maybeGenerateTitle(conversation, request, store, handle.output),
-    );
 
     return {
       response: handle.output,
@@ -2072,6 +2066,7 @@ export class Runtime {
     // may no longer act in.
     const userMessage = buildOpeningMessage(spec.input);
     if (binding) await binding.store.append(binding.conversation, userMessage);
+    callEstablished(spec, reqCtx, runId);
 
     // Read the resumed conversation once, before composition: calibration, the
     // history projection, and what the conversation already carries (ADR-0066)
@@ -3191,7 +3186,6 @@ export class Runtime {
     conversation: Conversation,
     request: ChatRequest,
     store: ConversationEventStore,
-    output: string,
   ): void {
     if (conversation.title !== null) return;
     const titleSlot = this.getModelSlot("fast");
@@ -3216,7 +3210,8 @@ export class Runtime {
     // The title call runs the `fast` slot outside the agentic loop; persist its
     // usage as an aux.usage event so it isn't invisible to cost accounting.
     const appendTitleUsage = store.appendEvent?.bind(store);
-    void generateTitleWith(titleModel, titleInput, output, (usage, llmMs, model = titleSlot) => {
+    // From the message alone: the title starts with the turn, before any reply.
+    void generateTitleWith(titleModel, titleInput, "", (usage, llmMs, model = titleSlot) => {
       recordLlmCall({ source: "title", model, usage, llmMs });
       appendTitleUsage?.(conversation.id, {
         ts: new Date().toISOString(),
@@ -5638,7 +5633,12 @@ export class Runtime {
           setTimeout(() => reject(new Error("probe timed out")), PROBE_TIMEOUT_MS),
         ),
       ]);
-      return { ...base, reachable: true, ...(described.plan ? { plan: described.plan } : {}) };
+      return {
+        ...base,
+        reachable: true,
+        ...(described.plan ? { plan: described.plan } : {}),
+        ...(described.model ? { model: described.model } : {}),
+      };
     } catch (err) {
       return {
         ...base,
@@ -6708,6 +6708,19 @@ function warnIfNoModelProvider(
   log.warn(`[runtime] No model provider is configured: chat fails until ${settings}.`);
 }
 
+/** Call a run's `onEstablished` once, in the run's context; a throw is logged, never the run's failure. */
+function callEstablished(spec: RunSpec, ctx: RequestContext, runId: string): void {
+  const established = spec.onEstablished;
+  if (!established) return;
+  runWithRequestContext(ctx, () => {
+    try {
+      established();
+    } catch (err) {
+      log.error("[runtime] a run's onEstablished hook threw", { runId, error: String(err) });
+    }
+  });
+}
+
 /** How long bootstrap waits for a runtime's agent to describe itself. */
 const PROBE_TIMEOUT_MS = 1500;
 
@@ -6718,6 +6731,8 @@ export interface RunsOn {
   title: string;
   /** The plan it bills (`Claude Max`), when its agent said. */
   plan?: string;
+  /** The model its turns run on (`Sonnet`), when its agent said. */
+  model?: string;
   /** Whether its agent answered just now. */
   reachable: boolean;
   /** When it did not: what is wrong and what to do, as the composer shows it. */
