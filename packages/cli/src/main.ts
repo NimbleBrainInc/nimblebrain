@@ -1,3 +1,4 @@
+import { AGENT_LABELS } from "./agent-picker.ts";
 import { SERVER_NAME, type SkillRefresh } from "./agents.ts";
 import { DEFAULT_PORT, type Parsed, parse, wantsJson } from "./args.ts";
 import { paths, runningHere } from "./compose.ts";
@@ -239,12 +240,6 @@ function isStatus(result: Ok): result is StatusLike {
   return "health" in result && "url" in result && "workspaces" in result;
 }
 
-const AGENT_NAMES: Record<string, string> = {
-  "claude-code": "Claude Code",
-  cursor: "Cursor",
-  codex: "Codex",
-};
-
 /** An install's state as a person reads it; the JSON carries the same facts. */
 function statusLines(r: StatusLike, cli: string, command?: string): string[] {
   const lines = [
@@ -274,7 +269,7 @@ function nextStep(r: StatusLike, cli: string, command?: string): string | undefi
       return `Next: choose what runs NimbleBrain's agents so it can chat. Run ${cli} use in your own terminal: your Claude subscription, your ChatGPT plan, an API key, or a local model.`;
     }
     const agent = r.agent.connected;
-    const ask = agent ? `, or ask ${AGENT_NAMES[agent] ?? agent} what NimbleBrain can do` : "";
+    const ask = agent ? `, or ask ${AGENT_LABELS[agent]} what NimbleBrain can do` : "";
     const use = r.opened ? `use NimbleBrain in your browser at ${r.url}` : `open ${r.url}`;
     return `Next: ${use}${ask}. Stop it with ${cli} down.`;
   }
@@ -328,7 +323,7 @@ function openLines(r: Ok): string[] {
 function agentLines(r: StatusLike): string[] {
   const agent = r.agent.connected;
   if (!agent) return r.manual ? [`  agent: not connected; add it by hand: ${r.manual}`] : [];
-  const name = AGENT_NAMES[agent] ?? agent;
+  const name = AGENT_LABELS[agent];
   // The default home's server goes unnamed; another install's says which of the agent's servers it is.
   const as = r.agent.server && r.agent.server !== SERVER_NAME ? ` as ${r.agent.server}` : "";
   const lines = [

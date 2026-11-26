@@ -317,6 +317,8 @@ export function machine(opts: MachineOptions = {}): Machine {
       };
     },
     readText: async (path) => m.files.get(path)?.text,
+    // A folder exists when a file is in it.
+    exists: async (path) => [...m.files.keys()].some((f) => f === path || f.startsWith(`${path}/`)),
     async writeText(path, text, mode = 0o644) {
       m.files.set(path, { text, mode });
     },

@@ -96,6 +96,20 @@ It only tells you; nothing updates by itself. It is off when `CI` is set, with `
 
 ## Connecting an agent
 
+At a terminal, `init` asks which coding agent to connect once NimbleBrain is up, as a numbered list:
+
+```text
+Connect a coding agent to NimbleBrain?
+It can then use NimbleBrain's tools. It does not change what runs NimbleBrain's own agents.
+  1) Claude Code   (installed; also runs NimbleBrain's agents)
+  2) Codex         (installed)
+  3) Cursor
+  4) None
+Choose 1-4, or claude-code, codex, cursor, none [1]:
+```
+
+The agents found on this machine come first: Claude Code when `claude` is on your `PATH`, Codex when `codex` is, and Cursor when `~/.cursor` exists. Enter takes the default: the agent that also runs NimbleBrain's agents when you chose your Claude or ChatGPT plan, else the first one found, else None. Type the number, the name, or a short form (`claude`, `Claude Code`, `no`); an answer that names none is asked again, and after three the default is taken and said. An agent that was not found can still be chosen. Under `--yes`, `--json` or with no terminal, `init` connects only the agent `--agent` names, and none without it.
+
 `init --agent <name>` registers the workspace's MCP URL, `http://127.0.0.1:27246/mcp/<workspaceId>`, with the agent: through `claude mcp add` for Claude Code, `codex mcp add` for Codex, and `~/.cursor/mcp.json` for Cursor. The default home's server is named `nimblebrain`; another home's is named after its folder (see [A second install](#a-second-install)), and `status` reports the name in `agent.server`. The local instance needs no login. If the agent's own CLI is not installed, `init` still succeeds and returns `manual`: the exact command or setting to add by hand. An agent loads a new MCP server when its next session starts. `status` reports the skill as the agent has it now, read from the agent's own skills folder, so a skill added later with `npx skills add nimblebraininc/skills --skill nimblebrain --agent <agent> -g` counts. Connecting an agent gives it NimbleBrain's tools; it does not change what NimbleBrain's own agents run on, which is what you chose with `use` (or at `init`).
 
 To connect another client by hand, take the MCP URL from `npx nimblebrain status` and follow [Connecting External Clients](/connect/external-clients/).
