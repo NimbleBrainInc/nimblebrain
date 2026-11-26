@@ -248,22 +248,36 @@ function statusLines(r: StatusLike, cli: string, command?: string): string[] {
       ? `  model: ${r.local_model} on Ollama (NimbleBrain's own agents use it)`
       : `  model key: ${r.model_key === "set" ? "set (NimbleBrain's own agents use it)" : `missing (run ${cli} key)`}`,
   ];
-  const agent = r.agent.connected;
   lines.push(...agentLines(r));
   if (!r.host_loopback) lines.push(`  servers on this machine: not reachable until ${cli} update`);
   lines.push(telemetryLine(r.telemetry));
   lines.push(`  CLI ${r.cli_version}`);
-  if (command === "init" && !r.already && r.health === "ok" && !hasModelIn(r)) {
-    lines.push(
-      "",
-      `Next: give NimbleBrain a model so it can chat. Run ${cli} key in your own terminal to enter a model key, or ${cli} local-model to run one on this machine with Ollama.`,
-    );
-  } else if (command === "init" && !r.already && r.health === "ok") {
+  const next = nextStep(r, cli, command);
+  if (next) lines.push("", next);
+  return lines;
+}
+
+/**
+ * The one thing to do after reading an install's state: what a fresh `init`
+ * leads to, and for `status`, the command that finishes an unfinished install,
+ * running or not, or starts a finished one that is stopped. Nothing when a
+ * finished install runs.
+ */
+function nextStep(r: StatusLike, cli: string, command?: string): string | undefined {
+  if (command === "init" && !r.already && r.health === "ok") {
+    if (!hasModelIn(r)) {
+      return `Next: give NimbleBrain a model so it can chat. Run ${cli} key in your own terminal to enter a model key, or ${cli} local-model to run one on this machine with Ollama.`;
+    }
+    const agent = r.agent.connected;
     const ask = agent ? `, or ask ${AGENT_NAMES[agent] ?? agent} what NimbleBrain can do` : "";
     const use = r.opened ? `use NimbleBrain in your browser at ${r.url}` : `open ${r.url}`;
-    lines.push("", `Next: ${use}${ask}. Stop it with ${cli} down.`);
+    return `Next: ${use}${ask}. Stop it with ${cli} down.`;
   }
-  return lines;
+  if (command !== "status") return undefined;
+  if (r.phase !== "ready") {
+    return `Next: finish installing it with ${cli}, or remove it with ${cli} uninstall.`;
+  }
+  return r.health === "ok" ? undefined : `Next: start it with ${cli} up.`;
 }
 
 /** `open`'s answer as a person reads it: the URL either way, so it can be opened by hand. */

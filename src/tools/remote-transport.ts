@@ -4,6 +4,7 @@ import type { RemoteTransportConfig } from "../connectors/runtime/types.ts";
 import { isMintedFleetSource } from "../oauth/minted-credential-provider.ts";
 import { getCredentialProvider } from "./credential-provider.ts";
 import { type CredentialValue, isCredentialRef } from "./credential-ref.ts";
+import { createCredentialRequiredFetch } from "./credential-required-fetch.ts";
 import { type CredentialScope, resolveCredentialValue } from "./credential-store.ts";
 import { createInBandAuthRejectionFetch } from "./in-band-auth-rejection-fetch.ts";
 import { createOAuthRefreshFetch } from "./oauth-refresh-fetch.ts";
@@ -276,6 +277,10 @@ export async function createRemoteTransport(
      *  that declares it reads a matching `tools/call` answer as a 401
      *  (`createInBandAuthRejectionFetch`). */
     inBandAuthErrors?: readonly string[];
+    /** The connection is OAuth-only: a request to the server without a token
+     *  is answered with a 401 and not sent (`createCredentialRequiredFetch`),
+     *  so a server that serves discovery anonymously still starts sign-in. */
+    requireCredential?: boolean;
   },
 ): Promise<Transport> {
   // The last source for a name wins, compared case-insensitively as header names
@@ -324,10 +329,16 @@ export async function createRemoteTransport(
   // Only a token the SDK can renew is worth a 401: a static-auth or minting
   // remote has no refresh, and its in-band rejection surfaces as the server sent it.
   const inBandAuthErrors = opts?.inBandAuthErrors ?? [];
-  const requestFetch =
+  const tokenFetch =
     effectiveAuthProvider && !mintingFetch && inBandAuthErrors.length > 0
       ? createInBandAuthRejectionFetch(headerFetch, inBandAuthErrors)
       : headerFetch;
+  // Outside every other wrapper, so it reads the headers the SDK built: only
+  // the SDK's own bearer counts as the credential.
+  const requestFetch =
+    effectiveAuthProvider && !mintingFetch && opts?.requireCredential
+      ? createCredentialRequiredFetch(tokenFetch, url)
+      : tokenFetch;
 
   if (config?.type === "sse") {
     return new SSEClientTransport(url, {

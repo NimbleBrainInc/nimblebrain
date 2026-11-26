@@ -13,6 +13,11 @@ describe("buildDevWorktreeSeed", () => {
     expect(validate.errors).toBeNull();
   });
 
+  test("leaves the model slots to the runtime's default", () => {
+    const root = "/tmp/nimblebrain-worktree";
+    expect(buildDevWorktreeSeed(root, join(root, WORKDIR_NAME))).not.toHaveProperty("models");
+  });
+
   test("keeps the default workdir relative, so it stays beside the config", () => {
     const root = "/tmp/nimblebrain-worktree";
     expect(buildDevWorktreeSeed(root, join(root, WORKDIR_NAME)).workDir).toBe(WORKDIR_NAME);

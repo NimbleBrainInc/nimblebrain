@@ -32,7 +32,7 @@ import { type CredentialStore, FileCredentialStore } from "./credential-store.ts
  * commonly rendered into a ConfigMap from a values file in version control, so
  * a key written into `secrets.config` is a key committed to a repository. The
  * schema refuses one (`nbNoInlineKeyMaterial` in
- * `nimblebrain-config.schema.json`) — the block names an environment variable,
+ * `schemas/config/v1/config.schema.json`) — the block names an environment variable,
  * and the runtime reads the key from there.
  */
 export interface CredentialStoreBackend {

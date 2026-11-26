@@ -233,6 +233,13 @@ export type McpTransportMode =
        * have been; see `createInBandAuthRejectionFetch`.
        */
       inBandAuthErrors?: readonly string[];
+      /**
+       * The connection signs in with OAuth only, so it never sends the server a
+       * request without a token, from the connector's catalog entry or its own
+       * OAuth client. With an `authProvider`, a tokenless request is answered
+       * with a 401 that starts sign-in; see `createCredentialRequiredFetch`.
+       */
+      requireCredential?: boolean;
     }
   | {
       type: "inProcess";
@@ -850,6 +857,7 @@ export class McpSource implements ToolSource {
           workspaceId: this.connectorContext?.workspaceId,
           allowInsecure: this.mode.allowInsecure ?? false,
           inBandAuthErrors: this.mode.inBandAuthErrors,
+          requireCredential: this.mode.requireCredential,
         },
       );
 
@@ -1273,6 +1281,7 @@ export class McpSource implements ToolSource {
         workspaceId: this.connectorContext?.workspaceId,
         allowInsecure: this.mode.allowInsecure ?? false,
         inBandAuthErrors: this.mode.inBandAuthErrors,
+        requireCredential: this.mode.requireCredential,
       },
     );
     // onclose is wired in `start()` AFTER the connect succeeds — same

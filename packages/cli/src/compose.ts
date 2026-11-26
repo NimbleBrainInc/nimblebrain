@@ -241,6 +241,10 @@ export function startError(res: ExecResult): CliError {
   if (/port is already allocated|address already in use/i.test(text)) {
     return new CliError("PORT_IN_USE", last);
   }
+  // Docker Desktop names the cause itself: the folder is not in its file sharing list.
+  if (/is not shared from the host/i.test(text)) {
+    return new CliError("HOME_NOT_SHARED", last);
+  }
   return new CliError("START_FAILED", last);
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import Ajv from "ajv";
+import schema from "../../schemas/host/v1/host.schema.json";
 import { RETIRED_HOOK_KEYS, RETIRED_HOST_KEYS } from "../../src/connectors/catalog/host-meta.ts";
-import schema from "../../src/connectors/catalog/schemas/host-manifest.schema.json";
 import type { HostManifestMeta, PlacementDeclaration } from "../../src/connectors/runtime/types.ts";
 import type { HookDeclaration } from "../../src/hooks/types.ts";
 
@@ -40,7 +40,7 @@ const PLACEMENT_KEYS = {
 
 const sorted = (keys: Iterable<string>) => [...keys].sort();
 
-describe("host-manifest.schema.json and the runtime's types", () => {
+describe("schemas/host/v1/host.schema.json and the runtime's types", () => {
   test("the block's properties are HostManifestMeta's keys", () => {
     expect(sorted(Object.keys(schema.properties))).toEqual(sorted(Object.keys(HOST_KEYS)));
   });

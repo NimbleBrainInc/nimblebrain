@@ -112,6 +112,20 @@ expect "$(nb uninstall --yes)" '.removed == true' "uninstall --yes removes it"
 test ! -e "$NIMBLEBRAIN_HOME"
 test -z "$(docker volume ls -q --filter "label=com.docker.compose.project=$project")"
 test -z "$(docker ps -a -q --filter "label=com.docker.compose.project=$project")"
-echo "ok: no folder, no volume, no containers"
+test -z "$(docker network ls -q --filter "label=com.docker.compose.project=$project")"
+echo "ok: no folder, no volume, no containers, no network"
+
+step "install again where one was removed"
+out=$(nb --yes --agent none)
+expect "$out" '.ok == true and .health == "ok" and .already != true' "a second install comes up as a new one"
+again=$(jq -r .project "$NIMBLEBRAIN_HOME/install.json")
+test "$again" != "$project"
+echo "ok: the second install has its own project"
+expect "$(nb uninstall --yes)" '.removed == true' "uninstall removes the second install"
+test ! -e "$NIMBLEBRAIN_HOME"
+test -z "$(docker volume ls -q --filter "label=com.docker.compose.project=$again")"
+test -z "$(docker ps -a -q --filter "label=com.docker.compose.project=$again")"
+test -z "$(docker network ls -q --filter "label=com.docker.compose.project=$again")"
+echo "ok: nothing is left of the second install"
 
 printf '\nAll end-to-end checks passed.\n'

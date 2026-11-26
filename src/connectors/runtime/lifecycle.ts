@@ -52,7 +52,7 @@ import {
 } from "./connection.ts";
 import { brokeredConnectionPresent, connectorHasStaticAuth } from "./connector-auth.ts";
 import { sanitizePlacements } from "./defaults.ts";
-import { inBandAuthErrorsOption } from "./in-band-auth-errors.ts";
+import { catalogTransportOptions } from "./in-band-auth-errors.ts";
 import { resolveStaticOAuthClient, type StaticOAuthClient } from "./oauth-static-client.ts";
 import { defaultWorkDir, isUsableConnectorRef, validateServerName } from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
@@ -1119,7 +1119,7 @@ export class ConnectorLifecycleManager {
         // transport's SSRF guard agrees with what this install was authorized for.
         allowInsecure: opts.allowInsecureRemotes === true,
         authProvider: provider,
-        ...(await inBandAuthErrorsOption(ref)),
+        ...(await catalogTransportOptions(ref)),
       },
       this.eventSink,
       composeConnectorMcpContext(this.resolveConnectorMcpDeps(wsId), serverName),
@@ -2162,7 +2162,7 @@ export class ConnectorLifecycleManager {
             (await resolveRefTransport(ref, this.catalogReader())).transportConfig,
           allowInsecure: opts.allowInsecureRemotes === true,
           authProvider: provider,
-          ...(await inBandAuthErrorsOption(ref)),
+          ...(await catalogTransportOptions(ref)),
         },
         this.eventSink,
         composeConnectorMcpContext(undefined, serverName),

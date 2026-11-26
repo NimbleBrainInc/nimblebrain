@@ -201,7 +201,7 @@ Create a `nimblebrain.json` in your working directory. A minimal file:
 
 ```json
 {
-  "$schema": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+  "$schema": "https://schemas.nimblebrain.ai/config/v1/config.schema.json",
   "version": "1"
 }
 ```
@@ -210,7 +210,7 @@ A fully specified example:
 
 ```json
 {
-  "$schema": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+  "$schema": "https://schemas.nimblebrain.ai/config/v1/config.schema.json",
   "version": "1",
   "models": {
     "default":   "anthropic:claude-sonnet-5-5",
@@ -587,7 +587,7 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 ### Configuration Reference
 
 **Files:**
-- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`skillDirs`, `preferences`, `home`) are stripped on load.
+- `nimblebrain.json` — instance config. Validated at startup against `schemas/config/v1/config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`skillDirs`, `preferences`, `home`) are stripped on load.
 - `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `connectors`, `skillDirs`, and optional `models` overrides.
 - `<workDir>/instance.json` — the identity provider (`dev`, `oidc`, or `workos` adapter). Required: `serve` refuses to start without it.
 

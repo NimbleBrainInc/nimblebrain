@@ -27,6 +27,7 @@
   "type": "module",
   "files": [
     "src/",
+    "schemas/",
     "nimblebrain.json",
     "README.md",
     "LICENSE",

@@ -8,12 +8,13 @@ import { findInlineKeyMaterial } from "./secrets.ts";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
- * Absolute path to the config schema. This file is the canonical source: the
- * runtime validates nimblebrain.json against it, and `.github/workflows/schema-deploy.yml`
- * publishes it to schemas.nimblebrain.ai on change. Keep it in lockstep with the
+ * Absolute path to the config schema, `schemas/config/v1/config.schema.json`.
+ * That file is the canonical source: the runtime validates nimblebrain.json
+ * against it, and `.github/workflows/schema-deploy.yml` publishes it to
+ * schemas.nimblebrain.ai on change. Keep it in lockstep with the
  * feature surface — `test/unit/config-schema-drift.test.ts` guards the drift.
  */
-export const SCHEMA_PATH = resolve(__dirname, "nimblebrain-config.schema.json");
+export const SCHEMA_PATH = resolve(__dirname, "../../schemas/config/v1/config.schema.json");
 
 /**
  * Schema keyword: this subtree must not carry key material. Declared on

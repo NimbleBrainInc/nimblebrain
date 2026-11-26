@@ -60,8 +60,9 @@ RUN set -e; \
     for p in $pids; do wait "$p"; done
 
 COPY --chown=1000:1000 src/ src/
-# The published schemas the runtime validates against: the plugin extension
-# schema and the contract documents the plugin loader reads.
+# The published schemas the runtime validates against: nimblebrain.json
+# against schemas/config/v1/config.schema.json, and the plugin extension schema
+# and the contract documents the plugin loader reads.
 COPY --chown=1000:1000 schemas/ schemas/
 # The connector catalog a fresh install starts with: NimbleBrain's catalog of
 # connectors that install with nothing to configure, taken at build. It replaces the
