@@ -838,6 +838,7 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
       "skill-instructions",
       "run-input",
       "judge-feedback",
+      "event",
       "host-instructions",
       "conversation-history",
     ] as const satisfies readonly ContainmentTag[];
@@ -860,6 +861,7 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
       "skill-instructions": true,
       "run-input": true,
       "judge-feedback": true,
+      event: true,
       "host-instructions": true,
       "conversation-history": true,
     };
