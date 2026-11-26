@@ -23,7 +23,7 @@
  *     SDK doesn't expose `params.server` because it isn't part of the
  *     ext-apps spec.
  *
- * Scope: only `src/platform/* /ui/**` is scanned. The rest of an app —
+ * Scope: only `src/platform/* /ui/**` and a plugin's screen, `packages/* /ui/**`, are scanned. The rest of an app —
  * its source and its tool handlers — doesn't postMessage to anyone.
  */
 
@@ -33,7 +33,8 @@ import { Glob } from "bun";
 import * as ts from "typescript";
 
 const ROOT = join(import.meta.dirname ?? __dirname, "..");
-const APPS_ROOT = join(ROOT, "src/platform");
+/** Where app UIs live: the platform apps', and a plugin's screen. */
+const APPS_ROOTS = [join(ROOT, "src/platform"), join(ROOT, "packages")];
 const ALLOW_MARKER = "lint-ok:platform-app-transport";
 
 interface Violation {
@@ -134,11 +135,13 @@ async function main(): Promise<void> {
   const glob = new Glob("*/ui/src/**/*.{ts,tsx}");
   let scanned = 0;
 
-  for await (const rel of glob.scan({ cwd: APPS_ROOT })) {
-    const abs = join(APPS_ROOT, rel);
-    if (abs.includes("/node_modules/") || abs.includes("/dist/")) continue;
-    scanned++;
-    await scanFile(abs, violations);
+  for (const root of APPS_ROOTS) {
+    for await (const rel of glob.scan({ cwd: root })) {
+      const abs = join(root, rel);
+      if (abs.includes("/node_modules/") || abs.includes("/dist/")) continue;
+      scanned++;
+      await scanFile(abs, violations);
+    }
   }
 
   if (violations.length > 0) {
