@@ -31,10 +31,10 @@ For the OIDC and WorkOS adapters, sign-in is an authorization-code flow, not a l
 
 <Steps>
 
-1. The web client redirects to `GET /v1/auth/authorize`, which sends the user to the configured identity provider.
+1. The web client redirects to `GET /v1/auth/authorize`, which sends the user to the configured identity provider. It sets a short-lived `__Host-nb_login` cookie (10 minutes) holding the flow's `state` and PKCE verifier. A request that reaches `authorize` on a host other than the public origin is first redirected to the public origin, where the callback lives.
 2. The provider authenticates the user and redirects back to `GET /v1/auth/callback` with an authorization code.
-3. The callback exchanges the code for tokens and sets the `nb_session` cookie (see [Session cookies](#session-cookies) below). It does **not** validate a shared secret — the cookie carries the provider-issued access token.
-4. Subsequent requests present either the `nb_session` cookie or an `Authorization: Bearer <token>` header. Programmatic callers (CLI, external MCP clients) use the bearer header; the browser uses the cookie.
+3. The callback completes only when the `__Host-nb_login` cookie's `state` matches the returned `state`, so a callback link opened in a browser that did not start the sign-in is refused. It exchanges the code for tokens with the cookie's verifier, clears `__Host-nb_login`, and sets the `__Host-nb_session` and `__Host-nb_refresh` cookies (see [Session cookies](#session-cookies) below). It does **not** validate a shared secret — the cookie carries the provider-issued access token. The server keeps no per-sign-in state.
+4. Subsequent requests present either the `__Host-nb_session` cookie or an `Authorization: Bearer <token>` header. Programmatic callers (CLI, external MCP clients) use the bearer header; the browser uses the cookie.
 
 </Steps>
 
@@ -52,24 +52,31 @@ The IP comes from the `X-Forwarded-For` header (set by your reverse proxy) or `"
 
 ## Session cookies
 
-The OIDC/WorkOS callback (`GET /v1/auth/callback`) sets the `nb_session` cookie after a successful authorization-code exchange. The web UI uses this cookie for all subsequent same-origin requests. No login endpoint is involved — the cookie value is the provider-issued access token, not a platform-minted secret.
+The OIDC/WorkOS callback (`GET /v1/auth/callback`) sets the `__Host-nb_session` cookie after a successful authorization-code exchange. The web UI uses this cookie for all subsequent same-origin requests. No login endpoint is involved — the cookie value is the provider-issued access token, not a platform-minted secret.
 
-### Cookie attributes
+### Sign-in cookies
+
+| Cookie | Holds | `Max-Age` |
+|---|---|---|
+| `__Host-nb_session` | The provider-issued access token | `3600` (1 hour); renewed by `POST /v1/auth/refresh` |
+| `__Host-nb_refresh` | The provider's refresh token | `2592000` (30 days) |
+| `__Host-nb_login` | The in-progress sign-in's `state` and PKCE verifier | `600` (10 minutes); cleared by the callback |
+
+Every sign-in cookie carries the same attributes:
 
 | Attribute | Value | Purpose |
 |---|---|---|
-| Name | `nb_session` | Identifies the session |
-| `HttpOnly` | Always set | Prevents JavaScript access — mitigates XSS token theft |
-| `SameSite` | `Lax` | Cookie sent on same-site requests and top-level navigations — mitigates CSRF |
-| `Secure` | Set when not localhost | Cookie only sent over HTTPS |
-| `Path` | `/` | Available to all routes |
-| `Max-Age` | `3600` (1 hour) | Session expires after one hour; refreshed via `POST /v1/auth/refresh` |
+| Name prefix | `__Host-` | The browser accepts the cookie only from this exact host, with `Secure`, `Path=/` and no `Domain`, so only this host can set a sign-in cookie: no parent domain or sibling subdomain can |
+| `HttpOnly` | Always set | Page scripts cannot read the cookie |
+| `SameSite` | `Lax` | Sent on same-site requests and top-level navigations, including the identity provider's redirect back to the callback |
+| `Secure` | Always set | Sent only over HTTPS, or to `http://localhost` |
+| `Path` | `/` | Required by the `__Host-` prefix |
 
-The `Secure` flag is automatically omitted for localhost connections (where `http://` is expected) and added for all other hosts.
+Chrome and Firefox treat `http://localhost` as a secure context, so sign-in to a local server over plain HTTP works there; Safari may not store a `Secure` cookie from `http://localhost`, so use HTTPS for local sign-in in Safari. A browser reaching the server over plain HTTP at any other address stores no sign-in cookie and cannot sign in; put the server behind TLS (see [TLS](#tls) below). The `dev` adapter sets no sign-in cookies, so the dev launchers are unaffected.
 
 ### Logout
 
-`POST /v1/auth/logout` clears `nb_session` and `nb_refresh` by setting `Max-Age=0`. It needs no valid session, so sign-out still works after the access token has expired. Under the WorkOS adapter it also revokes the WorkOS session behind the request, found from the access token or, once that cookie has expired, from `nb_refresh`, so the next sign-in asks for credentials instead of resuming that session; the cookies are cleared even if the revocation fails. It does require `Content-Type: application/json`: that header forces a CORS preflight, which a foreign origin fails, so another site cannot sign a user out with a plain form post. The client should discard any cached auth state.
+`POST /v1/auth/logout` clears `__Host-nb_session` and `__Host-nb_refresh` by setting `Max-Age=0`. It needs no valid session, so sign-out still works after the access token has expired. Under the WorkOS adapter it also revokes the WorkOS session behind the request, found from the access token or, once that cookie has expired, from `__Host-nb_refresh`, so the next sign-in asks for credentials instead of resuming that session; the cookies are cleared even if the revocation fails. It does require `Content-Type: application/json`: that header forces a CORS preflight, which a foreign origin fails, so another site cannot sign a user out with a plain form post. The client should discard any cached auth state.
 
 ## CORS
 
@@ -233,7 +240,7 @@ Caddy handles TLS automatically via Let's Encrypt.
 </Tabs>
 
 <Aside type="caution">
-The `Secure` flag on the `nb_session` cookie is only set when the server detects a non-localhost hostname. Behind a reverse proxy that terminates TLS, this works correctly because the browser reaches the proxy over HTTPS. If you test over plain HTTP on a non-localhost address, the cookie will be set with `Secure` but your browser will reject it.
+Every sign-in cookie is `Secure`. Behind a reverse proxy that terminates TLS, this works because the browser reaches the proxy over HTTPS. Over plain HTTP, sign-in works only at `localhost`; at any other address the browser rejects the cookies.
 </Aside>
 
 ## MCP OAuth: the resource URL

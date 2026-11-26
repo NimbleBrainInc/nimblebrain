@@ -87,6 +87,15 @@ export function hostLoopback(composeText: string): boolean {
   return composeText.includes("NB_HOST_LOOPBACK");
 }
 
+/**
+ * Whether the runtime of this Compose file takes its agent runtime from `.env`
+ * (`NB_AGENT_RUNTIME`, `NB_AGENT_RUNTIME_URL`), which `use` writes. An older
+ * release runs every turn on its own engine whatever `.env` says.
+ */
+export function takesAgentRuntime(composeText: string): boolean {
+  return composeText.includes("NB_AGENT_RUNTIME_URL");
+}
+
 /** The provider names `key` offers, each mapped to its variable. */
 export function providers(composeText: string): Record<string, string> {
   return Object.fromEntries(
@@ -120,6 +129,8 @@ export function composeEnv(deps: Deps, vars: string[]): NodeJS.ProcessEnv {
     "NB_LOCAL_MODEL_URL",
     "NB_LOCAL_MODEL",
     "NB_LOCAL_MODEL_CONTEXT",
+    "NB_AGENT_RUNTIME",
+    "NB_AGENT_RUNTIME_URL",
   ]) {
     delete env[v];
   }

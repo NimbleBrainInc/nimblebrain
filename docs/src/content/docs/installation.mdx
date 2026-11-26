@@ -192,7 +192,7 @@ There is no `NB_API_KEY` request-auth variable. Authentication is configured thr
 `<workDir>/instance.json` names the identity provider, and the platform does not start without it:
 
 - **`"adapter": "dev"`** — no login: every request resolves to a single built-in user. Fine for local development; not for shared or networked deployments.
-- **`"adapter": "oidc"` or `"workos"`** — a real identity provider (any OpenID Connect issuer, or WorkOS). On successful login the provider's callback sets an `nb_session` cookie.
+- **`"adapter": "oidc"` or `"workos"`** — a real identity provider (any OpenID Connect issuer, or WorkOS). On successful login the provider's callback sets a `__Host-nb_session` cookie, which requires HTTPS or `http://localhost`.
 
 ```json title="instance.json (OIDC example)"
 {

@@ -287,6 +287,7 @@ export default defineConfig({
             items: [
               { label: 'nimblebrain.json', slug: 'config/nimblebrain-json' },
               { label: 'Local Models', slug: 'config/local-models' },
+              { label: 'Run on Your Subscription', slug: 'config/subscriptions' },
               { label: 'instance.json', slug: 'config/instance-json' },
               { label: 'workspace.json', slug: 'config/workspace-json' },
               { label: 'Connector Configuration', slug: 'config/connectors' },

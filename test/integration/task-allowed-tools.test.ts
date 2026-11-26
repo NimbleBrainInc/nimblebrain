@@ -186,7 +186,8 @@ describe("an unattended run's allowedTools and the nb__ tools", () => {
     expect(call("nb__search")?.output).toContain("files__");
     for (const name of ["nb__read_resource", "nb__set_preferences"]) {
       expect(call(name)?.ok).toBe(false);
-      expect(call(name)?.output).toContain("not in this run's allowed tools");
+      // The run's listing leaves them out, so the engine refuses them before routing.
+      expect(call(name)?.output).toContain("not in this run's tool list");
     }
 
     // The model is shown what the router reaches, and no more.

@@ -66,6 +66,7 @@ import {
   type EngineResult,
   type EventSink,
   type FinishReason,
+  isAgentCallable,
   isModelVisible,
   type ResolvedThinking,
   SKILL_ACTIVATED_META_KEY,
@@ -732,8 +733,8 @@ function buildToolLookups(allRouterTools: ToolSchema[]): {
  * Fold a fresh router listing into the run's lookups in place (the tool
  * controls and per-call contexts hold these same Map objects). Adds and
  * overwrites, never removes: a connector that is down at refresh time is
- * absent from the listing, and dropping its `toolMeta` entries would read its
- * app-only tools as model-visible (absent meta defaults to visible).
+ * absent from the listing, and its tools keep the entries the run already
+ * read for them, visibility included.
  */
 function mergeToolLookups(
   fresh: ToolSchema[],
@@ -1023,19 +1024,38 @@ function orderPhases(
 }
 
 /**
- * Refusal for a call naming a tool without "model" in its `ui.visibility`.
- * Such a tool is withheld from every list the model sees, and that alone does
- * not stop a model that names it: an injected instruction can carry the name.
- * The engine is the host on this door, so the refusal is enforced at the call.
+ * The run's listing of the tool a call names. On a miss the router is re-read
+ * once (the run's per-iteration refresh), so a connector that came back mid-run
+ * is callable; a name still missing after that is returned as undefined.
  */
-function notAvailableToAgent(toolCall: LanguageModelV4ToolCall, call: ToolCall): ToolExecResult {
+async function listedTool(ctx: ToolExecContext, name: string): Promise<ToolSchema | undefined> {
+  const listed = ctx.allToolSchemaMap.get(name);
+  if (listed) return listed;
+  await ctx.refreshToolLookups();
+  return ctx.allToolSchemaMap.get(name);
+}
+
+/**
+ * The refusal for a call the agent door does not dispatch, or null. A tool
+ * without "model" in its `ui.visibility` is withheld from every list the model
+ * sees, and that alone does not stop a model that names it: an instruction in
+ * a tool result can carry the name. A tool the run cannot list has unknown
+ * visibility, so it is refused too (`isAgentCallable`). The engine is the host
+ * on this door, so the refusal is enforced at the call.
+ */
+function agentDoorRefusal(
+  toolCall: LanguageModelV4ToolCall,
+  call: ToolCall,
+  tool: ToolSchema | undefined,
+): ToolExecResult | null {
+  if (isAgentCallable(tool)) return null;
+  const message = tool
+    ? `${call.name} is not available to the agent.`
+    : `${call.name} is not available to the agent: it is not in this run's tool list. Use nb__search to find the tools you can call; a tool whose connector is reconnecting is listed again on a later step.`;
   return {
     toolCall,
     gatedCall: call,
-    result: {
-      content: textContent(`${call.name} is not available to the agent.`),
-      isError: true,
-    } as ToolResult,
+    result: { content: textContent(message), isError: true } as ToolResult,
     ms: 0,
   };
 }
@@ -1139,8 +1159,13 @@ interface ToolExecContext {
   toolMeta: Map<string, Record<string, unknown>>;
   skills: SkillDelivery;
   toolSchemaMap: Map<string, ToolSchema>;
-  /** Every router tool's schema: validates a call to a tool promoted in the same message. */
+  /**
+   * Every router tool's schema: the listing a call must be in to run, and the
+   * schema for a call to a tool promoted in the same message.
+   */
   allToolSchemaMap: Map<string, ToolSchema>;
+  /** Re-read the router into the run's lookups, at most once per iteration. */
+  refreshToolLookups: () => Promise<void>;
   supervisor: RunSupervisor;
 }
 
@@ -1667,6 +1692,7 @@ export class AgentEngine {
           skills,
           toolSchemaMap,
           allToolSchemaMap,
+          refreshToolLookups,
           supervisor,
         };
         const toolResults = await this.executeToolCallsBounded(toolCalls, toolExecContext);
@@ -2386,9 +2412,8 @@ export class AgentEngine {
       name: toolCall.toolName,
       input: parsedInput,
     };
-    if (!isModelVisible({ meta: ctx.toolMeta.get(offered.name) })) {
-      return { refused: notAvailableToAgent(toolCall, offered) };
-    }
+    const offeredRefusal = agentDoorRefusal(toolCall, offered, await listedTool(ctx, offered.name));
+    if (offeredRefusal) return { refused: offeredRefusal };
     const checked = coerceAndValidateToolInput(parsedInput, toolSchemaFor(ctx, offered.name));
     const validated: ToolCall = { ...offered, input: checked.input };
     if (checked.errorResult) return { gatedCall: validated, result: checked.errorResult };
@@ -2417,9 +2442,8 @@ export class AgentEngine {
         },
       };
     }
-    if (!isModelVisible({ meta: ctx.toolMeta.get(hooked.name) })) {
-      return { refused: notAvailableToAgent(toolCall, hooked) };
-    }
+    const hookedRefusal = agentDoorRefusal(toolCall, hooked, await listedTool(ctx, hooked.name));
+    if (hookedRefusal) return { refused: hookedRefusal };
     const rechecked = coerceAndValidateToolInput(hooked.input, toolSchemaFor(ctx, hooked.name));
     const gatedCall: ToolCall = { ...hooked, input: rechecked.input };
     if (rechecked.errorResult) return { gatedCall, result: rechecked.errorResult };

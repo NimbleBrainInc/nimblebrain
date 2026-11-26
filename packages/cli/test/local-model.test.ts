@@ -96,7 +96,7 @@ describe("init on a local model", () => {
     });
 
     expect(code).toBe(0);
-    expect(m.asked.some((q) => q.startsWith("Model (hosted, local)"))).toBe(true);
+    expect(m.asked.some((q) => q.startsWith("Choose 1-2, or api, local [1]"))).toBe(true);
     expect(m.asked.some((q) => q.startsWith("Download gemma4:e4b"))).toBe(true);
     expect(m.asked.some((q) => q.includes("API_KEY"))).toBe(false);
     expect(m.ollamaModels["gemma4:e4b"]).toBeDefined();
@@ -109,9 +109,7 @@ describe("init on a local model", () => {
     });
 
     expect(code).toBe(0);
-    expect(m.said).toContain(
-      "Using gemma4:e4b. Another model: npx nimblebrain local-model <model>",
-    );
+    expect(m.said).toContain("Using gemma4:e4b. Another model: npx nimblebrain use local <model>");
   });
 
   test("a person who answers hosted is asked for a key, as before", async () => {

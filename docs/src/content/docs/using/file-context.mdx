@@ -21,7 +21,7 @@ Attached files appear as chips below the input. Remove a file by clicking the X 
 
 | Format | Extensions | What the agent sees |
 |--------|-----------|---------------------|
-| PDF | `.pdf` | Extracted text from all pages |
+| PDF | `.pdf` | Extracted text, page by page, up to the text limit |
 | Word | `.docx` | Document text and structure |
 | Excel | `.xlsx` | Tabular data |
 | Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` | The image itself (visual analysis) |
@@ -35,6 +35,8 @@ When you attach a file to a message:
 2. Content is extracted based on the file type
 3. The extracted text is included as context in the conversation
 4. The agent can reference the file content when responding
+
+Extraction keeps up to `maxExtractedTextSize` of text per file (200 KB by default) and does only the work that limit needs: a PDF is read until its text passes the limit (at most 2,000 pages or 5 seconds). A Word or Excel file that would expand to far more than the limit, such as a very long document or a sheet of hundreds of thousands of rows, is not extracted. It is still stored and attached, and the agent sees its name, type, and size.
 
 Files **live in the workspace you upload them to**, under your own private partition — another member of that workspace can't see your files, and a file uploaded in one workspace isn't reachable from another. A `files://<id>` reference resolves within the workspace the conversation belongs to. Browse and organize them in the [Files app](/using/files/).
 

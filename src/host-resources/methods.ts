@@ -1,8 +1,10 @@
 /**
  * JSON-RPC method names for the host-resources extension. Namespaced
  * under `ai.nimblebrain/` per the MCP extension convention; connectors
- * dispatch to these via `ctx.session.send_request(...)` (Python) or
- * `server.request(...)` (TS) on the SDK side.
+ * send them on the stream of the tool call they serve, via
+ * `ctx.session.send_request(..., metadata=ServerMessageMetadata(related_request_id=...))`
+ * (Python) or `extra.mcpReq.send(...)` (TS). The host refuses one sent on
+ * the connection's standalone stream (see `McpSource.registerConnectorHandlers`).
  *
  * Result schemas reuse the standard MCP `ReadResourceResult` and
  * `ListResourcesResult` verbatim — the namespace only swaps the method

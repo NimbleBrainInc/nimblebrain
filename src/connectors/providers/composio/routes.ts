@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { type Context, Hono } from "hono";
 import { requireAuth } from "../../../api/middleware/auth.ts";
 import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../../../api/middleware/workspace.ts";
@@ -14,10 +14,19 @@ import { WORKSPACE_PRINCIPAL_ID } from "../../../connectors/runtime/connection.t
 import { slugifyServerName } from "../../../connectors/runtime/paths.ts";
 import { type ConnectorOwner, connectorOwnerKey } from "../../../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../../../identity/connector-store.ts";
+import {
+  browserBindingMatches,
+  buildFlowCookie,
+  mintBrowserBinding,
+} from "../../../oauth/flow-binding.ts";
 import { log } from "../../../observability/log.ts";
 import type { ConnectorCatalogEntry } from "../../catalog/types.ts";
 import { composioAuthConfigId, validateComposioConfig } from "./config.ts";
-import { consumeConnectFlow, registerConnectFlow } from "./connect-flow-registry.ts";
+import {
+  consumeConnectFlow,
+  peekConnectFlow,
+  registerConnectFlow,
+} from "./connect-flow-registry.ts";
 import { type ComposioConnection, saveComposioConnection } from "./connection.ts";
 import {
   COMPOSIO_CALLBACK_PATH,
@@ -38,19 +47,19 @@ import {
  * Three endpoints:
  *
  * - `POST /v1/workspaces/:wsId/composio-auth/initiate` (workspace-authed):
- *   asks Composio to begin a connection for this workspace, sets a session-
- *   bound `nb_composio_state` cookie, and returns the redirect URL the
+ *   asks Composio to begin a connection for a connector installed in this
+ *   workspace, binds the caller's browser with a random `nb_composio_state`
+ *   cookie, which only this host can set (`src/oauth/flow-binding.ts`), and returns the redirect URL the
  *   browser should navigate to. **POST-only**, and a cross-site write under
  *   `/v1/workspaces/` is refused — same posture as the workspace
  *   `mcp-auth/initiate`.
  *
  * - `GET /v1/composio-auth/callback` (unauthenticated): the return
- *   leg from Composio after the user consents at the vendor. Recovers
- *   the (owner, connectorId) from the server-side flow record that an
- *   authenticated `/initiate` created under the URL nonce — never from
- *   the query — so an unauthenticated caller can't land a connection
- *   under another owner. A session cookie binds the nonce to the
- *   calling browser on top. Then writes `connection.json`.
+ *   leg from Composio after the user consents at the vendor. Admits only
+ *   the browser the initiate bound, consumes the flow, and writes
+ *   `connection.json` from the server-side flow record: the owner, the
+ *   connector and the connected account all come from what the initiate
+ *   recorded, never from the query.
  *
  * - `GET /v1/composio-auth/proxy` (unauthenticated): white-label
  *   forwarder. Registered with the vendor as our OAuth client's
@@ -132,6 +141,12 @@ export function composioAuthRoutes(ctx: AppContext) {
       if (parsed instanceof Response) return parsed;
       const { connectorId } = parsed;
       const wsId = c.var.workspaceId;
+
+      // Connecting writes the workspace's connection for this connector, so it
+      // must be installed here first — mirrors the OAuth `/initiate`.
+      if (!ctx.runtime.getLifecycle().getInstance(slugifyServerName(connectorId), wsId)) {
+        return apiError(404, "connector_not_found", `Connector "${connectorId}" not installed.`);
+      }
 
       const entry = await loadInitiateCatalogEntry(ctx, connectorId);
       if (entry instanceof Response) return entry;
@@ -242,7 +257,7 @@ export function composioAuthRoutes(ctx: AppContext) {
 
     // One-shot cookie — clear on success so the callback URL can't be
     // replayed.
-    c.header("Set-Cookie", buildComposioStateCookie("", 0, ctx.secureCookies));
+    c.header("Set-Cookie", buildComposioStateCookie("", 0));
 
     // Back to the connectors page, naming what connected; the page confirms it.
     return c.redirect(connectorsReturnUrl(owner, returnTarget, slugifyServerName(cid)), 302);
@@ -497,7 +512,7 @@ async function connectComposio(
 ): Promise<Response> {
   const adopted = await adoptExistingComposioConnection(ctx, args);
   if (adopted) return adopted;
-  return initiateFreshComposioConnection(ctx, {
+  return initiateFreshComposioConnection({
     connectorId: args.connectorId,
     owner: args.owner,
     apiKey: args.apiKey,
@@ -507,16 +522,13 @@ async function connectComposio(
 }
 
 /** Begin a fresh Composio OAuth connection: bind the state cookie and return the vendor authorization URL. */
-async function initiateFreshComposioConnection(
-  ctx: AppContext,
-  args: {
-    connectorId: string;
-    owner: ConnectorOwner;
-    apiKey: string;
-    authConfigId: string;
-    returnTarget?: ReturnTarget;
-  },
-): Promise<Response> {
+async function initiateFreshComposioConnection(args: {
+  connectorId: string;
+  owner: ConnectorOwner;
+  apiKey: string;
+  authConfigId: string;
+  returnTarget?: ReturnTarget;
+}): Promise<Response> {
   const { connectorId, owner, apiKey, authConfigId, returnTarget } = args;
   const composioUser = composioUserId(owner);
   const ownerLabel = connectorOwnerKey(owner);
@@ -546,33 +558,36 @@ async function initiateFreshComposioConnection(
   }
 
   // Register the flow only once Composio has accepted the initiate, so a failed
-  // initiate leaves no orphan record. The nonce is a value only this
-  // authenticated initiate could mint — that's what makes the record the
-  // callback's anti-forgery gate.
-  registerConnectFlow(
-    nonce,
+  // initiate leaves no orphan record. The record keeps the connected account
+  // `link()` created: that account, not one the callback's query names, is the
+  // one the callback persists. The browser binding's cookie goes only to this
+  // caller (scoped to the callback path), and the record keeps only its hash.
+  const binding = mintBrowserBinding();
+  registerConnectFlow(nonce, {
     owner,
     connectorId,
-    undefined,
-    returnTarget?.wsId,
-    returnTarget?.conversationId,
-  );
+    connectedAccountId: initiateResponse.connectedAccountId,
+    bindingHash: binding.bindingHash,
+    ...(returnTarget ? { returnWsId: returnTarget.wsId } : {}),
+    ...(returnTarget?.conversationId ? { returnConversationId: returnTarget.conversationId } : {}),
+  });
 
-  // Cookie scoped to /v1/composio-auth/callback so it's only sent on the return
-  // leg — never leaked to /initiate calls on adjacent paths or to the SPA. The
-  // server-side flow record is the anti-forgery gate; the cookie only adds
-  // browser-context binding — a third-party web origin can't set this same-origin
-  // HttpOnly cookie in the victim's browser. It is NOT tamper resistance: the
-  // value is sha256(nonce) and the nonce rides in the callback URL, so any client
-  // that already holds the nonce recomputes it. Kept for parity with
-  // /v1/mcp-auth/callback as cheap defense-in-depth.
-  const stateHash = sha256Hex(nonce);
   return json<ComposioInitiateResponse>({ authorizationUrl: initiateResponse.redirectUrl }, 200, {
-    "Set-Cookie": buildComposioStateCookie(stateHash, 900, ctx.secureCookies),
+    "Set-Cookie": buildComposioStateCookie(binding.cookieValue, 900),
   });
 }
 
-/** Validate the callback (nonce, browser-binding cookie, server-side flow record) and return the trusted (owner, connectorId) plus the vendor fields, or an error Response. */
+/**
+ * Validate the callback and return what to persist, or an error Response.
+ *
+ * Order matters. The nonce finds the flow, and the browser binding is checked
+ * before anything else, so a request from a browser the initiate did not bind
+ * neither completes nor ends someone else's flow. Once the binding verifies,
+ * the flow is consumed whatever the outcome: a denied or failed callback
+ * cannot be replayed with other parameters. The connected account is the one
+ * the initiate recorded; the query's id is only a cross-check, and a callback
+ * that names another account is refused.
+ */
 async function validateCallbackParams(c: Context<AppEnv>): Promise<
   | {
       connectedAccountId: string;
@@ -583,12 +598,27 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
     }
   | Response
 > {
-  const connectedAccountId =
-    c.req.query("connectedAccountId") ?? c.req.query("connected_account_id");
-  const status = c.req.query("status") ?? "ACTIVE";
-  const error = c.req.query("error");
   const nonce = c.req.query("n");
+  if (!nonce) {
+    return c.text("missing nonce", 400);
+  }
 
+  const pending = peekConnectFlow(nonce);
+  if (!pending) {
+    return errorPage(c, "<h3>Unknown or expired authorization flow.</h3>");
+  }
+  if (
+    !browserBindingMatches(c.req.header("cookie"), COMPOSIO_STATE_COOKIE, [pending.bindingHash])
+  ) {
+    return errorPage(c, "<h3>Authorization session mismatch.</h3>");
+  }
+  // Bound to this browser: from here every outcome ends the flow.
+  const flow = consumeConnectFlow(nonce);
+  if (!flow) {
+    return errorPage(c, "<h3>Unknown or expired authorization flow.</h3>");
+  }
+
+  const error = c.req.query("error");
   if (error) {
     c.header("Content-Security-Policy", ERROR_PAGE_CSP);
     return c.html(
@@ -608,6 +638,7 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
   // Deny-listed rather than allow-listed on purpose: an unrecognised status
   // keeps today's behaviour, where an allow-list would turn one unseen success
   // spelling into "nobody can connect anything".
+  const status = c.req.query("status") ?? "ACTIVE";
   if (FAILED_CALLBACK_STATUSES.has(status.trim().toLowerCase())) {
     c.header("Content-Security-Policy", ERROR_PAGE_CSP);
     return c.html(
@@ -616,48 +647,36 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
       400,
     );
   }
-  if (!nonce) {
-    return c.text("missing nonce", 400);
-  }
-  if (!connectedAccountId) {
+
+  // Composio appends the account it created at initiate. Its absence means the
+  // return did not come from a completed hosted flow; a different id is not
+  // this flow's account. Either way nothing is persisted.
+  const queryAccountId = c.req.query("connectedAccountId") ?? c.req.query("connected_account_id");
+  if (!queryAccountId) {
     return c.text("missing connectedAccountId", 400);
   }
-
-  // Browser-context binding (defense-in-depth): the cookie set by /initiate must
-  // hash to the nonce. This only stops a third-party web origin from driving the
-  // callback in the victim's browser — a client that holds the nonce recomputes
-  // sha256(nonce) itself. The server-side record consumed below is the real gate.
-  const cookieValue = readCookie(c.req.header("cookie"), "nb_composio_state");
-  if (!cookieValue || !timingSafeEqualHex(cookieValue, sha256Hex(nonce))) {
-    c.header("Content-Security-Policy", ERROR_PAGE_CSP);
-    return c.html(
-      "<html><body><h3>Authorization session mismatch.</h3>" +
-        `${reinitiateParagraph()}</body></html>`,
-      400,
-    );
+  if (queryAccountId !== flow.connectedAccountId) {
+    log.warn("[composio-auth] callback named a connected account other than the flow's", {
+      event: "composio_auth.callback",
+      outcome: "account_mismatch",
+      connector: flow.connectorId,
+      owner: connectorOwnerKey(flow.owner),
+    });
+    return errorPage(c, "<h3>Connection does not match this authorization flow.</h3>");
   }
 
-  // Anti-forgery gate: recover (owner, connectorId) from the server-side record
-  // an authenticated /initiate created under this nonce. No record ⟹ the nonce
-  // was never issued (or is already used / expired) — reject rather than trust
-  // the query. This is what stops an unauthenticated caller from landing a
-  // connection under another owner. One-shot: `consume` removes the record.
-  const flow = consumeConnectFlow(nonce);
-  if (!flow) {
-    c.header("Content-Security-Policy", ERROR_PAGE_CSP);
-    return c.html(
-      "<html><body><h3>Unknown or expired authorization flow.</h3>" +
-        `${reinitiateParagraph()}</body></html>`,
-      400,
-    );
-  }
-
-  const { connectorId: cid, owner, returnWsId, returnConversationId } = flow;
+  const { connectorId: cid, owner, connectedAccountId, returnWsId, returnConversationId } = flow;
   if (!returnWsId) return { connectedAccountId, status, cid, owner };
   const returnTarget: ReturnTarget = returnConversationId
     ? { wsId: returnWsId, conversationId: returnConversationId }
     : { wsId: returnWsId };
   return { connectedAccountId, status, cid, owner, returnTarget };
+}
+
+/** A 400 error page with the restrictive CSP and the "connect again" hint. */
+function errorPage(c: Context<AppEnv>, heading: string): Response {
+  c.header("Content-Security-Policy", ERROR_PAGE_CSP);
+  return c.html(`<html><body>${heading}${reinitiateParagraph()}</body></html>`, 400);
 }
 
 /** Load a callback `cid` from the catalog and confirm it is Composio-backed, else an error Response. */
@@ -723,44 +742,11 @@ async function recoverCallbackSource(
   }
 }
 
-/** Build the `nb_composio_state` Set-Cookie value scoped to the callback path. */
-function buildComposioStateCookie(value: string, maxAgeSeconds: number, secure: boolean): string {
-  const parts = [
-    `nb_composio_state=${value}`,
-    "HttpOnly",
-    "SameSite=Lax",
-    "Path=/v1/composio-auth/callback",
-    `Max-Age=${maxAgeSeconds}`,
-  ];
-  if (secure) parts.push("Secure");
-  return parts.join("; ");
-}
+const COMPOSIO_STATE_COOKIE = "nb_composio_state";
 
-// ── Helpers shared with mcp-auth.ts in shape (kept inline to avoid
-// cross-route coupling — these are stock building blocks). ─────────
-
-function sha256Hex(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
-}
-
-const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
-function timingSafeEqualHex(a: string, b: string): boolean {
-  if (!SHA256_HEX_RE.test(a) || !SHA256_HEX_RE.test(b)) return false;
-  return timingSafeEqual(Buffer.from(a, "hex"), Buffer.from(b, "hex"));
-}
-
-function readCookie(header: string | undefined, name: string): string | null {
-  if (!header) return null;
-  const parts = header.split(";");
-  for (const part of parts) {
-    const trimmed = part.trim();
-    const eq = trimmed.indexOf("=");
-    if (eq < 0) continue;
-    const k = trimmed.slice(0, eq);
-    const v = trimmed.slice(eq + 1);
-    if (k === name) return v;
-  }
-  return null;
+/** Build the `__Host-nb_composio_state` flow cookie. */
+function buildComposioStateCookie(value: string, maxAgeSeconds: number): string {
+  return buildFlowCookie(COMPOSIO_STATE_COOKIE, value, maxAgeSeconds);
 }
 
 function escapeHtml(s: string): string {

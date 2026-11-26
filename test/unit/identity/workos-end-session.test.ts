@@ -7,7 +7,7 @@
  * token's `sid` names: from an expired token too, since sign-out often follows
  * one, but never from a token whose signature does not verify. With no access
  * token, as from a tab idle past the cookie's hour, it finds the session
- * through `nb_refresh`.
+ * through `__Host-nb_refresh`.
  */
 
 import { beforeAll, describe, expect, it } from "bun:test";
@@ -139,7 +139,7 @@ function logoutRequest(cookie: string): Request {
 }
 
 function withAccessToken(token: string): Request {
-  return logoutRequest(`nb_session=${token}; nb_refresh=rt_live`);
+  return logoutRequest(`__Host-nb_session=${token}; __Host-nb_refresh=rt_live`);
 }
 
 // ── endSession ──────────────────────────────────────────────────────
@@ -183,7 +183,7 @@ describe("WorkosIdentityProvider.endSession", () => {
       asked.push(refreshToken);
       return { accessToken: minted, refreshToken: "rt_rotated" };
     });
-    await provider.endSession(logoutRequest("nb_refresh=rt_idle"));
+    await provider.endSession(logoutRequest("__Host-nb_refresh=rt_idle"));
     expect(asked).toEqual(["rt_idle"]);
     expect(revoked).toEqual(["session_idle"]);
   });
@@ -192,7 +192,7 @@ describe("WorkosIdentityProvider.endSession", () => {
     const { provider, revoked } = createProvider(async () => {
       throw new TypeError("fetch failed");
     });
-    await expect(provider.endSession(logoutRequest("nb_refresh=rt_idle"))).rejects.toThrow();
+    await expect(provider.endSession(logoutRequest("__Host-nb_refresh=rt_idle"))).rejects.toThrow();
     expect(revoked).toEqual([]);
   });
 });

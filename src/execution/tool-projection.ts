@@ -49,7 +49,7 @@ import {
   type ConnectorSkillCandidate,
   type EngineHooks,
   type EventSink,
-  isModelVisible,
+  isAgentCallable,
   SKILL_ACTIVATED_META_KEY,
   SKILL_SUPPRESSION_META_KEY,
   type ToolCall,
@@ -245,7 +245,7 @@ function openChannel(server: () => Server): McpChannel & { close(): Promise<void
 /** The tools an agent may call: the router's set, model-visible, minus engine state. */
 async function projectedTools(router: ToolRouter): Promise<ToolSchema[]> {
   const all = await router.availableTools();
-  return all.filter((t) => isModelVisible(t) && !ENGINE_STATE_TOOLS.has(t.name));
+  return all.filter((t) => isAgentCallable(t) && !ENGINE_STATE_TOOLS.has(t.name));
 }
 
 type CallTool = (

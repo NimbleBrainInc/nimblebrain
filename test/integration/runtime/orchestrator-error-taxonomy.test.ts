@@ -1,12 +1,13 @@
 /**
- * Orchestrator error-taxonomy tests.
+ * What the chat door answers for names the orchestrator would reject.
  *
- * Each orchestrator error class surfaces a distinct `data.reason` discriminator
- * on the `isError: true` tool result that flows through `runtime.chat()`:
- * `invalid_tool_name`, `workspace_access_denied` (the wall — a call to any
- * workspace other than the session's is denied), and `unknown_tool_source`.
- * Conflating them under one symptom hides real failure modes. These tests use
- * the two-workspace fixture so the routing path matches production.
+ * Each orchestrator error class carries a distinct `data.reason` discriminator
+ * (`invalid_tool_name`, `workspace_access_denied`, `unknown_tool_source`),
+ * pinned at the router in `test/unit/orchestrator/route-error-mapping.test.ts`.
+ * On the chat door none of these names is in the run's listing, so the engine
+ * refuses each before routing, with one answer whatever the name addresses:
+ * no workspace is looked up, so nothing about one leaks. These tests use the
+ * two-workspace fixture so the routing path matches production.
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
@@ -28,22 +29,15 @@ describe("runtime.chat — orchestrator error taxonomy", () => {
     }
   });
 
+  const UNLISTED = "not in this run's tool list";
+
   /**
-   * Each test pins exactly one of the four orchestrator error classes by
-   * scripting the echo model to emit a tool call that triggers that error
-   * class, then inspects the resulting `tool_call.ok = false` record's
-   * `output` string for the discriminator.
-   *
-   * Why look at the chat result's `toolCalls[]` rather than the raw
-   * `tool.done` event payload: `result.toolCalls[].output` is the
-   * serialized `isError: true` result, which carries the structured
-   * `reason` field on its `structuredContent`. The event payload
-   * `tool.done.data` doesn't include `structuredContent` separately —
-   * it's already collapsed into the result by the time the engine
-   * builds the chat result.
+   * Each test scripts the echo model to emit a tool call that one orchestrator
+   * error class would reject, then inspects the resulting `tool_call.ok =
+   * false` record's `output`.
    */
 
-  it("`UnknownNamespacedToolName` → reason='invalid_tool_name'", async () => {
+  it("a malformed `ws_` name is refused before routing", async () => {
     fixture = await createTwoWorkspaceFixture({
       modelResponses: [
         {
@@ -70,7 +64,7 @@ describe("runtime.chat — orchestrator error taxonomy", () => {
     expect(tc).toBeDefined();
     if (!tc) return;
     expect(tc.ok).toBe(false);
-    expect(tc.output).toContain("invalid tool name");
+    expect(tc.output).toContain(UNLISTED);
   });
 
   it("a `ws_<id>-` name is rejected without leaking whether that workspace exists", async () => {
@@ -100,13 +94,13 @@ describe("runtime.chat — orchestrator error taxonomy", () => {
     expect(tc).toBeDefined();
     if (!tc) return;
     expect(tc.ok).toBe(false);
-    // Rejected before existence is checked: the error names the retired form,
-    // never "unknown workspace" (no existence leak).
-    expect(tc.output).toMatch(/retired/i);
-    expect(tc.output).not.toMatch(/unknown workspace/i);
+    // Refused before existence is checked: never "unknown workspace" (no existence leak).
+    expect(tc.output).toBe(
+      `ws_002cbcedbb32d4b3-crm__search is not available to the agent: it is ${UNLISTED}. Use nb__search to find the tools you can call; a tool whose connector is reconnecting is listed again on a later step.`,
+    );
   });
 
-  it("a `ws_<id>-` name naming a real, unreachable workspace is rejected as a retired form", async () => {
+  it("a `ws_<id>-` name naming a real, unreachable workspace is refused the same way", async () => {
     // Naming a second workspace is unexpressible, so a real-but-unreachable
     // workspace and a bogus one fail identically, at parse — no lookup, no leak.
     // The `WorkspaceToolUnavailable → workspace_access_denied` mapping is covered
@@ -145,10 +139,11 @@ describe("runtime.chat — orchestrator error taxonomy", () => {
     expect(tc).toBeDefined();
     if (!tc) return;
     expect(tc.ok).toBe(false);
-    expect(tc.output).toMatch(/retired/i);
+    expect(tc.output).toContain(UNLISTED);
+    expect(tc.output).not.toMatch(/unknown workspace/i);
   });
 
-  it("`UnknownToolSource` → reason='unknown_tool_source'", async () => {
+  it("a name whose source is not registered is refused before routing", async () => {
     // Target a workspace the identity CAN access but with a source name
     // that isn't registered in that workspace's `ToolRegistry`.
     fixture = await createTwoWorkspaceFixture({
@@ -158,9 +153,8 @@ describe("runtime.chat — orchestrator error taxonomy", () => {
             {
               toolCallId: "call_unknown_source",
               // Bare, so it resolves against the session's own workspace — where
-              // `nonexistent` is not registered. Orchestrator must surface
-              // UnknownToolSource: the workspace is in reach, the source name
-              // just doesn't resolve.
+              // `nonexistent` is not registered, so the run's listing has no
+              // such tool.
               toolName: "nonexistent__do_thing",
               input: "{}",
             },
@@ -196,6 +190,6 @@ describe("runtime.chat — orchestrator error taxonomy", () => {
     expect(tc).toBeDefined();
     if (!tc) return;
     expect(tc.ok).toBe(false);
-    expect(tc.output).toMatch(/no source|nonexistent/i);
+    expect(tc.output).toContain(UNLISTED);
   });
 });

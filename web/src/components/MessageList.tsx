@@ -341,12 +341,13 @@ function StopReasonNotice({ stopReason }: { stopReason: string }) {
 }
 
 /**
- * Whether resending the turn could succeed. A missing or rejected model key fails the
- * same way until someone changes the key and restarts, so it offers no retry
- * and its message, which says what to fix, becomes the headline.
+ * Whether resending the turn could succeed. A missing or rejected model key, or
+ * a coding agent's CLI signed out of its subscription, fails the same way until
+ * someone fixes it, so it offers no retry and its message, which says what to
+ * fix, becomes the headline.
  */
 function retryCanSucceed(msg: ChatMessage): boolean {
-  return msg.errorCode !== "model_auth_failed";
+  return msg.errorCode !== "model_auth_failed" && msg.errorCode !== "agent_signed_out";
 }
 
 /**

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `host(ctx).read` and `.list` send their request on the stream of the tool call they serve. The host answers host-resources requests only there, for the user that call was made for, and refuses one on the connection's standalone stream with `-32003`. See [Host Resources](https://docs.nimblebrain.ai/extensions/host-resources/).
+
 ## [0.9.0]
 
 ### Changed

@@ -9,6 +9,8 @@ The **Plugins → Browse plugins** list is the **catalog**: one directory of [`S
 
 Only an entry advertising a `remotes[]` endpoint is installable: the runtime connects to remote MCP servers and does not acquire, verify, or execute downloadable `packages[]`. An entry offering only packages is dropped from Browse with a logged reason.
 
+An install names a catalog entry by its `id`. The runtime resolves that id, matched exactly, to the catalog's own entry and builds the connector from that entry alone: URL, auth, transport, scopes, and authorization parameters. Whatever else the request carries is discarded. An id the catalog does not list is refused with `NOT_IN_CATALOG`, for a [personal install](/using/personal-connectors/) as for a workspace install. Adding a server by its URL is a separate capability, available only on a local install (`npx nimblebrain`).
+
 ## Where the catalog lives
 
 [`NB_CURATED_CATALOG_DIR`](/config/environment/) names a directory. Every `*.yaml`, `*.yml`, and `*.json` in it is read in sorted filename order and aggregated into one catalog; unset, the runtime falls back to the minimal DCR-only example baked into the image so a fresh install is not empty.
@@ -40,10 +42,10 @@ The kinds and what each asks of a *user* are documented once, in [Connectors →
 
 <Aside type="caution" title="A brokered entry must be in your catalog">
   Installing a brokered connector spends your platform's broker credential to
-  create a connection on your account, so the install re-resolves the entry's
-  provider block from **your** catalog by id and discards whatever the caller
-  sent. A brokered entry the catalog does not publish is refused — which means a
-  brokered connector reaches your users only through `NB_CURATED_CATALOG_DIR`.
+  create a connection on your account. Like every install, it is built from
+  **your** catalog's entry for the id, and an id the catalog does not publish is
+  refused — which means a brokered connector reaches your users only through
+  `NB_CURATED_CATALOG_DIR`.
 </Aside>
 
 ### 2. Add the YAML entry
@@ -203,7 +205,7 @@ servers:
         tags: [search]
 ```
 
-`providerAuth` is copied verbatim into the connector's transport at install. The install path re-reads the entry from the operator-published catalog first and refuses a `provider`-auth install it cannot verify there, so a workspace admin cannot forge an entry that spends your account key against an endpoint of their choosing.
+`providerAuth` is copied verbatim into the connector's transport at install. The install builds the connector from the operator-published catalog's entry for the id, never from the caller's copy, so a workspace admin cannot forge an entry that spends your account key against an endpoint of their choosing.
 
 The provider name must match one registered on the platform. Registering one is a small addition beside the built-in credential providers; `src/connectors/providers/smithery/transport-credential.ts` is the closest model.
 

@@ -208,6 +208,22 @@ export class ConnectorCatalog {
     return new Map(entries.map((e) => [e.url, e]));
   }
 
+  /**
+   * The Browse listing for one id, matched exactly, or `null` when the catalog
+   * lists none. Same projection and first-wins dedupe as `list()`. An install
+   * resolves the requested id to this, so what gets installed is the operator's
+   * entry and never the caller's copy of it.
+   */
+  async listingById(id: string): Promise<CatalogListing | null> {
+    const { servers } = await this.servers();
+    for (const { detail } of servers) {
+      if (detail.name !== id) continue;
+      const listing = projectServerDetailToCatalogListing(detail);
+      if (listing) return listing;
+    }
+    return null;
+  }
+
   /** Single-entry lookup by reverse-DNS id (used by set_oauth_client handlers). */
   async catalogById(id: string): Promise<ConnectorCatalogEntry | null> {
     const entries = await this.catalogEntries();

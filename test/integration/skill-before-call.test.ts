@@ -173,9 +173,10 @@ beforeAll(async () => {
   const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
   registry.addSource(source);
 
-  // The tenant's own copy rules, bound to the bundle's drafting tool.
+  // The tenant's own copy rules, bound to the bundle's drafting tool. A person
+  // sets tool-affinity, so the write goes through the Skills settings door.
   const created = await runWithRequestContext(
-    { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID },
+    { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, shellCall: true },
     () =>
       registry.execute({
         id: "create-tenant-skill",

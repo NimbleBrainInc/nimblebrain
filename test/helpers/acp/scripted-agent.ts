@@ -60,6 +60,8 @@ export interface ScriptedAgentOptions {
   providers?: acp.ProviderInfo[];
   /** Fail the turn after its steps with this error, as a model call that failed would. */
   failTurn?: () => unknown;
+  /** `_meta` on the `initialize` answer, as an agent that describes itself there would send. */
+  initMeta?: Record<string, unknown>;
   /**
    * Answer a cancelled turn with this instead of `cancelled`, as an agent whose
    * turn ended as the cancel arrived would; a throw fails the turn instead.
@@ -114,6 +116,7 @@ export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
         ...(opts.providers ? { providers: {} } : {}),
       },
       agentInfo: { name: "scripted", version: "1" },
+      ...(opts.initMeta ? { _meta: opts.initMeta } : {}),
     }))
     .onRequest(acp.methods.agent.providers.list, () => ({ providers: opts.providers ?? [] }))
     .onRequest(acp.methods.agent.providers.set, (ctx) => {

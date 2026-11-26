@@ -24,10 +24,12 @@ import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
  *     mac      = HMAC-SHA256(tenantKey, "v1.<base64url(payload)>")
  *     tenantKey = HKDF-SHA256(masterKey, salt=tid, info="oauth-bouncer/v1", L=32)
  *
- * `inner` is the existing CSRF state token (already bound to
- * `nb_oauth_state` cookie by the callback route). The envelope does not
- * replace that binding — it carries it through opaquely. Both checks
- * must pass on callback: router-side HMAC and tenant-side cookie hash.
+ * `inner` is the existing CSRF state token (already bound to the
+ * `__Host-nb_oauth_state` cookie by the callback route). The envelope does
+ * not replace that binding — it carries it through opaquely. Both checks
+ * must pass on callback: router-side HMAC and tenant-side cookie hash. The
+ * router 302s the browser to the tenant's own host, the host that set that
+ * host-only cookie, so the tenant-side check sees it.
  *
  * Trust boundary:
  *   - `masterKey` lives ONLY on the bouncer.

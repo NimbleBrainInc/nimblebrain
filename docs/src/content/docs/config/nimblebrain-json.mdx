@@ -725,7 +725,7 @@ Experimental. Runs a turn on an agent other than NimbleBrain's own engine: a [ni
 |---|---|
 | `default` | The runtime every run executes on: `native`, or a name under `runtimes`. Default `native`. |
 | `modelGateway` | The installation's model gateway, by its root URL: each provider is at `<modelGateway>/<provider>`. The one model endpoint every external agent calls, with a per-turn credential, at each call's provider; and the native engine's for [every provider](#through-a-model-gateway). Required for external runtimes outside the `dev` identity provider. |
-| `runtimes.<name>.driver` | The agent the worker serves: `nimblebrain-agent`. |
+| `runtimes.<name>.driver` | The agent the worker serves: `nimblebrain-agent`, or `claude-code` / `codex` for [your own subscription](/config/subscriptions/) (the `dev` identity provider only). |
 | `runtimes.<name>.url` | The worker's ACP endpoint. |
 
 What stays with NimbleBrain, whichever runtime runs a turn:
@@ -735,6 +735,8 @@ What stays with NimbleBrain, whichever runtime runs a turn:
 - **Credentials.** The runtime signs a connection credential with the installation's [run key](/config/secrets/), which the worker checks against the runtime's `/.well-known/run-keys.json`. Each turn's model calls carry a credential minted for that turn, which the gateway verifies against the same key set.
 
 A worker runtime does not check a run's spend accounts or input-token cap before each model call. When the model gateway says it enforces grants (its `GET /providers` answer carries `"grants": true`), such a run still executes on the worker: the runtime reserves the run's share of each spend account (its balance divided by how many runs may share it, such as a batch's concurrency), writes the smaller of that share and the cap into the run's model credential as a token `grant`, and the gateway refuses the run's calls once its input and output tokens reach it. Otherwise a run that sets either executes on the native runtime, which checks each call, even when `default` names the worker. Chat and every other run execute on the default. Each turn's model credential lasts as long as the turn may run: a task's own duration cap, or for a chat turn `tasks.maxRunDurationMs`, at which the turn is stopped with an error naming the limit. Outside the `dev` identity provider external runtimes need the run key and a `modelGateway`, and the runtime refuses to start without them. On a developer's machine, run a worker on loopback with `NB_AGENT_AUTH=none` and leave out `modelGateway`: it calls its provider with its own key.
+
+With the `claude-code` or `codex` driver, the worker runs that coding agent's own CLI on your machine, signed in to your Claude or ChatGPT subscription, so turns need no API key. Such a runtime brings its own model: its turns, the conversation's title and the summary that folds a long history all run on it, and the chat names the runtime instead of offering models. A run with a spend budget still runs on the native engine and needs a provider. `npx nimblebrain use` sets this up; see [Run on your subscription](/config/subscriptions/).
 
 A worker holds a turn's connection in memory, so a worker that stops mid-turn (a rollout drains it, it restarts) cuts the turn, as a runtime restart cuts a native one. The run ends with the error `The agent restarted mid-turn, so this turn was cut off. Try again; tool calls made before the cut may already have run.` (type `AgentConnectionLostError`). It is not retried mid-turn, because the tools it called already ran; a task records it as a transient failure.
 
@@ -807,7 +809,7 @@ File upload limits applied when `features.fileContext` is enabled.
 | `maxFileSize` | `integer` (bytes) | 26 MB | Maximum size of a single uploaded file. |
 | `maxTotalSize` | `integer` (bytes) | 100 MB | Maximum total size of all files per message. |
 | `maxFilesPerMessage` | `integer` | 10 | Maximum number of files per chat message. |
-| `maxExtractedTextSize` | `integer` (bytes) | 200 KB | Maximum extracted text size per file. |
+| `maxExtractedTextSize` | `integer` (bytes) | 200 KB | Maximum extracted text size per file. Extraction work scales with it: a larger value lets larger Word and Excel files through. |
 
 An upload to the workspace file store (the Files app, or an app's file picker) is not a chat message: `maxFilesPerMessage` does not apply to it. It takes up to 100 files at a time, each within `maxFileSize` and all together within `maxTotalSize`. The chat composer shows the per-message limits before you send.
 

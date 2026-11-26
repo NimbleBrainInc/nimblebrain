@@ -4,16 +4,15 @@
  * A record is created at a Composio initiate route — behind `requireAuth`,
  * with the owner derived from the authenticated session — and consumed once at
  * the unauthenticated `/v1/composio-auth/callback` (the return leg from the
- * vendor). This server-side record, not the `nb_composio_state` cookie, is the
- * anti-forgery boundary: the callback derives `owner` and `connectorId` from
- * the record rather than the query string, and a callback whose `nonce` names
- * no record is rejected. So a caller who can author the cookie (its value is a
- * bare hash of the nonce) still can't land a connection under an owner it
- * never authenticated as — the missing server record fails the flow closed.
- * This mirrors how `/v1/mcp-auth/callback` gates on `oauth-flow-registry`.
+ * vendor). The record holds everything the callback lands: the owner, the
+ * connector, and the connected account Composio created at initiate. The
+ * callback takes none of these from its query. It also holds the hash of the
+ * browser binding the initiate set as the `nb_composio_state` cookie
+ * (`src/oauth/flow-binding.ts`), so only the browser that ran the initiate
+ * completes the flow.
  *
- * Keyed by the 256-bit random `nonce` the initiate mints — unguessable, so
- * only the browser that ran an authenticated initiate holds a usable one.
+ * Keyed by the 256-bit random `nonce` the initiate mints. The nonce rides in
+ * the callback URL, so it is a lookup key, not a credential.
  *
  * State is not persisted, for the same reasons as `oauth-flow-registry`:
  * connect flows complete in seconds and a process restart mid-flow is correctly
@@ -33,13 +32,21 @@
 
 import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
 
-interface PendingConnectFlow {
+/** What an authenticated initiate records for its callback to land. */
+export interface ConnectFlow {
   owner: ConnectorOwner;
   connectorId: string;
+  /** The connected account Composio created for this flow at initiate; the one the callback persists. */
+  connectedAccountId: string;
+  /** sha256 of the browser binding the initiate set as the flow's cookie. */
+  bindingHash: string;
   /** The workspace a personal connect was started from, to return to. */
   returnWsId?: string;
   /** The caller's conversation in `returnWsId` to reopen on return, checked by the initiate. */
   returnConversationId?: string;
+}
+
+interface PendingConnectFlow extends ConnectFlow {
   timeout: ReturnType<typeof setTimeout>;
 }
 
@@ -56,12 +63,11 @@ export const DEFAULT_CONNECT_FLOW_TTL_MS = 15 * 60 * 1000;
 /** Record a pending connect flow keyed by `nonce`. Overwrites (and reclaims) any prior record for the same nonce. */
 export function registerConnectFlow(
   nonce: string,
-  owner: ConnectorOwner,
-  connectorId: string,
-  ttlMs: number = DEFAULT_CONNECT_FLOW_TTL_MS,
-  returnWsId?: string,
-  returnConversationId?: string,
+  flow: ConnectFlow,
+  options: { ttlMs?: number } = {},
 ): void {
+  const ttlMs = options.ttlMs ?? DEFAULT_CONNECT_FLOW_TTL_MS;
+  const { returnWsId, returnConversationId } = flow;
   // A fresh 256-bit nonce never collides in practice; clearing a pre-existing
   // record's timer is pure hygiene so a double-register can't leak a timer.
   const prev = flows.get(nonce);
@@ -77,8 +83,10 @@ export function registerConnectFlow(
   timeout.unref?.();
 
   flows.set(nonce, {
-    owner,
-    connectorId,
+    owner: flow.owner,
+    connectorId: flow.connectorId,
+    connectedAccountId: flow.connectedAccountId,
+    bindingHash: flow.bindingHash,
     timeout,
     ...(returnWsId ? { returnWsId } : {}),
     ...(returnWsId && returnConversationId ? { returnConversationId } : {}),
@@ -86,24 +94,36 @@ export function registerConnectFlow(
 }
 
 /**
- * Consume the pending flow for `nonce`: return its trusted `owner`,
- * `connectorId`, return workspace and conversation, and remove the record (one-shot). Returns null when no record
- * exists — the callback treats that as an unknown/expired flow and rejects.
+ * Read the pending flow for `nonce` without removing it, or null when none is
+ * pending. The callback checks the browser binding against it first, so a
+ * request from another browser cannot end someone else's flow.
  */
-export function consumeConnectFlow(nonce: string): {
-  owner: ConnectorOwner;
-  connectorId: string;
-  returnWsId?: string;
-  returnConversationId?: string;
-} | null {
+export function peekConnectFlow(nonce: string): ConnectFlow | null {
+  const flow = flows.get(nonce);
+  return flow ? publicFlow(flow) : null;
+}
+
+/**
+ * Consume the pending flow for `nonce`: return what its initiate recorded and
+ * remove the record (one-shot). Returns null when no record exists — the
+ * callback treats that as an unknown/expired flow and rejects.
+ */
+export function consumeConnectFlow(nonce: string): ConnectFlow | null {
   const flow = flows.get(nonce);
   if (!flow) return null;
   flows.delete(nonce);
   clearTimeout(flow.timeout);
-  const { owner, connectorId, returnWsId, returnConversationId } = flow;
+  return publicFlow(flow);
+}
+
+function publicFlow(flow: PendingConnectFlow): ConnectFlow {
+  const { owner, connectorId, connectedAccountId, bindingHash, returnWsId, returnConversationId } =
+    flow;
   return {
     owner,
     connectorId,
+    connectedAccountId,
+    bindingHash,
     ...(returnWsId ? { returnWsId } : {}),
     ...(returnConversationId ? { returnConversationId } : {}),
   };

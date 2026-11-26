@@ -184,10 +184,10 @@ describe("bouncer-config: value validation", () => {
   });
 
   test("rejects callback URL whose path doesn't end with /v1/mcp-auth/callback", () => {
-    // The session-binding cookie is path-scoped to /v1/mcp-auth/callback.
-    // A URL pointing elsewhere silently breaks every flow with a generic
-    // session-mismatch error and no clear root-cause signal — exactly the
-    // class of misconfiguration the boot check is meant to catch.
+    // The bouncer forwards a callback to the tenant at the path it was
+    // called on, and the tenant serves the callback only at
+    // /v1/mcp-auth/callback. A URL pointing elsewhere breaks every flow —
+    // exactly the class of misconfiguration the boot check is meant to catch.
     process.env.NB_OAUTH_BOUNCER_CALLBACK_URL = "https://connect.example.com/auth/callback";
     process.env.NB_OAUTH_BOUNCER_TENANT_KEY = VALID_KEY_B64;
     process.env.NB_TENANT_ID = VALID_TID;

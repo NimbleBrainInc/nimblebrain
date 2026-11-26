@@ -164,7 +164,7 @@ describe("init opens the browser", () => {
     const { stdout, code } = await run(["--yes", "--agent", "none"], noKey.deps);
     expect(code).toBe(0);
     expect(stdout).not.toContain("error:");
-    expect(stdout).toContain("Next: give NimbleBrain a model so it can chat.");
+    expect(stdout).toContain("Next: choose what runs NimbleBrain's agents so it can chat.");
     expect(noKey.launched).toEqual([]);
   });
 });

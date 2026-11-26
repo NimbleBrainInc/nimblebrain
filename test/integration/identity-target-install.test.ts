@@ -68,15 +68,30 @@ function dcrEntry(): CatalogListing {
 
 function composioEntry(): CatalogListing {
   return {
-    id: "com.example/gmail",
-    name: "Gmail",
-    description: "Email",
+    id: "io.asana/mcp",
+    name: "Asana",
+    description: "Tasks",
     install: {
       kind: "remote-oauth",
-      url: "https://mcp.composio.test/gmail",
+      url: "https://backend.composio.dev/v3/mcp",
       transportType: "streamable-http",
       auth: "composio",
-      composio: { toolkit: "gmail" },
+      composio: { toolkit: "asana" },
+    },
+  };
+}
+
+/** A `remote-oauth` entry whose id the operator catalog does not list. */
+function uncataloguedEntry(): CatalogListing {
+  return {
+    id: "zz.attacker/not-in-catalog",
+    name: "Looks Official",
+    description: "x",
+    install: {
+      kind: "remote-oauth",
+      url: "https://attacker.example.test/mcp",
+      transportType: "streamable-http",
+      auth: "dcr",
     },
   };
 }
@@ -107,7 +122,11 @@ function grantChanges(h: Harness): unknown[] {
   return h.events.filter((e) => e.type === "connector.grant_changed").map((e) => e.data);
 }
 
-async function buildHarness(): Promise<Harness> {
+/**
+ * `hostLoopback` is the local-install gate: `null` (the default) is a hosted
+ * instance, where adding a server by URL is refused.
+ */
+async function buildHarness(hostLoopback: string | null = null): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-identity-install-"));
   // Identity OAuth tokens and DCR registrations are keys in the credential store, which
   // the runtime installs at its composition root; this harness has no runtime.
@@ -163,6 +182,7 @@ async function buildHarness(): Promise<Harness> {
         },
       }),
     getAllowInsecureRemotes: () => false,
+    getHostLoopback: () => hostLoopback,
     getCredentialStore: () => requireCredentialStore(),
     getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
   });
@@ -269,22 +289,83 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     expect(sc.connectors[0].state).toBe("running");
   });
 
-  test("rejects a non-remote-oauth entry — personal connectors are remote MCP connections", async () => {
+  test("refuses a direct-url entry on a hosted instance before the personal path", async () => {
     const result = await h.tool.handler({
       action: "install",
       entry: unsupportedEntry(),
       scope: "identity",
+      wsId: h.sharedWsId,
     });
     expect(result.isError).toBe(true);
-    expect(resultText(result)).toMatch(/remote MCP connection/i);
-    // Nothing written to the identity plane.
+    expect((result.structuredContent as { error?: string }).error).toBe("DIRECT_URL_NOT_ALLOWED");
     expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
+    expect(h.grants).toEqual({});
+  });
+
+  test("rejects a non-remote-oauth entry on a local install — personal connectors are remote MCP connections", async () => {
+    const local = await buildHarness("127.0.0.1");
+    try {
+      const result = await local.tool.handler({
+        action: "install",
+        entry: unsupportedEntry(),
+        scope: "identity",
+      });
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toMatch(/remote MCP connection/i);
+      // Nothing written to the identity plane.
+      expect(
+        await new IdentityConnectorStore({ workDir: local.workDir }).list(USER.id),
+      ).toHaveLength(0);
+    } finally {
+      rmSync(local.workDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses an id the catalog does not list, and a case variant of one it does", async () => {
+    const caseVariant = dcrEntry();
+    caseVariant.id = "AI.Granola/mcp";
+    for (const entry of [uncataloguedEntry(), caseVariant]) {
+      const result = await h.tool.handler({ action: "install", entry, scope: "identity" });
+      expect(result.isError).toBe(true);
+      expect((result.structuredContent as { error?: string }).error).toBe("NOT_IN_CATALOG");
+    }
+    expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
+  });
+
+  test("a known id is installed from the catalog's entry: forged url, transport, scopes and params are dropped", async () => {
+    const forged = dcrEntry();
+    forged.install = {
+      kind: "remote-oauth",
+      url: "https://attacker.example.test/mcp",
+      transportType: "sse",
+      // The catalog entry is `dcr`. Were the caller's `static` trusted, the
+      // personal path would refuse it (no instance OAuth client).
+      auth: "static",
+      oauthClientSetup: { portalUrl: "https://x.test", hint: "x", clientSecretKey: "x.secret" },
+      requiredScopes: ["admin:everything"],
+      additionalAuthorizationParams: { prompt: "none" },
+    };
+    const result = await h.tool.handler({ action: "install", entry: forged, scope: "identity" });
+    expect(result.isError).toBe(false);
+    const refs = await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id);
+    expect(refs).toHaveLength(1);
+    const ref = refs[0] as {
+      url?: string;
+      transport?: unknown;
+      scopes?: unknown;
+      additionalAuthorizationParams?: unknown;
+    };
+    expect(ref.url).toBe("https://mcp.granola.ai/mcp");
+    expect(ref.transport).toEqual({ type: "streamable-http" });
+    expect(ref.scopes).toBeUndefined();
+    expect(ref.additionalAuthorizationParams).toBeUndefined();
   });
 
   test("rejects a connector whose slug is a reserved system name (nb) — nothing persisted", async () => {
     // A DCR entry whose id slugifies to `nb` would surface its tools as `nb__…`
-    // in the trusted system band. Install refuses it at the boundary, so no
-    // reserved-name record ever reaches connectors.json.
+    // in the trusted system band. A catalog id is reverse-DNS, so its slug
+    // carries a `-` and never equals a reserved name; a bare `nb` is refused at
+    // the catalog lookup, and no reserved-name record reaches connectors.json.
     const reserved: CatalogListing = {
       id: "nb",
       name: "Reserved",
@@ -298,7 +379,7 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     };
     const result = await h.tool.handler({ action: "install", entry: reserved, scope: "identity" });
     expect(result.isError).toBe(true);
-    expect(resultText(result).toLowerCase()).toContain("reserved");
+    expect((result.structuredContent as { error?: string }).error).toBe("NOT_IN_CATALOG");
     expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
   });
 
@@ -406,6 +487,20 @@ describe("manage_connectors.install scope:identity with wsId — install and gra
   afterEach(() => {
     resetTestCredentialStore();
     rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("an id the catalog does not list installs nothing and grants nothing", async () => {
+    const result = await h.tool.handler({
+      action: "install",
+      entry: uncataloguedEntry(),
+      scope: "identity",
+      wsId: h.sharedWsId,
+    });
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { error?: string }).error).toBe("NOT_IN_CATALOG");
+    expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
+    expect(h.grants).toEqual({});
+    expect(grantChanges(h)).toEqual([]);
   });
 
   test("grants the new personal connector into the named workspace", async () => {

@@ -19,20 +19,20 @@ export function authRoutes(ctx: AppContext) {
   // authRoutes in app.ts (mcp-auth, composio-auth) and 401 their
   // unauthenticated-by-design OAuth callbacks. Same footgun called out in
   // mcp-auth.ts and conversation-events.ts.
-  app.get("/v1/auth/authorize", (_c) => {
-    return handleOidcAuthorize(ctx.provider);
+  app.get("/v1/auth/authorize", (c) => {
+    return handleOidcAuthorize(c.req.raw, ctx.provider);
   });
 
   app.get("/v1/auth/callback", (c) => {
-    return handleOidcCallback(c.req.raw, ctx.provider, ctx.secureCookies, ctx.appOrigin);
+    return handleOidcCallback(c.req.raw, ctx.provider, ctx.appOrigin);
   });
 
   app.post("/v1/auth/refresh", limit, (c) => {
-    return handleOidcRefresh(c.req.raw, ctx.provider, ctx.secureCookies);
+    return handleOidcRefresh(c.req.raw, ctx.provider);
   });
 
   // Logout needs no valid identity: it must work with a lapsed access token,
-  // where `nb_refresh` is the only live credential left in the browser. It ends
+  // where the refresh cookie is the only live credential left in the browser. It ends
   // the identity provider's session too, or the next sign-in resumes it.
   // Requiring JSON forces a CORS preflight, which a foreign origin fails, so a
   // cross-site form cannot sign the user out.
