@@ -84,8 +84,6 @@ function mapChatTurnError(err: unknown): Response | null {
   if (err instanceof ConversationAccessDeniedError) {
     return conversationAccessDeniedResponse(err.conversationId);
   }
-  // Both chat doors can surface this: `store.load` throws it on an
-  // ownerless conversation file. 422 rather than a raw 500.
   if (err instanceof ConversationCorruptedError) {
     return conversationCorruptedResponse(err);
   }
@@ -189,7 +187,8 @@ function conversationNotFoundResponse(conversationId: string): Response {
 
 /**
  * Refuse a `conversationId` that is not one of the caller's conversations in
- * the workspace in the URL, or null when absent or found. The runtime refuses
+ * the workspace in the URL (`404`), or one the conversations plugin cannot read
+ * (`422`), or null when absent or found. The runtime refuses
  * the same ids; asking here first makes the answer an HTTP 404 on every chat
  * route (the stream route would otherwise carry it as an error frame) and keeps
  * a refused chat or upload from storing its files.
@@ -212,6 +211,7 @@ async function refuseConversationOutsideWorkspace(
     if (err instanceof ConversationNotFoundError) {
       return conversationNotFoundResponse(err.conversationId);
     }
+    if (err instanceof ConversationCorruptedError) return conversationCorruptedResponse(err);
     throw err;
   }
 }
@@ -225,15 +225,14 @@ function conversationAccessDeniedResponse(conversationId: string): Response {
   );
 }
 
-function conversationCorruptedResponse(err: ConversationCorruptedError): Response {
-  // 422 (Unprocessable Entity) over 500: the request is well-formed
-  // but the server-side state can't process it until an operator
-  // runs the migration. Surfacing the migration command in the
-  // message gives the operator the next step instead of a stack
-  // trace in the logs.
+/**
+ * The answer to a conversation the conversations plugin cannot read: 422 over
+ * 500, since the request is well-formed and the stored conversation is what
+ * cannot serve it. Every conversation route answers it the same way.
+ */
+export function conversationCorruptedResponse(err: ConversationCorruptedError): Response {
   return apiError(422, "conversation_corrupted", err.message, {
     conversationId: err.conversationId,
-    reason: err.reason,
   });
 }
 
@@ -1203,6 +1202,7 @@ export async function handleBootstrap(
       unread: runtime.getNotificationStore(ws.id).unreadCount(),
     })),
     config: {
+      chat: runtime.isChatEnabled(),
       models,
       configuredProviders,
       // The composer needs both of these before its first paint, and the

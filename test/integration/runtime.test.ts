@@ -2,12 +2,12 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { EngineEvent, EventSink, ToolSchema } from "../../src/engine/types.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { filterTools } from "../../src/tools/surfacing.ts";
 import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
+import { ownerConversationsDir } from "../helpers/conversation-store.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
@@ -171,7 +171,7 @@ describe("Runtime", () => {
 
     // The conversation lives under the workspace's owner partition:
     // {workDir}/workspaces/<wsId>/conversations/user_alice/{convId}.jsonl
-    const ownerDir = workspaceConversationsDir(workDir, wsId, "user_alice");
+    const ownerDir = ownerConversationsDir(workDir, wsId, "user_alice");
     expect(existsSync(ownerDir)).toBe(true);
     expect(existsSync(join(ownerDir, `${conv.id}.jsonl`))).toBe(true);
     // Not at the old flat top-level path.
@@ -204,7 +204,7 @@ describe("Runtime", () => {
       workspaceId: TEST_WORKSPACE_ID,
     });
 
-    const ownerDir = workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, "usr_default");
+    const ownerDir = ownerConversationsDir(workDir, TEST_WORKSPACE_ID, "usr_default");
     const workspaceFiles = [...new Bun.Glob("*.jsonl").scanSync(ownerDir)];
     expect(workspaceFiles.length).toBeGreaterThan(0);
     // Nothing was written at the old flat top-level path.

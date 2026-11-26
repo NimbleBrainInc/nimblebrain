@@ -14,7 +14,9 @@
  * workspace-scoped writer against a workspace that is gone and asserts the
  * refusal names the workspace — and then drives the same write inside a live
  * root, because "create your own subdirectory on first write" is still how
- * conversations, files, notifications and tasks are meant to behave.
+ * files, notifications and tasks are meant to behave. Conversations are the
+ * conversations plugin's storage; the kernel checks the workspace before the
+ * plugin's `create` instead (`src/conversation/contract-store.ts`).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -23,8 +25,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { saveComposioConnection } from "../../../src/connectors/providers/composio/connection.ts";
-import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
-import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { workspaceFilesDir } from "../../../src/files/paths.ts";
 import { createFileStore } from "../../../src/files/store.ts";
 import { parseNotificationEnvelope } from "../../../src/notifications/envelope.ts";
@@ -126,12 +126,6 @@ const WRITERS: Array<{ name: string; write: () => void | Promise<void> }> = [
   {
     name: "tasks — a run summary",
     write: () => appendRun(workDir, WS, OWNER, "daily-digest", run()),
-  },
-  {
-    name: "conversations — the owner partition",
-    write: () => {
-      new EventSourcedConversationStore({ dir: workspaceConversationsDir(workDir, WS, OWNER) });
-    },
   },
   {
     name: "files — the owner partition",
@@ -237,10 +231,6 @@ describe("the same write inside a live workspace", () => {
     // `scaffoldWorkspace` deliberately does not pre-create these: an empty dir
     // in every workspace that never uses the feature is worse than one made on
     // demand. That stays true — the guard is about the ROOT, not the subtree.
-    expect(existsSync(workspaceConversationsDir(workDir, WS, OWNER))).toBe(false);
-    new EventSourcedConversationStore({ dir: workspaceConversationsDir(workDir, WS, OWNER) });
-    expect(existsSync(workspaceConversationsDir(workDir, WS, OWNER))).toBe(true);
-
     expect(existsSync(workspaceTasksDir(workDir, WS, OWNER))).toBe(false);
     saveTask(workDir, WS, OWNER, task());
     expect(existsSync(taskRunsDir(workDir, WS, OWNER, "daily-digest"))).toBe(false);

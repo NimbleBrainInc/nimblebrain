@@ -102,6 +102,8 @@ export interface CommandSourceContext {
    * on the home / profile surfaces.
    */
   isWorkspaceRoute?: boolean;
+  /** Whether the instance offers chat (a plugin implements the conversations contract). */
+  chatEnabled?: boolean;
 }
 
 export interface CommandSource {

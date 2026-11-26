@@ -190,7 +190,7 @@ Sets the working directory where NimbleBrain stores runtime state.
 export NB_WORK_DIR=/data/nimblebrain
 ```
 
-The working directory contains `workspaces/<wsId>/` (which holds each workspace's conversations, files, and tasks), `users/<userId>/`, `logs/`, and `cache/`.
+The working directory contains `workspaces/<wsId>/` (which holds each workspace's files and tasks), `plugin-data/<plugin>/` (each plugin's data, the conversations plugin's conversations among them), `users/<userId>/`, `logs/`, and `cache/`.
 
 `NB_WORK_DIR` sets the `workDir` runtime value (where state lives). It does **not** select which `nimblebrain.json` is loaded — config-file discovery is driven by `--config`, a project-local `.nimblebrain/`, and the command's default workdir. See [config resolution](/config/nimblebrain-json/#config-resolution).
 

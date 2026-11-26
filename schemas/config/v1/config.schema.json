@@ -541,7 +541,7 @@
       "additionalProperties": false
     },
     "plugins": {
-      "description": "The Agent Plugins this instance runs as part of the runtime, by plugin name: where each comes from, whether it is a system plugin, and where its servers already run. Absent, the runtime runs none. Each plugin's plugin.json is validated against the Agent Plugins 1.0.0 schema and its ai.nimblebrain extension, and the contracts the plugins implement and require are checked, at boot; a plugin that fails refuses the boot with the plugin and field named. Experimental: the runtime loads and checks the plugins and logs the result; it does not yet start their servers.",
+      "description": "The Agent Plugins this instance runs as part of the runtime, by plugin name: where each comes from, whether it is a system plugin, and where its servers already run. The runtime runs its default plugins (the built-in conversations plugin, as a system plugin, which turns chat on) with these entries over them: an entry of a default's name replaces it, and false turns it off. Each plugin's plugin.json is validated against the Agent Plugins 1.0.0 schema and its ai.nimblebrain extension, and the contracts the plugins implement and require are checked, at boot; a plugin that fails refuses the boot with the plugin and field named. The runtime starts the server of each plugin that implements a contract it consumes. Experimental.",
       "type": "object",
       "propertyNames": {
         "pattern": "^(?!.*(?:--|\\.\\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$",

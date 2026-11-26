@@ -21,7 +21,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync } from "node:fs";
 import type { Transport } from "@modelcontextprotocol/client";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import type { EventSink } from "../engine/types.ts";
+import type { EventSink, ToolResult } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
 import { CONTRACT_SOURCE_NAMES } from "../tools/identity-sources.ts";
@@ -134,11 +134,22 @@ function toolErrorOf(result: { content?: unknown }): ContractToolError {
   return new ContractToolError("internal_error", typeof text === "string" ? text : "tool error");
 }
 
+/**
+ * Facts only the host knows, laid over a bound server's tool results before
+ * they reach agents, the door and apps, by contract: the kernel names the
+ * contract whose results it completes, never the plugin.
+ */
+export type ResultOverlays = ReadonlyMap<
+  string,
+  (toolName: string, result: ToolResult) => ToolResult
+>;
+
 /** Start one binding's server and connect to it. */
 async function startBoundServer(
   resolved: ResolvedPlugins,
   binding: ContractBinding,
   eventSink: EventSink,
+  overlays: ResultOverlays,
 ): Promise<BoundServer> {
   const name = `${binding.contract}: the ${binding.plugin} plugin's server "${binding.server}"`;
   const plugin = resolved.plugins.find((p) => p.name === binding.plugin);
@@ -180,6 +191,7 @@ async function startBoundServer(
           }),
         ),
       hiddenTools: new Set(binding.privateTools),
+      resultOverlay: overlays.get(binding.contract),
     },
     eventSink,
   );
@@ -223,11 +235,12 @@ async function startBoundServer(
 export async function startBoundServers(
   resolved: ResolvedPlugins,
   eventSink: EventSink,
+  overlays: ResultOverlays = new Map(),
 ): Promise<Map<string, BoundServer>> {
   const bound = new Map<string, BoundServer>();
   try {
     for (const binding of resolved.bindings) {
-      bound.set(binding.contract, await startBoundServer(resolved, binding, eventSink));
+      bound.set(binding.contract, await startBoundServer(resolved, binding, eventSink, overlays));
     }
   } catch (err) {
     await stopBoundServers(bound);

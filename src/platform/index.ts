@@ -2,23 +2,12 @@ import type { EventSink } from "../engine/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ToolSource } from "../tools/types.ts";
 import { createComposeSource } from "./compose/source.ts";
-import { createConversationsSource } from "./conversations/source.ts";
 import { createFilesSource } from "./files/source.ts";
 import { createHooksSource } from "./hooks/source.ts";
 import { createNotificationsSource } from "./notifications/source.ts";
 import { createSkillsSource } from "./skills/source.ts";
 import { createTasksSource } from "./tasks/source.ts";
 import { createUsageSource } from "./usage/source.ts";
-
-/**
- * Sources a plugin's server provides in place of a built-in app: the server
- * the operator's plugins bind to the contract that app implements, already
- * started (`src/plugins/bound-servers.ts`).
- */
-export interface BoundPlatformSources {
-  /** The server bound to `ai.nimblebrain.conversations`, in place of the built-in conversations app. */
-  conversations?: ToolSource;
-}
 
 /**
  * Create every platform app source, started and ready to register.
@@ -42,11 +31,9 @@ export interface BoundPlatformSources {
 export async function createPlatformSources(
   runtime: Runtime,
   eventSink: EventSink,
-  bound: BoundPlatformSources = {},
 ): Promise<ToolSource[]> {
   // Order doesn't matter — placements control UI ordering.
   const sources: ToolSource[] = [
-    bound.conversations ?? (await createConversationsSource(runtime, eventSink)),
     createFilesSource(runtime, eventSink),
     await createTasksSource(runtime, eventSink),
     createUsageSource(runtime, eventSink),
@@ -58,10 +45,8 @@ export async function createPlatformSources(
 
   // start() builds the in-process MCP server + InMemoryTransport pair and
   // runs `initialize`, so the source is ready to serve tools and resources
-  // as soon as this returns. A bound source arrives started.
-  for (const src of sources) {
-    if (src !== bound.conversations) await src.start();
-  }
+  // as soon as this returns.
+  for (const src of sources) await src.start();
 
   return sources;
 }

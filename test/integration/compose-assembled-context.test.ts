@@ -18,7 +18,6 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
-import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import type { ComposeAssembledContextOutput } from "../../src/platform/schemas/compose.ts";
@@ -54,7 +53,7 @@ async function getLatestRunId(runtime: Runtime, convId: string): Promise<string 
         convId,
         DEV_IDENTITY.id,
       );
-      if (!(store instanceof EventSourcedConversationStore)) return null;
+      if (!store) return null;
       const events = await store.readEvents(convId);
       for (let i = events.length - 1; i >= 0; i--) {
         const ev = events[i];

@@ -8,8 +8,8 @@ import type {
   ChatStartResponse,
 } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
-import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { ownerConversationsDir } from "../helpers/conversation-store.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
@@ -140,12 +140,11 @@ describe("detached turn HTTP surface", () => {
   });
 
   it("start on a pre-migration (ownerless) conversation is 422, not 500", async () => {
-    // Seed a corrupted conversation: line-1 metadata without ownerId makes the
-    // store throw ConversationCorruptedError on load (the resume path). It must
-    // live at the exact path the resume reads: the workspace in the URL
-    // (TEST_WORKSPACE_ID) and the dev caller's owner partition.
+    // Seed a corrupted conversation: a header without ownerId, which the
+    // conversations plugin answers `conversation_corrupted`. It lives where the
+    // plugin keeps the dev caller's conversations in the URL's workspace.
     const convId = "conv_dead00000000beef"; // conv_ + 16 hex
-    const convDir = workspaceConversationsDir(testDir, TEST_WORKSPACE_ID, DEV_OWNER);
+    const convDir = ownerConversationsDir(testDir, TEST_WORKSPACE_ID, DEV_OWNER);
     mkdirSync(convDir, { recursive: true });
     const meta = JSON.stringify({
       id: convId,

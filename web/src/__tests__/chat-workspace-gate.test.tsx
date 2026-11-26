@@ -14,8 +14,8 @@ import { describe, expect, test } from "bun:test";
 import { ACTIONS } from "../components/palette/actions";
 import type { CommandSourceContext } from "../components/palette/types";
 
-const ctx = (isWorkspaceRoute: boolean): CommandSourceContext =>
-  ({ isWorkspaceRoute }) as CommandSourceContext;
+const ctx = (isWorkspaceRoute: boolean, chatEnabled = true): CommandSourceContext =>
+  ({ isWorkspaceRoute, chatEnabled }) as CommandSourceContext;
 
 describe("chat is workspace-only — palette gate", () => {
   test("the 'Open / close chat' action is available only on a workspace route", () => {
@@ -25,5 +25,10 @@ describe("chat is workspace-only — palette gate", () => {
     // On a `/w/:slug` route → offered; on home / profile → hidden.
     expect(toggleChat?.available?.(ctx(true))).toBe(true);
     expect(toggleChat?.available?.(ctx(false))).toBe(false);
+  });
+
+  test("the action is not offered on an instance with chat off", () => {
+    const toggleChat = ACTIONS.find((a) => a.id === "toggle-chat");
+    expect(toggleChat?.available?.(ctx(true, false))).toBe(false);
   });
 });

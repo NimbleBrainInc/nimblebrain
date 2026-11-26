@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { PlacementEntry } from "../types";
 import { platformFirst, routablePlacements } from "./routable-placements";
 
-// The platform's Conversations placement, as `src/platform/conversations` declares it.
+// The Conversations placement, as the conversations plugin declares it in its handshake.
 const conversations: PlacementEntry = {
   serverName: "conversations",
   slot: "sidebar",

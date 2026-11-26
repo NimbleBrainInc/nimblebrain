@@ -129,7 +129,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/platform/*/ui/bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/platform/*/ui/bun.lock', 'packages/*/ui/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-${{ github.job }}-
             ${{ runner.os }}-bun-
@@ -160,7 +160,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/platform/*/ui/bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/platform/*/ui/bun.lock', 'packages/*/ui/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-${{ github.job }}-
             ${{ runner.os }}-bun-
@@ -171,7 +171,7 @@ jobs:
       # Platform app UI deps must be installed so each app's co-located tests
       # (e.g. the tasks markdown sanitizer contract) can resolve their
       # own npm dependencies (marked, dompurify, happy-dom). `test:platform-apps`
-      # runs `bun test` inside each src/platform/*/ui package. Mirrors the
+      # runs `bun test` inside each src/platform/*/ui and packages/*/ui package. Mirrors the
       # install loop inside build:platform-apps; CI doesn't build the app UIs for
       # the unit job, so the install must be explicit.
       - name: Install platform app UI dependencies
@@ -183,7 +183,7 @@ jobs:
         run: bun run test:ui
 
   # The root unit suite must run on a fresh checkout with ONLY root deps — no
-  # `web/` or `src/platform/*/ui` install. `test-unit` above installs both, so it
+  # `web/`, `src/platform/*/ui` or `packages/*/ui` install. `test-unit` above installs both, so it
   # cannot catch a web-only (or app-UI-only) module leaking into the backend
   # test graph: such a regression stays green there and surfaces only on a
   # contributor's fresh clone/worktree (`bun install && bun test test/unit/`).
@@ -206,7 +206,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/platform/*/ui/bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/platform/*/ui/bun.lock', 'packages/*/ui/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-${{ github.job }}-
             ${{ runner.os }}-bun-
@@ -231,7 +231,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/platform/*/ui/bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/platform/*/ui/bun.lock', 'packages/*/ui/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-${{ github.job }}-
             ${{ runner.os }}-bun-

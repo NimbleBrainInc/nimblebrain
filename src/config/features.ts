@@ -14,8 +14,8 @@ export interface FeatureFlags {
   /**
    * Default on. Long conversations are compacted at run start — the oldest
    * turns folded into a summary, operator messages retained verbatim — to
-   * bound context growth without per-turn cache thrash. Event-sourced stores
-   * only; set false to replay the full history every turn. See
+   * bound context growth without per-turn cache thrash. Set false to replay
+   * the full history every turn. See
    * `history/compaction.ts`.
    */
   compaction?: boolean;

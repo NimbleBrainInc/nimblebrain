@@ -26,18 +26,16 @@ export type {
 } from "./connectors/runtime/index.ts";
 // Connectors
 export { ConnectorLifecycleManager } from "./connectors/runtime/index.ts";
-export { EventSourcedConversationStore } from "./conversation/event-sourced-store.ts";
+// Conversation
 export type {
   Conversation,
+  ConversationEventStore,
   ConversationListResult,
   ConversationPatch,
-  ConversationStore,
   ConversationSummary,
   ListOptions,
   StoredMessage,
 } from "./conversation/index.ts";
-// Conversation
-export { InMemoryConversationStore } from "./conversation/index.ts";
 export type {
   EngineConfig,
   EngineEvent,

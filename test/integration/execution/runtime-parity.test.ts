@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
-import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
 import type { StoredMessage } from "../../../src/conversation/types.ts";
 import type {
   EngineEvent,
@@ -26,6 +25,7 @@ import {
   scriptedDriver,
   stepsFrom,
 } from "../../helpers/acp/scripted-agent.ts";
+import { conversationStore } from "../../helpers/conversation-store.ts";
 import { createEchoModel, type EchoModelResponse } from "../../helpers/echo-model.ts";
 
 // The same resolved run through the native runtime and through the generic
@@ -291,8 +291,8 @@ describe("acp runtime: the projection holds the run's bound", () => {
 
 /** Replay a run's events from a conversation log, as the next turn reads them. */
 async function replayed(events: EngineEvent[]): Promise<StoredMessage[]> {
-  const dir = join(mkdtempSync(join(tmpdir(), "acp-replay-")), "conversations");
-  const store = new EventSourcedConversationStore({ dir });
+  const dir = mkdtempSync(join(tmpdir(), "acp-replay-"));
+  const store = conversationStore(dir, "ws_0076759dbbe19fcc", "user_test");
   const conversation = await store.create({ model: "test:echo", ownerId: "user_test" });
   store.setActiveConversation(conversation.id);
   for (const event of events) store.emit(event);

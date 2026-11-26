@@ -1,6 +1,35 @@
+/**
+ * The public tools' schemas: the TypeBox authoring source for the `$defs`
+ * entries of every tool `contract.ts` marks public.
+ *
+ * `scripts/emit-contract.ts` turns this file into the published document
+ * (`schemas/contracts/conversations/v1/contract.json`), and `--check` fails when
+ * the committed document differs. Nothing at runtime imports this file.
+ *
+ * Scope (workspace and owner) and principal are never arguments: they are
+ * carried by the call's authenticated context (CONTRACT.md, "Scope and
+ * principal").
+ */
+
 import { type Static, Type } from "@sinclair/typebox";
-import { StringEnum } from "./_shared.ts";
-import { PluginRequestAnswer } from "./plugins.ts";
+
+/**
+ * A string enum in the `{ type, enum }` form JSON Schema validators and MCP
+ * clients expect, narrowed to its literals for TypeScript.
+ */
+function StringEnum<T extends string>(
+  values: readonly T[],
+  options: { description?: string } = {},
+) {
+  return Type.Unsafe<T>({ type: "string", enum: [...values], ...options });
+}
+
+/** A user's answer to an agent's request to use a plugin, as a stored user message carries it. */
+const PluginRequestAnswer = Type.Object({
+  /** The plugin's server, as the request named it. */
+  serverName: Type.String(),
+  answer: Type.Union([Type.Literal("use"), Type.Literal("not_now")]),
+});
 
 export const ConversationsListInput = Type.Object({
   limit: Type.Optional(Type.Number({ description: "Max conversations to return. Default: 20." })),
@@ -24,9 +53,8 @@ export const ConversationsListInput = Type.Object({
     }),
   ),
 });
-// No `workspaceId`: conversations are workspace-owned and the workspace is
-// AMBIENT (the request's focused workspace, via `RequestContext`), never a
-// caller-supplied coordinate. Same contract as `files__*`.
+// No `workspaceId`: conversations are workspace-owned and the workspace is the
+// call's scope (the host context), never a caller-supplied coordinate.
 export type ConversationsListInput = Static<typeof ConversationsListInput>;
 
 /**
@@ -97,11 +125,9 @@ export type ConversationsExportInput = Static<typeof ConversationsExportInput>;
 
 // ── Output schemas ──────────────────────────────────────────────────────
 //
-// Each tool's result, published as its `outputSchema` (src/platform/AGENTS.md
-// §2.1). The display shapes are declared here, where the handlers' outputs name
-// them; `jsonl-reader.ts` builds them from stored conversation logs and
-// re-exports them for its callers. A shape read from a log admits every value
-// that log can hold, not only what the runtime writes today.
+// Each tool's result, published as its `outputSchema`. A shape projected from
+// stored events admits every value an event can hold, not only what a host
+// writes today.
 
 const NullableString = Type.Union([Type.String(), Type.Null()]);
 
@@ -275,8 +301,8 @@ export const DisplayMessage = Type.Object({
   stopReason: Type.Optional(Type.String()),
   /**
    * True when this assistant turn has no terminal event yet (no run.done /
-   * run.error) and a run is live for the conversation — a partial disk
-   * snapshot rather than a finished turn.
+   * run.error) and a run is live for the conversation: a partial snapshot
+   * rather than a finished turn.
    */
   pending: Type.Optional(Type.Boolean()),
   /**

@@ -1,15 +1,17 @@
 /**
- * Conversation list views must follow every write AND a workspace
- * archive-delete — otherwise they freeze on update / ghost on delete, and a
- * read could re-create a deleted workspace's directory.
+ * Conversation list views must follow every write AND a workspace delete —
+ * otherwise they freeze on update / ghost on delete. Deleting a workspace
+ * purges its conversations through the conversations plugin
+ * (`delete_workspace`), and nothing reads them back into existence.
  */
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
+import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { ownerConversationsDir } from "../../helpers/conversation-store.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
@@ -67,16 +69,17 @@ test("workspace delete clears its conversations from the list (no ghost) and doe
   // Sanity: the conversation is live and resolvable before the delete.
   expect(await runtime.resolveConversationStore(wsId, convId, ALICE.id)).not.toBeNull();
 
-  await runtime.getWorkspaceStore().delete(wsId);
+  const result = await runWithRequestContext({ identity: ALICE, workspaceId: wsId }, () =>
+    runtime.deleteWorkspace(wsId),
+  );
+  expect(result.deleteError).toBeUndefined();
 
-  // The archived workspace's conversation is no longer listed.
+  // The purged workspace's conversation is no longer listed.
   const list = await runtime.listConversations(wsId, {}, { userId: ALICE.id });
   expect(list.conversations.find((c) => c.id === convId)).toBeUndefined();
 
-  // resolveConversationStore returns null instead of constructing a store at the
-  // archived path (whose constructor would mkdir it back into existence).
   expect(await runtime.resolveConversationStore(wsId, convId, ALICE.id)).toBeNull();
 
-  // The workspace's conversation dir was NOT re-created under workspaces/.
-  expect(existsSync(workspaceConversationsDir(workDir, wsId, ALICE.id))).toBe(false);
+  // The plugin's storage for the workspace is gone, and no read made it again.
+  expect(existsSync(ownerConversationsDir(workDir, wsId, ALICE.id))).toBe(false);
 });

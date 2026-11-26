@@ -4,7 +4,7 @@
  * The unit tests cover the pure helpers (planCompaction, summarizeMessages,
  * compactConversationMessages, reconstructMessages). This test covers
  * the ROUTE the units don't: enabling `features.compaction` and driving real
- * `/v1/workspaces/<wsId>/chat/start` turns through a live Runtime + EventSourcedConversationStore until
+ * `/v1/workspaces/<wsId>/chat/start` turns through a live Runtime and its conversation store until
  * the accumulated history crosses the budget, then proving that
  * `Runtime.maybeCompactHistory` actually fired — it persisted a
  * `history.compacted` event, the model-facing projection is compacted, and the
@@ -22,7 +22,6 @@ import { join } from "node:path";
 import type { ChatResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { reconstructMessages } from "../../src/history/event-reconstructor.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -116,15 +115,13 @@ async function sendTurn(message: string, conversationId?: string): Promise<strin
   return body.conversationId as string;
 }
 
-function readEvents(conversationId: string): ConversationEvent[] {
+/** A conversation's stored events, once the runtime's queued writes for it have settled. */
+function readEvents(conversationId: string): Promise<ConversationEvent[]> {
   // The authenticated caller (usr_test via the test auth adapter) chats in
-  // TEST_WORKSPACE_ID, so the conversation lives in that workspace's owner partition.
-  const path = join(
-    workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, TEST_IDENTITY.id),
-    `${conversationId}.jsonl`,
-  );
-  const lines = readFileSync(path, "utf-8").split("\n").filter(Boolean);
-  return lines.slice(1).map((l) => JSON.parse(l) as ConversationEvent);
+  // TEST_WORKSPACE_ID, so the conversation is in that workspace, under that owner.
+  return runtime
+    .workspaceConversationStore(TEST_WORKSPACE_ID, TEST_IDENTITY.id)
+    .readEvents(conversationId);
 }
 
 describe("history compaction — wired path", () => {
@@ -142,10 +139,10 @@ describe("history compaction — wired path", () => {
         `Follow up number ${i} with some additional content to grow the history.`,
         convId,
       );
-      compacted = readEvents(convId).some((e) => e.type === "history.compacted");
+      compacted = (await readEvents(convId)).some((e) => e.type === "history.compacted");
     }
 
-    const events = readEvents(convId);
+    const events = await readEvents(convId);
 
     // (a) The wired path actually persisted a compaction event.
     expect(events.some((e) => e.type === "history.compacted")).toBe(true);

@@ -6,25 +6,26 @@
  * Two layers tested here:
  *   1. The `assertNoBinaryPayloads` helper itself — sanity tests for the
  *      detection logic across the typed-array family and nested shapes.
- *   2. The store wiring — `append()` on both event-sourced and JSONL
- *      stores must reject binary-bearing messages, and a clean message
- *      with a `resource_link` must round-trip without producing the
- *      per-byte dict pattern on disk.
+ *   2. The store wiring — `append()` on the store the runtime writes
+ *      through (the conversations contract) must reject binary-bearing
+ *      messages before anything is sent, and a clean message with a
+ *      `resource_link` must round-trip without producing the per-byte
+ *      dict pattern in what the plugin stores.
  */
 
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertNoBinaryPayloads } from "../../../src/conversation/binary-guard.ts";
-import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
 import type { StoredMessage } from "../../../src/conversation/types.ts";
+import { conversationStore } from "../../helpers/conversation-store.ts";
+
+const WORKSPACE = "ws_0076759dbbe19fcc";
+const OWNER = "user_test";
 
 function makeDir(): string {
-  const base = mkdtempSync(join(tmpdir(), "binary-guard-"));
-  const dir = join(base, "conversations");
-  mkdirSync(dir, { recursive: true });
-  return dir;
+  return mkdtempSync(join(tmpdir(), "binary-guard-"));
 }
 
 /** Per-byte dict shape that bloats JSONL — see issue #54. */
@@ -85,8 +86,8 @@ describe("assertNoBinaryPayloads", () => {
 });
 
 describe("conversation stores reject binary-bearing messages (issue #54)", () => {
-  it("EventSourcedConversationStore.append throws on Buffer in contentParts", async () => {
-    const store = new EventSourcedConversationStore({ dir: makeDir() });
+  it("append throws on Buffer in contentParts", async () => {
+    const store = conversationStore(makeDir(), WORKSPACE, OWNER);
     const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
 
     // biome-ignore lint/plugin/double-cast: a message with raw bytes inline in a content part, claimed as a StoredMessage, whose parts carry no bytes
@@ -105,7 +106,7 @@ describe("conversation stores reject binary-bearing messages (issue #54)", () =>
 
   it("clean message with resource_link round-trips without per-byte dict pattern", async () => {
     const dir = makeDir();
-    const store = new EventSourcedConversationStore({ dir });
+    const store = conversationStore(dir, WORKSPACE, OWNER);
     const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
 
     const clean: StoredMessage = {
@@ -118,7 +119,10 @@ describe("conversation stores reject binary-bearing messages (issue #54)", () =>
     };
     await store.append(conv, clean);
 
-    const raw = readFileSync(join(dir, `${conv.id}.jsonl`), "utf-8");
+    const raw = readFileSync(
+      join(dir, "workspaces", WORKSPACE, "conversations", OWNER, `${conv.id}.jsonl`),
+      "utf-8",
+    );
     expect(raw).toContain("files://fl_test");
     expect(raw).not.toMatch(PER_BYTE_DICT_RE);
   });

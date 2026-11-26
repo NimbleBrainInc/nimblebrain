@@ -1,14 +1,14 @@
 /**
- * The runtime's conversation store over the conversations contract
- * (`ai.nimblebrain.conversations`), for an instance whose plugins bind it.
+ * The runtime's conversation store: the conversations contract
+ * (`ai.nimblebrain.conversations`), called on the server the operator's plugins
+ * bind to it. It is the one way the kernel reads and writes a conversation.
  *
- * It implements the same {@link ConversationEventStore} the filesystem store
- * does, so turns, history reconstruction, compaction and titles run on it
- * unchanged. Every operation is a call to the bound server under the kernel's
- * own (`host`) principal: records through the private tools (`create`,
- * `append_events`, `events`, `delete`, `delete_workspace`), and the
- * projections a public tool already answers (`get` for a conversation's
- * metadata, `list`, `update`).
+ * Turns, history reconstruction, compaction and titles run on the
+ * {@link ConversationEventStore} it hands out. Every operation is a call to the
+ * bound server under the kernel's own (`host`) principal: records through the
+ * private tools (`create`, `append_events`, `events`, `delete`,
+ * `delete_workspace`), and the projections a public tool already answers (`get`
+ * for a conversation's metadata, `list`, `update`).
  *
  * - **Writes are queued per conversation and sent in batches.** The engine
  *   emits events synchronously while it streams; each lands in its
@@ -31,13 +31,18 @@
  *   a gap its writer believes was filled. A completed read of the conversation
  *   (`load`, `readEvents`, `history`), which shows what was stored, opens it
  *   again.
+ * - **A conversation the server cannot read is `ConversationCorruptedError`.**
+ *   The contract's `conversation_corrupted` answers a private tool; the public
+ *   `get` answers such a conversation as absent, so a miss on `get` asks
+ *   `events`, which tells a corrupted conversation from an absent one.
  */
 
-import type { EngineEvent } from "../engine/types.ts";
+import type { EngineEvent, ToolResult } from "../engine/types.ts";
 import { reconstructMessages } from "../history/event-reconstructor.ts";
 import { log } from "../observability/log.ts";
+import { ConversationCorruptedError } from "../runtime/errors.ts";
 import { assertNoBinaryPayloads } from "./binary-guard.ts";
-import { conversationEventOf, messageEvents } from "./event-sourced-store.ts";
+import { conversationEventOf, messageEvents } from "./events.ts";
 import type {
   Conversation,
   ConversationAccessContext,
@@ -70,6 +75,32 @@ export type ContractCall = (
   args: Record<string, unknown>,
   scope: ContractScope,
 ) => Promise<Record<string, unknown>>;
+
+/**
+ * A relayed public `list` result with each row's `active` set by the host.
+ * Whether a reply is generating is the host's to know: an implementation
+ * reports what it can and the host overlays the true value (CONTRACT.md §5) on
+ * every `list` it relays, to agents, the door and apps alike. The text content
+ * is rendered again from the overlaid rows, so a model reads what a view shows.
+ */
+export function overlayListActive(
+  toolName: string,
+  result: ToolResult,
+  isActive: (conversationId: string) => boolean,
+): ToolResult {
+  const page = result.structuredContent;
+  if (toolName !== "list" || result.isError || !Array.isArray(page?.conversations)) return result;
+  const conversations = page.conversations.map((row: unknown) => {
+    const id = (row as { id?: unknown } | null)?.id;
+    return typeof id === "string" ? { ...(row as object), active: isActive(id) } : row;
+  });
+  const overlaid = { ...page, conversations };
+  return {
+    ...result,
+    structuredContent: overlaid,
+    content: [{ type: "text", text: JSON.stringify(overlaid, null, 2) }],
+  };
+}
 
 /** The largest page `events` serves. */
 const EVENTS_PAGE = 5000;
@@ -114,8 +145,6 @@ function summaryOf(r: Record<string, unknown>, scope: ContractScope): Conversati
     preview: String(r.preview ?? ""),
     totalInputTokens: Number(r.totalInputTokens ?? 0),
     totalOutputTokens: Number(r.totalOutputTokens ?? 0),
-    // The contract never prices; nothing that lists through this store reads cost.
-    totalCostUsd: 0,
     ownerId: typeof r.ownerId === "string" ? r.ownerId : scope.ownerId,
     workspaceId: scope.workspaceId,
   };
@@ -158,10 +187,28 @@ export interface ContractConversations {
 }
 
 export function createContractConversations(
-  call: ContractCall,
+  serverCall: ContractCall,
   opts: ContractConversationsOptions,
 ): ContractConversations {
   const debug = opts.logLevel === "debug";
+
+  /** One call to the server; a conversation it cannot read throws {@link ConversationCorruptedError}. */
+  async function call(
+    tool: string,
+    args: Record<string, unknown>,
+    scope: ContractScope,
+  ): Promise<Record<string, unknown>> {
+    try {
+      return await serverCall(tool, args, scope);
+    } catch (err) {
+      if (codeOf(err) !== "conversation_corrupted") throw err;
+      throw new ConversationCorruptedError(
+        String(args.id ?? ""),
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   const { assertWorkspace } = opts;
   const queues = new Map<string, WriteQueue>();
 
@@ -242,6 +289,9 @@ export function createContractConversations(
       return conversationOf(out.metadata as Record<string, unknown>);
     } catch (err) {
       if (codeOf(err) !== "conversation_not_found") throw err;
+      // The public `get` answers a corrupted conversation as absent; `events`
+      // tells the two apart, and throws for a corrupted one.
+      await call("events", { id, limit: 1 }, scope);
       reconciled(id);
       return null;
     }

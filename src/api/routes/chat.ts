@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { handleChatCancel, handleChatStart } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
+import { requireChat } from "../middleware/chat.ts";
 import { errorLog } from "../middleware/error-log.ts";
 import { requestRateLimit } from "../middleware/rate-limit.ts";
 import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspace.ts";
@@ -27,6 +28,9 @@ export function chatRoutes(ctx: AppContext) {
   // finds the conversation only in the caller's partition of the workspace in
   // its path, like every conversation read.
   const auth = requireAuth(ctx.authOptions);
+  // Chat is on only while a plugin implements the conversations contract;
+  // otherwise both routes answer `404 chat_disabled`.
+  const chat = requireChat(ctx);
   const logErrors = errorLog(ctx);
   return (
     new Hono<AppEnv>()
@@ -37,6 +41,7 @@ export function chatRoutes(ctx: AppContext) {
       .post(
         `${WORKSPACE_ROUTE_PREFIX}/chat/start`,
         auth,
+        chat,
         logErrors,
         chatBodyLimit,
         rl,
@@ -46,9 +51,9 @@ export function chatRoutes(ctx: AppContext) {
       )
       // Explicit Stop — the only way to abort an in-flight turn.
       .post(
-        // lint-ok:conversation-path (an HTTP route, not a storage path)
         `${WORKSPACE_ROUTE_PREFIX}/conversations/:id/cancel`,
         auth,
+        chat,
         logErrors,
         requireWorkspace(ctx),
         (c) => handleChatCancel(c.req.param("id"), ctx.runtime, c.var.identity, c.var.workspaceId),

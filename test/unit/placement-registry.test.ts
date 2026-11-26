@@ -116,7 +116,7 @@ describe("PlacementRegistry", () => {
 });
 
 describe("PlacementRegistry route ownership", () => {
-  // The platform's Conversations placement, as `src/platform/conversations` declares it.
+  // The Conversations placement, as the conversations plugin declares it in its handshake.
   const conversations: PlacementDeclaration = {
     slot: "sidebar",
     resourceUri: "ui://conversations/browser",

@@ -2,10 +2,9 @@ import { useEffect, useState } from "react";
 import { callTool } from "../api/client";
 import { parseToolResponse } from "../lib/tool-response";
 
-// The fields read from the `conversations__list` result (server shape:
-// ListResult / IndexEntry in src/platform/conversations/index-cache.ts),
-// declared locally as `RecentConversationsPopover` does: only tool inputs are
-// codegen'd.
+// The fields read from the `conversations__list` result (the conversations
+// contract's `list_output`), declared locally as `RecentConversationsPopover`
+// does.
 export interface RecentConversation {
   id: string;
   title: string | null;

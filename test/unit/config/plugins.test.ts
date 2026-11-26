@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { getValidator } from "../../../src/config/index.ts";
-import { enabledPlugins } from "../../../src/config/plugins.ts";
+import {
+  DEFAULT_PLUGINS,
+  enabledPlugins,
+  withDefaultPlugins,
+} from "../../../src/config/plugins.ts";
 
 const validate = getValidator();
 
@@ -48,5 +52,25 @@ describe("enabledPlugins", () => {
         ([name]) => name,
       ),
     ).toEqual(["b", "a"]);
+  });
+});
+
+describe("withDefaultPlugins", () => {
+  test("with no block the instance runs the built-in conversations plugin as a system plugin", () => {
+    expect(DEFAULT_PLUGINS).toEqual({ conversations: { source: "builtin", system: true } });
+    expect(withDefaultPlugins(undefined)).toEqual(DEFAULT_PLUGINS);
+  });
+
+  test("false turns a default off, and an entry of its name replaces it", () => {
+    expect(enabledPlugins(withDefaultPlugins({ conversations: false }))).toEqual([]);
+    expect(withDefaultPlugins({ conversations: { source: "./mine", system: true } })).toEqual({
+      conversations: { source: "./mine", system: true },
+    });
+  });
+
+  test("an operator's other plugins run beside the defaults", () => {
+    expect(
+      enabledPlugins(withDefaultPlugins({ reports: { source: "./reports" } })).map(([n]) => n),
+    ).toEqual(["conversations", "reports"]);
   });
 });

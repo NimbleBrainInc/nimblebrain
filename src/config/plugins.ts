@@ -13,8 +13,11 @@
  *
  * The block is the operator's. A plugin's manifest declares capabilities;
  * whether it runs, whether it is a system plugin, and where its servers run
- * are decided here and nowhere else. Absent, the instance runs no plugin from
- * this block and behaves as it does without one.
+ * are decided here and nowhere else.
+ *
+ * The defaults ship in the box ({@link DEFAULT_PLUGINS}): with no block the
+ * instance runs them, an entry of the same name replaces one, and `false`
+ * turns one off.
  */
 
 /** The `source` that names a plugin shipped with the runtime. */
@@ -56,6 +59,23 @@ export const PLUGIN_CONFIG_KEYS = Object.keys({
 export const PLUGIN_SERVER_CONFIG_KEYS = Object.keys({
   url: true,
 } satisfies Record<keyof PluginServerConfig, true>);
+
+/**
+ * The plugins an instance runs when its configuration names none: the built-in
+ * conversations plugin, as a system plugin, which is what turns chat on
+ * (ADR-0076, "Defaults ship in the box").
+ */
+export const DEFAULT_PLUGINS: Readonly<Record<string, PluginConfig>> = {
+  conversations: { source: BUILTIN_PLUGIN_SOURCE, system: true },
+};
+
+/**
+ * The block the instance runs: the defaults, then the operator's entries over
+ * them. An entry replaces the default of its name; `false` turns it off.
+ */
+export function withDefaultPlugins(config: PluginsConfig | undefined): PluginsConfig {
+  return { ...DEFAULT_PLUGINS, ...config };
+}
 
 /** The plugins to load, in the order the block lists them; `false` entries are left out. */
 export function enabledPlugins(config: PluginsConfig | undefined): Array<[string, PluginConfig]> {

@@ -21,9 +21,14 @@ import { appUisMissingDist, installIfMissing } from "../../../scripts/lib/dev-pr
 
 let repoRoot: string;
 
-/** Build a platform app dir the way the repo lays them out. */
-function makeApp(name: string, opts: { ui?: boolean; dist?: boolean } = {}) {
-  const ui = join(repoRoot, "src", "platform", name, "ui");
+/** Build an app UI dir the way the repo lays them out: a platform app's, or with `under: "packages"` a plugin's screen. */
+function makeApp(
+  name: string,
+  opts: { ui?: boolean; dist?: boolean; under?: "platform" | "packages" } = {},
+) {
+  const base =
+    opts.under === "packages" ? join(repoRoot, "packages") : join(repoRoot, "src", "platform");
+  const ui = join(base, name, "ui");
   mkdirSync(ui, { recursive: true });
   if (opts.ui !== false) writeFileSync(join(ui, "package.json"), "{}");
   if (opts.dist) {
@@ -77,6 +82,13 @@ describe("appUisMissingDist", () => {
   test("the returned ui path is the directory a build would run in", () => {
     const ui = makeApp("home");
     expect(appUisMissingDist(repoRoot)[0]?.ui).toBe(ui);
+  });
+
+  test("selects a plugin's unbuilt screen beside the platform apps", () => {
+    makeApp("tasks", { dist: true });
+    makeApp("conversations", { under: "packages" });
+    makeApp("server-sdk", { under: "packages", ui: false });
+    expect(appUisMissingDist(repoRoot).map((a) => a.name)).toEqual(["conversations"]);
   });
 
   test("dist/ alone is not enough — index.html is the sentinel the runtime resolves", () => {

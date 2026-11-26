@@ -1,7 +1,7 @@
 /**
  * The tool namespace of a bound contract is the kernel's, not the
  * implementation's: a conversations implementation whose `mcp.json` names its
- * server `archive` boots, and agents and the `/mcp/<wsId>` door see
+ * server `archive`, bound in place of the default plugin, boots, and agents and the `/mcp/<wsId>` door see
  * `conversations__*`, with the private tools hidden and refused.
  */
 
@@ -68,7 +68,9 @@ beforeAll(async () => {
     logging: { disabled: true },
     workDir: testDir,
     configPath: join(testDir, "nimblebrain.json"),
-    plugins: { archive: { source: "./archive-plugin", system: true } },
+    // The contract is a singleton: binding another implementation instead of
+    // the default turns the default off.
+    plugins: { conversations: false, archive: { source: "./archive-plugin", system: true } },
   });
   await provisionTestWorkspace(runtime);
   ({ conversationId } = await runtime.chat({

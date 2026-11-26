@@ -45,6 +45,17 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
 - **The extension declares capabilities, never trust.** Nothing in it makes a plugin a
   system plugin, sets where a server runs, or switches a kernel feature.
 
+## Defaults ship in the box
+
+- **The default plugins are configuration, in `src/config/plugins.ts` (`DEFAULT_PLUGINS`)**: the
+  built-in conversations plugin as a system plugin, which turns chat on. `withDefaultPlugins`
+  lays the operator's `plugins` block over them: an entry of a default's name replaces it, and
+  `false` turns it off. With no block the instance runs the defaults exactly as an explicit
+  entry would.
+- **Binding another implementation of a singleton contract turns the default off.** Two
+  enabled implementations refuse boot, so an operator writes `"conversations": false` beside
+  their own plugin's entry.
+
 ## System is an operator decision
 
 - **Only `nimblebrain.json` `plugins.<name>.system` makes a system plugin**
@@ -64,9 +75,9 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   Which tools are private is the contract's decision, never the plugin's.
 - **The kernel never names a plugin.** A kernel feature that needs a capability names the
   contract and asks for its binding; nothing here branches on a plugin's name.
-- **`checkConfiguredPlugins` is the boot hook.** With no plugin enabled it reads nothing
-  (not even the contract documents), so an instance without a `plugins` block boots as
-  before. With plugins it validates, logs the resolved set, and throws naming every error.
+- **`checkConfiguredPlugins` is the boot hook.** It resolves the defaults with the operator's
+  block over them. With every plugin turned off it reads nothing (not even the contract
+  documents). Otherwise it validates, logs the resolved set, and throws naming every error.
   It starts nothing; the runtime starts the bound servers from what it returns.
 
 ## Binding a contract's server
@@ -79,7 +90,21 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   at a `url` is refused at boot until the kernel holds a host credential for it.
 - **One connection per bound server, one `McpSource` (mode `plugin`).** Agents (the
   ToolRouter), the `/mcp/<wsId>` door and the app bridge reach the server through that
-  source; the kernel's contract client (`BoundServer.call`) uses the same connection.
+  source; the kernel's contract client (`BoundServer.call`) uses the same connection. Every
+  bound server's source is a platform source, so its tools, resources and placements reach
+  the shell the way an in-process app's do, and shutdown stops it once with them.
+- **A bound server's screen is placed from its own metadata.** The server answers its
+  handshake (`initialize`, or `server/discover` on the 2026-07-28 revision) with
+  `_meta["ai.nimblebrain/host"]` (`schemas/host/v1/host.schema.json`); `McpSource` keeps that
+  block for a plugin's server, and `getPlacements()` returns its placements through
+  `sanitizePlacements`, the check every connector's placements pass. No placement is
+  hard-coded in the kernel.
+- **Facts only the host knows are laid over a bound server's results** (`ResultOverlays`, by
+  contract, passed to `startBoundServers`): the runtime overlays `active` on every relayed
+  conversations `list`. The overlay renders the text content again from the overlaid result.
+- **The kernel announces its own writes.** A write through the contract store fires the
+  source's `notifications/resources/list_changed` to its subscribers for the owner, as an
+  in-process app's server would, so the owner's views refresh.
 - **The source name is the kernel's, keyed by contract** (`CONTRACT_SOURCE_NAMES` in
   `src/tools/identity-sources.ts`, beside the identity-source names it routes). So
   `conversations__*` is the namespace whichever plugin implements the contract; the

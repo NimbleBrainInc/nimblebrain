@@ -300,14 +300,39 @@ describe("server names are the plugin's own", () => {
 });
 
 describe("checkConfiguredPlugins", () => {
-  test("with no plugin enabled it reads nothing, not even the contracts", () => {
+  test("with every plugin turned off it reads nothing, not even the contracts", () => {
     const contracts = new Proxy(new Map(), {
       get() {
         throw new Error("contracts read");
       },
     }) as ContractRegistry;
-    expect(checkConfiguredPlugins(undefined, { workDir: "/w", contracts })).toBeNull();
-    expect(checkConfiguredPlugins({ tasks: false }, { workDir: "/w", contracts })).toBeNull();
+    expect(
+      checkConfiguredPlugins({ conversations: false }, { workDir: "/w", contracts }),
+    ).toBeNull();
+    expect(
+      checkConfiguredPlugins({ conversations: false, tasks: false }, { workDir: "/w", contracts }),
+    ).toBeNull();
+  });
+
+  test("with no plugins block it binds the built-in conversations plugin, as an explicit entry does", () => {
+    const byDefault = checkConfiguredPlugins(undefined, { workDir: "/w" });
+    const explicit = checkConfiguredPlugins(
+      { conversations: { source: "builtin", system: true } },
+      { workDir: "/w" },
+    );
+    expect(byDefault).toEqual(explicit);
+    expect(byDefault?.plugins.map((p) => [p.name, p.system])).toEqual([["conversations", true]]);
+    expect(byDefault?.bindings.map((b) => b.contract)).toEqual(["ai.nimblebrain.conversations"]);
+  });
+
+  test("an operator's entry of the default's name replaces it", () => {
+    const base = tmp();
+    writeConversations(base);
+    const resolved = checkConfiguredPlugins(
+      { conversations: { source: "./conversations", system: true } },
+      { workDir: "/w", configPath: join(base, "nimblebrain.json") },
+    );
+    expect(resolved?.plugins.map((p) => p.root)).toEqual([join(base, "conversations")]);
   });
 
   test("resolves relative to the config file, and throws naming every error", () => {

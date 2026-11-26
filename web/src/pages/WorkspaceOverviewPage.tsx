@@ -37,7 +37,7 @@ import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useComposerModel } from "../hooks/useComposerModel";
 import { useConversationStarters } from "../hooks/useConversationStarters";
-import { useRecentConversations } from "../hooks/useRecentConversations";
+import { type RecentConversation, useRecentConversations } from "../hooks/useRecentConversations";
 import { useRunsNeedingReview } from "../hooks/useRunsNeedingReview";
 import { canManageWorkspaceMembers, canWriteWorkspace } from "../hooks/useScopedRole";
 import { useWorkspaceBriefing } from "../hooks/useWorkspaceBriefing";
@@ -62,11 +62,10 @@ export function WorkspaceOverviewPage() {
     error: briefingError,
     refresh: refreshBriefing,
   } = useWorkspaceBriefing(workspace?.id);
-  const recent = useRecentConversations(workspace?.id, 1);
+  const { chatEnabled, recent, firstQuestion, conversationStarters } = useOverviewChat(
+    workspace?.id,
+  );
   const reviewCount = useRunsNeedingReview(workspace?.id);
-  // Not part of `settled` below: starters come last in the list, so they can
-  // arrive after the rest without moving any row above them.
-  const conversationStarters = useConversationStarters(workspace?.id);
 
   // Connector status comes from the list the app icons already fetch. Until it
   // names this workspace (a switch in flight), the cards wait for it, so a
@@ -116,13 +115,13 @@ export function WorkspaceOverviewPage() {
         reviewCount,
         setup: {
           connectPlugin: installed.length === 0 && canWriteWorkspace(workspace.userRole),
-          firstQuestion: recent.length === 0,
+          firstQuestion,
           invite:
             workspace.memberCount === 1 &&
             canManageWorkspaceMembers(session?.user?.orgRole, workspace.userRole),
         },
         lastConversation: recent[0] ?? null,
-        conversationStarters: conversationStarters ?? [],
+        conversationStarters,
         // The workspace and today's local date: the plugins whose starters
         // show change once a day, and stay put within it.
         starterRotation: `${workspace.id}:${localDay()}`,
@@ -136,7 +135,7 @@ export function WorkspaceOverviewPage() {
           Working in <span className="font-semibold text-foreground">{workspace.name}</span>
         </h1>
 
-        <OverviewComposer workspaceName={workspace.name} onAsk={ask} />
+        {chatEnabled && <OverviewComposer workspaceName={workspace.name} onAsk={ask} />}
 
         {actions && (
           <ActionRows
@@ -151,6 +150,29 @@ export function WorkspaceOverviewPage() {
       </div>
     </div>
   );
+}
+
+const NO_CONVERSATIONS: RecentConversation[] = [];
+
+/**
+ * What the overview offers from chat: the last conversation, the first
+ * question, and the plugins' conversation starters. With chat off (no plugin
+ * implements the conversations contract) it offers none and reads nothing for
+ * them, so no row resumes a conversation or asks a question.
+ */
+function useOverviewChat(workspaceId: string | undefined) {
+  const { chat: chatEnabled } = useChatConfigContext();
+  const read = useRecentConversations(chatEnabled ? workspaceId : undefined, 1);
+  // Not part of the page's `settled`: starters come last in the list, so they
+  // can arrive after the rest without moving any row above them.
+  const starters = useConversationStarters(workspaceId);
+  const recent = chatEnabled ? read : NO_CONVERSATIONS;
+  return {
+    chatEnabled,
+    recent,
+    firstQuestion: chatEnabled && recent?.length === 0,
+    conversationStarters: chatEnabled ? (starters ?? []) : [],
+  };
 }
 
 /**

@@ -15,9 +15,6 @@ import { readJson } from "../helpers/http.ts";
  *     workspace is still `conversation_not_found`.
  *   - The runtime read `findConversation(wsId, …)` stays owner-gated within
  *     its workspace: it does not consult membership.
- *
- * Secondary assertion: `canAccess` is a pure ownership check and does not
- * consult workspace membership.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -28,8 +25,6 @@ import { join } from "node:path";
 
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import { canAccess } from "../../src/conversation/index-cache.ts";
-import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type {
   CreateUserInput,
   CreateUserResult,
@@ -41,6 +36,7 @@ import type {
 import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User } from "../../src/identity/user.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { ownerConversationsDir } from "../helpers/conversation-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeIdentity } from "../helpers/identity.ts";
 
@@ -159,13 +155,13 @@ describe("conversation access after the owner is removed from its workspace", ()
     const convId = createBody.conversationId;
     expect(convId).toMatch(/^conv_[a-f0-9]{16}$/);
 
-    // The conversation is workspace-owned: its file lives under the workspace it
-    // ran in (`workspaces/<sharedA>/conversations/<ownerId>/`) — the workspace owns
-    // the directory — and NOT in a flat top-level `conversations/` dir. The
-    // owner partition is what makes it survive removal: dropping Alice from
-    // sharedA's member list doesn't touch her conversation file.
+    // The conversation is workspace-owned: the conversations plugin stores it
+    // under the workspace it ran in, in Alice's owner partition, and NOT in a
+    // flat top-level `conversations/` dir. The owner partition is what makes it
+    // survive removal: dropping Alice from sharedA's member list doesn't touch
+    // her conversation.
     const workspacePath = join(
-      workspaceConversationsDir(workDir, sharedA, ALICE.id),
+      ownerConversationsDir(workDir, sharedA, ALICE.id),
       `${convId}.jsonl`,
     );
     const flatPath = join(workDir, "conversations", `${convId}.jsonl`);
@@ -270,23 +266,5 @@ describe("conversation access after the owner is removed from its workspace", ()
       const texts = JSON.stringify(messages);
       expect(texts).not.toContain("continuing in workspace B");
     }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Secondary unit assertion — `canAccess` is purely ownership-based and
-// does not consult workspace membership.
-// ---------------------------------------------------------------------------
-
-describe("canAccess — ownership is independent of workspace state", () => {
-  test("an owner can access their conversation regardless of workspace context", () => {
-    // The function takes a meta { ownerId } and access { userId }. No
-    // workspace state is consulted. This is the invariant the E2E
-    // above ultimately rests on — workspace membership changes can't
-    // affect what `canAccess` returns for an owner.
-    expect(canAccess({ ownerId: "usr_alice" }, { userId: "usr_alice" })).toBe(true);
-    expect(canAccess({ ownerId: "usr_alice" }, { userId: "usr_bob" })).toBe(false);
-    expect(canAccess(undefined, { userId: "usr_alice" })).toBe(false);
-    expect(canAccess({ ownerId: "" }, { userId: "usr_alice" })).toBe(false);
   });
 });

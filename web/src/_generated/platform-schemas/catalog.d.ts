@@ -323,48 +323,6 @@ export declare const PlatformToolCatalog: {
             }>;
         };
     };
-    readonly conversations: {
-        readonly list: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-                cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                search: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                sortBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"created" | "updated">>;
-                dateFrom: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                dateTo: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            }>;
-        };
-        readonly get: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                expand: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"full" | "messages" | "metadata">>;
-                limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-            }>;
-        };
-        readonly search: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                query: import("@sinclair/typebox").TString;
-                limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-            }>;
-        };
-        readonly update: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                title: import("@sinclair/typebox").TString;
-            }>;
-        };
-        readonly stats: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"all" | "day" | "month" | "week">>;
-            }>;
-        };
-        readonly export: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                format: import("@sinclair/typebox").TUnsafe<"json" | "markdown">;
-            }>;
-        };
-    };
     readonly notifications: {
         readonly list: {
             readonly input: import("@sinclair/typebox").TObject<{

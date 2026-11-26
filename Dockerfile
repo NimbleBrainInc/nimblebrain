@@ -33,7 +33,8 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production --ignore-scripts
 
-# Build every platform app UI (`src/platform/*/ui`) — each is its own
+# Build every app UI — the platform apps' (`src/platform/*/ui`) and the
+# conversations plugin's screen (`packages/conversations/ui`). Each is its own
 # single-file Vite app and must build in the container because dist/ is
 # gitignored. Only the UI directories are copied for this step, ahead of the
 # rest of src/: each UI builds from its own directory alone, so a change
@@ -48,10 +49,10 @@ RUN bun install --frozen-lockfile --production --ignore-scripts
 # so any single app's failure fails the whole RUN (a bare `wait` would mask
 # a nonzero exit). Each subshell tags its own failure with the app's UI path so
 # the culprit is greppable even though parallel output is interleaved.
-COPY --chown=1000:1000 --parents src/platform/*/ui/ ./
+COPY --chown=1000:1000 --parents src/platform/*/ui/ packages/conversations/ui/ ./
 RUN set -e; \
     pids=""; \
-    for ui in src/platform/*/ui; do \
+    for ui in src/platform/*/ui packages/conversations/ui; do \
       [ -f "$ui/package.json" ] || continue; \
       ( cd "$ui" && bun install --frozen-lockfile && bun run build && rm -rf node_modules \
         || { echo "ERROR: platform app UI build failed: $ui" >&2; exit 1; } ) & \
@@ -60,6 +61,11 @@ RUN set -e; \
     for p in $pids; do wait "$p"; done
 
 COPY --chown=1000:1000 src/ src/
+# The default plugins the runtime starts (ADR-0076): the conversations plugin,
+# whose server runs from its source over stdio, and the server SDK it builds on.
+# Copied over the screen built above; its dist/ is not in the build context.
+COPY --chown=1000:1000 packages/server-sdk/ packages/server-sdk/
+COPY --chown=1000:1000 packages/conversations/ packages/conversations/
 # The published schemas the runtime validates against: nimblebrain.json
 # against schemas/config/v1/config.schema.json, and the plugin extension schema
 # and the contract documents the plugin loader reads.

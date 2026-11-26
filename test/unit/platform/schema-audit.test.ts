@@ -15,7 +15,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
-import { createConversationsSource } from "../../../src/platform/conversations/source.ts";
 import { createFilesSource } from "../../../src/platform/files/source.ts";
 import { createUsageSource } from "../../../src/platform/usage/source.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
@@ -75,17 +74,6 @@ describe("Connector audit — every inline connector has compilable schemas", ()
     const dir = mkdtempSync(join(tmpdir(), "nb-audit-usage-"));
     try {
       await auditSource(createUsageSource(makeRuntime(dir), new NoopEventSink()));
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("conversations", async () => {
-    // The conversations source lazily constructs its fs-watch index on first
-    // tool call, so simple construction is side-effect-free.
-    const dir = mkdtempSync(join(tmpdir(), "nb-audit-conv-"));
-    try {
-      await auditSource(await createConversationsSource(makeRuntime(dir), new NoopEventSink()));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

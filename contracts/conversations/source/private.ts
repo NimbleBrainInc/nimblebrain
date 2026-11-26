@@ -6,8 +6,7 @@
  * the published contract; this file is where those schemas are written.
  * `scripts/emit-contract.ts` turns it into JSON, and `--check` fails when the
  * committed document differs. Nothing at runtime imports this file. The public
- * tools are authored beside today's tools, in
- * `src/platform/schemas/conversations.ts`.
+ * tools are authored beside it, in `public.ts`.
  *
  * Scope (workspace and owner) and principal are never arguments: they are
  * carried by the call's authenticated context (CONTRACT.md, "Scope and

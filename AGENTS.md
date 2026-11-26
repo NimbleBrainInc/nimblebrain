@@ -37,16 +37,16 @@ bun run format             # Biome auto-format (writes)
 cd web && bun install      # Web client dependencies (separate package.json)
 cd web && bun run build    # Web production build → web/dist/
 
-bun run install:platform-apps    # Platform app UI deps (each a separate package.json) — the exact command CI runs
-bun run build:platform-apps      # Rebuild every src/platform/*/ui (vite single-file)
+bun run install:platform-apps    # App UI deps: src/platform/*/ui and a plugin's screen, packages/*/ui (each a separate package.json) — the exact command CI runs
+bun run build:platform-apps      # Rebuild every src/platform/*/ui and packages/*/ui (vite single-file)
 ```
 
 - **Before opening a PR, run `bun run verify`.** It mirrors CI by construction: `.github/workflows/ci.yml` invokes only `verify:*` subscripts (plus `test:integration`). To add or change a check, edit the matching subscript in `package.json`. If CI catches something `verify` didn't, fix the subscript, not a checklist.
-- **A fresh checkout/worktree must install `web/` AND every `src/platform/*/ui/` before `bun run verify`**, because `verify:static` typechecks and `verify:test-unit` tests those separate packages and root `bun install` does not cover them (the symptom is a missing-module error such as `Cannot find package 'dompurify'`).
+- **A fresh checkout/worktree must install `web/` AND every `src/platform/*/ui/` and `packages/*/ui/` before `bun run verify`** (`bun run install:platform-apps`), because `verify:static` typechecks and `verify:test-unit` tests those separate packages and root `bun install` does not cover them (the symptom is a missing-module error such as `Cannot find package 'dompurify'`).
 - **`test:unit` runs on root deps alone**, and the backend unit suite imports the shared bridge protocol (`web/src/bridge/*`). So a web-only *value* import must never leak into that graph: keep such deps type-only and inject the value at the browser entry (`web/src/sentry.ts` is the pattern). The `Unit Tests (root deps only)` CI job enforces this.
 - **The dev launchers choose the dev identity provider.** `serve` refuses a workdir with no `instance.json` (ADR-0040), so every launcher goes through `scripts/dev.ts`, which writes `{"auth":{"adapter":"dev"}}` there when the file is absent. Never make the runtime or server infer dev from a missing file.
 - **The dev launchers prepare a fresh checkout.** `dev`, `dev:empty`, `dev:minimal`, `dev:docs-demo`, `dev:plugins-demo`, `dev:scheduled-demo`, and `dev:worktree` install `web/` dependencies and build any platform app UI missing its `dist/index.html`; `dev:worktree` also installs root dependencies, since `scripts/dev.ts` imports from `src/`. Only what is absent is done.
-- **`bun run dev` does NOT rebuild the platform app UIs.** The API serves each app from its pre-built `src/platform/<name>/ui/dist/index.html`, read on iframe mount, not watched. After editing anything under `src/platform/*/ui/src/`, run `bun run build:platform-apps` and restart the dev server, or the iframe runs stale code.
+- **`bun run dev` does NOT rebuild the app UIs.** The API serves each platform app from its pre-built `src/platform/<name>/ui/dist/index.html`, and the conversations plugin serves its screen from `packages/conversations/ui/dist/index.html`, read on iframe mount, not watched. After editing anything under `src/platform/*/ui/src/` or `packages/*/ui/src/`, run `bun run build:platform-apps` and restart the dev server, or the iframe runs stale code.
 
 ### Worktree dev
 
@@ -88,7 +88,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 |---|---|
 | [`contracts/AGENTS.md`](./contracts/AGENTS.md) | Contracts the kernel consumes: spec and tooling, no runtime dependency on `src/`, one emitted document per version, `emit:contracts` and `check:contracts`, versioning in each `CONTRACT.md`, the host context every contract call carries (`host-context/CONTEXT.md`) |
 | [`schemas/AGENTS.md`](./schemas/AGENTS.md) | The published schemas tree: path = URL, `/<thing>/v<major>/`, every file authored or emitted with `--check`, additive minors in place, breaking change = new major, legacy `/v1/<name>` aliases, runtime validation reads from here |
-| [`src/plugins/AGENTS.md`](./src/plugins/AGENTS.md) | One manifest format for catalog and system plugins, the one reader, the additive published extension (`emit:plugin-extension`, `check:plugin-extension`), system as an operator decision, the contract registry, the boot check, starting a bound server, where the host context is stamped and how the principal is decided, hiding private tools |
+| [`src/plugins/AGENTS.md`](./src/plugins/AGENTS.md) | One manifest format for catalog and system plugins, the one reader, the additive published extension (`emit:plugin-extension`, `check:plugin-extension`), the default plugins and turning one off, system as an operator decision, the contract registry, the boot check, starting a bound server, its placements from its handshake, result overlays, where the host context is stamped and how the principal is decided, hiding private tools |
 | [`src/platform/AGENTS.md`](./src/platform/AGENTS.md) | Authoring platform apps and their tools: MCP-native sources, strict input schemas, update tools as patches where `null` clears, named output types, `ui://` MIME type |
 | [`src/platform/tasks/AGENTS.md`](./src/platform/tasks/AGENTS.md) | Task storage, run data retention, per-run membership gate, run results, scheduled and requested runs on the work queue, how the scheduler uses run admission, budget, per-run caps, run assessment and the connected judge, batches (driver, budget account, stop rule, restart) |
 | [`src/runtime/AGENTS.md`](./src/runtime/AGENTS.md) | Run admission at the run-start door: slots, queue, fair share, leases; spend accounts reserved before each model call |
@@ -97,7 +97,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`src/workspace/AGENTS.md`](./src/workspace/AGENTS.md) | Workspace roots and `assertWorkspaceRootExists`, write authorization, opaque ids, provisioning the first workspace |
 | [`src/orchestrator/AGENTS.md`](./src/orchestrator/AGENTS.md) | The workspace wall: tool-name shape as scope, `routeToolCall`, name parsing, skill walling |
 | [`src/tools/AGENTS.md`](./src/tools/AGENTS.md) | `CredentialStore`, credential refs, OAuth records, credential ownership; long-running (task-augmented) MCP tools |
-| [`src/conversation/AGENTS.md`](./src/conversation/AGENTS.md) | Conversation paths, workspace binding on resume, no conversation read or listing across workspaces, the store chosen when a plugin binds the conversations contract |
+| [`src/conversation/AGENTS.md`](./src/conversation/AGENTS.md) | The one conversation path (the conversations contract), chat off when nothing binds it, corrupted conversations, `active` on relayed lists, workspace binding on resume, no conversation read or listing across workspaces, workspace delete purges |
 | [`src/files/AGENTS.md`](./src/files/AGENTS.md) | File store paths, bare `files://` URIs, the file locator |
 | [`src/api/AGENTS.md`](./src/api/AGENTS.md) | Three API audiences, tool actions over new routes, named response bodies, router middleware chained per route, `/mcp/<wsId>` wall and which credentials reach it, the browser origins `/mcp` and the `/v1` tool-call doors trust, the hosts answered without sign-in, the one protocol revision `/mcp` speaks and the connector prompts it serves, what blocks running more than one replica, `clientAddressFor` |
 | [`src/hooks/AGENTS.md`](./src/hooks/AGENTS.md) | The inbound webhook door: never parse a body, uniform 404, delivery ids, rotation, provisioning |
@@ -109,7 +109,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`test/conformance/AGENTS.md`](./test/conformance/AGENTS.md) | The MCP conformance suite against `/mcp/<wsId>`: what it measures, the per-version baselines, the pin, where it runs in CI |
 | [`web/src/bridge/AGENTS.md`](./web/src/bridge/AGENTS.md) | MCP App Bridge rules: iframe scoping, handshake gate, notification relay, host capabilities |
 | [`packages/server-sdk/AGENTS.md`](./packages/server-sdk/AGENTS.md) | The TypeScript server SDK, counterpart of `nimblebrain-server-sdk` (Python): reading the host context, transport-verified dimensions, tool errors, the principal rule, reading a contract document; no dependencies, the contract document decides |
-| [`packages/conversations/AGENTS.md`](./packages/conversations/AGENTS.md) | The built-in conversations plugin: never imports the kernel, call order, context per transport, filesystem layout, `seq`, cursors, the screen, its conformance and parity tests |
+| [`packages/conversations/AGENTS.md`](./packages/conversations/AGENTS.md) | The built-in conversations plugin (bound by default): never imports the kernel, call order, context per transport, filesystem layout, `seq`, cursors, the screen and its build, its host metadata, its conformance tests |
 | [`packages/cli/AGENTS.md`](./packages/cli/AGENTS.md) | The `nimblebrain` CLI (`npx nimblebrain`): setup and running, plus a thin client of the local instance's API (`mcp add`), Node 20 with no dependencies, the `{ok, error, fix}` JSON contract, the model key never in output, never touching an install it did not make |
 
 ## Conventions
@@ -177,7 +177,7 @@ src/
 ├── identity/      Auth adapters (dev, oidc, workos)
 ├── workspace/     Multi-tenant workspace isolation
 ├── skills/        Skill discovery and matching (triggers → keywords)
-├── conversation/  Message persistence (JSONL, in-memory, event-sourced)
+├── conversation/  The kernel's conversation store: the conversations contract, called on its bound plugin
 ├── history/       A turn's model context from stored events: reconstruction, compaction, token window, titles
 ├── prompt/        System prompt composition (identity → core → apps → skill)
 ├── model/         LLM provider registry (AI SDK)
@@ -187,7 +187,7 @@ src/
 web/               Vite + React + TypeScript SPA (separate package.json)
 packages/
 ├── server-sdk/    The TypeScript server SDK: host context, tool errors, the principal rule (see server-sdk/AGENTS.md)
-├── conversations/ The built-in conversations plugin: one MCP server implementing the contract on the local filesystem (see conversations/AGENTS.md)
+├── conversations/ The built-in conversations plugin, bound by default: one MCP server implementing the contract on the local filesystem, and its screen (ui/) (see conversations/AGENTS.md)
 ├── cli/           The `nimblebrain` CLI (see cli/AGENTS.md)
 └── server-sdk-py/ The Python Server SDK
 ```
@@ -217,6 +217,7 @@ packages/
 | Max input tokens | 500,000 |
 | Max output tokens | the model's catalog output limit (16,384 for a model the catalog lacks) |
 | Default connectors | none (platform capabilities are built in) |
+| Default plugins | the built-in conversations plugin, as a system plugin (`plugins: { conversations: false }` turns chat off) |
 | Work directory | `~/.nimblebrain` |
 | API port | 27247 |
 | Web port | 27246 |

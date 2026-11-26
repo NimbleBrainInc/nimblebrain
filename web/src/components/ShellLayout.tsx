@@ -1,6 +1,7 @@
 import { memo, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useSidebarClass } from "../brand";
+import { useChatConfigContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
@@ -79,11 +80,13 @@ export const ShellLayout = memo(function ShellLayout({
   // `ChatPanelProvider` stay mounted app-wide (cheap, and `/w/:slug` needs
   // them); only the rendering is gated.
   const isWorkspaceRoute = useLocation().pathname.startsWith("/w/");
+  // And only when the instance offers chat: with no plugin implementing the
+  // conversations contract there is no chat anywhere.
+  const { chat: chatEnabled } = useChatConfigContext();
+  const chatShown = isWorkspaceRoute && chatEnabled;
   const chatIsSidebar = chatPanel.panelState === "sidebar";
   const mainMarginRight =
-    isWorkspaceRoute && chatIsSidebar && !isMobile
-      ? chatPanel.panelWidth + CHAT_RESIZE_HANDLE_WIDTH
-      : 0;
+    chatShown && chatIsSidebar && !isMobile ? chatPanel.panelWidth + CHAT_RESIZE_HANDLE_WIDTH : 0;
 
   // Reset the chat panel when leaving a workspace so its state doesn't carry
   // into (or silently reopen on return from) the home / profile surfaces.
@@ -92,8 +95,8 @@ export const ShellLayout = memo(function ShellLayout({
   // state persists across workspace→workspace navigation (both are `/w/`).
   const closeChat = chatPanel.closePanel;
   useEffect(() => {
-    if (!isWorkspaceRoute) closeChat();
-  }, [isWorkspaceRoute, closeChat]);
+    if (!chatShown) closeChat();
+  }, [chatShown, closeChat]);
 
   // Sidebar bottom items: pinned to bottom, excluding settings (now in workspace dropdown)
   const sidebarBottom = forSlot("sidebar.bottom").filter((p) => p.route !== "settings");
@@ -136,11 +139,12 @@ export const ShellLayout = memo(function ShellLayout({
         </main>
 
         {/* Chat chrome (toggle + sliding panel + resize handle) — the single,
-          global mount point, gated to workspace routes: chat exists only
-          inside a workspace, so home / profile render no panel. The push-over
+          global mount point, gated to workspace routes on an instance that
+          offers chat: chat exists only inside a workspace, so home / profile
+          render no panel. The push-over
           that makes room for the panel is the `marginRight` on <main> above;
           the panel and handle live inside ChatChrome itself. */}
-        {isWorkspaceRoute && <ChatChrome />}
+        {chatShown && <ChatChrome />}
 
         {/* Artifact document panel — the single, global mount point (sibling
           of ChatChrome), so an artifact chip in any conversation opens its

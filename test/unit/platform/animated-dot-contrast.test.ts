@@ -90,7 +90,7 @@ const GUARDED = [
   },
   {
     what: "conversations live dot",
-    file: join(REPO, "src", "platform", "conversations", "ui", "src", "index.css"),
+    file: join(REPO, "packages", "conversations", "ui", "src", "index.css"),
     selector: ".conv-streaming-dot",
   },
 ];
@@ -110,10 +110,11 @@ const EXEMPT: Record<string, string> = Object.fromEntries(
   ].map(([connector, sel, why]) => [`${connector}::${sel}`, why]),
 );
 
-/** Key an exemption the way GUARDED is keyed: per connector, not per name. */
+/** Key an exemption the way GUARDED is keyed: per app (the directory holding its `ui/`), not per name. */
 function exemptKey(file: string, selector: string): string {
-  const connector = relative(REPO, file).split("/")[2] ?? relative(REPO, file);
-  return `${connector}::${selector}`;
+  const parts = relative(REPO, file).split("/");
+  const app = parts[parts.indexOf("ui") - 1] ?? relative(REPO, file);
+  return `${app}::${selector}`;
 }
 
 /**
@@ -123,7 +124,7 @@ function exemptKey(file: string, selector: string): string {
  * `tasks/ui/src/styles.ts` is one big template literal and a stray
  * backtick in a comment terminates it. That is not theoretical: it happened,
  * and nothing caught it — `vite build` connectors without evaluating, the root
- * tsconfig excludes `src/platform/*&#47;ui`, and a `readFileSync` guard is
+ * tsconfig excludes the app UIs, and a `readFileSync` guard is
  * perfectly happy to parse a file the runtime cannot load. Importing it means a
  * connector that would render a blank iframe fails here instead.
  */

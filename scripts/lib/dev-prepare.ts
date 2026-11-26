@@ -34,7 +34,8 @@ export function installIfMissing(label: string, dir: string, prefix = "[dev]"): 
 }
 
 /**
- * Install and build any platform app UI with no `dist/index.html`.
+ * Install and build any app UI with no `dist/index.html`: a platform app's
+ * (`src/platform/<name>/ui`) or a plugin's screen (`packages/<name>/ui`).
  *
  * Only what is absent. `dev` deliberately does not rebuild the app UIs on every
  * start, so after editing one you still run `build:platform-apps` yourself.
@@ -47,12 +48,13 @@ export function installIfMissing(label: string, dir: string, prefix = "[dev]"): 
  * a dev path that either over-builds or makes CI depend on dev tooling.
  */
 export function appUisMissingDist(repoRoot: string): { name: string; ui: string }[] {
-  const appsDir = join(repoRoot, "src", "platform");
-  if (!existsSync(appsDir)) return [];
-
-  return readdirSync(appsDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => ({ name: e.name, ui: join(appsDir, e.name, "ui") }))
+  return [join(repoRoot, "src", "platform"), join(repoRoot, "packages")]
+    .filter((dir) => existsSync(dir))
+    .flatMap((dir) =>
+      readdirSync(dir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => ({ name: e.name, ui: join(dir, e.name, "ui") })),
+    )
     .filter((a) => existsSync(join(a.ui, "package.json")))
     .filter((a) => !existsSync(join(a.ui, "dist", "index.html")));
 }

@@ -69,6 +69,20 @@ export class ConversationNotFoundError extends Error {
 }
 
 /**
+ * Thrown when a chat is asked of an instance that offers none: no plugin
+ * implements the conversations contract, so there is nowhere to keep a
+ * conversation (ADR-0076, chat is derived from the contract). The HTTP layer
+ * answers it `404 chat_disabled`, and every chat route refuses it up front.
+ */
+export class ChatDisabledError extends Error {
+  readonly code = "chat_disabled";
+  constructor() {
+    super("Chat is turned off on this instance: no plugin implements the conversations contract.");
+    this.name = "ChatDisabledError";
+  }
+}
+
+/**
  * Thrown when the owner of a conversation tries to RESUME it but is no longer a
  * member of the workspace the conversation lives in. A conversation is sealed to
  * its workspace (its tools/skills/apps resolve there), so resuming it as a
@@ -155,33 +169,18 @@ export class DeclaredSkillsUnavailableError extends Error {
 }
 
 /**
- * Thrown when a conversation file on disk fails the ownership invariant
- * check at load time — a file that lacks `ownerId` (or a model). The store
- * can't synthesize an owner safely and the chat runtime can't authorize access
- * on it.
- *
- * Operator action is manual: an ownerless file has no derivable owner, so
- * nothing can recover it automatically. Recovery is to stamp an `ownerId` on the file's
- * line-1 metadata (when the owner is known) or remove the file. Without this
- * typed error, the unwrapped `Error("missing ownerId in ...")` from
- * `event-sourced-store` bubbles to `handleChatStart` as a 500; with it, the HTTP
- * layer returns a clean `422 conversation_corrupted` that explains the triage.
+ * Thrown when the conversations plugin holds a conversation it cannot read
+ * (the contract's `conversation_corrupted`). The HTTP layer answers it
+ * `422 conversation_corrupted`: the request is well-formed, but the stored
+ * conversation cannot serve it until its storage is repaired or it is deleted.
  */
 export class ConversationCorruptedError extends Error {
   readonly code = "conversation_corrupted";
   constructor(
     public readonly conversationId: string,
-    public readonly reason: "missing_owner" | "missing_model",
+    detail: string,
   ) {
-    super(
-      reason === "missing_owner"
-        ? `Conversation ${conversationId} is corrupted (${reason}): the file predates the ` +
-            `ownership invariant and has no ownerId. No migration stamps these — add an ownerId ` +
-            `to its line-1 metadata or remove the file.`
-        : `Conversation ${conversationId} is corrupted (${reason}): the file predates the ` +
-            `model binding and has no model. Add a provider-qualified model to its line-1 ` +
-            `metadata or remove the file.`,
-    );
+    super(`Conversation ${conversationId} cannot be read: ${detail}`);
     this.name = "ConversationCorruptedError";
   }
 }

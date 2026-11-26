@@ -1,70 +1,42 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+/**
+ * A conversation id that is not `conv_` and 16 lowercase hex characters never
+ * names a conversation: the store the runtime uses finds none for it, and never
+ * resolves it to anything outside the scope's own conversations.
+ */
+
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
-import type { ConversationStore } from "../../src/conversation/types.ts";
+import { conversationStore } from "../helpers/conversation-store.ts";
 
-function storeTests(name: string, makeStore: () => ConversationStore) {
-  describe(name, () => {
-    let store: ConversationStore;
+const dataDir = mkdtempSync(join(tmpdir(), "nb-conv-id-"));
+const store = conversationStore(dataDir, "ws_0076759dbbe19fcc", "user_test");
 
-    beforeEach(() => {
-      store = makeStore();
-    });
+afterAll(() => rmSync(dataDir, { recursive: true, force: true }));
 
-    it("accepts a valid conversation id format", async () => {
-      // create() generates a valid ID internally — load should not throw on format
-      const conv = await store.create({
-        model: "anthropic:claude-sonnet-4-6",
-        ownerId: "user_test",
-      });
-      const loaded = await store.load(conv.id);
-      expect(loaded).not.toBeNull();
-      expect(loaded!.id).toBe(conv.id);
-    });
+/** What a load of `id` comes to: the conversation, or null whether it answered null or refused. */
+async function found(id: string) {
+  return store.load(id).catch(() => null);
+}
 
-    it("rejects path traversal payload (../../etc/passwd)", async () => {
-      await expect(store.load("../../etc/passwd")).rejects.toThrow(/Invalid conversation ID/);
-    });
-
-    it("rejects id that is too short (conv_abc123)", async () => {
-      await expect(store.load("conv_abc123")).rejects.toThrow(/Invalid conversation ID/);
-    });
-
-    it("rejects empty string", async () => {
-      await expect(store.load("")).rejects.toThrow(/Invalid conversation ID/);
-    });
-
-    it("rejects string with null bytes", async () => {
-      await expect(store.load("conv_\x00abcdef01234567")).rejects.toThrow(
-        /Invalid conversation ID/,
-      );
-    });
-
-    it("rejects uppercase hex characters", async () => {
-      await expect(store.load("conv_0123456789ABCDEF")).rejects.toThrow(/Invalid conversation ID/);
-    });
-
-    it("rejects id with extra characters appended", async () => {
-      await expect(store.load("conv_0123456789abcdef_extra")).rejects.toThrow(
-        /Invalid conversation ID/,
-      );
-    });
+describe("conversation id validation", () => {
+  it("loads a conversation by the id create minted", async () => {
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
+    expect(conv.id).toMatch(/^conv_[a-f0-9]{16}$/);
+    expect((await store.load(conv.id))?.id).toBe(conv.id);
   });
-}
 
-let counter = 0;
-function tempDir(prefix: string): string {
-  const dir = join(tmpdir(), `nb-test-conv-id-${prefix}-${Date.now()}-${++counter}`);
-  return dir;
-}
-
-const esDir = tempDir("es");
-
-storeTests(
-  "EventSourcedConversationStore conversation id validation",
-  () =>
-    new EventSourcedConversationStore({
-      dir: join(esDir, `run-${++counter}`),
-    }),
-);
+  for (const [what, id] of [
+    ["a path traversal payload", "../../etc/passwd"],
+    ["an id that is too short", "conv_abc123"],
+    ["an empty string", ""],
+    ["an id with a null byte", "conv_\x00abcdef01234567"],
+    ["uppercase hex", "conv_0123456789ABCDEF"],
+    ["an id with characters appended", "conv_0123456789abcdef_extra"],
+  ] as const) {
+    it(`finds nothing for ${what}`, async () => {
+      expect(await found(id)).toBeNull();
+    });
+  }
+});

@@ -45,8 +45,9 @@ each tenant's data is kept under `<data>/tenants/<tenantId>/`, a request with no
 is refused, and a context naming another workspace than the verified one is refused as
 `context_mismatch`.
 
-`--screen <file>` serves a built screen as `ui://conversations/browser`; without one the
-resource is a placeholder page.
+The screen is `ui/`, its own package: `cd ui && bun install && bun run build` writes
+`ui/dist/index.html`, which the server serves as `ui://conversations/browser`. `--screen <file>`
+serves another file; without a built screen the resource is a placeholder page.
 
 ## Data
 
@@ -57,7 +58,8 @@ resource is a placeholder page.
 Line 1 is the conversation's header and every later line one event. A workspace the host
 stamps exists: its directories are made on the first `create` there, and `delete_workspace`
 purges them.
-The layout matches the NimbleBrain runtime's under its work directory.
+The NimbleBrain runtime gives the plugin `<workDir>/plugin-data/conversations` as its data
+directory.
 
 ## Check it
 

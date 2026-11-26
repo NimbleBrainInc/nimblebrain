@@ -23,6 +23,12 @@ import { useWorkspaceContext } from "./WorkspaceContext";
 // ---------------------------------------------------------------------------
 
 export interface ChatConfigContextValue {
+  /**
+   * Whether this instance offers chat (the bootstrap's `config.chat`): true
+   * exactly when a plugin implements the conversations contract. Off, the
+   * shell renders no chat surface. Instance config, fixed at startup.
+   */
+  chat: boolean;
   configuredProviders: string[];
   newConversationModel?: string;
   availableModels?: ConfigInfo["availableModels"];
@@ -92,6 +98,8 @@ export interface ChatProviderProps {
   children: ReactNode;
   /** Pre-fetched config from bootstrap. Skips the tool call when provided. */
   initialConfig?: {
+    /** Whether the instance offers chat; on when absent. */
+    chat?: boolean;
     configuredProviders: string[];
     newConversationModel?: string;
     availableModels?: ConfigInfo["availableModels"];
@@ -232,6 +240,7 @@ export function ChatProvider({
   // Not refreshed by `fetchConfig`: `get_config` does not carry it, and the
   // limits are instance config that does not change while the shell is open.
   const fileLimits = initialConfig?.fileLimits;
+  const chatEnabled = initialConfig?.chat ?? true;
 
   // Each `config.changed` starts a fetch, and responses can arrive out of
   // order; only the latest request's answer is applied, so an older read
@@ -285,6 +294,7 @@ export function ChatProvider({
   // -- Config context value (changes rarely) --
   const configValue = useMemo<ChatConfigContextValue>(
     () => ({
+      chat: chatEnabled,
       configuredProviders,
       newConversationModel,
       availableModels,
@@ -294,6 +304,7 @@ export function ChatProvider({
       fileLimits,
     }),
     [
+      chatEnabled,
       configuredProviders,
       newConversationModel,
       availableModels,

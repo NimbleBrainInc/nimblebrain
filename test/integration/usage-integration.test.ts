@@ -111,22 +111,16 @@ describe("per-conversation token accumulation", () => {
     // Wait for async event writes to flush
     await new Promise((r) => setTimeout(r, 1500));
 
-    // Derived totals from the list summary should be the sum of per-turn
-    // usage. Allow for async flush — at least 2 turns must be visible.
-    // Read the per-workspace store directly: a fresh store instance re-derives
-    // each summary's totals from the conversation file, so the accumulated
-    // per-turn tokens are visible. (The cross-workspace locator list is
-    // create/delete-fresh, not append-fresh.) Dev-mode owner is
-    // `usr_default`, focused on TEST_WORKSPACE_ID.
+    // The list summary's totals are derived from the conversation's stored
+    // events: every turn's model calls, and the conversation's own auxiliary
+    // calls (its title) beside them, so at least the sum of the turns. Dev-mode
+    // owner is `usr_default`, in TEST_WORKSPACE_ID.
     const list = await runtime.workspaceConversationStore(TEST_WORKSPACE_ID, "usr_default").list();
     const summary = list.conversations.find((c) => c.id === turn1.conversationId);
     expect(summary).toBeDefined();
 
-    const expectedInput =
-      turn1.usage.inputTokens + turn2.usage.inputTokens + turn3.usage.inputTokens;
-    const at_least_two = turn1.usage.inputTokens + turn2.usage.inputTokens;
-    expect(summary!.totalInputTokens).toBeGreaterThanOrEqual(at_least_two);
-    expect(summary!.totalInputTokens).toBeLessThanOrEqual(expectedInput);
+    const turnsInput = turn1.usage.inputTokens + turn2.usage.inputTokens + turn3.usage.inputTokens;
+    expect(summary!.totalInputTokens).toBeGreaterThanOrEqual(turnsInput);
 
     await runtime.shutdown();
   });
@@ -172,8 +166,6 @@ describe("per-conversation token accumulation", () => {
     expect(sumA!.totalInputTokens).toBeGreaterThan(sumB!.totalInputTokens);
     expect(sumA!.totalInputTokens).toBeGreaterThan(0);
     expect(sumB!.totalInputTokens).toBeGreaterThan(0);
-    expect(sumA!.totalCostUsd).toBeGreaterThanOrEqual(0);
-    expect(sumB!.totalCostUsd).toBeGreaterThanOrEqual(0);
 
     await runtime.shutdown();
   });

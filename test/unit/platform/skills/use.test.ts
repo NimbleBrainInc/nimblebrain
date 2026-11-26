@@ -19,8 +19,10 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
-import type { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
-import type { ConversationEvent } from "../../../../src/conversation/types.ts";
+import type {
+  ConversationEvent,
+  ConversationEventStore,
+} from "../../../../src/conversation/types.ts";
 import { SKILL_ACTIVATED_META_KEY } from "../../../../src/engine/types.ts";
 import type { UserIdentity } from "../../../../src/identity/provider.ts";
 import { createUseSkillToolDef } from "../../../../src/platform/skills/source.ts";
@@ -64,11 +66,11 @@ class FakeRuntime {
     wsId: string,
     _convId: string,
     _ownerId: string,
-  ): Promise<EventSourcedConversationStore | null> {
+  ): Promise<ConversationEventStore | null> {
     // Found only in the workspace the conversation is stored in.
     if (this.conversationEvents === null || wsId !== this.conversationWsId) return null;
     const events = this.conversationEvents;
-    return stub<EventSourcedConversationStore>({ readEvents: async () => events });
+    return stub<ConversationEventStore>({ readEvents: async () => events });
   }
 }
 

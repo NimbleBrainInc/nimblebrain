@@ -26,9 +26,9 @@ import { join } from "node:path";
 import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../../src/api/server.ts";
 import { startServer } from "../../../src/api/server.ts";
-import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { ownerConversationsDir } from "../../helpers/conversation-store.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { readJson } from "../../helpers/http.ts";
@@ -125,7 +125,7 @@ describe("Runtime.findConversation", () => {
       identity: ALICE,
     });
     const workspacePath = join(
-      workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, ALICE.id),
+      ownerConversationsDir(workDir, TEST_WORKSPACE_ID, ALICE.id),
       `${result.conversationId}.jsonl`,
     );
     const s = await stat(workspacePath);
@@ -399,9 +399,9 @@ describe("ownerless conversation file — no 500s", () => {
     });
     baseUrl = `http://localhost:${handle.port}`;
 
-    // Plant an ownerless file at the workspace path the resume path reads:
-    // `workspaces/<TEST_WORKSPACE_ID>/conversations/<callerId>/<convId>.jsonl`.
-    const convDir = workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, TEST_IDENTITY.id);
+    // Plant an ownerless file where the conversations plugin keeps the caller's
+    // conversations in TEST_WORKSPACE_ID: it answers `conversation_corrupted`.
+    const convDir = ownerConversationsDir(workDir, TEST_WORKSPACE_ID, TEST_IDENTITY.id);
     mkdirSync(convDir, { recursive: true });
     const meta = {
       id: convId,
@@ -416,9 +416,9 @@ describe("ownerless conversation file — no 500s", () => {
   });
 
   test("GET /v1/workspaces/:wsId/conversations/:id/events on an ownerless file returns 422 (not 500)", async () => {
-    // `findConversation` finds the file in the caller's partition, loads it,
-    // and the store throws `ConversationCorruptedError`, which the route maps
-    // to a 422 — operator-actionable, not a bare 404.
+    // `findConversation` asks the plugin, which cannot read the file; the
+    // store throws `ConversationCorruptedError`, which the route maps to a 422
+    // — operator-actionable, not a bare 404.
     const res = await fetch(
       `${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/conversations/${convId}/events`,
       {
@@ -442,7 +442,7 @@ describe("ownerless conversation file — no 500s", () => {
     expect(res.status).toBe(422);
     const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("conversation_corrupted");
-    expect(body.details?.reason).toBe("missing_owner");
+    expect(body.details?.conversationId).toBe(convId);
   });
 
   test("teardown", async () => {

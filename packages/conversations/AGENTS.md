@@ -2,12 +2,15 @@
 
 Scope: `packages/conversations/`. The built-in implementation of the conversations contract
 (`contracts/conversations/CONTRACT.md`, `ai.nimblebrain.conversations` 1.0): an Agent Plugin
-with one MCP server, on the local filesystem. How to run it standalone is in `README.md`.
+with one MCP server, on the local filesystem, and its screen. The runtime's default
+configuration binds it (`src/config/plugins.ts`), so it is how every instance with chat stores
+conversations. How to run it standalone is in `README.md`.
 
 ## Boundaries
 
 - **Never import the kernel.** This package imports only `packages/server-sdk` and reads the
-  contract document (`schemas/contracts/conversations/v1/contract.json`). Biome refuses any
+  contract document (`schemas/contracts/conversations/v1/contract.json`). The screen (`ui/`) is
+  its own package and imports only its own files and its dependencies. Biome refuses any
   other import that leaves the package. A plugin depends on contracts; the kernel never imports
   a plugin, and a plugin never imports the kernel.
 - **The contract document is the interface.** `tools/list` serves each tool's `$defs` schemas
@@ -42,14 +45,14 @@ with one MCP server, on the local filesystem. How to run it standalone is in `RE
   call made inside a conversation (`conversationId` in its context) is made during that
   conversation's turn, so that conversation reads `active: true` and its trailing run
   `pending`; every other reads `false` and an unterminated trailing run reads `interrupted`.
-  The host overlays the rest.
+  The host overlays every `list` row's `active` on the results it relays.
 
 ## Storage
 
 - **Layout:** `<data>/workspaces/<workspaceId>/conversations/<ownerId>/<conversationId>.jsonl`,
-  line 1 the header `create` wrote, every later line one event as `append_events` received it.
-  It is the runtime's own conversation layout under its work directory, so the plugin given a
-  runtime's work directory reads and writes the same files (`src/store.ts`).
+  line 1 the header `create` wrote, every later line one event as `append_events` received it
+  (`src/store.ts`). The runtime gives the plugin `<workDir>/plugin-data/conversations` as its
+  data directory.
 - **The path is the scope.** A call opens only its scope's owner partition of its scope's
   workspace. Scope ids must each be one path segment, or the call has no scope. A file whose
   header names another owner or id reads as absent.
@@ -58,8 +61,8 @@ with one MCP server, on the local filesystem. How to run it standalone is in `RE
   `conversations/<ownerId>/` (and the workspace directory above it) on first use, and a
   workspace with no storage reads as one with no conversations.
 - **`delete_workspace` purges.** It removes every owner's conversations and the workspace's
-  `conversations/` directory, then the workspace directory if nothing else is in it (a
-  runtime's own workspace in a shared directory keeps its other content). A `create` after a
+  `conversations/` directory, then the workspace directory if nothing else is in it (a data
+  directory shared with other content keeps it). A `create` after a
   purge simply makes the storage again. That is correct: the host is the authority on which
   workspaces exist, and it keeps conversations out of a deleted workspace by never stamping
   one.
@@ -83,20 +86,32 @@ with one MCP server, on the local filesystem. How to run it standalone is in `RE
 ## The screen
 
 - `ui://conversations/browser` (`text/html;profile=mcp-app`) serves the built HTML at
-  `--screen <file>`, by default `ui/index.html` in this directory, and a placeholder page when
-  that file is absent. The screen's source is not in this package.
+  `--screen <file>`, by default `ui/dist/index.html` in this directory, and a placeholder page
+  that says how to build it when that file is absent.
+- **The screen's source is `ui/`**: its own Vite package (React, `@nimblebrain/synapse`,
+  single-file build), installed, built and typechecked with the platform app UIs
+  (`install:platform-apps`, `build:platform-apps`, `check:platform-apps` glob `packages/*/ui`)
+  and built into the image beside them.
+- **The server places its own screen.** Its handshake result (`initialize`, and
+  `server/discover` on the 2026-07-28 revision) carries `_meta["ai.nimblebrain/host"]`
+  (`HOST_META` in `src/server.ts`, `schemas/host/v1/host.schema.json`) with the sidebar
+  placement. A host shows the screen from that metadata; nothing in the host names it.
 
 ## Tests
 
 - `test/integration/conversations-plugin-conformance.test.ts` runs the contract's runner against
   `bin/nb-conversations --http` in full mode and public-only mode, with the host context in
-  `_meta`, and checks the 401, stdio, and fleet mode (tenant walls, `context_mismatch`). Full mode passes every case; public-only fails only
-  `no private tool is listed`, which holds a host's agent-facing door, not an implementation.
-  `test/integration/conversations-plugin-bound.test.ts` runs public-only mode at a runtime's
-  `/mcp/<wsId>` with this plugin bound, where that case passes.
-- `test/unit/plugins/conversations-plugin-parity.test.ts` compares every public read with the
-  built-in app's for the same files and for the same events.
+  `_meta`, and checks the 401, stdio, and fleet mode (tenant walls, `context_mismatch`). Full mode
+  passes every case; public-only fails only `no private tool is listed`, which holds a host's
+  agent-facing door, not an implementation.
+- `test/integration/conversations-plugin-default.test.ts` boots a runtime with no `plugins`
+  block, which binds this plugin: turns stored through it, the runner's public-only mode at the
+  runtime's `/mcp/<wsId>` passing every case, the screen listed and served there and placed in
+  the sidebar from the handshake, and `list` rows carrying the host's `active`.
 - `test/unit/plugins/conversations-plugin-payloads.test.ts` appends schema-valid payloads no
   projection expects and checks every raw operation and public read still answers.
 - `test/unit/plugins/builtin-conversations.test.ts` resolves this directory as a builtin system
   plugin and checks its contract binding.
+- `test/helpers/conversation-store.ts` drives the kernel's contract store over this plugin's
+  tool dispatch (`callTool`) in process, for tests that need the runtime's store without a
+  server.
