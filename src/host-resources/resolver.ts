@@ -28,14 +28,18 @@ const RESOURCE_NOT_FOUND = -32602;
 const RESPONSE_TOO_LARGE = -32005;
 
 /**
- * Per-call context for resolving a host resource. The workspace id comes
+ * Per-request context for resolving a host resource. The workspace id comes
  * from the connector's session, never from the URI — the platform owns the
- * identity, the URI carries only the file id. The connector id rides along
- * for audit / rate-limit attribution.
+ * identity, the URI carries only the file id. The owner id is the user the
+ * connector's in-flight tool call was made for, passed by the caller that
+ * tied the request to that call; the resolver never looks identity up itself.
+ * The connector id rides along for audit / rate-limit attribution.
  */
 export interface HostResourceContext {
   workspaceId: string;
   connectorId: string;
+  /** Owner id (`resolveRequestOwnerId`) of the user the tool call was made for. */
+  ownerId: string;
 }
 
 export interface ListResourcesParams {
@@ -52,7 +56,7 @@ export interface ListResourcesParams {
  * request goes through (today the workspace-owned `FileStore`; future schemes like
  * `entities://` would land here as additional read/list paths). Files are
  * workspace-owned: every read/list resolves in the connector's request workspace
- * (`ctx.workspaceId`) under the session user's partition — never against any
+ * (`ctx.workspaceId`) under the calling user's partition (`ctx.ownerId`) — never against any
  * wsId the URI might encode (the URI is bare), and never across workspaces.
  */
 export interface HostResourcesResolver {
@@ -62,27 +66,27 @@ export interface HostResourcesResolver {
 
 /**
  * Resolves `files://<id>` URIs through the workspace-owned `FileStore` for the
- * connector's request workspace and the session user's partition.
+ * connector's request workspace and the calling user's partition.
  * Reuses `isTextMime`/`fileIdToUri` from the platform's `files` source
  * so the byte/text discrimination matches what the agent sees via
  * `files__read` exactly. Audit events ride the platform's existing
  * event sink alongside other tool activity.
  *
- * Files are workspace-owned: `getFileStore(wsId)` resolves the caller's store in one
+ * Files are workspace-owned: `getFileStore(wsId, ownerId)` resolves the caller's store in one
  * workspace. The resolver passes `ctx.workspaceId` (the workspace the connector ran in), so a
  * `files://` read resolves in that workspace only — a file from another workspace is not
  * on disk there and collapses to resource-not-found.
  */
 export class FileBackedHostResourcesResolver implements HostResourcesResolver {
   constructor(
-    private readonly getFileStore: (wsId: string) => FileStore,
+    private readonly getFileStore: (wsId: string, ownerId: string) => FileStore,
     private readonly maxReadSize: number = HOST_RESOURCES_MAX_READ_SIZE,
   ) {}
 
   async read(uri: string, ctx: HostResourceContext): Promise<ReadResourceResult> {
     const start = Date.now();
     const fileId = this.requireFileScheme(uri);
-    const store = this.getFileStore(ctx.workspaceId);
+    const store = this.getFileStore(ctx.workspaceId, ctx.ownerId);
 
     let result: Awaited<ReturnType<typeof store.readFile>>;
     try {
@@ -135,7 +139,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
   }
 
   async list(params: ListResourcesParams, ctx: HostResourceContext): Promise<ListResourcesResult> {
-    // Workspace-scoped: returns the session user's files in the connector's
+    // Workspace-scoped: returns the calling user's files in the connector's
     // request workspace (`ctx.workspaceId`) only — never across the user's other
     // workspaces. The store is rooted at that one owner partition, so the
     // boundary is the directory, not a filter here.
@@ -160,7 +164,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
       );
     }
 
-    const store = this.getFileStore(ctx.workspaceId);
+    const store = this.getFileStore(ctx.workspaceId, ctx.ownerId);
     const all = await store.readRegistry();
 
     const filteredByMime = params.filter?.mimeType

@@ -14,6 +14,7 @@ import {
   TokenBucketRateLimit,
 } from "../../src/host-resources/index.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { asDevUser } from "../helpers/dev-provider.ts";
 import { textOf } from "../helpers/resource-contents.ts";
 
 // End-to-end wire test for the inbound host-resources handlers, without
@@ -146,7 +147,7 @@ describe("McpSource inbound host-resources handlers", () => {
 
     // McpSource.execute takes the BARE tool name (without source prefix);
     // ToolRegistry.execute strips the prefix before calling source.execute.
-    const callResult = await source.execute("read_via_host", {});
+    const callResult = await asDevUser(() => source.execute("read_via_host", {}));
 
     if (callResult.isError) {
       throw new Error(
@@ -229,7 +230,7 @@ describe("McpSource inbound host-resources handlers", () => {
     );
     await source.start();
 
-    const callResult = await source.execute("list_csvs", {});
+    const callResult = await asDevUser(() => source.execute("list_csvs", {}));
     if (callResult.isError) {
       throw new Error(
         `expected isError=false, got isError=true. content=${JSON.stringify(callResult.content)}`,
@@ -309,7 +310,7 @@ describe("McpSource inbound host-resources handlers", () => {
     );
     await source.start();
 
-    const callResult = await source.execute("list_drafts", {});
+    const callResult = await asDevUser(() => source.execute("list_drafts", {}));
     if (callResult.isError) {
       throw new Error(
         `expected isError=false, got isError=true. content=${JSON.stringify(callResult.content)}`,
@@ -347,9 +348,112 @@ describe("McpSource inbound host-resources handlers", () => {
     // request-response machinery and surfaces it as a thrown exception.
     // McpSource's execute wrapper turns that into an `isError: true`
     // tool result rather than throwing.
-    const result = await source.execute("read_via_host", {});
+    const result = await asDevUser(() => source.execute("read_via_host", {}));
     expect(result.isError).toBe(true);
 
     await source.stop();
+  });
+  // A host-resources request is answered only for the user an inline tool call
+  // was made for. A call made with no identity in its request context carries
+  // no user, so the request is refused and the resolver is never reached.
+  it("refuses a request during a call made with no identity, without reaching the resolver", async () => {
+    const fake = await buildFakeConnector("files://fl_any");
+    let resolverCalls = 0;
+    const source = new McpSource(
+      "fake-connector",
+      { type: "inProcess", createServer: async () => fake },
+      NoopSink,
+      {
+        workspaceId: "ws_00079598e311c160",
+        connectorId: "fake-connector",
+        hostResources: {
+          read: async () => {
+            resolverCalls++;
+            return { contents: [] };
+          },
+          list: async () => {
+            resolverCalls++;
+            return { resources: [] };
+          },
+        },
+        rateLimit: new TokenBucketRateLimit(),
+      },
+    );
+    await source.start();
+
+    const result = await source.execute("read_via_host", {});
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("tool calls");
+    expect(resolverCalls).toBe(0);
+
+    await source.stop();
+  });
+
+  // The scope names the source that made the call. A request another
+  // connector sends while this source's call is in flight is that connector's
+  // own unsolicited request, so it is refused even though a call is running.
+  it("refuses a request from another source while this source's call is in flight", async () => {
+    const other = new Server({ name: "other", version: "0.0.1" }, { capabilities: { tools: {} } });
+    other.setRequestHandler("tools/list", async () => ({ tools: [] }));
+    const [otherClient, otherServer] = InMemoryTransport.createLinkedPair();
+    await other.connect(otherServer);
+
+    const caller = new Server(
+      { name: "caller", version: "0.0.1" },
+      { capabilities: { tools: {} } },
+    );
+    caller.setRequestHandler("tools/list", async () => ({
+      tools: [{ name: "poke", description: "x", inputSchema: { type: "object", properties: {} } }],
+    }));
+    caller.setRequestHandler("tools/call", async () => {
+      const answer = await other
+        .request({ method: HOST_RESOURCES_LIST_METHOD, params: {} }, ListResourcesResultSchema)
+        .then((r) => JSON.stringify(r))
+        .catch((e: { code?: number }) => `ERR ${e.code}`);
+      return { content: [{ type: "text", text: answer }] };
+    });
+    const [callerClient, callerServer] = InMemoryTransport.createLinkedPair();
+    await caller.connect(callerServer);
+
+    const listed: string[] = [];
+    const ctxFor = (connectorId: string) => ({
+      workspaceId: "ws_00079598e311c160",
+      connectorId,
+      hostResources: {
+        read: async () => ({ contents: [] }),
+        list: async () => {
+          listed.push(connectorId);
+          return { resources: [] };
+        },
+      },
+      rateLimit: new TokenBucketRateLimit(),
+    });
+    const otherSource = new McpSource(
+      "other",
+      {
+        type: "inProcess",
+        createServer: async () => ({ server: other, clientTransport: otherClient }),
+      },
+      NoopSink,
+      ctxFor("other"),
+    );
+    const callerSource = new McpSource(
+      "caller",
+      {
+        type: "inProcess",
+        createServer: async () => ({ server: caller, clientTransport: callerClient }),
+      },
+      NoopSink,
+      ctxFor("caller"),
+    );
+    await otherSource.start();
+    await callerSource.start();
+
+    const result = await asDevUser(() => callerSource.execute("poke", {}));
+    expect(JSON.stringify(result.content)).toContain("ERR -32003");
+    expect(listed).toEqual([]);
+
+    await callerSource.stop();
+    await otherSource.stop();
   });
 });

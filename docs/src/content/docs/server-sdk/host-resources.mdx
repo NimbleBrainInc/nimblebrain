@@ -52,6 +52,7 @@ An error the host returns arrives as `mcp.shared.exceptions.MCPError`. Match on 
 | Code | Constant | Meaning |
 |---|---|---|
 | `-32002` | `RESOURCE_NOT_FOUND` | Resource not found, or not visible to this caller |
+| `-32003` | | Sent outside one of the server's tool calls. `read` and `list` send on the calling tool's stream, so this means they ran outside a tool call |
 | `-32004` | `RATE_LIMITED` | Rate limited; `error.data` carries `retryAfterMs` |
 | `-32005` | `RESPONSE_TOO_LARGE` | The resource exceeds the host's size limit; `error.data` carries `size` and `maxSize` |
 | `-32602` | `INVALID_PARAMS` | Unsupported URI scheme, malformed `tags`, or a pagination cursor |

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   CallToolResult,
   ClientCapabilities,
@@ -52,8 +53,10 @@ import {
   type ResourceArgumentsResolver,
   resourceArgumentsClientExtension,
 } from "../host-resources/index.ts";
+import { resolveRequestOwnerId } from "../identity/owner.ts";
 import { addSpanEvent, requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
+import { getRequestContext } from "../runtime/request-context.ts";
 import { facetsClientExtension } from "../services/facets-extension.ts";
 import { lifecycleClientExtension } from "../services/lifecycle-extension.ts";
 import {
@@ -167,6 +170,33 @@ export interface ConnectorMcpContext {
    */
   resourceArguments?: ResourceArgumentsResolver;
 }
+
+/**
+ * The inline `tools/call` a host-resources request is answered for: the source
+ * that made the call and the owner id of the user it was made for.
+ *
+ * A 2025-era server→client request carries no field naming the call it serves.
+ * The only tie is the stream it arrives on: a request the server sends on a
+ * `tools/call`'s own response stream is read inside the `send()` that call
+ * started, so it runs in the async context the call was made in. Each inline
+ * call runs inside this scope ({@link McpSource.inHostCallScope}); connecting
+ * and reconnecting run outside every scope (`start()`), so the connection's
+ * standalone stream, which outlives every call, never carries one. A request
+ * that arrives with no scope, or with another source's, is refused.
+ */
+interface HostCallScope {
+  source: McpSource;
+  ownerId: string;
+}
+const hostCallScope = new AsyncLocalStorage<HostCallScope>();
+
+/**
+ * Impl-defined server-error code for a host-resources request that arrived
+ * outside one of the server's own tool calls: unsolicited, on the
+ * connection's standalone stream, or during a call made for no user.
+ * Sibling to `-32004 Rate limited` and `-32005 Response too large`.
+ */
+const HOST_RESOURCES_NO_CALL_IN_SCOPE = -32003;
 
 /**
  * Inbound params schemas for the two namespaced host-resource methods, taken
@@ -725,7 +755,11 @@ export class McpSource implements ToolSource {
   }
 
   async start(): Promise<void> {
-    const starting = this.doStart();
+    // Connect outside any host-resources call scope. A start can run inside a
+    // tool call (an on-demand reconnect, a restart after a lost session), and
+    // the standalone stream it opens, with its reconnects, would otherwise carry
+    // that call's user into every later request the server sends on it.
+    const starting = hostCallScope.exit(() => this.doStart());
     this.startInFlight = starting;
     try {
       await starting;
@@ -1057,7 +1091,9 @@ export class McpSource implements ToolSource {
     );
     this.taskClient = wire
       ? taskClientFor(wire)
-      : inlineTaskClient((params, signal) => client.callTool(params, { signal }));
+      : inlineTaskClient((params, signal) =>
+          this.inHostCallScope(() => client.callTool(params, { signal })),
+        );
     this.logNegotiatedEra(client);
     if (this.protocolEra === "modern") void this.listen();
   }
@@ -1369,11 +1405,14 @@ export class McpSource implements ToolSource {
    * claimed in the 2025 `initialize` only (`INITIALIZE_EXTENSIONS`), so a
    * connector sees it exactly where it can call these methods.
    *
-   * Handlers do three things, in order: rate-limit check (throws
-   * `-32004` on exhaustion), delegate to the resolver (which enforces
-   * scheme allowlist + workspace isolation + size cap), and log via
-   * the `host-resources` debug namespace. Errors propagate as JSON-RPC
-   * errors back to the connector.
+   * Handlers do four things, in order: refuse a request that is not inside
+   * one of this source's inline tool calls (`-32003`, see
+   * {@link HostCallScope}), rate-limit check (throws `-32004` on exhaustion),
+   * delegate to the resolver for the call's user (which enforces scheme
+   * allowlist + workspace isolation + size cap), and log via the
+   * `host-resources` debug namespace. The scope check comes first so a
+   * refused request spends no budget. Errors propagate as JSON-RPC errors
+   * back to the connector.
    */
   private registerConnectorHandlers(client: Client): void {
     const ctx = this.connectorContext;
@@ -1383,10 +1422,12 @@ export class McpSource implements ToolSource {
       HOST_RESOURCES_READ_METHOD,
       { params: NbReadResourceParamsSchema },
       async (params) => {
+        const ownerId = this.hostCallOwner(HOST_RESOURCES_READ_METHOD);
         ctx.rateLimit.check(ctx.workspaceId, ctx.connectorId);
         return ctx.hostResources.read(params.uri, {
           workspaceId: ctx.workspaceId,
           connectorId: ctx.connectorId,
+          ownerId,
         });
       },
     );
@@ -1395,6 +1436,7 @@ export class McpSource implements ToolSource {
       HOST_RESOURCES_LIST_METHOD,
       { params: NbListResourcesParamsSchema },
       async (parsed) => {
+        const ownerId = this.hostCallOwner(HOST_RESOURCES_LIST_METHOD);
         ctx.rateLimit.check(ctx.workspaceId, ctx.connectorId);
         const params = parsed ?? {};
         return ctx.hostResources.list(
@@ -1409,9 +1451,39 @@ export class McpSource implements ToolSource {
                 | { scheme?: string; mimeType?: string; tags?: string[] }
                 | undefined) ?? undefined,
           },
-          { workspaceId: ctx.workspaceId, connectorId: ctx.connectorId },
+          { workspaceId: ctx.workspaceId, connectorId: ctx.connectorId, ownerId },
         );
       },
+    );
+  }
+
+  /**
+   * Run one inline `tools/call` inside a host-resources call scope for the
+   * user it is made for, so a host-resources request the server sends on the
+   * call's own stream is answered for that user ({@link HostCallScope}). A
+   * call made with no identity in its request context runs outside every
+   * scope, so such requests are refused rather than answered for someone else.
+   */
+  private inHostCallScope<T>(call: () => Promise<T>): Promise<T> {
+    const identity = getRequestContext()?.identity;
+    if (!identity) return hostCallScope.exit(call);
+    return hostCallScope.run({ source: this, ownerId: resolveRequestOwnerId(identity) }, call);
+  }
+
+  /**
+   * The owner id of the inline call an inbound host-resources request serves,
+   * or a `-32003` refusal when it arrived outside one of this source's calls.
+   */
+  private hostCallOwner(method: string): string {
+    const scope = hostCallScope.getStore();
+    if (scope?.source === this) return scope.ownerId;
+    log.warn(
+      `[host-resources] [${this.connectorContext?.connectorId}:${this.connectorContext?.workspaceId}] refused ${method}: not sent on one of the connector's own tool calls`,
+    );
+    throw new ProtocolError(
+      HOST_RESOURCES_NO_CALL_IN_SCOPE,
+      "Host resources are served only on the stream of one of this server's tool calls",
+      { method },
     );
   }
 
@@ -2875,12 +2947,14 @@ export class McpSource implements ToolSource {
     caller?: McpCaller,
     meta?: Record<string, unknown>,
   ): Promise<ToolResult> {
-    const result = caller
-      ? await this.callToolForCaller(toolName, args, caller, signal, meta)
-      : await this.client?.callTool(
-          { name: toolName, arguments: args, ...(meta ? { _meta: meta } : {}) },
-          signal ? { signal } : undefined,
-        );
+    const result = await this.inHostCallScope(async () =>
+      caller
+        ? this.callToolForCaller(toolName, args, caller, signal, meta)
+        : this.client?.callTool(
+            { name: toolName, arguments: args, ...(meta ? { _meta: meta } : {}) },
+            signal ? { signal } : undefined,
+          ),
+    );
     if (!result) return { content: [], isError: true };
     if (isInputRequiredResult(result)) {
       const { inputRequests, requestState } = result;

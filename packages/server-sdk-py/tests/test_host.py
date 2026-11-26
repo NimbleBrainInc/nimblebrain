@@ -236,6 +236,8 @@ async def test_read_dispatches_namespaced_method(host_resources_v1_extensions, r
     call = ctx.session.calls[0]
     assert call.method == HOST_RESOURCES_READ_METHOD
     assert call.params == {"uri": "files://fl_abc"}
+    # Sent on the tool call's own stream: the host answers nothing else.
+    assert call.related_request_id == ctx.request_id
 
 
 @pytest.mark.asyncio
@@ -265,6 +267,7 @@ async def test_list_dispatches_namespaced_method_with_no_filter(
     assert call.method == HOST_RESOURCES_LIST_METHOD
     # No filter → params is empty (`_meta` gets dropped by exclude_none).
     assert call.params == {}
+    assert call.related_request_id == ctx.request_id
 
 
 @pytest.mark.asyncio
