@@ -3,7 +3,7 @@
 //
 // tryBootstrap is the first auth-touching call the app makes on every page
 // load (App.tsx). It must route through fetchWithRefresh so that a returning
-// user with an expired access-token cookie but a valid `nb_refresh` cookie
+// user with an expired access-token cookie but a valid `__Host-nb_refresh` cookie
 // is silently re-authed instead of being bounced to the login screen.
 //
 // Regression history: the original implementation used raw fetch and treated
@@ -74,7 +74,7 @@ describe("tryBootstrap", () => {
 
   test("silently refreshes on 401 and returns parsed bootstrap from the retry", async () => {
     // The bug fix: returning user has expired access-token cookie but a
-    // valid `nb_refresh`. Bootstrap 401s, fetchWithRefresh hits /v1/auth/refresh,
+    // valid `__Host-nb_refresh`. Bootstrap 401s, fetchWithRefresh hits /v1/auth/refresh,
     // and retries the bootstrap. The user must NOT see a login screen.
     const calls: CallLog = { bootstrap: 0, refresh: 0 };
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -101,7 +101,7 @@ describe("tryBootstrap", () => {
   });
 
   test("returns null when bootstrap 401s and refresh also fails", async () => {
-    // Truly unauthenticated user (no `nb_refresh` cookie or it's invalid).
+    // Truly unauthenticated user (no `__Host-nb_refresh` cookie or it's invalid).
     // Refresh fetch comes back 401; tryBootstrap should resolve to null
     // so App.tsx renders the login screen.
     const calls: CallLog = { bootstrap: 0, refresh: 0 };

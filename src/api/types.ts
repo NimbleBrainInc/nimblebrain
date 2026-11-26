@@ -96,14 +96,14 @@ export interface AppContext {
   hookWorkspaceLimiter: RequestRateLimiter;
   eventSink: EventSink;
   /**
-   * Whether auth cookies (`nb_session`, `nb_refresh`, OAuth-state) are issued
-   * with the `Secure` attribute. True under every identity provider: the
-   * browser↔edge leg is HTTPS even though the container itself is reached over
-   * plain HTTP behind the TLS-terminating edge, and browsers treat
-   * http://localhost as a secure context. Never derived from the listen address
-   * or a client-supplied forwarded-scheme header (both spoofable / misleading —
-   * the listen address is `0.0.0.0` in production). A browser reaching a server
-   * over plain HTTP at a non-localhost address drops these cookies.
+   * Whether the connector OAuth-state cookies are issued with the `Secure`
+   * attribute. True under every identity provider: the browser↔edge leg is
+   * HTTPS even though the container itself is reached over plain HTTP behind
+   * the TLS-terminating edge, and browsers treat http://localhost as a secure
+   * context. Never derived from the listen address or a client-supplied
+   * forwarded-scheme header (both spoofable / misleading — the listen address
+   * is `0.0.0.0` in production). The sign-in cookies are always `Secure`
+   * regardless (`src/identity/session-cookies.ts`).
    */
   secureCookies: boolean;
   appOrigin: string | undefined;

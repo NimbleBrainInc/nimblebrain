@@ -545,7 +545,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 ### HTTP API Internals
 
-**Authentication:** Bearer token via `Authorization` header or HttpOnly session cookie (`nb_session`). Cookie attributes: HttpOnly, SameSite=Lax, Secure in production. Bearer header takes precedence over cookie.
+**Authentication:** Bearer token via `Authorization` header or HttpOnly session cookie (`__Host-nb_session`). Cookie attributes: HttpOnly, SameSite=Lax, Secure, Path=/. Bearer header takes precedence over cookie.
 
 **CORS:** The same under every identity provider: only `ALLOWED_ORIGINS` env var origins, with credentials support; with it unset, same-origin only.
 
