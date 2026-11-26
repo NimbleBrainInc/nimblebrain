@@ -110,9 +110,10 @@ interface PluginRecord {
 }
 
 /**
- * The most bytes read from one catalog response. `readZip` refuses an archive
- * that expands past `ZIP_MAX_TOTAL_BYTES`, so an archive larger than that plus
- * header headroom can never be read; the index, a list of plugins, is far smaller.
+ * The most bytes read from one catalog response: the archive expansion budget
+ * `readZip` enforces (`ZIP_MAX_TOTAL_BYTES`) plus a 1 MiB allowance for ZIP
+ * metadata. It is a download policy tied to that budget, not a bound the reader
+ * implies; the index, a list of plugins, is far smaller.
  */
 export const MAX_FETCH_BYTES = ZIP_MAX_TOTAL_BYTES + 1024 * 1024;
 
