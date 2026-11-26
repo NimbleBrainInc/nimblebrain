@@ -285,7 +285,7 @@ describe("a legitimate delivery", () => {
 
   test("does not forward the browser's session cookie", async () => {
     await deliver(makeApp(), hookUrl(), {
-      headers: { cookie: "nb_session=user-session; nb_oauth_state=abc" },
+      headers: { cookie: "__Host-nb_session=user-session; nb_oauth_state=abc" },
     });
     expect(forwarded).toHaveLength(1);
     const [call] = forwarded;

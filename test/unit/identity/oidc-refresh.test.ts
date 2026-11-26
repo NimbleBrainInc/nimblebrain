@@ -144,7 +144,7 @@ function refreshProvider(
 const withCookie = (value = "rt-value") =>
   new Request("https://app.test/v1/auth/refresh", {
     method: "POST",
-    headers: { cookie: `nb_refresh=${value}` },
+    headers: { cookie: `__Host-nb_refresh=${value}` },
   });
 
 describe("handleOidcRefresh status mapping", () => {
@@ -152,7 +152,7 @@ describe("handleOidcRefresh status mapping", () => {
     const provider = refreshProvider(async () => {
       throw new RefreshTokenError("rejected", "dead", { code: "invalid_grant" });
     });
-    const res = await handleOidcRefresh(withCookie(), provider, false);
+    const res = await handleOidcRefresh(withCookie(), provider);
     expect(res.status).toBe(401);
     expect((await readJson<ApiErrorBody>(res)).error).toBe("refresh_failed");
   });
@@ -161,7 +161,7 @@ describe("handleOidcRefresh status mapping", () => {
     const provider = refreshProvider(async () => {
       throw new RefreshTokenError("unavailable", "blip", { code: "invalid_client" });
     });
-    const res = await handleOidcRefresh(withCookie(), provider, false);
+    const res = await handleOidcRefresh(withCookie(), provider);
     expect(res.status).toBe(503);
     expect(res.headers.get("Retry-After")).toBe("1");
     expect((await readJson<ApiErrorBody>(res)).error).toBe("refresh_unavailable");
@@ -171,20 +171,20 @@ describe("handleOidcRefresh status mapping", () => {
     const provider = refreshProvider(async () => {
       throw new TypeError("Failed to fetch");
     });
-    const res = await handleOidcRefresh(withCookie(), provider, false);
+    const res = await handleOidcRefresh(withCookie(), provider);
     expect(res.status).toBe(503);
     expect((await readJson<ApiErrorBody>(res)).error).toBe("refresh_unavailable");
   });
 
-  test("success → 200 with a fresh nb_session cookie", async () => {
+  test("success → 200 with a fresh __Host-nb_session cookie", async () => {
     const provider = refreshProvider(async () => ({
       accessToken: "new-access",
       refreshToken: "new-refresh",
     }));
-    const res = await handleOidcRefresh(withCookie(), provider, true);
+    const res = await handleOidcRefresh(withCookie(), provider);
     expect(res.status).toBe(200);
     const setCookie = res.headers.get("Set-Cookie") ?? "";
-    expect(setCookie).toContain("nb_session=new-access");
+    expect(setCookie).toContain("__Host-nb_session=new-access");
   });
 
   test("no refresh cookie → 401 no_refresh_token", async () => {
@@ -194,7 +194,6 @@ describe("handleOidcRefresh status mapping", () => {
     const res = await handleOidcRefresh(
       new Request("https://app.test/v1/auth/refresh", { method: "POST" }),
       provider,
-      false,
     );
     expect(res.status).toBe(401);
     expect((await readJson<ApiErrorBody>(res)).error).toBe("no_refresh_token");
@@ -204,7 +203,7 @@ describe("handleOidcRefresh status mapping", () => {
     const provider = refreshProvider(async () => ({ accessToken: "x" }), {
       tokenRefresh: false,
     });
-    const res = await handleOidcRefresh(withCookie(), provider, false);
+    const res = await handleOidcRefresh(withCookie(), provider);
     expect(res.status).toBe(400);
     expect((await readJson<ApiErrorBody>(res)).error).toBe("not_configured");
   });

@@ -285,20 +285,17 @@ function applyConfiguredScopes(url: URL, scopes: string[] | undefined): void {
  * preserving order.
  *
  * Best-effort — network errors at the protected-resource layer return
- * just the connector-origin fallback. SSRF-validated by the caller (the
- * fetcher itself doesn't enforce, since revocation discovery happens
- * post-auth in a trusted context).
+ * just the connector-origin fallback. `fetchImpl` is the caller's
+ * SSRF-guarded fetch, which validates the URL and every redirect hop.
  */
 async function discoverAuthorizationServerOrigins(
-  fetchImpl: typeof fetch,
+  fetchImpl: FetchLike,
   connectorOrigin: string,
-  allowInsecure: boolean,
 ): Promise<string[]> {
   const origins = new Set<string>();
   // 1. RFC 9728 — Protected Resource Metadata.
   try {
     const prMetadataUrl = `${connectorOrigin}/.well-known/oauth-protected-resource`;
-    validateConnectorUrl(new URL(prMetadataUrl), { allowInsecure });
     const res = await fetchImpl(prMetadataUrl);
     if (res.ok) {
       const body = (await res.json()) as { authorization_servers?: unknown };
@@ -337,7 +334,7 @@ async function discoverAuthorizationServerOrigins(
  * "none"` skip the secret).
  */
 async function postRevoke(
-  fetchImpl: typeof fetch,
+  fetchImpl: FetchLike,
   endpoint: string,
   token: string,
   tokenTypeHint: "access_token" | "refresh_token",
@@ -1887,9 +1884,18 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // No caller in this path sets its own `init.signal`, so the spread
     // is unambiguous.
     const signal = this.abortSignal;
-    const fetcher: typeof fetch = signal
-      ? (((input, init) => baseFetcher(input, { ...init, signal })) as typeof fetch)
-      : baseFetcher;
+    const fetcher: FetchLike = (input, init) =>
+      baseFetcher(input, signal ? { ...init, signal } : init);
+    // Discovery URLs come from the connector and from remote metadata, so
+    // discovery runs through the guard every connector request uses: each URL
+    // and each redirect hop is validated, and only same-origin hops are
+    // followed. The RFC 7009 POSTs carry credentials and follow no redirect
+    // at all (`postRevoke`), so they use `fetcher` against an endpoint
+    // validated in `fetchRevocationEndpoint`.
+    const discoveryFetch = createSsrfGuardedFetch(fetcher, {
+      allowInsecure: this.allowInsecureRemotes,
+      fleetInternal: false,
+    });
     const tokens = await this.readTokens("revoke");
     const clientInfo = await this.clientInformation();
     const result: {
@@ -1911,7 +1917,10 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
     // Discover the revocation endpoint (best-effort — undefined when the server
     // advertises none, in which case there's nothing to revoke upstream).
-    const revocationEndpoint = await this.discoverRevocationEndpoint(fetcher, opts.connectorUrl);
+    const revocationEndpoint = await this.discoverRevocationEndpoint(
+      discoveryFetch,
+      opts.connectorUrl,
+    );
 
     if (!clientInfo) {
       // `clientInformation()` returned undefined despite tokens being
@@ -1966,16 +1975,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    *      that co-locate the AS with the resource (Granola, Notion, HubSpot).
    */
   private async discoverRevocationEndpoint(
-    fetcher: typeof fetch,
+    fetcher: FetchLike,
     connectorUrl: string,
   ): Promise<string | undefined> {
     try {
       const connectorOrigin = new URL(connectorUrl).origin;
-      const asOrigins = await discoverAuthorizationServerOrigins(
-        fetcher,
-        connectorOrigin,
-        this.allowInsecureRemotes,
-      );
+      const asOrigins = await discoverAuthorizationServerOrigins(fetcher, connectorOrigin);
       // Try each AS in order. First one that advertises a usable
       // revocation_endpoint (a well-formed URL that passes SSRF/scheme
       // validation) wins. An AS whose endpoint is malformed, relative, or
@@ -1998,21 +2003,18 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * undefined (SSRF-blocked, unreachable, non-2xx, or not advertised).
    */
   private async fetchRevocationEndpoint(
-    fetcher: typeof fetch,
+    fetcher: FetchLike,
     asOrigin: string,
   ): Promise<string | undefined> {
     const metadataUrl = `${asOrigin}/.well-known/oauth-authorization-server`;
     try {
-      validateConnectorUrl(new URL(metadataUrl), {
-        allowInsecure: this.allowInsecureRemotes,
-      });
       const res = await fetcher(metadataUrl);
       if (!res.ok) return undefined;
       const meta = (await res.json()) as { revocation_endpoint?: unknown };
       if (typeof meta.revocation_endpoint === "string") {
         // The endpoint is a URL lifted from the (attacker-influenceable) AS
         // metadata *body* — an independent target from the metadata URL
-        // validated above, and one we POST the refresh token + client_secret
+        // the guarded fetch validated, and one we POST the refresh token + client_secret
         // to. Re-validate it against the same SSRF/scheme rules so a
         // malicious server can't point revocation at a private/metadata
         // address or a non-HTTPS host. A malformed or rejected endpoint
@@ -2044,7 +2046,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * `result.error` so disconnect continues to local cleanup.
    */
   private async revokeTokenPair(
-    fetcher: typeof fetch,
+    fetcher: FetchLike,
     endpoint: string,
     tokens: OAuthTokens,
     clientInfo: OAuthClientInformationMixed,

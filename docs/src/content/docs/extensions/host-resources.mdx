@@ -126,6 +126,8 @@ The whole list comes back in one response. Pagination is not supported, and a re
 
 A request resolves in **the workspace the calling connection belongs to**, for the user on whose behalf the tool is running. The URI names a file, never a workspace. The host takes the workspace from the connection, so a server cannot reach another workspace's files by constructing a URI.
 
+The host answers a request only while one of the server's own tool calls is in flight, and only when the request is sent on that call's response stream (a request related to the `tools/call`). It resolves for the user that call was made for. A connection is shared by a workspace and has no user of its own, so a request sent on the connection's standalone stream, or with no tool call in flight, is refused with `-32003`.
+
 A file that does not exist, and a file that exists somewhere the caller cannot see, return the same resource-not-found error (`-32602` with `{ uri }` as its data). A server cannot use reads to discover what exists outside its scope.
 
 ## Errors
@@ -136,6 +138,7 @@ The error codes are the specification's where one exists, so a future upstream v
 |---|---|---|
 | `-32602` | Resource not found, or not visible to this caller | `{ uri }` |
 | `-32602` | Invalid params: unsupported scheme, a `cursor`, or a malformed filter | Scheme: `{ uri \| scheme, supported }`. Cursor: `{ cursor }`. Non-array `tags`: `{ receivedType }` |
+| `-32003` | No tool call in scope: the request was not sent on the stream of one of the server's own tool calls | `{ method }` |
 | `-32004` | Rate limited. Each server in each workspace has its own request budget. | `{ retryAfterMs }` |
 | `-32005` | Response too large: the resource exceeds `read.maxSize` | `{ uri, size, maxSize }` |
 
@@ -156,7 +159,7 @@ Design the tool so it works on any host. Accept a URI, accept inline content as 
 <TabItem label="Wire (any SDK)">
 
 1. After `initialize`, read `clientCapabilities.extensions["ai.nimblebrain/host-resources"]`. On a `2026-07-28` connection the capability is never present, so the tool always takes the fallback.
-2. If `read.enabled` is true and the URI's scheme is in `schemes`, send an `ai.nimblebrain/resources/read` request to the client over the same session.
+2. If `read.enabled` is true and the URI's scheme is in `schemes`, send an `ai.nimblebrain/resources/read` request to the client on the tool call's own response stream: a request related to the `tools/call` being handled (in the TypeScript SDK, `extra.mcpReq.send`; in the Python SDK, `related_request_id`). A request on the session's standalone stream is refused.
 3. Parse the result as a standard `ReadResourceResult`.
 4. Otherwise, fall back to inline content.
 

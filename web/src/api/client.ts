@@ -1316,7 +1316,7 @@ export async function logout(): Promise<void> {
  * authenticated, null if 401 or network error. Used as the single auth check.
  *
  * Routes through {@link fetchWithRefresh} so a returning user with an expired
- * access-token cookie but a valid `nb_refresh` cookie is silently re-authed
+ * access-token cookie but a valid `__Host-nb_refresh` cookie is silently re-authed
  * on cold load instead of being bounced to the login screen. `onAuthError`
  * is null at this point in the App lifecycle (App.tsx wires it inside
  * initFromBootstrap, after this call) so a failed refresh just leaves the

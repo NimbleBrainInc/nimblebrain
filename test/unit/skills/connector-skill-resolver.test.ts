@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  MAX_FETCH_BYTES,
   pinnedIndexUrl,
   type ResolveServerSkillsOptions,
   resolveServerConversationStarters,
@@ -172,6 +173,88 @@ describe("resolveServerSkills", () => {
       pinnedIndexUrl(TEST_CATALOG_URL, next.pin),
       [...next.objects.keys()].find((u) => u.includes(next.digests.gmail!))!,
     ]);
+  });
+});
+
+describe("catalog fetch size bound", () => {
+  const CHUNK = 1024 * 1024;
+
+  /** A body of `chunks` 1 MiB chunks (endless when omitted), counting the chunks read and whether it was cancelled. */
+  function counted(chunks = Number.POSITIVE_INFINITY) {
+    const state = { pulls: 0, cancelled: false };
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (state.pulls >= chunks) return controller.close();
+          state.pulls++;
+          controller.enqueue(new Uint8Array(CHUNK));
+        },
+        cancel() {
+          state.cancelled = true;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    return { state, stream };
+  }
+
+  /** The catalog's fetch, with `url` answered by `respond` instead. */
+  function serving(c: FixtureCatalog, url: string, respond: () => Response): typeof fetch {
+    return fakeFetch(async (input, init) =>
+      String(input) === url ? respond() : c.fetch(input, init),
+    );
+  }
+
+  function archiveUrl(c: FixtureCatalog): string {
+    return [...c.objects.keys()].find((u) => u.includes(c.digests.gmail!))!;
+  }
+
+  test("an archive streamed past the cap with no Content-Length is refused and not cached", async () => {
+    const c = catalog();
+    const body = counted();
+    const o = { ...opts(c), fetchImpl: serving(c, archiveUrl(c), () => new Response(body.stream)) };
+    await expect(resolveServerSkills("com.google/gmail", o)).rejects.toThrow(
+      `plugin catalog fetch exceeds ${MAX_FETCH_BYTES} bytes`,
+    );
+    expect(body.state.pulls).toBeLessThanOrEqual(MAX_FETCH_BYTES / CHUNK + 1);
+    expect(body.state.cancelled).toBe(true);
+    const cached = join(o.cacheDir, "plugins");
+    expect(existsSync(cached) ? readdirSync(cached) : []).not.toContain(`${c.digests.gmail!}.zip`);
+  });
+
+  test("an archive whose Content-Length is over the cap is refused before its body is read", async () => {
+    const c = catalog();
+    const body = counted();
+    const respond = () =>
+      new Response(body.stream, { headers: { "content-length": String(MAX_FETCH_BYTES + 1) } });
+    const o = { ...opts(c), fetchImpl: serving(c, archiveUrl(c), respond) };
+    await expect(resolveServerSkills("com.google/gmail", o)).rejects.toThrow(
+      `plugin catalog fetch exceeds ${MAX_FETCH_BYTES} bytes`,
+    );
+    expect(body.state.pulls).toBe(0);
+    expect(body.state.cancelled).toBe(true);
+  });
+
+  test("an index streamed past the cap is refused and not cached", async () => {
+    const c = catalog();
+    const body = counted();
+    const url = pinnedIndexUrl(TEST_CATALOG_URL, c.pin);
+    const o = { ...opts(c), fetchImpl: serving(c, url, () => new Response(body.stream)) };
+    await expect(resolveServerSkills("com.google/gmail", o)).rejects.toThrow(
+      `plugin catalog fetch exceeds ${MAX_FETCH_BYTES} bytes`,
+    );
+    expect(body.state.cancelled).toBe(true);
+    expect(existsSync(join(o.cacheDir, "index"))).toBe(false);
+  });
+
+  test("a body of exactly the cap is read whole and judged by its digest", async () => {
+    const c = catalog();
+    const body = counted(MAX_FETCH_BYTES / CHUNK);
+    const o = { ...opts(c), fetchImpl: serving(c, archiveUrl(c), () => new Response(body.stream)) };
+    await expect(resolveServerSkills("com.google/gmail", o)).rejects.toThrow(
+      /plugin gmail integrity mismatch/,
+    );
+    expect(body.state.cancelled).toBe(false);
   });
 });
 

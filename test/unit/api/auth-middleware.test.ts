@@ -44,7 +44,7 @@ function createMockProvider(validToken: string, identity: UserIdentity): Identit
       const cookie = req.headers.get("cookie") ?? "";
       for (const pair of cookie.split(";")) {
         const [name, ...rest] = pair.trim().split("=");
-        if (name === "nb_session" && rest.join("=") === "valid-session") {
+        if (name === "__Host-nb_session" && rest.join("=") === "valid-session") {
           return { ...identity, grant: FIRST_PARTY_GRANT };
         }
       }
@@ -124,7 +124,7 @@ describe("authenticateRequest — adapter mode", () => {
 
   it("accepts valid session cookie via adapter", async () => {
     const req = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
-      headers: { Cookie: "nb_session=valid-session" },
+      headers: { Cookie: "__Host-nb_session=valid-session" },
     });
     const result = await authenticateRequest(req, options);
     expect(isAuthError(result)).toBe(false);

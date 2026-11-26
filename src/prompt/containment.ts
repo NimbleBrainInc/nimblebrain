@@ -29,6 +29,7 @@ export type ContainmentTag =
   | "skill-instructions"
   | "run-input"
   | "judge-feedback"
+  | "event"
   | "host-instructions"
   | "conversation-history";
 

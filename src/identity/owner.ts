@@ -8,7 +8,7 @@ import type { UserIdentity } from "./provider.ts";
  * throw, never silently own the data as a sentinel user.
  *
  * This is the single source of truth for that resolution. `runtime.chat()`,
- * the host-resources `files://` resolver, and the REST file handlers all call
+ * the host-resources call scope (`McpSource`), and the REST file handlers all call
  * it so an upload and its later read resolve to the SAME owner — and thus the
  * same identity-scoped store. Drift here would strand files in one store while
  * reads look in another.
