@@ -92,7 +92,7 @@ async function executeOverAcp(
   io: RunIO,
 ): Promise<EngineResult> {
   const signal = run.config.signal;
-  const recorder = createAcpRunRecorder(run, io);
+  const recorder = createAcpRunRecorder(run, io, driver.capabilities?.ownModel);
   recorder.start();
 
   const cleanup: (() => Promise<void>)[] = [];

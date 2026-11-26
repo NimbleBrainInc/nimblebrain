@@ -58,6 +58,16 @@ export interface RuntimeCapabilities {
    * projection), so the door composes no guidance about promoting one.
    */
   promotesTools: boolean;
+  /**
+   * The model id the runtime's runs are recorded under, for an agent that
+   * brings its own model and its own access to it (a vendor's CLI signed in to
+   * a person's subscription), so the run's model names nothing it calls.
+   * Such a runtime also executes the door's own model work (a title, a
+   * history fold's summary) as runs, because nothing else can spend that
+   * access (`Runtime.completeOnRuntime`). Absent: the runtime calls the run's
+   * model, and the door calls it too.
+   */
+  ownModel?: string;
 }
 
 /**

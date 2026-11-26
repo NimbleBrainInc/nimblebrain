@@ -56,12 +56,13 @@ import {
   type ConnectorTeardownOutcome,
   uninstallWorkspaceConnector,
 } from "../connectors/runtime/uninstall.ts";
-import { generateTitle } from "../conversation/auto-title.ts";
+import { generateTitleWith } from "../conversation/auto-title.ts";
 import {
   compactConversationMessages,
   planCompaction,
   summarizeMessages,
 } from "../conversation/compaction.ts";
+import { type Complete, completeWithModel } from "../conversation/completion.ts";
 import {
   collectSuppressedSkillNames,
   extractOperatorTurns,
@@ -376,6 +377,7 @@ import {
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
+import { completeOnRuntime } from "./aux-run.ts";
 import { buildMidTurnCompaction } from "./mid-turn-compaction.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
 import { resolveMessageBudget } from "./resolve-message-budget.ts";
@@ -2300,6 +2302,21 @@ export class Runtime {
    * here, before the run starts, never as a retry after a refusal, and logged
    * with the term the default could not hold.
    */
+  /**
+   * The door's own model work (a title, a history fold's summary) for `slot`.
+   * The door decides it; who executes it follows the same rule as a turn. A
+   * default runtime that brings its own model (`ownModel`, a CLI signed in to
+   * a person's subscription) runs it, since nothing else can spend that
+   * access. Otherwise the runtime calls the slot's model, so the door does too.
+   * Throws when the slot does not resolve.
+   */
+  private auxCompletion(slot: string): Complete {
+    const runtime = this.agentRuntimes.select(this.config.execution?.default);
+    const own = runtime.capabilities.ownModel;
+    if (own) return completeOnRuntime(runtime, own);
+    return completeWithModel(this.resolveModelFn(slot));
+  }
+
   private agentRuntimeFor(spec: RunSpec, runId: string): AgentRuntime {
     const preferred = this.agentRuntimes.select(this.config.execution?.default);
     const unheld = termTheRuntimeCannotHold(preferred, spec, this.holdsByGrant(preferred));
@@ -3063,9 +3080,9 @@ export class Runtime {
     // unconfigured provider throws here — synchronously, ahead of the promise
     // chain whose `.catch` handles every other failure — and would surface as a
     // 500 on a turn that already completed. Titling is best-effort; skip it.
-    let titleModel: LanguageModelV4;
+    let titleModel: Complete;
     try {
-      titleModel = this.resolveModelFn(titleSlot);
+      titleModel = this.auxCompletion(titleSlot);
     } catch (err) {
       log.error("[runtime] title generation skipped — fast slot did not resolve", {
         titleSlot,
@@ -3079,13 +3096,13 @@ export class Runtime {
     // The title call runs the `fast` slot outside the agentic loop; persist its
     // usage as an aux.usage event so it isn't invisible to cost accounting.
     const appendTitleUsage = store.appendEvent?.bind(store);
-    void generateTitle(titleModel, titleInput, output, (usage, llmMs) => {
-      recordLlmCall({ source: "title", model: titleSlot, usage, llmMs });
+    void generateTitleWith(titleModel, titleInput, output, (usage, llmMs, model = titleSlot) => {
+      recordLlmCall({ source: "title", model, usage, llmMs });
       appendTitleUsage?.(conversation.id, {
         ts: new Date().toISOString(),
         type: "aux.usage",
         source: "title",
-        model: titleSlot,
+        model,
         usage,
         llmMs,
       });
@@ -5503,9 +5520,9 @@ export class Runtime {
     // a workspace can name a model whose provider is not configured, and
     // resolution throws — which must not reject the turn. Skipping the fold
     // leaves the full history, exactly as the best-effort contract above says.
-    let model: LanguageModelV4;
+    let model: Complete;
     try {
-      model = this.resolveModelFn(fastSlot);
+      model = this.auxCompletion(fastSlot);
     } catch (err) {
       log.error("[runtime] history compaction skipped — fast slot did not resolve", {
         fastSlot,
@@ -5536,8 +5553,8 @@ export class Runtime {
       // The summarizer runs the `fast` slot outside the agentic loop, so it
       // emits no llm.response. Persist its usage as an aux.usage event so the
       // fold's cost isn't invisible to the usage aggregator.
-      onUsage: (usage, llmMs) =>
-        this.billCompactionUsage(store, conversationId, fastSlot, usage, llmMs),
+      onUsage: (usage, llmMs, answeredBy) =>
+        this.billCompactionUsage(store, conversationId, answeredBy ?? fastSlot, usage, llmMs),
     });
     // No-op contract: the helper returns the SAME array reference when nothing
     // was compacted (below threshold or best-effort failure). A future helper

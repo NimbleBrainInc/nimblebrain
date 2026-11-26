@@ -20,7 +20,7 @@ export const SUBSCRIPTION_USAGE_META_KEY = "nimblebrain-subscription/usage";
 
 export function createSubscriptionCliDriver(cli: "claude-code" | "codex"): AcpDriver {
   return {
-    capabilities: { spendGate: false },
+    capabilities: { spendGate: false, ownModel: `${cli}-subscription` },
     toolSurface: cli === "claude-code" ? "projection" : "mixed",
     outcome: subscriptionOutcome,
   };
