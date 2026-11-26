@@ -22,6 +22,7 @@ import { Scheduler } from "../../../src/platform/tasks/scheduler.ts";
 import { resolveExecutorContext } from "../../../src/platform/tasks/source.ts";
 import { loadOwnerTasks, saveTask } from "../../../src/platform/tasks/store.ts";
 import type { Task } from "../../../src/platform/tasks/types.ts";
+import { createFilesystemWorkQueue } from "../../../src/providers/queue/filesystem.ts";
 import { WorkspaceMembershipRevokedError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import type { TaskRequest } from "../../../src/runtime/types.ts";
@@ -142,9 +143,14 @@ describe("a deactivated user's unattended work", () => {
         (req) => runtime.executeTask(req as TaskRequest),
         resolveExecutorContext,
       );
-      const scheduler = new Scheduler(executor, { workDir });
+      // A queue of its own: the runtime's scheduler claims from the runtime's.
+      const queue = createFilesystemWorkQueue({ dir: join(workDir, "test-queue") });
+      const scheduler = new Scheduler(executor, { workDir, queue });
       scheduler.start();
-      stopScheduler = () => scheduler.stop();
+      stopScheduler = () => {
+        scheduler.stop();
+        void queue.close();
+      };
 
       await runtime.getUserStore().softDelete(owner.id);
       const skipped = await scheduler.runNow(WS, owner.id, "daily");
