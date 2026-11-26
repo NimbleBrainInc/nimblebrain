@@ -100,6 +100,7 @@ describe("telemetry consent at init", () => {
     expect(done?.properties).toMatchObject({
       model_key: "set",
       provider: "anthropic",
+      model_source: "api",
       agent: "claude-code",
     });
     expect(JSON.stringify(sent(m))).not.toContain("sk-secret");
@@ -109,7 +110,12 @@ describe("telemetry consent at init", () => {
     const m = machine({ env });
     await json(["--yes", "--telemetry", "on", "--agent", "none"], m);
     const done = sent(m).find((e) => e.event === "cli.init_completed");
-    expect(done?.properties).toMatchObject({ model_key: "missing", provider: null, agent: null });
+    expect(done?.properties).toMatchObject({
+      model_key: "missing",
+      provider: null,
+      model_source: null,
+      agent: null,
+    });
   });
 
   test("--telemetry off sends nothing and keeps nothing", async () => {

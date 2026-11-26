@@ -10,7 +10,7 @@ import { useChatConfigContext, useChatContext } from "../context/ChatContext";
  */
 export function useComposerModel() {
   const { conversationId, conversationMeta } = useChatContext();
-  const { availableModels, newConversationModel } = useChatConfigContext();
+  const { availableModels, newConversationModel, runsOn } = useChatConfigContext();
   const all = useMemo(() => toPickerModels(availableModels), [availableModels]);
   const [pendingModel, setPendingModel] = useState<string | undefined>(undefined);
 
@@ -31,7 +31,9 @@ export function useComposerModel() {
   const bindingUnknown = Boolean(conversationId) && !boundModel;
 
   return {
-    models: bindingUnknown ? [] : all,
+    // A runtime that brings its own model uses none of these, so none is offered.
+    models: bindingUnknown || runsOn ? [] : all,
+    runsOn,
     boundModel,
     defaultModel: newConversationModel,
     pendingModel,

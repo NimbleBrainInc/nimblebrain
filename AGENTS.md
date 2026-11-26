@@ -110,7 +110,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`web/src/bridge/AGENTS.md`](./web/src/bridge/AGENTS.md) | MCP App Bridge rules: iframe scoping, handshake gate, notification relay, host capabilities |
 | [`packages/server-sdk/AGENTS.md`](./packages/server-sdk/AGENTS.md) | The TypeScript server SDK, counterpart of `nimblebrain-server-sdk` (Python): reading the host context, tool errors, the principal rule, reading a contract document; no dependencies, the contract document decides |
 | [`packages/conversations/AGENTS.md`](./packages/conversations/AGENTS.md) | The built-in conversations plugin (bound by default): never imports the kernel, call order, context per transport, filesystem layout, `seq`, cursors, the screen and its build, its host metadata, its conformance tests |
-| [`packages/cli/AGENTS.md`](./packages/cli/AGENTS.md) | The `nimblebrain` CLI (`npx nimblebrain`): setup and running, plus a thin client of the local instance's API (`mcp add`), Node 20 with no dependencies, the `{ok, error, fix}` JSON contract, the model key never in output, never touching an install it did not make |
+| [`packages/cli/AGENTS.md`](./packages/cli/AGENTS.md) | The `nimblebrain` CLI (`npx nimblebrain`): setup and running, plus a thin client of the local instance's API (`mcp add`) and the agent worker `use` starts, one self-contained file on Node 20, the `{ok, error, fix}` JSON contract, the model key never in output, never touching an install it did not make |
 
 ## Conventions
 

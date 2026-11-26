@@ -32,8 +32,9 @@ import {
   MODEL_GATEWAY_BUDGET_ACCOUNT,
 } from "../../model/gateway-refusal.ts";
 import { log } from "../../observability/log.ts";
+import { AgentRuntimeError } from "../agent-runtime-error.ts";
 import { openToolProjection, type ToolProjection } from "../tool-projection.ts";
-import type { AgentRuntime, ResolvedRun, RunIO } from "../types.ts";
+import type { AgentRuntime, ResolvedRun, RunIO, RuntimeDescription } from "../types.ts";
 import { AgentConnectionLostError } from "./connection-lost.ts";
 import type {
   AcpConnection,
@@ -63,6 +64,13 @@ export interface AcpRuntimeOptions {
   modelGateway?: string;
 }
 
+/** The client's `initialize`: no filesystem and no terminal, whichever agent it reaches. */
+const INITIALIZE: acp.InitializeRequest = {
+  protocolVersion: acp.PROTOCOL_VERSION,
+  clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+  clientInfo: { name: "nimblebrain", version: "1" },
+};
+
 export function createAcpRuntime(
   id: string,
   driver: AcpDriver,
@@ -71,6 +79,8 @@ export function createAcpRuntime(
 ): AgentRuntime {
   return {
     id,
+    ...(driver.title ? { title: driver.title } : {}),
+    probe: () => probeOverAcp(id, driver, connection),
     // An agent with its own loop counts its own model calls, and is served its
     // tools by the projection, whatever its driver.
     capabilities: {
@@ -92,7 +102,7 @@ async function executeOverAcp(
   io: RunIO,
 ): Promise<EngineResult> {
   const signal = run.config.signal;
-  const recorder = createAcpRunRecorder(run, io);
+  const recorder = createAcpRunRecorder(run, io, driver.capabilities?.ownModel);
   recorder.start();
 
   const cleanup: (() => Promise<void>)[] = [];
@@ -183,7 +193,11 @@ function runFailure(
   caught: unknown,
 ): unknown {
   const signal = run.config.signal;
-  const err = !signal?.aborted && link.lost() ? connectionLost(run, caught) : caught;
+  const err = signal?.aborted
+    ? caught
+    : link.lost()
+      ? connectionLost(run, caught)
+      : (agentFailureOf(driver, caught) ?? caught);
   if (!recorder.ended()) {
     // A turn that failed as it was cancelled still reports the calls it made.
     if (signal?.aborted) recorder.cancelled(undefined, driver.modelFailure?.(err)?.outcome);
@@ -299,10 +313,8 @@ async function openSession(
   cleanup.push(async () => releaseSetupAbort());
   const agent = connection.agent;
 
-  const init = await agent.request(acp.methods.agent.initialize, {
-    protocolVersion: acp.PROTOCOL_VERSION,
-    clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-    clientInfo: { name: "nimblebrain", version: "1" },
+  const init = await agent.request(acp.methods.agent.initialize, INITIALIZE).catch((err) => {
+    throw signal?.aborted ? err : unreachable(runtimeId, driver, err);
   });
   const mcpServers = [
     projectionServer(runtimeId, init.agentCapabilities?.mcpCapabilities, projection, acpServers),
@@ -389,4 +401,60 @@ function isProjectedToolCall(toolCall: acp.ToolCallUpdate, projected: Set<string
     if (title === name || title.endsWith(`__${name}`) || title.endsWith(`/${name}`)) return true;
   }
   return false;
+}
+
+/**
+ * Ask the agent about itself on a connection of its own, with no run: what it
+ * says at `initialize`, read by its driver. Rejects as `agent_unreachable`
+ * when the worker does not answer.
+ */
+async function probeOverAcp(
+  runtimeId: string,
+  driver: AcpDriver,
+  agentConnection: AcpConnection,
+): Promise<RuntimeDescription> {
+  let opened: Awaited<ReturnType<AcpConnection["open"]>> | undefined;
+  let connection: ReturnType<acp.ClientApp["connect"]> | undefined;
+  try {
+    opened = await agentConnection.open();
+    const app = acp.client({ name: "nimblebrain" });
+    connection =
+      opened.target instanceof acp.AgentApp
+        ? app.connect(opened.target)
+        : app.connect(opened.target);
+    const init = await connection.agent
+      .request(acp.methods.agent.initialize, INITIALIZE)
+      .catch((err: unknown) => {
+        throw unreachable(runtimeId, driver, err);
+      });
+    return driver.describe?.(init) ?? {};
+  } catch (err) {
+    throw err instanceof AgentRuntimeError ? err : unreachable(runtimeId, driver, err);
+  } finally {
+    connection?.close();
+    await opened?.close().catch(() => {});
+  }
+}
+
+/**
+ * The run's failure when the worker never answered `initialize`: the network
+ * refused it, or the connection broke before an answer. An agent that answered
+ * with an error reached us, so that error stands as it is.
+ */
+function unreachable(runtimeId: string, driver: AcpDriver, err: unknown): unknown {
+  if (err instanceof acp.RequestError) return err;
+  const name = driver.title ?? runtimeId;
+  return new AgentRuntimeError(
+    "agent_unreachable",
+    `${name} isn't answering.${driver.unreachableFix ? ` ${driver.unreachableFix}` : ""}`,
+    { cause: err },
+  );
+}
+
+/** A failure the agent classified, as the named error the chat shows, or `undefined`. */
+function agentFailureOf(driver: AcpDriver, err: unknown): AgentRuntimeError | undefined {
+  const failure = driver.agentFailure?.(err);
+  return failure
+    ? new AgentRuntimeError(`agent_${failure.code}`, failure.message, { cause: err })
+    : undefined;
 }

@@ -242,7 +242,9 @@ export interface StreamErrorEvent {
    * Machine-readable error code: `model_auth_failed` when the native engine
    * called a model provider directly and its API key is missing or rejected
    * (retrying cannot succeed), `buffer_overflow` when the turn hit the per-run
-   * event cap, `engine_error` otherwise.
+   * event cap, `agent_unreachable` when the runtime's agent worker did not
+   * answer, `agent_<code>` for a failure the agent classified (such as
+   * `agent_signed_out`, which retrying cannot fix), `engine_error` otherwise.
    */
   error: string;
   message: string;

@@ -94,6 +94,7 @@ import type {
   ToolSchema,
 } from "../engine/types.ts";
 import { CONNECTOR_SKILL_SYNTHETIC, SKILL_ACTIVATED_SYNTHETIC } from "../engine/types.ts";
+import { AgentRuntimeError } from "../execution/agent-runtime-error.ts";
 import { NATIVE_RUNTIME_ID } from "../execution/native-runtime.ts";
 import { type AgentRuntimes, createAgentRuntimes } from "../execution/registry.ts";
 import type { AgentRuntime } from "../execution/types.ts";
@@ -102,12 +103,14 @@ import { workspaceFilesDir } from "../files/paths.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
-import { generateTitle } from "../history/auto-title.ts";
+import { generateTitleWith } from "../history/auto-title.ts";
+
 import {
   compactConversationMessages,
   planCompaction,
   summarizeMessages,
 } from "../history/compaction.ts";
+import { type Complete, completeWithModel } from "../history/completion.ts";
 import {
   collectSuppressedSkillNames,
   extractOperatorTurns,
@@ -384,6 +387,7 @@ import {
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
+import { completeOnRuntime } from "./aux-run.ts";
 import { buildMidTurnCompaction } from "./mid-turn-compaction.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
 import { resolveMessageBudget } from "./resolve-message-budget.ts";
@@ -1188,6 +1192,7 @@ export class Runtime {
       connectionCredential: runKey ? () => runKey.mintConnectionCredential() : null,
       dev: identityProvider instanceof DevIdentityProvider,
     });
+    warnIfNoModelProvider(config, gateway, agentRuntimes.select(config.execution?.default));
     const rt = new Runtime(
       resolveModelFn,
       agentRuntimes,
@@ -1680,7 +1685,10 @@ export class Runtime {
           this.runBus.end(turnKey, "cancelled");
         } else {
           this.publishTurnEvent(turnKey, "error", {
-            error: err instanceof ModelAuthError ? err.code : "engine_error",
+            error:
+              err instanceof ModelAuthError || err instanceof AgentRuntimeError
+                ? err.code
+                : "engine_error",
             message: err instanceof Error ? err.message : String(err),
           });
           this.runBus.end(turnKey, "error");
@@ -2415,6 +2423,21 @@ export class Runtime {
    * here, before the run starts, never as a retry after a refusal, and logged
    * with the term the default could not hold.
    */
+  /**
+   * The door's own model work (a title, a history fold's summary) for `slot`.
+   * The door decides it; who executes it follows the same rule as a turn. A
+   * default runtime that brings its own model (`ownModel`, a CLI signed in to
+   * a person's subscription) runs it, since nothing else can spend that
+   * access. Otherwise the runtime calls the slot's model, so the door does too.
+   * Throws when the slot does not resolve.
+   */
+  private auxCompletion(slot: string): Complete {
+    const runtime = this.agentRuntimes.select(this.config.execution?.default);
+    const own = runtime.capabilities.ownModel;
+    if (own) return completeOnRuntime(runtime, own);
+    return completeWithModel(this.resolveModelFn(slot));
+  }
+
   private agentRuntimeFor(spec: RunSpec, runId: string): AgentRuntime {
     const preferred = this.agentRuntimes.select(this.config.execution?.default);
     const unheld = termTheRuntimeCannotHold(preferred, spec, this.holdsByGrant(preferred));
@@ -3178,9 +3201,9 @@ export class Runtime {
     // unconfigured provider throws here — synchronously, ahead of the promise
     // chain whose `.catch` handles every other failure — and would surface as a
     // 500 on a turn that already completed. Titling is best-effort; skip it.
-    let titleModel: LanguageModelV4;
+    let titleModel: Complete;
     try {
-      titleModel = this.resolveModelFn(titleSlot);
+      titleModel = this.auxCompletion(titleSlot);
     } catch (err) {
       log.error("[runtime] title generation skipped — fast slot did not resolve", {
         titleSlot,
@@ -3194,13 +3217,13 @@ export class Runtime {
     // The title call runs the `fast` slot outside the agentic loop; persist its
     // usage as an aux.usage event so it isn't invisible to cost accounting.
     const appendTitleUsage = store.appendEvent?.bind(store);
-    void generateTitle(titleModel, titleInput, output, (usage, llmMs) => {
-      recordLlmCall({ source: "title", model: titleSlot, usage, llmMs });
+    void generateTitleWith(titleModel, titleInput, output, (usage, llmMs, model = titleSlot) => {
+      recordLlmCall({ source: "title", model, usage, llmMs });
       appendTitleUsage?.(conversation.id, {
         ts: new Date().toISOString(),
         type: "aux.usage",
         source: "title",
-        model: titleSlot,
+        model,
         usage,
         llmMs,
       });
@@ -5591,6 +5614,33 @@ export class Runtime {
   }
 
   /**
+   * The default runtime when it brings its own model, so no turn uses the
+   * model slots: its name, the plan it bills, and whether its agent answers
+   * now, asked within `PROBE_TIMEOUT_MS`. `undefined` for any other runtime.
+   */
+  async describeRuntimeWithOwnModel(): Promise<RunsOn | undefined> {
+    const runtime = this.agentRuntimes.select(this.config.execution?.default);
+    if (!runtime.capabilities.ownModel) return undefined;
+    const base = { id: runtime.id, title: runtime.title ?? runtime.id };
+    if (!runtime.probe) return { ...base, reachable: true };
+    try {
+      const described = await Promise.race([
+        runtime.probe(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("probe timed out")), PROBE_TIMEOUT_MS),
+        ),
+      ]);
+      return { ...base, reachable: true, ...(described.plan ? { plan: described.plan } : {}) };
+    } catch (err) {
+      return {
+        ...base,
+        reachable: false,
+        ...(err instanceof AgentRuntimeError ? { problem: err.message } : {}),
+      };
+    }
+  }
+
+  /**
    * Compact a conversation's history at run start when it has outgrown its
    * budget — fold the oldest turns into a summary so the prefix re-anchors once
    * instead of windowing (and busting the cache) every turn. Gated by
@@ -5619,9 +5669,9 @@ export class Runtime {
     // a workspace can name a model whose provider is not configured, and
     // resolution throws — which must not reject the turn. Skipping the fold
     // leaves the full history, exactly as the best-effort contract above says.
-    let model: LanguageModelV4;
+    let model: Complete;
     try {
-      model = this.resolveModelFn(fastSlot);
+      model = this.auxCompletion(fastSlot);
     } catch (err) {
       log.error("[runtime] history compaction skipped — fast slot did not resolve", {
         fastSlot,
@@ -5652,8 +5702,8 @@ export class Runtime {
       // The summarizer runs the `fast` slot outside the agentic loop, so it
       // emits no llm.response. Persist its usage as an aux.usage event so the
       // fold's cost isn't invisible to the usage aggregator.
-      onUsage: (usage, llmMs) =>
-        this.billCompactionUsage(store, conversationId, fastSlot, usage, llmMs),
+      onUsage: (usage, llmMs, answeredBy) =>
+        this.billCompactionUsage(store, conversationId, answeredBy ?? fastSlot, usage, llmMs),
     });
     // No-op contract: the helper returns the SAME array reference when nothing
     // was compacted (below threshold or best-effort failure). A future helper
@@ -6625,13 +6675,45 @@ function resolveModel(
   // Only the providers the config names are built; with none, every model
   // fails naming the settings that configure one. The runtime still starts, so
   // an install can come up first and be given its key afterwards.
-  if (!gateway && Object.keys(config.providers ?? {}).length === 0) {
-    log.warn(
-      "[runtime] No model provider is configured: chat fails until nimblebrain.json sets providers " +
-        `(providers.local for a model server you run) or the environment holds a provider key (${Object.values(MODEL_PROVIDER_KEY_ENV).join(", ")}).`,
-    );
-  }
   return buildModelResolver({ providers: config.providers }, gateway);
+}
+
+/**
+ * Say at boot when no model provider is configured, and what fails because of
+ * it. A default runtime that brings its own model (`ownModel`) runs every turn
+ * and the door's own model work without one; only a run it cannot hold (a
+ * spend budget, ADR-0062) needs the native engine, and so a provider.
+ */
+function warnIfNoModelProvider(
+  config: RuntimeConfig,
+  gateway: ModelGatewayAccess | undefined,
+  defaultRuntime: AgentRuntime,
+): void {
+  if (config.languageModel || gateway || Object.keys(config.providers ?? {}).length > 0) return;
+  const settings = `nimblebrain.json sets providers (providers.local for a model server you run) or the environment holds a provider key (${Object.values(MODEL_PROVIDER_KEY_ENV).join(", ")})`;
+  if (defaultRuntime.capabilities.ownModel) {
+    log.info(
+      `[runtime] No model provider is configured: every turn runs on ${defaultRuntime.id}, which brings its own model. A run with a spend budget runs on the native engine and fails until ${settings}.`,
+    );
+    return;
+  }
+  log.warn(`[runtime] No model provider is configured: chat fails until ${settings}.`);
+}
+
+/** How long bootstrap waits for a runtime's agent to describe itself. */
+const PROBE_TIMEOUT_MS = 1500;
+
+/** The runtime every turn runs on, as the composer names it (`BootstrapResponse.config.runsOn`). */
+export interface RunsOn {
+  id: string;
+  /** The name a person knows it by (`Claude Code`). */
+  title: string;
+  /** The plan it bills (`Claude Max`), when its agent said. */
+  plan?: string;
+  /** Whether its agent answered just now. */
+  reachable: boolean;
+  /** When it did not: what is wrong and what to do, as the composer shows it. */
+  problem?: string;
 }
 
 /** Initialize work directory env vars and sync core skills. */

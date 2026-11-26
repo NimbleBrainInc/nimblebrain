@@ -287,7 +287,8 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
     }
   }, [newConversation]);
 
-  const { models, boundModel, defaultModel, pendingModel, setPendingModel } = useComposerModel();
+  const { models, runsOn, boundModel, defaultModel, pendingModel, setPendingModel } =
+    useComposerModel();
 
   const handleNewChatWithModel = useCallback(
     (model: string) => {
@@ -358,6 +359,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
           onShowShortcuts={() => setShowShortcuts(true)}
           onStop={stop}
           models={models}
+          runsOn={runsOn}
           boundModel={boundModel}
           defaultModel={defaultModel}
           pendingModel={pendingModel}

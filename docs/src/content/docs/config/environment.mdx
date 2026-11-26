@@ -36,6 +36,15 @@ Set by `npx nimblebrain` when you choose a local model, and passed through by th
 | `NB_LOCAL_MODEL` | With `NB_LOCAL_MODEL_URL` | — | The model's id on that server. The runtime refuses to start without it. |
 | `NB_LOCAL_MODEL_CONTEXT` | No | `32768` | The context window the server allocates, in tokens. |
 
+### Agent runtime
+
+Set by `npx nimblebrain use`, and passed through by the release's `docker-compose.yml`. With both set, the runtime adds that agent runtime to [`execution.runtimes`](/config/nimblebrain-json/#execution) and makes it the default, unless `nimblebrain.json` sets `execution` itself (then the file wins, with a warning). The runtime accepts these drivers only under the `dev` adapter in [`instance.json`](/config/instance-json/). See [Run on your subscription](/config/subscriptions/).
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NB_AGENT_RUNTIME` | No | — | `claude-code` or `codex`: the coding agent whose CLI runs each turn on your subscription. The runtime refuses to start with any other value, or with only one of the pair set. |
+| `NB_AGENT_RUNTIME_URL` | With `NB_AGENT_RUNTIME` | — | The worker's ACP endpoint as the runtime reaches it, e.g. `http://host.docker.internal:27290/acp`. |
+
 ### Runtime & server
 
 | Variable | Required | Default | Description |

@@ -1181,6 +1181,7 @@ export async function handleBootstrap(
   const maxIterations = runtime.getMaxIterations();
   const maxInputTokens = runtime.getMaxInputTokens();
   const maxOutputTokens = runtime.getMaxOutputTokens();
+  const runsOn = await runtime.describeRuntimeWithOwnModel();
 
   return json<BootstrapResponse>({
     user: {
@@ -1214,6 +1215,7 @@ export async function handleBootstrap(
       maxIterations,
       maxInputTokens,
       maxOutputTokens,
+      ...(runsOn ? { runsOn } : {}),
       // Attachment limits, so the composer states them before a send rather
       // than after a refusal. Absent when file context is off: there is no
       // attachment to limit.

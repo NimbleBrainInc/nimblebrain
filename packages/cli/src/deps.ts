@@ -20,6 +20,10 @@ export interface Deps {
    * failed. Never throws.
    */
   launch(cmd: string, args: string[]): Promise<boolean>;
+  /** How this CLI runs: the Node binary and this CLI's own file, to start it again as another process. */
+  self: { node: string; script: string };
+  /** This user's id, which names their launchd domain (`gui/<uid>`) for the worker's login item. */
+  uid: number;
   /** Whether a program is on `PATH`, found without running it. */
   which(cmd: string): Promise<boolean>;
   /** Whether nothing on this machine listens on `127.0.0.1:<port>`. */
@@ -123,6 +127,8 @@ export function realDeps(): Deps {
         });
       });
     },
+    self: { node: process.execPath, script: resolve(process.argv[1] ?? "") },
+    uid: process.getuid?.() ?? 0,
     async which(cmd) {
       const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE").split(";") : [""];
       for (const dir of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {

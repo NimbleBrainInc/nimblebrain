@@ -34,9 +34,12 @@ export interface AcpConnectionTarget {
   close(): Promise<void>;
 }
 
-/** How an agent is reached: a fresh connection, and the agent's workspace, for one run. */
+/**
+ * How an agent is reached: a fresh connection, and the agent's workspace, for
+ * one run, or with no run to ask the agent about itself (`AgentRuntime.probe`).
+ */
 export interface AcpConnection {
-  open(run: ResolvedRun): Promise<AcpConnectionTarget>;
+  open(run?: ResolvedRun): Promise<AcpConnectionTarget>;
 }
 
 /** The agent-side calls a driver may make while preparing a session. */
@@ -109,7 +112,30 @@ export interface AcpModelFailure {
   outcome: AcpOutcome;
 }
 
+/** A failure the agent classified, in a person's words. */
+export interface AcpAgentFailure {
+  /** Short and stable: `signed_out`, `plan_limit`, `cli_missing`, `cli_failed`. */
+  code: string;
+  /** What happened and what to do, as the chat shows it. */
+  message: string;
+}
+
 export interface AcpDriver {
+  /** The name a person knows the agent by (`Claude Code`). */
+  readonly title?: string;
+  /**
+   * What a person does when the agent's worker does not answer, as one
+   * sentence (`Start it with \`npx nimblebrain up\`.`). Absent, the error
+   * names only the address that did not answer.
+   */
+  readonly unreachableFix?: string;
+  /** What the agent said about itself at `initialize`, in its own terms (`_meta`). */
+  describe?(init: acp.InitializeResponse): { plan?: string };
+  /**
+   * The failure the agent classified in its `session/prompt` error, in its
+   * own terms, or `undefined` when the error carries none.
+   */
+  agentFailure?(err: unknown): AcpAgentFailure | undefined;
   /**
    * What the agent holds a run to on its own, and which model credential it
    * takes (`RuntimeCapabilities`). Absent, nothing: an agent reached over ACP

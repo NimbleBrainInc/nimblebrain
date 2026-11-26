@@ -29,6 +29,7 @@ import {
   type UpdateCheck,
   updatesField,
 } from "./updates.ts";
+import { use } from "./use.ts";
 
 import { VERSION } from "./version.ts";
 
@@ -104,6 +105,7 @@ export async function run(argv: string[], deps: Deps): Promise<Answer> {
           key,
           telemetry,
           "local-model": localModel,
+          use,
           mcp,
           open,
         };
@@ -214,7 +216,9 @@ function render(result: Ok | Failure, json: boolean, cli: string, command?: stri
     ? statusLines(result, cli, command)
     : command === "open"
       ? openLines(result)
-      : genericLines(result);
+      : command === "use"
+        ? useLines(result)
+        : genericLines(result);
   return { stdout: `${lines.join("\n")}\n`, code };
 }
 
@@ -244,9 +248,7 @@ function statusLines(r: StatusLike, cli: string, command?: string): string[] {
     ...changeLines(r),
     `  NimbleBrain ${r.version.startsWith("v") ? r.version : `v${r.version}`}: ${r.health === "ok" ? "running" : "stopped"} at ${r.url}`,
     ...r.workspaces.map((w) => `  workspace ${w.name}: ${w.mcp}`),
-    r.local_model
-      ? `  model: ${r.local_model} on Ollama (NimbleBrain's own agents use it)`
-      : `  model key: ${r.model_key === "set" ? "set (NimbleBrain's own agents use it)" : `missing (run ${cli} key)`}`,
+    sourceLine(r, cli),
   ];
   lines.push(...agentLines(r));
   if (!r.host_loopback) lines.push(`  servers on this machine: not reachable until ${cli} update`);
@@ -266,7 +268,7 @@ function statusLines(r: StatusLike, cli: string, command?: string): string[] {
 function nextStep(r: StatusLike, cli: string, command?: string): string | undefined {
   if (command === "init" && !r.already && r.health === "ok") {
     if (!hasModelIn(r)) {
-      return `Next: give NimbleBrain a model so it can chat. Run ${cli} key in your own terminal to enter a model key, or ${cli} local-model to run one on this machine with Ollama.`;
+      return `Next: choose what runs NimbleBrain's agents so it can chat. Run ${cli} use in your own terminal: your Claude subscription, your ChatGPT plan, an API key, or a local model.`;
     }
     const agent = r.agent.connected;
     const ask = agent ? `, or ask ${AGENT_NAMES[agent] ?? agent} what NimbleBrain can do` : "";
@@ -278,6 +280,36 @@ function nextStep(r: StatusLike, cli: string, command?: string): string | undefi
     return `Next: finish installing it with ${cli}, or remove it with ${cli} uninstall.`;
   }
   return r.health === "ok" ? undefined : `Next: start it with ${cli} up.`;
+}
+
+/** What runs NimbleBrain's agents, in one line, with its worker when a subscription does. */
+function sourceLine(r: StatusLike, cli: string): string {
+  const { label } = r.model_source;
+  if (!label) return `  agents run on: nothing yet (choose with ${cli} use)`;
+  const worker = r.agent_runtime.worker;
+  if (!worker) return `  agents run on: ${label}`;
+  return worker.running
+    ? `  agents run on: ${label} (agent worker ${worker.pid} at ${worker.url})`
+    : `  agents run on: ${label}, but its agent worker is stopped (start it with ${cli} up)`;
+}
+
+/** `use`'s answer as a person reads it. */
+function useLines(r: Ok): string[] {
+  const { label } = r.model_source as StatusLike["model_source"];
+  const rt = r.agent_runtime as StatusLike["agent_runtime"];
+  const lines = [`  NimbleBrain's agents now run on ${label ?? "nothing"}.`];
+  if (!rt.worker) return lines;
+  return [
+    ...lines,
+    `  billed to: ${String(r.billed_to)}`,
+    `  tools: ${String(r.tools)}`,
+    `  agent worker: ${rt.worker.pid} at ${rt.worker.url} (this machine only), logging to ${rt.worker.log}`,
+    ...(rt.worker.login_item
+      ? [
+          `  starts at login: ${rt.worker.login_item} (launchd starts the worker when you log in, and again if it crashes)`,
+        ]
+      : []),
+  ];
 }
 
 /** `open`'s answer as a person reads it: the URL either way, so it can be opened by hand. */

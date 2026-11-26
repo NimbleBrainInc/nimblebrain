@@ -40,7 +40,7 @@ The answer belongs to the install. The CLI, the web UI and the runtime read and 
 | `cli.doctor_failed` | Which check failed (Docker, Compose, architecture, memory, port) and its error code |
 | `cli.init_failed` | The error code |
 | `cli.agent_connected` | Which coding agent (`claude-code`, `cursor`, `codex`) |
-| `cli.init_completed` | Time taken, whether a model key is set, the model provider (`anthropic`, `openai`, …, or `ollama` for a local model, never the model), and the coding agent connected, if any |
+| `cli.init_completed` | Time taken, whether a model key is set, the model provider (`anthropic`, `openai`, …, or `ollama` for a local model, never the model), what runs the agents (`claude`, `codex`, `api`, `local`, or none), and the coding agent connected, if any |
 
 Every CLI event also carries the CLI version, OS, CPU architecture and Node version.
 
