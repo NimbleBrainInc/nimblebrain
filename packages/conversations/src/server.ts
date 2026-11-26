@@ -1,10 +1,9 @@
 /**
  * The conversations server: one MCP server serving every tool of the conversations
- * contract and its screen. Each `tools/call` is decided in one order:
+ * contract and its screen. Each `tools/call` is decided in one order, under the host
+ * context it carries (`params._meta["ai.nimblebrain/context"]`,
+ * `contracts/host-context/CONTEXT.md`):
  *
- *   0. its host context (`params._meta["ai.nimblebrain/context"]`) is read, with the
- *      dimensions its transport verified applied; a contradiction is `context_mismatch`, a
- *      JSON-RPC error before any tool runs (`contracts/host-context/CONTEXT.md`);
  *   1. a tool the contract does not name is `unknown_tool`;
  *   2. a private tool called by anyone but the host is `forbidden` (before input and scope);
  *   3. arguments that fail the tool's input schema are `invalid_input`;
@@ -16,23 +15,17 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import {
-  ProtocolError,
-  ProtocolErrorCode,
-  Server,
-  type ServerContext,
-} from "@modelcontextprotocol/server";
+import { ProtocolError, ProtocolErrorCode, Server } from "@modelcontextprotocol/server";
 import {
   type CallContext,
-  callContext,
   contractSchema,
   publicErrorPrefix,
+  readHostContext,
   refuseUnlessAllowed,
   ToolCallError,
   type ToolErrorResult,
   toolError,
   toolVisibility,
-  type VerifiedDimensions,
 } from "../../server-sdk/src/index.ts";
 import { CONTRACT, DESCRIPTIONS, inputError } from "./contract.ts";
 import {
@@ -86,14 +79,7 @@ const SCREEN_PLACEHOLDER =
   "<body><p>The conversations screen is not built. Run: cd packages/conversations/ui &amp;&amp; bun install &amp;&amp; bun run build</p></body></html>";
 
 export interface ServerOptions {
-  /** The store: one, or one per transport-verified tenant (a multi-tenant server). */
-  store: ConversationStore | ((tenantId: string) => ConversationStore);
-  /**
-   * The dimensions this request's transport verified itself; none by default. Every request
-   * that reaches the server came through an authenticated host transport, so its host context
-   * (`params._meta["ai.nimblebrain/context"]`) is the host's word.
-   */
-  verifiedOf?: (ctx: ServerContext) => VerifiedDimensions;
+  store: ConversationStore;
   /** The built screen's HTML file; the placeholder page when absent. */
   screenPath?: string;
 }
@@ -267,26 +253,6 @@ function readScreen(path: string | undefined): string {
   return SCREEN_PLACEHOLDER;
 }
 
-/** The store a call is served from: the one store, or the verified tenant's. */
-function storeFor(opts: ServerOptions, tenantId: string | undefined): ConversationStore {
-  if (typeof opts.store !== "function") {
-    if (tenantId !== undefined) {
-      throw new ProtocolError(
-        ProtocolErrorCode.InvalidRequest,
-        "this server serves one tenant; the transport named one",
-      );
-    }
-    return opts.store;
-  }
-  if (tenantId === undefined) {
-    throw new ProtocolError(
-      ProtocolErrorCode.InvalidRequest,
-      "this server serves several tenants; the transport verified none",
-    );
-  }
-  return opts.store(tenantId);
-}
-
 /** A conversations server over `store`. One per connection; they share the store. */
 export function buildServer(opts: ServerOptions): Server {
   const server = new Server(
@@ -321,16 +287,10 @@ export function buildServer(opts: ServerOptions): Server {
     }),
   }));
 
-  server.setRequestHandler("tools/call", async (request, ctx) => {
-    const verified = opts.verifiedOf?.(ctx) ?? {};
-    const read = callContext(request.params._meta, verified);
-    if (!read.ok) {
-      // The host's word contradicts its transport's: refused before any tool runs.
-      throw new ProtocolError(ProtocolErrorCode.InvalidParams, read.error, { code: read.code });
-    }
-    const store = storeFor(opts, read.tenantId);
+  server.setRequestHandler("tools/call", async (request) => {
+    const context = readHostContext(request.params._meta) ?? {};
     const args = (request.params.arguments ?? {}) as Args;
-    return callTool(store, request.params.name, args, read.context);
+    return callTool(opts.store, request.params.name, args, context);
   });
 
   server.setRequestHandler("resources/list", async () => ({

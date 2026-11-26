@@ -13,10 +13,8 @@
  *   implementation, not such a surface, so it lists its private tools: that case is the
  *   one expected failure, and every other case must pass.
  *
- * Also: a request without the host's credential is refused before any tool runs, the stdio
- * transport (how `mcp.json` starts the server) carries the context in `_meta`, and fleet mode
- * (`--edge`) walls by the edge's verified tenant and refuses a context that contradicts its
- * verified workspace (`contracts/host-context/CONTEXT.md` §4).
+ * Also: a request without the host's credential is refused before any tool runs, and the
+ * stdio transport (how `mcp.json` starts the server) carries the context in `_meta`.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -46,9 +44,6 @@ const PUBLIC_ONLY_EXPECTED_FAILURE = "no private tool is listed";
 let dataDir: string;
 let proc: Subprocess<"ignore", "pipe", "pipe">;
 let url: string;
-let edgeDir: string;
-let edgeProc: Subprocess<"ignore", "pipe", "pipe">;
-let edgeUrl: string;
 
 async function readListening(p: Subprocess<"ignore", "pipe", "pipe">): Promise<string> {
   const reader = p.stdout.getReader();
@@ -70,8 +65,8 @@ async function readListening(p: Subprocess<"ignore", "pipe", "pipe">): Promise<s
 const failures = (results: CaseResult[]) =>
   results.filter((r) => r.status === "fail").map((r) => `${r.name}: ${r.detail}`);
 
-function serve(dir: string, extra: string[] = []): Subprocess<"ignore", "pipe", "pipe"> {
-  return spawn(["bun", "--no-env-file", BIN, "--data-dir", dir, "--http", "0", ...extra], {
+function serve(dir: string): Subprocess<"ignore", "pipe", "pipe"> {
+  return spawn(["bun", "--no-env-file", BIN, "--data-dir", dir, "--http", "0"], {
     env: { PATH: process.env.PATH ?? "", NB_CONVERSATIONS_TOKEN: TOKEN },
     stdin: "ignore",
     stdout: "pipe",
@@ -80,21 +75,16 @@ function serve(dir: string, extra: string[] = []): Subprocess<"ignore", "pipe", 
 }
 
 beforeAll(async () => {
-  // Empty data directories: a workspace the host stamps exists, and the plugin makes its
+  // An empty data directory: a workspace the host stamps exists, and the plugin makes its
   // storage on first use.
   dataDir = mkdtempSync(join(tmpdir(), "conversations-plugin-"));
-  edgeDir = mkdtempSync(join(tmpdir(), "conversations-plugin-edge-"));
   proc = serve(dataDir);
-  edgeProc = serve(edgeDir, ["--edge"]);
   url = await readListening(proc);
-  edgeUrl = await readListening(edgeProc);
 }, 30_000);
 
 afterAll(() => {
   proc?.kill();
-  edgeProc?.kill();
   if (dataDir) rmSync(dataDir, { recursive: true, force: true });
-  if (edgeDir) rmSync(edgeDir, { recursive: true, force: true });
 });
 
 describe("conversations plugin: the whole contract", () => {
@@ -124,14 +114,14 @@ describe("conversations plugin: the whole contract", () => {
   }, 60_000);
 });
 
-/** A host client: the host's credential, plus any headers its transport adds. */
-async function connectTo(server: string, headers: Record<string, string> = {}): Promise<Client> {
+/** A host client: the host's credential on every request. */
+async function connectTo(server: string): Promise<Client> {
   const client = new Client({ name: "conformance-test", version: "1.0.0" });
   await client.connect(
     new StreamableHTTPClientTransport(new URL(server), {
       fetch: (input, init) => {
         const h = new Headers(init?.headers);
-        for (const [k, v] of Object.entries({ ...AUTH, ...headers })) h.set(k, v);
+        for (const [k, v] of Object.entries(AUTH)) h.set(k, v);
         return fetch(input, { ...init, headers: h });
       },
     }),
@@ -263,57 +253,6 @@ describe("conversations plugin: transports", () => {
       expect((listed.structuredContent as { totalCount: number }).totalCount).toBe(1);
     } finally {
       await client.close();
-    }
-  }, 30_000);
-});
-
-describe("conversations plugin: fleet mode behind an edge", () => {
-  const edge = (tenant: string) => ({ "x-tenant-id": tenant, "x-workspace-id": WORKSPACE });
-  const host = { principal: "host" as const, ownerId: OWNER };
-
-  it("refuses a request with no verified tenant", async () => {
-    const res = await fetch(edgeUrl, {
-      method: "POST",
-      headers: { ...AUTH, "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it("walls every call by the verified tenant, and takes the verified workspace", async () => {
-    const a = await connectTo(edgeUrl, edge("tenant_a"));
-    const b = await connectTo(edgeUrl, edge("tenant_b"));
-    try {
-      const created = await callAs(a, host, "create", { model: "anthropic:claude-sonnet-5-5" });
-      expect(created.isError).toBeFalsy();
-      const made = created.structuredContent as { conversation: { workspaceId: string } };
-      expect(made.conversation.workspaceId).toBe(WORKSPACE);
-      const inA = await callAs(a, host, "list", {});
-      const inB = await callAs(b, host, "list", {});
-      expect((inA.structuredContent as { totalCount: number }).totalCount).toBe(1);
-      expect((inB.structuredContent as { totalCount: number }).totalCount).toBe(0);
-    } finally {
-      await a.close();
-      await b.close();
-    }
-  }, 30_000);
-
-  it("refuses a context that contradicts the verified workspace, before any tool runs", async () => {
-    const a = await connectTo(edgeUrl, edge("tenant_a"));
-    try {
-      let refusal: unknown;
-      try {
-        await callAs(a, { ...host, workspaceId: "ws_ffffffffffffffff" }, "create", {
-          model: "anthropic:claude-sonnet-5-5",
-        });
-      } catch (err) {
-        refusal = err;
-      }
-      expect(refusal).toMatchObject({ code: -32602, data: { code: "context_mismatch" } });
-      const listed = await callAs(a, host, "list", {});
-      expect((listed.structuredContent as { totalCount: number }).totalCount).toBe(1);
-    } finally {
-      await a.close();
     }
   }, 30_000);
 });

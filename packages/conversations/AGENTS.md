@@ -30,13 +30,12 @@ conversations. How to run it standalone is in `README.md`.
   construction, the pipe the host started. HTTP: every request presents
   `Authorization: Bearer $NB_CONVERSATIONS_TOKEN`, the self-hosted host's credential the operator
   issues for this server, or is refused 401 before its body is read.
-- **Fleet mode (`--http --edge`)**: an edge verifies the host and sets `x-tenant-id` and
-  `x-workspace-id`. The tenant walls every call (its data under `<data>/tenants/<tenantId>/`, the
-  layout below inside it); a request with no verified tenant is refused 400. A context whose
-  `workspaceId` differs from the verified one is `context_mismatch`, a JSON-RPC error before any
-  tool runs; an absent one takes the verified value.
-- **Every `tools/call` is decided in one order** (`src/server.ts`): the context
-  (`context_mismatch`), unknown tool (`unknown_tool`), private tool by anyone but `host`
+- **One server serves one deployment's host.** Hosting it behind a fleet edge, for several
+  tenants, is not supported: it needs its own design (an edge-only credential, the edge
+  stripping any client-sent identity headers, a network policy that admits only the edge), and
+  one bearer token that is `host` for every tenant is not that design. A transport that verifies
+  a dimension itself follows `contracts/host-context/CONTEXT.md` §4.
+- **Every `tools/call` is decided in one order** (`src/server.ts`): unknown tool (`unknown_tool`), private tool by anyone but `host`
   (`forbidden`), arguments against the input schema (`invalid_input`), workspace and owner
   present (`scope_missing`), then the tool.
 - **Errors are `{ code, error }`** from the contract's lists. A public error's text begins with
@@ -101,7 +100,7 @@ conversations. How to run it standalone is in `README.md`.
 
 - `test/integration/conversations-plugin-conformance.test.ts` runs the contract's runner against
   `bin/nb-conversations --http` in full mode and public-only mode, with the host context in
-  `_meta`, and checks the 401, stdio, and fleet mode (tenant walls, `context_mismatch`). Full mode
+  `_meta`, and checks the 401 and stdio. Full mode
   passes every case; public-only fails only `no private tool is listed`, which holds a host's
   agent-facing door, not an implementation.
 - `test/integration/conversations-plugin-default.test.ts` boots a runtime with no `plugins`

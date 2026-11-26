@@ -40,11 +40,6 @@ NB_CONVERSATIONS_TOKEN=change-me \
 request without `Authorization: Bearer $NB_CONVERSATIONS_TOKEN` is refused with 401. The context
 is the same `params._meta["ai.nimblebrain/context"]`.
 
-Behind an edge that verifies the host and sets `x-tenant-id` and `x-workspace-id`, add `--edge`:
-each tenant's data is kept under `<data>/tenants/<tenantId>/`, a request with no verified tenant
-is refused, and a context naming another workspace than the verified one is refused as
-`context_mismatch`.
-
 The screen is `ui/`, its own package: `cd ui && bun install && bun run build` writes
 `ui/dist/index.html`, which the server serves as `ui://conversations/browser`. `--screen <file>`
 serves another file; without a built screen the resource is a placeholder page.
