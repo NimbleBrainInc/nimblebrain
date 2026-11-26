@@ -19,6 +19,7 @@ import { createInterface } from "node:readline";
 import type * as acp from "@agentclientprotocol/sdk/unstable";
 import { modelLabel } from "../command.ts";
 import { classifyFailure } from "./failure.ts";
+import { startTimeline, type Timeline } from "./timeline.ts";
 import {
   type Account,
   type Backend,
@@ -34,7 +35,7 @@ import {
 const SERVER = "nimblebrain";
 
 export function createCodexBackend(
-  opts: { bin?: string; model?: string; log?: string } = {},
+  opts: { bin?: string; model?: string; log?: string; noteMs?: number } = {},
 ): Backend {
   const bin = opts.bin ?? "codex";
   return {
@@ -44,7 +45,7 @@ export function createCodexBackend(
     takesSystemPrompt: false,
     toolsAreNimbleBrainOnly: false,
     preflight: () => codexPreflight(bin),
-    run: (input) => runCodex(bin, opts.model, input, opts.log),
+    run: (input) => runCodex(bin, opts.model, input, opts.log, opts.noteMs),
   };
 }
 
@@ -80,11 +81,24 @@ export function codexAccount(out: string | undefined): Account {
   );
 }
 
+/** The points of a Codex turn the timeline times, after `spawn`. */
+export const CODEX_MARKS = [
+  "thread",
+  "turn",
+  "first_item",
+  "first_reasoning",
+  "first_text",
+  "first_tool",
+  "result",
+  "exit",
+] as const;
+
 async function runCodex(
   bin: string,
   model: string | undefined,
   input: TurnInput,
   log?: string,
+  noteMs?: number,
 ): Promise<TurnResult> {
   const cwd = await mkdtemp(join(tmpdir(), "nb-codex-"));
   const args = [
@@ -106,6 +120,15 @@ async function runCodex(
     ...(model ? ["-m", model] : []),
     "-",
   ];
+  const timeline = startTimeline({
+    backend: "codex",
+    label: "Codex",
+    model,
+    purpose: input.purpose,
+    marks: CODEX_MARKS,
+    emit: input.emit,
+    ...(noteMs ? { noteMs } : {}),
+  });
   const child = spawn(bin, args, { cwd, env: subscriptionEnv(), stdio: ["pipe", "pipe", "pipe"] });
   const kill = () => child.kill("SIGTERM");
   input.signal.addEventListener("abort", kill, { once: true });
@@ -114,10 +137,15 @@ async function runCodex(
   child.stderr.on("data", (d: Buffer) => {
     stderr = (stderr + d.toString()).slice(-4000);
   });
-  const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
+  const exited = new Promise<number | null>((resolve) =>
+    child.on("close", (code) => {
+      timeline.mark("exit");
+      resolve(code);
+    }),
+  );
   const failed = spawnFailure(child, "codex");
 
-  const translate = codexTranslator(input.emit);
+  const translate = codexTranslator(input.emit, timeline);
   try {
     await Promise.race([readCodex(child.stdout, translate), failed]);
     const code = await Promise.race([exited, failed]);
@@ -127,6 +155,7 @@ async function runCodex(
     const text = `${stderr}\n${translate.failure() ?? ""}`;
     throw classifyFailure("codex", text, { exitCode: code, log });
   } finally {
+    timeline.end();
     input.signal.removeEventListener("abort", kill);
     await rm(cwd, { recursive: true, force: true });
   }
@@ -156,6 +185,8 @@ interface CodexItem {
   arguments?: unknown;
   status?: string;
   command?: string;
+  /** An `error` item's text, such as a transport fallback. */
+  message?: string;
 }
 
 interface CodexEvent {
@@ -176,12 +207,16 @@ type Emit = (update: acp.SessionUpdate) => void;
 const isToolItem = (item: CodexItem | undefined): item is CodexItem =>
   item?.type === "mcp_tool_call" || item?.type === "command_execution";
 
-/** `codex exec --json` events as ACP session updates, and the turn's usage at the end. */
-export function codexTranslator(emit: Emit) {
+/**
+ * `codex exec --json` events as ACP session updates, and the turn's usage at
+ * the end. Each event's timing goes to `timeline` when given.
+ */
+export function codexTranslator(emit: Emit, timeline?: Timeline) {
   let usage: TokenUsage = emptyUsage();
   let done = false;
   let failed: string | undefined;
   const translate = (event: CodexEvent) => {
+    if (timeline) timeCodex(event, timeline);
     switch (event.type) {
       case "item.started":
         if (isToolItem(event.item)) emitToolCall(event.item, "in_progress", emit);
@@ -207,6 +242,70 @@ export function codexTranslator(emit: Emit) {
       calls: [{ model: "codex-subscription:codex", purpose: "turn" as const, usage }],
     }),
   });
+}
+
+/** Codex's retry line: `Reconnecting... 2/5 (stream disconnected)`. */
+const RECONNECTING = /^Reconnecting\.\.\.\s*(\d+)\/(\d+)\s*(?:\((.*)\))?/;
+
+/**
+ * Where an event falls on the turn's timeline: its type, an item's type, and
+ * Codex's own short error text (redacted), never a message or tool's content.
+ */
+function timeCodex(event: CodexEvent, timeline: Timeline): void {
+  switch (event.type) {
+    case "thread.started":
+      timeline.mark("thread");
+      break;
+    case "turn.started":
+      timeline.mark("turn");
+      break;
+    case "item.started":
+    case "item.completed":
+      timeItem(event.item, timeline);
+      break;
+    case "error":
+      timeError(event.message ?? event.error?.message ?? "", timeline);
+      break;
+    case "turn.completed":
+      timeline.mark("result");
+      break;
+    case "turn.failed":
+      timeline.mark("result");
+      timeline.event(`turn.failed ${event.error?.message ?? ""}`);
+      break;
+  }
+}
+
+const ITEM_FIRSTS: Record<string, string> = {
+  reasoning: "first_reasoning",
+  agent_message: "first_text",
+  mcp_tool_call: "first_tool",
+  command_execution: "first_tool",
+};
+
+/** The first item, and the first reasoning, message and tool call; an `error` item is a notice. */
+function timeItem(item: CodexItem | undefined, timeline: Timeline): void {
+  if (!item) return;
+  if (item.type === "error") {
+    if (item.message) timeline.event(`notice ${item.message}`);
+    return;
+  }
+  timeline.mark("first_item");
+  const first = ITEM_FIRSTS[item.type ?? ""];
+  if (!first) return;
+  timeline.mark(first);
+  timeline.output();
+}
+
+/** `Reconnecting... 2/5 (reason)` is a retry; any other error is logged as one. */
+function timeError(text: string, timeline: Timeline): void {
+  const retry = text.match(RECONNECTING);
+  if (!retry) {
+    timeline.event(`error ${text}`);
+    return;
+  }
+  const reason = retry[3] ? ` ${retry[3]}` : "";
+  timeline.retry(`${retry[1]}/${retry[2]}${reason}`, `attempt ${retry[1]} of ${retry[2]}`);
 }
 
 /** A tool call starting, or its end. */
