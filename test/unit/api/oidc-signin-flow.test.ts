@@ -229,6 +229,24 @@ describe("GET /v1/auth/callback", () => {
     expectFlowCleared(res);
   });
 
+  test("a callback with no code is a 400 that clears the flow cookie", async () => {
+    const { provider, exchanges } = makeProvider();
+    const begin = await authorize(provider);
+    const res = await handleOidcCallback(
+      new Request(`${ORIGIN}/v1/auth/callback?state=${stateOf(begin)}`, {
+        headers: { cookie: flowCookie(begin) ?? "" },
+      }),
+      provider,
+      true,
+      APP,
+    );
+    expect(res.status).toBe(400);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expectFlowCleared(res);
+    expectNoSession(res);
+    expect(exchanges).toEqual([]);
+  });
+
   test("the server holds no flow state: the first of many flows still completes", async () => {
     // What a callback on another process, or after a restart, looks like.
     const { provider, exchanges } = makeProvider();
