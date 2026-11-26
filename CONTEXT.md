@@ -286,8 +286,9 @@ conversations plugin is one, run by default; tasks and files are kernel code.
 ### Contract *(ADR-0076)*
 The versioned, language-neutral interface between the kernel and whatever implements a
 capability it consumes: a permanent reverse-DNS name (`ai.nimblebrain.conversations`), a
-`major.minor` version, a cardinality (`singleton` or `additive`), its tools with their
-visibility (public or private), JSON Schemas per tool, error codes (one JSON document per
+`major.minor` version, a cardinality (`singleton` or `additive`), whether it needs run
+grants, its tools with their visibility (public or private) and whether an unattended run may
+call each (`allowed` or `refused`), JSON Schemas per tool, error codes (one JSON document per
 version, at the URL its `$id` states), the rule that every
 call carries a scope and a principal (`host` or `person`), and a conformance runner over
 MCP. The scope and principal are the **host context**, one spec shared by every contract
@@ -296,7 +297,17 @@ MCP. The scope and principal are the **host context**, one spec shared by every 
 from an authenticated host transport. A
 plugin declares the contracts it `implements` and `requires`; the kernel names
 contracts, never plugins. Chat is on exactly when an enabled plugin implements the
-conversations contract; the default configuration binds the built-in one.
+conversations contract; the default configuration binds the built-in one. The tasks contract
+(`ai.nimblebrain.tasks`) is published and not yet implemented by any plugin; scheduled work is
+kernel code until one is.
+
+### Run grant *(ADR-0076, tasks contract)*
+The host's signed record that an owner, in a workspace, set up work under a contract that will
+run as them unattended. The host stamps it in the host context of a person's calls to a
+contract that declares `grants: true`; the implementation stores it with the definition and
+returns it with each run, and the host verifies it and the owner's current membership before
+admitting the run. Distinct from a personal connector's grant and from the model gateway's
+per-run grant (ADR-0063).
 
 ### Provider *(proposed, ADR-0076; not yet built)*
 Infrastructure the kernel uses and no agent calls: the work queue, pub/sub, leases,

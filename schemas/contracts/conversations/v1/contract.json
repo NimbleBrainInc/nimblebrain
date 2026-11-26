@@ -6,9 +6,11 @@
   "contract": "ai.nimblebrain.conversations",
   "version": "1.0",
   "cardinality": "singleton",
+  "grants": false,
   "tools": {
     "list": {
       "visibility": "public",
+      "unattended": "allowed",
       "input": {
         "$ref": "#/$defs/list_input"
       },
@@ -18,6 +20,7 @@
     },
     "get": {
       "visibility": "public",
+      "unattended": "allowed",
       "input": {
         "$ref": "#/$defs/get_input"
       },
@@ -27,6 +30,7 @@
     },
     "search": {
       "visibility": "public",
+      "unattended": "allowed",
       "input": {
         "$ref": "#/$defs/search_input"
       },
@@ -36,6 +40,7 @@
     },
     "update": {
       "visibility": "public",
+      "unattended": "allowed",
       "input": {
         "$ref": "#/$defs/update_input"
       },
@@ -45,6 +50,7 @@
     },
     "stats": {
       "visibility": "public",
+      "unattended": "allowed",
       "input": {
         "$ref": "#/$defs/stats_input"
       },
@@ -54,6 +60,7 @@
     },
     "export": {
       "visibility": "public",
+      "unattended": "allowed",
       "input": {
         "$ref": "#/$defs/export_input"
       },
@@ -63,6 +70,7 @@
     },
     "create": {
       "visibility": "private",
+      "unattended": "refused",
       "input": {
         "$ref": "#/$defs/create_input"
       },
@@ -72,6 +80,7 @@
     },
     "events": {
       "visibility": "private",
+      "unattended": "refused",
       "input": {
         "$ref": "#/$defs/events_input"
       },
@@ -81,6 +90,7 @@
     },
     "append_events": {
       "visibility": "private",
+      "unattended": "refused",
       "input": {
         "$ref": "#/$defs/append_events_input"
       },
@@ -90,6 +100,7 @@
     },
     "delete": {
       "visibility": "private",
+      "unattended": "refused",
       "input": {
         "$ref": "#/$defs/delete_input"
       },
@@ -99,6 +110,7 @@
     },
     "delete_workspace": {
       "visibility": "private",
+      "unattended": "refused",
       "input": {
         "$ref": "#/$defs/delete_workspace_input"
       },

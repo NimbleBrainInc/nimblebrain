@@ -1,0 +1,5657 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/contracts/tasks/v1/contract.json",
+  "title": "Tasks contract",
+  "description": "The ai.nimblebrain.tasks contract: its identity, version, cardinality, whether it needs run grants, its tools with their visibility, unattended marking and schemas, and the closed list of errors. Every tool error is a tools/call result with isError: true whose first text content is JSON {code, error}. A private tool's code is from errors.private. A public tool's code, and the answer to a tool name the server does not have, is from errors.public, and its error begins with that entry's prefix. Beyond the prefix, error is diagnostic. A request refused before any tool runs is the transport's answer and outside this list. Normative rules: contracts/tasks/CONTRACT.md in the NimbleBrain repository.",
+  "contract": "ai.nimblebrain.tasks",
+  "version": "1.0",
+  "cardinality": "singleton",
+  "grants": true,
+  "tools": {
+    "create": {
+      "visibility": "public",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/create_input"
+      },
+      "output": {
+        "$ref": "#/$defs/create_output"
+      }
+    },
+    "update": {
+      "visibility": "public",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/update_input"
+      },
+      "output": {
+        "$ref": "#/$defs/update_output"
+      }
+    },
+    "delete": {
+      "visibility": "public",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/delete_input"
+      },
+      "output": {
+        "$ref": "#/$defs/delete_output"
+      }
+    },
+    "list": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "input": {
+        "$ref": "#/$defs/list_input"
+      },
+      "output": {
+        "$ref": "#/$defs/list_output"
+      }
+    },
+    "status": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "input": {
+        "$ref": "#/$defs/status_input"
+      },
+      "output": {
+        "$ref": "#/$defs/status_output"
+      }
+    },
+    "run": {
+      "visibility": "public",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/run_input"
+      },
+      "output": {
+        "$ref": "#/$defs/run_output"
+      }
+    },
+    "run_result": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "input": {
+        "$ref": "#/$defs/run_result_input"
+      },
+      "output": {
+        "$ref": "#/$defs/run_result_output"
+      }
+    },
+    "runs": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "input": {
+        "$ref": "#/$defs/runs_input"
+      },
+      "output": {
+        "$ref": "#/$defs/runs_output"
+      }
+    },
+    "cancel": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "input": {
+        "$ref": "#/$defs/cancel_input"
+      },
+      "output": {
+        "$ref": "#/$defs/cancel_output"
+      }
+    },
+    "upcoming": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "input": {
+        "$ref": "#/$defs/upcoming_input"
+      },
+      "output": {
+        "$ref": "#/$defs/upcoming_output"
+      }
+    },
+    "stats": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "input": {
+        "$ref": "#/$defs/stats_input"
+      },
+      "output": {
+        "$ref": "#/$defs/stats_output"
+      }
+    },
+    "run_batch": {
+      "visibility": "public",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/run_batch_input"
+      },
+      "output": {
+        "$ref": "#/$defs/run_batch_output"
+      }
+    },
+    "batch": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "input": {
+        "$ref": "#/$defs/batch_input"
+      },
+      "output": {
+        "$ref": "#/$defs/batch_output"
+      }
+    },
+    "batches": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "input": {
+        "$ref": "#/$defs/batches_input"
+      },
+      "output": {
+        "$ref": "#/$defs/batches_output"
+      }
+    },
+    "batch_control": {
+      "visibility": "public",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/batch_control_input"
+      },
+      "output": {
+        "$ref": "#/$defs/batch_control_output"
+      }
+    },
+    "due": {
+      "visibility": "private",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/due_input"
+      },
+      "output": {
+        "$ref": "#/$defs/due_output"
+      }
+    },
+    "begin_run": {
+      "visibility": "private",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/begin_run_input"
+      },
+      "output": {
+        "$ref": "#/$defs/begin_run_output"
+      }
+    },
+    "end_run": {
+      "visibility": "private",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/end_run_input"
+      },
+      "output": {
+        "$ref": "#/$defs/end_run_output"
+      }
+    },
+    "check_runs": {
+      "visibility": "private",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/check_runs_input"
+      },
+      "output": {
+        "$ref": "#/$defs/check_runs_output"
+      }
+    },
+    "offer_event": {
+      "visibility": "private",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/offer_event_input"
+      },
+      "output": {
+        "$ref": "#/$defs/offer_event_output"
+      }
+    },
+    "expire": {
+      "visibility": "private",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/expire_input"
+      },
+      "output": {
+        "$ref": "#/$defs/expire_output"
+      }
+    },
+    "delete_workspace": {
+      "visibility": "private",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/delete_workspace_input"
+      },
+      "output": {
+        "$ref": "#/$defs/delete_workspace_output"
+      }
+    }
+  },
+  "errors": {
+    "public": [
+      {
+        "code": "task_not_found",
+        "prefix": "No task with id ",
+        "meaning": "The taskId names no task in the caller's scope: another owner's, another workspace's and a missing one answer alike."
+      },
+      {
+        "code": "task_exists",
+        "prefix": "A task with id ",
+        "meaning": "create named a task whose id is already stored in scope. Nothing was written."
+      },
+      {
+        "code": "run_not_found",
+        "prefix": "No run ",
+        "meaning": "The runId names no run in the caller's scope."
+      },
+      {
+        "code": "batch_not_found",
+        "prefix": "Batch not found: ",
+        "meaning": "The batchId names no batch in the caller's scope."
+      },
+      {
+        "code": "conflict",
+        "prefix": "Conflict: ",
+        "meaning": "The call contradicts what is stored: an idempotencyKey repeated with another definition, a batch action its state refuses, a budget at or below what is spent. Nothing was written."
+      },
+      {
+        "code": "grant_missing",
+        "prefix": "No run grant: ",
+        "meaning": "A call that stores a definition (create, or run or run_batch with a definition) carried no grant in its host context. Nothing was written."
+      },
+      {
+        "code": "unattended_refused",
+        "prefix": "Not available in an unattended run: ",
+        "meaning": "A tool marked unattended \"refused\" was called with unattended: true in its host context. Nothing was read or written."
+      },
+      {
+        "code": "scope_missing",
+        "prefix": "[tasks] no ",
+        "meaning": "tools/call reached a public tool with no workspace or no authenticated identity in its scope."
+      },
+      {
+        "code": "invalid_input",
+        "prefix": "Invalid arguments for ",
+        "meaning": "The arguments do not match the tool's input schema, or a rule the schema cannot state (an unknown timezone, a cron that does not parse, an input that fails the task's inputSchema); the tool name follows the prefix, quoted. Nothing was written."
+      },
+      {
+        "code": "unknown_tool",
+        "prefix": "Unknown tool ",
+        "meaning": "No tool by that name, public or private."
+      }
+    ],
+    "private": [
+      {
+        "code": "forbidden",
+        "meaning": "A private tool was called by a principal other than host. Checked before the input and the scope, so the answer reveals nothing about either. Nothing was read or written."
+      },
+      {
+        "code": "invalid_input",
+        "meaning": "The arguments do not match the tool's input schema. Nothing was written."
+      },
+      {
+        "code": "scope_missing",
+        "meaning": "The call reached the server with no workspace in its scope, or (begin_run, end_run, check_runs, offer_event) no owner. Nothing was read or written."
+      },
+      {
+        "code": "token_stale",
+        "meaning": "begin_run or end_run carried a token lower than one already recorded for that run: a newer claim holds it. Nothing was written."
+      },
+      {
+        "code": "run_not_found",
+        "meaning": "end_run named a run that begin_run never answered with a work spec in scope."
+      },
+      {
+        "code": "task_not_found",
+        "meaning": "offer_event named a task absent from the caller's scope."
+      },
+      {
+        "code": "internal_error",
+        "meaning": "Anything else. The error text is diagnostic only."
+      }
+    ]
+  },
+  "$defs": {
+    "create_input": {
+      "required": [
+        "manifest",
+        "body"
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "manifest": {
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false,
+          "description": "Task definition: identity, schedule, run-time policy.",
+          "type": "object",
+          "properties": {
+            "name": {
+              "minLength": 1,
+              "description": "Human-readable name; becomes the id.",
+              "type": "string"
+            },
+            "description": {
+              "description": "What this task does.",
+              "type": "string"
+            },
+            "schedule": {
+              "additionalProperties": false,
+              "description": "Exactly one of `cron`, `at`, `intervalMs`, or `match`. Omit to run only on demand.",
+              "type": "object",
+              "properties": {
+                "cron": {
+                  "description": "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
+                  "type": "string"
+                },
+                "at": {
+                  "description": "Fires once at this ISO-8601 time (with an offset).",
+                  "type": "string"
+                },
+                "intervalMs": {
+                  "minimum": 60000,
+                  "description": "Recurs every this many ms. Min 60000.",
+                  "type": "integer"
+                },
+                "match": {
+                  "additionalProperties": false,
+                  "description": "Fires on matching notifications routed to this task by an admin.",
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "maxLength": 200,
+                      "description": "Exact connector server name. Omit to match every source in this workspace.",
+                      "type": "string"
+                    },
+                    "name": {
+                      "pattern": "^[a-zA-Z0-9._*-]{1,200}$",
+                      "description": "Glob over the event name the server chose, e.g. `domain.*`. Omit to match every name.",
+                      "type": "string"
+                    },
+                    "level": {
+                      "type": "string",
+                      "enum": [
+                        "info",
+                        "attention",
+                        "urgent"
+                      ],
+                      "description": "Minimum level, not an exact match."
+                    }
+                  }
+                },
+                "timezone": {
+                  "description": "IANA timezone for `cron`. Default: the implementation's.",
+                  "type": "string"
+                },
+                "debounceMs": {
+                  "minimum": 1000,
+                  "maximum": 900000,
+                  "description": "With `match`: ms that matching notifications coalesce into one run. Default 30000.",
+                  "type": "integer"
+                },
+                "maxFiresPerHour": {
+                  "minimum": 1,
+                  "maximum": 60,
+                  "description": "With `match`: max runs per hour before the task disables. Default 12.",
+                  "type": "integer"
+                }
+              }
+            },
+            "enabled": {
+              "description": "Whether its schedule fires. Default true.",
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "saved",
+                "oneoff"
+              ],
+              "description": "`saved` (default), or `oneoff` for a task run once: hidden from list and deleted after the retention window."
+            },
+            "skills": {
+              "minItems": 1,
+              "maxItems": 5,
+              "description": "Skills each run is given in full, by name.",
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "model": {
+              "minLength": 1,
+              "description": "provider:model-id or a slot name (fast). Omit for the workspace default.",
+              "type": "string"
+            },
+            "thinkingEffort": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "description": "Reasoning depth for its runs. Omit for the workspace setting."
+            },
+            "allowedTools": {
+              "minItems": 1,
+              "description": "Tools its runs may use: one `<connector>__*` glob per connector. Omit for every tool.",
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "maxIterations": {
+              "minimum": 1,
+              "maximum": 50,
+              "description": "Max model iterations per run. Default 25.",
+              "type": "integer"
+            },
+            "maxInputTokens": {
+              "minimum": 1000,
+              "maximum": 1000000,
+              "description": "Input tokens one run may spend. Omit for no cap.",
+              "type": "integer"
+            },
+            "maxRunDurationMs": {
+              "minimum": 10000,
+              "maximum": 600000,
+              "description": "Max wall-clock per run, in ms. Default 120000.",
+              "type": "integer"
+            },
+            "tokenBudget": {
+              "additionalProperties": false,
+              "description": "Token limit across runs. Spent, the task is disabled.",
+              "type": "object",
+              "properties": {
+                "maxInputTokens": {
+                  "minimum": 1,
+                  "description": "Input tokens its runs may use per period.",
+                  "type": "integer"
+                },
+                "maxOutputTokens": {
+                  "minimum": 1,
+                  "description": "Output tokens its runs may use per period.",
+                  "type": "integer"
+                },
+                "period": {
+                  "type": "string",
+                  "enum": [
+                    "daily",
+                    "monthly"
+                  ],
+                  "description": "`daily` or `monthly` reset. Omit for a lifetime total."
+                }
+              }
+            },
+            "inputSchema": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": true,
+              "description": "JSON Schema each run's `input` must match."
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": true,
+              "description": "JSON Schema the deliverable must match."
+            },
+            "onPoorResult": {
+              "type": "string",
+              "enum": [
+                "record",
+                "notify",
+                "retry_once"
+              ],
+              "description": "What a deliverable that fails the outputSchema does: record, notify (default), or retry_once."
+            }
+          }
+        },
+        "body": {
+          "description": "The prompt every run starts from: the job, and where to deliver its result.",
+          "type": "string"
+        }
+      }
+    },
+    "create_output": {
+      "type": "object",
+      "required": [
+        "task",
+        "message",
+        "timezone"
+      ],
+      "properties": {
+        "task": {
+          "type": "object",
+          "required": [
+            "id",
+            "name",
+            "prompt",
+            "enabled",
+            "source",
+            "createdAt",
+            "updatedAt",
+            "runCount",
+            "consecutiveErrors",
+            "cumulativeInputTokens",
+            "cumulativeOutputTokens"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "schedule": {
+              "type": "object",
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "cron",
+                    "interval",
+                    "event",
+                    "once"
+                  ]
+                },
+                "expression": {
+                  "type": "string"
+                },
+                "timezone": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                },
+                "intervalMs": {
+                  "type": "number"
+                },
+                "match": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "level": {
+                      "type": "string",
+                      "enum": [
+                        "info",
+                        "attention",
+                        "urgent"
+                      ]
+                    }
+                  }
+                },
+                "debounceMs": {
+                  "type": "number"
+                },
+                "maxFiresPerHour": {
+                  "type": "number"
+                }
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "saved",
+                "oneoff"
+              ]
+            },
+            "onceDone": {
+              "type": "object",
+              "required": [
+                "at",
+                "outcome"
+              ],
+              "properties": {
+                "at": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "ran",
+                    "missed"
+                  ]
+                }
+              }
+            },
+            "skills": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "allowedTools": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "inputSchema": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {}
+              }
+            },
+            "outputSchema": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {}
+              }
+            },
+            "onPoorResult": {
+              "type": "string",
+              "enum": [
+                "record",
+                "notify",
+                "retry_once"
+              ]
+            },
+            "maxIterations": {
+              "type": "number"
+            },
+            "maxInputTokens": {
+              "type": "number"
+            },
+            "maxRunDurationMs": {
+              "type": "number"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "thinkingEffort": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "ownerId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "user",
+                "agent",
+                "bundle"
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "lastRunAt": {
+              "type": "string"
+            },
+            "lastRunStatus": {
+              "type": "string",
+              "enum": [
+                "success",
+                "degraded",
+                "failure",
+                "timeout",
+                "skipped"
+              ]
+            },
+            "nextRunAt": {
+              "type": "string"
+            },
+            "runCount": {
+              "type": "number"
+            },
+            "consecutiveErrors": {
+              "type": "number"
+            },
+            "disabledAt": {
+              "type": "string"
+            },
+            "disabledReason": {
+              "type": "string"
+            },
+            "cumulativeInputTokens": {
+              "type": "number"
+            },
+            "cumulativeOutputTokens": {
+              "type": "number"
+            },
+            "tokenBudget": {
+              "type": "object",
+              "properties": {
+                "maxInputTokens": {
+                  "type": "number"
+                },
+                "maxOutputTokens": {
+                  "type": "number"
+                },
+                "period": {
+                  "type": "string",
+                  "enum": [
+                    "daily",
+                    "monthly"
+                  ]
+                }
+              }
+            },
+            "budgetResetAt": {
+              "type": "string"
+            }
+          }
+        },
+        "message": {
+          "type": "string"
+        },
+        "timezone": {
+          "description": "The IANA timezone its schedule is read in: the schedule's own, else the implementation's.",
+          "type": "string"
+        }
+      }
+    },
+    "update_input": {
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "minLength": 1,
+          "description": "The task's id, as list returns it.",
+          "type": "string"
+        },
+        "manifest": {
+          "additionalProperties": false,
+          "description": "Patch of the manifest (field names as create). Omitted fields keep their values; null clears one so its default applies.",
+          "type": "object",
+          "properties": {
+            "description": {
+              "description": "New description, or null to remove it.",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "schedule": {
+              "description": "null removes it. A new `at` on a task that already fired re-arms and enables it.",
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "description": "Exactly one of `cron`, `at`, `intervalMs`, or `match`. Omit to run only on demand.",
+                  "type": "object",
+                  "properties": {
+                    "cron": {
+                      "description": "Recurs on a 5-field cron expression (`0 7 * * 1-5`), read in `timezone`.",
+                      "type": "string"
+                    },
+                    "at": {
+                      "description": "Fires once at this ISO-8601 time (with an offset).",
+                      "type": "string"
+                    },
+                    "intervalMs": {
+                      "minimum": 60000,
+                      "description": "Recurs every this many ms. Min 60000.",
+                      "type": "integer"
+                    },
+                    "match": {
+                      "additionalProperties": false,
+                      "description": "Fires on matching notifications routed to this task by an admin.",
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "maxLength": 200,
+                          "description": "Exact connector server name. Omit to match every source in this workspace.",
+                          "type": "string"
+                        },
+                        "name": {
+                          "pattern": "^[a-zA-Z0-9._*-]{1,200}$",
+                          "description": "Glob over the event name the server chose, e.g. `domain.*`. Omit to match every name.",
+                          "type": "string"
+                        },
+                        "level": {
+                          "type": "string",
+                          "enum": [
+                            "info",
+                            "attention",
+                            "urgent"
+                          ],
+                          "description": "Minimum level, not an exact match."
+                        }
+                      }
+                    },
+                    "timezone": {
+                      "description": "IANA timezone for `cron`. Default: the implementation's.",
+                      "type": "string"
+                    },
+                    "debounceMs": {
+                      "minimum": 1000,
+                      "maximum": 900000,
+                      "description": "With `match`: ms that matching notifications coalesce into one run. Default 30000.",
+                      "type": "integer"
+                    },
+                    "maxFiresPerHour": {
+                      "minimum": 1,
+                      "maximum": 60,
+                      "description": "With `match`: max runs per hour before the task disables. Default 12.",
+                      "type": "integer"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "description": "Whether its schedule or events fire it.",
+              "type": "boolean"
+            },
+            "skills": {
+              "description": "null: none.",
+              "anyOf": [
+                {
+                  "minItems": 1,
+                  "maxItems": 5,
+                  "description": "Skills each run is given in full, by name.",
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "model": {
+              "description": "null: the workspace default.",
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "description": "provider:model-id or a slot name (fast). Omit for the workspace default.",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "thinkingEffort": {
+              "description": "null: the workspace setting.",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max"
+                  ],
+                  "description": "Reasoning depth for its runs. Omit for the workspace setting."
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "allowedTools": {
+              "description": "null: every tool.",
+              "anyOf": [
+                {
+                  "minItems": 1,
+                  "description": "Tools its runs may use: one `<connector>__*` glob per connector. Omit for every tool.",
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxIterations": {
+              "description": "null: the default.",
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "maximum": 50,
+                  "description": "Max model iterations per run. Default 25.",
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxInputTokens": {
+              "description": "null: no cap.",
+              "anyOf": [
+                {
+                  "minimum": 1000,
+                  "maximum": 1000000,
+                  "description": "Input tokens one run may spend. Omit for no cap.",
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxRunDurationMs": {
+              "description": "null: the default.",
+              "anyOf": [
+                {
+                  "minimum": 10000,
+                  "maximum": 600000,
+                  "description": "Max wall-clock per run, in ms. Default 120000.",
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tokenBudget": {
+              "description": "null: no limit.",
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "description": "Token limit across runs. Spent, the task is disabled.",
+                  "type": "object",
+                  "properties": {
+                    "maxInputTokens": {
+                      "minimum": 1,
+                      "description": "Input tokens its runs may use per period.",
+                      "type": "integer"
+                    },
+                    "maxOutputTokens": {
+                      "minimum": 1,
+                      "description": "Output tokens its runs may use per period.",
+                      "type": "integer"
+                    },
+                    "period": {
+                      "type": "string",
+                      "enum": [
+                        "daily",
+                        "monthly"
+                      ],
+                      "description": "`daily` or `monthly` reset. Omit for a lifetime total."
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "inputSchema": {
+              "description": "null: any input.",
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": true,
+                  "description": "JSON Schema each run's `input` must match."
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "outputSchema": {
+              "description": "null: not checked.",
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": true,
+                  "description": "JSON Schema the deliverable must match."
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "onPoorResult": {
+              "description": "null: the default.",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "record",
+                    "notify",
+                    "retry_once"
+                  ],
+                  "description": "What a deliverable that fails the outputSchema does: record, notify (default), or retry_once."
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "body": {
+          "description": "New prompt. Omit to keep the current prompt.",
+          "type": "string"
+        }
+      }
+    },
+    "update_output": {
+      "type": "object",
+      "required": [
+        "task",
+        "updated",
+        "message",
+        "timezone"
+      ],
+      "properties": {
+        "task": {
+          "type": "object",
+          "required": [
+            "id",
+            "name",
+            "prompt",
+            "enabled",
+            "source",
+            "createdAt",
+            "updatedAt",
+            "runCount",
+            "consecutiveErrors",
+            "cumulativeInputTokens",
+            "cumulativeOutputTokens"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "schedule": {
+              "type": "object",
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "cron",
+                    "interval",
+                    "event",
+                    "once"
+                  ]
+                },
+                "expression": {
+                  "type": "string"
+                },
+                "timezone": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                },
+                "intervalMs": {
+                  "type": "number"
+                },
+                "match": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "level": {
+                      "type": "string",
+                      "enum": [
+                        "info",
+                        "attention",
+                        "urgent"
+                      ]
+                    }
+                  }
+                },
+                "debounceMs": {
+                  "type": "number"
+                },
+                "maxFiresPerHour": {
+                  "type": "number"
+                }
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "saved",
+                "oneoff"
+              ]
+            },
+            "onceDone": {
+              "type": "object",
+              "required": [
+                "at",
+                "outcome"
+              ],
+              "properties": {
+                "at": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "ran",
+                    "missed"
+                  ]
+                }
+              }
+            },
+            "skills": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "allowedTools": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "inputSchema": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {}
+              }
+            },
+            "outputSchema": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {}
+              }
+            },
+            "onPoorResult": {
+              "type": "string",
+              "enum": [
+                "record",
+                "notify",
+                "retry_once"
+              ]
+            },
+            "maxIterations": {
+              "type": "number"
+            },
+            "maxInputTokens": {
+              "type": "number"
+            },
+            "maxRunDurationMs": {
+              "type": "number"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "thinkingEffort": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "ownerId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "user",
+                "agent",
+                "bundle"
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "lastRunAt": {
+              "type": "string"
+            },
+            "lastRunStatus": {
+              "type": "string",
+              "enum": [
+                "success",
+                "degraded",
+                "failure",
+                "timeout",
+                "skipped"
+              ]
+            },
+            "nextRunAt": {
+              "type": "string"
+            },
+            "runCount": {
+              "type": "number"
+            },
+            "consecutiveErrors": {
+              "type": "number"
+            },
+            "disabledAt": {
+              "type": "string"
+            },
+            "disabledReason": {
+              "type": "string"
+            },
+            "cumulativeInputTokens": {
+              "type": "number"
+            },
+            "cumulativeOutputTokens": {
+              "type": "number"
+            },
+            "tokenBudget": {
+              "type": "object",
+              "properties": {
+                "maxInputTokens": {
+                  "type": "number"
+                },
+                "maxOutputTokens": {
+                  "type": "number"
+                },
+                "period": {
+                  "type": "string",
+                  "enum": [
+                    "daily",
+                    "monthly"
+                  ]
+                }
+              }
+            },
+            "budgetResetAt": {
+              "type": "string"
+            }
+          }
+        },
+        "updated": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "timezone": {
+          "description": "The IANA timezone its schedule is read in: the schedule's own, else the implementation's.",
+          "type": "string"
+        }
+      }
+    },
+    "delete_input": {
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "minLength": 1,
+          "description": "The task's id, as list returns it.",
+          "type": "string"
+        }
+      }
+    },
+    "delete_output": {
+      "type": "object",
+      "required": [
+        "deleted",
+        "id",
+        "message"
+      ],
+      "properties": {
+        "deleted": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "list_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Filter by enabled status.",
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "user",
+            "agent"
+          ],
+          "description": "Filter by source."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "saved",
+            "oneoff",
+            "all"
+          ],
+          "description": "Which kind to list. Default `saved`; `oneoff` or `all` to include one-offs."
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 500,
+          "description": "Max tasks to return. Default 100, max 500. The response always reports the unpaged total and whether more remain.",
+          "type": "integer"
+        },
+        "cursor": {
+          "description": "Opaque pagination cursor from a previous response's `nextCursor`. Omit for the first page.",
+          "type": "string"
+        }
+      }
+    },
+    "list_output": {
+      "type": "object",
+      "required": [
+        "tasks",
+        "total",
+        "returned",
+        "nextCursor",
+        "hasMore"
+      ],
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "schedule",
+              "scheduleType",
+              "kind",
+              "enabled",
+              "source",
+              "runCount",
+              "lastRunStatus",
+              "lastRunAt",
+              "nextRunAt",
+              "disabledAt",
+              "disabledReason",
+              "estimatedCostPerDay"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "schedule": {
+                "description": "Human-readable trigger, e.g. \"Weekdays at 8:00 AM HST\", \"Once at …\", \"Manual only\".",
+                "type": "string"
+              },
+              "scheduleType": {
+                "type": "string",
+                "enum": [
+                  "cron",
+                  "interval",
+                  "event",
+                  "once",
+                  "none"
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "saved",
+                  "oneoff"
+                ]
+              },
+              "onceDone": {
+                "type": "object",
+                "required": [
+                  "at",
+                  "outcome"
+                ],
+                "properties": {
+                  "at": {
+                    "type": "string"
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "ran",
+                      "missed"
+                    ]
+                  }
+                }
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "agent",
+                  "bundle"
+                ]
+              },
+              "runCount": {
+                "type": "number"
+              },
+              "lastRunStatus": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "success",
+                      "degraded",
+                      "failure",
+                      "timeout",
+                      "skipped"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastRunAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "nextRunAt": {
+                "description": "When its schedule next fires; null when nothing will.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "disabledAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "disabledReason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "estimatedCostPerDay": {
+                "type": "number"
+              },
+              "inputSchema": {
+                "type": "object",
+                "patternProperties": {
+                  "^(.*)$": {}
+                }
+              },
+              "startedVia": {
+                "type": "string"
+              },
+              "promptPreview": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "total": {
+          "type": "integer"
+        },
+        "returned": {
+          "type": "integer"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "string"
+        }
+      }
+    },
+    "status_input": {
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "minLength": 1,
+          "description": "The task's id, as list returns it.",
+          "type": "string"
+        },
+        "limit": {
+          "minimum": 0,
+          "maximum": 50,
+          "description": "Recent runs to include, 0 to 50. Default 5.",
+          "type": "integer"
+        }
+      }
+    },
+    "status_output": {
+      "type": "object",
+      "required": [
+        "task",
+        "recentRuns"
+      ],
+      "properties": {
+        "task": {
+          "type": "object",
+          "required": [
+            "id",
+            "name",
+            "prompt",
+            "scheduleHuman",
+            "timezone",
+            "enabled",
+            "source",
+            "runCount",
+            "consecutiveErrors",
+            "cumulativeInputTokens",
+            "cumulativeOutputTokens",
+            "tokenBudget",
+            "budgetResetAt",
+            "createdAt",
+            "updatedAt",
+            "estimatedCostPerRun",
+            "estimatedCostPerDay",
+            "estimatedCostPerMonth"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "schedule": {
+              "type": "object",
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "cron",
+                    "interval",
+                    "event",
+                    "once"
+                  ]
+                },
+                "expression": {
+                  "type": "string"
+                },
+                "timezone": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                },
+                "intervalMs": {
+                  "type": "number"
+                },
+                "match": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "level": {
+                      "type": "string",
+                      "enum": [
+                        "info",
+                        "attention",
+                        "urgent"
+                      ]
+                    }
+                  }
+                },
+                "debounceMs": {
+                  "type": "number"
+                },
+                "maxFiresPerHour": {
+                  "type": "number"
+                }
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "saved",
+                "oneoff"
+              ]
+            },
+            "onceDone": {
+              "type": "object",
+              "required": [
+                "at",
+                "outcome"
+              ],
+              "properties": {
+                "at": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "ran",
+                    "missed"
+                  ]
+                }
+              }
+            },
+            "scheduleHuman": {
+              "type": "string"
+            },
+            "timezone": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "user",
+                "agent",
+                "bundle"
+              ]
+            },
+            "ownerId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "thinkingEffort": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "skills": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "allowedTools": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "inputSchema": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {}
+              }
+            },
+            "outputSchema": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {}
+              }
+            },
+            "onPoorResult": {
+              "type": "string",
+              "enum": [
+                "record",
+                "notify",
+                "retry_once"
+              ]
+            },
+            "maxIterations": {
+              "type": "number"
+            },
+            "maxInputTokens": {
+              "type": "number"
+            },
+            "maxRunDurationMs": {
+              "type": "number"
+            },
+            "runCount": {
+              "type": "number"
+            },
+            "consecutiveErrors": {
+              "type": "number"
+            },
+            "cumulativeInputTokens": {
+              "type": "number"
+            },
+            "cumulativeOutputTokens": {
+              "type": "number"
+            },
+            "tokenBudget": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "maxInputTokens": {
+                      "type": "number"
+                    },
+                    "maxOutputTokens": {
+                      "type": "number"
+                    },
+                    "period": {
+                      "type": "string",
+                      "enum": [
+                        "daily",
+                        "monthly"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "budgetResetAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lastRunAt": {
+              "type": "string"
+            },
+            "lastRunStatus": {
+              "type": "string",
+              "enum": [
+                "success",
+                "degraded",
+                "failure",
+                "timeout",
+                "skipped"
+              ]
+            },
+            "nextRunAt": {
+              "type": "string"
+            },
+            "disabledAt": {
+              "type": "string"
+            },
+            "disabledReason": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "estimatedCostPerRun": {
+              "type": "number"
+            },
+            "estimatedCostPerDay": {
+              "type": "number"
+            },
+            "estimatedCostPerMonth": {
+              "type": "number"
+            }
+          }
+        },
+        "recentRuns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "taskId",
+              "startedAt",
+              "status",
+              "inputTokens",
+              "outputTokens",
+              "toolCalls",
+              "iterations",
+              "execution",
+              "label"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "taskId": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "string"
+              },
+              "completedAt": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "running",
+                  "success",
+                  "degraded",
+                  "failure",
+                  "timeout",
+                  "cancelled",
+                  "skipped"
+                ]
+              },
+              "inputTokens": {
+                "type": "number"
+              },
+              "outputTokens": {
+                "type": "number"
+              },
+              "toolCalls": {
+                "type": "number"
+              },
+              "iterations": {
+                "type": "number"
+              },
+              "error": {
+                "type": "string"
+              },
+              "transient": {
+                "type": "boolean"
+              },
+              "trigger": {
+                "type": "string",
+                "enum": [
+                  "scheduled",
+                  "manual",
+                  "event"
+                ]
+              },
+              "resultPreview": {
+                "type": "string"
+              },
+              "stopReason": {
+                "type": "string",
+                "enum": [
+                  "complete",
+                  "max_iterations",
+                  "max_input_tokens",
+                  "spend_limit",
+                  "length",
+                  "content_filter",
+                  "timeout",
+                  "cancelled",
+                  "error",
+                  "other",
+                  "not_started"
+                ]
+              },
+              "spendAccountId": {
+                "type": "string"
+              },
+              "input": {},
+              "idempotencyKey": {
+                "type": "string"
+              },
+              "outputSchemaValid": {
+                "type": "boolean"
+              },
+              "outputSchemaErrors": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "unrecoveredToolFailures": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "assessment": {
+                "type": "object",
+                "required": [
+                  "verdict",
+                  "assessedAt"
+                ],
+                "properties": {
+                  "verdict": {
+                    "type": "string",
+                    "enum": [
+                      "pass",
+                      "fail",
+                      "uncertain",
+                      "not_assessed"
+                    ]
+                  },
+                  "reason": {
+                    "type": "object",
+                    "required": [
+                      "code",
+                      "message"
+                    ],
+                    "properties": {
+                      "code": {
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "schema": {
+                    "type": "object",
+                    "required": [
+                      "valid"
+                    ],
+                    "properties": {
+                      "valid": {
+                        "type": "boolean"
+                      },
+                      "errors": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "assessedAt": {
+                    "type": "string"
+                  }
+                }
+              },
+              "retryOf": {
+                "type": "string"
+              },
+              "batchId": {
+                "type": "string"
+              },
+              "batchIndex": {
+                "type": "number"
+              },
+              "costUsd": {
+                "type": "number"
+              },
+              "unpricedCalls": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "execution": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "running",
+                  "skipped",
+                  "completed",
+                  "incomplete",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "enum": [
+                  "Succeeded",
+                  "Poor result",
+                  "Needs review",
+                  "Failed",
+                  "Skipped",
+                  "Cancelled",
+                  "Queued",
+                  "Running"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "run_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "minLength": 1,
+          "description": "The task to run, as list returns it. Or give `definition`.",
+          "type": "string"
+        },
+        "definition": {
+          "additionalProperties": false,
+          "description": "A one-off to run once: a `oneoff` task with no schedule is created from it, owned by you in this workspace, and kept with its runs. Give this or `taskId`, not both.",
+          "type": "object",
+          "properties": {
+            "manifest": {
+              "additionalProperties": false,
+              "description": "As create's manifest, minus schedule, enabled, and kind; `name` is optional and only labels it.",
+              "type": "object",
+              "properties": {
+                "skills": {
+                  "minItems": 1,
+                  "maxItems": 5,
+                  "description": "Skills each run is given in full, by name.",
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "model": {
+                  "minLength": 1,
+                  "description": "provider:model-id or a slot name (fast). Omit for the workspace default.",
+                  "type": "string"
+                },
+                "thinkingEffort": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max"
+                  ],
+                  "description": "Reasoning depth for its runs. Omit for the workspace setting."
+                },
+                "allowedTools": {
+                  "minItems": 1,
+                  "description": "Tools its runs may use: one `<connector>__*` glob per connector. Omit for every tool.",
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "maxIterations": {
+                  "minimum": 1,
+                  "maximum": 50,
+                  "description": "Max model iterations per run. Default 25.",
+                  "type": "integer"
+                },
+                "maxInputTokens": {
+                  "minimum": 1000,
+                  "maximum": 1000000,
+                  "description": "Input tokens one run may spend. Omit for no cap.",
+                  "type": "integer"
+                },
+                "maxRunDurationMs": {
+                  "minimum": 10000,
+                  "maximum": 600000,
+                  "description": "Max wall-clock per run, in ms. Default 120000.",
+                  "type": "integer"
+                },
+                "tokenBudget": {
+                  "additionalProperties": false,
+                  "description": "Token limit across runs. Spent, the task is disabled.",
+                  "type": "object",
+                  "properties": {
+                    "maxInputTokens": {
+                      "minimum": 1,
+                      "description": "Input tokens its runs may use per period.",
+                      "type": "integer"
+                    },
+                    "maxOutputTokens": {
+                      "minimum": 1,
+                      "description": "Output tokens its runs may use per period.",
+                      "type": "integer"
+                    },
+                    "period": {
+                      "type": "string",
+                      "enum": [
+                        "daily",
+                        "monthly"
+                      ],
+                      "description": "`daily` or `monthly` reset. Omit for a lifetime total."
+                    }
+                  }
+                },
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": true,
+                  "description": "JSON Schema each run's `input` must match."
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": true,
+                  "description": "JSON Schema the deliverable must match."
+                },
+                "onPoorResult": {
+                  "type": "string",
+                  "enum": [
+                    "record",
+                    "notify",
+                    "retry_once"
+                  ],
+                  "description": "What a deliverable that fails the outputSchema does: record, notify (default), or retry_once."
+                },
+                "name": {
+                  "minLength": 1,
+                  "maxLength": 120,
+                  "description": "What to call it in the Runs list. Display only: it names no task and is not part of what an idempotencyKey compares.",
+                  "type": "string"
+                }
+              }
+            },
+            "body": {
+              "description": "The prompt that opens each run (as create's body). Omit only with `manifest.skills`.",
+              "type": "string"
+            }
+          }
+        },
+        "input": {
+          "description": "JSON input for this run (any JSON value, at most 64 KiB serialized). Checked against the task's inputSchema when it has one, kept on the run record, and given to the run as data, never as instructions."
+        },
+        "idempotencyKey": {
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Repeat-safe key. A later call with the same key returns what the first call started instead of starting another. With an inline definition, a repeat must give the same definition.",
+          "type": "string"
+        }
+      }
+    },
+    "run_output": {
+      "type": "object",
+      "required": [
+        "status",
+        "taskId",
+        "runId",
+        "enabled",
+        "message"
+      ],
+      "properties": {
+        "status": {
+          "const": "queued",
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "existing": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "run_result_input": {
+      "required": [
+        "runId"
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "runId": {
+          "minLength": 1,
+          "description": "The run's id, as run, runs, or upcoming return it.",
+          "type": "string"
+        },
+        "taskId": {
+          "minLength": 1,
+          "description": "The run's task. Needed only for a run past the newest 1000 of its task; any other is found by its id alone.",
+          "type": "string"
+        }
+      }
+    },
+    "run_result_output": {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "run",
+            "message"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "running"
+              ]
+            },
+            "run": {
+              "type": "object",
+              "required": [
+                "id",
+                "taskId",
+                "startedAt",
+                "status",
+                "inputTokens",
+                "outputTokens",
+                "toolCalls",
+                "iterations",
+                "execution",
+                "label"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "taskId": {
+                  "type": "string"
+                },
+                "startedAt": {
+                  "type": "string"
+                },
+                "completedAt": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "running",
+                    "success",
+                    "degraded",
+                    "failure",
+                    "timeout",
+                    "cancelled",
+                    "skipped"
+                  ]
+                },
+                "inputTokens": {
+                  "type": "number"
+                },
+                "outputTokens": {
+                  "type": "number"
+                },
+                "toolCalls": {
+                  "type": "number"
+                },
+                "iterations": {
+                  "type": "number"
+                },
+                "error": {
+                  "type": "string"
+                },
+                "transient": {
+                  "type": "boolean"
+                },
+                "trigger": {
+                  "type": "string",
+                  "enum": [
+                    "scheduled",
+                    "manual",
+                    "event"
+                  ]
+                },
+                "resultPreview": {
+                  "type": "string"
+                },
+                "stopReason": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "max_iterations",
+                    "max_input_tokens",
+                    "spend_limit",
+                    "length",
+                    "content_filter",
+                    "timeout",
+                    "cancelled",
+                    "error",
+                    "other",
+                    "not_started"
+                  ]
+                },
+                "spendAccountId": {
+                  "type": "string"
+                },
+                "input": {},
+                "idempotencyKey": {
+                  "type": "string"
+                },
+                "outputSchemaValid": {
+                  "type": "boolean"
+                },
+                "outputSchemaErrors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "unrecoveredToolFailures": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "assessment": {
+                  "type": "object",
+                  "required": [
+                    "verdict",
+                    "assessedAt"
+                  ],
+                  "properties": {
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "pass",
+                        "fail",
+                        "uncertain",
+                        "not_assessed"
+                      ]
+                    },
+                    "reason": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "schema": {
+                      "type": "object",
+                      "required": [
+                        "valid"
+                      ],
+                      "properties": {
+                        "valid": {
+                          "type": "boolean"
+                        },
+                        "errors": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "assessedAt": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "retryOf": {
+                  "type": "string"
+                },
+                "batchId": {
+                  "type": "string"
+                },
+                "batchIndex": {
+                  "type": "number"
+                },
+                "costUsd": {
+                  "type": "number"
+                },
+                "unpricedCalls": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "execution": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "running",
+                    "skipped",
+                    "completed",
+                    "incomplete",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "label": {
+                  "type": "string",
+                  "enum": [
+                    "Succeeded",
+                    "Poor result",
+                    "Needs review",
+                    "Failed",
+                    "Skipped",
+                    "Cancelled",
+                    "Queued",
+                    "Running"
+                  ]
+                }
+              }
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "run"
+          ],
+          "properties": {
+            "status": {
+              "const": "ended",
+              "type": "string"
+            },
+            "run": {
+              "type": "object",
+              "required": [
+                "id",
+                "taskId",
+                "startedAt",
+                "status",
+                "inputTokens",
+                "outputTokens",
+                "toolCalls",
+                "iterations",
+                "execution",
+                "label"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "taskId": {
+                  "type": "string"
+                },
+                "startedAt": {
+                  "type": "string"
+                },
+                "completedAt": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "running",
+                    "success",
+                    "degraded",
+                    "failure",
+                    "timeout",
+                    "cancelled",
+                    "skipped"
+                  ]
+                },
+                "inputTokens": {
+                  "type": "number"
+                },
+                "outputTokens": {
+                  "type": "number"
+                },
+                "toolCalls": {
+                  "type": "number"
+                },
+                "iterations": {
+                  "type": "number"
+                },
+                "error": {
+                  "type": "string"
+                },
+                "transient": {
+                  "type": "boolean"
+                },
+                "trigger": {
+                  "type": "string",
+                  "enum": [
+                    "scheduled",
+                    "manual",
+                    "event"
+                  ]
+                },
+                "resultPreview": {
+                  "type": "string"
+                },
+                "stopReason": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "max_iterations",
+                    "max_input_tokens",
+                    "spend_limit",
+                    "length",
+                    "content_filter",
+                    "timeout",
+                    "cancelled",
+                    "error",
+                    "other",
+                    "not_started"
+                  ]
+                },
+                "spendAccountId": {
+                  "type": "string"
+                },
+                "input": {},
+                "idempotencyKey": {
+                  "type": "string"
+                },
+                "outputSchemaValid": {
+                  "type": "boolean"
+                },
+                "outputSchemaErrors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "unrecoveredToolFailures": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "assessment": {
+                  "type": "object",
+                  "required": [
+                    "verdict",
+                    "assessedAt"
+                  ],
+                  "properties": {
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "pass",
+                        "fail",
+                        "uncertain",
+                        "not_assessed"
+                      ]
+                    },
+                    "reason": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "schema": {
+                      "type": "object",
+                      "required": [
+                        "valid"
+                      ],
+                      "properties": {
+                        "valid": {
+                          "type": "boolean"
+                        },
+                        "errors": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "assessedAt": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "retryOf": {
+                  "type": "string"
+                },
+                "batchId": {
+                  "type": "string"
+                },
+                "batchIndex": {
+                  "type": "number"
+                },
+                "costUsd": {
+                  "type": "number"
+                },
+                "unpricedCalls": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "execution": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "running",
+                    "skipped",
+                    "completed",
+                    "incomplete",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "label": {
+                  "type": "string",
+                  "enum": [
+                    "Succeeded",
+                    "Poor result",
+                    "Needs review",
+                    "Failed",
+                    "Skipped",
+                    "Cancelled",
+                    "Queued",
+                    "Running"
+                  ]
+                }
+              }
+            },
+            "result": {
+              "type": "object",
+              "required": [
+                "completedAt",
+                "output",
+                "activityLog",
+                "outputFiles",
+                "usage"
+              ],
+              "properties": {
+                "completedAt": {
+                  "type": "string"
+                },
+                "output": {
+                  "type": "string"
+                },
+                "activityLog": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "name",
+                      "ok",
+                      "ms"
+                    ],
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "ok": {
+                        "type": "boolean"
+                      },
+                      "errorReason": {
+                        "type": "string"
+                      },
+                      "held": {
+                        "const": true,
+                        "type": "boolean"
+                      },
+                      "ms": {
+                        "type": "number"
+                      }
+                    }
+                  }
+                },
+                "outputFiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "uri"
+                    ],
+                    "properties": {
+                      "uri": {
+                        "description": "Opaque: the host's reference to the file.",
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "usage": {
+                  "type": "object",
+                  "required": [
+                    "inputTokens",
+                    "outputTokens",
+                    "iterations"
+                  ],
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "iterations": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "stopReason": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "max_iterations",
+                    "max_input_tokens",
+                    "spend_limit",
+                    "length",
+                    "content_filter",
+                    "timeout",
+                    "cancelled",
+                    "error",
+                    "other",
+                    "not_started"
+                  ]
+                },
+                "structured": {},
+                "error": {
+                  "type": "string"
+                },
+                "skillsDelivered": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "name",
+                      "loadedBy"
+                    ],
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "loadedBy": {
+                        "type": "string",
+                        "enum": [
+                          "declared",
+                          "before_call",
+                          "tool_use",
+                          "activation"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "fetch_failed",
+                          "capped",
+                          "renamed_unheld"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "type": "object"
+    },
+    "runs_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "minLength": 1,
+          "description": "Only this task's runs.",
+          "type": "string"
+        },
+        "label": {
+          "type": "string",
+          "enum": [
+            "Succeeded",
+            "Poor result",
+            "Needs review",
+            "Failed",
+            "Skipped",
+            "Cancelled"
+          ],
+          "description": "Only runs that ended reading as this label. Runs still queued or running are in upcoming."
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "uncertain",
+            "not_assessed"
+          ],
+          "description": "Only runs with this verdict. A run with no deliverable has none, and never matches."
+        },
+        "since": {
+          "description": "ISO timestamp — only runs started on or after this time.",
+          "type": "string"
+        },
+        "before": {
+          "description": "ISO timestamp — only runs started before this time. Pages back through the run history: pass the previous response's `nextBefore`, with or without `taskId`.",
+          "type": "string"
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 500,
+          "description": "Max runs to return. Default 20.",
+          "type": "integer"
+        },
+        "excludeBatchRuns": {
+          "description": "true: leave out runs that are items of a batch (read those with batch).",
+          "type": "boolean"
+        }
+      }
+    },
+    "runs_output": {
+      "type": "object",
+      "required": [
+        "runs",
+        "total"
+      ],
+      "properties": {
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "taskId",
+              "startedAt",
+              "status",
+              "inputTokens",
+              "outputTokens",
+              "toolCalls",
+              "iterations",
+              "execution",
+              "label"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "taskId": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "string"
+              },
+              "completedAt": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "running",
+                  "success",
+                  "degraded",
+                  "failure",
+                  "timeout",
+                  "cancelled",
+                  "skipped"
+                ]
+              },
+              "inputTokens": {
+                "type": "number"
+              },
+              "outputTokens": {
+                "type": "number"
+              },
+              "toolCalls": {
+                "type": "number"
+              },
+              "iterations": {
+                "type": "number"
+              },
+              "error": {
+                "type": "string"
+              },
+              "transient": {
+                "type": "boolean"
+              },
+              "trigger": {
+                "type": "string",
+                "enum": [
+                  "scheduled",
+                  "manual",
+                  "event"
+                ]
+              },
+              "resultPreview": {
+                "type": "string"
+              },
+              "stopReason": {
+                "type": "string",
+                "enum": [
+                  "complete",
+                  "max_iterations",
+                  "max_input_tokens",
+                  "spend_limit",
+                  "length",
+                  "content_filter",
+                  "timeout",
+                  "cancelled",
+                  "error",
+                  "other",
+                  "not_started"
+                ]
+              },
+              "spendAccountId": {
+                "type": "string"
+              },
+              "input": {},
+              "idempotencyKey": {
+                "type": "string"
+              },
+              "outputSchemaValid": {
+                "type": "boolean"
+              },
+              "outputSchemaErrors": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "unrecoveredToolFailures": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "assessment": {
+                "type": "object",
+                "required": [
+                  "verdict",
+                  "assessedAt"
+                ],
+                "properties": {
+                  "verdict": {
+                    "type": "string",
+                    "enum": [
+                      "pass",
+                      "fail",
+                      "uncertain",
+                      "not_assessed"
+                    ]
+                  },
+                  "reason": {
+                    "type": "object",
+                    "required": [
+                      "code",
+                      "message"
+                    ],
+                    "properties": {
+                      "code": {
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "schema": {
+                    "type": "object",
+                    "required": [
+                      "valid"
+                    ],
+                    "properties": {
+                      "valid": {
+                        "type": "boolean"
+                      },
+                      "errors": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "assessedAt": {
+                    "type": "string"
+                  }
+                }
+              },
+              "retryOf": {
+                "type": "string"
+              },
+              "batchId": {
+                "type": "string"
+              },
+              "batchIndex": {
+                "type": "number"
+              },
+              "costUsd": {
+                "type": "number"
+              },
+              "unpricedCalls": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "execution": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "running",
+                  "skipped",
+                  "completed",
+                  "incomplete",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "enum": [
+                  "Succeeded",
+                  "Poor result",
+                  "Needs review",
+                  "Failed",
+                  "Skipped",
+                  "Cancelled",
+                  "Queued",
+                  "Running"
+                ]
+              }
+            }
+          }
+        },
+        "total": {
+          "type": "integer"
+        },
+        "nextBefore": {
+          "type": "string"
+        }
+      }
+    },
+    "cancel_input": {
+      "required": [
+        "runId"
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "runId": {
+          "minLength": 1,
+          "description": "The run's id, as run, runs, or upcoming return it.",
+          "type": "string"
+        }
+      }
+    },
+    "cancel_output": {
+      "type": "object",
+      "required": [
+        "cancelled",
+        "runId",
+        "message"
+      ],
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "upcoming_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "days": {
+          "minimum": 1,
+          "maximum": 30,
+          "description": "How many days ahead to list scheduled fires. Default 7, max 30. Every enabled timed task's next fire is listed even when it falls past the window.",
+          "type": "integer"
+        }
+      }
+    },
+    "upcoming_output": {
+      "type": "object",
+      "required": [
+        "running",
+        "queued",
+        "days",
+        "windowEnd",
+        "scheduled",
+        "frequent",
+        "events"
+      ],
+      "properties": {
+        "running": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "taskId",
+              "state"
+            ],
+            "properties": {
+              "taskId": {
+                "type": "string"
+              },
+              "taskName": {
+                "type": "string"
+              },
+              "runId": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "queued"
+                ]
+              },
+              "startedAt": {
+                "type": "string"
+              },
+              "queuedAt": {
+                "type": "string"
+              },
+              "trigger": {
+                "type": "string",
+                "enum": [
+                  "scheduled",
+                  "manual",
+                  "event"
+                ]
+              },
+              "batchId": {
+                "type": "string"
+              },
+              "batchIndex": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "queued": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "taskId",
+              "state"
+            ],
+            "properties": {
+              "taskId": {
+                "type": "string"
+              },
+              "taskName": {
+                "type": "string"
+              },
+              "runId": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "queued"
+                ]
+              },
+              "startedAt": {
+                "type": "string"
+              },
+              "queuedAt": {
+                "type": "string"
+              },
+              "trigger": {
+                "type": "string",
+                "enum": [
+                  "scheduled",
+                  "manual",
+                  "event"
+                ]
+              },
+              "batchId": {
+                "type": "string"
+              },
+              "batchIndex": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "days": {
+          "type": "number"
+        },
+        "windowEnd": {
+          "type": "string"
+        },
+        "scheduled": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "taskId",
+              "taskName",
+              "at",
+              "schedule",
+              "scheduleType"
+            ],
+            "properties": {
+              "taskId": {
+                "type": "string"
+              },
+              "taskName": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              },
+              "schedule": {
+                "type": "string"
+              },
+              "scheduleType": {
+                "type": "string",
+                "enum": [
+                  "cron",
+                  "interval",
+                  "once"
+                ]
+              },
+              "beyondWindow": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "frequent": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "taskId",
+              "taskName",
+              "schedule",
+              "scheduleType",
+              "count",
+              "first"
+            ],
+            "properties": {
+              "taskId": {
+                "type": "string"
+              },
+              "taskName": {
+                "type": "string"
+              },
+              "schedule": {
+                "type": "string"
+              },
+              "scheduleType": {
+                "type": "string",
+                "enum": [
+                  "cron",
+                  "interval"
+                ]
+              },
+              "count": {
+                "type": "integer"
+              },
+              "countCapped": {
+                "type": "boolean"
+              },
+              "first": {
+                "type": "string"
+              },
+              "last": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "taskId",
+              "taskName",
+              "schedule",
+              "enabled",
+              "maxFiresPerHour",
+              "firesLastHour"
+            ],
+            "properties": {
+              "taskId": {
+                "type": "string"
+              },
+              "taskName": {
+                "type": "string"
+              },
+              "schedule": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "maxFiresPerHour": {
+                "type": "number"
+              },
+              "firesLastHour": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "stats_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "since": {
+          "description": "ISO timestamp: count runs started on or after it. Default: 30 days ago.",
+          "type": "string"
+        },
+        "taskId": {
+          "minLength": 1,
+          "description": "Only this task (any kind). Default: every saved task.",
+          "type": "string"
+        }
+      }
+    },
+    "stats_output": {
+      "type": "object",
+      "required": [
+        "since",
+        "tasks"
+      ],
+      "properties": {
+        "since": {
+          "type": "string"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "taskId",
+              "runs",
+              "pass",
+              "fail",
+              "uncertain",
+              "passRate",
+              "costUsd"
+            ],
+            "properties": {
+              "taskId": {
+                "type": "string"
+              },
+              "runs": {
+                "type": "integer"
+              },
+              "pass": {
+                "type": "integer"
+              },
+              "fail": {
+                "type": "integer"
+              },
+              "uncertain": {
+                "type": "integer"
+              },
+              "passRate": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "costUsd": {
+                "type": "number"
+              },
+              "lastRun": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "startedAt",
+                  "label"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "startedAt": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string",
+                    "enum": [
+                      "Succeeded",
+                      "Poor result",
+                      "Needs review",
+                      "Failed",
+                      "Skipped",
+                      "Cancelled",
+                      "Queued",
+                      "Running"
+                    ]
+                  }
+                }
+              },
+              "recent": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "startedAt",
+                    "label"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "startedAt": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string",
+                      "enum": [
+                        "Succeeded",
+                        "Poor result",
+                        "Needs review",
+                        "Failed",
+                        "Skipped",
+                        "Cancelled",
+                        "Queued",
+                        "Running"
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "run_batch_input": {
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "minLength": 1,
+          "description": "The task every item runs, as list returns it. Or give `definition`.",
+          "type": "string"
+        },
+        "definition": {
+          "additionalProperties": false,
+          "description": "The definition every item runs: a `oneoff` task with no schedule is created from it, owned by you in this workspace, and kept with its runs. Give this or `taskId`, not both.",
+          "type": "object",
+          "properties": {
+            "manifest": {
+              "additionalProperties": false,
+              "description": "As create's manifest, minus schedule, enabled, and kind; `name` is optional and only labels it.",
+              "type": "object",
+              "properties": {
+                "skills": {
+                  "minItems": 1,
+                  "maxItems": 5,
+                  "description": "Skills each run is given in full, by name.",
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "model": {
+                  "minLength": 1,
+                  "description": "provider:model-id or a slot name (fast). Omit for the workspace default.",
+                  "type": "string"
+                },
+                "thinkingEffort": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max"
+                  ],
+                  "description": "Reasoning depth for its runs. Omit for the workspace setting."
+                },
+                "allowedTools": {
+                  "minItems": 1,
+                  "description": "Tools its runs may use: one `<connector>__*` glob per connector. Omit for every tool.",
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "maxIterations": {
+                  "minimum": 1,
+                  "maximum": 50,
+                  "description": "Max model iterations per run. Default 25.",
+                  "type": "integer"
+                },
+                "maxInputTokens": {
+                  "minimum": 1000,
+                  "maximum": 1000000,
+                  "description": "Input tokens one run may spend. Omit for no cap.",
+                  "type": "integer"
+                },
+                "maxRunDurationMs": {
+                  "minimum": 10000,
+                  "maximum": 600000,
+                  "description": "Max wall-clock per run, in ms. Default 120000.",
+                  "type": "integer"
+                },
+                "tokenBudget": {
+                  "additionalProperties": false,
+                  "description": "Token limit across runs. Spent, the task is disabled.",
+                  "type": "object",
+                  "properties": {
+                    "maxInputTokens": {
+                      "minimum": 1,
+                      "description": "Input tokens its runs may use per period.",
+                      "type": "integer"
+                    },
+                    "maxOutputTokens": {
+                      "minimum": 1,
+                      "description": "Output tokens its runs may use per period.",
+                      "type": "integer"
+                    },
+                    "period": {
+                      "type": "string",
+                      "enum": [
+                        "daily",
+                        "monthly"
+                      ],
+                      "description": "`daily` or `monthly` reset. Omit for a lifetime total."
+                    }
+                  }
+                },
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": true,
+                  "description": "JSON Schema each run's `input` must match."
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": true,
+                  "description": "JSON Schema the deliverable must match."
+                },
+                "name": {
+                  "minLength": 1,
+                  "maxLength": 120,
+                  "description": "What to call it in the Runs list. Display only: it names no task and is not part of what an idempotencyKey compares.",
+                  "type": "string"
+                }
+              }
+            },
+            "body": {
+              "description": "The prompt that opens each run (as create's body). Omit only with `manifest.skills`.",
+              "type": "string"
+            }
+          }
+        },
+        "items": {
+          "minItems": 1,
+          "maxItems": 10000,
+          "description": "The inputs, one run each (at most 10,000; each at most 64 KiB serialized, 16 MiB together). Every item is checked against the task's inputSchema first: if any fails, the whole batch is refused (naming the first bad indices) and nothing is created.",
+          "type": "array",
+          "items": {
+            "description": "One run's JSON input, checked against the task's inputSchema."
+          }
+        },
+        "concurrency": {
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Most of the batch's runs at once (queued or running). The host's fair share between workspaces applies on top.",
+          "type": "integer"
+        },
+        "budgetUsd": {
+          "exclusiveMinimum": 0,
+          "description": "Whole-batch ceiling in USD, checked before every model call across all of the batch's runs at once. When what is left cannot pay for another item, no new item starts and the batch pauses (resume with a higher `budgetUsd`). An item that costs more than what is left can grant one run ends with errorCode exceeds_share and the batch goes on (rerun_failed with a higher `budgetUsd` runs it again).",
+          "type": "number"
+        },
+        "stopWhen": {
+          "required": [
+            "minPassRate",
+            "afterItems"
+          ],
+          "additionalProperties": false,
+          "description": "Pause the batch when its pass rate collapses. Needs a task with an outputSchema.",
+          "type": "object",
+          "properties": {
+            "minPassRate": {
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Pause when pass / (pass + fail) falls below this (0..1).",
+              "type": "number"
+            },
+            "afterItems": {
+              "minimum": 1,
+              "description": "Assessed runs before the rule applies.",
+              "type": "integer"
+            }
+          }
+        },
+        "idempotencyKey": {
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Repeat-safe key. A later call with the same key returns what the first call started instead of starting another. With an inline definition, a repeat must give the same definition.",
+          "type": "string"
+        }
+      }
+    },
+    "run_batch_output": {
+      "type": "object",
+      "required": [
+        "batch",
+        "existing",
+        "message"
+      ],
+      "properties": {
+        "batch": {
+          "type": "object",
+          "required": [
+            "id",
+            "taskId",
+            "workspaceId",
+            "ownerId",
+            "items",
+            "concurrency",
+            "state",
+            "counts",
+            "costUsd",
+            "createdAt",
+            "updatedAt",
+            "createdBy",
+            "done",
+            "passRate"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "taskId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "ownerId": {
+              "type": "string"
+            },
+            "items": {
+              "type": "number"
+            },
+            "concurrency": {
+              "type": "number"
+            },
+            "sharing": {
+              "type": "number"
+            },
+            "budgetUsd": {
+              "type": "number"
+            },
+            "stopWhen": {
+              "type": "object",
+              "required": [
+                "minPassRate",
+                "afterItems"
+              ],
+              "properties": {
+                "minPassRate": {
+                  "type": "number"
+                },
+                "afterItems": {
+                  "type": "number"
+                }
+              }
+            },
+            "stopRuleDisarmed": {
+              "type": "boolean"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "running",
+                "paused",
+                "completed",
+                "cancelled"
+              ]
+            },
+            "pause": {
+              "type": "object",
+              "required": [
+                "reason",
+                "message",
+                "at"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "manual",
+                    "budget",
+                    "pass_rate",
+                    "unavailable"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                }
+              }
+            },
+            "counts": {
+              "type": "object",
+              "required": [
+                "pending",
+                "queued",
+                "running",
+                "pass",
+                "fail",
+                "uncertain",
+                "not_assessed",
+                "failed",
+                "skipped",
+                "cancelled"
+              ],
+              "properties": {
+                "pending": {
+                  "type": "number"
+                },
+                "queued": {
+                  "type": "number"
+                },
+                "running": {
+                  "type": "number"
+                },
+                "pass": {
+                  "type": "number"
+                },
+                "fail": {
+                  "type": "number"
+                },
+                "uncertain": {
+                  "type": "number"
+                },
+                "not_assessed": {
+                  "type": "number"
+                },
+                "failed": {
+                  "type": "number"
+                },
+                "skipped": {
+                  "type": "number"
+                },
+                "cancelled": {
+                  "type": "number"
+                }
+              }
+            },
+            "costUsd": {
+              "type": "number"
+            },
+            "idempotencyKey": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "startedVia": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "completedAt": {
+              "type": "string"
+            },
+            "createdBy": {
+              "type": "string"
+            },
+            "done": {
+              "type": "number"
+            },
+            "passRate": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "existing": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "batch_input": {
+      "required": [
+        "batchId"
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "batchId": {
+          "pattern": "^batch_[a-f0-9]{12}$",
+          "description": "The batch's id (run_batch returns it).",
+          "type": "string"
+        },
+        "results": {
+          "description": "true: include item results, a page at a time. A filter, cursor, or limit also asks for them.",
+          "type": "boolean"
+        },
+        "filter": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "uncertain",
+            "not_assessed",
+            "failed",
+            "skipped",
+            "cancelled",
+            "pending",
+            "failing"
+          ],
+          "description": "Only items in this state: a verdict (pass, fail, uncertain, not_assessed), an execution without a deliverable (failed, skipped, cancelled), pending (not ended), or failing (fail or failed)."
+        },
+        "cursor": {
+          "minimum": 0,
+          "description": "Item index to start the page at: the previous page's `nextCursor`.",
+          "type": "integer"
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 500,
+          "description": "Items per page. Default 50.",
+          "type": "integer"
+        },
+        "output": {
+          "type": "string",
+          "enum": [
+            "summary",
+            "full"
+          ],
+          "description": "What each result row carries of its run's structured output. summary (default): its top-level scalar fields. full: the whole structured output as `structured`; a page then also ends when its rows reach a size budget, so follow `nextCursor`."
+        }
+      }
+    },
+    "batch_output": {
+      "type": "object",
+      "required": [
+        "batch"
+      ],
+      "properties": {
+        "batch": {
+          "type": "object",
+          "required": [
+            "id",
+            "taskId",
+            "workspaceId",
+            "ownerId",
+            "items",
+            "concurrency",
+            "state",
+            "counts",
+            "costUsd",
+            "createdAt",
+            "updatedAt",
+            "createdBy",
+            "done",
+            "passRate"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "taskId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "ownerId": {
+              "type": "string"
+            },
+            "items": {
+              "type": "number"
+            },
+            "concurrency": {
+              "type": "number"
+            },
+            "sharing": {
+              "type": "number"
+            },
+            "budgetUsd": {
+              "type": "number"
+            },
+            "stopWhen": {
+              "type": "object",
+              "required": [
+                "minPassRate",
+                "afterItems"
+              ],
+              "properties": {
+                "minPassRate": {
+                  "type": "number"
+                },
+                "afterItems": {
+                  "type": "number"
+                }
+              }
+            },
+            "stopRuleDisarmed": {
+              "type": "boolean"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "running",
+                "paused",
+                "completed",
+                "cancelled"
+              ]
+            },
+            "pause": {
+              "type": "object",
+              "required": [
+                "reason",
+                "message",
+                "at"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "manual",
+                    "budget",
+                    "pass_rate",
+                    "unavailable"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                }
+              }
+            },
+            "counts": {
+              "type": "object",
+              "required": [
+                "pending",
+                "queued",
+                "running",
+                "pass",
+                "fail",
+                "uncertain",
+                "not_assessed",
+                "failed",
+                "skipped",
+                "cancelled"
+              ],
+              "properties": {
+                "pending": {
+                  "type": "number"
+                },
+                "queued": {
+                  "type": "number"
+                },
+                "running": {
+                  "type": "number"
+                },
+                "pass": {
+                  "type": "number"
+                },
+                "fail": {
+                  "type": "number"
+                },
+                "uncertain": {
+                  "type": "number"
+                },
+                "not_assessed": {
+                  "type": "number"
+                },
+                "failed": {
+                  "type": "number"
+                },
+                "skipped": {
+                  "type": "number"
+                },
+                "cancelled": {
+                  "type": "number"
+                }
+              }
+            },
+            "costUsd": {
+              "type": "number"
+            },
+            "idempotencyKey": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "startedVia": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "completedAt": {
+              "type": "string"
+            },
+            "createdBy": {
+              "type": "string"
+            },
+            "done": {
+              "type": "number"
+            },
+            "passRate": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "index",
+              "inputSummary",
+              "state"
+            ],
+            "properties": {
+              "index": {
+                "type": "number"
+              },
+              "inputSummary": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "queued",
+                  "running",
+                  "done"
+                ]
+              },
+              "runId": {
+                "type": "string"
+              },
+              "previousRunIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "execution": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "running",
+                  "skipped",
+                  "completed",
+                  "incomplete",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "pass",
+                  "fail",
+                  "uncertain",
+                  "not_assessed"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "enum": [
+                  "Succeeded",
+                  "Poor result",
+                  "Needs review",
+                  "Failed",
+                  "Skipped",
+                  "Cancelled",
+                  "Queued",
+                  "Running"
+                ]
+              },
+              "costUsd": {
+                "type": "number"
+              },
+              "error": {
+                "type": "string"
+              },
+              "errorCode": {
+                "type": "string",
+                "enum": [
+                  "exceeds_share"
+                ]
+              },
+              "output": {
+                "type": "object",
+                "patternProperties": {
+                  "^(.*)$": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              },
+              "structured": {},
+              "structuredOmitted": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "nextCursor": {
+          "type": "integer"
+        }
+      }
+    },
+    "batches_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "minLength": 1,
+          "description": "Only batches of this task.",
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "running",
+            "paused",
+            "completed",
+            "cancelled"
+          ],
+          "description": "Only batches in this state."
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Most batches. Default 20.",
+          "type": "integer"
+        }
+      }
+    },
+    "batches_output": {
+      "type": "object",
+      "required": [
+        "batches"
+      ],
+      "properties": {
+        "batches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "taskId",
+              "workspaceId",
+              "ownerId",
+              "items",
+              "concurrency",
+              "state",
+              "counts",
+              "costUsd",
+              "createdAt",
+              "updatedAt",
+              "createdBy",
+              "done",
+              "passRate"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "taskId": {
+                "type": "string"
+              },
+              "workspaceId": {
+                "type": "string"
+              },
+              "ownerId": {
+                "type": "string"
+              },
+              "items": {
+                "type": "number"
+              },
+              "concurrency": {
+                "type": "number"
+              },
+              "sharing": {
+                "type": "number"
+              },
+              "budgetUsd": {
+                "type": "number"
+              },
+              "stopWhen": {
+                "type": "object",
+                "required": [
+                  "minPassRate",
+                  "afterItems"
+                ],
+                "properties": {
+                  "minPassRate": {
+                    "type": "number"
+                  },
+                  "afterItems": {
+                    "type": "number"
+                  }
+                }
+              },
+              "stopRuleDisarmed": {
+                "type": "boolean"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "paused",
+                  "completed",
+                  "cancelled"
+                ]
+              },
+              "pause": {
+                "type": "object",
+                "required": [
+                  "reason",
+                  "message",
+                  "at"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "manual",
+                      "budget",
+                      "pass_rate",
+                      "unavailable"
+                    ]
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "string"
+                  }
+                }
+              },
+              "counts": {
+                "type": "object",
+                "required": [
+                  "pending",
+                  "queued",
+                  "running",
+                  "pass",
+                  "fail",
+                  "uncertain",
+                  "not_assessed",
+                  "failed",
+                  "skipped",
+                  "cancelled"
+                ],
+                "properties": {
+                  "pending": {
+                    "type": "number"
+                  },
+                  "queued": {
+                    "type": "number"
+                  },
+                  "running": {
+                    "type": "number"
+                  },
+                  "pass": {
+                    "type": "number"
+                  },
+                  "fail": {
+                    "type": "number"
+                  },
+                  "uncertain": {
+                    "type": "number"
+                  },
+                  "not_assessed": {
+                    "type": "number"
+                  },
+                  "failed": {
+                    "type": "number"
+                  },
+                  "skipped": {
+                    "type": "number"
+                  },
+                  "cancelled": {
+                    "type": "number"
+                  }
+                }
+              },
+              "costUsd": {
+                "type": "number"
+              },
+              "idempotencyKey": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "startedVia": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "completedAt": {
+                "type": "string"
+              },
+              "createdBy": {
+                "type": "string"
+              },
+              "done": {
+                "type": "number"
+              },
+              "passRate": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "batch_control_input": {
+      "required": [
+        "batchId",
+        "action"
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "batchId": {
+          "pattern": "^batch_[a-f0-9]{12}$",
+          "description": "The batch's id (run_batch returns it).",
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "pause",
+            "resume",
+            "cancel",
+            "rerun_failed"
+          ],
+          "description": "pause: no new item starts; runs still queued are taken back, runs in flight finish. resume: start items again. cancel: stop for good, cancelling queued and running runs. rerun_failed: run again, each as a new run, every item that failed, was skipped or cancelled, was judged fail, or ended with errorCode exceeds_share."
+        },
+        "budgetUsd": {
+          "exclusiveMinimum": 0,
+          "description": "With resume or rerun_failed of a batch that is not running: the budget to run under (more than already spent). A running batch refuses it (pause first).",
+          "type": "number"
+        }
+      }
+    },
+    "batch_control_output": {
+      "type": "object",
+      "required": [
+        "batch",
+        "message",
+        "affected"
+      ],
+      "properties": {
+        "batch": {
+          "type": "object",
+          "required": [
+            "id",
+            "taskId",
+            "workspaceId",
+            "ownerId",
+            "items",
+            "concurrency",
+            "state",
+            "counts",
+            "costUsd",
+            "createdAt",
+            "updatedAt",
+            "createdBy",
+            "done",
+            "passRate"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "taskId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "ownerId": {
+              "type": "string"
+            },
+            "items": {
+              "type": "number"
+            },
+            "concurrency": {
+              "type": "number"
+            },
+            "sharing": {
+              "type": "number"
+            },
+            "budgetUsd": {
+              "type": "number"
+            },
+            "stopWhen": {
+              "type": "object",
+              "required": [
+                "minPassRate",
+                "afterItems"
+              ],
+              "properties": {
+                "minPassRate": {
+                  "type": "number"
+                },
+                "afterItems": {
+                  "type": "number"
+                }
+              }
+            },
+            "stopRuleDisarmed": {
+              "type": "boolean"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "running",
+                "paused",
+                "completed",
+                "cancelled"
+              ]
+            },
+            "pause": {
+              "type": "object",
+              "required": [
+                "reason",
+                "message",
+                "at"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "manual",
+                    "budget",
+                    "pass_rate",
+                    "unavailable"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                }
+              }
+            },
+            "counts": {
+              "type": "object",
+              "required": [
+                "pending",
+                "queued",
+                "running",
+                "pass",
+                "fail",
+                "uncertain",
+                "not_assessed",
+                "failed",
+                "skipped",
+                "cancelled"
+              ],
+              "properties": {
+                "pending": {
+                  "type": "number"
+                },
+                "queued": {
+                  "type": "number"
+                },
+                "running": {
+                  "type": "number"
+                },
+                "pass": {
+                  "type": "number"
+                },
+                "fail": {
+                  "type": "number"
+                },
+                "uncertain": {
+                  "type": "number"
+                },
+                "not_assessed": {
+                  "type": "number"
+                },
+                "failed": {
+                  "type": "number"
+                },
+                "skipped": {
+                  "type": "number"
+                },
+                "cancelled": {
+                  "type": "number"
+                }
+              }
+            },
+            "costUsd": {
+              "type": "number"
+            },
+            "idempotencyKey": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "startedVia": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "completedAt": {
+              "type": "string"
+            },
+            "createdBy": {
+              "type": "string"
+            },
+            "done": {
+              "type": "number"
+            },
+            "passRate": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "message": {
+          "type": "string"
+        },
+        "affected": {
+          "type": "integer"
+        }
+      }
+    },
+    "due_input": {
+      "required": [
+        "until"
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "until": {
+          "format": "date-time",
+          "minLength": 1,
+          "description": "List occurrences due at or before this instant.",
+          "type": "string"
+        },
+        "cursor": {
+          "description": "From the previous page's nextCursor.",
+          "type": "string"
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 1000,
+          "type": "integer"
+        }
+      }
+    },
+    "due_output": {
+      "type": "object",
+      "required": [
+        "occurrences",
+        "nextCursor"
+      ],
+      "properties": {
+        "occurrences": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "ownerId",
+              "key",
+              "ref"
+            ],
+            "properties": {
+              "ownerId": {
+                "minLength": 1,
+                "description": "The owner the run acts for. The host runs it as this owner, in this workspace.",
+                "type": "string"
+              },
+              "key": {
+                "minLength": 1,
+                "maxLength": 256,
+                "description": "Names the occurrence within the workspace: the host enqueues it under this key, so a repeat of the same occurrence is one item. Stable for as long as the occurrence is due.",
+                "type": "string"
+              },
+              "ref": {
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "What begin_run is called with when the occurrence is claimed.",
+                "type": "string"
+              },
+              "notBefore": {
+                "format": "date-time",
+                "minLength": 1,
+                "description": "Not due before this instant. Absent: due at once (a requested run).",
+                "type": "string"
+              }
+            }
+          }
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "begin_run_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "ref",
+        "attempt",
+        "token",
+        "now"
+      ],
+      "properties": {
+        "ref": {
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "The occurrence's ref, as due listed it.",
+          "type": "string"
+        },
+        "attempt": {
+          "minimum": 1,
+          "description": "The claim's attempt: above 1, an earlier claim may have begun the run.",
+          "type": "integer"
+        },
+        "token": {
+          "minimum": 0,
+          "description": "The claim's fencing token, greater than every earlier claim's.",
+          "type": "integer"
+        },
+        "now": {
+          "format": "date-time",
+          "minLength": 1,
+          "description": "The host's now: what lateness, budgets and backoff are judged against.",
+          "type": "string"
+        }
+      }
+    },
+    "begin_run_output": {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "decision",
+            "reason"
+          ],
+          "properties": {
+            "decision": {
+              "const": "skip",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Diagnostic only.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "decision",
+            "work"
+          ],
+          "properties": {
+            "decision": {
+              "const": "run",
+              "type": "string"
+            },
+            "work": {
+              "required": [
+                "kind",
+                "runId",
+                "grant",
+                "prompt"
+              ],
+              "additionalProperties": false,
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "agent",
+                  "type": "string"
+                },
+                "runId": {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "description": "The run's id, minted by the implementation.",
+                  "type": "string"
+                },
+                "grant": {
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "description": "The run grant the implementation stored with the definition, returned verbatim. The host verifies it before admitting the run.",
+                  "type": "string"
+                },
+                "prompt": {
+                  "description": "The instruction that opens the run. Empty only with `skills`: the run then carries the skills out.",
+                  "type": "string"
+                },
+                "input": {
+                  "description": "The run's JSON input, at most 65536 bytes serialized. Data, never instructions: the host contains it."
+                },
+                "notes": {
+                  "maxItems": 8,
+                  "description": "Context the implementation adds to this run (an event's items, a retry's reason). Contained like `input`.",
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "maxLength": 8000,
+                    "type": "string"
+                  }
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "description": "The JSON Schema the deliverable must match. The host renders the instruction."
+                },
+                "allowedTools": {
+                  "minItems": 1,
+                  "description": "Tools its runs may use: one `<connector>__*` glob per connector. Omit for every tool.",
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "skills": {
+                  "minItems": 1,
+                  "maxItems": 5,
+                  "description": "Skills each run is given in full, by name.",
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "limits": {
+                  "additionalProperties": false,
+                  "description": "The definition's caps. The host lowers each to its own ceiling.",
+                  "type": "object",
+                  "properties": {
+                    "maxIterations": {
+                      "minimum": 1,
+                      "maximum": 50,
+                      "description": "Max model iterations per run. Default 25.",
+                      "type": "integer"
+                    },
+                    "maxInputTokens": {
+                      "minimum": 1000,
+                      "maximum": 1000000,
+                      "description": "Input tokens one run may spend. Omit for no cap.",
+                      "type": "integer"
+                    },
+                    "maxRunDurationMs": {
+                      "minimum": 10000,
+                      "maximum": 600000,
+                      "description": "Max wall-clock per run, in ms. Default 120000.",
+                      "type": "integer"
+                    }
+                  }
+                },
+                "model": {
+                  "minLength": 1,
+                  "description": "provider:model-id or a slot name (fast). Omit for the workspace default.",
+                  "type": "string"
+                },
+                "thinkingEffort": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max"
+                  ],
+                  "description": "Reasoning depth for its runs. Omit for the workspace setting."
+                },
+                "spendAccounts": {
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "unit",
+                      "remaining"
+                    ],
+                    "properties": {
+                      "id": {
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "description": "Opaque. Runs naming the same id share one balance while any of them is in flight.",
+                        "type": "string"
+                      },
+                      "unit": {
+                        "type": "string",
+                        "enum": [
+                          "usd",
+                          "input_tokens",
+                          "output_tokens"
+                        ]
+                      },
+                      "remaining": {
+                        "description": "What is left, in `unit`. Read only from the first run in flight to name `id`.",
+                        "type": "number"
+                      },
+                      "sharedBy": {
+                        "minimum": 1,
+                        "description": "The most runs that may draw on it at once (a batch's concurrency).",
+                        "type": "integer"
+                      }
+                    }
+                  }
+                },
+                "exclusiveKey": {
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "description": "At most one run per key is in flight in the workspace. The host refuses a run whose key is taken (outcome not_started, exclusive_busy).",
+                  "type": "string"
+                },
+                "trigger": {
+                  "type": "string",
+                  "enum": [
+                    "scheduled",
+                    "manual",
+                    "event"
+                  ],
+                  "description": "What woke the run, for the host's telemetry. Decides nothing."
+                }
+              }
+            }
+          }
+        }
+      ],
+      "type": "object"
+    },
+    "end_run_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "runId",
+        "token",
+        "outcome"
+      ],
+      "properties": {
+        "runId": {
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "The run's id, minted by the implementation.",
+          "type": "string"
+        },
+        "token": {
+          "minimum": 0,
+          "description": "The token begin_run was called with.",
+          "type": "integer"
+        },
+        "outcome": {
+          "required": [
+            "startedAt",
+            "endedAt",
+            "output",
+            "stopReason",
+            "usage",
+            "costUsd",
+            "limits",
+            "toolCalls",
+            "filesWritten",
+            "skillsDelivered"
+          ],
+          "additionalProperties": false,
+          "type": "object",
+          "properties": {
+            "startedAt": {
+              "format": "date-time",
+              "minLength": 1,
+              "description": "When the run started, or was refused when it never started.",
+              "type": "string"
+            },
+            "endedAt": {
+              "format": "date-time",
+              "minLength": 1,
+              "description": "When it ended.",
+              "type": "string"
+            },
+            "output": {
+              "description": "The deliverable: the final answer's text. Empty when none.",
+              "type": "string"
+            },
+            "stopReason": {
+              "type": "string",
+              "enum": [
+                "complete",
+                "max_iterations",
+                "max_input_tokens",
+                "spend_limit",
+                "length",
+                "content_filter",
+                "timeout",
+                "cancelled",
+                "error",
+                "other",
+                "not_started"
+              ],
+              "description": "Why the run stopped. not_started: refused before its first model call (see `error`)."
+            },
+            "wrapUpLimit": {
+              "type": "string",
+              "enum": [
+                "max_iterations",
+                "max_input_tokens"
+              ],
+              "description": "With stopReason complete: the limit that made the host tell the run to finish, which it did. Its answer may leave work undone."
+            },
+            "error": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "code",
+                "transient"
+              ],
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "grant_invalid",
+                    "membership_revoked",
+                    "exclusive_busy",
+                    "tools_unavailable",
+                    "skills_unavailable",
+                    "model_error",
+                    "internal"
+                  ]
+                },
+                "transient": {
+                  "description": "Whether the same run may succeed later unchanged (an outage, a rate limit).",
+                  "type": "boolean"
+                },
+                "message": {
+                  "maxLength": 2000,
+                  "description": "Diagnostic, fit to show the owner.",
+                  "type": "string"
+                }
+              }
+            },
+            "usage": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "inputTokens",
+                "outputTokens",
+                "iterations"
+              ],
+              "properties": {
+                "inputTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "outputTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "iterations": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "costUsd": {
+              "minimum": 0,
+              "description": "What its model calls cost.",
+              "type": "number"
+            },
+            "unpricedCalls": {
+              "minimum": 1,
+              "description": "Model calls with no known rates, not in costUsd.",
+              "type": "integer"
+            },
+            "spendAccountId": {
+              "minLength": 1,
+              "description": "With stopReason spend_limit: the account that stopped it, one the spec named or one the host holds (an id the implementation did not name).",
+              "type": "string"
+            },
+            "limits": {
+              "additionalProperties": false,
+              "description": "The caps the run executed under, after the host's ceilings.",
+              "type": "object",
+              "required": [
+                "maxIterations",
+                "maxRunDurationMs"
+              ],
+              "properties": {
+                "maxIterations": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "maxInputTokens": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "maxRunDurationMs": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            },
+            "toolCalls": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "name",
+                  "ok",
+                  "ms"
+                ],
+                "properties": {
+                  "name": {
+                    "minLength": 1,
+                    "description": "The tool's name as the model called it.",
+                    "type": "string"
+                  },
+                  "ok": {
+                    "type": "boolean"
+                  },
+                  "errorReason": {
+                    "maxLength": 128,
+                    "description": "Why it failed, when the tool or the host said (`bad_input`, …).",
+                    "type": "string"
+                  },
+                  "held": {
+                    "description": "It did not run: it waited for its tool's guidance.",
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "ms": {
+                    "minimum": 0,
+                    "type": "number"
+                  }
+                }
+              }
+            },
+            "filesWritten": {
+              "maxItems": 100,
+              "description": "Files the run wrote, as the host recorded them.",
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "uri"
+                ],
+                "properties": {
+                  "uri": {
+                    "minLength": 1,
+                    "description": "Opaque: the host's reference.",
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "skillsDelivered": {
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "name",
+                  "loadedBy"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "loadedBy": {
+                    "type": "string",
+                    "enum": [
+                      "declared",
+                      "before_call",
+                      "tool_use",
+                      "activation"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "fetch_failed",
+                      "capped",
+                      "renamed_unheld"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "end_run_output": {
+      "type": "object",
+      "required": [
+        "notices"
+      ],
+      "properties": {
+        "notices": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "title",
+              "body",
+              "level"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "maxLength": 256,
+                "description": "Stable for the event it reports, so a repeated end_run delivers it once.",
+                "type": "string"
+              },
+              "title": {
+                "minLength": 1,
+                "maxLength": 200,
+                "type": "string"
+              },
+              "body": {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              "level": {
+                "type": "string",
+                "enum": [
+                  "info",
+                  "attention",
+                  "urgent"
+                ]
+              },
+              "link": {
+                "minLength": 1,
+                "maxLength": 2048,
+                "description": "A resource the notice opens (the implementation's screen).",
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "check_runs_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "runIds"
+      ],
+      "properties": {
+        "runIds": {
+          "maxItems": 1000,
+          "description": "Runs of this workspace the host has in flight.",
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "The run's id, minted by the implementation.",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "check_runs_output": {
+      "type": "object",
+      "required": [
+        "stop"
+      ],
+      "properties": {
+        "stop": {
+          "description": "Those to stop now (cancelled). Each ends with stopReason cancelled.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "offer_event_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "taskId",
+        "event",
+        "now"
+      ],
+      "properties": {
+        "taskId": {
+          "minLength": 1,
+          "description": "The task the route names.",
+          "type": "string"
+        },
+        "event": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "id",
+            "source",
+            "name",
+            "level",
+            "title",
+            "receivedAt"
+          ],
+          "properties": {
+            "id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "description": "Unique per source; delivery is at least once, so a repeat is the same event.",
+              "type": "string"
+            },
+            "source": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "name": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "level": {
+              "type": "string",
+              "enum": [
+                "info",
+                "attention",
+                "urgent"
+              ],
+              "description": "The level routes matched against."
+            },
+            "title": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "link": {
+              "type": "string"
+            },
+            "receivedAt": {
+              "format": "date-time",
+              "minLength": 1,
+              "description": "When the host received it.",
+              "type": "string"
+            }
+          }
+        },
+        "now": {
+          "format": "date-time",
+          "minLength": 1,
+          "description": "The host's now: what debounce and the fire ceiling are judged against.",
+          "type": "string"
+        }
+      }
+    },
+    "offer_event_output": {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "accepted"
+          ],
+          "properties": {
+            "accepted": {
+              "const": true,
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "accepted",
+            "outcome",
+            "classification",
+            "reason"
+          ],
+          "properties": {
+            "accepted": {
+              "const": false,
+              "type": "boolean"
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "skipped",
+                "denied"
+              ],
+              "description": "skipped: a condition that clears on its own (the task is off, or did not ask for it). denied: a configuration refusal only a person changes."
+            },
+            "classification": {
+              "description": "Machine-readable cause.",
+              "type": "string"
+            },
+            "reason": {
+              "description": "One line an operator can act on.",
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "type": "object"
+    },
+    "expire_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "endedBefore"
+      ],
+      "properties": {
+        "endedBefore": {
+          "format": "date-time",
+          "minLength": 1,
+          "description": "Remove what ended before this instant.",
+          "type": "string"
+        }
+      }
+    },
+    "expire_output": {
+      "type": "object",
+      "required": [
+        "removed"
+      ],
+      "properties": {
+        "removed": {
+          "type": "object",
+          "required": [
+            "runs",
+            "tasks"
+          ],
+          "properties": {
+            "runs": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tasks": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    "delete_workspace_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {}
+    },
+    "delete_workspace_output": {
+      "type": "object",
+      "required": [
+        "removed"
+      ],
+      "properties": {
+        "removed": {
+          "type": "object",
+          "required": [
+            "tasks",
+            "runs",
+            "batches"
+          ],
+          "properties": {
+            "tasks": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "runs": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "batches": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}
