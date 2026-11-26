@@ -318,8 +318,7 @@ describe("extractText bounds the work by the text it keeps", () => {
   });
 
   test("a sheet whose data starts far down extracts whole within a small maxSize", async () => {
-    const sheet = XLSX.utils.aoa_to_sheet([["hello"]], { origin: "A100" });
-    sheet["!ref"] = "A100:A100";
+    const sheet: XLSX.WorkSheet = { A100: { t: "s", v: "hello" }, "!ref": "A100:A100" };
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, sheet, "S");
     const data = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
