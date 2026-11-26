@@ -16,6 +16,9 @@ conversations. How to run it standalone is in `README.md`.
 - **The contract document is the interface.** `tools/list` serves each tool's `$defs` schemas
   from the document unchanged, inputs are validated against them, and visibility comes from it.
   Changing a tool's shape is a contract change (`contracts/AGENTS.md`), never an edit here.
+- **A system plugin runs as the runtime's OS user, unconfined**: its server can read and
+  write whatever that user can. Making a plugin a system plugin is the operator's trust
+  decision, so no sandbox is applied here.
 - **`plugin.json` and `mcp.json` follow Agent Plugins 1.0.0.** NimbleBrain's declaration is only
   `extensions["ai.nimblebrain"].implements`. Trust (`system`), presence and location are the
   operator's (`nimblebrain.json` `plugins`); nothing here sets them. `src/plugins` resolves this
@@ -58,8 +61,10 @@ conversations. How to run it standalone is in `README.md`.
   (`src/store.ts`). The runtime gives the plugin `<workDir>/plugin-data/conversations` as its
   data directory.
 - **The path is the scope.** A call opens only its scope's owner partition of its scope's
-  workspace. Scope ids must each be one path segment, or the call has no scope. A file whose
-  header names another owner or id reads as absent.
+  workspace. Scope ids must each be one path segment, or the call has no scope. Scope ids are
+  case-sensitive, but on a case-insensitive filesystem (macOS by default) two ids that differ
+  only in case name one directory and share its conversations: a known limit, not enforced
+  here. A file whose header names another owner or id reads as absent.
 - **The plugin never decides whether a workspace exists; the host does.** Every dimension of
   the host context is a fact the host verified, so a workspace it stamps exists: `create` makes
   `conversations/<ownerId>/` (and the workspace directory above it) on first use, and a
