@@ -320,6 +320,7 @@
 
 ### Fixed
 
+- **A deactivated user's scheduled tasks and notification routes stop running.** Unattended work refuses an owner whose user is deactivated, the same way it refuses one removed from the workspace: the run is recorded skipped, and restoring the user brings it back.
 - **An OAuth connector signs in even when its server answers discovery without a token.** A catalog entry that declares `auth: dcr` or `auth: static`, or a connector with its own OAuth client, now asks to sign in on Connect instead of reading as connected and failing at its first tool call (#2237).
 - **Conversation tools act only within the workspace a call is made in.** Getting, renaming or exporting a conversation by id finds it only in the calling workspace, like listing and search already did.
 - **The conversation list no longer holds every conversation file in memory.** Its index kept each file's whole text alive after reading it, so a workspace with large conversations held roughly twice their size on disk for the life of the process.

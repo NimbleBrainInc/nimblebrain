@@ -4456,10 +4456,17 @@ export class Runtime {
   }
 
   /**
-   * True if `principalId` is currently a member of `wsId`. The one "is this principal still allowed in this workspace"
-   * check behind every gate that asks it: the run-start door (`startRun`, for a
-   * conversation resume and a task run alike) and the unattended
-   * dispatch (ADR-0007).
+   * True if `principalId` may currently act in `wsId`: a current member of it
+   * whose user record is not deactivated. The one "is this principal still
+   * allowed in this workspace" check behind every gate that asks it: the
+   * run-start door (`startRun`, for a conversation resume and a task run
+   * alike) and the unattended dispatch (ADR-0007).
+   *
+   * A deactivated user keeps their memberships so `restore` brings them back,
+   * and acts nowhere while deactivated. The tombstone (`deletedAt`) is what
+   * refuses; a member with no user record is admitted, because a membership
+   * can name an id whose profile is not written yet (an identity provider
+   * writes it at first sign-in), and an absent record revokes nothing.
    *
    * Public because the second of those lives outside this file
    * (`src/orchestrator/unattended-dispatch.ts`) and must ask the same question
@@ -4467,7 +4474,9 @@ export class Runtime {
    */
   async isPrincipalWorkspaceMember(wsId: string, principalId: string): Promise<boolean> {
     const ws = await this._workspaceStore.get(wsId);
-    return ws?.members.some((m) => m.userId === principalId) ?? false;
+    if (!ws?.members.some((m) => m.userId === principalId)) return false;
+    const user = await this._userStore.get(principalId);
+    return !user?.deletedAt;
   }
 
   /**

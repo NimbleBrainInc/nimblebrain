@@ -143,7 +143,8 @@ export interface UnattendedDispatchResult {
  */
 export interface UnattendedDispatchRuntime extends OrchestratorRuntime {
   /**
-   * True if `principalId` may CURRENTLY act in `wsId`. The production `Runtime`
+   * True if `principalId` may CURRENTLY act in `wsId`: a current member whose
+   * user is not deactivated. The production `Runtime`
    * satisfies this with the same method behind the conversation-resume gate and
    * the scheduled-run gate, so all three answer one question one way.
    */
@@ -202,13 +203,14 @@ export async function dispatchUnattended(
   };
 
   // Gate 1 — membership, before the registry is touched. A principal who has
-  // left the workspace is SKIPPED: the configuration that named them is not
-  // wrong, it is dormant, and it comes back to life if they are re-added.
+  // left the workspace, or whose user is deactivated, is SKIPPED: the
+  // configuration that named them is not wrong, it is dormant, and it comes
+  // back to life if they are re-added or restored.
   if (!(await runtime.isPrincipalWorkspaceMember(opts.workspaceId, opts.principalId))) {
     return audit({
       outcome: "skipped",
       classification: "owner_not_member",
-      error: `principal "${opts.principalId}" is not a member of workspace "${opts.workspaceId}"`,
+      error: `principal "${opts.principalId}" is not an active member of workspace "${opts.workspaceId}"`,
     });
   }
 
