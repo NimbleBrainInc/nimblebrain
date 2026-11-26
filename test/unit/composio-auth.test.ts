@@ -69,6 +69,7 @@ import { _resetComposioConfigForTest } from "../../src/connectors/providers/comp
 import {
   _clearAllConnectFlows,
   consumeConnectFlow,
+  peekConnectFlow,
   registerConnectFlow,
 } from "../../src/connectors/providers/composio/connect-flow-registry.ts";
 import {
@@ -86,10 +87,13 @@ import {
 } from "../../src/connectors/providers/config.ts";
 import type { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
+import type { ConnectorInstance } from "../../src/connectors/runtime/types.ts";
 import type { EventSink } from "../../src/engine/types.ts";
+import type { ConnectorOwner } from "../../src/identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { FIRST_PARTY_GRANT, type IdentityProvider } from "../../src/identity/provider.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { mintBrowserBinding } from "../../src/oauth/flow-binding.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import type { ToolSource } from "../../src/tools/types.ts";
 import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
@@ -106,6 +110,29 @@ const DEV_AUTH: AuthMiddlewareOptions = {
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
+}
+
+/**
+ * Register a pending connect flow as an authenticated initiate does: the
+ * account `link()` created and a fresh browser binding. Returns the Cookie
+ * header the bound browser sends on the callback.
+ */
+function startFlow(
+  nonce: string,
+  owner: ConnectorOwner,
+  connectorId: string,
+  connectedAccountId: string,
+  returnTo: { returnWsId?: string; returnConversationId?: string } = {},
+): string {
+  const binding = mintBrowserBinding();
+  registerConnectFlow(nonce, {
+    owner,
+    connectorId,
+    connectedAccountId,
+    bindingHash: binding.bindingHash,
+    ...returnTo,
+  });
+  return `nb_composio_state=${binding.cookieValue}`;
 }
 
 /**
@@ -166,6 +193,8 @@ function stubCtx(
     ensureSourceRegisteredError?: Error;
     getIdentityConnectorSourceError?: Error;
     userId?: string;
+    /** Whether the connector is installed in every workspace the lifecycle is asked about. Default true. */
+    installed?: boolean;
   } = {},
 ): AppContext & { __lifecycleCalls: StubLifecycleCalls } {
   const calls: StubLifecycleCalls = {
@@ -173,6 +202,9 @@ function stubCtx(
     getIdentityConnectorSource: { lastCall: null, callCount: 0 },
   };
   const lifecycle = stub<ConnectorLifecycleManager>({
+    getInstance(): ConnectorInstance | null {
+      return options.installed === false ? null : stub<ConnectorInstance>({});
+    },
     recordConnectionStateChange(
       serverName: string,
       wsId: string,
@@ -434,16 +466,13 @@ describe("GET /v1/composio-auth/callback", () => {
       const nonce = "deadbeefdeadbeefdeadbeefdeadbeef";
       const wsId = "ws_0076759dbbe19fcc";
       const cid = "com.google/gmail";
-      // An authenticated /initiate registered this flow; the cookie is sha256(nonce).
-      registerConnectFlow(nonce, { type: "workspace", wsId }, cid);
-      const cookieHash = sha256Hex(nonce);
+      // An authenticated /initiate registered this flow and bound this browser.
+      const cookie = startFlow(nonce, { type: "workspace", wsId }, cid, "ca_xyz");
 
       const url =
         `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
         "&connected_account_id=ca_xyz&status=ACTIVE";
-      const res = await app.request(url, {
-        headers: { cookie: `nb_composio_state=${cookieHash}` },
-      });
+      const res = await app.request(url, { headers: { cookie } });
 
       // Redirect straight back to the workspace-scoped connectors page for the
       // workspace the connection landed in, naming the connector's server name
@@ -494,19 +523,18 @@ describe("GET /v1/composio-auth/callback", () => {
       const wsId = "ws_0076759dbbe19fcc";
       const ctx = stubCtx(dir, composioEntry(cid));
       const app = composioAuthRoutes(ctx);
-      const nonce = "beefbeefbeefbeefbeefbeefbeefbeef";
-      registerConnectFlow(nonce, { type: "workspace", wsId }, cid);
-
       // Case and surrounding space both have to be absorbed: the same outcome is
       // spelled `failed` on the redirect and `FAILED` on the connected-account
       // record, so a comparison against the raw param would catch one and miss
-      // the other. The guard returns before the flow record is consumed, so one
-      // registration serves every variant.
-      for (const status of ["failed", "FAILED", "%20Failed%20"]) {
+      // the other. A refused callback consumes its flow, so each variant runs
+      // on its own.
+      for (const [i, status] of ["failed", "FAILED", "%20Failed%20"].entries()) {
+        const nonce = `beefbeef${i}`;
+        const cookie = startFlow(nonce, { type: "workspace", wsId }, cid, "ca_denied");
         const res = await app.request(
           `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
             `&connected_account_id=ca_denied&status=${status}`,
-          { headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` } },
+          { headers: { cookie } },
         );
 
         expect(res.status).toBe(400);
@@ -561,10 +589,11 @@ describe("GET /v1/composio-auth/callback", () => {
     try {
       const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
       const nonce = "abc123abc123abc123abc123abc123ab";
-      registerConnectFlow(
+      startFlow(
         nonce,
         { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
+        "ca_xyz",
       );
       const url =
         `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
@@ -583,24 +612,28 @@ describe("GET /v1/composio-auth/callback", () => {
     }
   });
 
-  test("rejects when the cookie does not hash to the nonce", async () => {
+  test("rejects a cookie the initiate did not set, and leaves the flow for its own browser", async () => {
     const { dir, cleanup } = freshDir();
     try {
       const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
       const nonce = "feedfacefeedfacefeedfacefeedface";
-      registerConnectFlow(
+      const cookie = startFlow(
         nonce,
         { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
+        "ca_xyz",
       );
-      const wrongCookie = sha256Hex("some-other-nonce");
       const url =
         `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
         "&connected_account_id=ca_xyz&status=ACTIVE";
-      const res = await app.request(url, {
-        headers: { cookie: `nb_composio_state=${wrongCookie}` },
-      });
-      expect(res.status).toBe(400);
+      // A cookie computed from the nonce in the URL, and another binding's value.
+      for (const wrong of [sha256Hex(nonce), mintBrowserBinding().cookieValue]) {
+        const res = await app.request(url, { headers: { cookie: `nb_composio_state=${wrong}` } });
+        expect(res.status).toBe(400);
+        expect(await res.text()).toContain("Authorization session mismatch");
+      }
+      // A mismatched browser ends nothing: the bound one still completes the flow.
+      expect((await app.request(url, { headers: { cookie } })).status).toBe(302);
     } finally {
       cleanup();
     }
@@ -611,13 +644,14 @@ describe("GET /v1/composio-auth/callback", () => {
     try {
       const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
       const nonce = "abcabcabcabcabcabcabcabcabcabcab";
-      registerConnectFlow(
+      const cookie = startFlow(
         nonce,
         { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
+        "ca_xyz",
       );
       const res = await app.request(`http://nb.test/v1/composio-auth/callback?n=${nonce}`, {
-        headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` },
+        headers: { cookie },
       });
       expect(res.status).toBe(400);
     } finally {
@@ -631,17 +665,16 @@ describe("GET /v1/composio-auth/callback", () => {
       // Stub returns no catalog entry.
       const app = composioAuthRoutes(stubCtx(dir, null));
       const nonce = "1111111111111111111111111111111a";
-      registerConnectFlow(
+      const cookie = startFlow(
         nonce,
         { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
+        "ca_xyz",
       );
       const url =
         `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
         "&connected_account_id=ca_xyz&status=ACTIVE";
-      const res = await app.request(url, {
-        headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` },
-      });
+      const res = await app.request(url, { headers: { cookie } });
       expect(res.status).toBe(400);
     } finally {
       cleanup();
@@ -1104,13 +1137,17 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     expect(cbUrl.searchParams.get("ws")).toBeNull();
     expect(cbUrl.searchParams.get("cid")).toBeNull();
 
-    // Cookie binds the nonce to this browser session (sha256(nonce)).
+    // The cookie is a random binding, not derivable from the nonce; the flow
+    // records its hash and the account `link()` created.
     const setCookie = res.headers.get("set-cookie") ?? "";
     expect(setCookie.includes("HttpOnly")).toBe(true);
     expect(setCookie.includes("SameSite=Lax")).toBe(true);
     expect(setCookie.includes("Path=/v1/composio-auth/callback")).toBe(true);
-    const cookieHash = /nb_composio_state=([0-9a-f]{64})/.exec(setCookie)?.[1];
-    expect(cookieHash).toBe(sha256Hex(nonce));
+    const cookieValue = /nb_composio_state=([0-9a-f]{64})/.exec(setCookie)?.[1] ?? "";
+    expect(cookieValue).not.toBe(sha256Hex(nonce));
+    const flow = peekConnectFlow(nonce);
+    expect(flow?.bindingHash).toBe(sha256Hex(cookieValue));
+    expect(flow?.connectedAccountId).toBe("ca_identity");
   });
 
   test("a returnWorkspaceId the caller belongs to is recorded on the connect flow", async () => {
@@ -1346,15 +1383,12 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
       const userId = "usr_test";
       const cid = "com.google/gmail";
       // An authenticated /initiate-identity registered this user-owned flow.
-      registerConnectFlow(nonce, { type: "user", userId }, cid);
-      const cookieHash = sha256Hex(nonce);
+      const cookie = startFlow(nonce, { type: "user", userId }, cid, "ca_user");
 
       const url =
         `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
         "&connected_account_id=ca_user&status=ACTIVE";
-      const res = await app.request(url, {
-        headers: { cookie: `nb_composio_state=${cookieHash}` },
-      });
+      const res = await app.request(url, { headers: { cookie } });
 
       expect(res.status).toBe(302);
       const location = res.headers.get("Location") ?? "";
@@ -1392,16 +1426,18 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
       const ctx = stubCtx(dir, composioEntry("com.google/gmail"));
       const app = composioAuthRoutes(ctx);
       const nonce = "feedfacefeedfacefeedfacefeedface";
-      registerConnectFlow(
+      const cookie = startFlow(
         nonce,
         { type: "user", userId: "usr_test" },
         "com.google/gmail",
-        undefined,
-        STUB_MEMBER_WS,
+        "ca_u",
+        {
+          returnWsId: STUB_MEMBER_WS,
+        },
       );
       const res = await app.request(
         `http://nb.test/v1/composio-auth/callback?n=${nonce}&connected_account_id=ca_u&status=ACTIVE`,
-        { headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` } },
+        { headers: { cookie } },
       );
 
       expect(res.status).toBe(302);
@@ -1419,17 +1455,19 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
       const ctx = stubCtx(dir, composioEntry("com.google/gmail"));
       const app = composioAuthRoutes(ctx);
       const nonce = "beadbeadbeadbeadbeadbeadbeadbead";
-      registerConnectFlow(
+      const cookie = startFlow(
         nonce,
         { type: "user", userId: "usr_test" },
         "com.google/gmail",
-        undefined,
-        STUB_MEMBER_WS,
-        MY_CONV,
+        "ca_u",
+        {
+          returnWsId: STUB_MEMBER_WS,
+          returnConversationId: MY_CONV,
+        },
       );
       const res = await app.request(
         `http://nb.test/v1/composio-auth/callback?n=${nonce}&connected_account_id=ca_u&status=ACTIVE&chat=conv_ffffffffffffffff`,
-        { headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` } },
+        { headers: { cookie } },
       );
 
       expect(res.status).toBe(302);
@@ -1451,17 +1489,16 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
       const ctx = stubCtx(dir, composioEntry("com.google/gmail"));
       const app = composioAuthRoutes(ctx);
       const nonce = "cafecafecafecafecafecafecafecafe";
-      registerConnectFlow(
+      const cookie = startFlow(
         nonce,
         { type: "workspace", wsId: "ws_0065ab540586462e" },
         "com.google/gmail",
+        "ca_xyz",
       );
       const url =
         `http://nb.test/v1/composio-auth/callback?n=${nonce}&usr=usr_attacker` +
         "&connected_account_id=ca_xyz&status=ACTIVE";
-      const res = await app.request(url, {
-        headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` },
-      });
+      const res = await app.request(url, { headers: { cookie } });
 
       expect(res.status).toBe(302);
       const { existsSync } = await import("node:fs");
