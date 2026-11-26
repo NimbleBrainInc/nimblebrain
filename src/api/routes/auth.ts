@@ -19,8 +19,8 @@ export function authRoutes(ctx: AppContext) {
   // authRoutes in app.ts (mcp-auth, composio-auth) and 401 their
   // unauthenticated-by-design OAuth callbacks. Same footgun called out in
   // mcp-auth.ts and conversation-events.ts.
-  app.get("/v1/auth/authorize", (_c) => {
-    return handleOidcAuthorize(ctx.provider);
+  app.get("/v1/auth/authorize", (c) => {
+    return handleOidcAuthorize(c.req.raw, ctx.provider, ctx.secureCookies);
   });
 
   app.get("/v1/auth/callback", (c) => {

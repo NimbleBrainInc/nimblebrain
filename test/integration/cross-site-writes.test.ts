@@ -298,17 +298,24 @@ describe("the web app's own flows", () => {
   }
 
   it("signs in through the auth-code flow and refreshes the session", async () => {
+    // The browser reaches the runtime on its canonical host.
+    const host = new URL(PUBLIC_ORIGIN).host;
     const authorize = await fetch(`${baseUrl}/v1/auth/authorize`, {
-      headers: { "Sec-Fetch-Site": "same-origin" },
+      headers: { "Sec-Fetch-Site": "same-origin", Host: host },
       redirect: "manual",
     });
     expect(authorize.status).toBe(302);
     const state = new URL(authorize.headers.get("location") ?? "").searchParams.get("state");
     expect(state).toBeTruthy();
+    const flowCookie = setCookies(authorize)
+      .find((c) => c.startsWith("nb_login="))
+      ?.split(";")[0];
+    expect(flowCookie).toBeTruthy();
 
-    // The identity provider redirects the browser back: a cross-site navigation.
+    // The identity provider redirects the browser back: a cross-site navigation
+    // that carries the flow cookie set above.
     const callback = await fetch(`${baseUrl}/v1/auth/callback?code=c&state=${state}`, {
-      headers: { "Sec-Fetch-Site": "cross-site" },
+      headers: { "Sec-Fetch-Site": "cross-site", Host: host, Cookie: flowCookie ?? "" },
       redirect: "manual",
     });
     expect(callback.status).toBe(302);

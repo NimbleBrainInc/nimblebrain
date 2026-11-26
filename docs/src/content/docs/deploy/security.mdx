@@ -31,9 +31,9 @@ For the OIDC and WorkOS adapters, sign-in is an authorization-code flow, not a l
 
 <Steps>
 
-1. The web client redirects to `GET /v1/auth/authorize`, which sends the user to the configured identity provider.
+1. The web client redirects to `GET /v1/auth/authorize`, which sends the user to the configured identity provider. It sets a short-lived `nb_login` cookie (HttpOnly, `SameSite=Lax`, `Path=/v1/auth/callback`, 10 minutes) holding the flow's `state` and PKCE verifier. A request that reaches `authorize` on a host other than the public origin is first redirected to the public origin, where the callback lives.
 2. The provider authenticates the user and redirects back to `GET /v1/auth/callback` with an authorization code.
-3. The callback exchanges the code for tokens and sets the `nb_session` cookie (see [Session cookies](#session-cookies) below). It does **not** validate a shared secret — the cookie carries the provider-issued access token.
+3. The callback completes only when the `nb_login` cookie's `state` matches the returned `state`, so a callback link opened in a browser that did not start the sign-in is refused. It exchanges the code for tokens with the cookie's verifier, clears `nb_login`, and sets the `nb_session` cookie (see [Session cookies](#session-cookies) below). It does **not** validate a shared secret — the cookie carries the provider-issued access token. The server keeps no per-sign-in state.
 4. Subsequent requests present either the `nb_session` cookie or an `Authorization: Bearer <token>` header. Programmatic callers (CLI, external MCP clients) use the bearer header; the browser uses the cookie.
 
 </Steps>
