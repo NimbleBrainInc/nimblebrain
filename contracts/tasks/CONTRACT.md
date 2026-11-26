@@ -231,7 +231,7 @@ runs**, runs it, and enforces every limit. Nothing runs except through this flow
 7. **The implementation answers a skip or a run:**
    - `{ decision: "skip", reason, interrupted?, notices? }` for an occurrence that is no longer
      owed (the definition changed, was disabled or deleted, the run was cancelled while queued,
-     a once schedule is past its grace, a budget is spent). It records what its own records
+     a budget is spent). It records what its own records
      need, and the skip settles the item.
    - `{ decision: "run", runId, grant, work }`: the run's id, minted by the implementation, the
      definition's stored grant (§9), and the work spec (§7).
@@ -323,7 +323,9 @@ late, spent, expired, or allowed.
 - **Retention is judged on `due`'s `now`** (§5.1).
 - **Budget periods are UTC calendar days and months**, judged on the host's `now`.
 - **Lateness, backoff and the fire ceiling** are judged on the `now` of the call that decides
-  them.
+  them. A once's lateness is judged only on the `due` that would list it: past its grace
+  there, it is recorded missed and not listed; once listed, it is owed, and `begin_run` never
+  skips it as late however long the host's queue held it.
 - The implementation MAY read its own clock to stamp a record (`createdAt`) and to render a
   public read (`upcoming`'s window, `stats`' default `since`). Neither decides anything.
 - The host's queue alone is the timer: `notBefore` is the only way the implementation delays
