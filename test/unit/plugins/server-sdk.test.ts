@@ -18,6 +18,7 @@ const ROOT = resolve(import.meta.dir, "../../..");
 const json = (path: string) => JSON.parse(readFileSync(resolve(ROOT, path), "utf-8"));
 
 const CONTRACT = json("schemas/contracts/conversations/v1/contract.json") as ContractDocument;
+const TASKS = json("schemas/contracts/tasks/v1/contract.json") as ContractDocument;
 const HOST_CONTEXT_SCHEMA = json("schemas/host-context/v1/host-context.schema.json");
 const validate = new Ajv2020({ strict: true }).compile(HOST_CONTEXT_SCHEMA);
 
@@ -37,6 +38,13 @@ const FIXTURES: unknown[] = [
   { principal: "host", workspaceId: "" },
   { principal: "host", ownerId: 7 },
   { principal: "person", conversationId: null },
+  { principal: "person", workspaceId: "ws_1", ownerId: "u", grant: "opaque.grant" },
+  { principal: "person", unattended: true },
+  { principal: "person", unattended: false },
+  { principal: "person", grant: "" },
+  { principal: "person", grant: "g".repeat(4097) },
+  { principal: "person", grant: 7 },
+  { principal: "person", unattended: "true" },
   null,
   "host",
   ["host"],
@@ -67,6 +75,9 @@ describe("the host context", () => {
       principal: "person",
       workspaceId: "ws_1",
     });
+    expect(
+      readHostContext(meta({ principal: "person", grant: "opaque.grant", unattended: true })),
+    ).toEqual({ principal: "person", grant: "opaque.grant", unattended: true });
     expect(readHostContext({})).toBeUndefined();
     expect(readHostContext({ "ai.nimblebrain/scope": { principal: "host" } })).toBeUndefined();
   });
@@ -90,6 +101,16 @@ describe("the principal rule", () => {
     expect(toolVisibility(CONTRACT, "list")).toBe("public");
     expect(toolVisibility(CONTRACT, "toString")).toBeUndefined();
     expect(contractSchema(CONTRACT, "create", "input")).toBe(CONTRACT.$defs.create_input!);
+  });
+
+  test("lists a schema that refers to shared $defs with them bundled, so it compiles alone", () => {
+    const listed = contractSchema(TASKS, "begin_run", "output");
+    expect(Object.keys(listed.$defs as object).sort()).toEqual(["notice", "work_spec"]);
+    const validate = new Ajv2020({ strict: false }).compile(listed);
+    const work = { kind: "agent", runId: "run_1", grant: "g", prompt: "Summarize." };
+    expect(validate({ decision: "run", work })).toBe(true);
+    expect(validate({ decision: "run", work: { ...work, extra: 1 } })).toBe(false);
+    expect(contractSchema(TASKS, "list", "input")).toBe(TASKS.$defs.list_input!);
   });
 
   test("refuses a private tool to anyone but the host, and nothing else", () => {

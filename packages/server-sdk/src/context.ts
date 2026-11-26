@@ -19,6 +19,13 @@ export interface HostContext {
   ownerId?: string;
   /** The conversation the call is made inside, during a chat turn. */
   conversationId?: string;
+  /**
+   * The run grant, on a person's call to a tool its contract marks `grant: true`. Opaque: a
+   * server stores it and returns it verbatim, and never parses it.
+   */
+  grant?: string;
+  /** True when the call is made inside an unattended run, with no person present. */
+  unattended?: boolean;
 }
 
 /**
@@ -30,7 +37,35 @@ export type CallContext = Partial<HostContext>;
 /** The request metadata key the host context travels under. */
 export const HOST_CONTEXT_META_KEY = "ai.nimblebrain/context";
 
-const OPTIONAL_FIELDS = ["workspaceId", "ownerId", "conversationId"] as const;
+const OPTIONAL_STRINGS = ["workspaceId", "ownerId", "conversationId"] as const;
+
+/** The longest grant the schema accepts. */
+const MAX_GRANT_LENGTH = 4096;
+
+/** A non-empty string no longer than `max`. */
+function isText(value: unknown, max = Number.POSITIVE_INFINITY): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= max;
+}
+
+/** The context's optional fields, or undefined when one fails the schema. */
+function optionalFields(r: Record<string, unknown>): Omit<HostContext, "principal"> | undefined {
+  const out: Omit<HostContext, "principal"> = {};
+  for (const field of OPTIONAL_STRINGS) {
+    const value = r[field];
+    if (value === undefined) continue;
+    if (!isText(value)) return undefined;
+    out[field] = value;
+  }
+  if (r.grant !== undefined) {
+    if (!isText(r.grant, MAX_GRANT_LENGTH)) return undefined;
+    out.grant = r.grant;
+  }
+  if (r.unattended !== undefined) {
+    if (typeof r.unattended !== "boolean") return undefined;
+    out.unattended = r.unattended;
+  }
+  return out;
+}
 
 /**
  * The host context in a request's `params._meta`, or undefined when there is none or the
@@ -42,14 +77,8 @@ export function readHostContext(meta: unknown): HostContext | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const r = raw as Record<string, unknown>;
   if (r.principal !== "host" && r.principal !== "person") return undefined;
-  const ctx: HostContext = { principal: r.principal };
-  for (const field of OPTIONAL_FIELDS) {
-    const value = r[field];
-    if (value === undefined) continue;
-    if (typeof value !== "string" || value.length === 0) return undefined;
-    ctx[field] = value;
-  }
-  return ctx;
+  const fields = optionalFields(r);
+  return fields ? { principal: r.principal, ...fields } : undefined;
 }
 
 /** Whether the call is the host's own. A call that names no principal is not. */
