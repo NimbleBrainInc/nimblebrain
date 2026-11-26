@@ -89,6 +89,11 @@ const GUARDED = [
     selector: ".dot-running",
   },
   {
+    what: "tasks plugin running dot",
+    file: join(REPO, "packages", "tasks", "ui", "src", "styles.ts"),
+    selector: ".dot-running",
+  },
+  {
     what: "conversations live dot",
     file: join(REPO, "packages", "conversations", "ui", "src", "index.css"),
     selector: ".conv-streaming-dot",
