@@ -40,7 +40,8 @@ Every decision is taken on a host instant: `due`'s `now` and `until`, `begin_run
 `offer_event`'s `now`, an outcome's `startedAt`/`endedAt`. The plugin's own clock only stamps
 `createdAt`/`updatedAt`/`requestedAt` and renders `upcoming`'s window and `stats`' default
 `since`. A schedule check that needs no clock (an unknown timezone, a cron that matches no
-date) is decided at write time; a once's lateness is decided on `due` or `begin_run`.
+date) is decided at write time. A once's lateness is decided only on the `due` that would
+produce it: whether the host was down at its time is knowable only there.
 
 ## How the run flow is kept (`src/flow.ts`)
 
@@ -50,8 +51,9 @@ date) is decided at write time; a once's lateness is decided on `due` or `begin_
   `s:<definition uid>:<epoch ms>`: a moved time is a new key, and a claim of the old one
   answers skip. Every other run (`run`, a batch item, a pending event occurrence) is a queued
   run record; its ref is `r:<run id>`, its key that plus `@<notBefore ms>`.
-- **`due`** anchors, retires a once more than `ONCE_GRACE_MS` (1 h) past its time (recorded
-  skipped: missed), and lists occurrences at or before `until`, ordered by (`notBefore`, key),
+- **`due`** anchors, retires a once not yet listed whose `notBefore` is more than
+  `ONCE_GRACE_MS` (1 h) before its `now` (recorded skipped: missed; never listed), and lists
+  occurrences at or before `until`, ordered by (`notBefore`, key),
   paged by a cursor that encodes that position. `cancel` is every begun run asked to stop whose
   `end_run` has not landed, whole on every page. Retention runs on the first page only.
 - **Fencing** (`state.fences`, per ref): the highest token and what it was answered. The same
@@ -60,7 +62,8 @@ date) is decided at write time; a once's lateness is decided on `due` or `begin_
   interrupted, provisionally, and answers skip with `interrupted`. `end_run` is accepted from
   the run's token only, first-wins: an ended run answers its stored notices.
 - **What a claim checks**: scheduled: the occurrence is still `nextRunAt`, the task enabled,
-  not already running, its budget not spent, a once within grace; requested: the run still
+  not already running, its budget not spent. A once listed by a `due` (`onceListed`) is never
+  judged late again: it runs however long the host's queue held it; requested: the run still
   queued, the task still there, an event run's task still enabled with an event schedule, no
   other non-batch run of the task running, the budget not spent. A refusal is recorded skipped
   (a scheduled one moves `nextRunAt` on); a batch run refused for its budget or a deleted task
@@ -146,9 +149,10 @@ Behaviour that differs from today:
 - **`run` answers at once** with `{ runId, taskId }`; the run is followed with `run_result`. No
   queue position, no synchronous wait.
 - **Instants are the host's.** A schedule is placed on the next `due`, not at write time; a
-  past `at` is accepted at write and judged on `due`: within its grace it fires, past it it is
-  missed. A once is judged late on the host's `now` whenever it is claimed, not only after a
-  restart, so a once held more than an hour in the host's queue is missed.
+  past `at` is accepted at write and judged on the `due` that would produce it: within its
+  grace it is listed and runs, past it it is missed. As today, a once produced in time runs
+  however long the queue holds it; only one first seen past its grace (the host was down) is
+  missed.
 - **Budget windows are UTC calendar days and months**, not the instance timezone's. A spent
   window refuses every claim (recorded skipped), whatever triggered it.
 - **`grant_invalid` and `membership_revoked` disable the definition at once** with a notice; a

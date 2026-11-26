@@ -120,8 +120,10 @@ function decodeCursor(cursor: string): string {
 
 /**
  * Place a timed schedule saved or changed since the last `due` on this `now`, stamp the
- * definition's first host instant, and retire a once whose time passed more than its
- * grace ago (recorded skipped: missed).
+ * definition's first host instant, and judge a once's lateness where it is produced: a once
+ * not yet listed whose `notBefore` is more than its grace before this `now` was missed while
+ * the host was down (recorded skipped: missed) and is never listed. Once listed, it is the
+ * host's to run however long its queue holds it; nothing judges it late again.
  */
 function anchor(tx: Tx, task: TaskDef, now: number): void {
   if (!task.seenAt) task.seenAt = iso(now);
@@ -129,7 +131,8 @@ function anchor(tx: Tx, task: TaskDef, now: number): void {
   if (task.nextRunAt === undefined) setNextRunAt(task, nextOccurrence(task, now));
   const schedule = task.schedule;
   if (!schedule || !("at" in schedule) || task.nextRunAt === undefined) return;
-  if (now - Date.parse(schedule.at) > ONCE_GRACE_MS) retireMissed(tx, task, now);
+  if (task.onceListed === task.nextRunAt) return;
+  if (now - Date.parse(task.nextRunAt) > ONCE_GRACE_MS) retireMissed(tx, task, now);
 }
 
 function retireMissed(tx: Tx, task: TaskDef, now: number): Notice[] {
@@ -147,6 +150,7 @@ function retireMissed(tx: Tx, task: TaskDef, now: number): Notice[] {
   task.disabledAt = iso(now);
   task.disabledReason = `Missed its one time at ${at}`;
   delete task.nextRunAt;
+  delete task.onceListed;
   return [];
 }
 
@@ -159,6 +163,8 @@ function scheduledOccurrences(tx: Tx, until: number): Occurrence[] {
     if (at > until) continue;
     const ref = `s:${task.uid}:${at}`;
     out.push({ key: ref, ref, notBefore: iso(at) });
+    // Produced: from here a once is owed to the host's queue, never judged late again.
+    if (task.schedule && "at" in task.schedule) task.onceListed = task.nextRunAt;
   }
   return out;
 }
@@ -345,11 +351,9 @@ function decideScheduled(tx: Tx, ref: string, token: number, now: number): Begin
     advanceAfterSkip(task, now);
     return { decision: "skip", reason: refusal };
   }
+  // A once's lateness was judged when `due` produced this occurrence (`anchor`): a claim
+  // runs it however long the host's queue held it.
   const once = task.schedule && "at" in task.schedule ? task.schedule.at : undefined;
-  if (once !== undefined && now - at > ONCE_GRACE_MS) {
-    retireMissed(tx, task, now);
-    return { decision: "skip", reason: "the once schedule is past its grace" };
-  }
   const run = newRun(task, "scheduled", iso(now));
   if (once !== undefined) run.onceAt = once;
   task.inFlight = run.id;
@@ -648,6 +652,7 @@ function applyToSchedule(task: TaskDef, run: RunRecord, outcome: Outcome, ended:
 }
 
 function retireOnce(task: TaskDef, run: RunRecord): void {
+  delete task.onceListed;
   task.enabled = false;
   task.onceDone = { at: run.startedAt ?? "", outcome: "ran" };
   task.disabledAt = run.completedAt;

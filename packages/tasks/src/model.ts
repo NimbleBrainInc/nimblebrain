@@ -90,6 +90,11 @@ export interface TaskDef extends DefinitionFields {
   /** The scheduled run begun and not yet ended, by id. */
   inFlight?: string;
   onceDone?: OnceDone;
+  /**
+   * The once occurrence (`nextRunAt`) a `due` has listed: produced, so it is the host's to
+   * run however late it is claimed. Its lateness was judged on the `due` that produced it.
+   */
+  onceListed?: string;
   runCount: number;
   consecutiveErrors: number;
   transientErrors?: number;

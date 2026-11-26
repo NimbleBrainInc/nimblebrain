@@ -1311,6 +1311,63 @@ async function clockCases(c: FullCtx): Promise<void> {
   });
 }
 
+/**
+ * A once's lateness is judged where `due` produces it (CONTRACT.md §5.1, §5.2, §6): one first
+ * listed far past its time was missed while the host was down; one listed in time is owed to
+ * the host's queue and runs however late it is claimed. "Far" is 30 days: past any grace an
+ * implementation could choose.
+ */
+async function onceCases(c: FullCtx): Promise<void> {
+  const { h, audit } = c;
+  const { host, person } = scenario(c, "once");
+  const t = CLOCK_START;
+  const LATE = 30 * DAY;
+  await h.run("a once listed by due runs however long the host's queue held it", async () => {
+    const taskId = await createTask(
+      person,
+      { name: taskName(audit, "queued-once"), schedule: { at: at(t + HOUR) } },
+      "q",
+    );
+    const listed = (await host.dueAll(t, t + DAY)).occurrences.filter(
+      (o) => o.notBefore === at(t + HOUR),
+    );
+    assert(listed.length === 1, `the once is listed ${listed.length} times, want 1`);
+    const occ = listed[0] as Occurrence;
+    // The host stays up, and due keeps listing the produced occurrence as it waits.
+    const later = (await host.dueAll(t + HOUR + LATE, t + HOUR + LATE)).occurrences;
+    assert(
+      later.some((o) => o.key === occ.key),
+      "a once produced in time was judged missed by a later due",
+    );
+    const answer = await beginRun(host, occ, 1, t + HOUR + LATE);
+    await host.end(str(answer.runId, "runId"), 1, outcome({ start: t + HOUR + LATE }));
+    eq((await execution(person, str(answer.runId, "runId"))).execution, "completed", "execution");
+    const task = obj((await okCall(person, "status", { taskId })).task, "task");
+    eq(obj(task.onceDone, "onceDone").outcome, "ran", "onceDone.outcome");
+  });
+  await h.run(
+    "a once first seen by due far past its time was missed: recorded skipped, never listed",
+    async () => {
+      const taskId = await createTask(
+        person,
+        { name: taskName(audit, "missed-once"), schedule: { at: at(t + 2 * HOUR) } },
+        "m",
+      );
+      const now = t + 2 * HOUR + LATE;
+      const listed = (await host.dueAll(now, now + DAY)).occurrences;
+      assert(!listed.some((o) => o.notBefore === at(t + 2 * HOUR)), "the missed once is listed");
+      const status = await okCall(person, "status", { taskId });
+      eq(obj(obj(status.task, "task").onceDone, "onceDone").outcome, "missed", "onceDone");
+      const runs = list(status.recentRuns, "recentRuns");
+      eq(
+        runs.map((r) => obj(r, "run").execution),
+        ["skipped"],
+        "the missed occurrence's record",
+      );
+    },
+  );
+}
+
 async function pagingCases(c: FullCtx): Promise<void> {
   const { h, audit } = c;
   const { host, person } = scenario(c, "paging");
@@ -2275,6 +2332,7 @@ const FLOW_GROUPS: Array<[string, (c: FullCtx) => Promise<void>]> = [
   ["grant_missing", grantMissingCase],
   ["grants", grantCases],
   ["clock", clockCases],
+  ["once", onceCases],
   ["paging", pagingCases],
   ["fencing", fencingCases],
   ["run flow", runFlowCases],

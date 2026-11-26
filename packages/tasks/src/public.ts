@@ -199,6 +199,7 @@ export function update(tx: Tx, caller: Caller, args: Checked) {
 function rescheduled(task: TaskDef, manifest: Args, wasRetired: boolean): void {
   delete task.nextRunAt;
   delete task.onceDone;
+  delete task.onceListed;
   if (wasRetired && task.schedule && "at" in task.schedule && manifest.enabled !== false) {
     task.enabled = true;
     clearDisableState(task);
