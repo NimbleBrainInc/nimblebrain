@@ -7,7 +7,16 @@
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProtocolError } from "@modelcontextprotocol/server";
@@ -122,26 +131,47 @@ describe("the store", () => {
     expect(listed.tasks.map((t: { id: string }) => t.id)).toEqual(["keep"]);
   });
 
-  test("a run state.json still holds open stays open, whatever the ended log says", async () => {
-    await ok("create", { manifest: { name: "Crash" }, body: "p" });
-    const { runId } = await ok("run", { taskId: "crash" });
-    // A crash after the log append and before the commit: the log ends the run, the state does not.
-    appendFileSync(
-      join(dir, "workspaces", WS, "runs.jsonl"),
-      `${JSON.stringify({ id: runId, status: "success" })}\n`,
-    );
-    store = new Store(dir);
-    const read = await ok("run_result", { runId });
-    expect(read.run.execution).toBe("queued");
-  });
+  const wsDir = () => join(dir, "workspaces", WS);
+  const logOf = () => {
+    const files = readdirSync(wsDir()).filter((f) => /^runs(-\d+)?\.jsonl$/.test(f));
+    expect(files).toHaveLength(1);
+    return join(wsDir(), files[0] as string);
+  };
 
-  test("a torn last line of the ended log is skipped", async () => {
+  test("a torn tail, a restart, another run, a restart: both committed runs are there", async () => {
     await ok("create", { manifest: { name: "Torn" }, body: "p" });
     await runOnce("torn", T0, outcome(T0));
-    appendFileSync(join(dir, "workspaces", WS, "runs.jsonl"), '{"id":"run_half');
+    appendFileSync(logOf(), '{"id":"run_half');
     store = new Store(dir);
-    const runs = await ok("runs", { taskId: "torn" });
-    expect(runs.runs).toHaveLength(1);
+    await runOnce("torn", T0 + HOUR, outcome(T0 + HOUR));
+    store = new Store(dir);
+    expect((await ok("runs", { taskId: "torn" })).runs).toHaveLength(2);
+  });
+
+  test("an append whose commit never landed is gone after a restart, and the retry records one", async () => {
+    await ok("create", { manifest: { name: "Late", schedule: { at: iso(T0) } }, body: "p" });
+    await ok("list", {});
+    const committed = readFileSync(join(wsDir(), "state.json"), "utf-8");
+    // The due that finds the once missed appends its skipped run; the crash comes before
+    // state.json is replaced, so the previous state is what the disk holds.
+    await due(T0 + 2 * HOUR);
+    writeFileSync(join(wsDir(), "state.json"), committed);
+    store = new Store(dir);
+    expect((await ok("status", { taskId: "late" })).recentRuns).toEqual([]);
+    await due(T0 + 2 * HOUR);
+    store = new Store(dir);
+    const { recentRuns } = await ok("status", { taskId: "late", limit: 50 });
+    expect(recentRuns.map((r: Answer) => r.execution)).toEqual(["skipped"]);
+  });
+
+  test("a compaction is committed by the state that names its log", async () => {
+    await ok("create", { manifest: { name: "Old" }, body: "p" });
+    await runOnce("old", T0, outcome(T0));
+    const before = logOf();
+    await due(T0 + 100 * 365 * 24 * HOUR);
+    expect(logOf()).not.toBe(before);
+    store = new Store(dir);
+    expect((await ok("runs", { taskId: "old" })).runs).toEqual([]);
   });
 
   test("a blob no record names is removed on load", async () => {

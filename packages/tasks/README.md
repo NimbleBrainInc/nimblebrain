@@ -54,9 +54,9 @@ writes `ui/dist/index.html`; `--screen <file>` serves another file.
 ## Data
 
 ```
-<data>/workspaces/<workspaceId>/state.json    definitions, open runs, fences, batches, keys
-<data>/workspaces/<workspaceId>/runs.jsonl    ended runs
-<data>/workspaces/<workspaceId>/blobs/        inputs, answers, results, batch inputs
+<data>/workspaces/<workspaceId>/state.json      definitions, open runs, fences, batches, keys
+<data>/workspaces/<workspaceId>/runs-<n>.jsonl  ended runs, up to the length state.json commits
+<data>/workspaces/<workspaceId>/blobs/          inputs, answers, results, batch inputs
 ```
 
 A workspace the host stamps exists: its directory is made on first use, and

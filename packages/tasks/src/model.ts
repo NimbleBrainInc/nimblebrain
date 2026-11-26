@@ -287,8 +287,21 @@ export interface WorkspaceState {
   batches: Record<string, Batch>;
   /** Idempotency keys by owner NUL tool NUL key. */
   keys: Record<string, KeyEntry>;
+  /**
+   * The committed ended-runs log: its file and its length in bytes. Bytes past `length` were
+   * appended by a call that never committed, and are cut off on load.
+   */
+  log: { file: string; length: number };
 }
 
 export function emptyState(): WorkspaceState {
-  return { version: 1, tasks: {}, open: {}, fences: {}, batches: {}, keys: {} };
+  return {
+    version: 1,
+    tasks: {},
+    open: {},
+    fences: {},
+    batches: {},
+    keys: {},
+    log: { file: "runs-0.jsonl", length: 0 },
+  };
 }

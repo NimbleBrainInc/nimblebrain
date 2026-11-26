@@ -59,7 +59,9 @@ produce it: whether the host was down at its time is knowable only there.
 - **Fencing** (`state.fences`, per ref): the highest token and what it was answered. The same
   token repeats the answer (a run's grant and work spec are read back from the answer blob); a
   lower one is `token_stale`; a higher one after a run was answered marks that run
-  interrupted, provisionally, and answers skip with `interrupted`. `end_run` is accepted from
+  interrupted, provisionally, and answers skip with `interrupted: { runId, token }`, the token
+  that received its work. Every later claim answers the same `interrupted` until that run's
+  `end_run` lands, so a second takeover never strands it. `end_run` is accepted from
   the run's token only, first-wins: an ended run answers its stored notices.
 - **What a claim checks**: scheduled: the occurrence is still `nextRunAt`, the task enabled,
   not already running, its budget not spent. A once listed by a `due` (`onceListed`) is never
@@ -93,15 +95,20 @@ produce it: whether the host was down at its time is knowable only there.
 ## Storage (`src/store.ts`)
 
 - **Layout:** `<data>/workspaces/<workspaceId>/state.json` (definitions with their grants,
-  open runs, fences, batches and their items, idempotency keys), `runs.jsonl` (ended runs, one
-  record per line), `blobs/<name>.json` (write-once: a run's input, the answer `begin_run`
-  gave, a run's result, a batch's inputs).
-- **Why:** one transaction per call with one commit point. A call changes the workspace in
-  memory; then its blobs are written, its ended runs appended, and `state.json` replaced
-  atomically (fsynced, renamed). A run is ended only once `state.json` no longer holds it
-  open, so a crash before the rename leaves the call undone and the host's retry applies it
-  whole. A call that throws evicts the workspace from memory. Loading folds the log (last line
-  per id, torn line skipped, open in `state.json` wins) and removes blobs no record names.
+  open runs, fences, batches and their items, idempotency keys, and the ended-runs log's file
+  and committed length), `runs-<n>.jsonl` (ended runs, one record per line),
+  `blobs/<name>.json` (write-once: a run's input, the answer `begin_run` gave, a run's result,
+  a batch's inputs).
+- **`state.json` is the only commit point.** A call changes the workspace in memory; then its
+  blobs are written, its ended runs appended to the log, and `state.json` replaced atomically
+  (fsynced, renamed) with the log's new length. An append is committed by that replace and by
+  nothing else, so the log never holds more or less than the state says. A call that throws
+  evicts the workspace from memory.
+- **Loading cuts the log to its committed length** before anything reads or appends: an
+  append whose commit never landed, or a torn tail, is gone, and the host's retry records the
+  call once. Compaction (retention) writes the log whole to the next generation's file, which
+  the replace naming it commits; log files the state does not name, and blobs no record names,
+  are removed on load.
 - **One process owns a data directory.** All I/O is synchronous, so one process's calls never
   interleave; two processes on one directory are not serialized. The workspace id is the only
   path segment taken from a call.
@@ -131,7 +138,7 @@ Where each feature lives now:
 | Timer and work-queue enqueue | the host, from `due` |
 | Claim decisions, interrupted scheduled runs, fencing | `begin_run` and fences (`src/flow.ts`) |
 | Executor, admission, slots, containment, limits clamping, spend enforcement | the host's door; the plugin sends a work spec |
-| Run records, execution and label, results | `end_run`, `src/runs.ts`, `state.json`/`runs.jsonl`/blobs |
+| Run records, execution and label, results | `end_run`, `src/runs.ts`, `state.json`/`runs-<n>.jsonl`/blobs |
 | Failure streak, backoff, auto-disable, run-failed notice | `applyStreak`, `nextAfterRun` (`src/flow.ts`, `src/schedule.ts`) |
 | Token budgets as spend accounts | `budgetAccounts`, `addUsage` |
 | Output-schema check | `recordOutcome` (`src/runs.ts`) |

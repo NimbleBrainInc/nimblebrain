@@ -4,21 +4,24 @@
  *   <data>/workspaces/<workspaceId>/state.json     everything but ended runs: definitions
  *                                                   (with their grants), open runs, fences,
  *                                                   batches and their items, idempotency keys
- *   <data>/workspaces/<workspaceId>/runs.jsonl     ended runs, one JSON record per line
+ *   <data>/workspaces/<workspaceId>/runs-<n>.jsonl ended runs, one JSON record per line
  *   <data>/workspaces/<workspaceId>/blobs/<name>.json  write-once data too large for the state:
  *                                                   a run's input, the answer begin_run gave
  *                                                   (grant and work spec), a run's result, a
  *                                                   batch's item inputs
  *
  * - **Every call is one transaction** ({@link Store.mutate}): it changes the workspace in
- *   memory, then its blobs are written, then its ended runs are appended, then `state.json`
- *   is replaced atomically (written beside it, fsynced, renamed). `state.json` is the commit
- *   point: a run is ended only when `state.json` no longer holds it open, so a crash before
- *   the rename leaves the call undone and the host's retry applies it whole. A call that
- *   throws evicts the workspace from memory, so its partial changes are never seen.
- * - **Loading folds `runs.jsonl`**: the last line per run id wins, a torn line is skipped,
- *   and a run `state.json` still holds open is open whatever the log says. Blobs no record
- *   names (left by a crash before a commit) are removed on load.
+ *   memory, then its blobs are written, then its ended runs are appended to the log, then
+ *   `state.json` is replaced atomically (written beside it, fsynced, renamed). `state.json`
+ *   is the only commit point, and it records the log's file and committed length
+ *   (`state.log`): an append is committed by the replace that records the new length. A crash
+ *   before the rename leaves the call undone, and the host's retry applies it whole. A call
+ *   that throws evicts the workspace from memory, so its partial changes are never seen.
+ * - **Loading cuts the log to its committed length** before anything reads or appends, which
+ *   drops an uncommitted append and a torn tail alike, then folds it (the last line per run
+ *   id wins). Compaction (retention) writes the log whole to the next generation's file, and
+ *   the replace that names it commits it; files the state does not name, and blobs no record
+ *   names, are removed on load.
  * - **One process owns a data directory.** Every read and write is synchronous, so the calls
  *   of one process never interleave; two processes on one directory are not serialized.
  * - **The workspace id is a path segment**; the owner is never part of a path.
@@ -35,6 +38,8 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
+  truncateSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -137,8 +142,8 @@ export class Store {
     const state = existsSync(statePath)
       ? (JSON.parse(readFileSync(statePath, "utf-8")) as WorkspaceState)
       : emptyState();
-    const ended = readEnded(join(dir, "runs.jsonl"));
-    for (const id of Object.keys(state.open)) ended.delete(id);
+    state.log ??= emptyState().log;
+    const ended = readCommittedLog(dir, state.log);
     const ws: Workspace = { id: workspaceId, state, ended };
     removeOrphanBlobs(dir, ws);
     this.#cache.set(workspaceId, ws);
@@ -193,15 +198,21 @@ class Effects {
     for (const [name, value] of this.#puts)
       atomicWrite(blobPath(this.#dir, name), JSON.stringify(value));
     mkdirSync(this.#dir, { recursive: true });
-    const log = join(this.#dir, "runs.jsonl");
-    // The log is written before the commit point: a run it ends that `state.json` still holds
-    // open stays open on load.
+    const state = this.#ws.state;
+    const before = state.log.file;
     if (this.#compact) {
-      atomicWrite(log, [...this.#ws.ended.values()].map((r) => `${JSON.stringify(r)}\n`).join(""));
+      // The next generation, written whole; committed by the replace below that names it.
+      const text = [...this.#ws.ended.values()].map((r) => `${JSON.stringify(r)}\n`).join("");
+      const file = `runs-${logGeneration(before) + 1}.jsonl`;
+      atomicWrite(join(this.#dir, file), text);
+      state.log = { file, length: Buffer.byteLength(text, "utf-8") };
     } else if (this.#ended.length > 0) {
-      appendDurably(log, this.#ended.map((r) => `${JSON.stringify(r)}\n`).join(""));
+      const text = this.#ended.map((r) => `${JSON.stringify(r)}\n`).join("");
+      appendDurably(join(this.#dir, before), text);
+      state.log = { file: before, length: state.log.length + Buffer.byteLength(text, "utf-8") };
     }
-    atomicWrite(join(this.#dir, "state.json"), JSON.stringify(this.#ws.state));
+    atomicWrite(join(this.#dir, "state.json"), JSON.stringify(state));
+    if (state.log.file !== before) rmSync(join(this.#dir, before), { force: true });
     for (const name of this.#drops) rmSync(blobPath(this.#dir, name), { force: true });
   }
 }
@@ -239,18 +250,33 @@ function appendDurably(path: string, text: string): void {
   }
 }
 
-/** Fold the ended-runs log: the last line per id wins, a torn line is skipped. */
-function readEnded(path: string): Map<string, RunRecord> {
+const LOG_FILE_RE = /^runs-(\d+)\.jsonl$/;
+
+function logGeneration(file: string): number {
+  return Number(LOG_FILE_RE.exec(file)?.[1] ?? 0);
+}
+
+/**
+ * The committed ended runs: the log cut to the length `state.json` committed (an
+ * uncommitted append or a torn tail goes), folded with the last line per id winning. Log
+ * files the state does not name are left from a compaction and removed.
+ */
+function readCommittedLog(
+  dir: string,
+  log: { file: string; length: number },
+): Map<string, RunRecord> {
   const out = new Map<string, RunRecord>();
+  if (!existsSync(dir)) return out;
+  for (const file of readdirSync(dir)) {
+    if (LOG_FILE_RE.test(file) && file !== log.file) unlinkSync(join(dir, file));
+  }
+  const path = join(dir, log.file);
   if (!existsSync(path)) return out;
+  if (statSync(path).size > log.length) truncateSync(path, log.length);
   for (const line of readFileSync(path, "utf-8").split("\n")) {
     if (!line.trim()) continue;
-    try {
-      const run = JSON.parse(line) as RunRecord;
-      if (run && typeof run.id === "string") out.set(run.id, run);
-    } catch {
-      // a torn line
-    }
+    const run = JSON.parse(line) as RunRecord;
+    out.set(run.id, run);
   }
   return out;
 }
