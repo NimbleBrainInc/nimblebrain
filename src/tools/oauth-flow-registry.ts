@@ -50,6 +50,12 @@ interface PendingFlow {
   returnWsId?: string;
   /** The caller's conversation in `returnWsId` to reopen on return (`setFlowReturnWorkspace`). */
   returnConversationId?: string;
+  /**
+   * Hashes of the browser bindings authenticated initiates handed out for this
+   * flow (`addBrowserBinding`, `src/oauth/flow-binding.ts`). The callback
+   * completes the flow only from a browser holding one of them.
+   */
+  bindings: Set<string>;
 }
 
 /**
@@ -167,6 +173,7 @@ export function register(
       owner,
       serverName,
       timeout,
+      bindings: new Set(),
       ...(scopeFallback ? { scopeFallback } : {}),
     });
   });
@@ -236,6 +243,40 @@ export function setFlowReturnWorkspace(
 }
 
 /**
+ * Most browser bindings one flow holds. Each authenticated initiate that hands
+ * the flow out adds one; past this the oldest is dropped, so repeated initiates
+ * cannot grow a flow without bound within its TTL.
+ */
+export const MAX_FLOW_BINDINGS = 16;
+
+/**
+ * Record a browser binding's hash on a pending flow, so the browser holding its
+ * cookie can complete it. The authenticated initiate calls this each time it
+ * hands the flow's authorization URL to a browser. False when no flow is
+ * pending for `state`.
+ */
+export function addBrowserBinding(state: string, bindingHash: string): boolean {
+  const flow = flows.get(state);
+  if (!flow) return false;
+  flow.bindings.add(bindingHash);
+  while (flow.bindings.size > MAX_FLOW_BINDINGS) {
+    const oldest = flow.bindings.values().next().value;
+    if (oldest === undefined) break;
+    flow.bindings.delete(oldest);
+  }
+  return true;
+}
+
+/**
+ * The browser binding hashes recorded on a pending flow, or null when no flow
+ * is pending for `state`. The callback checks its cookie against these before
+ * it resolves or refuses the flow.
+ */
+export function flowBrowserBindings(state: string): ReadonlySet<string> | null {
+  return flows.get(state)?.bindings ?? null;
+}
+
+/**
  * Take a pending flow's scope fallback: the authorize URL to send the browser
  * to after the server answered `invalid_scope`. Returns it once and never
  * again, so a server that refuses the fallback too gets no further retry.
@@ -272,8 +313,8 @@ export function rejectFlow(state: string, err: Error): boolean {
 
 /**
  * End a pending flow the authorization server answered with `providerError`.
- * Returns true if found. The callback route calls this only for the session
- * that began the flow, as it does before resolving one.
+ * Returns true if found. The callback route calls this only from a browser
+ * bound to the flow, as it does before resolving one.
  */
 export function refuseFlow(state: string, providerError: string): boolean {
   return rejectFlow(state, new OAuthFlowRefusedError(state.slice(0, FLOW_ID_CHARS), providerError));

@@ -72,11 +72,16 @@ const TENANT_ID_ENV = "NB_TENANT_ID";
 const REQUIRED_KEY_BYTES = 32;
 
 /**
- * Path the bouncer must serve. The platform-side `nb_oauth_state`
- * cookie is scoped to this path; any divergence in the bouncer URL
- * silently breaks every OAuth flow with a session-mismatch error
- * that points nowhere obvious. Hardcoded here and in `mcp-auth.ts`
- * by the same value; changing one without the other is incoherent.
+ * Path the bouncer must serve. The bouncer verifies the envelope and
+ * 302s the browser to this tenant's own host at the same path, where
+ * `mcp-auth.ts` serves the callback; a bouncer URL on any other path
+ * forwards every callback to a route this tenant does not serve.
+ * Hardcoded here and in `mcp-auth.ts` by the same value; changing one
+ * without the other is incoherent.
+ *
+ * The bouncer only routes: the callback completes on this tenant's
+ * host, the same host whose initiate set the `__Host-nb_oauth_state`
+ * cookie, so that host-only cookie reaches it.
  */
 const EXPECTED_CALLBACK_PATH = "/v1/mcp-auth/callback";
 
@@ -189,14 +194,14 @@ function validateCallbackUrl(callbackUrl: string): void {
       `[oauth bouncer] ${CALLBACK_URL_ENV} must use http(s); got ${parsedUrl.protocol}`,
     );
   }
-  // The platform-side cookie that binds the OAuth flow to a session is
-  // scoped to `Path=/v1/mcp-auth/callback`, hard-coded in `mcp-auth.ts`.
-  // A bouncer URL that lands callbacks on any other path means the cookie
-  // never travels back, and every flow fails the session-mismatch check
-  // with no clear root cause. Lock the implicit coupling explicit.
+  // The bouncer forwards a callback to this tenant at the path it was
+  // called on, and `mcp-auth.ts` serves the callback only at
+  // `/v1/mcp-auth/callback`. A bouncer URL on any other path forwards
+  // every flow to a route that does not exist here. Lock the implicit
+  // coupling explicit.
   if (!parsedUrl.pathname.endsWith(EXPECTED_CALLBACK_PATH)) {
     throw new Error(
-      `[oauth bouncer] ${CALLBACK_URL_ENV} must end with "${EXPECTED_CALLBACK_PATH}" (got "${parsedUrl.pathname}"). The platform's session-binding cookie is scoped to this path; a divergent URL silently breaks every OAuth flow.`,
+      `[oauth bouncer] ${CALLBACK_URL_ENV} must end with "${EXPECTED_CALLBACK_PATH}" (got "${parsedUrl.pathname}"). The bouncer forwards callbacks to this tenant at the same path, and the tenant serves the callback only there; a divergent URL breaks every OAuth flow.`,
     );
   }
 }

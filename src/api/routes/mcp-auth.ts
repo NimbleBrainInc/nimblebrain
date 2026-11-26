@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import { type Context, Hono } from "hono";
 import { WORKSPACE_PRINCIPAL_ID } from "../../connectors/runtime/connection.ts";
 import { ConnectorBusyError } from "../../connectors/runtime/lifecycle.ts";
@@ -10,11 +9,19 @@ import {
   signEnvelope,
   verifyEnvelopeAsTenant,
 } from "../../oauth/envelope.ts";
+import {
+  browserBindingMatches,
+  buildFlowCookie,
+  mintBrowserBinding,
+  readFlowCookie,
+} from "../../oauth/flow-binding.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { assertFleetIdentityProvisioned } from "../../oauth/tenant-key-mint.ts";
 import { log } from "../../observability/log.ts";
 import {
+  addBrowserBinding,
   type FlowOwner,
+  flowBrowserBindings,
   peekFlow,
   refuseFlow,
   resolveWithCode,
@@ -40,20 +47,22 @@ import { reinitiateParagraph } from "./oauth-error-page.ts";
  *
  * - `POST /v1/workspaces/:wsId/mcp-auth/initiate` (workspace-authed):
  *   launches an interactive flow. Looks up the captured authorization URL on
- *   the connector's pending Connection, sets a session-bound `nb_oauth_state`
- *   cookie scoped to the callback path, and returns the URL the client
- *   should navigate the user's browser to. **POST-only** so a malicious
+ *   the connector's pending Connection, binds the caller's browser to the
+ *   flow with a random `nb_oauth_state` cookie, which only this host can set
+ *   (`src/oauth/flow-binding.ts`), and returns the URL the client should
+ *   navigate the user's browser to. **POST-only** so a malicious
  *   `<img>` or prefetch can't trigger a flow, and a browser's write from
  *   another origin is refused (`rejectCrossSiteWrites`, on every route).
  *
  * - `GET /v1/mcp-auth/callback?code&state` (unauthenticated): the return
- *   leg of the OAuth dance. Verifies the `nb_oauth_state` cookie hashes
- *   to the URL-bound `state` (closes the gap where a leaked state value
- *   alone would let an attacker complete a flow on someone else's
- *   account), looks up the pending flow in `oauth-flow-registry` by
- *   state, and resolves it with the code. Stays unauthenticated by
- *   design — the user just came back from the AS and the platform's own
- *   session may not be present in this navigation context.
+ *   leg of the OAuth dance. Looks up the pending flow in
+ *   `oauth-flow-registry` by state and admits the request only when its
+ *   `nb_oauth_state` cookie is one of the bindings an initiate recorded on
+ *   that flow. The cookie never appears in a URL, so a leaked `state`
+ *   alone cannot complete a flow. Then it resolves the flow with the code.
+ *   Stays unauthenticated by design — the user just came back from the AS
+ *   and the platform's own session may not be present in this navigation
+ *   context.
  */
 // The redirect URI the platform registers with remote authorization
 // servers is resolved by the single source of truth in
@@ -120,22 +129,12 @@ export function mcpAuthRoutes(ctx: AppContext) {
       // rather than the old spurious 500 (#679).
       if (started === null) return json<OAuthInitiateResponse>({ authorizationUrl: null });
 
-      // Bind the user's browser session to the SDK-built `state` via a
-      // hashed cookie so a leaked `state` value alone can't let a
-      // different session land tokens; in bouncer mode the outbound URL
-      // carries a signed-envelope wrapping of that same inner state.
+      // In bouncer mode the outbound URL carries a signed-envelope wrapping
+      // of the SDK-built inner `state`; the flow is keyed on the inner one.
       const prepared = prepareAuthorization(started, serverName, wsId);
       if (prepared instanceof Response) return prepared;
       const { authorizationUrl, state } = prepared;
-
-      const stateHash = sha256Hex(state);
-
-      // Cookie scoped to /v1/mcp-auth/callback so it's only sent on the
-      // return leg. HttpOnly + SameSite=Lax matches the existing session
-      // cookie posture; Secure when not on localhost.
-      return json<OAuthInitiateResponse>({ authorizationUrl }, 200, {
-        "Set-Cookie": buildOAuthStateCookie(stateHash, 900, ctx.secureCookies),
-      });
+      return answerWithBinding(state, authorizationUrl, serverName, wsId);
     },
   );
 
@@ -184,10 +183,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
     if (returnTarget) {
       setFlowReturnWorkspace(state, returnTarget.wsId, returnTarget.conversationId);
     }
-
-    return json<OAuthInitiateResponse>({ authorizationUrl }, 200, {
-      "Set-Cookie": buildOAuthStateCookie(sha256Hex(state), 900, ctx.secureCookies),
-    });
+    return answerWithBinding(state, authorizationUrl, serverName, `user:${userId}`);
   });
 
   // ── GET /v1/mcp-auth/callback ─────────────────────────────────────
@@ -234,7 +230,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
     }
 
     logCallbackOutcome("resolved", { flow: flowId(state), owner: flow?.owner.kind });
-    return redirectHome(c, flow, ctx.secureCookies);
+    return redirectHome(c, flow);
   });
 
   return app;
@@ -403,17 +399,42 @@ function prepareAuthorization(
   }
 }
 
-/** Serialize the `nb_oauth_state` cookie scoped to the callback path; `Secure` is appended when cookies are secure. */
-function buildOAuthStateCookie(value: string, maxAge: number, secure: boolean): string {
-  const parts = [
-    `nb_oauth_state=${value}`,
-    "HttpOnly",
-    "SameSite=Lax",
-    "Path=/v1/mcp-auth/callback",
-    `Max-Age=${maxAge}`,
-  ];
-  if (secure) parts.push("Secure");
-  return parts.join("; ");
+const OAUTH_STATE_COOKIE = "nb_oauth_state";
+/** Seconds the binding cookie lives: the flow registry's TTL. */
+const BINDING_COOKIE_MAX_AGE = 900;
+
+/** Serialize the `__Host-nb_oauth_state` flow cookie. */
+function buildOAuthStateCookie(value: string, maxAge: number): string {
+  return buildFlowCookie(OAUTH_STATE_COOKIE, value, maxAge);
+}
+
+/**
+ * Bind the caller's browser to the pending flow for `state` and answer the
+ * initiate with the authorization URL and the binding cookie. Every initiate
+ * that hands out the URL mints its own binding, so a second member joining a
+ * pending workspace flow, or a person resuming their own sign-in, gets a
+ * cookie that completes it. A 500 when no flow is pending for `state`: the
+ * provider registers the flow before it reports the URL, so a missing one is
+ * a flow that ended between the two, and the person connects again.
+ */
+function answerWithBinding(
+  state: string,
+  authorizationUrl: string,
+  serverName: string,
+  flowContext: string,
+): Response {
+  const binding = mintBrowserBinding();
+  if (!addBrowserBinding(state, binding.bindingHash)) {
+    log.warn(`[mcp-auth] no pending flow to bind for ${serverName} (${flowContext})`);
+    return apiError(
+      500,
+      "auth_start_failed",
+      "The sign-in ended before it started. Connect again.",
+    );
+  }
+  return json<OAuthInitiateResponse>({ authorizationUrl }, 200, {
+    "Set-Cookie": buildOAuthStateCookie(binding.cookieValue, BINDING_COOKIE_MAX_AGE),
+  });
 }
 
 /**
@@ -459,10 +480,10 @@ function flowId(state: string): string {
  * Log one terminal outcome of the callback.
  *
  * **Never logs `code`, `state`, or the cookie.** An authorization code is a
- * live credential and the full state is the flow's key. The `flow` field is a
- * truncated state prefix: enough to identify a flow across log lines, not
- * enough to be used as one — the cookie binding, not the state, is what admits
- * a callback.
+ * live credential, the full state is the flow's key, and the cookie is the
+ * browser binding that admits a callback. The `flow` field is a truncated
+ * state prefix: enough to identify a flow across log lines, not enough to be
+ * used as one.
  *
  * The handler calls this rather than each helper logging its own refusal, so
  * one read of the route shows every outcome and its level, and a new branch
@@ -520,14 +541,19 @@ function readCallbackParams(
  * start waits on the flow, so a flow left pending holds the connection in
  * "connecting", and a personal connector's Connect at 409, until the TTL.
  *
- * The state is checked like a code's before anything is taken or ended, so a
- * callback without the session's state cookie settles nothing.
+ * The browser binding is checked like a code's before anything is taken or
+ * ended, so a callback from a browser the flow did not bind settles nothing.
  */
 function answerProviderRefusal(c: Context<AppEnv>, refusal: CallbackFailure): Response {
   const error = c.req.query("error") ?? "";
   const wireState = c.req.query("state");
   const flow = wireState ? sessionFlow(c, wireState) : null;
   if (flow === null || isCallbackFailure(flow)) {
+    // No flow pending for the state: the provider's refusal is the diagnosis,
+    // and it ended nothing.
+    if (flow?.outcome === "unknown_flow") {
+      return refuse(refusal, { ...flow.fields, flowEnded: false });
+    }
     // Which check failed is the diagnosis only where the callback asked for
     // something (the fallback); otherwise the provider's refusal is.
     return refuse(flow !== null && error === "invalid_scope" ? flow : refusal);
@@ -543,13 +569,13 @@ function answerProviderRefusal(c: Context<AppEnv>, refusal: CallbackFailure): Re
 }
 
 /**
- * The flow a callback's state names, once the state cookie binds it to this
- * session; otherwise the check that refused it.
+ * The flow a callback's state names, once the request's cookie is one of the
+ * flow's browser bindings; otherwise the check that refused it.
  */
 function sessionFlow(c: Context<AppEnv>, wireState: string): string | CallbackFailure {
   const state = recoverInnerState(c, wireState);
   if (isCallbackFailure(state)) return state;
-  const mismatch = verifyStateCookie(c, state);
+  const mismatch = verifyBrowserBinding(c, state);
   if (mismatch) return { ...mismatch, fields: { ...mismatch.fields, flow: flowId(state) } };
   return state;
 }
@@ -630,16 +656,28 @@ function recoverInnerState(c: Context<AppEnv>, wireState: string): string | Call
   }
 }
 
-/** Reject unless the `nb_oauth_state` cookie is a constant-time match for the state's sha256; returns a refusal on mismatch, else null. */
-function verifyStateCookie(c: Context<AppEnv>, state: string): CallbackFailure | null {
-  // Session-binding check: the cookie set by /initiate must match the
-  // URL state. Without this, a leaked state value (referrer header,
-  // browser history, network log) could let an attacker drop tokens
-  // into someone else's flow. The cookie is a sha256 of state — bound
-  // to the originating session, can't be derived from the URL alone.
-  const expected = sha256Hex(state);
-  const cookieValue = readCookie(c.req.header("cookie"), "nb_oauth_state");
-  if (!cookieValue || !timingSafeEqualHex(cookieValue, expected)) {
+/**
+ * Refuse unless a flow is pending for `state` and the request's
+ * `nb_oauth_state` cookie is one of the browser bindings recorded on it;
+ * null when it is. Nothing in the callback URL can satisfy this: the cookie
+ * value is a random secret an initiate gave this browser, and the flow holds
+ * only its hash.
+ */
+function verifyBrowserBinding(c: Context<AppEnv>, state: string): CallbackFailure | null {
+  const bindings = flowBrowserBindings(state);
+  if (!bindings) {
+    return {
+      outcome: "unknown_flow",
+      response: c.html(
+        "<html><body><h3>Unknown or expired OAuth flow.</h3>" +
+          `${reinitiateParagraph()}</body></html>`,
+        404,
+      ),
+    };
+  }
+  const cookieHeader = c.req.header("cookie");
+  if (!browserBindingMatches(cookieHeader, OAUTH_STATE_COOKIE, bindings)) {
+    const cookieValue = readFlowCookie(cookieHeader, OAUTH_STATE_COOKIE);
     return {
       outcome: "cookie_mismatch",
       // Whether the state cookie was absent or present-but-wrong separates a
@@ -676,10 +714,9 @@ function redirectHome(
     returnWsId?: string;
     returnConversationId?: string;
   } | null,
-  secureCookies: boolean,
 ): Response {
   // Clear the one-shot state cookie so the callback URL can't be replayed.
-  c.header("Set-Cookie", buildOAuthStateCookie("", 0, secureCookies));
+  c.header("Set-Cookie", buildOAuthStateCookie("", 0));
 
   // A workspace connector returns to its own workspace; a personal one to the
   // workspace its sign-in was started from (reopening the conversation it was
@@ -693,36 +730,6 @@ function redirectHome(
     : undefined;
   const returnConversationId = owner?.kind === "workspace" ? undefined : flow?.returnConversationId;
   return c.redirect(connectorReturnUrl(returnWsId, connected, returnConversationId), 302);
-}
-
-function sha256Hex(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
-}
-
-/**
- * Constant-time hex string comparison via Node's `crypto.timingSafeEqual`.
- * Both inputs must be 64-char sha256 hex; anything else (malformed cookie,
- * wrong length) is rejected up-front so the constant-time compare always
- * runs on equal-length 32-byte buffers.
- */
-const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
-function timingSafeEqualHex(a: string, b: string): boolean {
-  if (!SHA256_HEX_RE.test(a) || !SHA256_HEX_RE.test(b)) return false;
-  return timingSafeEqual(Buffer.from(a, "hex"), Buffer.from(b, "hex"));
-}
-
-function readCookie(header: string | undefined, name: string): string | null {
-  if (!header) return null;
-  const parts = header.split(";");
-  for (const part of parts) {
-    const trimmed = part.trim();
-    const eq = trimmed.indexOf("=");
-    if (eq < 0) continue;
-    const k = trimmed.slice(0, eq);
-    const v = trimmed.slice(eq + 1);
-    if (k === name) return v;
-  }
-  return null;
 }
 
 function escapeHtml(s: string): string {
