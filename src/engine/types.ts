@@ -233,9 +233,11 @@ export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
  *
  *   - A tool without `"model"` is left out of every tool list that reaches a
  *     model: the chat list (`surfaceTools`), `nb__search`, the `/mcp`
- *     `tools/list`, the invalid-name recovery hint, and promotion. The engine,
- *     the host on the chat door, also refuses a model's call that names one.
- *     `/mcp` refuses an agent's call that names one: any call that is not an
+ *     `tools/list`, the invalid-name recovery hint, and promotion. Every
+ *     agent door also refuses a call that names one, or names a tool the door
+ *     cannot list (`isAgentCallable`): the engine (the host on the chat door)
+ *     and the ACP tool projection against the run's listing, `/mcp` against
+ *     the source's. On `/mcp` an agent's call is any call that is not an
  *     app's, which takes a first-party credential naming a source
  *     (`isAppCall` in `src/api/mcp-server.ts`). REST admits first-party
  *     credentials only, and the web shell's settings reach the platform's own
@@ -261,6 +263,16 @@ const DEFAULT_TOOL_VISIBILITY: readonly McpUiToolVisibility[] = ["model", "app"]
 /** True when the agent may see and call a tool (`"model"` in its visibility). */
 export function isModelVisible(tool: { meta?: Record<string, unknown> }): boolean {
   return toolVisibility(tool).includes("model");
+}
+
+/**
+ * True when an agent door may dispatch a call to this tool: the door's listing
+ * holds it and its visibility includes `"model"`. Pass the door's own lookup
+ * of the name. A tool the door cannot list (`undefined`) is not callable: its
+ * visibility is unknown, which is not the spec's default of visible to both.
+ */
+export function isAgentCallable(tool: { meta?: Record<string, unknown> } | undefined): boolean {
+  return tool !== undefined && isModelVisible(tool);
 }
 
 /** True when a view of the tool's own server may call it (`"app"` in its visibility). */

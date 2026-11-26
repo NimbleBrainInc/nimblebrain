@@ -9,7 +9,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
-import { isAppCallable, isModelVisible, toolVisibility } from "../../../src/engine/types.ts";
+import {
+  isAgentCallable,
+  isAppCallable,
+  isModelVisible,
+  toolVisibility,
+} from "../../../src/engine/types.ts";
 import { McpSource } from "../../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../../src/tools/registry.ts";
 import { surfaceTools } from "../../../src/tools/surfacing.ts";
@@ -31,6 +36,17 @@ describe("toolVisibility", () => {
 
   test("a value that is not an array is read as absent", () => {
     expect(toolVisibility({ meta: { ui: { visibility: "app" } } })).toEqual(["model", "app"]);
+  });
+});
+
+describe("isAgentCallable", () => {
+  test.each([
+    ["a tool the door cannot list", undefined, false],
+    ["a listed tool with no meta", {}, true],
+    ["an app-only tool", { meta: { ui: { visibility: ["app"] } } }, false],
+    ["a model-only tool", { meta: { ui: { visibility: ["model"] } } }, true],
+  ] as const)("%s", (_label, tool, callable) => {
+    expect(isAgentCallable(tool)).toBe(callable);
   });
 });
 

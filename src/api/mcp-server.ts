@@ -57,7 +57,12 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
-import { isAppCallable, isModelVisible, type ToolResult } from "../engine/types.ts";
+import {
+  isAgentCallable,
+  isAppCallable,
+  isModelVisible,
+  type ToolResult,
+} from "../engine/types.ts";
 import { humanSize } from "../files/human-size.ts";
 import type { TokenGrant, UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
@@ -1533,7 +1538,7 @@ async function assertAgentMayCall(
     );
   }
   const tool = tools.find((t) => t.name === innerToolName);
-  if (!tool || !isModelVisible(tool)) {
+  if (!isAgentCallable(tool)) {
     throw mcpError(
       ProtocolErrorCode.InvalidParams,
       tool

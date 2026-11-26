@@ -5896,3 +5896,158 @@ describe("AgentEngine — promotion after a connector comes up mid-run", () => {
     expect(result.stopReason).toBe("complete");
   });
 });
+
+describe("AgentEngine — a call runs only on a tool the run can list", () => {
+  const MANAGE: ToolSchema = {
+    name: "nb__manage_tools",
+    description: "Patch tool list",
+    inputSchema: MANAGE_TOOLS_INPUT,
+  };
+  const ACTION: ToolSchema = {
+    name: "flaky__action",
+    description: "An action",
+    inputSchema: { type: "object", properties: {} },
+  };
+  const APP_ONLY_ACTION: ToolSchema = { ...ACTION, meta: { ui: { visibility: ["app"] } } };
+
+  function callOnce(...names: string[]) {
+    let n = 0;
+    return createMockModel(() => {
+      n++;
+      if (n === 1) {
+        return {
+          content: names.map((toolName, i) => ({
+            type: "tool-call" as const,
+            toolCallId: `c${i}`,
+            toolName,
+            input: JSON.stringify(toolName === MANAGE.name ? { add: [ACTION.name] } : {}),
+          })),
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "Done" }], inputTokens: 10, outputTokens: 5 };
+    });
+  }
+
+  /** A router whose listing is `listing()` and whose execute runs any name, as a reconnecting source does. */
+  function run(
+    model: LanguageModelV4,
+    listing: () => ToolSchema[],
+    config: Partial<EngineConfig> = {},
+    offered: ToolSchema[] = [],
+  ) {
+    const executed: string[] = [];
+    let listings = 0;
+    let controls: ToolPromotionControls | null = null;
+    const engine = new AgentEngine(
+      model,
+      {
+        availableTools: async () => {
+          listings++;
+          return listing();
+        },
+        execute: async (call) => {
+          executed.push(call.name);
+          if (call.name === MANAGE.name) {
+            for (const name of (call.input.add as string[]) ?? []) await controls?.addTool(name);
+          }
+          return { content: textContent("ran"), isError: false };
+        },
+      },
+      new NoopEventSink(),
+    );
+    const result = engine.run(
+      {
+        ...defaultConfig,
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (c) => {
+            controls = c;
+            return () => {
+              controls = null;
+            };
+          },
+        },
+        ...config,
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "go" }] }],
+      offered,
+    );
+    return { result, executed, listings: () => listings };
+  }
+
+  it("refuses a tool the run cannot list, without running it", async () => {
+    const r = run(callOnce(ACTION.name), () => []);
+    const result = await r.result;
+
+    expect(r.executed).toEqual([]);
+    const call = result.toolCalls.find((c) => c.name === ACTION.name)!;
+    expect(call.ok).toBe(false);
+    expect(call.output).toContain("not in this run's tool list");
+    // The run-start listing plus the one refresh the miss made.
+    expect(r.listings()).toBe(2);
+  });
+
+  it("refuses a hallucinated name without reaching the router", async () => {
+    const r = run(callOnce("nonexistent_tool"), () => [ACTION]);
+    const result = await r.result;
+
+    expect(r.executed).toEqual([]);
+    expect(result.toolCalls[0]?.output).toContain("nb__search");
+  });
+
+  it("runs a model-visible tool whose connector lists again on the refresh", async () => {
+    let up = false;
+    const r = run(callOnce(ACTION.name), () => {
+      const listed = up ? [ACTION] : [];
+      up = true;
+      return listed;
+    });
+    await r.result;
+
+    expect(r.executed).toEqual([ACTION.name]);
+  });
+
+  it("refuses an app-only tool whose connector lists again on the refresh", async () => {
+    let up = false;
+    const r = run(callOnce(APP_ONLY_ACTION.name), () => {
+      const listed = up ? [APP_ONLY_ACTION] : [];
+      up = true;
+      return listed;
+    });
+    const result = await r.result;
+
+    expect(r.executed).toEqual([]);
+    expect(result.toolCalls[0]?.output).toBe(`${ACTION.name} is not available to the agent.`);
+  });
+
+  it("refuses a call a hook renames to a tool the run cannot list", async () => {
+    const r = run(callOnce(ACTION.name), () => [ACTION], {
+      hooks: { beforeToolCall: (call) => ({ ...call, name: "ghost__action" }) },
+    });
+    const result = await r.result;
+
+    expect(r.executed).toEqual([]);
+    expect(result.toolCalls[0]?.output).toContain("ghost__action is not available to the agent");
+  });
+
+  it("runs a tool promoted earlier in the same message", async () => {
+    // The tool's connector comes up after the run-start listing: the promotion's
+    // refresh lists it, and the call after it in the same message runs.
+    let listings = 0;
+    const r = run(
+      callOnce(MANAGE.name, ACTION.name),
+      () => {
+        listings++;
+        return listings === 1 ? [MANAGE] : [MANAGE, ACTION];
+      },
+      {},
+      [MANAGE],
+    );
+    await r.result;
+
+    expect(r.executed).toEqual([MANAGE.name, ACTION.name]);
+  });
+});

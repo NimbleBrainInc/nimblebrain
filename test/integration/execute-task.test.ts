@@ -454,11 +454,11 @@ describe("runtime.executeTask", () => {
     await probe.source.start();
 
     // The wall for the task path: a task is bounded to the workspace it names,
-    // and a name addressing ANOTHER workspace does not
-    // resolve — not because reach is denied, but because the `ws_<id>-` form is
-    // retired and rejected at parse. A task reaches exactly one workspace plus
-    // identity tools, and there is no name that can say otherwise. The
-    // echo model is scripted to emit the retired cross-workspace form directly.
+    // and a name addressing ANOTHER workspace does not resolve. The run's
+    // listing holds no such name, so the engine refuses it before routing; the
+    // router rejects the retired `ws_<id>-` form at parse on every other path
+    // (test/unit/orchestrator/route-error-mapping.test.ts). The echo model is
+    // scripted to emit the retired cross-workspace form directly.
     const namespacedPing = `${SHARED_WS_ID}-probe__ping`;
     runtime = await bootRuntime({
       responses: [
@@ -488,7 +488,7 @@ describe("runtime.executeTask", () => {
     expect(result.toolCalls[0]?.name).toBe(namespacedPing);
     // Rejected: a task bounded to its session workspace cannot NAME another.
     expect(result.toolCalls[0]?.ok).toBe(false);
-    expect(result.toolCalls[0]?.output).toMatch(/retired/i);
+    expect(result.toolCalls[0]?.output).toContain("not in this run's tool list");
   });
 
   it("returns partial usage + runId tagged 'aborted' when the run is aborted mid-flight", async () => {
