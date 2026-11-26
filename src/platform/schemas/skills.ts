@@ -17,7 +17,7 @@ const SkillStatus = StringEnum(["active", "disabled"] as const, {
 
 const LoadingStrategy = StringEnum(["always", "dynamic"] as const, {
   description:
-    "`always` = always-on context (Layer 0/1), set only by the user in Skills settings; `dynamic` = on-demand (loads via tool-affinity, triggers, or the catalog). Default `dynamic`.",
+    "`always` = always-on context (Layer 0/1); `dynamic` = on-demand (loads via tool-affinity, triggers, or the catalog). Default `dynamic`. Only the user, in Skills settings, makes a skill load on its own (`always`, tool-affinity or triggers).",
 });
 
 // How a `---` block at the head of `body` is treated. The canonical skill
@@ -71,12 +71,13 @@ const ManifestFields = {
   toolAffinity: Type.Optional(
     Type.Array(Type.String(), {
       description:
-        "Tool-name globs (e.g. `gmail__*`); a dynamic skill auto-loads when one is active.",
+        "Tool-name globs (e.g. `gmail__*`); a dynamic skill auto-loads before a matching tool's first call. Set only by the user in Skills settings.",
     }),
   ),
   triggers: Type.Optional(
     Type.Array(Type.String(), {
-      description: "Exact phrases that deterministically activate a dynamic skill.",
+      description:
+        "Exact phrases that deterministically activate a dynamic skill. Set only by the user in Skills settings.",
     }),
   ),
   allowedTools: Type.Optional(
