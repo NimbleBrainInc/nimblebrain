@@ -18,6 +18,8 @@
  *     archive at the sha256 that index lists. No tag, branch or bare URL.
  *   - Fail-closed: a missing index, any non-2xx, a network error, an unreadable
  *     archive, or a digest mismatch throws. Nothing partial is returned.
+ *   - Bounded: a response is read up to `MAX_FETCH_BYTES` and refused past it,
+ *     before its digest is checked.
  *   - Content-addressed cache: the index and each plugin archive are cached as
  *     the bytes fetched, under their sha256, and verified again on every read,
  *     so one catalog read serves every workspace and a pin bump refetches only
@@ -37,7 +39,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { readZip } from "../util/zip.ts";
+import { readZip, ZIP_MAX_TOTAL_BYTES } from "../util/zip.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 
 /** One curated skill bound to a server, as read from its plugin. */
@@ -106,6 +108,14 @@ interface PluginRecord {
   skills: Array<{ name: string; server: string; body: string }>;
   conversationStarters: PluginConversationStarter[];
 }
+
+/**
+ * The most bytes read from one catalog response: the archive expansion budget
+ * `readZip` enforces (`ZIP_MAX_TOTAL_BYTES`) plus a 1 MiB allowance for ZIP
+ * metadata. It is a download policy tied to that budget, not a bound the reader
+ * implies; the index, a list of plugins, is far smaller.
+ */
+export const MAX_FETCH_BYTES = ZIP_MAX_TOTAL_BYTES + 1024 * 1024;
 
 /** The most starters read from one plugin; the catalog build allows no more. */
 const MAX_CONVERSATION_STARTERS = 4;
@@ -289,7 +299,34 @@ async function fetchBytes(url: string, opts: ResolveServerSkillsOptions): Promis
   const fetchImpl = opts.fetchImpl ?? fetch;
   const res = await fetchImpl(url, { signal: AbortSignal.timeout(opts.timeoutMs ?? 15_000) });
   if (!res.ok) throw new Error(`plugin catalog fetch failed: HTTP ${res.status} (${url})`);
-  return new Uint8Array(await res.arrayBuffer());
+  const tooLarge = () =>
+    new Error(`plugin catalog fetch exceeds ${MAX_FETCH_BYTES} bytes (${url})`);
+  const declared = Number(res.headers.get("content-length"));
+  if (declared > MAX_FETCH_BYTES) {
+    await res.body?.cancel();
+    throw tooLarge();
+  }
+  if (!res.body) return new Uint8Array(0);
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_FETCH_BYTES) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 function assertDigest(what: string, bytes: Uint8Array, expected: string): void {
