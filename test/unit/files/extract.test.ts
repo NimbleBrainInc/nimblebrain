@@ -290,6 +290,25 @@ describe("extractText bounds the work by the text it keeps", () => {
     }
   });
 
+  // A ZIP64 extra field replaces the header's sizes for a parser that reads it.
+  // An unrelated record (an extended timestamp) comes first, so finding the
+  // ZIP64 record needs the traversal; the same field without it extracts.
+  const timestamp = Buffer.from([0x55, 0x54, 5, 0, 1, 0, 0, 0, 0]);
+  const zip64 = Buffer.alloc(12);
+  zip64.writeUInt16LE(0x0001, 0);
+  zip64.writeUInt16LE(8, 2);
+  zip64.writeBigUInt64LE(128n * 1024n * 1024n, 4);
+  for (const where of ["local", "central"] as const) {
+    test(`a ZIP64 extra field in the ${where} header is refused before parsing`, async () => {
+      const plain = xlsxWithRows(1, { extraField: { field: timestamp, where } });
+      expect((await extractText(plain, XLSX_MIME))?.text).toContain("aaaa");
+      const data = xlsxWithRows(1, {
+        extraField: { field: Buffer.concat([timestamp, zip64]), where },
+      });
+      expect(await refusedBeforeParsing(() => extractText(data, XLSX_MIME))).toBe(true);
+    });
+  }
+
   test("a zip whose end record miscounts its entries is refused", async () => {
     expect(
       await extractText(docxWithParagraphs(6_000, { entryCount: 0 }), DOCX_MIME, 10_000),

@@ -18,6 +18,8 @@ export interface ZipOptions {
   understate?: { size: number; where: "everywhere" | "central"; entry?: string };
   /** Write this as the end record's entry counts instead of the real one. */
   entryCount?: number;
+  /** Write `field` as every entry's extra field, in the local or central header. */
+  extraField?: { field: Buffer; where: "local" | "central" };
 }
 
 /** A deflated zip of `entries`, in order. */
@@ -36,6 +38,9 @@ export function buildZip(entries: Record<string, string | Buffer>, options: ZipO
         : undefined;
     const localSize = lie?.where === "everywhere" ? lie.size : raw.length;
     const centralSize = lie ? lie.size : raw.length;
+    const empty = Buffer.alloc(0);
+    const localExtra = options.extraField?.where === "local" ? options.extraField.field : empty;
+    const centralExtra = options.extraField?.where === "central" ? options.extraField.field : empty;
 
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
@@ -46,7 +51,8 @@ export function buildZip(entries: Record<string, string | Buffer>, options: ZipO
     local.writeUInt32LE(deflated.length, 18);
     local.writeUInt32LE(localSize, 22);
     local.writeUInt16LE(nameBytes.length, 26);
-    locals.push(local, nameBytes, deflated);
+    local.writeUInt16LE(localExtra.length, 28);
+    locals.push(local, nameBytes, localExtra, deflated);
 
     const central = Buffer.alloc(46);
     central.writeUInt32LE(0x02014b50, 0);
@@ -58,10 +64,11 @@ export function buildZip(entries: Record<string, string | Buffer>, options: ZipO
     central.writeUInt32LE(deflated.length, 20);
     central.writeUInt32LE(centralSize, 24);
     central.writeUInt16LE(nameBytes.length, 28);
+    central.writeUInt16LE(centralExtra.length, 30);
     central.writeUInt32LE(offset, 42);
-    centrals.push(central, nameBytes);
+    centrals.push(central, nameBytes, centralExtra);
 
-    offset += local.length + nameBytes.length + deflated.length;
+    offset += local.length + nameBytes.length + localExtra.length + deflated.length;
   }
   const directory = Buffer.concat(centrals);
   const eocd = Buffer.alloc(22);
