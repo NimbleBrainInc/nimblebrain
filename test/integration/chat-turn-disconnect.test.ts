@@ -23,6 +23,9 @@ import { devProvider } from "../helpers/dev-provider.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
+/** The scope the dev identity's turns in the test workspace run in. */
+const SCOPE = { workspaceId: TEST_WORKSPACE_ID, ownerId: DEV_IDENTITY.id };
+
 const SENTINEL = "DETACH_SENTINEL";
 const BACKGROUND_REPLY = "completed in the background after disconnect";
 
@@ -124,7 +127,7 @@ describe("chat turn — run survives viewer disconnect", () => {
       buffer += decoder.decode(value, { stream: true });
     }
     expect(buffer).toContain("event: chat.start");
-    expect(runtime.isTurnActive(convId)).toBe(true);
+    expect(runtime.isTurnActive(SCOPE, convId)).toBe(true);
 
     // The mobile client drops: abort the request and tear down the reader.
     await reader.cancel().catch(() => {});
@@ -134,8 +137,8 @@ describe("chat turn — run survives viewer disconnect", () => {
     await new Promise((r) => setTimeout(r, 50));
     release();
 
-    await waitFor(() => runtime?.isTurnActive(convId) === false);
-    expect(runtime.isTurnActive(convId)).toBe(false);
+    await waitFor(() => runtime?.isTurnActive(SCOPE, convId) === false);
+    expect(runtime.isTurnActive(SCOPE, convId)).toBe(false);
 
     // Inspect the persisted event log.
     const store = (await runtime.resolveConversationStore(

@@ -264,6 +264,8 @@ describe("detached turn HTTP surface", () => {
     });
     expect(res.status).toBe(404);
     expect((await readJson<ApiErrorBody>(res)).error).toBe("conversation_not_found");
-    expect(runtime.isTurnActive(convId)).toBe(false);
+    expect(
+      runtime.isTurnActive({ workspaceId: TEST_WORKSPACE_ID, ownerId: DEV_OWNER }, convId),
+    ).toBe(false);
   });
 });

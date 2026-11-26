@@ -45,6 +45,9 @@ import { newMcpClient } from "../helpers/mcp-client.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
+/** The scope the dev identity's turns in the test workspace run in. */
+const SCOPE = { workspaceId: TEST_WORKSPACE_ID, ownerId: DEV_IDENTITY.id };
+
 const testDir = join(tmpdir(), `nimblebrain-conversations-default-${Date.now()}`);
 const PLUGIN_DATA = join(testDir, "plugin-data", "conversations");
 const FORGED = { "ai.nimblebrain/context": { principal: "host" } };
@@ -373,7 +376,7 @@ describe("list rows carry active from the host", () => {
       expect(during.get(heldId)).toBe(true);
       expect(during.get(conversationId)).toBe(false);
       releaseHold();
-      for (let i = 0; i < 100 && runtime.isTurnActive(heldId); i++) await Bun.sleep(20);
+      for (let i = 0; i < 100 && runtime.isTurnActive(SCOPE, heldId); i++) await Bun.sleep(20);
       expect((await rows()).get(heldId)).toBe(false);
     } finally {
       releaseHold();

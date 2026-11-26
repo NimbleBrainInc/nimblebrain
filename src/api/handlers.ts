@@ -177,7 +177,7 @@ export async function handleChatCancel(
   if (!conversation) {
     return conversationNotFoundResponse(conversationId);
   }
-  const cancelled = runtime.cancelTurn(conversationId);
+  const cancelled = runtime.cancelTurn({ workspaceId, ownerId: callerId }, conversationId);
   return json<ChatCancelResponse>({ cancelled });
 }
 

@@ -18,6 +18,11 @@ bound to `ai.nimblebrain.conversations` (ADR-0076): by default the built-in plug
   over the plugin in process (`test/helpers/conversation-store.ts`).
 - **`events.ts` is what a turn stores**: one function maps an engine event to its stored event
   (`conversationEventOf`), one a stored message (`messageEvents`).
+- **Per-conversation state is keyed by scope and id, never the id alone** (`conversationKey`
+  in `contract-store.ts`): a conversation id is unique only within its workspace and owner
+  (CONTRACT.md §2). The write queues, the turn lock, the run bus and the SSE viewers of a turn
+  all use it, so a batch is sent only under the scope it was written in and a turn's state is
+  never shared with the same id in another scope.
 - **Writes are queued per conversation and sent in batches**, in order; a read of a
   conversation waits for its queued writes. An append is never retried (the contract has no
   idempotency key). Shutdown flushes the queues before the server stops.

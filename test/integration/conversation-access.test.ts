@@ -374,7 +374,7 @@ describe("HTTP — a conversation that is not the caller's in the path's workspa
     expect(shape(inB.body, aliceConvInB)).toEqual(shape(unknown.body, unknownId));
 
     // Nothing ran in B and nothing was born in A under either id.
-    expect(runtime.isTurnActive(aliceConvInB)).toBe(false);
+    expect(runtime.isTurnActive({ workspaceId: wsB, ownerId: ALICE.id }, aliceConvInB)).toBe(false);
     const inBStore = await runtime.resolveConversationStore(wsB, aliceConvInB, ALICE.id);
     const conv = await inBStore!.load(aliceConvInB);
     expect(await inBStore!.history(conv!)).toHaveLength(2);

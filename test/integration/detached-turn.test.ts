@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatResponse } from "../../src/api/schemas/responses.ts";
+import { conversationKey } from "../../src/conversation/contract-store.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { ModelAuthError } from "../../src/model/model-auth.ts";
 import { ConversationNotFoundError, RunInProgressError } from "../../src/runtime/errors.ts";
@@ -13,6 +14,9 @@ import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+
+/** The scope the dev identity's turns in the test workspace run in. */
+const SCOPE = { workspaceId: TEST_WORKSPACE_ID, ownerId: DEV_IDENTITY.id };
 
 let runtime: Runtime;
 const testDir = join(tmpdir(), `nimblebrain-detached-${Date.now()}`);
@@ -40,8 +44,8 @@ afterAll(async () => {
 async function awaitTurn(
   conversationId: string,
 ): Promise<{ events: BufferedRunEvent[]; status: RunStatus }> {
-  await waitFor(() => !runtime.isTurnActive(conversationId));
-  const events = runtime.getTurnReplay(conversationId, 0);
+  await waitFor(() => !runtime.isTurnActive(SCOPE, conversationId));
+  const events = runtime.getTurnReplay(SCOPE, conversationId, 0);
   const last = events[events.length - 1];
   const status: RunStatus =
     last?.type === "done" ? "done" : last?.type === "cancelled" ? "cancelled" : "error";
@@ -109,7 +113,7 @@ describe("detached turns (server-authoritative streaming)", () => {
     const spy = spyOn(runtime, "announceIdentitySourceChange").mockImplementation(
       (name: string, userId: string) => {
         if (name === "conversations" && userId === ownerId) {
-          activeAtAnnounce.push(runtime.isTurnActive(created.id));
+          activeAtAnnounce.push(runtime.isTurnActive(SCOPE, created.id));
         }
         original(name, userId);
       },
@@ -121,7 +125,7 @@ describe("detached turns (server-authoritative streaming)", () => {
         conversationId: created.id,
         workspaceId: TEST_WORKSPACE_ID,
       });
-      await waitFor(() => !runtime.isTurnActive(created.id));
+      await waitFor(() => !runtime.isTurnActive(SCOPE, created.id));
       await waitFor(() => activeAtAnnounce.at(-1) === false);
 
       expect(activeAtAnnounce).toContain(true);
@@ -138,7 +142,7 @@ describe("detached turns (server-authoritative streaming)", () => {
       workspaceId: TEST_WORKSPACE_ID,
     });
     // Never attach — wait for the run to end purely via server state.
-    await waitFor(() => !runtime.isTurnActive(conversationId));
+    await waitFor(() => !runtime.isTurnActive(SCOPE, conversationId));
 
     const conv = await runtime.findConversation(TEST_WORKSPACE_ID, conversationId, {
       userId: DEV_IDENTITY.id,
@@ -172,7 +176,7 @@ describe("detached turns (server-authoritative streaming)", () => {
         join(ownerConversationsDir(testDir, TEST_WORKSPACE_ID, DEV_IDENTITY.id), `${id}.jsonl`),
       ),
     ).toBe(false);
-    expect(runtime.isTurnActive(id)).toBe(false);
+    expect(runtime.isTurnActive(SCOPE, id)).toBe(false);
     expect(
       await runtime.findConversation(TEST_WORKSPACE_ID, id, { userId: DEV_IDENTITY.id }),
     ).toBeNull();
@@ -237,7 +241,7 @@ describe("detached turns (server-authoritative streaming)", () => {
       }),
     ).rejects.toBeInstanceOf(ConversationNotFoundError);
     // The run was never reserved.
-    expect(runtime.isTurnActive(convId)).toBe(false);
+    expect(runtime.isTurnActive(SCOPE, convId)).toBe(false);
   });
 
   it("allows a new turn on the same conversation once idle", async () => {
@@ -297,6 +301,33 @@ describe("cancel delivers a terminal frame to live viewers (Stop button)", () =>
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("keys a turn by its scope: the same id in another scope shares none of its state", async () => {
+    const captured: string[] = [];
+    rt.onTurnEvent = (key) => captured.push(key);
+    const { conversationId } = await rt.startTurn({
+      identity: DEV_IDENTITY,
+      message: "hang",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    await waitFor(() => rt.isTurnActive(SCOPE, conversationId));
+
+    for (const other of [
+      { workspaceId: "ws_ffffffffffffffff", ownerId: DEV_IDENTITY.id },
+      { workspaceId: TEST_WORKSPACE_ID, ownerId: "usr_someone_else" },
+    ]) {
+      expect(rt.isTurnActive(other, conversationId)).toBe(false);
+      expect(rt.turnSeq(other, conversationId)).toBe(0);
+      expect(rt.getTurnReplay(other, conversationId, 0)).toEqual([]);
+      expect(rt.cancelTurn(other, conversationId)).toBe(false);
+    }
+    // Live events fan out under the turn's own scope only.
+    expect(new Set(captured)).toEqual(new Set([conversationKey(SCOPE, conversationId)]));
+    expect(rt.isTurnActive(SCOPE, conversationId)).toBe(true);
+    expect(rt.getTurnReplay(SCOPE, conversationId, 0).length).toBeGreaterThan(0);
+
+    expect(rt.cancelTurn(SCOPE, conversationId)).toBe(true);
+  });
+
   it("publishes `cancelled` on the live onTurnEvent path (not just RunBus onEnd)", async () => {
     // Capture the SSE feed path: server.ts wires runtime.onTurnEvent →
     // ConversationEventManager. This is the channel the bug bypassed.
@@ -308,14 +339,14 @@ describe("cancel delivers a terminal frame to live viewers (Stop button)", () =>
       message: "hang",
       workspaceId: TEST_WORKSPACE_ID,
     });
-    await waitFor(() => rt.isTurnActive(conversationId));
+    await waitFor(() => rt.isTurnActive(SCOPE, conversationId));
 
-    const ok = rt.cancelTurn(conversationId);
+    const ok = rt.cancelTurn(SCOPE, conversationId);
     expect(ok).toBe(true);
     // The terminal frame must reach live viewers — RunBus.cancel ends the run
     // synchronously, so publishing after it (engine's catch) would no-op.
     expect(captured.some((e) => e.type === "cancelled")).toBe(true);
-    expect(rt.isTurnActive(conversationId)).toBe(false);
+    expect(rt.isTurnActive(SCOPE, conversationId)).toBe(false);
   });
 });
 
@@ -347,8 +378,8 @@ describe("a missing or rejected model key ends the turn with a structured error 
       message: "What can you help me with?",
       workspaceId: TEST_WORKSPACE_ID,
     });
-    await waitFor(() => !rt.isTurnActive(conversationId));
-    const last = rt.getTurnReplay(conversationId, 0).at(-1);
+    await waitFor(() => !rt.isTurnActive(SCOPE, conversationId));
+    const last = rt.getTurnReplay(SCOPE, conversationId, 0).at(-1);
     expect(last?.type).toBe("error");
     const data = last?.data as { error: string; message: string };
     expect(data.error).toBe("model_auth_failed");
@@ -390,8 +421,8 @@ describe("a runtime with no model provider configured", () => {
       message: "What can you help me with?",
       workspaceId: TEST_WORKSPACE_ID,
     });
-    await waitFor(() => !rt.isTurnActive(conversationId));
-    const last = rt.getTurnReplay(conversationId, 0).at(-1);
+    await waitFor(() => !rt.isTurnActive(SCOPE, conversationId));
+    const last = rt.getTurnReplay(SCOPE, conversationId, 0).at(-1);
     expect(last?.type).toBe("error");
     const data = last?.data as { error: string; message: string };
     expect(data.error).toBe("model_auth_failed");
@@ -405,8 +436,8 @@ describe("a runtime with no model provider configured", () => {
       model: "openai:gpt-5",
       workspaceId: TEST_WORKSPACE_ID,
     });
-    await waitFor(() => !rt.isTurnActive(conversationId));
-    const data = rt.getTurnReplay(conversationId, 0).at(-1)?.data as { error: string };
+    await waitFor(() => !rt.isTurnActive(SCOPE, conversationId));
+    const data = rt.getTurnReplay(SCOPE, conversationId, 0).at(-1)?.data as { error: string };
     expect(data.error).toBe("model_auth_failed");
   });
 });
@@ -446,7 +477,7 @@ describe("shutdown aborts in-flight detached turns (RunBus teardown)", () => {
       // captured) — `isTurnActive` flips true on `runBus.begin()`, before
       // `doStream`, so it alone would race the capture.
       await waitFor(() => capturedSignal !== undefined);
-      expect(rt.isTurnActive(conversationId)).toBe(true);
+      expect(rt.isTurnActive(SCOPE, conversationId)).toBe(true);
       expect(capturedSignal?.aborted).toBe(false);
 
       // Shutdown must abort the in-flight turn (RunBus.reset) so it stops
@@ -454,7 +485,7 @@ describe("shutdown aborts in-flight detached turns (RunBus teardown)", () => {
       await rt.shutdown();
 
       expect(capturedSignal?.aborted).toBe(true);
-      expect(rt.isTurnActive(conversationId)).toBe(false);
+      expect(rt.isTurnActive(SCOPE, conversationId)).toBe(false);
     } finally {
       release(); // let the parked engine task unwind
       rmSync(dir, { recursive: true, force: true });

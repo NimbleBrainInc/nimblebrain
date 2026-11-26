@@ -155,8 +155,8 @@ export function startServer(options: ServerOptions): ServerHandle {
   // Bridge detached-turn events (RunBus) to the per-conversation SSE manager
   // so connected viewers tail live. Replay-on-connect is sourced separately
   // from the RunBus buffer (see the conversation-events route).
-  runtime.onTurnEvent = (conversationId, event) => {
-    conversationEventManager.publishEvent(conversationId, event);
+  runtime.onTurnEvent = (key, event) => {
+    conversationEventManager.publishEvent(key, event);
   };
 
   // Per-identity request rate limiters. The limit lives on the caller's
