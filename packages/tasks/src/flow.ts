@@ -285,7 +285,13 @@ export function beginRun(
     );
   }
   if (fence && args.token === fence.token) return answerOf(tx, fence.answer);
-  if (fence?.answer.decision === "run") return interrupt(tx, args, fence.token, fence.answer.runId);
+  // The run an earlier claim received, whether this ref's last answer was that run or an
+  // interrupted skip naming it: every higher claim reports it until its `end_run` lands.
+  const held =
+    fence?.answer.decision === "run"
+      ? { runId: fence.answer.runId, token: fence.token }
+      : fence?.answer.interrupted;
+  if (held) return interrupt(tx, args, held.token, held.runId);
   const answer = decide(tx, args.ref, args.token, Date.parse(args.now));
   state.fences[args.ref] = { token: args.token, answer: fenceAnswer(answer), at: args.now };
   return answer;
@@ -304,14 +310,18 @@ function answerOf(tx: Tx, answer: FenceAnswer): BeginAnswer {
   return { decision: "run", runId: answer.runId, grant: given.grant, work: given.work };
 }
 
-/** A later claim of a ref whose run an earlier claim received: never that run again. */
+/**
+ * A later claim of a ref whose run an earlier claim received: never that run again. While
+ * the run's `end_run` has not landed it is recorded interrupted, provisionally, and the
+ * answer names it with the token that received its work, on this claim and every later one.
+ */
 function interrupt(
   tx: Tx,
   args: { ref: string; token: number; now: string },
   earlier: number,
   runId: string,
 ): BeginAnswer {
-  const run = tx.ws.state.open[runId];
+  const run = Object.hasOwn(tx.ws.state.open, runId) ? tx.ws.state.open[runId] : undefined;
   const answer: BeginAnswer = run
     ? {
         decision: "skip",

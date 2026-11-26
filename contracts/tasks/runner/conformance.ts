@@ -201,8 +201,9 @@ function validateOutput(tool: string, value: unknown): void {
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
 }
-/** JSON with object keys sorted, so key order never decides equality. */
+/** JSON with object keys sorted, so key order never decides equality; `undefined` reads as itself. */
 function canonical(v: unknown): string {
+  if (v === undefined) return "undefined";
   return JSON.stringify(v, (_k, val) =>
     val && typeof val === "object" && !Array.isArray(val)
       ? Object.fromEntries(Object.entries(val).sort(([a], [b]) => a.localeCompare(b)))
@@ -1456,7 +1457,11 @@ async function fencingCases(c: FullCtx): Promise<void> {
       eq(skip.decision, "skip", "decision");
       eq(skip.interrupted, { runId, token: 3 }, "interrupted");
       eq(await host.begin(ref, 4, t + MINUTE, 3), skip, "the repeated token 4 answer");
-      eq((await host.begin(ref, 5, t + 2 * MINUTE, 4)).decision, "skip", "a later token");
+      // Every higher claim names the run until its end_run lands, so a second takeover
+      // never strands it.
+      const third = await host.begin(ref, 5, t + 2 * MINUTE, 4);
+      eq(third.decision, "skip", "a third claim's decision");
+      eq(third.interrupted, { runId, token: 3 }, "a third claim's interrupted");
     },
   );
   await h.run("end_run names only a run begin_run answered", async () => {
@@ -1495,6 +1500,13 @@ async function fencingCases(c: FullCtx): Promise<void> {
       });
       notices = (await host.end(runId, 3, o)).notices;
       eq(await execution(person, runId), { execution: "failed", label: "Failed" }, "the run");
+      // The host's report closed it: a later claim names no interrupted run, and the run is
+      // in no listing's cancel.
+      const after = await host.begin(ref, 6, t + 3 * MINUTE, 5);
+      eq([after.decision, after.interrupted], ["skip", undefined], "a claim after its end_run");
+      assert(!(await host.dueAll(t, t + DAY)).cancel.includes(runId), "the ended run in cancel");
+      const ran = obj((await runResult(person, runId)).run, "run");
+      assert(typeof ran.completedAt === "string", "the ended run has no completedAt");
     },
   );
   await h.run(
