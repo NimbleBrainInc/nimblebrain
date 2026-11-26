@@ -283,6 +283,14 @@ serve the kernel. The server refuses a private tool to any principal but `host` 
 runtime itself), and the runtime never offers private tools to agents. The built-in
 conversations plugin is one, run by default; tasks and files are kernel code.
 
+### Catalog policy *(proposed, ADR-0076; not yet built)*
+How far a catalog's plugins reach, set by the operator when attaching the catalog:
+`required` installs every plugin in it in every workspace, including workspaces created
+later, and a workspace cannot remove one; `available` offers them to install. Policy
+decides presence, not authorization: a plugin that needs each person to sign in still
+asks each person. The kernel reconciles every workspace to its required plugins. A
+catalog cannot implement a kernel contract or make a plugin a system plugin.
+
 ### Contract *(ADR-0076)*
 The versioned, language-neutral interface between the kernel and whatever implements a
 capability it consumes: a permanent reverse-DNS name (`ai.nimblebrain.conversations`), a

@@ -135,6 +135,51 @@ present. A plugin a tenant installs stays remote-only. A system plugin's process
 receive the scope and principal of each call and a minimal environment, never the
 runtime's own.
 
+### Catalogs decide reach, and the kernel keeps it
+
+**A plugin reaches workspaces in one of three ways**, and trust and reach are separate
+questions:
+
+| | What it is | Who decides | In every workspace? |
+|---|---|---|---|
+| **Contract plugins** | implementations of a contract the kernel consumes (conversations, tasks, files) | the operator, in `plugins` | yes, as part of the platform; a workspace cannot remove one |
+| **Catalog plugins** | tools, skills and screens a tenant or vendor offers to all of its workspaces | the operator, by attaching a catalog with a policy | as its catalog's policy says |
+| **Workspace plugins** | connectors one workspace installs from any catalog or by URL | the workspace | no |
+
+**The operator attaches catalogs, each with a policy**:
+
+```json
+"catalogs": [
+  { "source": "https://catalog.example-vendor.com", "policy": "required" },
+  { "source": "nimblebrain", "policy": "available" }
+]
+```
+
+- `required`: every plugin in the catalog is installed in every workspace, including
+  each workspace created later, and a workspace cannot remove it.
+- `available`: the catalog's plugins are offered to install, as every catalog is
+  today.
+- Catalogs sit side by side: a vendor's own catalog beside NimbleBrain's catalog of
+  business tools and any other.
+
+**Policy decides presence, not authorization.** A required plugin's tools, skills and
+screens are present in every workspace. A plugin that needs each person to sign in to
+an outside account still asks each person; nobody is signed in on another's behalf. A
+plugin that takes identity from the host context, as the kernel stamps it on every
+call, works for everyone at once.
+
+**The kernel keeps presence true.** At boot, when a workspace is created and when the
+catalogs change, the kernel reconciles every workspace to its required plugins. No
+script installs them and nothing has to remember to.
+
+**Reach never changes trust.** A catalog plugin is a connector: the kernel connects to
+it and never runs its code, every call carries the host context so the plugin walls by
+workspace and person, and a catalog can neither implement a kernel contract nor make a
+plugin a system plugin. Those come only from `plugins`.
+
+**The operator's configuration holds the catalogs today.** A control plane that lets a
+tenant attach and detach its own catalogs edits the same list.
+
 ### One server per capability, authorized by principal
 
 **A plugin implements a contract with one MCP server.** The server exposes the contract's
@@ -290,12 +335,22 @@ kernel's `history/`.
 - Every published contract is an interface maintained for every implementation built on
   it. Contracts are written for what the kernel consumes and what someone will replace,
   and nothing else.
+- A tenant or vendor offers its own tools to all of its workspaces by attaching a
+  catalog with `required`; the kernel's reconcile keeps them present. A policy that
+  installs everywhere but lets a workspace remove a plugin is a later addition, made
+  when someone needs it.
 - Moving to this layout is incremental: conversations first, then tasks with the work
   queue, then files with blobs. The work happens on a dedicated branch and reaches
   `main` when each step is complete and passes its conformance suites.
 
 ## Alternatives considered
 
+- **Policy on each catalog entry instead of each catalog.** Rejected for now: a catalog
+  is what a tenant or vendor curates for one purpose, so the policy belongs with it. An
+  entry-level override is added if a catalog ever needs to mix.
+- **Installing required plugins with a script or an admin action per workspace.**
+  Rejected: a workspace created later, or one a script missed, would lack them. Presence
+  is an invariant the kernel keeps by reconciling.
 - **In-process domain stores with a storage-provider registry (ADR-0075).** Superseded:
   the boundary does not serialize, so it can leak, and the registry is a second
   extension model beside MCP for capabilities.
