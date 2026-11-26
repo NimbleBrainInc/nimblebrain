@@ -226,12 +226,6 @@ export function startServer(options: ServerOptions): ServerHandle {
     toolCallLimiter,
     mcpLimiter,
     eventSink: runtime.getEventSink(),
-    // Every provider's cookies are `Secure`. A deployment is fronted by a
-    // TLS-terminating edge, so the browser↔edge leg is HTTPS regardless of the
-    // container's plain-HTTP listen address, and browsers treat
-    // http://localhost as a secure context. Deriving this from the listen
-    // address is wrong: Bun binds `0.0.0.0` in production.
-    secureCookies: true,
     // Post-login landing — a user-facing browser destination, so it uses
     // webOrigin() like the connectors return (one rule: browser-facing →
     // webOrigin, vendor-facing → publicOrigin). Identical to publicOrigin() in
