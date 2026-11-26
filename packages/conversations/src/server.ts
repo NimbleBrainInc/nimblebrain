@@ -19,6 +19,7 @@ import { ProtocolError, ProtocolErrorCode, Server } from "@modelcontextprotocol/
 import {
   type CallContext,
   contractSchema,
+  declareHostMeta,
   publicErrorPrefix,
   readHostContext,
   refuseUnlessAllowed,
@@ -50,9 +51,6 @@ import {
 export const SERVER_NAME = "conversations";
 export const SCREEN_URI = "ui://conversations/browser";
 export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
-
-/** Where a host's `_meta` carries a server's host metadata (`schemas/host/v1/host.schema.json`). */
-export const HOST_META_KEY = "ai.nimblebrain/host";
 
 /**
  * This server's host metadata: the screen's place in a host's shell. It answers the
@@ -275,18 +273,8 @@ export function buildServer(opts: ServerOptions): Server {
     { capabilities: { tools: {}, resources: {} } },
   );
 
-  // The handshake answers as the SDK does, with this server's host metadata in `_meta`. The
-  // SDK declares its handshake handlers private; bracket access is how TypeScript reads one.
-  server.setRequestHandler("initialize", async (request) => ({
-    // biome-ignore lint/complexity/useLiteralKeys: a private SDK member, read by bracket access
-    ...(await server["_oninitialize"](request)),
-    _meta: { [HOST_META_KEY]: HOST_META },
-  }));
-  server.setRequestHandler("server/discover", () => {
-    // biome-ignore lint/complexity/useLiteralKeys: a private SDK member, read by bracket access
-    const discovered = server["_ondiscover"]();
-    return { ...discovered, _meta: { ...discovered._meta, [HOST_META_KEY]: HOST_META } };
-  });
+  // The handshake answers as the SDK does, with this server's host metadata in `_meta`.
+  declareHostMeta(server, HOST_META);
 
   server.setRequestHandler("tools/list", async () => ({
     tools: Object.keys(CONTRACT.tools).map((name) => {

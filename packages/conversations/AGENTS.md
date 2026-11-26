@@ -104,7 +104,7 @@ conversations. How to run it standalone is in `README.md`.
 - **The server places its own screen.** Its handshake result (`initialize`, and
   `server/discover` on the 2026-07-28 revision) carries `_meta["ai.nimblebrain/host"]`
   (`HOST_META` in `src/server.ts`, `schemas/host/v1/host.schema.json`) with the sidebar
-  placement. A host shows the screen from that metadata; nothing in the host names it.
+  placement, through the server SDK's `declareHostMeta`. A host shows the screen from that metadata; nothing in the host names it.
 
 ## Tests
 

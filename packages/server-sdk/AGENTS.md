@@ -5,7 +5,7 @@ Scope: `packages/server-sdk/`, `@nimblebrain/server-sdk`. The TypeScript counter
 needs to serve a contract (ADR-0076), and nothing more. It is private until the kernel stamps
 the host context on its calls.
 
-It covers three things:
+It covers four things:
 
 - **Reading the host context** (`readHostContext`): the object at
   `params._meta["ai.nimblebrain/context"]` (`contracts/host-context/CONTEXT.md`). The reader
@@ -19,6 +19,12 @@ It covers three things:
   and `publicErrorPrefix` read a contract's published `contract.json`. `contractSchema` returns
   a tool's schema with the shared `$defs` it refers to bundled beside it, so the schema a
   server lists compiles on its own.
+- **Host metadata on the handshake** (`declareHostMeta`): carries a server's
+  `_meta["ai.nimblebrain/host"]` block on its `initialize` and `server/discover` results. The
+  MCP TypeScript SDK builds both in members it declares private, so the helper wraps them on
+  the instance, reached structurally (no MCP import), and throws when they are gone;
+  `test/unit/plugins/server-sdk-handshake.test.ts` guards an SDK upgrade that renames them.
+  Every plugin server uses it rather than its own copy.
 - **`grant` and `unattended` are read, never interpreted.** `readHostContext` exposes the run
   grant as the opaque string the host stamped (a server stores it and returns it verbatim) and
   `unattended` as a boolean; refusing a tool on an unattended call is the server's, from the
