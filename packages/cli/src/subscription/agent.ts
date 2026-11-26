@@ -7,7 +7,13 @@
 import { randomUUID } from "node:crypto";
 import * as acp from "@agentclientprotocol/sdk/unstable";
 import { FAILURE_META_KEY, type FailureCode, TurnFailed } from "./backends/failure.ts";
-import { type Backend, BackendRefused, type Refusal } from "./backends/types.ts";
+import {
+  type Backend,
+  BackendRefused,
+  type Refusal,
+  type SessionPurpose,
+  type TurnInput,
+} from "./backends/types.ts";
 import type { Bridge } from "./bridge.ts";
 import { log } from "./log.ts";
 
@@ -15,11 +21,20 @@ import { log } from "./log.ts";
 export const USAGE_META_KEY = "nimblebrain-subscription/usage";
 /** The `initialize` key the runtime's driver reads the plan from, for the composer: "Claude Max". */
 export const PLAN_META_KEY = "nimblebrain-subscription/plan";
+/** The `initialize` key the runtime reads the turn model from, as a person reads it: "Sonnet". */
+export const MODEL_META_KEY = "nimblebrain-subscription/model";
+/**
+ * The `session/new` key that says what a session is for: `{purpose: "internal"}`
+ * for the door's own model work (a title, a summary); absent is a normal turn.
+ */
+export const SESSION_META_KEY = "nimblebrain-subscription/session";
 export const AGENT_VERSION = "0.1.0";
 
 interface Session {
   system?: string;
-  mcpUrl: string;
+  purpose: SessionPurpose;
+  /** The session's bridge to its NimbleBrain tools; none for an internal session. */
+  mcpUrl?: string;
   release(): void;
   turn?: AbortController;
 }
@@ -49,19 +64,33 @@ export function createWorkerAgent(backend: Backend, bridge: Bridge, plan?: strin
           : {}),
       },
       agentInfo: { name: `nimblebrain-subscription-${backend.id}`, version: AGENT_VERSION },
-      ...(plan ? { _meta: { [PLAN_META_KEY]: plan } } : {}),
+      ...(plan || backend.modelLabel
+        ? {
+            _meta: {
+              ...(plan ? { [PLAN_META_KEY]: plan } : {}),
+              ...(backend.modelLabel ? { [MODEL_META_KEY]: backend.modelLabel } : {}),
+            },
+          }
+        : {}),
     }))
     .onRequest(acp.methods.agent.session.new, (ctx) => {
+      const purpose = sessionPurpose(ctx.params._meta);
+      const sessionId = randomUUID();
+      const system = ctx.params.systemPrompt?.content
+        .map((b) => (b.type === "text" ? b.text : ""))
+        .join("\n\n");
+      const extra = system ? { system } : {};
+      // The door's own work calls no tool, so it gets no bridge, whatever servers it names.
+      if (purpose === "internal") {
+        sessions.set(sessionId, { purpose, release: () => {}, ...extra });
+        return { sessionId };
+      }
       const server = ctx.params.mcpServers.find((s) => "type" in s && s.type === "acp");
       if (!server || !("serverId" in server)) {
         throw acp.RequestError.invalidParams(undefined, "the session names no acp MCP server");
       }
       const { url, release } = bridge.bind(ctx.client, server.serverId);
-      const sessionId = randomUUID();
-      const system = ctx.params.systemPrompt?.content
-        .map((b) => (b.type === "text" ? b.text : ""))
-        .join("\n\n");
-      sessions.set(sessionId, { mcpUrl: url, release, ...(system ? { system } : {}) });
+      sessions.set(sessionId, { purpose, mcpUrl: url, release, ...extra });
       return { sessionId };
     })
     .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
@@ -71,12 +100,11 @@ export function createWorkerAgent(backend: Backend, bridge: Bridge, plan?: strin
       const turn = new AbortController();
       session.turn = turn;
       const started = performance.now();
-      log(`turn started on ${backend.label}`);
+      log(`${RUN_NAMES[session.purpose]} started on ${backend.label}`);
       try {
         const result = await backend.run({
           prompt: promptText(ctx.params.prompt),
-          ...(session.system ? { system: session.system } : {}),
-          mcpUrl: session.mcpUrl,
+          ...sessionInput(session),
           signal: turn.signal,
           emit: (update) =>
             void ctx.client
@@ -142,6 +170,23 @@ function turnFailure(err: unknown, label: string): { code: FailureCode; message:
     code: "cli_failed",
     message: `${label} could not finish the turn. Check the agent worker's log, then send your message again.`,
   };
+}
+
+const RUN_NAMES: Record<SessionPurpose, string> = { turn: "turn", internal: "internal run" };
+
+/** What a session gives each of its turns: its purpose, system prompt and bridge, when it has them. */
+function sessionInput(session: Session): Pick<TurnInput, "purpose" | "system" | "mcpUrl"> {
+  return {
+    purpose: session.purpose,
+    ...(session.system ? { system: session.system } : {}),
+    ...(session.mcpUrl ? { mcpUrl: session.mcpUrl } : {}),
+  };
+}
+
+/** What `session/new`'s `_meta` says the session is for; anything but `internal` is a turn. */
+export function sessionPurpose(meta: Record<string, unknown> | null | undefined): SessionPurpose {
+  const marker = meta?.[SESSION_META_KEY] as { purpose?: unknown } | null | undefined;
+  return marker?.purpose === "internal" ? "internal" : "turn";
 }
 
 /** The prompt's text: text blocks and embedded text resources, in order. */

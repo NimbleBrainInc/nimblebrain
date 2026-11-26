@@ -8,6 +8,7 @@ import type {
   LanguageModelV4Usage,
   SharedV4ProviderMetadata,
 } from "@ai-sdk/provider";
+import { isTitleCall, TEST_TITLE } from "./mock-model.ts";
 
 /**
  * A queued response entry. Can be plain text or include tool calls.
@@ -49,6 +50,8 @@ export interface EchoModelResponse {
 export interface EchoModelOptions {
   /** Pre-programmed response queue. Consumed FIFO; when empty, falls back to echo. */
   responses?: EchoModelResponse[];
+  /** Answer title calls from the queue too, instead of with `TEST_TITLE` (`./mock-model.ts`). */
+  scriptTitles?: boolean;
   provider?: string;
   modelId?: string;
 }
@@ -100,6 +103,15 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV4 {
     return {
       unified: hasToolCalls ? "tool-calls" : "stop",
       raw: undefined,
+    };
+  }
+
+  /** A title call's answer, apart from the queue (`isTitleCall`). */
+  function titleResult() {
+    return {
+      content: [{ type: "text" as const, text: TEST_TITLE }],
+      finishReason: buildFinishReason(false),
+      usage: buildUsage(TEST_TITLE.length),
     };
   }
 
@@ -168,6 +180,9 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV4 {
     supportedUrls: {},
 
     async doGenerate(callOptions) {
+      if (!options?.scriptTitles && isTitleCall(callOptions)) {
+        return { ...titleResult(), warnings: [] };
+      }
       const result = buildResult(callOptions);
       return {
         ...result,

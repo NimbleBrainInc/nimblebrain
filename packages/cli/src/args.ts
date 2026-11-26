@@ -1,6 +1,7 @@
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
 import { DEFAULT_LOCAL_MODEL } from "./local-model.ts";
 import { CliError } from "./result.ts";
+import { MODEL_ID } from "./subscription/command.ts";
 
 /**
  * Every command, what it takes after it, and what it does: the one table the
@@ -79,6 +80,8 @@ export interface Flags {
   localModel?: string;
   /** `--use <source>`: what `init` runs NimbleBrain's agents on, without asking. */
   use?: Source;
+  /** `--model <id>`: the model a subscription's turns run on (`use claude|codex`, `init --use claude|codex`). */
+  model?: string;
   runtime?: string;
   /** `--telemetry on|off`: an answer a person already gave. */
   telemetry?: "on" | "off";
@@ -130,7 +133,7 @@ export const FLAG_SPECS = {
   port: {
     type: "string",
     takes: "n",
-    description: `Local port (default ${DEFAULT_PORT}; for doctor, the install's own port; for use, the agent worker's, default 27290 for claude and 27291 for codex)`,
+    description: `Local port (default ${DEFAULT_PORT}, or on a new install the next free port 100 on when that one is in use; for doctor, the install's own port; for use, the agent worker's, default 27290 for claude and 27291 for codex, moved the same way). A port given here is never moved: in use, it is PORT_IN_USE`,
     commands: ["init", "doctor", "use"],
   },
   home: {
@@ -152,6 +155,13 @@ export const FLAG_SPECS = {
     description:
       "What runs NimbleBrain's agents, as use takes it; without it (or --local-model), init asks a person, or leaves it unchosen and returns the question in model_source.ask",
     commands: ["init"],
+  },
+  model: {
+    type: "string",
+    takes: "id",
+    description:
+      "The model your subscription's turns run on, for use claude|codex and init --use claude|codex: for claude sonnet (default), opus, haiku or a full model id; for codex a model your plan offers (default Codex's own)",
+    commands: ["init", "use"],
   },
   "local-model": {
     type: "string",
@@ -239,6 +249,7 @@ export function parse(argv: string[]): Parsed {
     provider: values.provider,
     localModel: values["local-model"],
     use,
+    model: modelFlag(values.model),
     runtime: values.runtime,
     telemetry,
     noOpen: values["no-open"] === true,
@@ -270,6 +281,15 @@ function useFlag(value: string | undefined, localModel: string | undefined): Sou
       `--local-model runs on a local model, so it takes --use local, not "${value}".`,
     );
   return value as Source;
+}
+
+/** `--model`, checked for shape only: the vendor CLI says whether the plan offers it. */
+function modelFlag(value: string | undefined): string | undefined {
+  if (value === undefined || MODEL_ID.test(value)) return value;
+  throw new CliError(
+    "USAGE",
+    `--model takes a model name such as sonnet, opus or haiku, or a full model id, not "${value}".`,
+  );
 }
 
 function telemetryFlag(value: string | undefined): "on" | "off" | undefined {

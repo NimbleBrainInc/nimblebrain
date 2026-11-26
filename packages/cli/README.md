@@ -48,6 +48,19 @@ When a newer CLI or NimbleBrain release exists, the CLI says so on stderr after 
 answer (once a day at most; it never updates anything itself).
 `NIMBLEBRAIN_NO_UPDATE_CHECK=1` turns that off.
 
+## A second install
+
+```bash
+npx nimblebrain --home ~/.nimblebrain-beta --runtime vX.Y.Z-rc.N
+```
+
+Each `--home` is its own install, beside the one you use every day. When port 27246 is
+taken, the new install takes the next free port 100 on (27346, 27446, …), says what holds
+it, and keeps that port for every later command. Your coding agent gets it under its own
+name, `nimblebrain-<folder>` (here `nimblebrain-beta`), beside `nimblebrain`, and its
+`uninstall` removes only that one. Pass the same `--home` to every command for it; a port
+you pass with `--port` is used as given, or refused when it is taken.
+
 ## Your Claude or ChatGPT subscription instead of a model key
 
 ```bash
@@ -81,6 +94,11 @@ NimbleBrain (Docker) ──ACP──▶ agent worker (this machine) ──runs�
   `host.docker.internal`, which Docker Desktop forwards to this machine. On Linux that
   name reaches the Docker bridge instead, so `use` refuses there for now.
 - **Usage is counted, not priced.** Turns are recorded with their tokens at $0.
+
+Claude Code's turns run on Sonnet, which answers a chat turn faster than Opus; pick
+another with `use claude --model opus` (or `haiku`, or a full model id). Codex runs on its
+own default unless `--model` names one. A conversation's title and history summary run
+with no tools, and on Claude Code on Haiku, so they take a couple of seconds.
 
 `status` shows which source is in use and whether its worker answers. The worker is a
 login item (a LaunchAgent for your user, running a copy of the CLI kept in the install's

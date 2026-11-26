@@ -37,6 +37,7 @@ export function completeOnRuntime(runtime: AgentRuntime, ownModel: string): Comp
       {
         runId,
         conversationId: null,
+        internal: true,
         system,
         messages: [{ role: "user", content: [{ type: "text", text }] }],
         tools: [],

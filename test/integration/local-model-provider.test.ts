@@ -112,7 +112,8 @@ describe("a chat on a local model server", () => {
   });
 
   it("speaks Chat Completions to the server, with the server's model id and usage asked for", () => {
-    const chat = requests.filter((r) => r.path === "/v1/chat/completions");
+    // The turn's calls stream; the first turn's title, beside it, does not.
+    const chat = requests.filter((r) => r.path === "/v1/chat/completions" && r.body.stream);
     expect(chat.length).toBeGreaterThanOrEqual(2);
     expect(chat[0]?.body.model).toBe("gemma4:e4b");
     expect(chat[0]?.body.stream_options).toEqual({ include_usage: true });

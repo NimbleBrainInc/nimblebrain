@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type * as acp from "@agentclientprotocol/sdk/unstable";
+import { modelLabel } from "../command.ts";
 import { classifyFailure } from "./failure.ts";
 import {
   type Account,
@@ -39,6 +40,7 @@ export function createCodexBackend(
   return {
     id: "codex",
     label: "Codex",
+    ...(opts.model ? { modelLabel: modelLabel(opts.model) } : {}),
     takesSystemPrompt: false,
     toolsAreNimbleBrainOnly: false,
     preflight: () => codexPreflight(bin),
@@ -97,8 +99,10 @@ async function runCodex(
     cwd,
     "-c",
     'approval_policy="never"',
-    "-c",
-    `mcp_servers.${SERVER}.url=${JSON.stringify(input.mcpUrl)}`,
+    // An internal session (a title, a summary) attaches no MCP server.
+    ...(input.purpose === "internal" || input.mcpUrl === undefined
+      ? []
+      : ["-c", `mcp_servers.${SERVER}.url=${JSON.stringify(input.mcpUrl)}`]),
     ...(model ? ["-m", model] : []),
     "-",
   ];

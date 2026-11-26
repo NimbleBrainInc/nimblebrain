@@ -228,6 +228,7 @@ describe("init", () => {
     await json(["--yes", "--agent", "claude-code"], m);
     expect((await json(["status"], m)).body.agent).toEqual({
       connected: "claude-code",
+      server: "nimblebrain",
       skill: null,
     });
     const skill = "/home/dana/.claude/skills/nimblebrain/SKILL.md";
@@ -601,6 +602,7 @@ describe("a first start that did not finish", () => {
       port: 28000,
       version: "0.73.0",
       phase: "ready",
+      serverName: "nimblebrain",
     });
     expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_WEB_PORT=28000");
   });

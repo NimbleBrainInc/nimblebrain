@@ -4,7 +4,12 @@ import {
   generateTitle,
   sanitizeGeneratedTitle,
 } from "../../src/conversation/auto-title.ts";
+
 import { createMockModel } from "../helpers/mock-model.ts";
+
+/** These tests script the title call itself, so the helper must pass it through. */
+const titleModel = (fn: Parameters<typeof createMockModel>[0]) =>
+  createMockModel(fn, { scriptTitles: true });
 
 describe("fallbackTitle", () => {
   it("returns full message when under 60 chars", () => {
@@ -36,7 +41,7 @@ describe("fallbackTitle", () => {
 describe("generateTitle", () => {
   it("uses a bounded transcript as untrusted data", async () => {
     let transcript = "";
-    const model = createMockModel((options) => {
+    const model = titleModel((options) => {
       const userMessage = options.prompt.find((m) => m.role === "user");
       if (userMessage && Array.isArray(userMessage.content)) {
         const textPart = userMessage.content.find((p) => p.type === "text");
@@ -61,7 +66,7 @@ describe("generateTitle", () => {
   });
 
   it("reports the title call's usage via onUsage", async () => {
-    const model = createMockModel(() => ({
+    const model = titleModel(() => ({
       content: [{ type: "text", text: "My Title" }],
       inputTokens: 120,
       outputTokens: 8,
@@ -75,7 +80,7 @@ describe("generateTitle", () => {
   });
 
   it("falls back when the model returns refusal text", async () => {
-    const model = createMockModel(() => ({
+    const model = titleModel(() => ({
       content: [
         {
           type: "text",
@@ -93,7 +98,7 @@ describe("generateTitle", () => {
   });
 
   it("cleans title prefixes and wrapping quotes", async () => {
-    const model = createMockModel(() => ({
+    const model = titleModel(() => ({
       content: [{ type: "text", text: 'Title: "Smoke Test Deal"' }],
     }));
     const title = await generateTitle(model, "Create a smoke test deal", "Done.");
@@ -102,7 +107,7 @@ describe("generateTitle", () => {
   });
 
   it("falls back when the model returns long prose", async () => {
-    const model = createMockModel(() => ({
+    const model = titleModel(() => ({
       content: [
         {
           type: "text",
@@ -121,7 +126,7 @@ describe("generateTitle", () => {
 
   it("falls back to truncated user message on API error", async () => {
     // Model that throws to trigger fallback
-    const failingModel = createMockModel(() => {
+    const failingModel = titleModel(() => {
       throw new Error("API error");
     });
     const title = await generateTitle(
@@ -133,7 +138,7 @@ describe("generateTitle", () => {
   });
 
   it("falls back for long messages on error, truncated at word boundary", async () => {
-    const failingModel = createMockModel(() => {
+    const failingModel = titleModel(() => {
       throw new Error("API error");
     });
     const longMsg =
@@ -144,7 +149,7 @@ describe("generateTitle", () => {
   });
 
   it("returns the model's title text (trimmed)", async () => {
-    const model = createMockModel(() => ({
+    const model = titleModel(() => ({
       content: [{ type: "text", text: "  Library Paranoia Joke  " }],
     }));
     const title = await generateTitle(model, "Write something funny", "A man walks in...");

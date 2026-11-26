@@ -33,6 +33,13 @@ const nativeSearches: string[] = [];
 /** Calls `nb__search` once, then answers in text. */
 const nativeModel = createMockModel(async ({ prompt }) => {
   const system = prompt.find((m) => m.role === "system");
+  // The first turn's title runs beside it on the same model; it is not the turn.
+  if (
+    typeof system?.content === "string" &&
+    system.content.startsWith("Generate a 3-6 word title")
+  ) {
+    return { content: [{ type: "text", text: "Widget Tools" }] };
+  }
   if (system && typeof system.content === "string") nativeSystems.push(system.content);
   const last = prompt[prompt.length - 1];
   if (last?.role === "tool") {

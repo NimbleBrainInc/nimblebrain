@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { paths, setEnvLines } from "./compose.ts";
 import type { Deps } from "./deps.ts";
 import { bootout, bootstrap, type LoginItem, loginItem, plist, printed } from "./login-item.ts";
@@ -28,10 +28,15 @@ import { type SubscriptionRuntime, WORKER_COMMAND, WORKER_PORTS } from "./subscr
  * CLI to the runtime (ADR-0065).
  */
 
-/** The `.env` names the runtime reads its agent runtime from. */
+/**
+ * The `.env` names the runtime reads its agent runtime from, and the worker's
+ * turn model, which only this CLI reads: `.env` outlives the worker's record
+ * and login item (`down` removes both), so `up` starts it on the same model.
+ */
 export const AGENT_RUNTIME_ENV = {
   runtime: "NB_AGENT_RUNTIME",
   url: "NB_AGENT_RUNTIME_URL",
+  model: "NB_AGENT_WORKER_MODEL",
 } as const;
 
 export type AgentRuntimeName = "native" | SubscriptionRuntime;
@@ -42,6 +47,8 @@ interface WorkerRecord {
   agent: SubscriptionRuntime;
   /** The plan its sign-in named when it started ("Claude Max"), so `status` can say who pays. */
   plan?: string;
+  /** The model its turns run on (`--model`), when one was passed; else the vendor CLI's default. */
+  model?: string;
   /** Its login item's launchd label. */
   label?: string;
   /** A worker an earlier build of this CLI started detached, found by `ps` and stopped by `kill`. */
@@ -120,13 +127,22 @@ const WORKER_START_MS = 20_000;
 const WORKER_STOP_MS = 5_000;
 const POLL_MS = 250;
 
-/** The agent runtime `.env` names, and the worker port its URL dials. */
-export function agentRuntimeOf(envText: string): { name: AgentRuntimeName; port?: number } {
+/** The agent runtime `.env` names, the worker port its URL dials, and the worker's turn model. */
+export function agentRuntimeOf(envText: string): {
+  name: AgentRuntimeName;
+  port?: number;
+  model?: string;
+} {
   const name = envText.match(/^NB_AGENT_RUNTIME=(\S*)\r?$/m)?.[1];
   if (name !== "claude-code" && name !== "codex") return { name: "native" };
   const url = envText.match(/^NB_AGENT_RUNTIME_URL=(\S*)\r?$/m)?.[1] ?? "";
   const port = Number(url.match(/^https?:\/\/[^/]+:(\d+)\//)?.[1]);
-  return Number.isInteger(port) && port > 0 ? { name, port } : { name };
+  const model = envText.match(/^NB_AGENT_WORKER_MODEL=(\S+)\r?$/m)?.[1];
+  return {
+    name,
+    ...(Number.isInteger(port) && port > 0 ? { port } : {}),
+    ...(model ? { model } : {}),
+  };
 }
 
 /** The worker's ACP URL as the runtime's container dials it. */
@@ -203,6 +219,7 @@ async function readRecord(deps: Deps, home: string): Promise<WorkerRecord | unde
       port: r.port,
       agent: r.agent,
       plan: stringOr(r.plan),
+      model: stringOr(r.model),
       label: stringOr(r.label),
       pid: typeof r.pid === "number" ? r.pid : undefined,
     };
@@ -285,12 +302,20 @@ async function workerProgram(
   home: string,
   runtime: SubscriptionRuntime,
   port: number,
+  model: string | undefined,
 ): Promise<{ program: string[]; copy?: string }> {
   const w = workerPaths(home);
-  // The published file is self-contained, so it is copied; a source checkout's entry runs in place.
-  const copy = deps.self.script.endsWith(".js") ? await deps.readText(deps.self.script) : undefined;
+  // The published file is self-contained, so it is copied, whatever npx named its entry (a
+  // `.bin` link, resolved in `Deps.self`); only a source checkout's `.ts` entry runs in place.
+  const copy = deps.self.script.endsWith(".ts") ? undefined : await deps.readText(deps.self.script);
   const script = copy === undefined ? deps.self.script : w.bin;
-  const args = [WORKER_COMMAND, SUBSCRIPTION_RUNTIMES[runtime].arg, "--port", String(port)];
+  const args = [
+    WORKER_COMMAND,
+    SUBSCRIPTION_RUNTIMES[runtime].arg,
+    "--port",
+    String(port),
+    ...(model ? ["--model", model] : []),
+  ];
   return {
     program: [deps.self.node, script, ...args, "--log", w.log],
     ...(copy === undefined ? {} : { copy }),
@@ -310,6 +335,7 @@ export async function startWorker(
   runtime: SubscriptionRuntime,
   port: number,
   plan?: string,
+  model?: string,
 ): Promise<WorkerState> {
   if (deps.platform !== "darwin") {
     throw new CliError(
@@ -319,9 +345,10 @@ export async function startWorker(
   }
   const w = workerPaths(home);
   const item = loginItem(deps, (await projectOf(deps, home)) ?? "nimblebrain");
-  const { program, copy } = await workerProgram(deps, home, runtime, port);
-  const text = plist(item, program, w.log, deps.env);
-  const record: WorkerRecord = { port, agent: runtime, plan, label: item.label };
+  const { program, copy } = await workerProgram(deps, home, runtime, port, model);
+  const env = { ...deps.env, PATH: await workerPath(deps, runtime) };
+  const text = plist(item, program, w.log, env);
+  const record: WorkerRecord = { port, agent: runtime, plan, label: item.label, model };
   const writeRecord = () => deps.writeText(w.record, `${JSON.stringify(record, null, 2)}\n`, 0o600);
   const state = async (): Promise<WorkerState> => ({
     running: true,
@@ -397,23 +424,47 @@ async function lastLine(deps: Deps, log: string): Promise<string> {
  * or when it is not answering (after `down`). Leaves one that is current alone.
  */
 export async function restartWorker(deps: Deps, home: string): Promise<void> {
-  const { name, port } = agentRuntimeOf((await deps.readText(paths(home).env)) ?? "");
+  const { name, port, model } = agentRuntimeOf((await deps.readText(paths(home).env)) ?? "");
   if (name === "native") return;
   const account = await preflight(deps, name);
-  await startWorker(deps, home, name, port ?? WORKER_PORTS[name], account.plan);
+  await startWorker(deps, home, name, port ?? WORKER_PORTS[name], account.plan, model);
 }
 
-/** Points the install's `.env` at `runtime`'s worker on `port`, or at the native engine. */
+/**
+ * The login item's `PATH`: the folder of the vendor CLI this run finds first,
+ * so launchd runs the same `claude` or `codex` the person does, then this
+ * shell's `PATH` without npx's cache, which npx cleans, so an entry there
+ * would stop resolving at a later login.
+ */
+async function workerPath(deps: Deps, runtime: SubscriptionRuntime): Promise<string> {
+  const found = await deps.which(SUBSCRIPTION_RUNTIMES[runtime].bin);
+  const dirs = [
+    ...(found ? [dirname(found)] : []),
+    ...(deps.env.PATH ?? "").split(":").filter((d) => d && !/[\\/]_npx[\\/]/.test(d)),
+  ];
+  return [...new Set(dirs)].join(":");
+}
+
+/** Points the install's `.env` at `runtime`'s worker on `port` with its turn `model`, or at the native engine. */
 export async function writeAgentRuntime(
   deps: Deps,
   home: string,
   runtime: AgentRuntimeName,
   port?: number,
+  model?: string,
 ): Promise<void> {
   const p = paths(home);
   const values =
     runtime === "native" || port === undefined
-      ? { [AGENT_RUNTIME_ENV.runtime]: "", [AGENT_RUNTIME_ENV.url]: "" }
-      : { [AGENT_RUNTIME_ENV.runtime]: runtime, [AGENT_RUNTIME_ENV.url]: dialedUrl(port) };
+      ? {
+          [AGENT_RUNTIME_ENV.runtime]: "",
+          [AGENT_RUNTIME_ENV.url]: "",
+          [AGENT_RUNTIME_ENV.model]: "",
+        }
+      : {
+          [AGENT_RUNTIME_ENV.runtime]: runtime,
+          [AGENT_RUNTIME_ENV.url]: dialedUrl(port),
+          [AGENT_RUNTIME_ENV.model]: model ?? "",
+        };
   await deps.writeText(p.env, setEnvLines((await deps.readText(p.env)) ?? "", values), 0o600);
 }
