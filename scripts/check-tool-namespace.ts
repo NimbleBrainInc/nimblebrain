@@ -222,7 +222,7 @@ export function isNamespacedSplit(node: ts.CallExpression): boolean {
   return literalText(arg) === "-";
 }
 
-// ── Walker scaffolding (same shape as check-conversation-paths.ts) ──
+// ── Walker scaffolding (same shape as check-file-paths.ts) ──
 
 function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): boolean {
   const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));

@@ -191,6 +191,7 @@ function AuthenticatedApp({
   const initialWorkspaces: WorkspaceInfo[] = bootstrapWorkspacesToInfo(bootstrap.workspaces);
 
   const initialConfig = {
+    chat: bootstrap.config.chat,
     configuredProviders: bootstrap.config.configuredProviders,
     newConversationModel: bootstrap.config.newConversationModel,
     availableModels: bootstrap.config.availableModels,
@@ -236,6 +237,7 @@ function BootstrappedShell({
 }: {
   token: string;
   initialConfig: {
+    chat: boolean;
     configuredProviders: string[];
     newConversationModel?: string;
     availableModels?: ConfigInfo["availableModels"];
@@ -655,6 +657,9 @@ function OpenBridge({
   activeSlug: string | null;
 }) {
   const chatPanel = useChatPanelContext();
+  const { chat: chatEnabled } = useChatConfigContext();
+  const chatEnabledRef = useRef(chatEnabled);
+  chatEnabledRef.current = chatEnabled;
 
   // Use refs so the event handler doesn't need to re-register on every
   // render — only the ref contents update.
@@ -673,6 +678,7 @@ function OpenBridge({
     // when the app it names has no route here.
     const show = (dest: OpenDestination): void => {
       if ("conversationId" in dest) {
+        if (!chatEnabledRef.current) throw new Error("Chat is turned off on this instance");
         chatPanelRef.current.openPanel(dest.conversationId);
         return;
       }

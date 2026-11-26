@@ -8,10 +8,9 @@ import { toSlug } from "../lib/workspace-slug";
 import { Tooltip } from "./ui/tooltip";
 
 // Mirror of the fields this popover reads from the `conversations__list`
-// result (server shape: ListResult / IndexEntry in
-// src/platform/conversations/index-cache.ts). The web package can't import
-// server types, and only tool *inputs* are codegen'd, so the read shape is
-// declared locally — the same approach the Conversations app UI takes.
+// result (its shape is the conversations contract's `list_output`). The web
+// package can't import server types, so the read shape is declared locally —
+// the same approach the Conversations screen takes.
 interface RecentConversation {
   id: string;
   title: string | null;

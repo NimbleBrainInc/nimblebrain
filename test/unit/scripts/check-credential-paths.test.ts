@@ -5,7 +5,7 @@
  * — no subprocess, no fixture-on-disk dance. Each predicate is tested
  * against a small parsed snippet that either matches or doesn't, and
  * against a clean snippet that must not match. Same shape as
- * `check-conversation-paths.test.ts` and `check-tool-namespace.test.ts`.
+ * `check-file-paths.test.ts` and `check-tool-namespace.test.ts`.
  *
  * The final block runs the script as a subprocess against the actual
  * `src/` tree — exit 0 there proves the predicate set above doesn't
@@ -172,7 +172,7 @@ describe("check-credential-paths — allow-marker discipline", () => {
     // that has the marker. A clean tree should still exit 0; the
     // marker-respect part is exercised indirectly here. The exhaustive
     // marker-vs-no-marker contract is covered in
-    // `check-conversation-paths.test.ts` against the shared scaffold;
+    // `check-file-paths.test.ts` against the shared scaffold;
     // these predicates use the same `hasAllowMarker` helper so the
     // contract carries forward.
     //

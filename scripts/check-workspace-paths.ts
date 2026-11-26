@@ -17,9 +17,9 @@
  *     itself, which is correct in scope-classification code.
  *   - Sites inside the implementation files that DEFINE the layout
  *     (`src/workspace/context.ts`, `src/workspace/workspace-store.ts`, and
- *     `src/conversation/paths.ts` for the workspace-owned
- *     `workspaces/<wsId>/conversations/...` subtree) — those are the
- *     source of truth and the lint shouldn't fight itself.
+ *     `src/files/paths.ts` for the workspace-owned `workspaces/<wsId>/files/...`
+ *     subtree) — those are the source of truth and the lint shouldn't fight
+ *     itself.
  *   - A `// lint-ok:workspace-path` marker on the line immediately
  *     above the call, for the rare future case where the typed handle
  *     genuinely doesn't apply.
@@ -43,9 +43,6 @@ const ALLOWED_FILES = new Set(
   [
     "workspace/context.ts",
     "workspace/workspace-store.ts",
-    // Defines the `workspaces/<wsId>/conversations/...` workspace-owned conversation
-    // layout — the one sanctioned site that hand-builds that subtree.
-    "conversation/paths.ts",
     // Defines the `workspaces/<wsId>/files/...` workspace-owned file layout —
     // the one sanctioned site that hand-builds that subtree (`workspaceFilesDir`).
     "files/paths.ts",

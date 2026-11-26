@@ -2,12 +2,12 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ToolSchema } from "../../src/engine/types.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { Skill } from "../../src/skills/types.ts";
 import { surfaceTools } from "../../src/tools/surfacing.ts";
+import { ownerConversationsDir } from "../helpers/conversation-store.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
@@ -155,8 +155,15 @@ describe("surfaceTools — requestAllowedTools", () => {
 
 // --- Integration: metadata persisted in conversation ---
 
+/** The header the conversations plugin stored for a conversation (line 1 of its file). */
+function storedHeader(workDir: string, conversationId: string): Record<string, unknown> {
+  const convDir = ownerConversationsDir(workDir, TEST_WORKSPACE_ID, "usr_default");
+  const content = readFileSync(join(convDir, `${conversationId}.jsonl`), "utf-8");
+  return JSON.parse(content.split("\n")[0]!) as Record<string, unknown>;
+}
+
 describe("ChatRequest.metadata — conversation persistence", () => {
-  it("metadata is persisted in conversation object", async () => {
+  it("metadata is stored with the conversation at create", async () => {
     const workDir = join(testDir, `meta-${Date.now()}`);
     const runtime = await Runtime.start({
       identityProvider: devProvider,
@@ -174,23 +181,12 @@ describe("ChatRequest.metadata — conversation persistence", () => {
         metadata: { source: "task", id: "test-123" },
       });
 
-      // Load the conversation and verify metadata is present
-      const conv = await runtime.findConversation(TEST_WORKSPACE_ID, result.conversationId, {
-        userId: DEV_IDENTITY.id,
+      // The contract's `create` carries it; the plugin stores it in the
+      // conversation's header (dev owner `usr_default`, in TEST_WORKSPACE_ID).
+      expect(storedHeader(workDir, result.conversationId).metadata).toEqual({
+        source: "task",
+        id: "test-123",
       });
-      expect(conv).not.toBeNull();
-      expect(conv!.metadata).toEqual({ source: "task", id: "test-123" });
-
-      // Verify it's actually in the JSONL file's first line under the workspace's
-      // owner partition (dev owner `usr_default`, focused on TEST_WORKSPACE_ID).
-      const convDir = workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, "usr_default");
-      const files = require("node:fs")
-        .readdirSync(convDir)
-        .filter((f: string) => f.endsWith(".jsonl"));
-      expect(files.length).toBeGreaterThan(0);
-      const content = readFileSync(join(convDir, files[0]!), "utf-8");
-      const firstLine = JSON.parse(content.split("\n")[0]!);
-      expect(firstLine.metadata).toEqual({ source: "task", id: "test-123" });
     } finally {
       await runtime.shutdown();
     }
@@ -212,11 +208,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
         message: "hello",
         workspaceId: TEST_WORKSPACE_ID,
       });
-      const conv = await runtime.findConversation(TEST_WORKSPACE_ID, result.conversationId, {
-        userId: DEV_IDENTITY.id,
-      });
-      expect(conv).not.toBeNull();
-      expect(conv!.metadata).toBeUndefined();
+      expect(storedHeader(workDir, result.conversationId).metadata).toBeUndefined();
     } finally {
       await runtime.shutdown();
     }
@@ -250,10 +242,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
         metadata: { source: "second" },
       });
 
-      const conv = await runtime.findConversation(TEST_WORKSPACE_ID, result1.conversationId, {
-        userId: DEV_IDENTITY.id,
-      });
-      expect(conv!.metadata).toEqual({ source: "first" });
+      expect(storedHeader(workDir, result1.conversationId).metadata).toEqual({ source: "first" });
     } finally {
       await runtime.shutdown();
     }

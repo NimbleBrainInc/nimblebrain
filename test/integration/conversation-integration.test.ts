@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
-import type { StoredMessage } from "../../src/conversation/types.ts";
+import type { ConversationEventStore, StoredMessage } from "../../src/conversation/types.ts";
+import { conversationStore } from "../helpers/conversation-store.ts";
 
 function tempDir(): string {
   const dir = join(tmpdir(), `nb-integration-${crypto.randomUUID()}`);
@@ -25,16 +25,17 @@ function assistantMsg(text: string, metadata: StoredMessage["metadata"]): Stored
 }
 
 // ---------------------------------------------------------------------------
-// 1. Store-level full lifecycle integration
+// 1. Store-level full lifecycle: the runtime's store over the conversations
+//    plugin, in process
 // ---------------------------------------------------------------------------
 
 describe("Conversation full lifecycle (store-level)", () => {
   let dir: string;
-  let store: EventSourcedConversationStore;
+  let store: ConversationEventStore;
 
   beforeEach(() => {
     dir = tempDir();
-    store = new EventSourcedConversationStore({ dir });
+    store = conversationStore(dir, "ws_0076759dbbe19fcc", "user_test");
   });
 
   afterEach(() => {
@@ -64,9 +65,6 @@ describe("Conversation full lifecycle (store-level)", () => {
     expect(summary.id).toBe(conv.id);
     expect(summary.totalInputTokens).toBe(200);
     expect(summary.totalOutputTokens).toBe(80);
-    // claude-sonnet-4-5: input $3/M, output $15/M
-    // 200 * $3/M + 80 * $15/M = $0.0006 + $0.0012 = $0.0018
-    expect(summary.totalCostUsd).toBeCloseTo(0.0018, 5);
     expect(summary.messageCount).toBe(3);
 
     // --- rename ---

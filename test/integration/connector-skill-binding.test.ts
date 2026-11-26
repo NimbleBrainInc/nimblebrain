@@ -4,11 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
-import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
-import type { Conversation, StoredMessage } from "../../src/conversation/types.ts";
+import type {
+  Conversation,
+  ConversationEventStore,
+  StoredMessage,
+} from "../../src/conversation/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import type { EngineConfig, EngineEvent, EventSink, ToolSchema } from "../../src/engine/types.ts";
+import { conversationStore } from "../helpers/conversation-store.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { recordingModel } from "../helpers/recording-model.ts";
 
@@ -30,10 +34,10 @@ afterAll(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
-function freshStore(): EventSourcedConversationStore {
+function freshStore(): ConversationEventStore {
   const dir = mkdtempSync(join(tmpdir(), "nb-connector-skill-"));
   dirs.push(dir);
-  return new EventSourcedConversationStore({ dir });
+  return conversationStore(dir, "ws_0076759dbbe19fcc", "user_test");
 }
 
 const SYSTEM = "You are a test assistant.";
@@ -79,7 +83,7 @@ function router(): StaticToolRouter {
 }
 
 async function appendUser(
-  store: EventSourcedConversationStore,
+  store: ConversationEventStore,
   conv: Conversation,
   text: string,
 ): Promise<void> {

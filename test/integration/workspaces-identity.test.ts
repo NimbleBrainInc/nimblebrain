@@ -14,8 +14,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { authenticateRequest } from "../../src/api/auth-middleware.ts";
 import { isAddressedWorkspaceMember } from "../../src/api/workspace-address.ts";
-import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
-import type { ConversationAccessContext } from "../../src/conversation/types.ts";
 import type { CreateUserResult, IdentityProvider } from "../../src/identity/provider.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import type { User } from "../../src/identity/user.ts";
@@ -23,6 +21,7 @@ import { UserStore } from "../../src/identity/user.ts";
 import { buildProcessInventory } from "../../src/runtime/workspace-runtime.ts";
 import type { Workspace } from "../../src/workspace/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { workDirConversationStore } from "../helpers/conversation-store.ts";
 import { writeInstanceConfig } from "../helpers/instance-config.ts";
 
 // ---------------------------------------------------------------------------
@@ -59,11 +58,12 @@ describe("UC-W1: Private work with shared tools", () => {
     await wsStore.addMember(eng.id, mat.id, "admin");
     await wsStore.addMember(eng.id, kai.id, "member");
 
-    // Mat creates a private conversation in Engineering
-    const convDir = join(workDir, "workspaces", eng.id, "conversations");
-    const store = new EventSourcedConversationStore({ dir: convDir });
+    // Mat creates a private conversation in Engineering. Every store is walled
+    // to one workspace and one owner, as the contract's scope is.
+    const matStore = workDirConversationStore(workDir, eng.id, mat.id);
+    const kaiStore = workDirConversationStore(workDir, eng.id, kai.id);
 
-    const matConv = await store.create({
+    const matConv = await matStore.create({
       model: "anthropic:claude-sonnet-4-6",
       workspaceId: eng.id,
       ownerId: mat.id,
@@ -71,15 +71,11 @@ describe("UC-W1: Private work with shared tools", () => {
 
     // Kai lists conversations -> Mat's conversation NOT visible.
     // Workspace role doesn't grant access; only ownership does.
-    const kaiAccess: ConversationAccessContext = { userId: kai.id };
-    const kaiList = await store.list(undefined, kaiAccess);
-    const kaiIds = kaiList.conversations.map((c) => c.id);
+    const kaiIds = (await kaiStore.list()).conversations.map((c) => c.id);
     expect(kaiIds).not.toContain(matConv.id);
 
     // Mat lists conversations -> his own conversation IS visible.
-    const matAccess: ConversationAccessContext = { userId: mat.id };
-    const matList = await store.list(undefined, matAccess);
-    const matIds = matList.conversations.map((c) => c.id);
+    const matIds = (await matStore.list()).conversations.map((c) => c.id);
     expect(matIds).toContain(matConv.id);
   });
 });
@@ -110,8 +106,7 @@ describe("UC-W2: Single-owner conversation", () => {
     await wsStore.addMember(eng.id, mat.id, "admin");
     await wsStore.addMember(eng.id, kai.id, "member");
 
-    const convDir = join(workDir, "workspaces", eng.id, "conversations");
-    const store = new EventSourcedConversationStore({ dir: convDir });
+    const store = workDirConversationStore(workDir, eng.id, mat.id);
 
     const conv = await store.create({
       model: "anthropic:claude-sonnet-4-6",
@@ -127,6 +122,7 @@ describe("UC-W2: Single-owner conversation", () => {
     // workspace-admin override.
     const kaiLoaded = await store.load(conv.id, { userId: kai.id });
     expect(kaiLoaded).toBeNull();
+    expect(await workDirConversationStore(workDir, eng.id, kai.id).load(conv.id)).toBeNull();
   });
 });
 

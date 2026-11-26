@@ -13,8 +13,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
-import type { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
-import type { Conversation, ConversationEvent } from "../../../../src/conversation/types.ts";
+import type {
+  Conversation,
+  ConversationEvent,
+  ConversationEventStore,
+} from "../../../../src/conversation/types.ts";
 import type { ToolResult, ToolSchema } from "../../../../src/engine/types.ts";
 import { ADMIT_ALL } from "../../../../src/permissions/admin-tools.ts";
 import { createComposeSource } from "../../../../src/platform/compose/source.ts";
@@ -109,7 +112,7 @@ const EMPTY_WORKSPACE: LiveWorkspace = { apps: [], skills: [], tools: [] };
 let lookups: Array<[string, string, string]> = [];
 
 function makeRuntime(live: LiveWorkspace = EMPTY_WORKSPACE): Runtime {
-  const store = stub<EventSourcedConversationStore>({
+  const store = stub<ConversationEventStore>({
     load: async (id: string) => stub<Conversation>({ id }),
     readEvents: async (id: string) => (id === CONV_ID ? recordedEvents() : []),
   });

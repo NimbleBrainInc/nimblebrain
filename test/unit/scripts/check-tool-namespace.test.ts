@@ -3,7 +3,7 @@
  *
  * The lint exports its AST predicates so each is exercised directly
  * against a small parsed snippet — same pattern as
- * `check-conversation-paths.test.ts`. The script's own
+ * `check-file-paths.test.ts`. The script's own
  * self-invocation case at the bottom proves the clean src/ tree passes.
  */
 

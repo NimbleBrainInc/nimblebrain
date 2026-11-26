@@ -46,19 +46,21 @@ export function sourceFiles(dir: string): string[] {
 
 /**
  * Every tree whose CSS is injected with `buildThemeStyleBlock`: the platform
- * app UIs.
+ * app UIs and a plugin's screen (`packages/<name>/ui`).
  *
  * The list is derived rather than written out, so a new app is covered on
- * creation. Add an entry here only for a tree outside `src/platform` that
- * renders host-themed markup — and only when it actually does: `scripts/` was
- * carried here on that rationale while containing no `var()` read, no `ui://`
+ * creation. Add an entry here only for a tree outside those two that renders
+ * host-themed markup — and only when it actually does: `scripts/` was carried
+ * here on that rationale while containing no `var()` read, no `ui://`
  * resource, and no markup at all.
  */
-export const themedTrees = readdirSync(PLATFORM_APPS)
-  .map((name) => ({
-    name,
-    dir: join(PLATFORM_APPS, name, "ui", "src"),
-  }))
+export const themedTrees = [PLATFORM_APPS, join(REPO, "packages")]
+  .flatMap((root) =>
+    readdirSync(root).map((name) => ({
+      name,
+      dir: join(root, name, "ui", "src"),
+    })),
+  )
   .filter(({ dir }) => {
     try {
       return statSync(dir).isDirectory();

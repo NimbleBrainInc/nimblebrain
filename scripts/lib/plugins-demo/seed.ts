@@ -5,8 +5,9 @@
  * writes only into the demo's own workdir. Everything goes through the store
  * the runtime itself writes with (`WorkspaceStore`, `UserStore`,
  * `IdentityConnectorStore`, `PermissionStore`, the configured
- * `CredentialStore` behind `McpOAuthRecords`, the skill writer, the
- * conversation store), and each connector row has the shape the matching
+ * `CredentialStore` behind `McpOAuthRecords`, the skill writer, and the
+ * conversations plugin's own store in the data directory the runtime gives
+ * it), and each connector row has the shape the matching
  * install path writes (`handleInstallDirectUrl`, `buildRemoteConnectorRef` in
  * `src/tools/connector-tools.ts`). So the runtime boots it like any workdir and
  * derives every plugin's state itself.
@@ -17,20 +18,19 @@
  * relaunch, except the URLs of the mock servers, which move with their ports.
  */
 
-import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { createStore } from "../../../packages/conversations/src/store.ts";
 import type { SecretsConfig } from "../../../src/config/secrets.ts";
 import { ConnectorCatalog } from "../../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../../src/connectors/catalog/types.ts";
 import { slugifyServerName } from "../../../src/connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
-import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
-import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../../src/conversation/types.ts";
 import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import { FALLBACK_DEFAULT_MODEL } from "../../../src/model/default-model.ts";
 import { PermissionStore } from "../../../src/permissions/permission-store.ts";
+import { pluginDataDir } from "../../../src/plugins/index.ts";
 import { readSkill, writeSkill } from "../../../src/skills/writer.ts";
 import { type CredentialStore, setCredentialStore } from "../../../src/tools/credential-store.ts";
 import {
@@ -351,16 +351,10 @@ function writeSkills(dir: string, skills: readonly SkillFixture[]): number {
  * and a skill a plugin publishes, so the chat's plugin labels show.
  */
 async function seedConversation(workDir: string, wsId: string): Promise<void> {
-  const store = new EventSourcedConversationStore({
-    dir: workspaceConversationsDir(workDir, wsId, DEMO_USER_ID),
-  });
-  if (existsSync(join(store.getDir(), `${DEMO_CONVERSATION_ID}.jsonl`))) return;
-  await store.create({
-    id: DEMO_CONVERSATION_ID,
-    ownerId: DEMO_USER_ID,
-    model: MODEL,
-    workspaceId: wsId,
-  });
+  const store = createStore(pluginDataDir(workDir, "conversations"));
+  const scope = { workspaceId: wsId, ownerId: DEMO_USER_ID };
+  if (await store.find(scope, DEMO_CONVERSATION_ID)) return;
+  await store.create(scope, { id: DEMO_CONVERSATION_ID, model: MODEL });
 
   const calls: { id: string; name: string; input: Record<string, unknown>; output: string }[] = [
     {
@@ -447,6 +441,9 @@ async function seedConversation(workDir: string, wsId: string): Promise<void> {
     },
     { ts: at(3), type: "run.done", runId, stopReason: "complete", totalMs: 2400 },
   ];
-  for (const event of events) store.appendEvent(DEMO_CONVERSATION_ID, event);
-  await store.flush();
+  await store.append(
+    scope,
+    DEMO_CONVERSATION_ID,
+    events.map((e) => ({ ...e })),
+  );
 }

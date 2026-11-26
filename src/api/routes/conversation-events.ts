@@ -3,21 +3,24 @@
  *
  * GET /v1/workspaces/:wsId/conversations/:id/events
  *
- * Security: requireAuth → requireWorkspace (membership of the workspace in the
- * path) → the caller's own conversation in that workspace.
+ * Security: requireAuth → requireChat (`404 chat_disabled` when no plugin
+ * implements the conversations contract) → requireWorkspace (membership of the
+ * workspace in the path) → the caller's own conversation in that workspace.
  *
  * The workspace in the path is the only place the conversation is looked
  * for: no conversation read crosses a workspace. An unknown id, another
  * owner's conversation, and one the caller holds in another workspace all
  * answer `404 conversation_not_found`, so the answer reveals neither
- * existence nor location. A stored file the store cannot read answers
- * `422 conversation_corrupted`.
+ * existence nor location. A conversation the conversations plugin cannot read
+ * answers `422 conversation_corrupted`.
  */
 
 import { Hono } from "hono";
 import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
 import { ConversationCorruptedError } from "../../runtime/errors.ts";
+import { conversationCorruptedResponse } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
+import { requireChat } from "../middleware/chat.ts";
 import { errorLog } from "../middleware/error-log.ts";
 import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
@@ -67,9 +70,9 @@ export function conversationEventRoutes(ctx: AppContext) {
   // scopes enforcement to exactly this path — same precedent as
   // `mcp-auth.ts` (per-handler, not `.use("*")`).
   return new Hono<AppEnv>().get(
-    // lint-ok:conversation-path (an HTTP route, not a storage path)
     `${WORKSPACE_ROUTE_PREFIX}/conversations/:id/events`,
     requireAuth(ctx.authOptions),
+    requireChat(ctx),
     errorLog(ctx),
     requireWorkspace(ctx),
     async (c) => {
@@ -96,10 +99,7 @@ export function conversationEventRoutes(ctx: AppContext) {
         callerId,
       );
       if (conversation instanceof ConversationCorruptedError) {
-        return apiError(422, "conversation_corrupted", conversation.message, {
-          conversationId: conversation.conversationId,
-          reason: conversation.reason,
-        });
+        return conversationCorruptedResponse(conversation);
       }
       if (!conversation) {
         return apiError(404, "conversation_not_found", "Conversation not found", {

@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
 /**
- * Typecheck: every platform app UI package (`src/platform/*\/ui`) compiles under
- * its own strict config, source and tests alike. Every diagnostic fails the check.
+ * Typecheck: every app UI package (the platform apps' `src/platform/*\/ui` and a
+ * plugin's screen, `packages/*\/ui`) compiles under its own strict config, source
+ * and tests alike. Every diagnostic fails the check.
  *
  * Each UI is a separate package with its own `tsconfig.json` and its own
- * TypeScript. The root project excludes `src/platform/*\/ui`, `vite build` does
+ * TypeScript. The root project excludes both trees, `vite build` does
  * not typecheck, and `bun test` strips types, so without this gate nothing reads
  * these files as TypeScript at all: a wrong prop type or a stale import ships.
  *
@@ -103,8 +104,10 @@ async function checkProject(pkg: string, project: Project, sources: string[]): P
 
 async function main(): Promise<void> {
   const packages: string[] = [];
-  for await (const rel of new Glob("src/platform/*/ui/package.json").scan({ cwd: ROOT })) {
-    packages.push(join(ROOT, rel, ".."));
+  for (const pattern of ["src/platform/*/ui/package.json", "packages/*/ui/package.json"]) {
+    for await (const rel of new Glob(pattern).scan({ cwd: ROOT })) {
+      packages.push(join(ROOT, rel, ".."));
+    }
   }
   packages.sort();
   if (packages.length === 0) {

@@ -28,6 +28,8 @@ import {
 import { ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/core";
 import type { ReadResourceResult, Server } from "@modelcontextprotocol/server";
 import { brandName } from "../brand/index.ts";
+import { NIMBLEBRAIN_HOST_META_KEY } from "../connectors/catalog/server-detail.ts";
+import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
 import type { PlacementDeclaration, RemoteTransportConfig } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import {
@@ -282,6 +284,13 @@ export type McpTransportMode =
        * client this source holds. Bare names.
        */
       hiddenTools: ReadonlySet<string>;
+      /**
+       * Facts only the host knows, laid over a call's result before it reaches
+       * its caller (an agent, the door, an app). The contract the server
+       * implements says which results the host completes; the kernel's plugin
+       * binding supplies this.
+       */
+      resultOverlay?: (toolName: string, result: ToolResult) => ToolResult;
     };
 
 /**
@@ -461,6 +470,9 @@ export function toolListChanged(a: readonly Tool[], b: readonly Tool[]): boolean
  * every other request passes through untouched.
  */
 class EraCapabilitiesClient extends Client {
+  /** The `_meta` of the last `initialize` result: the 2025 era's server descriptor. */
+  private initializeResultMeta: Record<string, unknown> | undefined;
+
   constructor(
     clientInfo: Implementation,
     options: ClientOptions,
@@ -491,7 +503,24 @@ class EraCapabilitiesClient extends Client {
     // The implementation signature is wider than either SDK overload, so the
     // super call goes through the overload-erased shape both funnel into.
     const send = super.request as (r: JsonRpcRequest, ...a: unknown[]) => Promise<unknown>;
-    return send.call(this, sent, ...rest);
+    const answer = send.call(this, sent, ...rest);
+    if (request.method !== "initialize") return answer;
+    this.initializeResultMeta = undefined;
+    return answer.then((result) => {
+      const meta = (result as { _meta?: unknown } | undefined)?._meta;
+      if (meta && typeof meta === "object") {
+        this.initializeResultMeta = meta as Record<string, unknown>;
+      }
+      return result;
+    });
+  }
+
+  /**
+   * The `_meta` the server answered the handshake with: the `server/discover`
+   * result's on the 2026-07-28 era, the `initialize` result's on the 2025 era.
+   */
+  handshakeMeta(): Record<string, unknown> | undefined {
+    return this.getDiscoverResult()?._meta ?? this.initializeResultMeta;
   }
 }
 
@@ -578,6 +607,12 @@ export class McpSource implements ToolSource {
   private _serverVersion: string | undefined;
   /** Sanitized `serverInfo.title` from the same response, on the same terms. */
   private _serverTitle: string | undefined;
+  /**
+   * The server's own `ai.nimblebrain/host` block, from its handshake result's
+   * `_meta`, read for a plugin's server only. Untrusted; its placements are
+   * sanitized where they are read ({@link getPlacements}).
+   */
+  private _hostMeta: unknown;
   /**
    * The server's `resources/templates/list`, fetched on first ask after each
    * connect and kept until the next one. Null means not fetched on this
@@ -822,6 +857,12 @@ export class McpSource implements ToolSource {
     const reportedTitle = serverInfo?.title;
     this._serverTitle =
       typeof reportedTitle === "string" ? sanitizeReportedTitle(reportedTitle) : undefined;
+    // A plugin's server declares its own placements in its handshake; a
+    // connector's come from its catalog entry or server card instead.
+    this._hostMeta =
+      this.mode.type === "plugin" && this.client instanceof EraCapabilitiesClient
+        ? this.client.handshakeMeta()?.[NIMBLEBRAIN_HOST_META_KEY]
+        : undefined;
 
     this.startTaskSweeper();
 
@@ -1905,10 +1946,12 @@ export class McpSource implements ToolSource {
    * for routing to subscribers (clients that issued `resources/subscribe` are
    * filtered server-side). Callers do not need to track per-subscriber state.
    *
-   * Only meaningful for `inProcess` sources, where this `McpSource` owns the
-   * server end of the linked-pair transport. For `remote` mode the source
-   * is a *client* of an external server and has nothing to emit on — call
-   * becomes a silent no-op.
+   * For `inProcess` sources, where this `McpSource` owns the server end of
+   * the linked-pair transport, the server emits it. For a `plugin` server the
+   * kernel announces its own writes through the contract, so the change is
+   * fanned out to this source's subscribers as if the server had sent it.
+   * For `remote` mode the source is a *client* of an external server and has
+   * nothing to emit on — call becomes a silent no-op.
    *
    * Drops silently between `stop()` and the next successful `start()` (the
    * `inProcessServer` field is cleared in those windows). This matches the
@@ -1916,6 +1959,10 @@ export class McpSource implements ToolSource {
    * missed one re-fetches via `resources/list` or `resources/read`.
    */
   notifyResourceListChanged(): void {
+    if (this.mode.type === "plugin") {
+      this.emitServerNotification({ method: "notifications/resources/list_changed" });
+      return;
+    }
     const server = this.inProcessServer;
     if (!server) return;
     void server.notification({ method: "notifications/resources/list_changed" }).catch((err) => {
@@ -1954,17 +2001,26 @@ export class McpSource implements ToolSource {
   }
 
   /**
-   * UI placements declared by this source. Populated for `inProcess` mode
-   * (platform built-ins); `[]` for remote sources, whose placements
-   * come from the connector manifest and are tracked separately by the
-   * connector lifecycle.
+   * UI placements declared by this source: an in-process platform app's from
+   * its definition, a plugin's server's from its own `ai.nimblebrain/host`
+   * handshake metadata (sanitized, as every server-declared placement is).
+   * `[]` for a remote connector, whose placements come from its catalog entry
+   * and are tracked by the connector lifecycle.
    *
    * Read by the runtime at start time to register placements in the
-   * platform `PlacementRegistry`. Static — doesn't change across restarts.
+   * platform `PlacementRegistry`.
    */
   getPlacements(): PlacementDeclaration[] {
     if (this.mode.type === "inProcess") {
       return this.mode.placements ?? [];
+    }
+    if (this.mode.type === "plugin") {
+      const host = this._hostMeta as { placements?: unknown } | undefined;
+      // `sanitizePlacements` type-checks every field of every element before
+      // reading it, so the unchecked array is safe to hand it.
+      return Array.isArray(host?.placements)
+        ? sanitizePlacements(host.placements as PlacementDeclaration[])
+        : [];
     }
     return [];
   }
@@ -2226,6 +2282,18 @@ export class McpSource implements ToolSource {
   }
 
   async execute(
+    toolName: string,
+    input: Record<string, unknown>,
+    signal?: AbortSignal,
+    options?: ToolExecuteOptions,
+  ): Promise<ToolResult> {
+    const result = await this.dispatch(toolName, input, signal, options);
+    const overlay = this.mode.type === "plugin" ? this.mode.resultOverlay : undefined;
+    return overlay ? overlay(toolName, result) : result;
+  }
+
+  /** One tool call, as the server answered it. */
+  private async dispatch(
     toolName: string,
     input: Record<string, unknown>,
     signal?: AbortSignal,

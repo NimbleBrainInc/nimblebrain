@@ -472,9 +472,9 @@ function appendRunMessages(
   // byte-for-byte ("thinking blocks in the latest assistant message cannot be
   // modified"). Grouping content by category (reasoning / text / tool-call) and
   // emitting them as separate messages is a 400 on multi-iteration runs with
-  // thinking enabled. The chat UI consumes its own projection from
-  // src/platform/conversations/jsonl-reader.ts; this function is the
-  // LLM-replay projection.
+  // thinking enabled. The chat UI reads the conversations plugin's own display
+  // projection (`conversations__get`); this function is the LLM-replay
+  // projection.
   // Overlays are placed where the live run put them: inside the tool results
   // of the iteration that delivered them (the call a body held, else the
   // iteration's last result), through the engine's own `guidanceByToolCall`,

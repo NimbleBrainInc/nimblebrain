@@ -1,15 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatResponse } from "../../src/api/schemas/responses.ts";
-import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
-import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { ModelAuthError } from "../../src/model/model-auth.ts";
 import { ConversationNotFoundError, RunInProgressError } from "../../src/runtime/errors.ts";
 import type { BufferedRunEvent, RunStatus } from "../../src/runtime/run-bus.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { ownerConversationsDir } from "../helpers/conversation-store.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
@@ -151,7 +150,7 @@ describe("detached turns (server-authoritative streaming)", () => {
       conversationId,
       DEV_IDENTITY.id,
     );
-    expect(store).toBeInstanceOf(EventSourcedConversationStore);
+    expect(store).not.toBeNull();
     const events = await store!.readEvents(conversationId);
     expect(events.length).toBeGreaterThan(0);
   });
@@ -159,27 +158,24 @@ describe("detached turns (server-authoritative streaming)", () => {
   it("refuses an unknown provided id without creating it or reserving a run", async () => {
     // A provided id is only ever resumed. One that is not in the workspace is
     // `ConversationNotFoundError`, before `begin`, and nothing is written.
-    const createSpy = spyOn(EventSourcedConversationStore.prototype, "create");
-    try {
-      const id = "conv_face0000face0001"; // conv_ + 16 hex, not on disk
-      await expect(
-        runtime.startTurn({
-          identity: DEV_IDENTITY,
-          message: "a",
-          conversationId: id,
-          workspaceId: TEST_WORKSPACE_ID,
-        }),
-      ).rejects.toBeInstanceOf(ConversationNotFoundError);
-      expect(createSpy.mock.calls.filter((c) => (c[0] as { id?: string })?.id === id)).toHaveLength(
-        0,
-      );
-      expect(runtime.isTurnActive(id)).toBe(false);
-      expect(
-        await runtime.findConversation(TEST_WORKSPACE_ID, id, { userId: DEV_IDENTITY.id }),
-      ).toBeNull();
-    } finally {
-      createSpy.mockRestore();
-    }
+    const id = "conv_face0000face0001"; // conv_ + 16 hex, never created
+    await expect(
+      runtime.startTurn({
+        identity: DEV_IDENTITY,
+        message: "a",
+        conversationId: id,
+        workspaceId: TEST_WORKSPACE_ID,
+      }),
+    ).rejects.toBeInstanceOf(ConversationNotFoundError);
+    expect(
+      existsSync(
+        join(ownerConversationsDir(testDir, TEST_WORKSPACE_ID, DEV_IDENTITY.id), `${id}.jsonl`),
+      ),
+    ).toBe(false);
+    expect(runtime.isTurnActive(id)).toBe(false);
+    expect(
+      await runtime.findConversation(TEST_WORKSPACE_ID, id, { userId: DEV_IDENTITY.id }),
+    ).toBeNull();
   });
 
   it("serializes concurrent starts on the same existing conversation", async () => {
@@ -218,7 +214,7 @@ describe("detached turns (server-authoritative streaming)", () => {
     // Seed the foreign conversation in a workspace of its owner's
     // (`workspaces/<wsId>/conversations/<ownerId>/`).
     const foreignOwner = "usr_someone_else";
-    const convDir = workspaceConversationsDir(testDir, "ws_006f297ff466f8d6", foreignOwner);
+    const convDir = ownerConversationsDir(testDir, "ws_006f297ff466f8d6", foreignOwner);
     mkdirSync(convDir, { recursive: true });
     writeFileSync(
       join(convDir, `${convId}.jsonl`),

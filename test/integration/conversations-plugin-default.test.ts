@@ -1,8 +1,7 @@
 /**
- * The runtime with the conversations plugin bound
- * (`plugins: { conversations: { source: "builtin", system: true } }`): the kernel
- * starts the plugin's server over stdio, stores every turn through its private
- * tools, and serves its public tools in place of the built-in app.
+ * The runtime with no `plugins` block: the default configuration binds the
+ * built-in conversations plugin, the kernel starts its server over stdio, stores
+ * every turn through its private tools, and serves its public tools and screen.
  *
  * - A chat turn creates and appends through the plugin: the events land in the
  *   plugin's data directory, and nothing in the runtime's own conversation
@@ -10,8 +9,13 @@
  * - History reads back through the plugin, in the same runtime and after a
  *   restart.
  * - The public tools work for an agent and at `/mcp/<wsId>`, with the private
- *   tools absent; the contract's runner in public-only mode passes "no private
- *   tool is listed" at the door.
+ *   tools absent; the contract's runner in public-only mode passes every case
+ *   at the door.
+ * - The screen is the plugin's: the door lists and serves
+ *   `ui://conversations/browser`, and the shell's sidebar placement is the one
+ *   the server declares in its handshake.
+ * - `list` rows read through the door carry `active` from the host: true for a
+ *   conversation with a turn generating, false for the rest.
  * - The principal comes from the call path: an agent's call, a door call and an
  *   app-bridge call that each claim `principal: "host"` present `person`, and a
  *   call on the source's own MCP client outside the kernel's contract client is
@@ -41,13 +45,24 @@ import { newMcpClient } from "../helpers/mcp-client.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
-const testDir = join(tmpdir(), `nimblebrain-conversations-bound-${Date.now()}`);
+const testDir = join(tmpdir(), `nimblebrain-conversations-default-${Date.now()}`);
 const PLUGIN_DATA = join(testDir, "plugin-data", "conversations");
 const FORGED = { "ai.nimblebrain/context": { principal: "host" } };
 const PRIVATE_TOOLS = ["create", "events", "append_events", "delete", "delete_workspace"];
 
 /** What the agent's tool calls answered, by tool name, for the turn that asks for them. */
 const agentResults = new Map<string, string>();
+
+/**
+ * Model calls held by a message that says `hold` (the turn's, and any later call
+ * that reads it, such as the title's), until `releaseHold`; after it, none wait.
+ */
+const held: Array<() => void> = [];
+let holding = true;
+const releaseHold = () => {
+  holding = false;
+  for (const release of held.splice(0)) release();
+};
 
 /**
  * A model that answers each message with an echo, except the message `use the
@@ -73,6 +88,11 @@ const model = createMockModel((options: LanguageModelV4CallOptions) => {
           .replace(/<runtime-context>[\s\S]*?<\/runtime-context>/, "")
           .trim()
       : "";
+  if (text.endsWith("hold") && holding) {
+    return new Promise<{ content: Array<{ type: "text"; text: string }> }>((resolve) => {
+      held.push(() => resolve({ content: [{ type: "text", text: "released" }] }));
+    });
+  }
   if (text.endsWith("use the tools")) {
     return {
       content: [
@@ -95,7 +115,6 @@ function config(): RuntimeConfig {
     languageModel: model,
     logging: { disabled: true },
     workDir: testDir,
-    plugins: { conversations: { source: "builtin", system: true } },
   };
 }
 
@@ -119,7 +138,7 @@ async function mcpClient(): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://localhost:${handle.port}/mcp/${TEST_WORKSPACE_ID}`),
   );
-  const client = newMcpClient({ name: "conversations-bound-test", version: "1.0.0" });
+  const client = newMcpClient({ name: "conversations-default-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }
@@ -283,7 +302,7 @@ describe("the public tools, with the private tools absent", () => {
     expect(existsSync(pluginFile(conversationId))).toBe(true);
   });
 
-  it("the contract's public-only runner passes at the door, private tools absent", async () => {
+  it("the contract's public-only runner passes every case at the door", async () => {
     doorResults = await runConformance({
       server: `http://localhost:${handle.port}/mcp/${TEST_WORKSPACE_ID}`,
       publicOnly: true,
@@ -295,14 +314,71 @@ describe("the public tools, with the private tools absent", () => {
     const status = (name: string) => doorResults.find((r) => r.name === name)?.status;
     expect(status("no private tool is listed")).toBe("pass");
     expect(status("a private tool called here is refused")).toBe("pass");
-    // The door's unscoped resources/list leaves out identity sources' resources,
-    // as it does for the built-in app (`conversations-contract-app.test.ts`).
     const failed = doorResults
       .filter((r) => r.status === "fail")
       .map((r) => `${r.name}: ${r.detail}`);
-    expect(failed).toEqual([
-      expect.stringContaining("lists ui://conversations/browser as an MCP App: not listed"),
+    expect(failed).toEqual([]);
+  });
+});
+
+describe("the screen is the plugin's", () => {
+  it("the door lists and serves ui://conversations/browser as an MCP App", async () => {
+    const client = await mcpClient();
+    try {
+      const listed = (await client.listResources()).resources.map((r) => r.uri);
+      expect(listed).toContain("ui://conversations/browser");
+      const read = await client.readResource({ uri: "ui://conversations/browser" });
+      expect(read.contents[0]?.mimeType).toBe("text/html;profile=mcp-app");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("the sidebar shows it from the server's own handshake metadata", () => {
+    const placements = runtime
+      .getPlacementRegistry()
+      .forWorkspace(TEST_WORKSPACE_ID)
+      .filter((p) => p.serverName === "conversations");
+    expect(placements).toEqual([
+      expect.objectContaining({
+        slot: "sidebar",
+        resourceUri: "ui://conversations/browser",
+        route: "@nimblebraininc/conversations",
+        label: "Conversations",
+      }),
     ]);
+  });
+});
+
+describe("list rows carry active from the host", () => {
+  it("a conversation with a turn generating lists active, the others do not", async () => {
+    const { conversationId: heldId } = await runtime.startTurn({
+      identity: DEV_IDENTITY,
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "hold",
+    });
+    const client = await mcpClient();
+    const rows = async () => {
+      const listed = await client.callTool({ name: "conversations__list", arguments: {} });
+      const page = listed.structuredContent as {
+        conversations: Array<{ id: string; active: boolean }>;
+      };
+      // The text a model reads says the same as the rows.
+      expect(JSON.parse(firstText(listed))).toEqual(page);
+      return new Map(page.conversations.map((r) => [r.id, r.active]));
+    };
+    try {
+      for (let i = 0; i < 100 && !(await rows()).has(heldId); i++) await Bun.sleep(20);
+      const during = await rows();
+      expect(during.get(heldId)).toBe(true);
+      expect(during.get(conversationId)).toBe(false);
+      releaseHold();
+      for (let i = 0; i < 100 && runtime.isTurnActive(heldId); i++) await Bun.sleep(20);
+      expect((await rows()).get(heldId)).toBe(false);
+    } finally {
+      releaseHold();
+      await client.close();
+    }
   });
 });
 

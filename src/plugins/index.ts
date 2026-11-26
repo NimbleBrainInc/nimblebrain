@@ -10,7 +10,8 @@
  * satisfy from the contracts it declares.
  *
  * The runtime calls {@link checkConfiguredPlugins} at boot to validate and log
- * the resolved set, then starts each binding's server (`bound-servers.ts`).
+ * the resolved set (the default plugins with the operator's entries over them),
+ * then starts each binding's server (`bound-servers.ts`).
  */
 
 import { existsSync } from "node:fs";
@@ -20,6 +21,7 @@ import {
   enabledPlugins,
   type PluginConfig,
   type PluginsConfig,
+  withDefaultPlugins,
 } from "../config/plugins.ts";
 import { log } from "../observability/log.ts";
 import {
@@ -235,6 +237,11 @@ export function formatPluginError(e: PluginError): string {
   return `${e.plugin}${where ? ` (${where})` : ""}: ${e.message}`;
 }
 
+/** Where a plugin's `${PLUGIN_DATA}` is under the runtime's work directory: `<workDir>/plugin-data/<name>`. */
+export function pluginDataDir(workDir: string, name: string): string {
+  return join(workDir, "plugin-data", name);
+}
+
 export interface CheckConfiguredPluginsOptions {
   /** The config file's path; a relative `source` resolves against its directory. */
   configPath?: string;
@@ -245,20 +252,21 @@ export interface CheckConfiguredPluginsOptions {
 }
 
 /**
- * The boot check: resolve the configured plugins, log the resolved set, and
- * throw naming every error when they cannot run together. It starts nothing;
- * the runtime starts each binding's server from what it returns. With no plugin
- * enabled it reads nothing and returns null, so an instance without a
- * `plugins` block boots as it always has.
+ * The boot check: resolve the plugins the instance runs (the defaults, with
+ * the operator's `plugins` block over them), log the resolved set, and throw
+ * naming every error when they cannot run together. It starts nothing; the
+ * runtime starts each binding's server from what it returns. With every plugin
+ * turned off it reads nothing and returns null.
  */
 export function checkConfiguredPlugins(
-  config: PluginsConfig | undefined,
+  configured: PluginsConfig | undefined,
   opts: CheckConfiguredPluginsOptions,
 ): ResolvedPlugins | null {
+  const config = withDefaultPlugins(configured);
   if (enabledPlugins(config).length === 0) return null;
   const result = resolvePlugins(config, opts.contracts ?? loadContracts(), {
     baseDir: opts.configPath ? resolve(opts.configPath, "..") : process.cwd(),
-    dataDir: join(opts.workDir, "plugin-data"),
+    dataDir: pluginDataDir(opts.workDir, ""),
     ...(opts.builtinDir ? { builtinDir: opts.builtinDir } : {}),
   });
   if (!result.ok) {

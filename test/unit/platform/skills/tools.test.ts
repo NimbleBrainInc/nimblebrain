@@ -9,19 +9,20 @@
  *   - `skills__loading_log` projects every load channel and filters by
  *     `since`/`until`/`skill`/`loaded_by`.
  *
- * The Runtime fixture wraps a real `EventSourcedConversationStore` rooted
- * in a tmpdir so the conversation-event paths are exercised end-to-end.
+ * The Runtime fixture wraps the real conversation store (the contract
+ * adapter over the conversations plugin, in process) rooted in a tmpdir, so
+ * the conversation-event paths are exercised end-to-end.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
-import { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
-import { workspaceConversationsDir } from "../../../../src/conversation/paths.ts";
+import type { ContractConversations } from "../../../../src/conversation/contract-store.ts";
 import type {
   ConversationAccessContext,
+  ConversationEventStore,
   ConversationListResult,
   ListOptions,
   SkillsLoadedEvent,
@@ -33,6 +34,7 @@ import { mergeScopedSkills, parseSkillFile } from "../../../../src/skills/loader
 import type { Skill } from "../../../../src/skills/types.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { inProcessConversations } from "../../../helpers/conversation-store.ts";
 import { makeIdentity } from "../../../helpers/identity.ts";
 import { stub } from "../../../helpers/stub.ts";
 
@@ -42,8 +44,8 @@ import { stub } from "../../../helpers/stub.ts";
 const TEST_HASH = "0".repeat(64);
 
 // The workspace the fake's seed conversations live in. Conversations are
-// workspace-owned (`workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`);
-// every `runtime.store().create(...)` in this file seeds into this workspace +
+// workspace-owned; every `runtime.store().create(...)` in this file seeds into
+// this workspace +
 // owner partition, and the facade (`resolveConversationStore` /
 // `findConversation` / `listConversations`) reads them back from the one
 // workspace + owner partition each call names, as the runtime does.
@@ -60,7 +62,7 @@ class FakeRuntime {
   identity: FakeIdentity | null = null;
   hasIdentityProvider = false;
   wsId: string | null = null;
-  private readonly _store: EventSourcedConversationStore;
+  private readonly conversations: ContractConversations;
 
   contextSkills: Skill[] = [];
   matchableSkills: Skill[] = [];
@@ -69,12 +71,15 @@ class FakeRuntime {
   overlayFor: ((wsId: string | null, userId: string | null) => Skill[]) | null = null;
 
   constructor(private workDir: string) {
-    // Back the fake with a real workspace store, so the conversation facade
-    // (`resolveConversationStore` / `findConversation` / `listConversations`)
-    // is exercised against the workspace-partitioned on-disk layout.
-    const convDir = workspaceConversationsDir(workDir, SEED_WS_ID, SEED_OWNER_ID);
-    mkdirSync(convDir, { recursive: true });
-    this._store = new EventSourcedConversationStore({ dir: convDir });
+    // Back the fake with the runtime's own conversation store, so the
+    // conversation facade (`resolveConversationStore` / `findConversation` /
+    // `listConversations`) is walled by workspace and owner as the runtime's is.
+    this.conversations = inProcessConversations(join(workDir, "plugin-data", "conversations"));
+  }
+
+  /** One owner's conversations in one workspace. */
+  storeFor(workspaceId: string, ownerId: string): ConversationEventStore {
+    return this.conversations.forScope({ workspaceId, ownerId });
   }
 
   getWorkDir(): string {
@@ -99,10 +104,9 @@ class FakeRuntime {
     wsId: string,
     convId: string,
     ownerId: string,
-  ): Promise<EventSourcedConversationStore | null> {
-    const dir = workspaceConversationsDir(this.workDir, wsId, ownerId);
-    if (!existsSync(join(dir, `${convId}.jsonl`))) return null;
-    return new EventSourcedConversationStore({ dir });
+  ): Promise<ConversationEventStore | null> {
+    if (!(await this.conversations.has({ workspaceId: wsId, ownerId }, convId))) return null;
+    return this.storeFor(wsId, ownerId);
   }
   async findConversation(wsId: string, id: string, access: ConversationAccessContext) {
     const store = await this.resolveConversationStore(wsId, id, access.userId);
@@ -114,9 +118,7 @@ class FakeRuntime {
     options: ListOptions | undefined,
     access: ConversationAccessContext,
   ): Promise<ConversationListResult> {
-    const dir = workspaceConversationsDir(this.workDir, workspaceId, access.userId);
-    if (!existsSync(dir)) return { conversations: [], nextCursor: null, totalCount: 0 };
-    return new EventSourcedConversationStore({ dir }).list(options, access);
+    return this.storeFor(workspaceId, access.userId).list(options);
   }
   getWorkspaceStore() {
     // Tests that exercise the cross-workspace path supply this directly
@@ -136,8 +138,8 @@ class FakeRuntime {
     return this.overlayFor ? this.overlayFor(wsId, userId) : this.conversationOverlay;
   }
 
-  store(): EventSourcedConversationStore {
-    return this._store;
+  store(): ConversationEventStore {
+    return this.storeFor(SEED_WS_ID, SEED_OWNER_ID);
   }
 }
 
@@ -965,13 +967,7 @@ describe("skills__loading_log", () => {
     // A conversation the same owner has in a DIFFERENT workspace. The scan
     // must not reach it: skills are workspace-tiered, so "which skills loaded"
     // is a question about the active workspace.
-    const otherDir = workspaceConversationsDir(
-      runtime.getWorkDir(),
-      "ws_005820c54ca342ad",
-      SEED_OWNER_ID,
-    );
-    mkdirSync(otherDir, { recursive: true });
-    const otherStore = new EventSourcedConversationStore({ dir: otherDir });
+    const otherStore = runtime.storeFor("ws_005820c54ca342ad", SEED_OWNER_ID);
     const convOther = await otherStore.create({
       model: "anthropic:claude-sonnet-4-6",
       ownerId: SEED_OWNER_ID,
@@ -1014,9 +1010,7 @@ describe("skills__loading_log", () => {
   test("an explicit conversation_id is read only in the active workspace", async () => {
     // The same owner's conversation, held in a different workspace.
     const otherWs = "ws_005820c54ca342ad";
-    const otherDir = workspaceConversationsDir(runtime.getWorkDir(), otherWs, SEED_OWNER_ID);
-    mkdirSync(otherDir, { recursive: true });
-    const otherStore = new EventSourcedConversationStore({ dir: otherDir });
+    const otherStore = runtime.storeFor(otherWs, SEED_OWNER_ID);
     const convOther = await otherStore.create({
       model: "anthropic:claude-sonnet-4-6",
       ownerId: SEED_OWNER_ID,

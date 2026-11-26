@@ -215,6 +215,12 @@ export interface BootstrapResponse {
      */
     workspaces: BootstrapWorkspace[];
     config: {
+        /**
+         * Whether this instance offers chat: true exactly when a plugin implements
+         * the conversations contract. When false every chat route answers
+         * `404 chat_disabled`, and the shell shows no chat surface.
+         */
+        chat: boolean;
         models: ModelSlots;
         configuredProviders: string[];
         /** What the caller's next conversation will be created with. */

@@ -30,7 +30,7 @@ import { useLocation } from "react-router-dom";
 import { getActiveWorkspaceId } from "../api/client";
 import type { AppTrailEntry } from "../bridge/schemas";
 import { useAppLocation } from "../context/AppLocationContext";
-import { useChatContext } from "../context/ChatContext";
+import { useChatConfigContext, useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
 import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
@@ -79,6 +79,7 @@ export function AppWithChat({ placement }: AppWithChatProps) {
   const { panelState, openPanel, toggleFullscreen } = useChatPanelContext();
 
   const chat = useChatContext();
+  const { chat: chatEnabled } = useChatConfigContext();
   const isMobile = useIsMobile();
   const { setFocusedApp } = useFocusedApp();
   const { setAppLocation } = useAppLocation();
@@ -114,6 +115,7 @@ export function AppWithChat({ placement }: AppWithChatProps) {
   const openFromUrl = useEffectEvent(() => {
     if (deepLinkHandled.current) return;
     deepLinkHandled.current = true;
+    if (!chatEnabled) return;
     const chatId = new URLSearchParams(window.location.search).get("chat");
     if (chatId) {
       openPanel(chatId);
@@ -175,14 +177,17 @@ export function AppWithChat({ placement }: AppWithChatProps) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: sibling app routes reuse this instance, so a new `placement.resourceUri` is the app leaving and its trail must clear as on unmount
   useEffect(() => () => setAppLocation(null), [setAppLocation, placement.resourceUri]);
 
+  // An app's `ui/message`. With chat off it throws, so the app is told the
+  // message reached no conversation.
   const handleChat = useCallback(
     (message: string) => {
+      if (!chatEnabled) throw new Error("Chat is turned off on this instance");
       if (panelState === "closed") {
         openPanel();
       }
       chat.sendMessage(message, appContext);
     },
-    [panelState, openPanel, chat, appContext],
+    [chatEnabled, panelState, openPanel, chat, appContext],
   );
 
   const isSidebar = panelState === "sidebar";

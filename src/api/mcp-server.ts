@@ -438,7 +438,9 @@ function createHandlers(
   // One source, when `_meta` names it (`RESOURCE_SOURCE_META_KEY`): that is how
   // the iframe bridge asks for an app's own server, and the listing is that
   // server's, cursor and `nextCursor` passed straight through. Without it, the
-  // workspace-wide listing an MCP client gets returns everything in a single
+  // listing an MCP client gets is what `resources/read` resolves: the caller's
+  // identity sources (conversations, files, tasks), each in the identity
+  // request context, then the request's one workspace, all in a single
   // response (no `cursor` plumbing across sources).
   const listResources = async (request: ListResourcesRequest): Promise<ListResourcesResult> => {
     const scoped = scopedSourceName(request.params?._meta);
@@ -457,6 +459,15 @@ function createHandlers(
 
     const resources: Resource[] = [];
     if (!runtime || !identityId) return { resources };
+
+    const identityReqCtx: RequestContext = {
+      identity: requestCtx.identity ?? null,
+      workspaceId: wsId,
+    };
+    for (const sourceName of IDENTITY_SOURCES) {
+      const src = runtime.getIdentitySource(sourceName);
+      await runWithRequestContext(identityReqCtx, () => collectSourceResources(src, resources));
+    }
 
     let wsRegistry: ToolRegistry;
     try {

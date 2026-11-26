@@ -28,6 +28,8 @@ import type { ManagedConnectorProvider } from "../../src/connectors/providers/ma
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
 import { brokeredConnectorDir } from "../../src/connectors/runtime/brokered.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
@@ -36,6 +38,17 @@ import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { marked, startLifecycleSource } from "../helpers/lifecycle-server.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
+
+/**
+ * Delete a workspace as a signed-in caller does: the purge of its conversations
+ * (`delete_workspace` on the conversations plugin) is made in the deleting
+ * identity's request context.
+ */
+function deleteAsMember(rt: Runtime, wsId: string) {
+  return runWithRequestContext({ identity: DEV_IDENTITY, workspaceId: wsId }, () =>
+    rt.deleteWorkspace(wsId),
+  );
+}
 
 const ADMIN = { id: "usr_admin", email: "admin@example.test" };
 const WS_ID = "ws_003eba8844413cd9";
@@ -188,7 +201,7 @@ afterEach(async () => {
 test("tears down every connector the workspace holds, before the subtree is renamed", async () => {
   await seedConnectors();
 
-  const result = await runtime.deleteWorkspace(WS_ID);
+  const result = await deleteAsMember(runtime, WS_ID);
 
   expect(result.deleted).toBe(true);
   expect(result.connectors.map((c) => c.serverName)).toEqual([ALPHA, BETA]);
@@ -223,7 +236,7 @@ test("a connector that throws mid-teardown is reported, and the workspace still 
   await seedConnectors();
   failingStops.add(ALPHA);
 
-  const result = await runtime.deleteWorkspace(WS_ID);
+  const result = await deleteAsMember(runtime, WS_ID);
   // Cleared before `afterEach` shuts the runtime down — the throw leaves the
   // source in the registry, so shutdown stops it once more.
   failingStops.clear();
@@ -284,7 +297,7 @@ test("reaches the broker's revoke for a brokered connector, and clears its crede
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "lease.json"), "{}\n");
 
-  const result = await runtime.deleteWorkspace(WS_ID);
+  const result = await deleteAsMember(runtime, WS_ID);
 
   expect(result.deleted).toBe(true);
   expect(cleanups).toEqual([{ connectorId: "com.example/gamma", wsId: WS_ID }]);
@@ -299,7 +312,7 @@ test("an archive that cannot be written reports the teardown it already ran", as
   // nothing happened while the workspace sits on disk with its grants revoked.
   writeFileSync(join(workDir, "archived"), "not a directory\n");
 
-  const result = await runtime.deleteWorkspace(WS_ID);
+  const result = await deleteAsMember(runtime, WS_ID);
 
   expect(result.deleted).toBe(false);
   expect(result.deleteError).toBeDefined();
@@ -322,7 +335,7 @@ test("a failure on the FAR side of the rename reports the teardown too", async (
   // landed.
   mkdirSync(join(workDir, "workspaces", WS_ID, ARCHIVE_MARKER_FILENAME), { recursive: true });
 
-  const result = await runtime.deleteWorkspace(WS_ID);
+  const result = await deleteAsMember(runtime, WS_ID);
 
   expect(result.deleted).toBe(false);
   expect(result.deleteError).toBeDefined();
@@ -336,7 +349,7 @@ test("a failure on the FAR side of the rename reports the teardown too", async (
 });
 
 test("a workspace that does not exist reports not-deleted and tears down nothing", async () => {
-  const result = await runtime.deleteWorkspace("ws_000e0377c44c9171");
+  const result = await deleteAsMember(runtime, "ws_000e0377c44c9171");
 
   expect(result.deleted).toBe(false);
   expect(result.connectors).toEqual([]);

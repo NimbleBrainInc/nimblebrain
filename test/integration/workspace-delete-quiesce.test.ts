@@ -36,6 +36,17 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
+/**
+ * Delete a workspace as a signed-in caller does: the purge of its conversations
+ * (`delete_workspace` on the conversations plugin) is made in the deleting
+ * identity's request context.
+ */
+function deleteAsMember(rt: Runtime, wsId: string) {
+  return runWithRequestContext({ identity: DEV_IDENTITY, workspaceId: wsId }, () =>
+    rt.deleteWorkspace(wsId),
+  );
+}
+
 const WS_ID = "ws_0064f069a7f4e1b0";
 const TASK_ID = "daily-digest";
 /** No identity provider is configured, so every owner resolves to the dev id. */
@@ -137,7 +148,7 @@ test("deleting the workspace disarms it, and the directory does not come back", 
   // `deleteWorkspace` drops the workspace's tasks in its synchronous
   // prefix, before its first await — so the zero-delay timer `arm()` just
   // scheduled is cleared before it can run. Nothing here waits on a race.
-  const result = await runtime.deleteWorkspace(WS_ID);
+  const result = await deleteAsMember(runtime, WS_ID);
   expect(result.deleted).toBe(true);
 
   await tick();
@@ -153,7 +164,7 @@ test("a run that slips through cannot re-create the archived workspace", async (
   // store directly — the same call `updateAfterRun` makes when a run that was
   // already in flight at delete time settles afterwards.
   arm();
-  await runtime.deleteWorkspace(WS_ID);
+  await deleteAsMember(runtime, WS_ID);
 
   expect(() =>
     appendRun(workDir, WS_ID, OWNER, TASK_ID, {

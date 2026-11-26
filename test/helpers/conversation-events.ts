@@ -3,7 +3,7 @@
  *
  * Tests describe a conversation as a list of turns — the shape that reads
  * naturally in a test — and this turns it into the JSONL event lines the
- * event-sourced store would have written for those turns: a `user.message` per
+ * conversations plugin stores for those turns: a `user.message` per
  * user turn, and per assistant turn a run (`run.start`, one `llm.response`
  * carrying the text and tool calls, a `tool.start`/`tool.done` pair per call,
  * `run.done`).

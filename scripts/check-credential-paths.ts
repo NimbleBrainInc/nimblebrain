@@ -109,8 +109,7 @@ export function isUserCredentialTemplate(node: ts.TemplateExpression): boolean {
   let assembled = node.head.text;
   for (const span of node.templateSpans) {
     // Placeholder so adjacency-matching works on the literal text
-    // between substitutions. Same convention as
-    // `check-conversation-paths.ts`.
+    // between substitutions. Same convention as `check-file-paths.ts`.
     assembled += "<expr>";
     assembled += span.literal.text;
   }
@@ -125,7 +124,7 @@ export function isUserCredentialStringLiteral(node: ts.StringLiteral): boolean {
   return USER_CREDENTIAL_PATH_RE.test(node.text);
 }
 
-// ── Walker scaffolding (same shape as check-conversation-paths.ts) ──
+// ── Walker scaffolding (same shape as check-file-paths.ts) ──
 
 function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): boolean {
   const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));

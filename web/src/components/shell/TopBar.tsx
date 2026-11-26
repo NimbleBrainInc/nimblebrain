@@ -35,6 +35,7 @@ import { Fragment, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { AppTrailEntry } from "../../bridge/schemas";
 import { useAppLocation } from "../../context/AppLocationContext";
+import { useChatConfigContext } from "../../context/ChatContext";
 import { useShellContext } from "../../context/ShellContext";
 import { useSidebar } from "../../context/SidebarContext";
 import { useWorkspaceAppIcons } from "../../context/WorkspaceAppIconsContext";
@@ -118,6 +119,18 @@ function CrumbControl({
     >
       {children}
     </button>
+  );
+}
+
+/** The workspace's controls at the bar's end; Chat only on an instance that offers it. */
+function WorkspaceControls() {
+  const { chat: chatEnabled } = useChatConfigContext();
+  return (
+    <>
+      <AppSettingsLink />
+      <InboxToggle />
+      {chatEnabled && <ChatToggle />}
+    </>
   );
 }
 
@@ -209,13 +222,7 @@ export function TopBar() {
         >
           {title}
         </h1>
-        {pathname.startsWith("/w/") && (
-          <>
-            <AppSettingsLink />
-            <InboxToggle />
-            <ChatToggle />
-          </>
-        )}
+        {pathname.startsWith("/w/") && <WorkspaceControls />}
       </header>
     </TooltipProvider>
   );

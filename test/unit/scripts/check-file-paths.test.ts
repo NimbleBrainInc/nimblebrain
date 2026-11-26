@@ -4,7 +4,7 @@
  * The lint exports its AST predicates so we can exercise them directly — no
  * subprocess, no fixture-on-disk dance. Each predicate is tested against a small
  * parsed snippet that either matches (a forbidden construction) or doesn't (the
- * sanctioned workspace-owned shape). Same shape as `check-conversation-paths.test.ts`.
+ * sanctioned workspace-owned shape).
  */
 
 import { describe, expect, test } from "bun:test";

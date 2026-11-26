@@ -1,6 +1,6 @@
 /**
  * The single sanctioned construction and parse site for the usage ledger's
- * on-disk layout, mirroring `src/conversation/paths.ts` for conversations.
+ * on-disk layout, mirroring `src/files/paths.ts` for files.
  *
  *   {workDir}/usage/<YYYY-MM>/<instance>.jsonl
  *

@@ -15,12 +15,11 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatResponse } from "../../src/api/schemas/responses.ts";
 import { startServer } from "../../src/api/server.ts";
-import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { postChatTurn } from "../helpers/chat-turn.ts";
@@ -99,16 +98,11 @@ async function sendTurn(baseUrl: string): Promise<string> {
   return (await readJson<ChatResponse>(res)).conversationId as string;
 }
 
-function readEvents(workDir: string, conversationId: string): ConversationEvent[] {
-  const path = join(
-    workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, TEST_IDENTITY.id),
-    `${conversationId}.jsonl`,
-  );
-  return readFileSync(path, "utf-8")
-    .split("\n")
-    .filter(Boolean)
-    .slice(1)
-    .map((l) => JSON.parse(l) as ConversationEvent);
+/** A conversation's stored events, once the runtime's queued writes for it have settled. */
+function readEvents(runtime: Runtime, conversationId: string): Promise<ConversationEvent[]> {
+  return runtime
+    .workspaceConversationStore(TEST_WORKSPACE_ID, TEST_IDENTITY.id)
+    .readEvents(conversationId);
 }
 
 const isCompactionUsage = (e: ConversationEvent) =>
@@ -136,7 +130,7 @@ afterAll(async () => {
 describe("mid-turn compaction — wired path", () => {
   test("a single turn folds mid-loop, bills the summarizer, and persists no compaction event", async () => {
     const convId = await sendTurn(on.baseUrl);
-    const events = readEvents(onDir, convId);
+    const events = await readEvents(on.runtime, convId);
 
     // The fold ran inside the turn. This is a FIRST turn — it opened on one
     // message — so turn-setup compaction had nothing to fold and cannot be
@@ -167,7 +161,7 @@ describe("mid-turn compaction — wired path", () => {
 
   test("features.compaction off makes no summarizer call on the same turn", async () => {
     const convId = await sendTurn(off.baseUrl);
-    const events = readEvents(offDir, convId);
+    const events = await readEvents(off.runtime, convId);
 
     // Same growth, same budget, gate closed: the hook is never installed, so
     // an operator who turned compaction off is not billed for folds.

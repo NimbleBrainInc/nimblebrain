@@ -19,8 +19,8 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { ownerConversationsDir } from "../../helpers/conversation-store.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 
@@ -50,7 +50,7 @@ async function defaultWorkspaceConvPath(
   convId: string,
 ): Promise<string> {
   return join(
-    workspaceConversationsDir(workDir, await defaultWorkspaceId(runtime, ownerId), ownerId),
+    ownerConversationsDir(workDir, await defaultWorkspaceId(runtime, ownerId), ownerId),
     `${convId}.jsonl`,
   );
 }

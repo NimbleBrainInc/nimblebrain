@@ -1,7 +1,7 @@
 /**
  * The single sanctioned construction site for workspace-partitioned file
- * paths. Mirrors `src/conversation/paths.ts`: every file directory is built
- * here, so the on-disk layout has exactly one definition.
+ * paths: every file directory is built here, so the on-disk layout has exactly
+ * one definition.
  *
  * The workspace owns the directory: a file lives under the workspace it was
  * created in, with the owner as a

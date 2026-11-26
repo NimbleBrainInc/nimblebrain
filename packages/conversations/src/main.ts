@@ -6,7 +6,7 @@
  *       [--host <host>]     the address to listen on (default 127.0.0.1)
  *       [--edge]            behind an edge that verifies the tenant and workspace (fleet mode)
  *   [--screen <file>]       the built ui://conversations/browser HTML
- *                           (default: ui/index.html in the plugin's root)
+ *                           (default: ui/dist/index.html in the plugin's root)
  *
  * Every call's context is the host context at `params._meta["ai.nimblebrain/context"]`
  * (`contracts/host-context/CONTEXT.md`), believed only from an authenticated host transport:
@@ -132,7 +132,7 @@ export async function serveStdio(opts: { dataDir: string; screenPath?: string })
 export async function main(argv: string[]): Promise<void> {
   const dataDir = arg(argv, "data-dir");
   if (!dataDir) fail("--data-dir <dir> is required");
-  const screenPath = arg(argv, "screen") ?? resolve(import.meta.dir, "../ui/index.html");
+  const screenPath = arg(argv, "screen") ?? resolve(import.meta.dir, "../ui/dist/index.html");
   if (!argv.includes("--http")) {
     await serveStdio({ dataDir, screenPath });
     return;

@@ -60,12 +60,8 @@ import {
   CONVERSATIONS_CONTRACT,
   type ContractConversations,
   createContractConversations,
+  overlayListActive,
 } from "../conversation/contract-store.ts";
-import {
-  type ConversationMutation,
-  EventSourcedConversationStore,
-} from "../conversation/event-sourced-store.ts";
-import { workspaceConversationsDir } from "../conversation/paths.ts";
 import {
   CONVERSATION_ID_RE,
   type Conversation,
@@ -202,7 +198,6 @@ import {
   type PermissionOwner,
   PermissionStore,
 } from "../permissions/permission-store.ts";
-import type { BoundPlatformSources } from "../platform/index.ts";
 import { isTaskForbiddenSkillTool } from "../platform/skills/source.ts";
 import type { TaskDomainContext } from "../platform/tasks/domain.ts";
 import type {
@@ -327,6 +322,7 @@ import {
   matchConversation,
 } from "./conversation-carry.ts";
 import {
+  ChatDisabledError,
   ConversationAccessDeniedError,
   ConversationNotFoundError,
   ConversationWorkspaceAccessDeniedError,
@@ -564,20 +560,6 @@ class MultiEventSink implements EventSink {
 }
 
 /**
- * A single conversation that changed, as broadcast to conversation-cache
- * subscribers.
- *
- * The store supplies id and path; the runtime adds the workspace, which it
- * holds in the store factory's closure and the store itself never sees. A
- * cache keys its entries on the workspace *directory*, so handing it the
- * binding the store was built from keeps that derivation identical to the one
- * a full directory walk would produce.
- */
-export interface ConversationChange extends ConversationMutation {
-  wsId: string;
-}
-
-/**
  * What a workspace delete needs from the tasks scheduler.
  *
  * A structural interface `Scheduler` already satisfies, so the scheduler is
@@ -644,8 +626,6 @@ export class Runtime {
   private config: RuntimeConfig;
   private contextSkills: Skill[];
   private _fileLocator?: FileLocator;
-  /** Subscribers (e.g. the conversations-tool index) notified on any conversation change. */
-  private _conversationsChangedListeners = new Set<(change?: ConversationChange) => void>();
   private hooks: EngineHooks;
   private defaultEvents: EventSink;
   private lifecycle: ConnectorLifecycleManager;
@@ -695,22 +675,22 @@ export class Runtime {
   /** The system source ("nb") — shared across workspace registries. */
   _systemSource: ToolSource | null;
   /**
-   * All platform sources (home, conversations, files, etc.). The WHOLE set —
-   * used for placements, identity-source resolution (`getIdentitySource`), and
-   * listing identity tools. NOT what workspace registries get; see
-   * `_workspaceSources`.
+   * All platform sources: the kernel's in-process apps (files, tasks, …) and
+   * every bound plugin server (conversations). The WHOLE set — used for
+   * placements, identity-source resolution (`getIdentitySource`), and listing
+   * identity tools. NOT what workspace registries get; see `_workspaceSources`.
    */
   private _platformSources: ToolSource[] = [];
   /**
-   * The servers the operator's plugins bind to contracts this kernel consumes,
-   * by contract. Empty with no `plugins` block.
+   * The servers the instance's plugins bind to contracts this kernel consumes,
+   * by contract. Empty when every plugin is turned off.
    */
   private _boundServers: ReadonlyMap<string, BoundServer> = new Map();
   /**
    * The conversation store over the bound conversations contract, or null when
-   * no plugin binds it (the filesystem store then serves every turn).
+   * no plugin binds it. Chat is on exactly when this is set (ADR-0076).
    */
-  private _contractConversations: ContractConversations | null = null;
+  private _conversations: ContractConversations | null = null;
   /**
    * Platform sources MINUS the kernel identity sources (conversations, …).
    * This is what workspace registries are composed from, so an identity source
@@ -844,11 +824,6 @@ export class Runtime {
     this._instanceConfig = instanceConfig;
     this._userStore = userStore;
     this._workspaceStore = workspaceStore;
-    // A workspace archive-delete moves its `conversations/` subtree away
-    // without going through a workspace store, so the conversations-tool index
-    // would otherwise keep ghosts. Deletion fires `membershipChanged` for each
-    // former member; ride that to invalidate the conversation caches.
-    this._workspaceStore.onMembershipChanged(() => this.notifyConversationsChanged());
     this._identityProvider = identityProvider;
     this._workspaceRegistries = workspaceRegistries;
     this._systemSource = systemSource;
@@ -967,9 +942,10 @@ export class Runtime {
       config = { ...config, configOverridePath: deriveOverridePath(config.configPath) };
     }
 
-    // The operator's plugins (ADR-0076): read, validated and held to their
-    // contracts, so a setup that cannot work refuses the boot here. Nothing is
-    // started or routed from the result yet. No `plugins` block reads nothing.
+    // The instance's plugins (ADR-0076): the defaults with the operator's
+    // block over them, read, validated and held to their contracts, so a setup
+    // that cannot work refuses the boot here. Nothing is started from the
+    // result yet; every plugin turned off reads nothing.
     const resolvedPlugins = checkConfiguredPlugins(config.plugins, {
       workDir,
       ...(config.configPath ? { configPath: config.configPath } : {}),
@@ -1296,12 +1272,12 @@ export class Runtime {
       // makes a second process on this work directory fail here, at boot.
       rt.getWorkQueue();
       // Each binding's server starts before anything reads conversations, and a
-      // server that does not start refuses the boot. A bound conversations
-      // server stores every turn and serves the conversations tools in place
-      // of the built-in app.
+      // server that does not start refuses the boot. A bound server is a
+      // platform source like the in-process apps: its tools, resources and
+      // placements reach the shell the same way.
       const bound = await rt.bindPlugins(resolvedPlugins, events);
       const { createPlatformSources } = await import("../platform/index.ts");
-      const platformSources = await createPlatformSources(rt, events, bound);
+      const platformSources = [...bound, ...(await createPlatformSources(rt, events))];
       // A connector may never take the name of a source the runtime registers
       // itself; install and boot both read that from the reserved set.
       assertRuntimeSourceNamesReserved([systemTools.name, ...platformSources.map((s) => s.name)]);
@@ -1428,28 +1404,53 @@ export class Runtime {
   }
 
   /**
-   * Start the server of every contract binding the operator's plugins resolved
+   * Start the server of every contract binding the instance's plugins resolved
    * to, and take each up where the kernel consumes its contract: a bound
-   * conversations server stores every turn (`contract-store.ts`) and serves the
-   * conversations tools in place of the built-in app. Returns the sources that
-   * replace built-in apps.
+   * conversations server stores every turn (`contract-store.ts`), which turns
+   * chat on. Returns every bound server's tool source, already started.
    */
   private async bindPlugins(
     resolved: ResolvedPlugins | null,
     events: EventSink,
-  ): Promise<BoundPlatformSources> {
-    if (resolved) this._boundServers = await startBoundServers(resolved, events);
+  ): Promise<McpSource[]> {
+    if (resolved) {
+      // `active` on a relayed conversations `list` is the host's fact (the run bus's).
+      const overlays = new Map([
+        [
+          CONVERSATIONS_CONTRACT,
+          (tool: string, result: ToolResult) =>
+            overlayListActive(tool, result, (id) => this.isTurnActive(id)),
+        ],
+      ]);
+      this._boundServers = await startBoundServers(resolved, events, overlays);
+    }
     const conversations = this._boundServers.get(CONVERSATIONS_CONTRACT);
-    if (!conversations) return {};
-    const workDir = resolveWorkDir(this.config);
-    this._contractConversations = createContractConversations(conversations.call, {
-      logLevel: this.config.logging?.level ?? "normal",
-      // Identity and scope are the kernel's: the plugin creates storage for any
-      // workspace the kernel stamps, so the kernel stamps only a live one.
-      assertWorkspace: ({ workspaceId, ownerId }) =>
-        assertWorkspaceRootExists(workspaceConversationsDir(workDir, workspaceId, ownerId)),
-    });
-    return { conversations: conversations.source };
+    if (conversations) {
+      const workspacesDir = this._workspaceStore.getWorkspacesDir();
+      this._conversations = createContractConversations(conversations.call, {
+        logLevel: this.config.logging?.level ?? "normal",
+        // Identity and scope are the kernel's: the plugin creates storage for any
+        // workspace the kernel stamps, so the kernel stamps only a live one.
+        assertWorkspace: ({ workspaceId }) =>
+          assertWorkspaceRootExists(join(workspacesDir, workspaceId)),
+      });
+    }
+    return [...this._boundServers.values()].map((server) => server.source);
+  }
+
+  /**
+   * Whether this instance offers chat: a plugin implements the conversations
+   * contract. Chat is derived from the contract (ADR-0076), so with nothing
+   * bound every chat route answers `chat_disabled` and the shell shows no chat.
+   */
+  isChatEnabled(): boolean {
+    return this._conversations !== null;
+  }
+
+  /** The bound conversations store; throws {@link ChatDisabledError} when nothing implements the contract. */
+  private requireConversations(): ContractConversations {
+    if (!this._conversations) throw new ChatDisabledError();
+    return this._conversations;
   }
 
   /** Process a chat message. Optional per-request EventSink for SSE streaming. */
@@ -4410,67 +4411,18 @@ export class Runtime {
   }
 
   /**
-   * Subscribe to conversation changes (create / delete / append, and workspace
-   * archive-delete). The conversations-tool index registers here so it refreshes
-   * off the one invalidation signal every conversation write raises. Returns an
-   * unsubscribe function.
-   *
-   * The listener receives the conversation that moved, or `undefined` when the
-   * change is not attributable to one — see `notifyConversationsChanged`.
-   */
-  onConversationsChanged(listener: (change?: ConversationChange) => void): () => void {
-    this._conversationsChangedListeners.add(listener);
-    return () => this._conversationsChangedListeners.delete(listener);
-  }
-
-  /**
-   * Invalidate conversation caches. The single freshness chokepoint: workspace
-   * stores call this on create/delete/append (via `onMutate`), and a workspace
-   * archive-delete calls it (via the membership-change hook), so the
-   * conversations-tool index never serves a frozen summary or a ghost of a
-   * deleted workspace.
-   *
-   * `change` names the one conversation that moved, letting a listening cache
-   * re-read that entry instead of its whole corpus. **Omitting it means "assume
-   * anything may have changed"** and costs a full rebuild — correct for a
-   * workspace archive-delete, which retires an unbounded set of conversations
-   * at once and so cannot name one.
-   */
-  notifyConversationsChanged(change?: ConversationChange): void {
-    for (const listener of this._conversationsChangedListeners) {
-      try {
-        listener(change);
-      } catch (err) {
-        log.warn(`[runtime] conversations-changed listener threw: ${(err as Error).message}`);
-      }
-    }
-  }
-
-  /**
-   * Conversation store for a user's private chats in ONE workspace
-   * (`workspaces/<wsId>/conversations/<ownerId>/`). The workspace owns the
-   * directory — the path is the boundary. Per-call instances are intentional
-   * (the store is stateless w.r.t. its dir); the `onMutate` hook keeps the
-   * conversation caches fresh on every write, and announces the write to the
-   * owner's conversation views. An append counts: it changes the conversation's
-   * summary, and the relay's coalescing bounds how often a streaming turn
-   * reaches those views.
+   * Conversation store for a user's private chats in ONE workspace, over the
+   * bound conversations contract. Per-call instances share the contract
+   * store's write queues; the `onMutate` hook announces each write to the
+   * owner's conversation views. An append counts: it changes the
+   * conversation's summary, and the relay's coalescing bounds how often a
+   * streaming turn reaches those views. Throws {@link ChatDisabledError} when
+   * nothing implements the contract.
    */
   workspaceConversationStore(wsId: string, ownerId: string): ConversationEventStore {
-    const dir = workspaceConversationsDir(resolveWorkDir(this.config), wsId, ownerId);
-    if (this._contractConversations) {
-      return this._contractConversations.forScope({ workspaceId: wsId, ownerId }, () =>
-        this.announceIdentitySourceChange("conversations", ownerId),
-      );
-    }
-    return new EventSourcedConversationStore({
-      dir,
-      logLevel: this.config.logging?.level ?? "normal",
-      onMutate: (change) => {
-        this.notifyConversationsChanged({ ...change, wsId });
-        this.announceIdentitySourceChange("conversations", ownerId);
-      },
-    });
+    return this.requireConversations().forScope({ workspaceId: wsId, ownerId }, () =>
+      this.announceIdentitySourceChange("conversations", ownerId),
+    );
   }
 
   /**
@@ -4478,8 +4430,7 @@ export class Runtime {
    * `null` when that partition does not hold it. The workspace is always named
    * by the caller (the route or the request context), never discovered: no
    * conversation read crosses a workspace, so a conversation stored in another
-   * workspace answers exactly like one that does not exist. One `existsSync`
-   * on one partition: no scan.
+   * workspace answers exactly like one that does not exist.
    */
   async resolveConversationStore(
     workspaceId: string,
@@ -4496,24 +4447,22 @@ export class Runtime {
     convId: string,
     ownerId: string,
   ): Promise<boolean> {
-    if (!CONVERSATION_ID_RE.test(convId)) return false;
-    if (this._contractConversations) {
-      return this._contractConversations.has({ workspaceId, ownerId }, convId);
-    }
-    const dir = workspaceConversationsDir(resolveWorkDir(this.config), workspaceId, ownerId);
-    return existsSync(join(dir, `${convId}.jsonl`));
+    if (!CONVERSATION_ID_RE.test(convId) || !this._conversations) return false;
+    return this._conversations.has({ workspaceId, ownerId }, convId);
   }
 
   /**
    * The store a chat turn reads and writes: the caller's partition of the
    * workspace the request addresses. A named conversation must already be there
-   * (see `assertConversationInWorkspace`); a new one is born there.
+   * (see `assertConversationInWorkspace`); a new one is born there. Throws
+   * {@link ChatDisabledError} first when nothing implements the contract.
    */
   private async resolveChatStore(
     conversationId: string | undefined,
     wsId: string,
     ownerId: string,
   ): Promise<ConversationEventStore> {
+    this.requireConversations();
     if (conversationId) await this.assertConversationInWorkspace(conversationId, wsId, ownerId);
     return this.workspaceConversationStore(wsId, ownerId);
   }
@@ -4562,7 +4511,6 @@ export class Runtime {
    * addresses (ADR-0037), never one read off the conversation, so a
    * conversation stored in another workspace, one owned by someone else, and
    * one that does not exist all throw the same `ConversationNotFoundError`.
-   * One `existsSync` on the caller's own partition: no tenant scan.
    *
    * Public for the upload handlers, which attach files to a conversation and
    * must refuse the same ids the chat door refuses.
@@ -4582,7 +4530,7 @@ export class Runtime {
    * `null` when the caller's partition of that workspace does not hold it, so
    * an unknown id, another owner's conversation, and one stored in another
    * workspace are the same answer. Throws `ConversationCorruptedError` for a
-   * stored file the store cannot read.
+   * conversation the conversations plugin cannot read.
    */
   async findConversation(
     workspaceId: string,
@@ -4691,18 +4639,18 @@ export class Runtime {
   }
 
   /**
-   * Delete a workspace's conversations through the bound conversations plugin,
-   * which holds them outside the workspace's directory, so the archive rename
-   * does not carry them. With nothing bound they are in that directory and move
-   * with it. The contract walls the call by an owner it ignores; the deleting
-   * identity is the verified one.
+   * Purge a workspace's conversations through the bound conversations plugin
+   * (the contract's `delete_workspace`), which holds them apart from the
+   * workspace's directory, so the archive rename does not carry them. With
+   * nothing bound there are none. The contract walls the call by an owner it
+   * ignores; the deleting identity is the verified one.
    */
   private async deleteWorkspaceConversations(wsId: string): Promise<void> {
-    if (!this._contractConversations) return;
+    if (!this._conversations) return;
     const ownerId = getRequestContext()?.identity?.id;
     if (!ownerId)
       throw new Error("deleting a workspace's conversations needs a signed-in identity");
-    await this._contractConversations.deleteWorkspace({ workspaceId: wsId, ownerId });
+    await this._conversations.deleteWorkspace({ workspaceId: wsId, ownerId });
   }
 
   /**
@@ -5579,8 +5527,8 @@ export class Runtime {
    * Compact a conversation's history at run start when it has outgrown its
    * budget — fold the oldest turns into a summary so the prefix re-anchors once
    * instead of windowing (and busting the cache) every turn. Gated by
-   * `features.compaction` (on by default); event-sourced stores only (it
-   * persists a `history.compacted` event). Returns the compacted
+   * `features.compaction` (on by default); it persists a `history.compacted`
+   * event. Returns the compacted
    * `StoredMessage[]`, or `null` when nothing changed (compaction disabled or
    * below threshold) so the caller can skip re-rehydrating. Best-effort: the
    * helper swallows
@@ -6325,23 +6273,16 @@ export class Runtime {
   /**
    * List `access.userId`'s conversations in one workspace. Reads only that
    * owner's partition of `workspaceId`: conversations are workspace-owned, so
-   * there is no cross-workspace listing to fall back to.
+   * there is no cross-workspace listing to fall back to. With chat off there
+   * are none.
    */
   async listConversations(
     workspaceId: string,
     options: ListOptions | undefined,
     access: ConversationAccessContext,
   ): Promise<ConversationListResult> {
-    if (!this._contractConversations) {
-      const dir = workspaceConversationsDir(
-        resolveWorkDir(this.config),
-        workspaceId,
-        access.userId,
-      );
-      // A read creates nothing: a partition that was never written lists empty.
-      if (!existsSync(dir)) return { conversations: [], nextCursor: null, totalCount: 0 };
-    }
-    return this.workspaceConversationStore(workspaceId, access.userId).list(options, access);
+    if (!this._conversations) return { conversations: [], nextCursor: null, totalCount: 0 };
+    return this.workspaceConversationStore(workspaceId, access.userId).list(options);
   }
 
   /**
@@ -6444,9 +6385,9 @@ export class Runtime {
     // cooperatively) and clears the run map. Order matters: stop the
     // producers first, then dismantle their dependencies.
     this.runBus.reset();
-    // A bound conversations plugin receives a turn's writes after the engine
-    // emits them; settle them before its server stops.
-    await this._contractConversations?.flush();
+    // The conversations plugin receives a turn's writes after the engine emits
+    // them; settle them before its server stops.
+    await this._conversations?.flush();
     // Stop all sources across all workspace registries. A shared source (the
     // system source, the platform apps) is not stopped by a registry; the
     // runtime created them, so it stops them here, each once.
@@ -6455,17 +6396,14 @@ export class Runtime {
         await reg.removeSource(name);
       }
     }
-    // Every platform source and the system source, workspace-scoped and identity
-    // alike, stopped once each. Identity sources (tasks, files, conversations) sit
+    // Every platform source (each bound plugin server among them) and the system
+    // source, workspace-scoped and identity alike, stopped once each. Identity sources (tasks, files, conversations) sit
     // in no workspace registry at all, and the tasks source's stop is what ends its
     // scheduler, whose timer otherwise outlives the runtime and keeps the process
     // alive.
     for (const source of [...this._platformSources, this._systemSource]) {
       await source?.stop();
     }
-    // A bound server serves as a platform source when it replaces one; any
-    // other is stopped here. Stopping one twice is a no-op.
-    await stopBoundServers(this._boundServers);
     // Nothing drains the run queue once the sources are gone, so a run still
     // waiting for a slot is refused rather than left waiting forever.
     this._runAdmission?.stop();

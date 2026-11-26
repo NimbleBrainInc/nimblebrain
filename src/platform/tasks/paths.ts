@@ -1,8 +1,7 @@
 /**
  * The single sanctioned construction (and parse) site for workspace-partitioned
- * task paths. Mirrors `src/conversation/paths.ts` and `src/files/paths.ts`:
- * every task directory is built and parsed here, so the on-disk layout has
- * exactly one definition.
+ * task paths. Mirrors `src/files/paths.ts`: every task directory is built and
+ * parsed here, so the on-disk layout has exactly one definition.
  *
  * The workspace owns the directory: a task lives under the workspace it
  * fires against, with the owner as a privacy sub-partition. The path is the

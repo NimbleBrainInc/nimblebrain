@@ -58,10 +58,32 @@ export const SERVER_NAME = "conversations";
 export const SCREEN_URI = "ui://conversations/browser";
 export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
 
+/** Where a host's `_meta` carries a server's host metadata (`schemas/host/v1/host.schema.json`). */
+export const HOST_META_KEY = "ai.nimblebrain/host";
+
+/**
+ * This server's host metadata: the screen's place in a host's shell. It answers the
+ * handshake (`initialize`, and `server/discover` on the 2026-07-28 revision) in the
+ * result's `_meta`, so a host shows the screen from what the server itself declares.
+ */
+export const HOST_META = {
+  hostVersion: "1.0",
+  placements: [
+    {
+      slot: "sidebar",
+      resourceUri: SCREEN_URI,
+      route: "@nimblebraininc/conversations",
+      label: "Conversations",
+      icon: "message-square-text",
+      priority: 1,
+    },
+  ],
+} as const;
+
 /** The page served when no built screen is installed beside the plugin. */
 const SCREEN_PLACEHOLDER =
   '<!doctype html><html><head><meta charset="utf-8"><title>Conversations</title></head>' +
-  "<body><p>The conversations screen is not installed with this server.</p></body></html>";
+  "<body><p>The conversations screen is not built. Run: cd packages/conversations/ui &amp;&amp; bun install &amp;&amp; bun run build</p></body></html>";
 
 export interface ServerOptions {
   /** The store: one, or one per transport-verified tenant (a multi-tenant server). */
@@ -203,7 +225,11 @@ function scopeMissing(visibility: "public" | "private", missing: "workspace" | "
   );
 }
 
-async function callTool(
+/**
+ * One `tools/call` decided as the server decides it (steps 1 to 5 above), for a context
+ * already read. Exported so a host's tests can drive the contract in process.
+ */
+export async function callTool(
   store: ConversationStore,
   name: string,
   args: Args,
@@ -267,6 +293,19 @@ export function buildServer(opts: ServerOptions): Server {
     { name: SERVER_NAME, version: "1.0.0" },
     { capabilities: { tools: {}, resources: {} } },
   );
+
+  // The handshake answers as the SDK does, with this server's host metadata in `_meta`. The
+  // SDK declares its handshake handlers private; bracket access is how TypeScript reads one.
+  server.setRequestHandler("initialize", async (request) => ({
+    // biome-ignore lint/complexity/useLiteralKeys: a private SDK member, read by bracket access
+    ...(await server["_oninitialize"](request)),
+    _meta: { [HOST_META_KEY]: HOST_META },
+  }));
+  server.setRequestHandler("server/discover", () => {
+    // biome-ignore lint/complexity/useLiteralKeys: a private SDK member, read by bracket access
+    const discovered = server["_ondiscover"]();
+    return { ...discovered, _meta: { ...discovered._meta, [HOST_META_KEY]: HOST_META } };
+  });
 
   server.setRequestHandler("tools/list", async () => ({
     tools: Object.keys(CONTRACT.tools).map((name) => {

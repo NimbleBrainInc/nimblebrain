@@ -5,7 +5,7 @@
  *   1. Engine-level: when `EngineConfig.runMetadata` carries skills/context
  *      payloads, the engine emits exactly one event of each type, ordered
  *      after `run.start` and before `llm.done` / `run.done`.
- *   2. Conversation-store-level: the `EventSourcedConversationStore` maps
+ *   2. Conversation-store-level: the store the runtime writes through maps
  *      these engine events to persisted `ConversationEvent`s via
  *      `mapEngineEvent` (CONVERSATION_EVENT_TYPES).
  *
@@ -16,15 +16,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
-import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
 import type {
   ContextAssembledEvent,
   ConversationEvent,
+  ConversationEventStore,
   SkillsLoadedEvent,
 } from "../../../src/conversation/types.ts";
 import { textContent } from "../../../src/engine/content-helpers.ts";
@@ -36,6 +36,7 @@ import type {
   ToolCall,
   ToolResult,
 } from "../../../src/engine/types.ts";
+import { conversationStore } from "../../helpers/conversation-store.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { firstPayloadOf } from "../../helpers/engine-events.ts";
 
@@ -246,15 +247,15 @@ describe("engine.runMetadata — skills.loaded + context.assembled emission", ()
 
 // ---------------------------------------------------------------------------
 // Persistence — the conversation store maps these engine events to durable
-// conv jsonl entries.
+// conversation events.
 // ---------------------------------------------------------------------------
 
 let convDir: string;
-let store: EventSourcedConversationStore;
+let store: ConversationEventStore;
 
 beforeEach(async () => {
   convDir = mkdtempSync(join(tmpdir(), "skills-events-store-"));
-  store = new EventSourcedConversationStore({ dir: convDir });
+  store = conversationStore(convDir, "ws_0076759dbbe19fcc", "user_test");
 });
 
 afterEach(() => {
@@ -262,16 +263,11 @@ afterEach(() => {
 });
 
 async function readEvents(id: string): Promise<ConversationEvent[]> {
-  const raw = readFileSync(join(convDir, `${id}.jsonl`), "utf-8");
-  return raw
-    .split("\n")
-    .filter(Boolean)
-    .slice(1) // line 1 is conversation metadata
-    .map((line) => JSON.parse(line) as ConversationEvent);
+  return store.readEvents(id);
 }
 
-describe("EventSourcedConversationStore — persistence", () => {
-  test("skills.loaded emit is mapped to a ConversationEvent in the conv jsonl", async () => {
+describe("the conversation store — persistence", () => {
+  test("skills.loaded emit is mapped to a stored ConversationEvent", async () => {
     const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
