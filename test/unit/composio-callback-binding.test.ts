@@ -92,7 +92,7 @@ let installed = true;
 const calls = { state: [] as string[] };
 
 /** Every request authenticates as `usr_member`: role "member" in ws-a. */
-function makeApp(secureCookies = false): Hono<AppEnv> {
+function makeApp(): Hono<AppEnv> {
   const auth = stub<AuthMiddlewareOptions>({
     provider: stub<IdentityProvider>({
       verifyRequest: async () => ({
@@ -139,7 +139,7 @@ function makeApp(secureCookies = false): Hono<AppEnv> {
           : null,
     }),
     authOptions: auth,
-    secureCookies,
+    secureCookies: true,
   });
   const app = new Hono<AppEnv>();
   app.route("/", composioAuthRoutes(ctx));
@@ -195,10 +195,10 @@ async function startPersonal(app: Hono<AppEnv>): Promise<{ nonce: string; cookie
 function started(init: Response): { nonce: string; cookie: string } {
   const callbackUrl = (broker.linkArgs[2] as { callbackUrl: string }).callbackUrl;
   const nonce = new URL(callbackUrl).searchParams.get("n") ?? "";
-  const match = /((?:__Host-)?nb_composio_state)=([0-9a-f]{64})/.exec(
+  const value = /^__Host-nb_composio_state=([0-9a-f]{64});/.exec(
     init.headers.get("set-cookie") ?? "",
-  );
-  return { nonce, cookie: `${match?.[1]}=${match?.[2]}` };
+  )?.[1];
+  return { nonce, cookie: `__Host-nb_composio_state=${value}` };
 }
 
 const callback = (nonce: string, query: string) =>
@@ -278,7 +278,7 @@ test("a cookie computed from the nonce is refused and does not end the flow", as
 
   const forged = await app.request(
     callback(nonce, "status=failed&connected_account_id=ca_linked_own"),
-    { headers: { cookie: `nb_composio_state=${sha(nonce)}` } },
+    { headers: { cookie: `__Host-nb_composio_state=${sha(nonce)}` } },
   );
   expect(forged.status).toBe(400);
   expect(await forged.text()).toContain("Authorization session mismatch");
@@ -325,8 +325,8 @@ test("a workspace connect for an installed connector persists only its own accou
   expect(calls.state).toEqual([]);
 });
 
-test("on a Secure host only the __Host- cookie this host set completes the flow", async () => {
-  const app = makeApp(/* secureCookies */ true);
+test("only the __Host- cookie completes the flow, not the same value under the bare name", async () => {
+  const app = makeApp();
   const { nonce, cookie } = await startPersonal(app);
   expect(cookie).toStartWith("__Host-nb_composio_state=");
 

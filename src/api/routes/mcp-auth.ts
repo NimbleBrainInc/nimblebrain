@@ -134,7 +134,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       const prepared = prepareAuthorization(started, serverName, wsId);
       if (prepared instanceof Response) return prepared;
       const { authorizationUrl, state } = prepared;
-      return answerWithBinding(state, authorizationUrl, serverName, wsId, ctx.secureCookies);
+      return answerWithBinding(state, authorizationUrl, serverName, wsId);
     },
   );
 
@@ -183,13 +183,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
     if (returnTarget) {
       setFlowReturnWorkspace(state, returnTarget.wsId, returnTarget.conversationId);
     }
-    return answerWithBinding(
-      state,
-      authorizationUrl,
-      serverName,
-      `user:${userId}`,
-      ctx.secureCookies,
-    );
+    return answerWithBinding(state, authorizationUrl, serverName, `user:${userId}`);
   });
 
   // ── GET /v1/mcp-auth/callback ─────────────────────────────────────
@@ -214,11 +208,11 @@ export function mcpAuthRoutes(ctx: AppContext) {
     const params = readCallbackParams(c);
     if (isCallbackFailure(params)) {
       if (params.outcome !== "provider_error") return refuse(params);
-      return answerProviderRefusal(c, params, ctx.secureCookies);
+      return answerProviderRefusal(c, params);
     }
     const { code, wireState, iss } = params;
 
-    const state = sessionFlow(c, wireState, ctx.secureCookies);
+    const state = sessionFlow(c, wireState);
     if (isCallbackFailure(state)) return refuse(state);
 
     // Recover the flow's owner *before* resolving (which deletes the registry
@@ -236,7 +230,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
     }
 
     logCallbackOutcome("resolved", { flow: flowId(state), owner: flow?.owner.kind });
-    return redirectHome(c, flow, ctx.secureCookies);
+    return redirectHome(c, flow);
   });
 
   return app;
@@ -409,9 +403,9 @@ const OAUTH_STATE_COOKIE = "nb_oauth_state";
 /** Seconds the binding cookie lives: the flow registry's TTL. */
 const BINDING_COOKIE_MAX_AGE = 900;
 
-/** Serialize the `nb_oauth_state` flow cookie (`__Host-nb_oauth_state` when `secure`). */
-function buildOAuthStateCookie(value: string, maxAge: number, secure: boolean): string {
-  return buildFlowCookie(OAUTH_STATE_COOKIE, value, maxAge, secure);
+/** Serialize the `__Host-nb_oauth_state` flow cookie. */
+function buildOAuthStateCookie(value: string, maxAge: number): string {
+  return buildFlowCookie(OAUTH_STATE_COOKIE, value, maxAge);
 }
 
 /**
@@ -428,7 +422,6 @@ function answerWithBinding(
   authorizationUrl: string,
   serverName: string,
   flowContext: string,
-  secureCookies: boolean,
 ): Response {
   const binding = mintBrowserBinding();
   if (!addBrowserBinding(state, binding.bindingHash)) {
@@ -440,7 +433,7 @@ function answerWithBinding(
     );
   }
   return json<OAuthInitiateResponse>({ authorizationUrl }, 200, {
-    "Set-Cookie": buildOAuthStateCookie(binding.cookieValue, BINDING_COOKIE_MAX_AGE, secureCookies),
+    "Set-Cookie": buildOAuthStateCookie(binding.cookieValue, BINDING_COOKIE_MAX_AGE),
   });
 }
 
@@ -551,14 +544,10 @@ function readCallbackParams(
  * The browser binding is checked like a code's before anything is taken or
  * ended, so a callback from a browser the flow did not bind settles nothing.
  */
-function answerProviderRefusal(
-  c: Context<AppEnv>,
-  refusal: CallbackFailure,
-  secureCookies: boolean,
-): Response {
+function answerProviderRefusal(c: Context<AppEnv>, refusal: CallbackFailure): Response {
   const error = c.req.query("error") ?? "";
   const wireState = c.req.query("state");
-  const flow = wireState ? sessionFlow(c, wireState, secureCookies) : null;
+  const flow = wireState ? sessionFlow(c, wireState) : null;
   if (flow === null || isCallbackFailure(flow)) {
     // No flow pending for the state: the provider's refusal is the diagnosis,
     // and it ended nothing.
@@ -583,14 +572,10 @@ function answerProviderRefusal(
  * The flow a callback's state names, once the request's cookie is one of the
  * flow's browser bindings; otherwise the check that refused it.
  */
-function sessionFlow(
-  c: Context<AppEnv>,
-  wireState: string,
-  secureCookies: boolean,
-): string | CallbackFailure {
+function sessionFlow(c: Context<AppEnv>, wireState: string): string | CallbackFailure {
   const state = recoverInnerState(c, wireState);
   if (isCallbackFailure(state)) return state;
-  const mismatch = verifyBrowserBinding(c, state, secureCookies);
+  const mismatch = verifyBrowserBinding(c, state);
   if (mismatch) return { ...mismatch, fields: { ...mismatch.fields, flow: flowId(state) } };
   return state;
 }
@@ -678,11 +663,7 @@ function recoverInnerState(c: Context<AppEnv>, wireState: string): string | Call
  * value is a random secret an initiate gave this browser, and the flow holds
  * only its hash.
  */
-function verifyBrowserBinding(
-  c: Context<AppEnv>,
-  state: string,
-  secureCookies: boolean,
-): CallbackFailure | null {
+function verifyBrowserBinding(c: Context<AppEnv>, state: string): CallbackFailure | null {
   const bindings = flowBrowserBindings(state);
   if (!bindings) {
     return {
@@ -695,8 +676,8 @@ function verifyBrowserBinding(
     };
   }
   const cookieHeader = c.req.header("cookie");
-  if (!browserBindingMatches(cookieHeader, OAUTH_STATE_COOKIE, secureCookies, bindings)) {
-    const cookieValue = readFlowCookie(cookieHeader, OAUTH_STATE_COOKIE, secureCookies);
+  if (!browserBindingMatches(cookieHeader, OAUTH_STATE_COOKIE, bindings)) {
+    const cookieValue = readFlowCookie(cookieHeader, OAUTH_STATE_COOKIE);
     return {
       outcome: "cookie_mismatch",
       // Whether the state cookie was absent or present-but-wrong separates a
@@ -733,10 +714,9 @@ function redirectHome(
     returnWsId?: string;
     returnConversationId?: string;
   } | null,
-  secureCookies: boolean,
 ): Response {
   // Clear the one-shot state cookie so the callback URL can't be replayed.
-  c.header("Set-Cookie", buildOAuthStateCookie("", 0, secureCookies));
+  c.header("Set-Cookie", buildOAuthStateCookie("", 0));
 
   // A workspace connector returns to its own workspace; a personal one to the
   // workspace its sign-in was started from (reopening the conversation it was

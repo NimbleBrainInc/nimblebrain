@@ -72,7 +72,7 @@ A browser write (any method but `GET`/`HEAD`/`OPTIONS`) from another origin is r
 
 A redirect callback completes only in the browser that started it and trusts nothing in its URL but the lookup key, because that key rides in URLs others can see: connector flows bind the browser with `src/oauth/flow-binding.ts` (a random cookie whose hash the flow records) and land only what the flow recorded at initiate; sign-in binds through its own cookie.
 
-Only this host can set a flow cookie: a `Secure` one travels as `__Host-<name>` (`Path=/`, no `Domain`), and one that is not keeps the bare name, because the prefix requires `Secure`. `flowCookieName` in `flow-binding.ts` picks the name for the write and the read, so the two never drift. In bouncer mode the bouncer only routes: it sends the browser back to this tenant's own host, which set the cookie, so the callback still sees it.
+Only this host can set a flow cookie: each one is `__Host-<name>` (`Secure`, `Path=/`, no `Domain`). `flowCookieName` in `flow-binding.ts` names it for the write and the read, so the two never drift. In bouncer mode the bouncer only routes: it sends the browser back to this tenant's own host, which set the cookie, so the callback still sees it.
 
 ## `/mcp/<wsId>` and the `/v1` tool-call doors refuse an untrusted browser origin
 

@@ -17,12 +17,12 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
  * that is waiting on sign-in, a person pressing Connect again after closing the
  * provider's tab) adds one, and each of those browsers can complete it.
  *
- * Only this host can set a flow cookie: when it is `Secure` it travels as
- * `__Host-<name>` (RFC 6265bis: `Secure`, `Path=/`, no `Domain`), which a
- * browser accepts only from this exact host, never from a sibling subdomain or
- * a parent domain. A cookie that is not `Secure` cannot carry the prefix, so it
- * keeps the bare name. {@link flowCookieName} makes that choice for both the
- * write and the read, so the two never name different cookies.
+ * Only this host can set a flow cookie: each one travels as `__Host-<name>`
+ * (RFC 6265bis: `Secure`, `Path=/`, no `Domain`), which a browser accepts only
+ * from this exact host, never from a sibling subdomain or a parent domain.
+ * {@link flowCookieName} names it for both the write and the read, so the two
+ * never name different cookies. Browsers treat http://localhost as a secure
+ * context, so the `Secure` cookie works in local development too.
  *
  * Used by the connector OAuth callback (`src/api/routes/mcp-auth.ts`) and the
  * Composio callback (`src/connectors/providers/composio/routes.ts`). Each owns
@@ -44,29 +44,23 @@ export function mintBrowserBinding(): BrowserBinding {
   return { cookieValue, bindingHash: sha256(cookieValue).toString("hex") };
 }
 
-/**
- * The name flow cookie `name` travels under: `__Host-<name>` when `secure`, the
- * bare `name` otherwise (the prefix requires `Secure`). Every write and read of
- * a flow cookie resolves its name here.
- */
-export function flowCookieName(name: string, secure: boolean): string {
-  return secure ? `__Host-${name}` : name;
+/** The name flow cookie `name` travels under: `__Host-<name>`. Every write and read of a flow cookie resolves its name here. */
+export function flowCookieName(name: string): string {
+  return `__Host-${name}`;
 }
 
 /**
  * Whether flow cookie `name` in `cookieHeader` is the browser half of one of
- * `bindingHashes`. `secure` is the value the cookie was written with, and picks
- * its name ({@link flowCookieName}). False when the cookie is absent or malformed, or when no
+ * `bindingHashes`. False when the cookie is absent or malformed, or when no
  * hash is recorded. Every recorded hash is compared, each in constant time on
  * equal-length buffers, so the time taken does not say which (if any) matched.
  */
 export function browserBindingMatches(
   cookieHeader: string | undefined,
   name: string,
-  secure: boolean,
   bindingHashes: Iterable<string>,
 ): boolean {
-  const value = readFlowCookie(cookieHeader, name, secure);
+  const value = readFlowCookie(cookieHeader, name);
   if (!value || !BINDING_VALUE_RE.test(value)) return false;
   const presented = sha256(value);
   let matched = false;
@@ -78,35 +72,25 @@ export function browserBindingMatches(
 }
 
 /**
- * Serialize flow cookie `name`. `HttpOnly`, `SameSite=Lax` (a top-level return
- * navigation from the provider carries it), `Path=/` and no `Domain`, as the
- * `__Host-` prefix requires; `Secure` and prefixed when `secure`. An empty
- * `value` with `maxAgeSeconds` 0 clears it.
+ * Serialize flow cookie `name` as the `__Host-` prefix requires: `Secure`,
+ * `Path=/`, no `Domain`; also `HttpOnly` and `SameSite=Lax` (a top-level return
+ * navigation from the provider carries it). An empty `value` with
+ * `maxAgeSeconds` 0 clears it.
  */
-export function buildFlowCookie(
-  name: string,
-  value: string,
-  maxAgeSeconds: number,
-  secure: boolean,
-): string {
-  const parts = [
-    `${flowCookieName(name, secure)}=${value}`,
+export function buildFlowCookie(name: string, value: string, maxAgeSeconds: number): string {
+  return [
+    `${flowCookieName(name)}=${value}`,
     "HttpOnly",
     "SameSite=Lax",
     "Path=/",
     `Max-Age=${maxAgeSeconds}`,
-  ];
-  if (secure) parts.push("Secure");
-  return parts.join("; ");
+    "Secure",
+  ].join("; ");
 }
 
-/** The value of flow cookie `name` in a `Cookie` header, under the name `secure` picks; null when absent. */
-export function readFlowCookie(
-  header: string | undefined,
-  name: string,
-  secure: boolean,
-): string | null {
-  return readCookie(header, flowCookieName(name, secure));
+/** The value of flow cookie `name` in a `Cookie` header, or null when absent. */
+export function readFlowCookie(header: string | undefined, name: string): string | null {
+  return readCookie(header, flowCookieName(name));
 }
 
 /** The value of cookie `name` in a `Cookie` header, or null when absent. */

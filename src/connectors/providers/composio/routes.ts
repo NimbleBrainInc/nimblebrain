@@ -220,7 +220,7 @@ export function composioAuthRoutes(ctx: AppContext) {
     c.header("Cache-Control", "no-store");
     c.header("Pragma", "no-cache");
 
-    const validated = await validateCallbackParams(c, ctx.secureCookies);
+    const validated = await validateCallbackParams(c);
     if (validated instanceof Response) return validated;
     const { connectedAccountId, status, cid, owner, returnTarget } = validated;
 
@@ -257,7 +257,7 @@ export function composioAuthRoutes(ctx: AppContext) {
 
     // One-shot cookie — clear on success so the callback URL can't be
     // replayed.
-    c.header("Set-Cookie", buildComposioStateCookie("", 0, ctx.secureCookies));
+    c.header("Set-Cookie", buildComposioStateCookie("", 0));
 
     // Back to the connectors page, naming what connected; the page confirms it.
     return c.redirect(connectorsReturnUrl(owner, returnTarget, slugifyServerName(cid)), 302);
@@ -512,7 +512,7 @@ async function connectComposio(
 ): Promise<Response> {
   const adopted = await adoptExistingComposioConnection(ctx, args);
   if (adopted) return adopted;
-  return initiateFreshComposioConnection(ctx, {
+  return initiateFreshComposioConnection({
     connectorId: args.connectorId,
     owner: args.owner,
     apiKey: args.apiKey,
@@ -522,16 +522,13 @@ async function connectComposio(
 }
 
 /** Begin a fresh Composio OAuth connection: bind the state cookie and return the vendor authorization URL. */
-async function initiateFreshComposioConnection(
-  ctx: AppContext,
-  args: {
-    connectorId: string;
-    owner: ConnectorOwner;
-    apiKey: string;
-    authConfigId: string;
-    returnTarget?: ReturnTarget;
-  },
-): Promise<Response> {
+async function initiateFreshComposioConnection(args: {
+  connectorId: string;
+  owner: ConnectorOwner;
+  apiKey: string;
+  authConfigId: string;
+  returnTarget?: ReturnTarget;
+}): Promise<Response> {
   const { connectorId, owner, apiKey, authConfigId, returnTarget } = args;
   const composioUser = composioUserId(owner);
   const ownerLabel = connectorOwnerKey(owner);
@@ -576,7 +573,7 @@ async function initiateFreshComposioConnection(
   });
 
   return json<ComposioInitiateResponse>({ authorizationUrl: initiateResponse.redirectUrl }, 200, {
-    "Set-Cookie": buildComposioStateCookie(binding.cookieValue, 900, ctx.secureCookies),
+    "Set-Cookie": buildComposioStateCookie(binding.cookieValue, 900),
   });
 }
 
@@ -591,10 +588,7 @@ async function initiateFreshComposioConnection(
  * the initiate recorded; the query's id is only a cross-check, and a callback
  * that names another account is refused.
  */
-async function validateCallbackParams(
-  c: Context<AppEnv>,
-  secureCookies: boolean,
-): Promise<
+async function validateCallbackParams(c: Context<AppEnv>): Promise<
   | {
       connectedAccountId: string;
       status: string;
@@ -614,9 +608,7 @@ async function validateCallbackParams(
     return errorPage(c, "<h3>Unknown or expired authorization flow.</h3>");
   }
   if (
-    !browserBindingMatches(c.req.header("cookie"), COMPOSIO_STATE_COOKIE, secureCookies, [
-      pending.bindingHash,
-    ])
+    !browserBindingMatches(c.req.header("cookie"), COMPOSIO_STATE_COOKIE, [pending.bindingHash])
   ) {
     return errorPage(c, "<h3>Authorization session mismatch.</h3>");
   }
@@ -752,9 +744,9 @@ async function recoverCallbackSource(
 
 const COMPOSIO_STATE_COOKIE = "nb_composio_state";
 
-/** Build the `nb_composio_state` flow cookie (`__Host-nb_composio_state` when `secure`). */
-function buildComposioStateCookie(value: string, maxAgeSeconds: number, secure: boolean): string {
-  return buildFlowCookie(COMPOSIO_STATE_COOKIE, value, maxAgeSeconds, secure);
+/** Build the `__Host-nb_composio_state` flow cookie. */
+function buildComposioStateCookie(value: string, maxAgeSeconds: number): string {
+  return buildFlowCookie(COMPOSIO_STATE_COOKIE, value, maxAgeSeconds);
 }
 
 function escapeHtml(s: string): string {
