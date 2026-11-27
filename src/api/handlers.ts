@@ -884,12 +884,16 @@ async function validateRestToolInput(
     }
     return { ok: true, coercedArgs };
   } catch {
+    // The source could not list its tools (down, or restarting past the wait):
+    // the tool may well exist, so the caller may retry.
     return {
       ok: false,
-      response: apiError(404, "tool_not_found", `Tool "${tool}" not found on server "${server}"`, {
-        server,
-        tool,
-      }),
+      response: apiError(
+        503,
+        "source_unavailable",
+        `Server "${server}" is not available; try again`,
+        { server, tool },
+      ),
     };
   }
 }

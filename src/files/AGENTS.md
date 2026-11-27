@@ -34,7 +34,9 @@ code implements. The built-in implementation is `packages/files/` (`packages/fil
   from the extension.
 - **Then begin, stream, complete.** `begin_upload` as `host` walled to the workspace and the
   uploader, with the turn's `conversationId` in the scope; the body streamed to the upload URL;
-  `complete_upload`. A chat turn with no conversation yet mints its id first
+  `complete_upload`. A step the plugin refused (a `ContractToolError`) is a 400; one that did not
+  reach it (not running, restarting, a transfer cut off) is `IntakeError.unavailable`, answered
+  503 `files_unavailable` so the caller sends the file again. A chat turn with no conversation yet mints its id first
   (`ChatRequest.newConversationId`), so every record names it. The REST door is per file; a
   chat turn is all or none, deleting (as `host`) what it completed when a later step fails.
 - **Never hold a body in memory.** A multipart request is read as it arrives

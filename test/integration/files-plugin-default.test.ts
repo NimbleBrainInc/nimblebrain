@@ -598,3 +598,40 @@ describe("workspace delete", () => {
     expect(existsSync(join(PLUGIN_DATA, "workspaces", PURGED))).toBe(false);
   }, 30_000);
 });
+
+describe("a files server that restarts", () => {
+  /** Kill the bound files server, as a crash would. */
+  function killServer(): void {
+    const found = Bun.spawnSync(["pgrep", "-f", `nb-files --data-dir ${PLUGIN_DATA}`]);
+    const pids = found.stdout.toString().trim().split("\n").filter(Boolean);
+    expect(pids.length).toBeGreaterThan(0);
+    for (const pid of pids) process.kill(Number(pid), "SIGKILL");
+  }
+
+  function listCall(): Promise<Response> {
+    return rest(`/v1/workspaces/${WS}/tools/call`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ server: "files", tool: "list", args: {} }),
+    });
+  }
+
+  function upload(): Promise<Response> {
+    const form = new FormData();
+    form.append("file", new File(["after a restart"], "restart.txt", { type: "text/plain" }));
+    return rest(`/v1/workspaces/${WS}/resources`, { method: "POST", body: form });
+  }
+
+  it("answers calls made meanwhile, or a retryable 503; never not found or refused", async () => {
+    for (let round = 0; round < 3; round++) {
+      killServer();
+      // Let the host see the exit, so the calls below race the restart it starts.
+      await Bun.sleep(200);
+      const answers = await Promise.all([listCall(), upload(), listCall(), upload(), listCall()]);
+      for (const res of answers) expect([200, 503]).toContain(res.status);
+    }
+    // Once it is back, every call is answered.
+    await eventually(async () => (await listCall()).status === 200);
+    expect((await upload()).status).toBe(200);
+  }, 60_000);
+});

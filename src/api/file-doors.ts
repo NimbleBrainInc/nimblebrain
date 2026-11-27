@@ -92,6 +92,17 @@ function intakeBodies(parsed: ParsedMultipart): IntakeBody[] {
   }));
 }
 
+/**
+ * The answer of an intake that stored nothing: 400 when a file was refused,
+ * 503 when the files plugin was not reached (it is restarting, or down), which
+ * the caller may send again.
+ */
+function intakeFailed(unavailable: boolean, errors: string[]): Response {
+  return unavailable
+    ? apiError(503, "files_unavailable", "Files are not available; try again", { errors })
+    : apiError(400, "file_upload_error", "File upload failed", { errors });
+}
+
 /** A fresh conversation id, in the shape the conversations contract takes. */
 export function mintConversationId(): string {
   return `conv_${randomBytes(8).toString("hex")}`;
@@ -147,7 +158,7 @@ export async function takeInTurnAttachments(
     records = await takeInTurn(host, scope, bodies);
   } catch (err) {
     if (err instanceof IntakeError) {
-      return apiError(400, "file_upload_error", "File upload failed", { errors: [err.message] });
+      return intakeFailed(err.unavailable, [err.message]);
     }
     throw err;
   } finally {
@@ -229,9 +240,10 @@ async function takeInEach(
   bodies: readonly IntakeBody[],
   meta: IntakeMeta,
   maxFileSize: number,
-): Promise<{ files: FileRecord[]; errors: string[] }> {
+): Promise<{ files: FileRecord[]; errors: string[]; unavailable: boolean }> {
   const files: FileRecord[] = [];
   const errors: string[] = [];
+  let unavailable = false;
   for (const body of bodies) {
     const why = fileRefusal(body, maxFileSize);
     if (why) {
@@ -243,9 +255,10 @@ async function takeInEach(
     } catch (err) {
       if (!(err instanceof IntakeError)) throw err;
       errors.push(err.message);
+      unavailable ||= err.unavailable;
     }
   }
-  return { files, errors };
+  return { files, errors, unavailable };
 }
 
 /**
@@ -286,7 +299,7 @@ export async function handleUpload(
       ownerId,
       ...(meta.conversationId ? { conversationId: meta.conversationId } : {}),
     };
-    const { files, errors } = await takeInEach(
+    const { files, errors, unavailable } = await takeInEach(
       host,
       scope,
       bodies,
@@ -298,7 +311,9 @@ export async function handleUpload(
       config.maxFileSize,
     );
     if (files.length === 0) {
-      return apiError(400, "file_upload_error", "All uploads were rejected", { errors });
+      return unavailable
+        ? intakeFailed(true, errors)
+        : apiError(400, "file_upload_error", "All uploads were rejected", { errors });
     }
     runtime.announceFilesChange(ownerId);
     return json<UploadResourceResponse>({ files, ...(errors.length > 0 ? { errors } : {}) });
