@@ -12,7 +12,7 @@ A path outside any workspace tree (org skills, `users/<id>/skills/`, the instanc
 
 This is structural rather than per-writer on purpose. A purge removes the subtree out from under every writer holding a path into it, those writers mkdir recursively, and without the guard the first one to fire afterwards re-creates the purged workspace's directory — invisibly, because `list()` skips a workspace dir whose `workspace.json` will not parse, so the resurrected tree appeared nowhere and was never deleted again. There is no way to grep for "everywhere that writes into a workspace", so guarding each writer is a discipline problem; the rule lives at the mkdir instead. **Do not add a recursive mkdir on a workspace-scoped path without it**, and do not "fix" a `WorkspaceRootMissingError` by creating the root — the workspace is gone, and the caller's job is to stop.
 
-A store still creates its own subdirectory on first write. `WORKSPACE_DIRS` (`src/workspace/scaffold.ts`) scaffolds `data/`, `credentials/`, `skills/` and `files/`; what is NOT pre-created is `conversations/`, `notifications/`, `tasks/`, and the per-owner partition beneath `files/` and `tasks/`. That stays true; the guard is about the root, not the subtree.
+A store still creates its own subdirectory on first write. `WORKSPACE_DIRS` (`src/workspace/scaffold.ts`) scaffolds `data/`, `credentials/` and `skills/`; what is NOT pre-created is `conversations/` and `notifications/`. That stays true; the guard is about the root, not the subtree.
 
 ## Deleted workspaces
 

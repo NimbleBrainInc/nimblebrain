@@ -9,7 +9,7 @@
 //
 // This module imports nothing. `bun run codegen` emits it alone into
 // `web/src/_generated/api/`, and an import would drag its module graph into the
-// web tree. A type mirrored from a domain module (`FileEntry`, `PlacementEntry`,
+// web tree. A type mirrored from a domain module (`FileRecord`, `PlacementEntry`,
 // `TurnUsage`, …) is held to its source by `responses-drift-guard.ts`.
 //
 // Types only: responses are not validated at runtime. Request bodies are in
@@ -117,14 +117,15 @@ export interface PlacementEntry {
   wsId?: string;
 }
 
-/** Mirrors `FileEntry` (`src/files/types.ts`). */
-export interface FileEntry {
+/** A file's record as the files contract answers it. Mirrors `FileRecord` (`src/files/types.ts`). */
+export interface FileRecord {
   id: string;
   filename: string;
   mimeType: string;
   size: number;
   tags: string[];
-  source: "chat" | "agent" | "app" | "manual";
+  /** Known values: `chat`, `agent`, `app`, `manual`. */
+  source: string;
   conversationId: string | null;
   runId?: string | null;
   createdAt: string;
@@ -132,8 +133,6 @@ export interface FileEntry {
   folderId?: string | null;
   ownerId?: string;
   workspaceId?: string;
-  deleted?: true;
-  deletedAt?: string;
 }
 
 /** The limits a chat message's attachments are held to. */
@@ -370,7 +369,7 @@ export interface ReadResourceResponse {
 // ── POST /v1/workspaces/:wsId/resources ──────────────────────────────────────
 
 export interface UploadResourceResponse {
-  files: FileEntry[];
+  files: FileRecord[];
   /** One message per file that was refused; absent when none was. */
   errors?: string[];
 }

@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { compress } from "hono/compress";
 import { etag } from "hono/etag";
+import { handleFileDownload } from "../file-doors.ts";
 import { handleReadResource, handleResourceProxy, handleResourceUpload } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
@@ -64,14 +65,17 @@ export function resourceRoutes(ctx: AppContext) {
         logErrors,
         requireWorkspace(ctx),
         uploadLimit,
-        (c) =>
-          handleResourceUpload(
-            c.req.raw,
-            ctx.runtime,
-            ctx.features,
-            c.var.identity,
-            c.var.workspaceId,
-          ),
+        (c) => handleResourceUpload(c.req.raw, ctx.runtime, c.var.identity, c.var.workspaceId),
+      )
+      // The browser download door: the caller's own file in the workspace in the
+      // URL, resolved through the files contract and streamed under the host's
+      // own headers (`file-serve.ts`). A browser `<img src>` or link loads it.
+      .get(`${WORKSPACE_ROUTE_PREFIX}/files/:fileId`, auth, logErrors, requireWorkspace(ctx), (c) =>
+        handleFileDownload(c.req.raw, ctx.runtime, {
+          workspaceId: c.var.workspaceId,
+          identity: c.var.identity,
+          fileId: decodeURIComponent(c.req.param("fileId")),
+        }),
       )
       // Compressed: an app's UI is one inlined HTML document, commonly several
       // hundred KB, and the shell shows nothing until it arrives, so on a slow

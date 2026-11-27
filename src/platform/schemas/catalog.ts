@@ -1,6 +1,5 @@
 import type { Static, TSchema } from "@sinclair/typebox";
 import * as Compose from "./compose.ts";
-import * as Files from "./files.ts";
 import * as ManageTools from "./manage-tools.ts";
 import * as Notifications from "./notifications.ts";
 import * as Skills from "./skills.ts";
@@ -39,15 +38,6 @@ export const PlatformToolCatalog = {
     settings: { input: Notifications.NotificationsSettingsInput },
     set_source_level: { input: Notifications.NotificationsSetSourceLevelInput },
     set_routes: { input: Notifications.NotificationsSetRoutesInput },
-  },
-  files: {
-    list: { input: Files.FilesListInput },
-    search: { input: Files.FilesSearchInput },
-    read: { input: Files.FilesReadInput },
-    create: { input: Files.FilesCreateInput },
-    info: { input: Files.FilesInfoInput },
-    tag: { input: Files.FilesTagInput },
-    delete: { input: Files.FilesDeleteInput },
   },
 } as const satisfies Record<string, Record<string, { input: TSchema }>>;
 

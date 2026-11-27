@@ -337,6 +337,12 @@ export type McpTransportMode =
        * binding supplies this.
        */
       resultOverlay?: (toolName: string, result: ToolResult) => ToolResult;
+      /**
+       * The host's refusal of a call before it reaches the server, or null to
+       * let it through: a workspace the kernel is purging takes no call. Read
+       * at dispatch, with the call's request context in scope.
+       */
+      refuseCall?: (toolName: string) => string | null;
     };
 
 /**
@@ -1450,12 +1456,9 @@ export class McpSource implements ToolSource {
    * ({@link registerConnectorHandlers}). A source without one (an in-process
    * platform source, or a remote connector started on a path that does not
    * thread the host-resources deps) claims nothing it would not answer
-   * (ADR-0023).
-   */
-  private static readonly INITIALIZE_EXTENSIONS: NonNullable<ClientCapabilities["extensions"]> =
-    hostExtensions();
-
-  /**
+   * (ADR-0023). The capability names the schemes the resolver serves when the
+   * client is built: none while no files plugin is bound.
+   *
    * The client this source connects with. One builder, called on the initial
    * start and again on the OAuth retry rebuild.
    *
@@ -1469,7 +1472,7 @@ export class McpSource implements ToolSource {
     return new EraCapabilitiesClient(
       CLIENT_INFO,
       { capabilities: this.clientCapabilities(), versionNegotiation: { mode: "auto" } },
-      this.connectorContext ? McpSource.INITIALIZE_EXTENSIONS : {},
+      this.connectorContext ? hostExtensions(this.connectorContext.hostResources.schemes()) : {},
     );
   }
 
@@ -1482,7 +1485,7 @@ export class McpSource implements ToolSource {
    *
    * These are server→client requests, a channel only the 2025 era has: on a
    * 2026-07-28 connection the SDK drops inbound requests. The capability is
-   * claimed in the 2025 `initialize` only (`INITIALIZE_EXTENSIONS`), so a
+   * claimed in the 2025 `initialize` only (`buildClient`), so a
    * connector sees it exactly where it can call these methods.
    *
    * Handlers do four things, in order: refuse a request that is not inside
@@ -2314,6 +2317,7 @@ export class McpSource implements ToolSource {
     ) {
       return `unattended_refused: ${this.name}__${toolName} is not available inside an unattended run`;
     }
+    if (this.mode.type === "plugin") return this.mode.refuseCall?.(toolName) ?? null;
     return null;
   }
 

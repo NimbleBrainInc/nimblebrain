@@ -159,14 +159,16 @@ export function workspacePath(suffix: string, workspaceId?: string): string {
 }
 
 /**
- * Build the browser URL for a stored file. File ids are globally unique, so the
- * bare id addresses the file — the server resolves which workspace it lives in
- * from the id (within the caller's own files). No workspace in the URL: the id
- * already locates it, and a link to a file stays valid whichever workspace is
- * active when it is opened.
+ * The browser URL of a stored file: the caller's own file in a workspace,
+ * `/v1/workspaces/<wsId>/files/<id>`. A file belongs to the workspace it was
+ * stored in and is served from there alone, so the URL names it; a link to a
+ * file opens it in that workspace whichever is active. Null when no workspace
+ * is given or active.
  */
-export function fileUrl(fileId: string): string {
-  return `${API_BASE}/v1/files/${encodeURIComponent(fileId)}`;
+export function fileUrl(fileId: string, workspaceId?: string): string | null {
+  const wsId = workspaceId ?? activeWorkspaceId;
+  if (!wsId) return null;
+  return `${API_BASE}${workspacePath(`/files/${encodeURIComponent(fileId)}`, wsId)}`;
 }
 
 /** Register a callback invoked on 401 responses. */

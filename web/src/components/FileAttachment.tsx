@@ -33,9 +33,11 @@ export function FileAttachment({ file }: Props) {
   const isImage = file.mimeType.startsWith("image/");
   const isPending = file.id.startsWith("pending_");
   const Icon = getTypeIcon(file.mimeType);
+  // The chat panel shows the active workspace's conversation, where the file is.
+  const src = isPending ? null : fileUrl(file.id);
 
   // Images with a real server-side ID get a thumbnail
-  if (isImage && !isPending && !imgError) {
+  if (isImage && src && !imgError) {
     return (
       <div className="inline-block">
         <button
@@ -44,7 +46,7 @@ export function FileAttachment({ file }: Props) {
           className="block cursor-pointer"
         >
           <img
-            src={fileUrl(file.id)}
+            src={src}
             alt={file.filename}
             loading="lazy"
             onError={() => setImgError(true)}

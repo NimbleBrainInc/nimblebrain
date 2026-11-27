@@ -64,6 +64,12 @@ export interface ResolvedPlugin {
   manifest: PluginManifest;
   /** Every server of the plugin, by key: `mcp.json`'s and the extension's. */
   servers: Record<string, ResolvedServer>;
+  /**
+   * The origins the operator lists for the plugin's bindings, beside their own
+   * server's: where a contract that moves bytes by URL may fetch from
+   * (scheme, host and port, normalised).
+   */
+  transferOrigins: string[];
 }
 
 export interface ResolvedPlugins {
@@ -176,7 +182,38 @@ function resolvePlugin(
   const system = entry.system === true;
   const servers = placeServers(manifest, entry.servers ?? {}, fail);
   checkStartable(servers, system, fail);
-  return { name, root, dataDir, system, manifest, servers };
+  const transferOrigins = parseTransferOrigins(entry.transferOrigins, fail);
+  return { name, root, dataDir, system, manifest, servers, transferOrigins };
+}
+
+/**
+ * The operator's `transferOrigins`, each an http or https origin and nothing
+ * more (no path, query, fragment or userinfo), normalised to `URL.origin`.
+ */
+function parseTransferOrigins(raw: readonly string[] | undefined, fail: Fail): string[] {
+  const out: string[] = [];
+  (raw ?? []).forEach((value, i) => {
+    const field = `transferOrigins[${i}]`;
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      fail("must be an absolute http or https origin", { field });
+      return;
+    }
+    const bare =
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === "" &&
+      url.username === "" &&
+      url.password === "";
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || !bare) {
+      fail("must be an http or https origin: a scheme, a host and an optional port, with no path", { field });
+      return;
+    }
+    out.push(url.origin);
+  });
+  return out;
 }
 
 /**

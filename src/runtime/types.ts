@@ -338,6 +338,13 @@ export interface ChatRequest {
    * namespace prefix.
    */
   appContext?: AppContext;
+  /**
+   * The id a new conversation is created with, when the door minted it before
+   * the turn: a turn that attaches files takes them in before it runs, and
+   * each file's record names the conversation it was attached in. Ignored
+   * when `conversationId` names one to resume.
+   */
+  newConversationId?: string;
   /** Additional content parts from file uploads (text extracts, images). */
   contentParts?: ContentPart[];
   /** File references for conversation metadata (stored alongside the message). */
@@ -633,8 +640,9 @@ export interface TaskResult {
     status?: "fetch_failed" | "capped" | "renamed_unheld";
   }>;
   /**
-   * The files the run wrote, as the workspace's file store recorded them (each
-   * entry the run's own `runId` stamped), as `files://` URIs.
+   * The files the run wrote: the host's own record of the run's successful
+   * `files__create` calls, each its `files://` URI and the filename that call
+   * answered.
    */
   filesWritten: Array<{ uri: string; name: string }>;
 }

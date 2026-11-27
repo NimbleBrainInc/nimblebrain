@@ -352,11 +352,6 @@
           "description": "Enable tool search via nb__search scope=tools. Default: true.",
           "default": true
         },
-        "fileContext": {
-          "type": "boolean",
-          "description": "Enable file context (workspace files, chat attachments). Default: true.",
-          "default": true
-        },
         "userManagement": {
           "type": "boolean",
           "description": "Enable user create/delete via nb__manage_users (admin only). Default: true.",
@@ -541,7 +536,7 @@
       "additionalProperties": false
     },
     "plugins": {
-      "description": "The Agent Plugins this instance runs as part of the runtime, by plugin name: where each comes from, whether it is a system plugin, and where its servers already run. The runtime runs its default plugins (the built-in conversations plugin, which turns chat on, and the built-in tasks plugin, which turns scheduled work on, each as a system plugin) with these entries over them: an entry of a default's name replaces it, and false turns it off. Each plugin's plugin.json is validated against the Agent Plugins 1.0.0 schema and its ai.nimblebrain extension, and the contracts the plugins implement and require are checked, at boot; a plugin that fails refuses the boot with the plugin and field named. The runtime starts the server of each plugin that implements a contract it consumes. Experimental.",
+      "description": "The Agent Plugins this instance runs as part of the runtime, by plugin name: where each comes from, whether it is a system plugin, and where its servers already run. The runtime runs its default plugins (the built-in conversations plugin, which turns chat on, the built-in tasks plugin, which turns scheduled work on, and the built-in files plugin, which turns files and attachments on, each as a system plugin) with these entries over them: an entry of a default's name replaces it, and false turns it off. Each plugin's plugin.json is validated against the Agent Plugins 1.0.0 schema and its ai.nimblebrain extension, and the contracts the plugins implement and require are checked, at boot; a plugin that fails refuses the boot with the plugin and field named. The runtime starts the server of each plugin that implements a contract it consumes. Experimental.",
       "type": "object",
       "propertyNames": {
         "pattern": "^(?!.*(?:--|\\.\\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$",
@@ -581,6 +576,12 @@
                   "required": ["url"],
                   "additionalProperties": false
                 }
+              },
+              "transferOrigins": {
+                "type": "array",
+                "description": "Origins (scheme://host[:port], http or https, no path) the plugin's bindings issue transfer URLs from, beside their own server's origin: an object store's, for presigned URLs. A contract that moves bytes by URL (ai.nimblebrain.files) is fetched only from these, the binding's own server origin, and loopback for a server the runtime starts. Every transfer refuses redirects, and a name that resolves to a loopback, link-local, unspecified or multicast address.",
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
               }
             },
             "required": ["source"],
@@ -645,7 +646,7 @@
       "additionalProperties": false
     },
     "files": {
-      "description": "File context configuration for workspace file uploads.",
+      "description": "Limits the runtime applies when it takes files in (chat attachments and uploads) and when it puts an attachment's text in a prompt. Files are on while a plugin implements ai.nimblebrain.files (plugins.files: false turns them off).",
       "type": "object",
       "properties": {
         "maxFileSize": {
@@ -665,7 +666,7 @@
         },
         "maxExtractedTextSize": {
           "type": "number",
-          "description": "Maximum extracted text size per file in bytes. Default: 204800 (200 KB).",
+          "description": "The most bytes of an attachment's text the runtime asks the files plugin's read for and puts in a prompt, at most 1048576. Default: 204800 (200 KB).",
           "default": 204800
         }
       },

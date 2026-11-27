@@ -42,17 +42,46 @@ export interface HostContext {
   workspaceId?: string;
   ownerId?: string;
   conversationId?: string;
+  /** The unattended run the call is made inside, or that a host call is made for. */
+  runId?: string;
   /** The run grant, on a person call to a grant-marked tool. */
   grant?: string;
   /** True on every call made inside an unattended run. */
   unattended?: boolean;
 }
 
-/** The scope the kernel's own contract calls are walled to: a workspace, and an owner where the tool has one. */
+/**
+ * The scope the kernel's own contract calls are walled to: a workspace, an
+ * owner where the tool has one, and the chat turn or run the call is made for,
+ * which attribute and grant nothing.
+ */
 export interface HostScope {
   workspaceId: string;
   ownerId?: string;
+  conversationId?: string;
+  runId?: string;
 }
+
+/**
+ * Where a binding's transfer URLs may point (`contracts/files/CONTRACT.md` §7,
+ * §10): its own server's origin when the runtime reaches it by URL, the origins
+ * the operator lists for it, and loopback when the runtime starts it over stdio.
+ */
+export interface TransferDestinations {
+  /** The origin of the binding's server URL, or null for a server the runtime starts. */
+  serverOrigin: string | null;
+  /** The operator's `transferOrigins` for the plugin, each `URL.origin`. */
+  listed: readonly string[];
+  /** Whether a literal loopback address on any port is a destination: a stdio binding's. */
+  loopback: boolean;
+}
+
+/**
+ * The host's refusal of a call to a bound server, by contract, before it is
+ * sent: a reason, or null to send it. It sees the call's scope (a host call's,
+ * or the person call's workspace from the request context).
+ */
+export type CallGuard = (tool: string, workspaceId: string | undefined) => string | null;
 
 /** Signs the run grant a grant-marked call carries. */
 export type GrantSigner = (claims: RunGrantClaims) => string;
@@ -80,6 +109,8 @@ export interface BoundServer {
   unattendedRefused: ReadonlySet<string>;
   /** The contract's private tools, which only the kernel calls, by bare name. */
   privateTools: ReadonlySet<string>;
+  /** Where the binding's transfer URLs may point. */
+  transferDestinations: TransferDestinations;
   /** The kernel's own call: presents `host` in `scope`. Throws {@link ContractToolError} on a tool error. */
   call(
     tool: string,
@@ -115,6 +146,8 @@ function currentContext(): HostContext {
       principal: "host",
       workspaceId: host.workspaceId,
       ...(host.ownerId ? { ownerId: host.ownerId } : {}),
+      ...(host.conversationId ? { conversationId: host.conversationId } : {}),
+      ...(host.runId ? { runId: host.runId } : {}),
     };
   }
   const ctx = getRequestContext();
@@ -123,6 +156,7 @@ function currentContext(): HostContext {
     ...(ctx?.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
     ...(ctx?.identity?.id ? { ownerId: ctx.identity.id } : {}),
     ...(ctx?.conversationId ? { conversationId: ctx.conversationId } : {}),
+    ...(ctx?.runId ? { runId: ctx.runId } : {}),
     ...(ctx?.unattended ? { unattended: true } : {}),
   };
 }
@@ -228,6 +262,7 @@ async function startBoundServer(
   eventSink: EventSink,
   overlays: ResultOverlays,
   signGrant: GrantSigner | undefined,
+  guard: CallGuard | undefined,
 ): Promise<BoundServer> {
   const name = `${binding.contract}: the ${binding.plugin} plugin's server "${binding.server}"`;
   const plugin = resolved.plugins.find((p) => p.name === binding.plugin);
@@ -281,12 +316,14 @@ async function startBoundServer(
         ),
       hiddenTools: new Set(binding.privateTools),
       refusedUnattended: unattendedRefused,
-      // The public tools that author, start or stop work change what their
-      // caller's views show.
-      announceAfter: new Set(
-        binding.unattendedRefused.filter((t) => !binding.privateTools.includes(t)),
-      ),
+      // The public tools that author, start or stop work, or that the contract
+      // annotates as writing, change what their caller's views show.
+      announceAfter: new Set([
+        ...binding.unattendedRefused.filter((t) => !binding.privateTools.includes(t)),
+        ...binding.writeTools,
+      ]),
       resultOverlay: overlays.get(binding.contract),
+      ...(guard ? { refuseCall: (tool) => guard(tool, getRequestContext()?.workspaceId) } : {}),
     },
     eventSink,
   );
@@ -303,6 +340,8 @@ async function startBoundServer(
     args: Record<string, unknown>,
     scope: HostScope,
   ): Promise<Record<string, unknown>> {
+    const refused = guard?.(tool, scope.workspaceId);
+    if (refused) throw new ContractToolError("refused", refused);
     // A server that exited is started again for the next call; one stopped at
     // shutdown stays stopped. A call that was in flight when it exited is not
     // retried: its write may have landed.
@@ -348,6 +387,9 @@ async function startBoundServer(
     source,
     unattendedRefused,
     privateTools: new Set(binding.privateTools),
+    // The runtime binds only a server it starts over stdio (above), so its
+    // transfer URLs point at loopback or at an origin the operator listed.
+    transferDestinations: { serverOrigin: null, listed: plugin.transferOrigins, loopback: true },
     call,
     watch,
     connection: () => source.getClient() ?? null,
@@ -364,13 +406,21 @@ export async function startBoundServers(
   eventSink: EventSink,
   overlays: ResultOverlays = new Map(),
   signGrant?: GrantSigner,
+  guards: ReadonlyMap<string, CallGuard> = new Map(),
 ): Promise<Map<string, BoundServer>> {
   const bound = new Map<string, BoundServer>();
   try {
     for (const binding of resolved.bindings) {
       bound.set(
         binding.contract,
-        await startBoundServer(resolved, binding, eventSink, overlays, signGrant),
+        await startBoundServer(
+          resolved,
+          binding,
+          eventSink,
+          overlays,
+          signGrant,
+          guards.get(binding.contract),
+        ),
       );
     }
   } catch (err) {

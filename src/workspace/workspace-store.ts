@@ -71,7 +71,7 @@ export type MembershipChangeHandler = (userId: string) => void;
  * separator in `ws_<id>-<tool>` (see `src/tools/namespace.ts`), so it
  * round-trips through `parseNamespacedToolName` cleanly. This mirrors the
  * established opaque-id idiom for users (`usr_<hex>`, `src/identity/user.ts`)
- * and files (`fl_<hex>`, `src/files/store.ts`).
+ * and conversations (`conv_<hex>`).
  *
  * 16 hex chars = 64 bits of entropy. Collisions are astronomically
  * unlikely, but `create` still does a conflict check and retries against

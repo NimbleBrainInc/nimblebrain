@@ -19,7 +19,7 @@ import { join } from "node:path";
  * line, and `create` calling this function is one of the two sites allowed
  * past it.
  */
-export const WORKSPACE_DIRS = ["data", "credentials", "skills", "files"] as const;
+export const WORKSPACE_DIRS = ["data", "credentials", "skills"] as const;
 
 /**
  * Scaffold the directory structure for a workspace.

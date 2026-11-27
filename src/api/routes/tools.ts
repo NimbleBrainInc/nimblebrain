@@ -1,10 +1,5 @@
 import { Hono } from "hono";
-import {
-  handleFileServe,
-  handleIdentityToolCall,
-  handleShell,
-  handleToolCall,
-} from "../handlers.ts";
+import { handleIdentityToolCall, handleShell, handleToolCall } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { errorLog } from "../middleware/error-log.ts";
@@ -65,13 +60,5 @@ export function toolRoutes(ctx: AppContext, allowedOrigins: ReadonlySet<string> 
       .get(`${WORKSPACE_ROUTE_PREFIX}/shell`, auth, logErrors, requireWorkspace(ctx), (c) =>
         handleShell(ctx.runtime, c.var.workspaceId),
       )
-      .get("/v1/files/:fileId", auth, logErrors, (c) => {
-        // Files are workspace-owned but addressed by their globally-unique id alone:
-        // the server resolves the workspace from the id within the caller's own
-        // owner partitions (see handleFileServe). No workspace in the URL, so a
-        // browser `<img src>` or download link can load it.
-        const fileId = decodeURIComponent(c.req.param("fileId"));
-        return handleFileServe(fileId, ctx.runtime, ctx.features, c.var.identity);
-      })
   );
 }

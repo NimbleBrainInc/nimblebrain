@@ -8,6 +8,8 @@
  *     "conversations": { "source": "builtin", "system": true,
  *                        "servers": { "conversations": { "url": "http://conversations.internal/mcp" } } },
  *     "reports": { "source": "./plugins/reports" },
+ *     "files": { "source": "./plugins/s3-files", "system": true,
+ *                "transferOrigins": ["https://bucket.s3.example.com"] },
  *     "tasks": false } }
  * ```
  *
@@ -43,6 +45,13 @@ export interface PluginConfig {
   system?: boolean;
   /** By the server's key in the plugin (its `mcp.json` key). */
   servers?: Record<string, PluginServerConfig>;
+  /**
+   * Origins (a scheme, a host and an optional port) the plugin's bindings issue transfer URLs
+   * from, beside their own server's: an object store's, for presigned URLs. A
+   * contract that moves bytes by URL is fetched only from these, its server's
+   * own origin, and loopback for a server the runtime starts.
+   */
+  transferOrigins?: string[];
 }
 
 /** The `plugins` block: plugin name → its entry, or `false` for off. */
@@ -53,6 +62,7 @@ export const PLUGIN_CONFIG_KEYS = Object.keys({
   source: true,
   system: true,
   servers: true,
+  transferOrigins: true,
 } satisfies Record<keyof PluginConfig, true>);
 
 /** Every key of a server entry, for the config schema drift guard. */
@@ -63,12 +73,14 @@ export const PLUGIN_SERVER_CONFIG_KEYS = Object.keys({
 /**
  * The plugins an instance runs when its configuration names none, each a
  * system plugin (ADR-0076, "Defaults ship in the box"): the built-in
- * conversations plugin, which turns chat on, and the built-in tasks plugin,
- * which turns scheduled and unattended work on.
+ * conversations plugin, which turns chat on, the built-in tasks plugin, which
+ * turns scheduled and unattended work on, and the built-in files plugin, which
+ * turns files and attachments on.
  */
 export const DEFAULT_PLUGINS: Readonly<Record<string, PluginConfig>> = {
   conversations: { source: BUILTIN_PLUGIN_SOURCE, system: true },
   tasks: { source: BUILTIN_PLUGIN_SOURCE, system: true },
+  files: { source: BUILTIN_PLUGIN_SOURCE, system: true },
 };
 
 /**

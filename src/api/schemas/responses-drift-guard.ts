@@ -15,7 +15,7 @@
 import type { ResolvedBrand } from "../../brand/index.ts";
 import type { PlacementEntry } from "../../connectors/runtime/types.ts";
 import type { ContentBlock } from "../../engine/types.ts";
-import type { FileEntry } from "../../files/types.ts";
+import type { FileRecord } from "../../files/types.ts";
 import type { OrgRole } from "../../identity/types.ts";
 import type { UserPreferences } from "../../identity/user.ts";
 import type { CatalogModel } from "../../model/catalog.ts";
@@ -51,7 +51,7 @@ export type DriftUserPreferences = AssertTrue<Identical<Wire.UserPreferences, Us
 export type DriftModelSlots = AssertTrue<Identical<Wire.ModelSlots, ModelSlots>>;
 export type DriftCatalogModel = AssertTrue<Identical<Wire.CatalogModel, CatalogModel>>;
 export type DriftPlacementEntry = AssertTrue<Identical<Wire.PlacementEntry, PlacementEntry>>;
-export type DriftFileEntry = AssertTrue<Identical<Wire.FileEntry, FileEntry>>;
+export type DriftFileRecord = AssertTrue<Identical<Wire.FileRecord, FileRecord>>;
 export type DriftTokenUsage = AssertTrue<Identical<Wire.TokenUsage, TokenUsage>>;
 export type DriftTurnUsage = AssertTrue<Identical<Wire.TurnUsage, TurnUsage>>;
 export type DriftRunPublicJwk = AssertTrue<Identical<Wire.RunPublicJwk, RunPublicJwk>>;

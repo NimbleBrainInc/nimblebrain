@@ -18,7 +18,7 @@ export type {
   HostResourcesResolver,
   ListResourcesParams,
 } from "./resolver.ts";
-export { FileBackedHostResourcesResolver } from "./resolver.ts";
+export { FilesHostResourcesResolver } from "./resolver.ts";
 export type {
   RecordArgumentsGrant,
   ResourceArgumentEntries,
