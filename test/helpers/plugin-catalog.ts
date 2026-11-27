@@ -29,6 +29,10 @@ export interface FixturePlugin {
   skills?: Record<string, string>;
   /** `extensions["ai.nimblebrain"].conversationStarters`, as written (unvalidated). */
   conversationStarters?: unknown[];
+  /** Server key → its `ServerDetail`, written at `ai.nimblebrain/servers/<key>.json`. */
+  serverDetails?: Record<string, unknown>;
+  /** Any other file in the archive, by path, as written. */
+  files?: Record<string, string>;
 }
 
 export interface FixtureCatalog {
@@ -41,6 +45,19 @@ export interface FixtureCatalog {
   /** A fetch over `objects` (404 for anything else) that records each URL it was asked for. */
   fetch: typeof fetch;
   requests: string[];
+}
+
+/** A remote `ServerDetail` named `name`, installable with no setup (`auth: dcr`). */
+export function serverDetail(name: string, overrides: Record<string, unknown> = {}) {
+  return {
+    name,
+    title: name,
+    description: `The ${name} connector`,
+    version: "1.0.0",
+    remotes: [{ type: "streamable-http", url: `https://mcp.example.test/${name}` }],
+    _meta: { "ai.nimblebrain/connector": { auth: "dcr" } },
+    ...overrides,
+  };
 }
 
 /** A SKILL.md bound to plugin server `server`. */
@@ -86,6 +103,10 @@ export function buildCatalog(
     for (const [skill, text] of Object.entries(plugin.skills ?? {})) {
       files[`skills/${skill}/SKILL.md`] = text;
     }
+    for (const [key, detail] of Object.entries(plugin.serverDetails ?? {})) {
+      files[`ai.nimblebrain/servers/${key}.json`] = JSON.stringify(detail);
+    }
+    Object.assign(files, plugin.files ?? {});
     const archive = zip(files);
     const digest = sha256(archive);
     digests[plugin.name] = digest;

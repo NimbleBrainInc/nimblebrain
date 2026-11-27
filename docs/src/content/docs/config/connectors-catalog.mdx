@@ -15,19 +15,20 @@ An install names a catalog entry by its `id`. The runtime resolves that id, matc
 
 The catalog has one source at a time.
 
-**By default, the NimbleBrain plugin catalog.** The runtime reads the connector list of the catalog at [`NB_PLUGIN_CATALOG_URL`](/config/environment/#connectors-catalog) ([catalog.nimblebrain.ai](https://catalog.nimblebrain.ai)), the same catalog its [connector skills](/using/skills/#connector-skill-overlays) come from. A source checkout, `npx nimblebrain`, and a release image all show the same list.
+**By default, the NimbleBrain plugin catalog.** The runtime reads the NimbleBrain index of the catalog at [`NB_PLUGIN_CATALOG_URL`](/config/environment/#connectors-catalog) ([catalog.nimblebrain.ai](https://catalog.nimblebrain.ai)), the same index its [connector skills](/using/skills/#connector-skill-overlays) come from. A source checkout, `npx nimblebrain`, and a release image all show the same list.
 
-- **Pinned.** The list is used only when its sha256 is `NB_PLUGIN_CATALOG_CONNECTORS_SHA256`, which each release compiles in. It is asked for at `nimblebrain/connectors/<sha256>.yaml`, a copy a catalog keeps for good, and then at `nimblebrain/connectors.yaml`, the catalog's current build. A list that does not match is refused and logged with both digests.
-- **Cached.** A verified list is kept in the work directory (`cache/plugin-catalog/connectors/<sha256>.yaml`), so a restart needs no network.
-- **Never fatal.** When the pinned list cannot be fetched or does not match, the runtime reads the newest verified list in its cache and logs a warning naming it. With nothing cached, Browse is empty and the startup log says why. A failed fetch is retried on a later read, at most once a minute, so a runtime that started offline fills Browse once the network is back.
-- **Moving forward is bumping the pins.** The list and the index connector skills come from are pinned together; take both from the same catalog build:
+- **One pin.** The index is used only when its sha256 is `NB_PLUGIN_CATALOG_SHA256`, which each release compiles in, and each plugin's archive only when its sha256 is the one the index lists. Bytes that do not match are refused.
+- **A plugin carries its server.** Each plugin names its servers in `plugin.json` under `extensions["ai.nimblebrain"].servers` (key → registry name) and carries each one's `ServerDetail` at `ai.nimblebrain/servers/<key>.json`. That file is the Browse entry, validated like any other. A server whose plugin carries no such file, or whose file names a different server, is skipped and logged. A plugin that names no server lists nothing.
+- **One plugin per server.** An installed connector binds to its entry by server name, so when two plugins name the same server, the first in the index is listed and the second is refused with a logged error.
+- **Cached.** The index and every archive are kept in the work directory by sha256 (`cache/plugin-catalog/`), shared with connector skills, so a restart needs no network.
+- **Never fatal.** When the pinned index cannot be fetched, the runtime reads the newest verified index in its cache and logs a warning naming it. With nothing cached, Browse is empty and the startup log says why. A plugin whose archive cannot be fetched is left out and reported. A catalog that fell short is built again on a read a minute later, so a runtime that started offline fills Browse once the network is back.
+- **Moving forward is bumping the pin:**
 
   ```bash
   curl -s https://catalog.nimblebrain.ai/nimblebrain/marketplace.json | sha256sum   # NB_PLUGIN_CATALOG_SHA256
-  curl -s https://catalog.nimblebrain.ai/nimblebrain/connectors.yaml | sha256sum    # NB_PLUGIN_CATALOG_CONNECTORS_SHA256
   ```
 
-The NimbleBrain catalog's list holds the connectors that install with nothing to configure (`auth: dcr`). To offer your own list, publish a catalog in the same shape and point `NB_PLUGIN_CATALOG_URL` and both pins at it.
+The NimbleBrain catalog lists the connectors that install with nothing to configure (`auth: dcr`). To offer your own list, publish a catalog in the same shape and point `NB_PLUGIN_CATALOG_URL` and the pin at it.
 
 **When `NB_CURATED_CATALOG_DIR` is set, a directory.** It replaces the plugin catalog wholesale; the two are never merged, so every entry has one place it came from. A mounted directory is trusted by whoever mounts it, so it takes no pin and an edit applies on the next read. Use it for entries a public catalog cannot carry: `auth: static` entries that need your OAuth app, brokered toolkits (`composio`, `smithery`), a server you are developing. Every `*.yaml`, `*.yml`, and `*.json` in it is read in sorted filename order and aggregated into one catalog.
 
@@ -41,7 +42,7 @@ A directory is re-read on every lookup, so editing a mounted ConfigMap takes eff
 
 ## Adding a new OAuth connector
 
-Add the entry to your deployment's catalog: the directory [`NB_CURATED_CATALOG_DIR`](/config/environment/#connectors-catalog) points at, or the catalog you publish at `NB_PLUGIN_CATALOG_URL`. Either way the file is a list of upstream `ServerDetail` records; platform-specific fields live under the reverse-DNS extension key `_meta["ai.nimblebrain/connector"]`.
+Add the entry to your deployment's catalog: a file in the directory [`NB_CURATED_CATALOG_DIR`](/config/environment/#connectors-catalog) points at, or a plugin's `ai.nimblebrain/servers/<key>.json` in the catalog you publish at `NB_PLUGIN_CATALOG_URL`. Either way the entry is an upstream `ServerDetail` record; platform-specific fields live under the reverse-DNS extension key `_meta["ai.nimblebrain/connector"]`.
 
 ### 1. Pick the auth flow
 

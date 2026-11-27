@@ -8,17 +8,17 @@
  *
  * **Where the catalog comes from** (`catalogLocation`), one source at a time:
  *
- * - **The pinned plugin catalog**, by default: the connector list of the catalog
- *   at `NB_PLUGIN_CATALOG_URL` (catalog.nimblebrain.ai), verified against the
- *   image's pin and cached in the work directory (`pinned.ts`). It is the same
- *   catalog connector skills come from, so dev, a local install and a release
- *   image show one list, and moving it forward is bumping the pin. An operator
- *   with their own list publishes their own catalog and points the URL and pins
- *   at it.
+ * - **The pinned plugin index**, by default: the NimbleBrain index of the
+ *   catalog at `NB_PLUGIN_CATALOG_URL` (catalog.nimblebrain.ai), pinned by
+ *   `NB_PLUGIN_CATALOG_SHA256`, and the `ServerDetail` each plugin it lists
+ *   carries (`plugin-index.ts`). It is the index connector skills come from, so
+ *   dev, a local install and a release image show one list, and moving it
+ *   forward is bumping the one pin. An operator with their own list publishes
+ *   their own catalog and points the URL and pin at it.
  * - **A directory**, when `NB_CURATED_CATALOG_DIR` names one: it replaces the
- *   pinned catalog wholesale, never merges with it. A mounted directory is
+ *   pinned index wholesale, never merges with it. A mounted directory is
  *   trusted by whoever mounts it, so it needs no pin and an edit takes effect on
- *   the next read. It holds what the pinned list cannot: entries that need
+ *   the next read. It holds what a public catalog cannot: entries that need
  *   instance setup (`auth: static`, brokered toolkits), a server in development,
  *   a test's fixtures. Replacing rather than merging keeps one answer to where
  *   an entry came from.
@@ -39,13 +39,13 @@ import { resolvePluginCatalogConfig } from "../../config/plugin-catalog.ts";
 import { log } from "../../observability/log.ts";
 import { brokeredRef } from "../runtime/brokered.ts";
 import type { ConnectorRef } from "../runtime/types.ts";
-import { type CatalogFile, loadPinnedConnectors } from "./pinned.ts";
+import { readIndexCatalog } from "./plugin-index.ts";
 import {
   projectServerDetailToCatalogListing,
   serverDetailToCatalogEntry,
   validateServerDetailSafety,
 } from "./projection.ts";
-import { readCatalogEntries } from "./read.ts";
+import { type CatalogRead, readCatalogEntries } from "./read.ts";
 import type { ServerDetail } from "./server-detail.ts";
 import type { CatalogListing, ConnectorCatalogEntry, ListEntriesContext } from "./types.ts";
 
@@ -85,7 +85,7 @@ export interface CatalogError {
 }
 
 /**
- * The deployment's catalog directory, which replaces the pinned catalog when
+ * The deployment's catalog directory, which replaces the pinned index when
  * set: a mounted ConfigMap (e.g. `/config/connectors`) or any directory of
  * `ServerDetail` files. What writes them is outside the runtime.
  */
@@ -93,24 +93,24 @@ export const CATALOG_DIR_ENV = "NB_CURATED_CATALOG_DIR";
 
 /**
  * Where a `ConnectorCatalog` reads: a catalog file or directory, or a function
- * that produces the file (the pinned catalog, fetched on first read).
+ * that reads the catalog itself (the pinned plugin index).
  */
-export type CatalogLocation = string | (() => Promise<CatalogFile>);
+export type CatalogLocation = string | (() => Promise<CatalogRead>);
 
 /**
  * The catalog for a runtime whose work directory is `workDir`: the directory
- * `NB_CURATED_CATALOG_DIR` names, else the pinned plugin catalog's connector
- * list, cached under `{workDir}/cache/plugin-catalog`. Throws on a malformed pin.
+ * `NB_CURATED_CATALOG_DIR` names, else the pinned plugin index, its archives
+ * cached under `{workDir}/cache/plugin-catalog`. Throws on a malformed pin.
  */
 export function catalogLocation(workDir: string): CatalogLocation {
   const dir = process.env[CATALOG_DIR_ENV]?.trim();
   if (dir) return dir;
   const config = resolvePluginCatalogConfig();
   return () =>
-    loadPinnedConnectors({
+    readIndexCatalog({
       cacheDir: join(workDir, "cache", "plugin-catalog"),
       catalogUrl: config.url,
-      sha256: config.connectorsSha256,
+      pin: config.sha256,
     });
 }
 
@@ -264,12 +264,8 @@ export class ConnectorCatalog {
   // ── internals ────────────────────────────────────────────────────
 
   private async read(): Promise<AggregatedServers> {
-    const file: CatalogFile =
-      typeof this.location === "string" ? { path: this.location } : await this.location();
-    if ("error" in file) {
-      return { servers: [], refused: [], errors: [{ file: file.source, message: file.error }] };
-    }
-    const { entries, diagnostics } = readCatalogEntries(file.path);
+    const { entries, diagnostics } =
+      typeof this.location === "string" ? readCatalogEntries(this.location) : await this.location();
 
     // A diagnostic carrying an entry `index` is one bad record inside an
     // otherwise-fine file: logged, like every other per-entry drop, and

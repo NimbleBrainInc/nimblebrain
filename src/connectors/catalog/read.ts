@@ -198,19 +198,36 @@ export function readCatalogEntries(path: string): CatalogRead {
     };
   }
   const files = statSync(path).isDirectory() ? catalogFilesInDir(path) : [path];
-  const entries: CatalogEntry[] = [];
+  const groups: CandidateGroup[] = [];
   const diagnostics: CatalogDiagnostic[] = [];
-  const seenNames = new Set<string>();
   for (const file of files) {
     const parsed = parseCatalogFile(file, diagnostics);
     if (parsed === undefined) continue; // unreadable / unparseable — already reported
-    appendValidatedServers(
-      extractServerCandidates(parsed, file, diagnostics),
-      file,
-      seenNames,
-      entries,
-      diagnostics,
-    );
+    groups.push({ source: file, candidates: extractServerCandidates(parsed, file, diagnostics) });
+  }
+  return validateServerCandidates(groups, diagnostics);
+}
+
+/** Raw server candidates from one source: a catalog file, or a plugin's server file. */
+export interface CandidateGroup {
+  source: string;
+  candidates: unknown[];
+}
+
+/**
+ * Validate raw candidates, grouped by where each came from, the way every
+ * catalog source is validated: the upstream `ServerDetail` schema, first-wins
+ * dedupe by name across groups, and the refusal of every entry whose server
+ * name another entry shares. Problems are appended to `diagnostics`.
+ */
+export function validateServerCandidates(
+  groups: CandidateGroup[],
+  diagnostics: CatalogDiagnostic[] = [],
+): CatalogRead {
+  const entries: CatalogEntry[] = [];
+  const seenNames = new Set<string>();
+  for (const { source, candidates } of groups) {
+    appendValidatedServers(candidates, source, seenNames, entries, diagnostics);
   }
   return { entries: refuseServerNameCollisions(entries, diagnostics), diagnostics };
 }

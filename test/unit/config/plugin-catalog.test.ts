@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import {
-  PLUGIN_CATALOG_CONNECTORS_SHA256_DEFAULT,
   PLUGIN_CATALOG_SHA256_DEFAULT,
   PLUGIN_CATALOG_URL_DEFAULT,
   resolvePluginCatalogConfig,
@@ -14,23 +13,16 @@ describe("resolvePluginCatalogConfig", () => {
     expect(resolvePluginCatalogConfig({})).toEqual({
       url: PLUGIN_CATALOG_URL_DEFAULT,
       sha256: PLUGIN_CATALOG_SHA256_DEFAULT,
-      connectorsSha256: PLUGIN_CATALOG_CONNECTORS_SHA256_DEFAULT,
     });
     expect(PLUGIN_CATALOG_SHA256_DEFAULT).toMatch(/^[0-9a-f]{64}$/);
-    expect(PLUGIN_CATALOG_CONNECTORS_SHA256_DEFAULT).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("takes the operator's catalog and pins, trimming a trailing slash", () => {
+  it("takes the operator's catalog and pin, trimming a trailing slash", () => {
     const cfg = resolvePluginCatalogConfig({
       NB_PLUGIN_CATALOG_URL: "https://catalog.example/",
       NB_PLUGIN_CATALOG_SHA256: PIN.toUpperCase(),
-      NB_PLUGIN_CATALOG_CONNECTORS_SHA256: "b".repeat(64),
     });
-    expect(cfg).toEqual({
-      url: "https://catalog.example",
-      sha256: PIN,
-      connectorsSha256: "b".repeat(64),
-    });
+    expect(cfg).toEqual({ url: "https://catalog.example", sha256: PIN });
   });
 
   it("treats blank values as unset", () => {
@@ -46,9 +38,6 @@ describe("resolvePluginCatalogConfig", () => {
     expect(() => resolvePluginCatalogConfig({ NB_PLUGIN_CATALOG_SHA256: "v0.5.0" })).toThrow(
       /sha256/,
     );
-    expect(() =>
-      resolvePluginCatalogConfig({ NB_PLUGIN_CATALOG_CONNECTORS_SHA256: "latest" }),
-    ).toThrow(/NB_PLUGIN_CATALOG_CONNECTORS_SHA256/);
   });
 });
 

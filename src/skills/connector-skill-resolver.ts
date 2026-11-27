@@ -13,17 +13,10 @@
  * that names no server is not a connector's guidance and is not returned here.
  * Nothing derives a binding from a connector's name.
  *
- * ADR-0013's mechanics hold:
- *   - Pinned: the index is read at the sha256 the runtime is pinned to, and every
- *     archive at the sha256 that index lists. No tag, branch or bare URL.
- *   - Fail-closed: a missing index, any non-2xx, a network error, an unreadable
- *     archive, or a digest mismatch throws. Nothing partial is returned.
- *   - Bounded: a response is read up to `MAX_FETCH_BYTES` and refused past it,
- *     before its digest is checked.
- *   - Content-addressed cache: the index and each plugin archive are cached as
- *     the bytes fetched, under their sha256, and verified again on every read,
- *     so one catalog read serves every workspace and a pin bump refetches only
- *     the plugins whose bytes changed.
+ * The index and archives are read through `src/plugins/pinned-catalog.ts`:
+ * pinned by sha256, bounded, cached by content, and fail-closed, so a missing
+ * index, any non-2xx, a network error, an unreadable archive, or a digest
+ * mismatch throws and nothing partial is returned.
  *
  * A server no plugin names, or whose plugin carries no skill bound to it, has
  * no curated skill: the answer is `[]`, read from verified bytes, so it is a
@@ -36,13 +29,19 @@
  * servers a workspace has.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import type { ConversationStarter } from "../plugins/extension.ts";
-import { nimblebrainExtension, PLUGIN_MANIFEST_FILE, readPluginJson } from "../plugins/manifest.ts";
-import { assertDigest, fetchBounded, sha256Hex } from "../util/pinned-fetch.ts";
-import { readZip, ZIP_MAX_TOTAL_BYTES } from "../util/zip.ts";
+import { nimblebrainExtension } from "../plugins/manifest.ts";
+import {
+  type IndexEntry,
+  loadArchive,
+  loadIndex,
+  openArchive,
+  type PinnedCatalogOptions,
+} from "../plugins/pinned-catalog.ts";
+import { sha256Hex } from "../util/pinned-fetch.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
+
+export { MAX_FETCH_BYTES, pinnedIndexUrl } from "../plugins/pinned-catalog.ts";
 
 /** One curated skill bound to a server, as read from its plugin. */
 export interface PluginSkill {
@@ -60,37 +59,7 @@ export interface PluginSkill {
   sha: string;
 }
 
-export interface ResolveServerSkillsOptions {
-  /** Content-addressed cache directory (`{workDir}/cache/plugin-catalog`). */
-  cacheDir: string;
-  /** Catalog base URL, no trailing slash. */
-  catalogUrl: string;
-  /** sha256 of the catalog's NimbleBrain index. */
-  pin: string;
-  /** Injectable fetch; tests pass a fixture. */
-  fetchImpl?: typeof fetch;
-  /** Per-request timeout (ms). Default 15000. */
-  timeoutMs?: number;
-}
-
-/** Where the catalog keeps the NimbleBrain index with this sha256. */
-export function pinnedIndexUrl(catalogUrl: string, pin: string): string {
-  return `${catalogUrl}/nimblebrain/marketplace/${pin}.json`;
-}
-
-/** Claude Code's manifest, read when an archive has no Agent Plugins root manifest. */
-const CLAUDE_PLUGIN_MANIFEST_FILE = ".claude-plugin/plugin.json";
-
-interface IndexEntry {
-  name: string;
-  url: string;
-  sha256: string;
-}
-
-interface CatalogIndex {
-  name: string;
-  plugins: IndexEntry[];
-}
+export type ResolveServerSkillsOptions = PinnedCatalogOptions;
 
 /** One conversation starter from a plugin: the action a person reads, and the text sent. */
 export type PluginConversationStarter = ConversationStarter;
@@ -110,14 +79,6 @@ interface PluginRecord {
   skills: Array<{ name: string; server: string; body: string }>;
   conversationStarters: PluginConversationStarter[];
 }
-
-/**
- * The most bytes read from one catalog response: the archive expansion budget
- * `readZip` enforces (`ZIP_MAX_TOTAL_BYTES`) plus a 1 MiB allowance for ZIP
- * metadata. It is a download policy tied to that budget, not a bound the reader
- * implies; the index, a list of plugins, is far smaller.
- */
-export const MAX_FETCH_BYTES = ZIP_MAX_TOTAL_BYTES + 1024 * 1024;
 
 /**
  * Every curated skill in the pinned catalog bound to the server with registry
@@ -179,35 +140,11 @@ export async function resolveServerConversationStarters(
   return out;
 }
 
-async function loadIndex(opts: ResolveServerSkillsOptions): Promise<CatalogIndex> {
-  const path = join(opts.cacheDir, "index", `${opts.pin}.json`);
-  let bytes: Uint8Array;
-  if (existsSync(path)) {
-    bytes = readFileSync(path);
-    assertDigest("catalog index", bytes, opts.pin);
-  } else {
-    bytes = await fetchBytes(pinnedIndexUrl(opts.catalogUrl, opts.pin), opts);
-    assertDigest("catalog index", bytes, opts.pin);
-    writeCache(path, bytes);
-  }
-  return parseIndex(JSON.parse(new TextDecoder().decode(bytes)));
-}
-
 async function loadPlugin(
   entry: IndexEntry,
   opts: ResolveServerSkillsOptions,
 ): Promise<PluginRecord> {
-  const path = join(opts.cacheDir, "plugins", `${entry.sha256}.zip`);
-  let bytes: Uint8Array;
-  if (existsSync(path)) {
-    bytes = readFileSync(path);
-    assertDigest(`plugin ${entry.name}`, bytes, entry.sha256);
-  } else {
-    bytes = await fetchBytes(entry.url, opts);
-    assertDigest(`plugin ${entry.name}`, bytes, entry.sha256);
-    writeCache(path, bytes);
-  }
-  return readPlugin(entry.name, bytes);
+  return readPlugin(entry.name, await loadArchive(entry, opts));
 }
 
 /**
@@ -220,15 +157,8 @@ async function loadPlugin(
  * when the archive has no root manifest.
  */
 function readPlugin(name: string, archive: Uint8Array): PluginRecord {
-  const files = readZip(archive);
-  const manifestPath = files.has(PLUGIN_MANIFEST_FILE)
-    ? PLUGIN_MANIFEST_FILE
-    : CLAUDE_PLUGIN_MANIFEST_FILE;
-  const manifestBytes = files.get(manifestPath);
-  if (!manifestBytes) throw new Error(`plugin ${name}: archive has no plugin.json`);
-  const { servers, conversationStarters } = nimblebrainExtension(
-    readPluginJson(name, manifestPath, manifestBytes),
-  );
+  const { files, manifest } = openArchive(name, archive);
+  const { servers, conversationStarters } = nimblebrainExtension(manifest);
 
   const skills: PluginRecord["skills"] = [];
   for (const [path, bytes] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
@@ -250,47 +180,6 @@ function frontmatter(body: string): unknown {
   } catch {
     return undefined;
   }
-}
-
-function parseIndex(raw: unknown): CatalogIndex {
-  const name = field(raw, "name");
-  const plugins = field(raw, "plugins");
-  if (typeof name !== "string" || !Array.isArray(plugins)) {
-    throw new Error("catalog index has no name or plugins");
-  }
-  const entries: IndexEntry[] = [];
-  for (const plugin of plugins) {
-    const source = field(plugin, "source");
-    const pluginName = field(plugin, "name");
-    const url = field(source, "url");
-    const sha256 = field(source, "sha256");
-    // Only an archive pinned by its digest can be verified; a git source is not
-    // read here.
-    if (field(source, "source") !== "archive") continue;
-    if (
-      typeof pluginName !== "string" ||
-      typeof url !== "string" ||
-      typeof sha256 !== "string" ||
-      !/^[0-9a-f]{64}$/.test(sha256)
-    ) {
-      throw new Error(`catalog index lists a malformed plugin: ${JSON.stringify(plugin)}`);
-    }
-    entries.push({ name: pluginName, url, sha256 });
-  }
-  return { name, plugins: entries };
-}
-
-function fetchBytes(url: string, opts: ResolveServerSkillsOptions): Promise<Uint8Array> {
-  return fetchBounded(url, {
-    fetchImpl: opts.fetchImpl,
-    timeoutMs: opts.timeoutMs ?? 15_000,
-    maxBytes: MAX_FETCH_BYTES,
-  });
-}
-
-function writeCache(path: string, bytes: Uint8Array): void {
-  mkdirSync(join(path, ".."), { recursive: true });
-  writeFileSync(path, bytes);
 }
 
 function field(value: unknown, key: string): unknown {

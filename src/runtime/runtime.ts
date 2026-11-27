@@ -1500,7 +1500,7 @@ export class Runtime {
       });
 
       // Boot-time visibility: the connector catalog is what Browse lists.
-      // Reading it here also fetches the pinned catalog's list on a first boot.
+      // Reading it here also fetches the pinned index and its archives on a first boot.
       // Warn loudly if it yields zero entries (catalog unreachable, empty mount,
       // mis-set NB_CURATED_CATALOG_DIR) so an empty Browse is diagnosable rather
       // than silent.

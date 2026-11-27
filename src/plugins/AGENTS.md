@@ -11,7 +11,8 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   `extensions["ai.nimblebrain"]`, so the directory installs unchanged on other hosts.
 - **`manifest.ts` is the one reader of `plugin.json` and the extension.** Code that needs a
   manifest field calls it; never parse `extensions["ai.nimblebrain"]` anywhere else
-  (`src/skills/connector-skill-resolver.ts` reads its catalog plugins through it).
+  (`src/skills/connector-skill-resolver.ts` and `src/connectors/catalog/plugin-index.ts` read
+  their catalog plugins through it).
   - `parsePluginManifest` is strict, for a plugin the operator configured: the format's
     schemas (vendored in `schemas/` here, never fetched), the format's prose rules
     (one-token `command`, `cwd` inside its root, HTTPS off loopback, `${PLUGIN_ROOT}` /
@@ -20,6 +21,14 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
     field is a warning, because the format says report and ignore.
   - `nimblebrainExtension` is lenient, for a manifest a pinned catalog vouches for: it
     drops a malformed field instead of failing the read.
+- **`pinned-catalog.ts` is the one reader of a pinned catalog's bytes**: the index at its
+  pin, each archive at the digest the index lists, bounded, cached by sha256 and fail-closed.
+  The skill resolver and the connector catalog both read through it, so they share one cache
+  and one trust rule; a caller that must not fail (Browse) decides its own fallback.
+- **A catalog plugin carries each server's `ServerDetail` at
+  `ai.nimblebrain/servers/<key>.json`** (`pluginServerDetailPath`), `<key>` being its key in
+  the extension's `servers`. The file's `name` is that registry name; nothing derives an entry
+  from anything else in the plugin.
 - **The vendored `schemas/agent-plugins-1.0.0-*.json` are the format's, byte for byte.**
   Replace them only with the published versions; never edit them.
 
