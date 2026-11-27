@@ -78,6 +78,8 @@ export interface BoundServer {
   source: McpSource;
   /** The contract's tools no call made inside an unattended run reaches, by bare name. */
   unattendedRefused: ReadonlySet<string>;
+  /** The contract's private tools, which only the kernel calls, by bare name. */
+  privateTools: ReadonlySet<string>;
   /** The kernel's own call: presents `host` in `scope`. Throws {@link ContractToolError} on a tool error. */
   call(
     tool: string,
@@ -345,6 +347,7 @@ async function startBoundServer(
     hostVersion: binding.hostVersion,
     source,
     unattendedRefused,
+    privateTools: new Set(binding.privateTools),
     call,
     watch,
     connection: () => source.getClient() ?? null,

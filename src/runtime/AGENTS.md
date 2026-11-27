@@ -40,7 +40,7 @@ Every run may name spend accounts (`RunBudget.spendAccounts`, `TaskRequest.spend
 - **What a run holds stays held until its end is acknowledged.** The worker anchors a run's spend accounts (`SpendBalances.open`, a hold that never spends) and holds its exclusive key from before the run until its `end_run` lands, by run id rather than by claim: an end never acknowledged keeps them through the item's later claims until the interrupted close lands. So a run of the same account that starts in between draws on the live balance the first run spent. Dropping the workspace or stopping the worker releases them.
 - **Notices** go to the workspace inbox under the source `tasks` (`deliverContractNotices`), one item per (source, notice id): the inbox's own dedupe, for its retention window. A run's end refreshes its owner's views (`announceIdentitySourceChange`).
 - **Event triggers.** A notification route naming a task is offered with `offer_event` (`Runtime.offerTaskEvent`), as `host` walled to the route's author; accepted settles the route's row `delivered`, a refusal with the task's outcome. With no tasks plugin bound it answers `tasks_unavailable`.
-- **Workspace delete.** `drop` stops serving the workspace and stops its runs before the teardown; after the archive rename `delete_workspace` purges its tasks (`purgeWorkspaceTasks`), as conversations does.
+- **Workspace delete.** `drop` stops serving a workspace as soon as it is a tombstone and stops its runs; `workspaceIds` lists live workspaces only, so no refresh serves it again. A restore calls `serve`. Its tasks stay in the plugin until the purge calls `delete_workspace` (`src/workspace/AGENTS.md`).
 
 ## The door's own model work
 

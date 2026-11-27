@@ -105,19 +105,19 @@ describe("pageTitle", () => {
 });
 
 describe("the organization's tabs", () => {
-  test("run from what an admin comes to do to cleanup", () => {
+  test("run from what an admin comes to do to deleted workspaces", () => {
     expect(ORG_SETTINGS_TABS.map((t) => t.label)).toEqual([
       "Workspaces",
       "Users",
       "Skills",
       "Models",
       "Usage",
-      "Archives",
+      "Deleted workspaces",
     ]);
   });
 
   test("land on, and crumb back to, the first tab in the list", () => {
     expect(landingTab(ORG_SETTINGS_TABS)).toBe("workspaces");
-    expect(settingsLocation("/org/archives")?.crumbs[0]?.to).toBe("/org/workspaces");
+    expect(settingsLocation("/org/deleted")?.crumbs[0]?.to).toBe("/org/workspaces");
   });
 });

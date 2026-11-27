@@ -144,12 +144,11 @@ describe("the rest of the product works", () => {
     expect(result.output).toContain("summarize the day");
   });
 
-  it("deleting the workspace needs no conversations plugin", async () => {
+  it("deleting and purging a workspace needs no conversations plugin", async () => {
     const ws = await runtime.getWorkspaceStore().create("Spare", {
       members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
     });
-    const result = await runtime.deleteWorkspace(ws.id);
-    expect(result.deleteError).toBeUndefined();
-    expect(result.deleted).toBe(true);
+    expect((await runtime.deleteWorkspace(ws.id)).deleted).toBe(true);
+    expect((await runtime.purgeWorkspace(ws.id)).purged).toBe(true);
   });
 });

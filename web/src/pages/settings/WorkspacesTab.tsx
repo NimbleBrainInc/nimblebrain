@@ -378,7 +378,7 @@ export function WorkspacesTab() {
           if (!open) setDeleting(null);
         }}
         title={`Delete ${deleting?.name ?? ""}?`}
-        description="It disappears for everyone in it, and its connectors are disconnected. That can't be undone."
+        description="It disappears for everyone in it and nobody can use it."
         confirmLabel="Delete workspace"
         pendingLabel="Deleting…"
         destructive
@@ -387,8 +387,8 @@ export function WorkspacesTab() {
         }}
       >
         <p className="text-sm text-muted-foreground">
-          Its conversations and files are kept in Organization → Archives until an admin purges
-          them.
+          An org admin can restore it as it was from Organization → Deleted workspaces until its
+          purge time; then its conversations, tasks, files and connections are removed for good.
         </p>
       </ConfirmDialog>
     </SettingsListPage>

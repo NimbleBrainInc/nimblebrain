@@ -6,6 +6,7 @@ import type { PluginsConfig } from "../config/plugins.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import type { RunsConfig } from "../config/runs.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
+import type { WorkspacesConfig } from "../config/workspaces.ts";
 import type { ConnectorsConfig } from "../connectors/providers/config.ts";
 import type { PluginRequestAnswer } from "../conversation/types.ts";
 import type { EventSink, ThinkingEffort, WrapUpLimit } from "../engine/types.ts";
@@ -259,6 +260,12 @@ export interface RuntimeConfig {
    * the ceilings on any one run. See `src/config/runs.ts`.
    */
   runs?: RunsConfig;
+
+  /**
+   * Deleted workspaces — how long one can be restored before it is purged.
+   * See `src/config/workspaces.ts`.
+   */
+  workspaces?: WorkspacesConfig;
 
   /**
    * Which agent runtime executes a run, and the external runtimes the

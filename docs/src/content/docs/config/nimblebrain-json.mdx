@@ -114,6 +114,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `connectors` | `object` | — | Managed-connector provider settings (Composio). See [connectors](#connectors). |
 | `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
 | `runs` | `object` | — | Unattended run slots, queue, and per-run ceilings. See [runs](#runs). |
+| `workspaces` | `object` | — | How long a deleted workspace can be restored before it is purged. See [workspaces](#workspaces). |
 | `execution` | `object` | native engine | Which agent runtime executes a run: the native engine, or an agent worker the runtime dials. Experimental. See [execution](#execution). |
 | `plugins` | `object` | — | Agent Plugins the runtime runs as part of the instance, and which are system plugins. Experimental: validated at boot; a server bound to a contract the runtime consumes is started. See [plugins](#plugins). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
@@ -681,6 +682,24 @@ Guardrails on unattended runs (a [task](/using/tasks)'s runs, and any other run 
 The three per-run ceilings apply when a run starts, so they cover every task however it was written. A cap a task sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling. Input tokens have no runtime default: a task with no `maxInputTokens` runs under `maxRunInputTokens` when it is set, and with no input-token cap when it is not.
 
 A configuration with a `tasks` block fails validation at boot: these ceilings belong in `runs`, and run data retention is the [tasks plugin](#tasks-and-scheduled-work)'s.
+
+## workspaces
+
+Deleting a workspace makes it unusable at once, but nothing in it is removed: an org admin can restore it as it was until the retention window passes. Then the runtime purges it: every plugin's records for it (conversations, tasks), its connectors' grants, its secrets and its files. The purge runs at boot and every hour; one that stops partway, at a crash or a plugin's error, is finished on a later pass.
+
+```json
+{
+  "workspaces": {
+    "deletedRetentionDays": 30
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `deletedRetentionDays` | `integer` | `30` | Days a deleted workspace can be restored before it is purged. `0` purges it at once, inside the delete. Range: 0--3650. |
+
+A change to the window applies to every deleted workspace whose purge has not begun. A directory a release before this one left under `archived/` is removed once the window has passed since it was archived.
 
 ## execution
 

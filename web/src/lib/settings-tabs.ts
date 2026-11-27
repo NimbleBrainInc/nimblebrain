@@ -34,7 +34,7 @@ export const WORKSPACE_SETTINGS_TABS: readonly SettingsTab[] = [
 
 // Ordered by what an org admin comes to do: who and where (workspaces, users),
 // then what the assistant can do (skills, model), then oversight (usage), then
-// cleanup after a workspace is deleted (archives).
+// the workspaces that were deleted and can still be restored.
 export const ORG_SETTINGS_TABS: readonly SettingsTab[] = [
   { segment: "workspaces", label: "Workspaces", minRole: "org_admin" },
   { segment: "users", label: "Users", minRole: "org_admin" },
@@ -43,7 +43,7 @@ export const ORG_SETTINGS_TABS: readonly SettingsTab[] = [
   // thinking they run under. The segment stays `model` so existing links work.
   { segment: "model", label: "Models", minRole: "org_admin" },
   { segment: "usage", label: "Usage", minRole: "org_admin" },
-  { segment: "archives", label: "Archives", minRole: "org_admin" },
+  { segment: "deleted", label: "Deleted workspaces", minRole: "org_admin" },
 ];
 
 /** Pinned to the org nav's footer and role-exempt: any signed-in user may read it. */

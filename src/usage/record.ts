@@ -4,7 +4,7 @@
  * Every call path that spends tokens goes through here. A new one that does not
  * is invisible to cost accounting by construction — which is the defect this
  * module exists to prevent, and which the runtime has already hit four times
- * (task runs, sub-agent runs, background briefing refresh, and archived
+ * (task runs, sub-agent runs, background briefing refresh, and deleted
  * workspaces all spent money no in-product surface showed).
  *
  * Two rules hold this together:

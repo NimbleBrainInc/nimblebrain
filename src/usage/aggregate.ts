@@ -5,7 +5,7 @@
  * per priced LLM call. Scanning `llm.response` events out of conversation
  * JSONL files would make usage a function of whether a conversation file
  * happened to exist — so task runs, sub-agent runs, the background briefing
- * and archived workspaces would all spend money it never saw.
+ * and deleted workspaces would all spend money it never saw.
  *
  * **There is exactly one reader, deliberately.** Two readers can disagree,
  * and the disagreement hides an undercount. Per-conversation display still reads `llm.response` from the

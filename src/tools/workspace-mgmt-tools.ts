@@ -7,9 +7,8 @@ import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
 import { log } from "../observability/log.ts";
-import type { Runtime } from "../runtime/runtime.ts";
+import type { Runtime, WorkspacePurgeResult } from "../runtime/runtime.ts";
 import { isHttpUrl } from "../util/url.ts";
-import { isArchiveName, listArchives, purgeArchive } from "../workspace/archives.ts";
 import {
   canManageWorkspaceMembers,
   canReadWorkspaceMembers,
@@ -68,13 +67,13 @@ export interface ManageWorkspacesContext {
   getIdentity: () => UserIdentity | null;
   workspaceStore: WorkspaceStore;
   /**
-   * The runtime seam a delete goes through.
+   * The runtime seam a delete, restore and purge go through.
    *
-   * A workspace owns its connectors, and tearing them down needs the lifecycle,
-   * the per-workspace registry, and the credential store — none of which a
-   * `WorkspaceStore` has or should have. `Runtime.deleteWorkspace` is where
-   * that cascade lives, so the tool holds the runtime rather than reaching past
-   * it to the store.
+   * A workspace owns its runs and connectors, and stopping, restarting or
+   * tearing them down needs the run worker, the lifecycle, the per-workspace
+   * registry and the bound plugins — none of which a `WorkspaceStore` has or
+   * should have. So the tool holds the runtime rather than reaching past it to
+   * the store.
    */
   runtime: Runtime;
   /** Required for member management (user validation, display name enrichment). */
@@ -103,7 +102,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
   return {
     name: "manage_workspaces",
     description:
-      "Manage workspaces and their members. Workspace CRUD requires org admin, except a rename (update with only name), which a workspace admin member may also make. Listing members is open to any member of the workspace. Changing members requires org admin or workspace admin membership, so an org admin can seat themselves as admin of any workspace, including one left with no admin member. add_member takes the person's userId or the email of someone in the organization. list_archives and purge_archive (org admin) list the archives deleted workspaces leave under archived/ and permanently remove one, named by its directory.",
+      "Manage workspaces and their members. Workspace CRUD requires org admin, except a rename (update with only name), which a workspace admin member may also make. Listing members is open to any member of the workspace. Changing members requires org admin or workspace admin membership, so an org admin can seat themselves as admin of any workspace, including one left with no admin member. add_member takes the person's userId or the email of someone in the organization. A deleted workspace can be restored until its purge time; list_deleted, restore and purge (org admin) list deleted workspaces with their purge time, bring one back as it was, and purge one now, which cannot be undone.",
     meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
     inputSchema: {
       type: "object",
@@ -115,8 +114,9 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
             "update",
             "delete",
             "list",
-            "list_archives",
-            "purge_archive",
+            "list_deleted",
+            "restore",
+            "purge",
             "add_member",
             "remove_member",
             "update_member",
@@ -159,11 +159,6 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
           enum: ["admin", "member"],
           description: "Workspace role (for add_member, update_member).",
         },
-        archive: {
-          type: "string",
-          description:
-            "Archive directory name under archived/, as list_archives returns it (required for purge_archive).",
-        },
       },
       required: ["action"],
       // Closed so an argument the tool does not take is refused at the
@@ -181,9 +176,9 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
         return dispatchRename(ctx, input);
       }
 
-      // Workspace CRUD and archives — requires org admin
+      // Workspace CRUD and deleted workspaces — requires org admin
       if (
-        ["create", "update", "delete", "list", "list_archives", "purge_archive"].includes(action)
+        ["create", "update", "delete", "list", "list_deleted", "restore", "purge"].includes(action)
       ) {
         return dispatchWorkspaceAction(ctx, action, input);
       }
@@ -222,7 +217,7 @@ async function dispatchRename(
   return handleUpdate(ctx, input);
 }
 
-/** Gate workspace CRUD and the archive actions on org admin, then route to its handler. */
+/** Gate workspace CRUD and the deleted-workspace actions on org admin, then route to its handler. */
 async function dispatchWorkspaceAction(
   ctx: ManageWorkspacesContext,
   action: string,
@@ -240,10 +235,12 @@ async function dispatchWorkspaceAction(
       return handleDelete(ctx, input);
     case "list":
       return handleList(ctx);
-    case "list_archives":
-      return handleListArchives(ctx);
-    case "purge_archive":
-      return handlePurgeArchive(ctx, input);
+    case "list_deleted":
+      return handleListDeleted(ctx);
+    case "restore":
+      return handleRestore(ctx, input);
+    case "purge":
+      return handlePurge(ctx, identity, input);
     default:
       return { content: textContent(`Unknown action: ${action}`), isError: true };
   }
@@ -448,60 +445,25 @@ async function handleDelete(
   }
 
   try {
-    // The runtime seam, not the store: deleting a workspace runs the same
-    // teardown as removing each connector it holds, and the store knows nothing
-    // about connectors. Per-connector failures come back in `connectors` rather
-    // than as a throw — one unreachable vendor must not strand the workspace
-    // half-deleted.
-    const { deleted, connectors, deleteError, purgeError, conversationsPurged } =
-      await ctx.runtime.deleteWorkspace(workspaceId);
-    // The archive step failed AFTER the teardown, which is not reversible.
-    // Saying only "failed" would describe a no-op; the connectors are gone and
-    // the operator has to know that to act.
-    //
-    // Where the record itself ended up is deliberately NOT claimed. The store
-    // throws on both sides of its rename — `mkdir`/destination resolution
-    // before it, the archive marker write after it — so a message that named
-    // one of those states would be wrong half the time, and the half it got
-    // wrong would send an operator looking for a workspace that is already
-    // archived. What is true on both sides is the teardown, so say that.
-    if (deleteError) {
+    // The runtime seam, not the store: a delete stops the workspace's runs and
+    // connectors as well as writing its tombstone.
+    const { deleted, purgeAt, purge } = await ctx.runtime.deleteWorkspace(workspaceId);
+    if (!deleted) {
+      return { content: textContent(`Workspace not found: ${workspaceId}`), isError: true };
+    }
+    if (purge) {
       return {
-        content: textContent(
-          `Failed to finish deleting workspace ${workspaceId}: ${deleteError}.` +
-            describeConnectorTeardown(
-              connectors.length,
-              connectors.filter((c) => !c.ok || c.revokeError),
-            ) +
-            (connectors.length > 0
-              ? " That teardown cannot be undone — check whether the workspace still exists before retrying, and reinstall its connectors if it does."
-              : ""),
-        ),
-        structuredContent: { deleted: false, workspaceId, connectors, deleteError },
-        isError: true,
+        content: textContent(`Deleted workspace ${workspaceId}. ${describePurge(purge)}`),
+        structuredContent: { deleted: true, workspaceId, purgeAt, purge },
+        isError: !purge.purged,
       };
     }
-    // The workspace is gone before its conversations are purged, so a failed
-    // purge leaves no live workspace; the same delete runs the purge again.
-    const purgeNote = purgeError
-      ? ` Its conversations were not purged: ${purgeError}. Delete ${workspaceId} again to retry the purge.`
-      : "";
-    if (!deleted) return alreadyDeleted(workspaceId, purgeNote, purgeError, conversationsPurged);
-
-    const failed = connectors.filter((c) => !c.ok || c.revokeError);
-    const data = {
-      deleted: true,
-      workspaceId,
-      connectors,
-      conversationsPurged,
-      ...(purgeError ? { purgeError } : {}),
-    };
     return {
       content: textContent(
-        `Deleted workspace ${workspaceId}.${describeConnectorTeardown(connectors.length, failed)}${purgeNote}`,
+        `Deleted workspace ${workspaceId}. An org admin can restore it until ${purgeAt}; then it is purged.`,
       ),
-      structuredContent: data,
-      isError: purgeError !== undefined,
+      structuredContent: { deleted: true, workspaceId, purgeAt },
+      isError: false,
     };
   } catch (err) {
     return {
@@ -514,53 +476,24 @@ async function handleDelete(
 }
 
 /**
- * The answer to deleting an id the store no longer holds: not found, unless
- * the purge that runs for it anyway failed or removed conversations an earlier
- * delete left behind.
+ * What a purge did, in a sentence or two. A connector that did not tear down
+ * cleanly is named: once the record is gone this is the last place the grant
+ * that may still be live at a vendor is identified.
  */
-function alreadyDeleted(
-  workspaceId: string,
-  purgeNote: string,
-  purgeError: string | undefined,
-  conversationsPurged: number,
-): ToolResult {
-  if (purgeError) {
-    return {
-      content: textContent(`Workspace ${workspaceId} is already deleted.${purgeNote}`),
-      structuredContent: { deleted: false, workspaceId, connectors: [], purgeError },
-      isError: true,
-    };
+function describePurge(purge: WorkspacePurgeResult): string {
+  if (!purge.purged) {
+    return `Its purge stopped: ${purge.error}. It stays deleted and the purge is retried on the next pass.`;
   }
-  if (conversationsPurged > 0) {
-    return {
-      content: textContent(
-        `Workspace ${workspaceId} is already deleted. Purged ${conversationsPurged} conversation${conversationsPurged === 1 ? "" : "s"} left in it.`,
-      ),
-      structuredContent: { deleted: false, workspaceId, connectors: [], conversationsPurged },
-      isError: false,
-    };
-  }
-  return { content: textContent(`Workspace not found: ${workspaceId}`), isError: true };
-}
-
-/**
- * One sentence about what the delete tore down, silent when the workspace held
- * no connectors.
- *
- * A failure is named rather than counted: on the success path the workspace
- * record is gone, so this notice is the last place the connector whose grant
- * may still be live at a vendor can be identified.
- */
-function describeConnectorTeardown(total: number, failed: Array<{ serverName: string }>): string {
-  if (total === 0) return "";
-  const torn = ` Tore down ${total} connector${total === 1 ? "" : "s"}.`;
-  if (failed.length === 0) return torn;
+  const total = purge.connectors.length;
+  const failed = purge.connectors.filter((c) => !c.ok || c.revokeError);
+  const torn = total === 0 ? "" : ` Tore down ${total} connector${total === 1 ? "" : "s"}.`;
+  if (failed.length === 0) return `Purged it.${torn}`;
   // A row that named no server has no name to print; say so rather than
   // quoting an empty string at an operator who then has nothing to search for.
   const names = failed
     .map((f) => (f.serverName ? `"${f.serverName}"` : "an unnamed connector row"))
     .join(", ");
-  return `${torn} ${names} did not tear down cleanly — check the workspace's grants at the vendor.`;
+  return `Purged it.${torn} ${names} did not tear down cleanly — check the workspace's grants at the vendor.`;
 }
 
 /** One installed connector as this tool reports it. */
@@ -630,18 +563,58 @@ async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
   }
 }
 
-async function handleListArchives(ctx: ManageWorkspacesContext): Promise<ToolResult> {
+async function handleListDeleted(ctx: ManageWorkspacesContext): Promise<ToolResult> {
   try {
-    const archives = await listArchives(ctx.workspaceStore.getArchivedDir());
+    const deleted = await ctx.runtime.listDeletedWorkspaces();
     return {
-      content: textContent(`${archives.length} archive(s).`),
-      structuredContent: { archives },
+      content: textContent(`${deleted.length} deleted workspace(s).`),
+      structuredContent: { deleted },
       isError: false,
     };
   } catch (err) {
     return {
       content: textContent(
-        `Failed to list archives: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to list deleted workspaces: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+      isError: true,
+    };
+  }
+}
+
+/** Bring a deleted workspace back as it was, while its purge is not yet due. */
+async function handleRestore(
+  ctx: ManageWorkspacesContext,
+  input: Record<string, unknown>,
+): Promise<ToolResult> {
+  const workspaceId = input.workspaceId ? String(input.workspaceId) : undefined;
+  if (!workspaceId) {
+    return { content: textContent("workspaceId is required for restore."), isError: true };
+  }
+  try {
+    const result = await ctx.runtime.restoreWorkspace(workspaceId);
+    if (!result.restored) {
+      return {
+        content: textContent(
+          result.reason === "purging"
+            ? `Workspace ${workspaceId} is being purged and cannot be restored.`
+            : `No deleted workspace ${workspaceId}.`,
+        ),
+        isError: true,
+      };
+    }
+    log.info("[manage_workspaces] workspace restored", { workspaceId });
+    return {
+      content: textContent(`Restored workspace ${workspaceId}.`),
+      structuredContent: {
+        restored: true,
+        workspace: { id: result.workspace.id, name: result.workspace.name },
+      },
+      isError: false,
+    };
+  } catch (err) {
+    return {
+      content: textContent(
+        `Failed to restore workspace: ${err instanceof Error ? err.message : String(err)}`,
       ),
       isError: true,
     };
@@ -649,44 +622,34 @@ async function handleListArchives(ctx: ManageWorkspacesContext): Promise<ToolRes
 }
 
 /**
- * Permanently remove one archive. There is no undo, so the web tab confirms
- * with the size first; this handler refuses anything that is not a direct
- * child of `archived/` and treats an absent archive as already purged.
+ * Purge a deleted workspace now rather than at the end of its window. There is
+ * no undo, so the web tab confirms first. The plugins are called under the
+ * purging admin.
  */
-async function handlePurgeArchive(
+async function handlePurge(
   ctx: ManageWorkspacesContext,
+  identity: UserIdentity,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const archive = typeof input.archive === "string" ? input.archive : "";
-  if (!isArchiveName(archive)) {
-    return {
-      content: textContent(
-        archive === ""
-          ? "archive is required for purge_archive."
-          : `"${archive}" is not an archive name. Use a name list_archives returned.`,
-      ),
-      isError: true,
-    };
+  const workspaceId = input.workspaceId ? String(input.workspaceId) : undefined;
+  if (!workspaceId) {
+    return { content: textContent("workspaceId is required for purge."), isError: true };
   }
-
   try {
-    const result = await purgeArchive(ctx.workspaceStore.getArchivedDir(), archive);
-    if (result.purged) {
-      log.info("[manage_workspaces] archive purged", { archive, sizeBytes: result.sizeBytes });
+    if (!(await ctx.workspaceStore.getDeleted(workspaceId))) {
+      return { content: textContent(`No deleted workspace ${workspaceId}.`), isError: true };
     }
+    const purge = await ctx.runtime.purgeWorkspace(workspaceId, { ownerId: identity.id });
+    if (purge.purged) log.info("[manage_workspaces] workspace purged", { workspaceId });
     return {
-      content: textContent(
-        result.purged
-          ? `Purged archive ${archive} (${result.sizeBytes} bytes).`
-          : `Archive ${archive} does not exist; nothing to purge.`,
-      ),
-      structuredContent: { ...result },
-      isError: false,
+      content: textContent(`Workspace ${workspaceId}: ${describePurge(purge)}`),
+      structuredContent: { workspaceId, ...purge },
+      isError: !purge.purged,
     };
   } catch (err) {
     return {
       content: textContent(
-        `Failed to purge archive: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to purge workspace: ${err instanceof Error ? err.message : String(err)}`,
       ),
       isError: true,
     };

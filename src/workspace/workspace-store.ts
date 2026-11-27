@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { readdir, readFile, rename } from "node:fs/promises";
+import { readdir, readFile, rm, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { log } from "../observability/log.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
@@ -38,8 +38,8 @@ export class MemberConflictError extends Error {
 
 /**
  * Fired after a successful mutation that changes which workspaces a
- * user is a member of: `addMember`, `removeMember`, `delete` (for every
- * former member), and `create` (for every initial member). NOT fired
+ * user is a member of: `addMember`, `removeMember`, `delete` and `restore`
+ * (for every member), and `create` (for every initial member). NOT fired
  * for `updateMemberRole` — role changes don't affect set membership,
  * and the SSE manager's only consumer cares about presence, not role.
  *
@@ -103,30 +103,37 @@ export async function resolveWorkspaceDisplayName(
   }
 }
 
-// ── Archive (tombstone) marker ─────────────────────────────────────
+// ── Tombstone ──────────────────────────────────────────────────────
 
-/** Filename of the per-archive tombstone marker dropped by `delete`. */
-export const ARCHIVE_MARKER_FILENAME = ".archived.json";
+/** The file `delete` writes beside `workspace.json`; its presence makes the workspace deleted. */
+export const TOMBSTONE_FILENAME = "deleted.json";
 
 /**
- * Tombstone written to `archived/<wsId>/.archived.json` when a workspace
- * is deleted.
+ * Why a workspace is deleted and when it goes: `workspaces/<wsId>/deleted.json`.
  *
- * Deletion is archive-then-cascade: the workspace's data subtree is moved
- * under `archived/` rather than
- * destroyed, so it stays recoverable/exportable until an org admin purges it
- * from Organization → Archives (`manage_workspaces` `list_archives` /
- * `purge_archive`, over `src/workspace/archives.ts`). Nothing purges one
- * automatically (default: keep).
- *
- * The marker deliberately omits a self-reported timestamp: the archive
- * dir's mtime (set at move time) is the authoritative archival time, so
- * duplicating it here would only invite drift. Keeping the marker to a
- * fixed shape also keeps archive contents deterministic for tests.
+ * A deleted workspace keeps every record it had (its `workspace.json`, members,
+ * connectors, files, credentials) until the kernel purges it, so a restore puts
+ * it back as it was. The tombstone is its own file rather than a field of the
+ * record, so no read-modify-write of the record can drop it or bring it back.
  */
-export interface ArchiveMarker {
-  wsId: string;
-  archivedReason: "workspace_deleted";
+export interface WorkspaceTombstone {
+  deletedAt: string;
+  /** The signed-in identity that deleted it; the purge calls plugins under it. */
+  deletedBy: string | null;
+  /**
+   * When the purge began, or when an admin asked for it now. Set once and
+   * never cleared: from then on the workspace cannot be restored, so a purge
+   * that stopped halfway is only ever finished.
+   */
+  purgeAt?: string;
+}
+
+/** A deleted workspace: its tombstone, and its record while the purge has not removed it. */
+export interface DeletedWorkspace {
+  id: string;
+  /** `null` once a purge has removed the record and not yet the rest. */
+  workspace: Workspace | null;
+  tombstone: WorkspaceTombstone;
 }
 
 // ── WorkspaceStore ─────────────────────────────────────────────────
@@ -143,9 +150,8 @@ export class WorkspaceStore {
 
   constructor(workDir: string) {
     this.workspacesDir = join(workDir, "workspaces");
-    // Sibling of `workspaces/` — tombstoned subtrees land here on delete.
-    // Created lazily (in `delete`), not here, so the many throwaway stores
-    // (e.g. `resolveWorkspaceDisplayName`) don't litter empty `archived/`.
+    // Where earlier releases moved a deleted workspace. Nothing writes here; the
+    // purge removes what is left once the retention window has passed.
     this.archivedDir = join(workDir, "archived");
     if (!existsSync(this.workspacesDir)) {
       mkdirSync(this.workspacesDir, { recursive: true });
@@ -163,19 +169,14 @@ export class WorkspaceStore {
     return this.workspacesDir;
   }
 
-  /**
-   * Absolute path to the `archived/` tombstone directory, where `delete`
-   * moves a workspace's data subtree. `manage_workspaces` reads it to list
-   * and purge archives for the org-admin Archives tab; nothing sweeps it
-   * (see `delete`). Created lazily on the first archive, so this path may not
-   * exist yet.
-   */
-  getArchivedDir(): string {
-    return this.archivedDir;
+  /** The live workspace: `null` for an unknown id and for a deleted workspace alike. */
+  async get(id: string): Promise<Workspace | null> {
+    if (!WORKSPACE_ID_RE.test(id) || this.isDeleted(id)) return null;
+    return this.readRecord(id);
   }
 
-  async get(id: string): Promise<Workspace | null> {
-    if (!WORKSPACE_ID_RE.test(id)) return null;
+  /** The record on disk, deleted or not. */
+  private async readRecord(id: string): Promise<Workspace | null> {
     const filePath = this.wsPath(id);
     try {
       const content = await readFile(filePath, "utf-8");
@@ -186,22 +187,10 @@ export class WorkspaceStore {
     }
   }
 
+  /** Every live workspace; a deleted one is left out. */
   async list(): Promise<Workspace[]> {
-    let entries: string[];
-    try {
-      entries = await readdir(this.workspacesDir);
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw err;
-    }
-
     const workspaces: Workspace[] = [];
-    for (const entry of entries) {
-      if (!entry.startsWith("ws_")) continue;
-      if (!WORKSPACE_ID_RE.test(entry)) {
-        this.warnNonConforming(entry);
-        continue;
-      }
+    for (const entry of await this.entries()) {
       const ws = await this.get(entry);
       if (ws) workspaces.push(ws);
     }
@@ -212,6 +201,23 @@ export class WorkspaceStore {
     // Ids are unique, so breaking the tie on id makes the order total.
     workspaces.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     return workspaces;
+  }
+
+  /** The directory names under `workspaces/` that are workspace ids. */
+  private async entries(): Promise<string[]> {
+    let entries: string[];
+    try {
+      entries = await readdir(this.workspacesDir);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw err;
+    }
+    return entries.filter((entry) => {
+      if (!entry.startsWith("ws_")) return false;
+      if (WORKSPACE_ID_RE.test(entry)) return true;
+      this.warnNonConforming(entry);
+      return false;
+    });
   }
 
   /**
@@ -345,81 +351,122 @@ export class WorkspaceStore {
   }
 
   /**
-   * Delete a workspace — **archive-then-cascade, not hard `rm`**.
+   * Delete a workspace: write its tombstone. From that moment `get` and `list`
+   * leave it out, so every door answers it as not found, and nothing else
+   * changes: its record, members, connectors and data stay where they are until
+   * the runtime purges it (`Runtime.purgeWorkspace`), so `restore` puts it back
+   * as it was. Membership-change notifications fire for each member.
    *
-   * A workspace owns its data subtree (`workspaces/<wsId>/`: the workspace
-   * record, credentials, skills, files, and conversations as they migrate
-   * under it), so deletion must handle that subtree rather than orphan or
-   * destroy it. Instead of removing the directory, we *tombstone* it: move
-   * the whole subtree to `archived/<wsId>/` (a same-filesystem `rename(2)`)
-   * and drop a `.archived.json` marker. The data stays recoverable /
-   * exportable until an org admin purges that one archive from
-   * Organization → Archives — nothing purges automatically (default: keep).
-   *
-   * From every other surface the workspace is gone the moment this
-   * returns: `get`/`list` read `workspaces/`, which no longer holds the
-   * subtree. Membership-change notifications fire for each former member.
-   *
-   * Returns `false` (idempotent no-op) when no such workspace dir exists.
-   *
-   * `archiveSuffix` disambiguates a same-id re-archive — rare, since new ids
-   * are random; it takes a record with the same id placed on disk again
-   * after a delete (a restore, or a test fixture). When
-   * `archived/<wsId>/` is already occupied the suffix is appended
-   * (`archived/<wsId>-<suffix>/`); absent a suffix the store probes a
-   * deterministic incrementing counter (`-1`, `-2`, …). The path carries
-   * no wall-clock or randomness, so archives stay reproducible for tests
-   * and legible to an operator.
+   * Returns `false` when no live workspace has the id (unknown, or already
+   * deleted).
    */
-  async delete(id: string, opts?: { archiveSuffix?: string }): Promise<boolean> {
-    const wsDir = join(this.workspacesDir, id);
-    if (!existsSync(wsDir)) return false;
-    // Read members BEFORE moving — we need them to fire change
-    // notifications. A corrupted dir (missing workspace.json) yields
-    // `null` and we simply don't fire; nothing to invalidate.
+  async delete(id: string, opts: { deletedBy?: string | null } = {}): Promise<boolean> {
     const ws = await this.get(id);
-
-    // Tombstone the subtree: move it under `archived/` rather than rm-ing
-    // it. The move is an atomic same-filesystem rename — no copy, and no
-    // window where the subtree is half-present in both trees.
-    mkdirSync(this.archivedDir, { recursive: true });
-    const dest = this.resolveArchiveDest(id, opts?.archiveSuffix);
-    await rename(wsDir, dest);
-    const marker: ArchiveMarker = { wsId: id, archivedReason: "workspace_deleted" };
-    await writeJsonAtomic(join(dest, ARCHIVE_MARKER_FILENAME), marker);
-
-    if (ws) {
-      for (const m of ws.members) this.fireMembershipChanged(m.userId);
-    }
+    if (!ws) return false;
+    const tombstone: WorkspaceTombstone = {
+      deletedAt: new Date().toISOString(),
+      deletedBy: opts.deletedBy ?? null,
+    };
+    await writeJsonAtomic(this.tombstonePath(id), tombstone);
+    for (const m of ws.members) this.fireMembershipChanged(m.userId);
     return true;
   }
 
-  /**
-   * Resolve a free destination under `archived/` for `id`'s subtree.
-   *
-   * Prefers `archived/<id>`. On collision (a same-id workspace archived
-   * before) a caller-supplied `suffix` wins (`archived/<id>-<suffix>`);
-   * otherwise an incrementing counter is probed. Pure path resolution plus
-   * `existsSync` — deterministic, no wall-clock or randomness — so the
-   * chosen path is reproducible for tests and predictable for operators.
-   */
-  private resolveArchiveDest(id: string, suffix?: string): string {
-    const base = join(this.archivedDir, id);
-    if (!existsSync(base)) return base;
+  /** Whether `id` has a tombstone. Synchronous, for a check that must not yield. */
+  isDeleted(id: string): boolean {
+    return WORKSPACE_ID_RE.test(id) && existsSync(this.tombstonePath(id));
+  }
 
-    if (suffix !== undefined && suffix !== "") {
-      const withSuffix = join(this.archivedDir, `${id}-${suffix}`);
-      if (!existsSync(withSuffix)) return withSuffix;
+  /** One deleted workspace, or `null` when `id` has no tombstone. */
+  async getDeleted(id: string): Promise<DeletedWorkspace | null> {
+    if (!WORKSPACE_ID_RE.test(id)) return null;
+    let tombstone: WorkspaceTombstone;
+    try {
+      tombstone = JSON.parse(await readFile(this.tombstonePath(id), "utf-8")) as WorkspaceTombstone;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw err;
     }
+    return { id, workspace: await this.readRecord(id), tombstone };
+  }
 
-    const MAX_ARCHIVE_ATTEMPTS = 10_000;
-    for (let n = 1; n <= MAX_ARCHIVE_ATTEMPTS; n++) {
-      const candidate = join(this.archivedDir, `${id}-${n}`);
-      if (!existsSync(candidate)) return candidate;
+  /** Every deleted workspace, oldest deletion first. */
+  async listDeleted(): Promise<DeletedWorkspace[]> {
+    const deleted: DeletedWorkspace[] = [];
+    for (const entry of await this.entries()) {
+      const one = await this.getDeleted(entry);
+      if (one) deleted.push(one);
     }
-    throw new Error(
-      `[workspace-store] delete: could not find a free archive destination for "${id}" after ${MAX_ARCHIVE_ATTEMPTS} attempts`,
+    deleted.sort(
+      (a, b) =>
+        a.tombstone.deletedAt.localeCompare(b.tombstone.deletedAt) || a.id.localeCompare(b.id),
     );
+    return deleted;
+  }
+
+  /**
+   * Fix the moment a deleted workspace's purge began. The first value stays;
+   * returns the tombstone as written, or `null` when there is none.
+   */
+  async markPurging(id: string, at: Date): Promise<WorkspaceTombstone | null> {
+    const deleted = await this.getDeleted(id);
+    if (!deleted) return null;
+    if (deleted.tombstone.purgeAt) return deleted.tombstone;
+    const tombstone = { ...deleted.tombstone, purgeAt: at.toISOString() };
+    await writeJsonAtomic(this.tombstonePath(id), tombstone);
+    return tombstone;
+  }
+
+  /**
+   * Remove a deleted workspace's tombstone, so it is live again as it was.
+   * Membership-change notifications fire for each member. Returns the
+   * workspace, or `null` when `id` is not a deleted workspace with its record.
+   * Whether it may still be restored is the caller's rule.
+   */
+  async restore(id: string): Promise<Workspace | null> {
+    const deleted = await this.getDeleted(id);
+    if (!deleted?.workspace) return null;
+    await unlink(this.tombstonePath(id));
+    for (const m of deleted.workspace.members) this.fireMembershipChanged(m.userId);
+    return deleted.workspace;
+  }
+
+  /**
+   * Remove a deleted workspace's directory: the last step of its purge. The
+   * record goes first, so a removal that stops partway leaves the tombstone
+   * without a record (still a deleted workspace, finished on the next pass) and
+   * never a record without its tombstone. A live workspace is refused.
+   */
+  async remove(id: string): Promise<void> {
+    if (!this.isDeleted(id)) throw new Error(`Workspace "${id}" is not deleted`);
+    await rm(this.wsPath(id), { force: true });
+    await rm(join(this.workspacesDir, id), { recursive: true, force: true });
+  }
+
+  /**
+   * Remove each directory an earlier release moved under `archived/` on delete
+   * whose archive time (its mtime) is at or before `cutoff`. Its connectors were
+   * torn down and its conversations and tasks purged when it was archived, so
+   * there is nothing to call and nothing it could be restored to. Returns the
+   * names removed.
+   */
+  async removeArchivedBefore(cutoff: Date): Promise<string[]> {
+    let names: string[];
+    try {
+      names = await readdir(this.archivedDir);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw err;
+    }
+    const removed: string[] = [];
+    for (const name of names) {
+      const dir = join(this.archivedDir, name);
+      const st = await stat(dir);
+      if (!st.isDirectory() || st.mtime > cutoff) continue;
+      await rm(dir, { recursive: true, force: true });
+      removed.push(name);
+    }
+    return removed;
   }
 
   // ── Member operations ──────────────────────────────────────────
@@ -486,8 +533,8 @@ export class WorkspaceStore {
 
   /**
    * Subscribe to membership-change notifications. Returns an unsubscribe
-   * function. Fires after `addMember`, `removeMember`, `create`, and
-   * `delete` for every affected `userId` (see `MembershipChangeHandler`).
+   * function. Fires after `addMember`, `removeMember`, `create`, `delete`
+   * and `restore` for every affected `userId` (see `MembershipChangeHandler`).
    * The SSE event manager uses this to invalidate its per-client cached
    * workspace-membership set without polling the store on every emit.
    */
@@ -545,6 +592,10 @@ export class WorkspaceStore {
 
   private wsPath(id: string): string {
     return join(this.workspacesDir, id, "workspace.json");
+  }
+
+  private tombstonePath(id: string): string {
+    return join(this.workspacesDir, id, TOMBSTONE_FILENAME);
   }
 
   private async atomicWrite(filePath: string, data: Workspace): Promise<void> {

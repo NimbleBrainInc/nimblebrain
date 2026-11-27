@@ -636,9 +636,9 @@ export class FileCredentialStore implements CredentialStore {
    * would stay plaintext forever, and the rarely-read key is exactly the one an
    * operator forgets they have.
    *
-   * `archived/<wsId>/` is deliberately NOT walked. A deleted workspace's
-   * secrets are a retention problem, not an encryption one — they should be
-   * gone, and sealing them would make them look handled instead.
+   * A deleted workspace's secrets stay under `workspaces/<wsId>/` until its
+   * purge, so they are walked and sealed like any live workspace's: a restore
+   * must find them readable.
    */
   async reconcile(): Promise<void> {
     const sealer = this.#sealer;

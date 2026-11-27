@@ -65,14 +65,15 @@ test("an append refreshes the listed summary (list is not frozen)", async () => 
   expect(list.conversations[0]?.messageCount ?? 0).toBeGreaterThan(afterTurn1);
 });
 
-test("workspace delete clears its conversations from the list (no ghost) and does not re-create the workspace", async () => {
+test("a workspace purge clears its conversations from the list (no ghost) and does not re-create the workspace", async () => {
   // Sanity: the conversation is live and resolvable before the delete.
   expect(await runtime.resolveConversationStore(wsId, convId, ALICE.id)).not.toBeNull();
 
   const result = await runWithRequestContext({ identity: ALICE, workspaceId: wsId }, () =>
     runtime.deleteWorkspace(wsId),
   );
-  expect(result.deleteError).toBeUndefined();
+  expect(result.deleted).toBe(true);
+  expect((await runtime.purgeWorkspace(wsId)).purged).toBe(true);
 
   // The purged workspace's conversation is no longer listed.
   const list = await runtime.listConversations(wsId, {}, { userId: ALICE.id });

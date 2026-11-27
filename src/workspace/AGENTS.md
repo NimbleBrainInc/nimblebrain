@@ -1,6 +1,6 @@
 # Workspaces
 
-Scope: the workspace store, its on-disk root, ids, authorization, and provisioning (`src/workspace/`). The rules for what lives *inside* a workspace sit beside that code: conversations in `src/conversation/AGENTS.md`, files in `src/files/AGENTS.md`, tasks in `packages/tasks/AGENTS.md`, credentials in `src/tools/AGENTS.md`, the tool wall in `src/orchestrator/AGENTS.md`. Gating a write in the web tier is in `web/AGENTS.md`.
+Scope: the workspace store, its on-disk root, ids, authorization, provisioning, and deleted workspaces (`src/workspace/`). The rules for what lives *inside* a workspace sit beside that code: conversations in `src/conversation/AGENTS.md`, files in `src/files/AGENTS.md`, tasks in `packages/tasks/AGENTS.md`, credentials in `src/tools/AGENTS.md`, the tool wall in `src/orchestrator/AGENTS.md`. Gating a write in the web tier is in `web/AGENTS.md`.
 
 ## Workspace roots
 
@@ -10,9 +10,40 @@ The prefix is derived by scanning for the first `workspaces/<wsId>` **pair**. Te
 
 A path outside any workspace tree (org skills, `users/<id>/skills/`, the instance credential dir, a test's temp dir) has no root to require and passes — which is why a writer shared across scopes, like `writeSkill` or `CredentialStore.put`, takes the guard for its workspace callers without changing what it does for the others.
 
-This is structural rather than per-writer on purpose. `WorkspaceStore.delete` renames the subtree out from under every writer holding a path into it, those writers mkdir recursively, and the first one to fire afterwards used to re-create the deleted workspace's directory — invisibly, because `list()` skips a workspace dir whose `workspace.json` will not parse, so the resurrected tree appeared nowhere and was never deleted again. There is no way to grep for "everywhere that writes into a workspace", so guarding each writer is a discipline problem; the rule lives at the mkdir instead. **Do not add a recursive mkdir on a workspace-scoped path without it**, and do not "fix" a `WorkspaceRootMissingError` by creating the root — the workspace is gone, and the caller's job is to stop.
+This is structural rather than per-writer on purpose. A purge removes the subtree out from under every writer holding a path into it, those writers mkdir recursively, and without the guard the first one to fire afterwards re-creates the purged workspace's directory — invisibly, because `list()` skips a workspace dir whose `workspace.json` will not parse, so the resurrected tree appeared nowhere and was never deleted again. There is no way to grep for "everywhere that writes into a workspace", so guarding each writer is a discipline problem; the rule lives at the mkdir instead. **Do not add a recursive mkdir on a workspace-scoped path without it**, and do not "fix" a `WorkspaceRootMissingError` by creating the root — the workspace is gone, and the caller's job is to stop.
 
 A store still creates its own subdirectory on first write. `WORKSPACE_DIRS` (`src/workspace/scaffold.ts`) scaffolds `data/`, `credentials/`, `skills/` and `files/`; what is NOT pre-created is `conversations/`, `notifications/`, `tasks/`, and the per-owner partition beneath `files/` and `tasks/`. That stays true; the guard is about the root, not the subtree.
+
+## Deleted workspaces
+
+**One rule for every capability, owned by the kernel: a delete makes a tombstone, the purge
+reconcile removes it after the retention window, and an admin can restore it before then.**
+No contract has an archive or restore; plugins only ever see `delete_workspace`, at the purge.
+
+- **The tombstone is `workspaces/<wsId>/deleted.json`** (`WorkspaceTombstone`: `deletedAt`,
+  `deletedBy`, and `purgeAt` once a purge began or was asked for). Its own file, so no
+  read-modify-write of `workspace.json` can drop it. `get` and `list` leave a tombstoned
+  workspace out, so every door answers it as not found and every write through the store
+  is refused; `getDeleted` / `listDeleted` read it.
+- **Delete changes nothing else** (`Runtime.deleteWorkspace`): the run worker drops it, its
+  connectors are stopped and forgotten in the process, and no plugin is called. Members,
+  record, files, secrets and every plugin's records stay, so a restore is complete.
+- **Restore** (`Runtime.restoreWorkspace`) removes the tombstone, starts the connectors as
+  boot does and serves the workspace in the run worker. Refused once `purgeAt` is set or the
+  window has passed: a purge that began is only ever finished.
+- **The purge** (`Runtime.purgeWorkspace`), per workspace and one at a time with restores:
+  set `purgeAt`; call `delete_workspace` as `host` on every bound server whose contract makes
+  it private, under `deletedBy` (an admin's purge-now passes the admin); tear down the
+  connectors; delete the workspace's secrets through `CredentialStore`; `WorkspaceStore.remove`
+  (record first, then the directory). A plugin's error stops it there and leaves the
+  tombstone. Every step is idempotent, so the next pass finishes whatever stopped.
+- **The reconcile** (`Runtime.purgeDeletedWorkspaces`) runs at boot and hourly and purges
+  every tombstone whose window (`workspaces.deletedRetentionDays`, default 30; 0 purges inside
+  the delete) has passed. It also removes each `archived/<name>` directory an earlier release
+  left, once its mtime is older than the window: its plugins were purged and its connectors
+  torn down when it was archived, so there is nothing to call or restore.
+- **Kept past the purge**: the usage ledger (the org's spend record, retained by its own
+  window) and each person's per-workspace skill switches under `users/`.
 
 ## Write authorization
 
