@@ -8,6 +8,7 @@ import {
   type TaskHealth,
 } from "../lib/attention.ts";
 import { stripLabel } from "../lib/describe.ts";
+import { askMessage } from "../lib/needs-you.ts";
 import { outcomeOf } from "../lib/outcome.ts";
 import { shortSchedule } from "../lib/schedule-label.ts";
 import type {
@@ -47,6 +48,10 @@ export interface HomeActions {
   onCreate: (template?: Template) => void;
   /** Hand a sentence to the agent in chat; absent where the host takes no message. */
   onDescribe?: (sentence: string) => void;
+  /** Open a task's form to change its instructions. */
+  onEditTask: (task: TaskSummary) => void;
+  /** Hand a message to the agent in chat; absent where the host takes no message. */
+  onAsk?: (message: string) => void;
   onSeeActivity: () => void;
   /** Open a batch from the Runs list. */
   onOpenBatch: (batch: TaskBatch) => void;
@@ -139,6 +144,7 @@ export function recentFromStats(list: TaskStats[]): Map<string, TaskRun[]> {
       label: r.label,
       startedAt: r.startedAt,
       ...(r.error ? { error: r.error } : {}),
+      ...(r.toolFailures ? { toolFailures: r.toolFailures } : {}),
     })),
   );
   return recentByTask(runs);
@@ -190,6 +196,8 @@ const ACTION_LABEL: Record<HealthAction, string> = {
   "enable-and-retry": "Turn on and try again",
   review: "Review",
   "open-task": "See runs",
+  edit: "Edit instructions",
+  chat: "Ask in chat",
 };
 
 /** The latest runs as squares, oldest to newest, each in its outcome's tone; empty slots first. */
@@ -261,8 +269,15 @@ function BoardRow({ row, actions }: { row: HomeRow; actions: HomeActions }) {
     else if (action === "enable-and-retry")
       void actions.onSetEnabled(task, true).then((saved) => saved && actions.onRunNow(task));
     else if (action === "review" && health.runId) actions.onOpenRun(task.id, health.runId);
+    else if (action === "edit") actions.onEditTask(task);
+    else if (action === "chat" && health.runId && health.reason)
+      actions.onAsk?.(askMessage(task, { id: health.runId }, health.reason));
     else actions.onOpenTask(task);
   }
+  /** The row's buttons: its action, and its second one; chat only where the host takes a message. */
+  const shown = [health.action, health.secondary].filter(
+    (a): a is HealthAction => !!a && (a !== "chat" || !!actions.onAsk),
+  );
 
   return (
     <li
@@ -279,15 +294,11 @@ function BoardRow({ row, actions }: { row: HomeRow; actions: HomeActions }) {
             <span className="board-reason-text" title={health.reason}>
               {health.reason}
             </span>
-            {health.action && (
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => health.action && act(health.action)}
-              >
-                {ACTION_LABEL[health.action]}
+            {shown.map((a) => (
+              <button key={a} type="button" className="btn btn-sm" onClick={() => act(a)}>
+                {ACTION_LABEL[a]}
               </button>
-            )}
+            ))}
           </span>
         ) : (
           <span className="board-when" title={task.scheduleHuman}>

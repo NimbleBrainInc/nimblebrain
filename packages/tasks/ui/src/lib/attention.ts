@@ -9,6 +9,8 @@
  * in a run.
  */
 import type { LiveRun, TaskRun, TaskStats, TaskSummary } from "../types.ts";
+import { attentionOf } from "./needs-you.ts";
+import { outcomeOf } from "./outcome.ts";
 
 export type HealthTone = "danger" | "warning" | "active" | "success" | "muted";
 
@@ -21,7 +23,11 @@ export type HealthAction =
   /** Open the run and read it. */
   | "review"
   /** Open the task to see which runs failed. */
-  | "open-task";
+  | "open-task"
+  /** Open the task's form to change its instructions. */
+  | "edit"
+  /** Ask the agent in chat, with the task and its failure. */
+  | "chat";
 
 export interface TaskHealth {
   /** The word beside the task: "Failing", "Flaky", "Paused". */
@@ -31,6 +37,8 @@ export interface TaskHealth {
   reason?: string;
   /** What to do about it; set only when it needs you. */
   action?: HealthAction;
+  /** A second thing to do, beside `action`. */
+  secondary?: HealthAction;
   /** The run the reason is about, when one is. */
   runId?: string;
   /** Counted in the board's "need you". */
@@ -90,6 +98,8 @@ export function healthOf(
   stats?: TaskStats,
   live?: LiveRun,
   recent: TaskRun[] = [],
+  /** The task's `allowedTools`, when its definition was read. */
+  allowedTools?: string[],
 ): TaskHealth {
   const last = stats?.lastRun;
   const quiet = { needsYou: false, paused: false };
@@ -111,10 +121,10 @@ export function healthOf(
   // Off is a decision, so a failure stays quiet; a result waiting for review
   // is still the person's to read, trigger or not.
   if (hasTrigger(task) && !task.enabled) {
-    if (last?.label === "Needs review") return needsReview(last.id);
+    if (last?.label === "Needs review") return needsYou(last, recent, allowedTools);
     return { word: "Paused", tone: "muted", needsYou: false, paused: true };
   }
-  const trouble = troubleOf(last, recent);
+  const trouble = troubleOf(last, recent, allowedTools);
   if (trouble) return trouble;
   if (task.onceDone) {
     return {
@@ -127,20 +137,33 @@ export function healthOf(
   return { word: "Healthy", tone: "success", ...quiet };
 }
 
-function needsReview(runId: string): TaskHealth {
-  return {
-    word: "Needs review",
-    tone: "warning",
-    reason: "A result is waiting for your check.",
-    action: "review",
-    runId,
-    needsYou: true,
-    paused: false,
-  };
+/**
+ * A last run that asks for the person (Needs review, or a result that did not
+ * match its shape): why, in one sentence from its recorded failures, and the two
+ * things that fix it. With nothing to name, the run itself is the place to look.
+ */
+function needsYou(
+  last: NonNullable<TaskStats["lastRun"]>,
+  recent: TaskRun[],
+  allowedTools?: string[],
+): TaskHealth {
+  const outcome = outcomeOf(last.label);
+  const run = recent.find((r) => r.id === last.id) ?? { ...last, taskId: "", execution: "" };
+  const reason = attentionOf(run, { allowedTools });
+  const base = { word: outcome.word, runId: last.id, needsYou: true, paused: false };
+  const tone = outcome.tone === "danger" ? "danger" : "warning";
+  if (!reason) {
+    return { ...base, tone, reason: "Open the last run to see what it needs.", action: "review" };
+  }
+  return { ...base, tone, reason, action: "edit", secondary: "chat" };
 }
 
 /** What is wrong with a task that is on, from its last run and its latest runs; null when nothing is. */
-function troubleOf(last: TaskStats["lastRun"], recent: TaskRun[]): TaskHealth | null {
+function troubleOf(
+  last: TaskStats["lastRun"],
+  recent: TaskRun[],
+  allowedTools?: string[],
+): TaskHealth | null {
   const streak = trailingFailures(recent);
   if (streak > 1) {
     return {
@@ -155,7 +178,7 @@ function troubleOf(last: TaskStats["lastRun"], recent: TaskRun[]): TaskHealth | 
   }
   if (last?.label === "Failed") {
     return {
-      word: "Failed",
+      word: outcomeOf(last.label).word,
       tone: "danger",
       reason: `Last run failed${errorClause(recent)}`,
       action: "retry",
@@ -164,18 +187,9 @@ function troubleOf(last: TaskStats["lastRun"], recent: TaskRun[]): TaskHealth | 
       paused: false,
     };
   }
-  if (last?.label === "Poor result") {
-    return {
-      word: "Fell short",
-      tone: "danger",
-      reason: "The last result fell short of its checks.",
-      action: "review",
-      runId: last.id,
-      needsYou: true,
-      paused: false,
-    };
+  if (last?.label === "Poor result" || last?.label === "Needs review") {
+    return needsYou(last, recent, allowedTools);
   }
-  if (last?.label === "Needs review") return needsReview(last.id);
   const { failed, of } = recentFailures(recent);
   if (failed >= FLAKY_FAILURES) {
     return {

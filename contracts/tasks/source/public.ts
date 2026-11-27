@@ -802,6 +802,18 @@ const TaskRunAssessment = Type.Object({
   assessedAt: Type.Optional(Type.String()),
 });
 
+/** The tools a run's failed calls left failed, each with the reason of its last failure. */
+const TaskRunToolFailures = Type.Array(
+  Type.Object({
+    name: Type.String(),
+    errorReason: Type.Optional(Type.String()),
+  }),
+  {
+    description:
+      "Each tool in `unrecoveredToolFailures`, with the `errorReason` of its last failed call when the host gave one.",
+  },
+);
+
 /**
  * A run, as every run surface returns it. `startedAt` is present once the run
  * has started or ended without starting; `completedAt` once it has ended.
@@ -820,6 +832,7 @@ const TaskRunView = Type.Object(
     resultPreview: Type.Optional(Type.String()),
     assessment: Type.Optional(TaskRunAssessment),
     unrecoveredToolFailures: Type.Optional(Type.Array(Type.String())),
+    toolFailures: Type.Optional(TaskRunToolFailures),
     inputTokens: Type.Optional(Type.Number()),
     outputTokens: Type.Optional(Type.Number()),
     iterations: Type.Optional(Type.Number()),
@@ -1141,6 +1154,7 @@ export const TasksStatsOutput = Type.Object({
             label: TaskRunLabel,
             startedAt: Type.Optional(Type.String()),
             error: Type.Optional(Type.String()),
+            toolFailures: Type.Optional(TaskRunToolFailures),
           }),
         ),
       ),

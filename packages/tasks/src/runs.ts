@@ -7,7 +7,7 @@
  */
 
 import { checkAgainstSchema, parseJsonDeliverable } from "./json-schema.ts";
-import type { Assessment, Notice, RunRecord, RunStatus } from "./model.ts";
+import type { Assessment, Notice, RunRecord, RunStatus, ToolFailure } from "./model.ts";
 
 /** How much of the deliverable a run list carries. */
 export const RESULT_PREVIEW_CHARS = 500;
@@ -131,6 +131,7 @@ export function runView(run: RunRecord, input?: unknown): Record<string, unknown
     resultPreview: run.resultPreview,
     assessment: run.assessment,
     unrecoveredToolFailures: run.unrecoveredToolFailures,
+    toolFailures: run.toolFailures,
     costUsd: run.costUsd,
     unpricedCalls: run.unpricedCalls,
     spendAccountId: run.spendAccountId,
@@ -202,6 +203,12 @@ export function unresolvedFailures(calls: Outcome["toolCalls"]): string[] {
     if (!resolved) out.add(call.name);
   });
   return [...out];
+}
+
+/** A tool that failed for good, with the reason the host gave for its last failed call. */
+function failureOf(calls: Outcome["toolCalls"], name: string): ToolFailure {
+  const last = calls.findLast((c) => c.name === name && !c.ok);
+  return last?.errorReason ? { name, errorReason: last.errorReason } : { name };
 }
 
 /** The fewest calls to one tool, all failed, that say the tool never worked. */
@@ -336,6 +343,7 @@ export function recordOutcome(
     "hasOutput",
     "assessment",
     "unrecoveredToolFailures",
+    "toolFailures",
     "events",
     "spendAccountId",
     "spendStop",
@@ -349,7 +357,10 @@ export function recordOutcome(
     record.hasOutput = true;
     record.resultPreview = outcome.output.slice(0, RESULT_PREVIEW_CHARS);
   }
-  if (unrecovered.length > 0) record.unrecoveredToolFailures = unrecovered;
+  if (unrecovered.length > 0) {
+    record.unrecoveredToolFailures = unrecovered;
+    record.toolFailures = unrecovered.map((name) => failureOf(outcome.toolCalls, name));
+  }
   if (outcome.spendAccountId) record.spendAccountId = outcome.spendAccountId;
   if (outcome.spendStop) record.spendStop = outcome.spendStop;
   if (outcome.unpricedCalls) record.unpricedCalls = outcome.unpricedCalls;

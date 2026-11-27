@@ -84,6 +84,7 @@ const ACTIONS = {
   onSeeActivity: noop,
   onOpenBatch: noop,
   onOpenOneoff: noop,
+  onEditTask: noop,
 };
 
 const STATS = (label: "Succeeded" | "Poor result" | "Needs review") =>
@@ -134,12 +135,49 @@ describe("Home", () => {
   test("an error with nothing loaded says so", () => {
     expect(body({ error: "boom" })).toContain('role="alert"');
   });
-  test("a poor result leads, its reason on its row, with Review", () => {
+  test("a poor result leads, its reason on its row, with Edit instructions", () => {
     const html = body({ tasks: [live], stats: STATS("Poor result") });
     expect(html).toContain("1 needs you");
     expect(html).toContain("board-row tone-danger");
-    expect(html).toContain("The last result fell short of its checks.");
-    expect(html).toContain(">Review<");
+    expect(html).toContain("Didn&#x27;t work");
+    expect(html).toContain("The output didn&#x27;t match the expected shape.");
+    expect(html).toContain(">Edit instructions<");
+    // No chat in this host: no Ask in chat.
+    expect(html).not.toContain(">Ask in chat<");
+  });
+  test("a run that needs you names what failed and why, with both fixes", () => {
+    const stats = STATS("Needs review");
+    const recent = new Map([
+      [
+        "digest",
+        [
+          {
+            id: "run_1",
+            taskId: "digest",
+            execution: "completed",
+            label: "Needs review" as const,
+            startedAt: new Date().toISOString(),
+            toolFailures: [
+              { name: "tasks__create", errorReason: "denied" },
+              { name: "tasks__cancel", errorReason: "denied" },
+            ],
+          },
+        ],
+      ],
+    ]);
+    const html = body({
+      tasks: [live],
+      stats,
+      recent,
+      actions: { ...ACTIONS, onAsk: noop },
+    });
+    expect(html).toContain("board-row tone-warning");
+    expect(html).toContain(", Needs you");
+    expect(html).toContain(
+      "This task tried to create and cancel scheduled tasks, which scheduled runs can&#x27;t do.",
+    );
+    expect(html).toContain(">Edit instructions<");
+    expect(html).toContain(">Ask in chat<");
   });
   test("a healthy task reads as one short line and its last runs as squares", () => {
     const recent = new Map([
@@ -423,6 +461,47 @@ describe("Result", () => {
     );
     expect(html).toContain("Show raw");
     expect(html).toContain("Open the run this retried");
+  });
+
+  test("a run that needs you leads with why, read from its steps, and the two fixes", () => {
+    const review = {
+      ...RUN,
+      label: "Needs review",
+      assessment: undefined,
+      unrecoveredToolFailures: ["tasks__create", "tasks__cancel"],
+    };
+    const html = render(
+      createElement(result.ResultBody, {
+        state: {
+          status: "ready",
+          run: review,
+          result: {
+            ...RESULT,
+            label: "Needs review",
+            activityLog: [
+              { name: "tasks__create", ok: false, errorReason: "denied", ms: 3 },
+              { name: "tasks__cancel", ok: false, errorReason: "denied", ms: 2 },
+            ],
+          },
+        },
+        onEdit: noop,
+        onAsk: noop,
+      }),
+    );
+    expect(html.indexOf("callout tone-warning")).toBeLessThan(html.indexOf("Run summary"));
+    expect(html).toContain(
+      "This task tried to create and cancel scheduled tasks, which scheduled runs can&#x27;t do.",
+    );
+    expect(html).toContain(">Edit instructions<");
+    expect(html).toContain(">Ask in chat<");
+    // A run whose task is gone, or a host without chat, offers only what it can do.
+    const readOnly = render(
+      createElement(result.ResultBody, {
+        state: { status: "ready", run: review, result: RESULT },
+      }),
+    );
+    expect(readOnly).toContain("This task had Create in tasks and Cancel in tasks fail.");
+    expect(readOnly).not.toContain(">Edit instructions<");
   });
 
   test("a verdict this screen does not know is shown verbatim", () => {

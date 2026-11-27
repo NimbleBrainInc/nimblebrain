@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { StatusIcon } from "../icons.tsx";
 import { healthOf, type TaskHealth } from "../lib/attention.ts";
+import { askMessage } from "../lib/needs-you.ts";
 import { inputSummary, runTime } from "../lib/plain.ts";
 import { readResult } from "../lib/runResult.ts";
 import type { TaskDetail, TaskRun, TaskRunResult, TaskStats, TaskSummary } from "../types.ts";
@@ -15,6 +16,7 @@ import {
   toolErrorText,
 } from "../utils.ts";
 import { PageHeader } from "./Chrome.tsx";
+import { FixActions } from "./NeedsYou.tsx";
 import { STATS_REFRESH_MS } from "./HomeView.tsx";
 import { isOpenRun } from "./ResultView.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
@@ -55,6 +57,8 @@ export interface TaskPageActions {
   onSetEnabled: (d: TaskDetail, enabled: boolean) => Promise<boolean>;
   onOpenRun: (run: TaskRun) => void;
   onSeeRuns: (d: TaskDetail) => void;
+  /** Hand a message to the agent in chat; absent where the host takes no message. */
+  onAsk?: (message: string) => void;
 }
 
 /** The task's ⋯ menu. */
@@ -532,6 +536,19 @@ export function TaskPageBody({
         <div className={`callout tone-${health.tone}`} role="status">
           <StatusIcon tone={health.tone} />
           <span>{health.reason}</span>
+          {health.action === "edit" && (
+            <FixActions
+              onEdit={() => actions.onEdit(detail)}
+              onAsk={
+                actions.onAsk && health.runId && health.reason
+                  ? () =>
+                      actions.onAsk?.(
+                        askMessage(detail, { id: health.runId ?? "" }, health.reason ?? ""),
+                      )
+                  : undefined
+              }
+            />
+          )}
           {reasonRun && reasonRun.id !== latest?.id && (
             <button
               type="button"
@@ -628,7 +645,7 @@ export function taskHealth(
     disabledReason: detail.disabledReason,
     onceDone: detail.onceDone,
   };
-  return healthOf(task, stats ?? undefined, live, runs ?? []);
+  return healthOf(task, stats ?? undefined, live, runs ?? [], detail.allowedTools);
 }
 
 /** The task page's actions: the Enabled switch for a task with a trigger, Run now or Watch, the menu. */

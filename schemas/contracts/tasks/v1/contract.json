@@ -1771,6 +1771,24 @@
                   "type": "string"
                 }
               },
+              "toolFailures": {
+                "description": "Each tool in `unrecoveredToolFailures`, with the `errorReason` of its last failed call when the host gave one.",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "errorReason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
               "inputTokens": {
                 "type": "number"
               },
@@ -2118,6 +2136,24 @@
                 "type": "string"
               }
             },
+            "toolFailures": {
+              "description": "Each tool in `unrecoveredToolFailures`, with the `errorReason` of its last failed call when the host gave one.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "errorReason": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
             "inputTokens": {
               "type": "number"
             },
@@ -2452,6 +2488,24 @@
                 "type": "array",
                 "items": {
                   "type": "string"
+                }
+              },
+              "toolFailures": {
+                "description": "Each tool in `unrecoveredToolFailures`, with the `errorReason` of its last failed call when the host gave one.",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "errorReason": {
+                      "type": "string"
+                    }
+                  }
                 }
               },
               "inputTokens": {
@@ -2834,6 +2888,24 @@
                     },
                     "error": {
                       "type": "string"
+                    },
+                    "toolFailures": {
+                      "description": "Each tool in `unrecoveredToolFailures`, with the `errorReason` of its last failed call when the host gave one.",
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "name"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "errorReason": {
+                            "type": "string"
+                          }
+                        }
+                      }
                     }
                   }
                 }

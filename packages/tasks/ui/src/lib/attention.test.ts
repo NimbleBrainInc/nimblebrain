@@ -68,7 +68,7 @@ describe("healthOf, most urgent rule first", () => {
     });
   });
   test("one failure is not a streak: the last run's label speaks", () => {
-    expect(healthOf(TASK, stats("Failed")).word).toBe("Failed");
+    expect(healthOf(TASK, stats("Failed")).word).toBe("Didn't work");
     expect(healthOf(TASK, stats("Poor result"))).toMatchObject({ tone: "danger", needsYou: true });
     expect(healthOf(TASK, stats("Needs review"))).toMatchObject({
       tone: "warning",
@@ -88,7 +88,8 @@ describe("healthOf, most urgent rule first", () => {
       needsYou: false,
     });
     expect(healthOf({ ...TASK, enabled: false }, stats("Needs review"))).toMatchObject({
-      word: "Needs review",
+      word: "Needs you",
+      reason: "Open the last run to see what it needs.",
       action: "review",
       needsYou: true,
     });

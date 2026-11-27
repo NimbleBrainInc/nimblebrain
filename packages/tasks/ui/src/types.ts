@@ -136,6 +136,8 @@ export interface TaskRun {
   resultPreview?: string;
   assessment?: RunAssessment;
   unrecoveredToolFailures?: string[];
+  /** Each tool in `unrecoveredToolFailures`, with the reason its last failed call failed. */
+  toolFailures?: { name: string; errorReason?: string }[];
   inputTokens?: number;
   outputTokens?: number;
   iterations?: number;
@@ -332,5 +334,11 @@ export interface TaskStats {
   costUsd?: number;
   lastRun?: { id: string; label: string; startedAt?: string };
   /** The newest runs, newest first (batch runs left out). */
-  recent?: { id: string; label: string; startedAt?: string; error?: string }[];
+  recent?: {
+    id: string;
+    label: string;
+    startedAt?: string;
+    error?: string;
+    toolFailures?: { name: string; errorReason?: string }[];
+  }[];
 }

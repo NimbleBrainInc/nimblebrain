@@ -9,9 +9,11 @@
  */
 
 import { createHash } from "node:crypto";
+import { toolsOf } from "../../server-sdk/src/index.ts";
 import { type BatchAction, batchRunCancelled, controlBatch, pumpBatch } from "./batches.ts";
 import {
   batchNotFound,
+  CONTRACT,
   conflict,
   invalidInput,
   publicError,
@@ -74,6 +76,56 @@ export function toKebabCase(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+/** How a host names this contract's tools to agents (CONTRACT.md §3), and so in `allowedTools`. */
+const HOST_PREFIX = "tasks__";
+
+/** This contract's public tools by the host's names, and whether a run may call each (§10). */
+const HOST_TOOLS = toolsOf(CONTRACT, "public").map((tool) => ({
+  name: `${HOST_PREFIX}${tool}`,
+  refused: CONTRACT.tools[tool]?.unattended === "refused",
+}));
+
+/** Whether `name` matches an `allowedTools` entry, where `*` is any run of characters. */
+function globMatches(entry: string, name: string): boolean {
+  if (!entry.includes("*")) return entry === name;
+  const source = entry.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+  return new RegExp(`^${source}$`).test(name);
+}
+
+/**
+ * The `allowedTools` entries that name only tools a run can never call: under the
+ * host's names for this contract's tools, they match some, every one refused
+ * unattended (§4, §10). The rest of the list is opaque: only the host matches it.
+ */
+export function unrunnableTools(allowedTools: readonly string[] | undefined): string[] {
+  return (allowedTools ?? []).filter((entry) => {
+    if (!entry.startsWith(HOST_PREFIX)) return false;
+    const matched = HOST_TOOLS.filter((t) => globMatches(entry, t.name));
+    return matched.length > 0 && matched.every((t) => t.refused);
+  });
+}
+
+/** Why a list naming `entries` is refused, in words the person reads in chat. */
+function unrunnableProblem(entries: string[]): string {
+  const named = entries.map((e) => `"${e}"`).join(", ");
+  return (
+    `allowedTools names ${named}, which a scheduled run can never call: runs cannot create, ` +
+    "edit, delete, run or cancel scheduled tasks. Remove " +
+    (entries.length === 1 ? "it" : "them") +
+    `, and leave that step out of the instructions; "${HOST_PREFIX}*" still lets a run read tasks.`
+  );
+}
+
+/**
+ * Refuse an `allowedTools` list that names only tools a run can never call. An
+ * update checks the list it is given, so a task saved before keeps changing.
+ */
+function checkAllowedTools(tool: string, allowedTools: unknown): void {
+  if (!Array.isArray(allowedTools)) return;
+  const unrunnable = unrunnableTools(allowedTools as string[]);
+  if (unrunnable.length > 0) throw invalidInput(tool, unrunnableProblem(unrunnable));
 }
 
 /** Refuse a definition the schema cannot judge: an unplaceable schedule, a schema that does not compile, an empty prompt with no skills. */
@@ -141,6 +193,7 @@ export function create(tx: Tx, caller: Caller, args: Checked) {
     enabled: manifest.enabled !== false,
     ...(manifest.schedule ? { schedule: manifest.schedule as Schedule } : {}),
   });
+  checkAllowedTools("create", task.allowedTools);
   checkDefinition("create", task);
   if (findTask(tx.ws.state, caller.ownerId, id)) {
     throw publicError(
@@ -174,6 +227,7 @@ export function update(tx: Tx, caller: Caller, args: Checked) {
   const task = requireTask(tx, caller, args.taskId);
   const manifest = (args.manifest ?? {}) as Args;
   const before = { budget: JSON.stringify(task.tokenBudget), retired: task.onceDone !== undefined };
+  checkAllowedTools("update", manifest.allowedTools);
   let updated = applyPatch(task, manifest);
   if (args.body !== undefined) {
     task.prompt = args.body;
@@ -337,6 +391,7 @@ function ensureOneoff(
     prompt: (def.body as string | undefined) ?? "",
     kind: "oneoff",
   });
+  checkAllowedTools(tool, candidate.allowedTools);
   checkDefinition(tool, candidate);
   const existing = findTask(tx.ws.state, caller.ownerId, id);
   if (!existing) {

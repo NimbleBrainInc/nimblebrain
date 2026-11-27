@@ -114,7 +114,7 @@ describe("TaskPageBody", () => {
       { ...STATS, lastRun: { id: "r2", startedAt: review.startedAt, label: "Needs review" } },
       runs,
     );
-    expect(health.word).toBe("Needs review");
+    expect(health.word).toBe("Needs you");
     const html = renderToStaticMarkup(
       createElement(page.TaskPageBody, {
         detail: DETAIL,
@@ -139,7 +139,8 @@ describe("TaskPageBody", () => {
       }),
     );
     expect(html).toContain("callout tone-warning");
-    expect(html).toContain("A result is waiting for your check.");
+    expect(html).toContain("This task stopped before it finished.");
+    expect(html).toContain(">Edit instructions<");
     expect(html).toContain("Latest result");
     expect(html).toContain("<dt>note</dt>");
     expect(html).toContain("Three prospects found.");

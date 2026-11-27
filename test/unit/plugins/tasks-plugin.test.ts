@@ -185,6 +185,88 @@ describe("the store", () => {
   });
 });
 
+describe("allowedTools that name only tools a run can never call", () => {
+  const refusal = async (tool: string, args: Record<string, unknown>) => {
+    const r = await call(tool, args);
+    expect(r.isError).toBe(true);
+    return JSON.parse(r.content[0]?.text ?? "{}") as { code: string; error: string };
+  };
+
+  test("create refuses them with invalid_input, naming each and why", async () => {
+    const body = await refusal("create", {
+      manifest: { name: "Loop", allowedTools: ["gmail__*", "tasks__create", "tasks__cancel"] },
+      body: "p",
+    });
+    expect(body.code).toBe("invalid_input");
+    expect(body.error).toContain('"tasks__create", "tasks__cancel"');
+    expect(body.error).toContain("runs cannot create, edit, delete, run or cancel scheduled tasks");
+    expect(body.error).not.toContain("gmail__*");
+    expect((await ok("list", { kind: "all" })).tasks).toEqual([]);
+  });
+
+  test("a glob that reaches only refused tools is refused; one that reaches a read is kept", async () => {
+    expect(
+      (
+        await refusal("create", {
+          manifest: { name: "B", allowedTools: ["tasks__batch_*"] },
+          body: "p",
+        })
+      ).code,
+    ).toBe("invalid_input");
+    const kept = ["tasks__*", "tasks__run*", "other__create", "create", "tasks__nothing"];
+    const saved = await ok("create", {
+      manifest: { name: "Reads", allowedTools: kept },
+      body: "p",
+    });
+    expect(saved.task.allowedTools).toEqual(kept);
+  });
+
+  test("update checks the list it is given, so a task saved earlier still changes", async () => {
+    await ok("create", { manifest: { name: "Digest", allowedTools: ["tasks__list"] }, body: "p" });
+    const body = await refusal("update", {
+      taskId: "digest",
+      manifest: { allowedTools: ["tasks__update"] },
+    });
+    expect(body.code).toBe("invalid_input");
+    expect((await ok("status", { taskId: "digest" })).task.allowedTools).toEqual(["tasks__list"]);
+    await ok("update", { taskId: "digest", manifest: { enabled: false } });
+  });
+
+  test("an inline one-off is refused the same way", async () => {
+    const body = await refusal("run", {
+      definition: { manifest: { name: "Once", allowedTools: ["tasks__run"] }, body: "p" },
+    });
+    expect(body.code).toBe("invalid_input");
+  });
+});
+
+describe("a run's tool failures", () => {
+  test("keep each tool's last failure reason on the run and in stats", async () => {
+    await ok("create", { manifest: { name: "Author" }, body: "p" });
+    await runOnce(
+      "author",
+      T0,
+      outcome(T0, {
+        toolCalls: [
+          { name: "tasks__create", ok: false, errorReason: "denied", ms: 1 },
+          { name: "gmail__send", ok: false, errorReason: "timeout", ms: 1 },
+          { name: "gmail__send", ok: false, errorReason: "tool_error", ms: 1 },
+          { name: "files__read", ok: false, errorReason: "tool_error", ms: 1 },
+          { name: "files__read", ok: true, ms: 1 },
+        ],
+      }),
+    );
+    const [run] = (await ok("runs", { taskId: "author" })).runs;
+    expect(run.label).toBe("Needs review");
+    expect(run.toolFailures).toEqual([
+      { name: "tasks__create", errorReason: "denied" },
+      { name: "gmail__send", errorReason: "tool_error" },
+    ]);
+    const stats = (await ok("stats", {})).tasks[0];
+    expect(stats.recent[0].toolFailures).toEqual(run.toolFailures);
+  });
+});
+
 describe("the failure policy", () => {
   test("the first failure of a stretch notifies once; a success ends the stretch", async () => {
     await ok("create", { manifest: { name: "Flaky" }, body: "p" });

@@ -2,6 +2,7 @@ import { notify, open } from "@nimblebrain/synapse";
 import { useApp } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useEffectEvent, useState } from "react";
 import { STARTED_BY_TEXT, startedByOf } from "../lib/activity.ts";
+import { attentionOf, askMessage } from "../lib/needs-you.ts";
 import { outcomeOf } from "../lib/outcome.ts";
 import { assessmentReasonText, inputSummary, runName, runTime } from "../lib/plain.ts";
 import { readResult } from "../lib/runResult.ts";
@@ -18,6 +19,7 @@ import { useTool } from "../useTool.ts";
 import { asDict, formatDuration, formatTokens, formatUsd, toolErrorText } from "../utils.ts";
 import { AssessmentPanel } from "./AssessmentPanel.tsx";
 import { PageHeader } from "./Chrome.tsx";
+import { NeedsYouCallout } from "./NeedsYou.tsx";
 import { RowMenu } from "./RowMenu.tsx";
 import { RunBadge, StatusBadge } from "./RunBadge.tsx";
 import { Elapsed, RunSteps } from "./RunSteps.tsx";
@@ -259,6 +261,8 @@ export interface RunResultState {
   taskName?: string;
   /** True once the task was looked up and is gone. */
   taskGone?: boolean;
+  /** The task's `allowedTools`, once read. */
+  allowedTools?: string[];
 }
 
 /** Poll interval while a run is still open. */
@@ -270,12 +274,13 @@ type ToolCall = (args: Record<string, unknown>) => Promise<{ data?: unknown }>;
 async function readTask(
   call: ToolCall,
   taskId: string | undefined,
-): Promise<{ taskName?: string; taskGone?: boolean }> {
+): Promise<{ taskName?: string; taskGone?: boolean; allowedTools?: string[] }> {
   if (!taskId) return {};
   try {
     const res = await call({ taskId, limit: 0 });
     const task = asDict(res.data).task as TaskDetail | undefined;
-    return task ? { taskName: task.name } : { taskGone: true };
+    if (!task) return { taskGone: true };
+    return { taskName: task.name, ...(task.allowedTools ? { allowedTools: task.allowedTools } : {}) };
   } catch (err) {
     return /no task with id/i.test(toolErrorText(err)) ? { taskGone: true } : {};
   }
@@ -285,7 +290,7 @@ async function readTask(
 function stateOf(
   read: { run?: TaskRun; result: TaskRunResult | null; open: boolean; error?: string },
   fallback: TaskRun | undefined,
-  task: { taskName?: string; taskGone?: boolean },
+  task: { taskName?: string; taskGone?: boolean; allowedTools?: string[] },
 ): RunResultState {
   const run = read.run ?? fallback;
   const open = read.open || (!!run && isOpenRun(run));
@@ -415,18 +420,37 @@ export function ResultBody({
   onOpenFile,
   onOpenRun,
   onOpenBatch,
+  onEdit,
+  onAsk,
 }: {
   state: RunResultState;
   onOpenFile?: (file: RunFileRef) => void;
   onOpenRun?: (runId: string) => void;
   onOpenBatch?: (batchId: string) => void;
+  /** Open the run's task's form; absent when there is no task to edit. */
+  onEdit?: () => void;
+  /** Ask the agent in chat about the run, given why it needs the person. */
+  onAsk?: (sentence: string) => void;
 }) {
   const status = <ResultStatus state={state} />;
   if (state.status !== "ready" && (state.status !== "loading" || !state.run)) return status;
   const { run, result } = state;
   const assessment = run?.assessment ?? result?.assessment;
+  const sentence = attentionOf(run, {
+    log: result?.activityLog,
+    allowedTools: state.allowedTools,
+    stopReason: result?.stopReason,
+  });
   return (
     <Sections>
+      {sentence && (
+        <NeedsYouCallout
+          sentence={sentence}
+          tone={run?.label === "Needs review" ? "warning" : "danger"}
+          onEdit={onEdit}
+          onAsk={onAsk ? () => onAsk(sentence) : undefined}
+        />
+      )}
       <RunSummary run={run} result={result} />
       <Deliverable result={result} run={run} onOpenFile={onOpenFile} />
       <AssessmentPanel assessment={assessment} />
@@ -488,6 +512,8 @@ export function ResultScreen({
   onOpenRun,
   onOpenBatch,
   onRunLoaded,
+  onEdit,
+  onAsk,
 }: {
   runId: string;
   taskId?: string;
@@ -500,6 +526,10 @@ export function ResultScreen({
   onOpenBatch: (batchId: string) => void;
   /** Told the run's record once read, so the crumb can name the run as the heading does. */
   onRunLoaded?: (run: TaskRun) => void;
+  /** Open a task's form. */
+  onEdit?: (taskId: string) => void;
+  /** Hand a message to the agent in chat; absent where the host takes no message. */
+  onAsk?: (message: string) => void;
 }) {
   const ownerTaskId = taskId ?? initialRun?.taskId;
   const state = useRunResult(runId, ownerTaskId, initialRun);
@@ -520,6 +550,8 @@ export function ResultScreen({
   const shownName = taskName ?? state.taskName;
   const rerunId = taskId ?? run?.taskId;
   const output = state.result?.output ?? "";
+  // A task still there is one the person can fix; a deleted task's run only reads.
+  const canFix = !!rerunId && !!shownName && !state.taskGone;
 
   async function copy() {
     try {
@@ -592,6 +624,12 @@ export function ResultScreen({
             onOpenFile={openFile}
             onOpenRun={(id) => onOpenRun(id, taskId)}
             onOpenBatch={onOpenBatch}
+            onEdit={canFix && onEdit ? () => onEdit(rerunId) : undefined}
+            onAsk={
+              canFix && onAsk
+                ? (sentence) => onAsk(askMessage({ id: rerunId, name: shownName }, { id: runId }, sentence))
+                : undefined
+            }
           />
         </div>
       </div>

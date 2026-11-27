@@ -35,6 +35,10 @@ They are listed on the **Scheduled** page. Say "run" for one execution.
    `nb__search`. If its connector is missing, say which one to install and stop.
 2. Write `body` as the job: what to read, what to make, where to deliver it.
    Set `allowedTools` to one `<connector>__*` glob per connector it uses.
+   **A scheduled run cannot create, edit, run or cancel scheduled tasks**, so
+   never write instructions that ask it to, and never list `tasks__create`,
+   `tasks__update`, `tasks__run` or `tasks__cancel`: `tasks__create` refuses
+   them. Work that needs another scheduled task is set up now, in chat.
 3. If the person has not said what it does or when, ask. Otherwise name it
    yourself and call `tasks__create` once, shaped like:
    `{"manifest": {"name": "Weekday file summary", "schedule": {"cron": "0 8 * * 1-5"}, "allowedTools": ["files__*"]}, "body": "Summarize my files in one line."}`

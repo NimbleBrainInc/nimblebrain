@@ -153,7 +153,13 @@ the sidebar placement (`HOST_META`), through the server SDK's `declareHostMeta`.
 - **Event runs carry their events as `notes`** (data); the host frames them.
 - **Writes do not validate what only the host knows**: a model reference, `allowedTools` globs,
   and skill names. The host's unattended rule keeps a run from the tools that author or start
-  work.
+  work. The one check on `allowedTools` reads this contract's own tools (`unrunnableTools`,
+  `src/public.ts`): `create`, `update` (only the list it is given, so a task saved earlier can
+  still be paused) and an inline definition refuse an entry that names only `tasks__<tool>`
+  tools marked refused unattended, since a run could never call one and the host drops it.
+- **A run's failures keep their reasons**: `toolFailures` (on the run view and `stats`'
+  `recent`) is each tool in `unrecoveredToolFailures` with its last failed call's
+  `errorReason`, so the screen can say why a run needs the person without reading its result.
 - **Unrecovered tool failures are judged per tool name**, since the outcome carries no call
   input: a failed call is recovered by any later success of the same tool (a `bad_input` call
   by the next call that is not itself `bad_input`).

@@ -35,6 +35,7 @@ const ACTIONS = {
   onSeeActivity: noop,
   onOpenBatch: noop,
   onOpenOneoff: noop,
+  onEditTask: noop,
 };
 
 beforeAll(async () => {
