@@ -19,14 +19,12 @@ it purges the workspace's conversations (`src/conversation/AGENTS.md`). Teardown
 runs BEFORE the rename: `on_removing` needs the connector reachable, and the
 credential cleanup needs the credential directory at its live path.
 
-- **The workspace's tasks are disarmed first**, before the connector
-  teardown and long before the rename: `TaskQuiescer.dropWorkspace` (the
-  scheduler, handed over by the tasks source — the runtime may not import
-  it) drops them from the in-memory `definitions` map. Nothing else does:
-  `scheduler.reload()` is called only from the tasks tool surface, so a
-  deleted workspace's tasks stayed armed until the process restarted. A
-  targeted drop, never `reload()` — that rescans every workspace and owner on
-  disk to learn one thing the caller already knows.
+- **The workspace's runs stop first**, before the connector teardown and
+  long before the rename: the run worker stops serving the workspace and
+  stops its runs in flight (`RunWorker.drop`), so none runs against
+  half-removed connectors. After the rename the tasks plugin purges the
+  workspace's tasks (`delete_workspace`), as the conversations plugin purges
+  its conversations.
 - `WorkspaceStore` imports nothing from `src/connectors/` and holds no lifecycle
   handle. The cascade is the runtime's; the store does the rename.
 - `manage_workspaces delete` calls `Runtime.deleteWorkspace`, never

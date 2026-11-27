@@ -484,7 +484,7 @@ describe("send test", () => {
           kind: "agent",
           attempts: 0,
           outcome: "deferred",
-          classification: "awaiting_batch",
+          classification: "awaiting_offer",
           updatedAt: "2026-01-01T00:00:00Z",
         },
       ],

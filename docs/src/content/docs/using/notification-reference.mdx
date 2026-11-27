@@ -129,10 +129,9 @@ to the connector; the platform renders your template and makes the call.
 The task must be [scheduled on events](/using/tasks) to accept one.
 Matching items are batched for about 30 seconds before the run starts.
 
-A task may start at most **12 runs an hour** from events by default.
-Crossing that ceiling switches the task off and settles every waiting item
-`failed` — see
-[failed](/using/notification-troubleshooting#failed).
+A task may start at most **12 runs an hour** from events by default. The
+item that would pass that ceiling is `refused` and the task is switched off —
+see [refused](/using/notification-troubleshooting#refused).
 
 ## Placeholders
 
@@ -165,11 +164,11 @@ One ledger line per target, per notification.
 | Outcome | Terminal | Means | Retries |
 |---|---|---|---|
 | `sending` | no | An attempt is in flight or the next is due | yes |
-| `delivered` | yes | The tool ran and did not report a failure, or the task's run started | — |
-| `batching for the task` | no | An agent target inside its batching window | — |
-| `refused` | yes | A gate said no: the author may not use that tool, or the route names no event-scheduled task of theirs | no |
+| `delivered` | yes | The tool ran and did not report a failure, or the task took the item | — |
+| `batching for the task` | no | An agent target whose task has not answered the offer yet | — |
+| `refused` | yes | A gate said no: the author may not use that tool, the route names no event-scheduled task of theirs, the item would pass the task's fire ceiling, or this runtime runs no tasks | no |
 | `skipped` | yes | The author has left the workspace, or the task is off or did not want the item | no |
-| `failed` | yes | A tool call did not complete and the retry budget is spent, or a run was owed and did not happen | no |
+| `failed` | yes | A tool call did not complete and the retry budget is spent, or an offer to a task did not settle | no |
 
 **Three attempts across about five minutes** — immediately, then after a minute,
 then after four more. Retry state lives on the item, so a restart mid-delivery
