@@ -33,7 +33,7 @@ const HOST_META_KEY = "ai.nimblebrain/host";
 const SCREEN_URI = "ui://files/browser";
 
 /** Every case of the full run that can pass without waiting 300 s. */
-const FULL_PASSES = 71;
+const FULL_PASSES = 77;
 const WAITS_FOR_GRACE = "complete_upload past the 300 s window is upload_not_found";
 const PUBLIC_ONLY_EXPECTED_FAILURE = "no private tool is listed";
 const SHORT_TTLS = ["--upload-ttl", "3", "--download-ttl", "3"];

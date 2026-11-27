@@ -92,7 +92,8 @@ export const PRIVATE_SCHEMAS = {
         mimeType: Type.String({
           minLength: 1,
           maxLength: 255,
-          description: "The body's type, on the allowlist (CONTRACT.md §7).",
+          description:
+            "The body's type. application/octet-stream for a known text extension is recorded as that extension's type (CONTRACT.md §5, Types); the type recorded is on the allowlist (§7).",
         }),
         size: Type.Integer({
           minimum: 0,
@@ -102,7 +103,7 @@ export const PRIVATE_SCHEMAS = {
         folder: Type.Optional(
           Type.String({
             description:
-              "Folder path, '/'-separated; missing levels are created at completion, as create's manifest.folder.",
+              "Folder path, '/'-separated; missing levels are created at completion, as create's manifest.folder. A leading or trailing '/' or an empty segment is invalid_input.",
           }),
         ),
         tags: Type.Optional(Type.Array(Type.String(), { maxItems: 100 })),
@@ -184,7 +185,11 @@ export const PRIVATE_SCHEMAS = {
       {
         removed: Type.Object(
           { files: Type.Integer({ minimum: 0 }), folders: Type.Integer({ minimum: 0 }) },
-          CLOSED,
+          {
+            ...CLOSED,
+            description:
+              "The files and folders removed, across every owner. Open uploads are removed and not counted.",
+          },
         ),
       },
       CLOSED,

@@ -121,6 +121,12 @@ are unchanged.
 - **Folders are metadata.** Moving a file or a folder rewrites the record's place and touches no
   body. Sibling folder names are unique, compared case-insensitively. A record whose folder no
   longer exists reads as at the top level.
+- **A folder name** is trimmed of surrounding space, and is then not empty, not `.` or `..`,
+  and holds no `/` or `\`. A name that breaks this fails `invalid_input`.
+- **A folder path** (`create`'s `manifest.folder`, `begin_upload`'s `folder`) is folder names
+  joined by `/`, top first; `""` or an absent path is the top level. A path that begins or ends
+  with `/`, or holds an empty segment (`a//b`, a segment of only spaces), fails
+  `invalid_input`: no `/` is trimmed and no segment skipped, so one path names one place.
 
 ## 5. Behaviour and outputs
 
@@ -143,11 +149,9 @@ The public tools' behaviour, where a schema cannot state it.
   every match.
 - **`create`** decodes `body` under `encoding` (base64 by default, verbatim UTF-8 with `text`),
   refuses base64 that is not the standard padded alphabet (`invalid_input`), and makes the file
-  with `source: "agent"`, creating the folders `manifest.folder` names that do not exist. A
-  generic `application/octet-stream` or empty `mimeType` for a known text or source extension
-  is recorded as that extension's text type; a specific type is kept as given (**Types**,
-  below). The type recorded MUST be on the allowlist (§7), or the call fails
-  `type_not_allowed`.
+  with `source: "agent"`, creating the folders `manifest.folder` names that do not exist (§4).
+  It records the type **Types** (below) gives from `mimeType` and `filename`, which MUST be on
+  the allowlist (§7), or the call fails `type_not_allowed`.
 - **`tag`** answers the tags after the change; **`move`** moves every id or none; **`delete`**
   removes the file, after which it is absent everywhere and its bytes are the
   implementation's to remove (§7); **`delete_folder`** refuses a folder that holds files or
@@ -155,7 +159,9 @@ The public tools' behaviour, where a schema cannot state it.
 - **`read`** is §8.
 
 **Types.** A type is compared with its parameters (`;charset=…`) stripped, surrounding space
-trimmed and case-folded; call that its bare type.
+trimmed and case-folded; call that its bare type. `create` and `begin_upload` record a file's
+type by the same rule, from the `mimeType` and `filename` they are given, and judge the
+allowlist on the type recorded.
 
 - **The recorded type.** When the bare `mimeType` is neither empty nor
   `application/octet-stream`, it is recorded as given, trimmed, with its case and parameters.
@@ -210,17 +216,19 @@ a `files://` URI itself, which is always the host's.
   workspace, and answers `{ uploadId, url, method: "PUT", headers, expiresAt }`. `source` is
   the door the body comes through: `chat` (an attachment), `app` (an upload through an app or
   the REST door), `manual` (an upload a person made in the shell); `agent` is `create`'s alone.
-  The file records the context's `conversationId` and `runId` (§2). `folder` is a path, as
-  `create`'s. It fails `type_not_allowed` for a type off the allowlist and `too_large` for a
-  `size` past the implementation's per-file limit. It makes no file: a file exists only once
-  `complete_upload` answers.
+  The file records the context's `conversationId` and `runId` (§2) and the type §5 **Types**
+  gives. `folder` is a folder path (§4), checked here: a path that breaks §4's rule fails
+  `invalid_input`. It fails `type_not_allowed` when the type recorded is off the allowlist and
+  `too_large` for a `size` past the implementation's per-file limit. It makes no file: a file
+  exists only once `complete_upload` answers.
 - **`complete_upload({ version, uploadId })`** makes the file from the body last stored at the
   upload's URL and answers `{ uri, file }`, where `uri` is `files://<file.id>`. The
   implementation measures the stored body itself: absent, or of a length other than the
   declared `size`, it fails `upload_incomplete` and the upload stays open until it expires.
-  It succeeds for a body whose PUT began before `expiresAt` for at least 300 seconds after
-  `expiresAt`. An unknown or out-of-scope `uploadId`, or one past that window, fails
-  `upload_not_found`. The record's `size` is the measured length.
+  Its **completion window** runs until 300 seconds after `expiresAt`: within it, a body whose
+  PUT began before `expiresAt` completes. An unknown or out-of-scope `uploadId`, or one past
+  that window, fails `upload_not_found`. The record's `size` is the measured length. A repeat
+  for a completed upload is §12.
 - **`resolve({ version, uris })`** answers, for each URI in the order asked, `{ uri, found:
   true, file, download: { url, expiresAt } }` when the URI names a file the context's owner may
   see in the workspace, and `{ uri, found: false }` otherwise. It is the one place visibility is
@@ -228,8 +236,9 @@ a `files://` URI itself, which is always the host's.
   and fetches it from the URL it answered. A URI repeated in one call is answered at each place
   it appears.
 - **`delete_workspace({ version })`** removes every owner's files, folders and open uploads in
-  the workspace, their bytes, and any storage the implementation holds for it, and answers what
-  it removed. Idempotent.
+  the workspace, their bytes, and any storage the implementation holds for it, and answers
+  `removed`: the count of files and of folders it removed, across every owner. Open uploads
+  are removed with their bytes and not counted. Idempotent: a repeat answers zero counts.
 
 **Why completion is a tool call.** The upload URL may point at a store that runs none of the
 implementation's code (a presigned object-store URL), so the PUT's answer cannot make the
@@ -264,14 +273,19 @@ configuration for it.
   notification. It crosses only the private outputs above.
 
 **What a URL serves.** A download URL answers `GET` with status 200, the file's exact body
-streamed, unencoded, and its `Content-Length`. It MUST honour a single `Range: bytes=a-b` with
-206, `Content-Range` and that range's `Content-Length`. An upload URL accepts a `PUT` of the
-body with the `headers` `begin_upload` named, and answers a 2xx once the body is stored. A PUT
-may be repeated until the upload completes or expires; each replaces any earlier body, and
-`complete_upload` measures the last one stored. After `delete` answers, no URL issued since serves the
-file; one issued before serves it at most until it expires. That window is unreachable from
-outside: only the host ever holds a download URL, and it fetches from it at once after the
-`resolve` that answered it, under the caller's context.
+streamed, unencoded, and its `Content-Length`. It MUST honour a single satisfiable range
+(`Range: bytes=a-b`, `bytes=a-` or `bytes=-n`) with 206, `Content-Range` and that range's
+`Content-Length`. A single range that starts at or past the body's end, a suffix of zero
+bytes, or any range of an empty body answers 416. Any other `Range` (several ranges, or one it cannot parse) is ignored: 200
+with the whole body. An upload URL accepts a `PUT` of the body with the `headers`
+`begin_upload` named, and answers a 2xx once the body is stored. A PUT may be repeated until
+the upload completes or expires; each replaces any earlier body, and `complete_upload`
+measures the last one stored. A PUT longer than the declared `size` is refused with a 4xx
+(413 where the implementation answers the PUT itself, an object store's own refusal
+otherwise) and stores nothing: an earlier body stays as it was. After `delete` answers, no URL
+issued since serves the file; one issued before serves it at most until it expires. That
+window is unreachable from outside: only the host ever holds a download URL, and it fetches
+from it at once after the `resolve` that answered it, under the caller's context.
 
 **A local implementation** (one the host starts over stdio) serves its URLs from an HTTP
 listener bound to a loopback address, on a port it chooses, started with the server. The
@@ -299,7 +313,8 @@ URLs). It documents which origins it issues so the operator can list them.
   `headers` `begin_upload` named. It refuses an upload whose `headers` name `Host`,
   `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade`, `Expect`, `TE`, `Trailer`,
   `Keep-Alive`, `Cookie`, `Authorization` or any `Proxy-*` field, compared case-insensitively.
-- A transfer that does not answer 2xx is a failed transfer, and so is an answer with a
+- A `GET` succeeds only on 200, or on 206 when the host sent a `Range`; a `PUT` only on a 2xx.
+  Any other answer (a 416 among them) is a failed transfer, and so is an answer with a
   `Content-Encoding` other than `identity`.
 - **Before it writes a byte onward**, the host checks that the answer's `Content-Length` is
   present and equals the record's `size` (for a 206, the range's length, with a
@@ -332,6 +347,10 @@ own. The host never deletes a body and has no way to.
 | `read`'s text, outbound | at most `maxBytes`, and at most 1 MiB (1,048,576 bytes), of UTF-8 across `extractedText` or `pages` |
 | records, folders, URIs, transfer URLs | as their schemas bound them |
 
+**A server the host reaches over HTTP accepts an MCP request body of at least 8 MiB**
+(8,388,608 bytes), so a `create` whose body is 4 MiB decoded fits as base64 with its envelope
+and is answered by the tool (`too_large` past the limit), never refused by the transport.
+
 **What never crosses MCP:** an upload's body, and every body the host serves (a download, a
 `resources/read` of `files://`, a body rehydrated into a prompt, a connector's host-resources
 read). Those move by transfer URL; `read` never answers a body, in base64 or any other form.
@@ -350,12 +369,15 @@ and YAML, PDF, DOCX and XLSX. An image, a font, an archive or other binary has n
 - **`read({ id, maxBytes? })`** answers the record's `id`, `filename`, `mimeType` and `size`,
   and `extractedText`: the text up to the lesser of `maxBytes` and the implementation's bound,
   cut at a character boundary, with `truncated` saying whether it stopped there, or `null` for
-  a type with no text or an extraction that failed. A failed extraction is not an error.
+  a type with no text or an extraction that failed, with `truncated: false`. A failed
+  extraction is not an error.
 - **`read({ id, pages, maxBytes? })`** answers the text of those 1-based pages of a paged
   document (a PDF in 1.0), at most 10 a call: `totalPages`, `requestedPages` (sorted, each
   once), `missingPages` (past the end) and `pages[]` (`{ page, text, truncated, empty }` for
-  each page that exists, in order), with `extractedText: null`. The pages' text together holds
-  at most the same bound. A file with no pages fails `not_paged`; an extraction that fails
+  each page that exists, in order), with `extractedText: null` and the top-level `truncated:
+  false`, which describes `extractedText` alone. Each page's `truncated` says whether that
+  page's text stopped at the bound. The pages' text together holds at most the same bound,
+  spent in page order. A file with no pages fails `not_paged`; an extraction that fails
   fails `extraction_failed`.
 - **The implementation MAY keep what it extracted** to answer the next `read` without parsing
   again. How is its own.
@@ -449,9 +471,11 @@ The document's `errors` is the closed list. A failed call writes nothing.
 ## 12. Idempotency
 
 - **`complete_upload` is idempotent per upload.** A repeat for an upload already completed
-  answers the first call's `{ uri, file }` and makes nothing, for as long as that file exists
-  and at least until 300 seconds after the upload's `expiresAt`. The host MAY retry
-  `complete_upload` within that window, and a host that lost an answer retries it safely.
+  answers the first call's `{ uri, file }` unchanged (a tag or a move since does not change
+  it) and makes nothing, while both hold: the file exists, and the upload's completion window
+  (§6) lasts. Once the file is deleted, or the window has passed, a repeat fails
+  `upload_not_found`. The host MAY retry `complete_upload` within the window, and a host that
+  lost an answer retries it safely.
 - **`begin_upload` is not idempotent**: each call opens a new upload. One never completed
   expires and its bytes are removed (§7).
 - **`create` is not idempotent**: each call makes a new file.
@@ -528,22 +552,35 @@ every rule this file states; the runner checks at least:
 - that `resolve` called as `host` with a `runId` in the context succeeds;
 - an upload end to end: `begin_upload`, a PUT of the body, `complete_upload`, then `resolve`
   and a GET of the download URL answer the same bytes; `upload_incomplete` for a missing or
-  short body; a repeated PUT replacing the earlier body; a single `Range` answered 206 with
-  `Content-Range`; `upload_not_found` for another owner's upload; `complete_upload`
-  idempotent and succeeding up to 300 seconds past `expiresAt` for a PUT begun before it;
-  `type_not_allowed` and `too_large` from `begin_upload`;
+  short body; a repeated PUT replacing the earlier body; a PUT past the declared size refused
+  and storing nothing; a single `Range` answered 206 with `Content-Range`, several ranges
+  answered 200 whole and an unsatisfiable one 416; `upload_not_found` for another owner's
+  upload; `complete_upload` idempotent, `upload_not_found` once its file is deleted, and
+  succeeding up to 300 seconds past `expiresAt` for a PUT begun before it; `type_not_allowed`
+  and `too_large` from `begin_upload`, its type recorded by §5 **Types**, and `invalid_input`
+  for a folder path §4 refuses;
 - that every transfer URL meets §7 (scheme, expiry bound, one operation: a download URL refuses
   `PUT`, an upload URL refuses `GET`), and that none answers a redirect;
 - that `create`'s body round-trips unchanged through `resolve` and its download URL,
-  `too_large` past 4 MiB, `type_not_allowed` off the allowlist, and `invalid_input` for
-  unpadded or base64url bodies;
+  a body of exactly 4 MiB stored, `too_large` past it (with a request of nearly 8 MiB answered
+  by the tool), `type_not_allowed` off the allowlist, `invalid_input` for unpadded or base64url
+  bodies and for a folder path §4 refuses;
 - `resolve` found for the owner and absent for another owner, another workspace and a deleted
   file, and that no download URL issued after `delete` serves the body;
 - `list`'s cursor (every file once across pages, `invalid_input` for a cursor with other
-  filters), `read`'s bound and `maxBytes`, pages, `not_paged`;
+  filters), `read`'s bound and `maxBytes`, pages (the top-level `truncated` false, each page's
+  its own), `not_paged`;
 - that no public output, error or screen carries a transfer URL or a body;
 - that the server answers no `resources/read` of a `files://` URI;
 - that every private answer is valid against its closed schema at the stated `version`.
+
+**Timing cases.** The cases that wait for a transfer URL to expire run only when the
+implementation issues URLs that expire within 15 seconds of issue; otherwise the runner skips
+each, saying why. An implementation MAY offer URL lifetimes shorter than §7's bounds, as an
+option for testing or any other reason: any lifetime within those bounds conforms. The case
+that an upload past its completion window is `upload_not_found` waits 300 seconds past
+`expiresAt`, so it runs only when the runner is asked to wait, and is skipped, saying so,
+otherwise.
 
 The document is also held by unit tests: it compiles whole as JSON Schema 2020-12, every
 `$ref` resolves, every tool carries its markings and every public one its annotations, every

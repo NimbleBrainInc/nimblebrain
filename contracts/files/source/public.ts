@@ -304,7 +304,8 @@ const ReadOutput = Type.Object({
       "The file's text, when its type is extractable and extraction succeeded; null otherwise, and with `pages`.",
   }),
   truncated: Type.Boolean({
-    description: "Whether `extractedText` stops at the text bound or at `maxBytes`.",
+    description:
+      "Whether `extractedText` stops at the text bound or at `maxBytes`. False when `extractedText` is null, and with `pages`, where each page says its own.",
   }),
   totalPages: Type.Optional(Type.Integer({ description: "With `pages`: the document's pages." })),
   requestedPages: Type.Optional(
@@ -336,7 +337,7 @@ const CreateInput = Type.Object(
         folder: Type.Optional(
           Type.String({
             description:
-              "Folder path to put the file in, '/'-separated (e.g. 'Reports/Q3'). Folders that do not exist are created. Omit for the top level.",
+              "Folder path to put the file in, '/'-separated (e.g. 'Reports/Q3'). Folders that do not exist are created. Omit, or \"\", for the top level. A leading or trailing '/' or an empty segment is invalid_input.",
           }),
         ),
         mimeType: Type.String({
