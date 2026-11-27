@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
 
@@ -190,8 +190,8 @@ export class WorkspaceContext {
 // ---------------------------------------------------------------------------
 
 /**
- * Thrown when a write would have created a directory inside a workspace root
- * that is not there.
+ * Thrown when a write would land inside a workspace root that is not there, or
+ * inside a deleted workspace that can still be restored.
  *
  * It names the workspace, which a bare `ENOENT` on a leaf path does not: the
  * caller needs to know the *container* is gone, because that is the difference
@@ -204,7 +204,7 @@ export class WorkspaceRootMissingError extends Error {
     readonly attemptedPath: string,
   ) {
     super(
-      `Workspace "${workspaceId}" does not exist — refusing to create ${attemptedPath}. ` +
+      `Workspace "${workspaceId}" does not exist — refusing to write ${attemptedPath}. ` +
         "A workspace root is created by WorkspaceStore.create and by nothing else.",
     );
     this.name = "WorkspaceRootMissingError";
@@ -212,6 +212,9 @@ export class WorkspaceRootMissingError extends Error {
 }
 
 const WORKSPACES_SEGMENT = "workspaces";
+
+/** The file `WorkspaceStore.delete` writes beside `workspace.json`; its presence makes the workspace deleted. */
+export const TOMBSTONE_FILENAME = "deleted.json";
 
 /**
  * The `workspaces/<wsId>` prefix of `dir`, or `null` when `dir` is not inside a
@@ -247,15 +250,16 @@ function workspaceRootOf(dir: string): { wsId: string; root: string } | null {
 }
 
 /**
- * Throw when `dir` sits inside a workspace whose root does not exist.
+ * Throw when `dir` sits inside a workspace whose root does not exist, or whose
+ * root holds a tombstone no purge has begun on.
  *
  * **This is the invariant, and it is here rather than in each writer.**
- * `WorkspaceStore.delete` renames a workspace's subtree out from under every
- * writer holding a path into it. Those writers mkdir recursively, so the first
- * one to fire after the rename used to *re-create the deleted workspace's
- * directory* and write into it — and the result was invisible, because `list()`
+ * A purge removes a workspace's subtree out from under every writer holding a
+ * path into it. Those writers mkdir recursively, so without this the first one
+ * to fire afterwards would *re-create the purged workspace's directory* and
+ * write into it — invisibly, because `list()`
  * skips a workspace directory whose `workspace.json` will not parse. The
- * resurrected tree appeared nowhere and was never deleted again.
+ * resurrected tree would appear nowhere and never be deleted again.
  *
  * Guarding each writer by hand is a discipline problem with no way to grep for
  * the writers, so the rule lives one layer down, immediately before the mkdir:
@@ -269,6 +273,15 @@ function workspaceRootOf(dir: string): { wsId: string; root: string } | null {
  * `CredentialStore.put`, picks the guard up for its workspace-scoped callers
  * without changing what it does for the others.
  *
+ * **A deleted workspace is frozen until its purge begins.** Its directory stays
+ * for the retention window, so existence alone would admit a writer that took
+ * its path before the delete; refusing it keeps a restore exactly what was
+ * deleted. Once the purge has begun (`purgeAt` on the tombstone, written as
+ * its first step) the workspace can only be removed, so the purge's own
+ * teardown (starting the connectors to tell them, dropping their permissions)
+ * may write, and the purge's final `rm` takes whatever landed. A tombstone that
+ * will not parse refuses.
+ *
  * Call this directly when the writer must keep its own `mkdir` — the
  * credential dirs pass `mode: 0o700`, and several are
  * `await mkdir`, so swapping in {@link ensureWorkspaceDir} would widen them to
@@ -277,8 +290,25 @@ function workspaceRootOf(dir: string): { wsId: string; root: string } | null {
  */
 export function assertWorkspaceRootExists(dir: string): void {
   const located = workspaceRootOf(dir);
-  if (located && !existsSync(located.root)) {
+  if (!located) return;
+  if (!existsSync(located.root) || isFrozenTombstone(join(located.root, TOMBSTONE_FILENAME))) {
     throw new WorkspaceRootMissingError(located.wsId, dir);
+  }
+}
+
+/** Whether `path` is a tombstone no purge has begun on. */
+function isFrozenTombstone(path: string): boolean {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf-8");
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+  try {
+    return !(JSON.parse(raw) as { purgeAt?: unknown }).purgeAt;
+  } catch {
+    return true;
   }
 }
 

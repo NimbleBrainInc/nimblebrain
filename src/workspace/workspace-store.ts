@@ -3,6 +3,7 @@ import { readdir, readFile, rm, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { log } from "../observability/log.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
+import { TOMBSTONE_FILENAME } from "./context.ts";
 import { scaffoldWorkspace } from "./scaffold.ts";
 import type { Workspace, WorkspaceMember, WorkspaceRole } from "./types.ts";
 import { WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
@@ -104,9 +105,6 @@ export async function resolveWorkspaceDisplayName(
 }
 
 // ── Tombstone ──────────────────────────────────────────────────────
-
-/** The file `delete` writes beside `workspace.json`; its presence makes the workspace deleted. */
-export const TOMBSTONE_FILENAME = "deleted.json";
 
 /**
  * Why a workspace is deleted and when it goes: `workspaces/<wsId>/deleted.json`.

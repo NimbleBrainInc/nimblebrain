@@ -4,7 +4,7 @@ Scope: the workspace store, its on-disk root, ids, authorization, provisioning, 
 
 ## Workspace roots
 
-**A workspace root is created by `WorkspaceStore.create` (and the `scaffoldWorkspace` it calls), and by nothing else.** The rule is `assertWorkspaceRootExists(dir)` (`src/workspace/context.ts`), which derives the `workspaces/<wsId>` prefix from the path it is handed and throws `WorkspaceRootMissingError`, naming the workspace, when that root is absent. **Every workspace-scoped mkdir passes it** — via `ensureWorkspaceDir` (assert-then-mkdir, for a plain recursive mkdir at the default mode: the tasks store, both conversation stores, the file store, the notification inbox, `writeSkill`), or called directly ahead of a writer's own `mkdir` where the mode or the async form has to be kept (`permissions/permission-store.ts`, `connectors/providers/composio/connection.ts`, `tools/credential-store.ts` — the last three write at `0o700`).
+**A workspace root is created by `WorkspaceStore.create` (and the `scaffoldWorkspace` it calls), and by nothing else.** The rule is `assertWorkspaceRootExists(dir)` (`src/workspace/context.ts`), which derives the `workspaces/<wsId>` prefix from the path it is handed and throws `WorkspaceRootMissingError`, naming the workspace, when that root is absent or holds a tombstone no purge has begun on (a deleted workspace is frozen, so a restore is exactly what was deleted; once `purgeAt` is set only the purge's teardown runs there, and its `rm` takes what it wrote). **Every workspace-scoped mkdir passes it** — via `ensureWorkspaceDir` (assert-then-mkdir, for a plain recursive mkdir at the default mode: the tasks store, both conversation stores, the file store, the notification inbox, `writeSkill`), or called directly ahead of a writer's own `mkdir` where the mode or the async form has to be kept (`permissions/permission-store.ts`, `connectors/providers/composio/connection.ts`, `tools/credential-store.ts` — the last three write at `0o700`).
 
 The prefix is derived by scanning for the first `workspaces/<wsId>` **pair**. Testing the segment after the last `workspaces` is not the same thing and is not safe: a path *ending* in `workspaces` has no successor to test, so it read as "not a workspace tree" and fell through to the unguarded mkdir — reachable by naming a task "Workspaces", since `taskRunsDir` ends in `runs/<taskId>`.
 
@@ -26,12 +26,15 @@ No contract has an archive or restore; plugins only ever see `delete_workspace`,
   workspace out, so every door answers it as not found and every write through the store
   is refused; `getDeleted` / `listDeleted` read it.
 - **Delete changes nothing else** (`Runtime.deleteWorkspace`): the run worker drops it, its
-  connectors are stopped and forgotten in the process, and no plugin is called. Members,
+  connectors are stopped and forgotten in the process, and no plugin is called. Writers that
+  took a path before the delete are refused by the root guard. Members,
   record, files, secrets and every plugin's records stay, so a restore is complete.
 - **Restore** (`Runtime.restoreWorkspace`) removes the tombstone, starts the connectors as
   boot does and serves the workspace in the run worker. Refused once `purgeAt` is set or the
   window has passed: a purge that began is only ever finished.
-- **The purge** (`Runtime.purgeWorkspace`), per workspace and one at a time with restores:
+- **Delete, restore and purge run one at a time per workspace** (`oneAtATime`); a zero-window
+  delete runs its purge inside its own turn.
+- **The purge** (`Runtime.purgeWorkspace`):
   set `purgeAt`; call `delete_workspace` as `host` on every bound server whose contract makes
   it private, walled to the workspace with no owner (it crosses every owner, and is the host's
   call whoever deleted or purges); tear down the

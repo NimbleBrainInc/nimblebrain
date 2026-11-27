@@ -826,7 +826,7 @@ export class Runtime {
   private _runWorker: RunWorker | null = null;
   /** Signs the run grant a person's call to a grant-marked contract tool carries. */
   private _runGrants: RunGrants | null = null;
-  /** The last restore or purge queued for each workspace (`oneAtATime`). */
+  /** The last delete, restore or purge queued for each workspace (`oneAtATime`). */
   private readonly _tombstoneOps = new Map<string, Promise<void>>();
   /** The purge reconcile's pass in flight, and its timer. */
   private _purgePass: Promise<void> | null = null;
@@ -4871,20 +4871,27 @@ export class Runtime {
    * result is returned.
    *
    * The deleting identity is recorded on the tombstone, for an admin's view.
+   * Queued with the workspace's restores and purges, so a restore never lands
+   * while the delete is still stopping what the restore starts.
    */
-  async deleteWorkspace(wsId: string): Promise<WorkspaceDeleteResult> {
+  deleteWorkspace(wsId: string): Promise<WorkspaceDeleteResult> {
     const deletedBy = getRequestContext()?.identity?.id ?? null;
-    if (!(await this._workspaceStore.delete(wsId, { deletedBy }))) return { deleted: false };
-    await this._runWorker?.drop(wsId);
-    await this.unloadWorkspaceConnectors(wsId);
-    const deleted = await this._workspaceStore.getDeleted(wsId);
-    const purgeAt = deleted ? this.purgeTimeOf(deleted.tombstone) : new Date();
-    if (purgeAt.getTime() > Date.now()) return { deleted: true, purgeAt: purgeAt.toISOString() };
-    return {
-      deleted: true,
-      purgeAt: purgeAt.toISOString(),
-      purge: await this.purgeWorkspace(wsId),
-    };
+    return this.oneAtATime(wsId, async () => {
+      if (!(await this._workspaceStore.delete(wsId, { deletedBy }))) return { deleted: false };
+      await this._runWorker?.drop(wsId);
+      await this.unloadWorkspaceConnectors(wsId);
+      const deleted = await this._workspaceStore.getDeleted(wsId);
+      const purgeAt = deleted ? this.purgeTimeOf(deleted.tombstone) : new Date();
+      if (purgeAt.getTime() > Date.now()) {
+        return { deleted: true, purgeAt: purgeAt.toISOString() };
+      }
+      // Already this workspace's turn in the queue, so the purge runs here.
+      return {
+        deleted: true,
+        purgeAt: purgeAt.toISOString(),
+        purge: await this.purgeOnce(wsId, {}),
+      };
+    });
   }
 
   /** The retention window for a deleted workspace, in ms (`workspaces.deletedRetentionDays`). */
@@ -4936,8 +4943,9 @@ export class Runtime {
   }
 
   /**
-   * Run `fn` after every restore and purge of `wsId` already queued, so a
-   * restore never lands in the middle of a purge or a purge in a restore.
+   * Run `fn` after every delete, restore and purge of `wsId` already queued,
+   * so none of them lands in the middle of another. `fn` never queues on the
+   * same workspace: it would wait on itself.
    */
   private oneAtATime<T>(wsId: string, fn: () => Promise<T>): Promise<T> {
     const result = (this._tombstoneOps.get(wsId) ?? Promise.resolve()).then(fn);

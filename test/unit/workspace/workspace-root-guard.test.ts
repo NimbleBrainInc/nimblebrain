@@ -12,7 +12,9 @@
  * root comes from `WorkspaceStore.create`, and everything else may only create
  * paths inside a root that is already there. This file drives each
  * workspace-scoped writer against a workspace that is gone and asserts the
- * refusal names the workspace — and then drives the same write inside a live
+ * refusal names the workspace, then against a deleted workspace whose
+ * directory the retention window keeps (refused until its purge begins), and
+ * then drives the same write inside a live
  * root, because "create your own subdirectory on first write" is still how
  * files and notifications are meant to behave. Conversations and tasks are
  * their plugins' storage; the kernel stamps only a live workspace on their
@@ -20,7 +22,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
@@ -171,6 +173,46 @@ describe("a write into a workspace that is gone", () => {
       expect(existsSync(join(workDir, "workspaces", WS))).toBe(false);
     });
   }
+});
+
+describe("a write into a deleted workspace", () => {
+  function tombstone(purgeAt?: string): void {
+    const root = seedWorkspaceRoot(workDir, WS);
+    writeFileSync(
+      join(root, "deleted.json"),
+      JSON.stringify({ deletedAt: "2026-01-01T00:00:00.000Z", deletedBy: null, purgeAt }),
+    );
+  }
+
+  for (const { name, write } of WRITERS) {
+    test(`${name} refuses while it can be restored`, async () => {
+      // The directory stays for the retention window, so existence alone would
+      // admit a writer that took its path before the delete.
+      tombstone();
+      let thrown: unknown;
+      try {
+        await write();
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(WorkspaceRootMissingError);
+      expect((thrown as WorkspaceRootMissingError).workspaceId).toBe(WS);
+      expect(readdirSync(join(workDir, "workspaces", WS))).toEqual(["deleted.json"]);
+    });
+
+    test(`${name} is admitted once its purge has begun`, async () => {
+      // The purge's own teardown writes here; its final rm takes what it wrote.
+      tombstone("2026-02-01T00:00:00.000Z");
+      await write();
+      expect(readdirSync(join(workDir, "workspaces", WS)).length).toBeGreaterThan(1);
+    });
+  }
+
+  test("a tombstone that will not parse refuses", () => {
+    const root = seedWorkspaceRoot(workDir, WS);
+    writeFileSync(join(root, "deleted.json"), "{");
+    expect(() => ensureWorkspaceDir(join(root, "files"))).toThrow(WorkspaceRootMissingError);
+  });
 });
 
 describe("the same write inside a live workspace", () => {

@@ -229,6 +229,50 @@ describe("a deleted workspace", () => {
     await runtime.ensureWorkspaceRegistry(WS);
   });
 
+  test("a restore asked for while the delete is still stopping it runs after, and stays loaded", async () => {
+    await seedData();
+    // biome-ignore lint/complexity/useLiteralKeys: the run worker is private to the runtime
+    const worker = runtime["_runWorker"];
+    if (!worker) throw new Error("no run worker");
+    const drop = worker.drop.bind(worker);
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let dropping = () => {};
+    const reached = new Promise<void>((resolve) => {
+      dropping = resolve;
+    });
+    const spy = spyOn(worker, "drop").mockImplementation(async (wsId) => {
+      dropping();
+      await held;
+      await drop(wsId);
+    });
+    try {
+      const deleting = deleteAsOwner();
+      await reached;
+      // The tombstone is written and the delete is waiting on the worker.
+      const restoring = runtime.restoreWorkspace(WS);
+      let restoredEarly = false;
+      void restoring.then(() => {
+        restoredEarly = true;
+      });
+      await Bun.sleep(50);
+      expect(restoredEarly).toBe(false);
+
+      release();
+      expect((await deleting).deleted).toBe(true);
+      expect((await restoring).restored).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await runtime.getWorkspaceStore().get(WS)).not.toBeNull();
+    // The delete finished before the restore began, so nothing unloaded what
+    // the restore started.
+    // biome-ignore lint/complexity/useLiteralKeys: the registries are private to the runtime
+    expect(runtime["_workspaceRegistries"].has(WS)).toBe(true);
+  });
+
   test("after the window, is purged: each plugin's delete_workspace, then the kernel's data", async () => {
     await seedData();
     await deleteAsOwner();
