@@ -397,9 +397,11 @@ async function startBoundServer(
 }
 
 /**
- * Start the server of every binding in the resolved set, by contract. A
- * server that does not start refuses the boot, naming the contract, the
- * plugin and the server; the ones already started are stopped first.
+ * Start the server of every binding in the resolved set, by contract. The
+ * servers are separate processes, so they start together: boot waits for the
+ * slowest, not the sum. A server that does not start refuses the boot, naming
+ * the contract, the plugin and the server; the ones that started are stopped
+ * first.
  */
 export async function startBoundServers(
   resolved: ResolvedPlugins,
@@ -408,24 +410,26 @@ export async function startBoundServers(
   signGrant?: GrantSigner,
   guards: ReadonlyMap<string, CallGuard> = new Map(),
 ): Promise<Map<string, BoundServer>> {
+  const settled = await Promise.allSettled(
+    resolved.bindings.map((binding) =>
+      startBoundServer(
+        resolved,
+        binding,
+        eventSink,
+        overlays,
+        signGrant,
+        guards.get(binding.contract),
+      ),
+    ),
+  );
   const bound = new Map<string, BoundServer>();
-  try {
-    for (const binding of resolved.bindings) {
-      bound.set(
-        binding.contract,
-        await startBoundServer(
-          resolved,
-          binding,
-          eventSink,
-          overlays,
-          signGrant,
-          guards.get(binding.contract),
-        ),
-      );
-    }
-  } catch (err) {
+  for (const result of settled) {
+    if (result.status === "fulfilled") bound.set(result.value.contract, result.value);
+  }
+  const failed = settled.find((result) => result.status === "rejected");
+  if (failed) {
     await stopBoundServers(bound);
-    throw err;
+    throw failed.reason;
   }
   return bound;
 }

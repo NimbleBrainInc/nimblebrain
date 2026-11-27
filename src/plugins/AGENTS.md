@@ -151,8 +151,9 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   `privateTools`): left out of `tools/list` and so of every agent listing and the door, and
   refused by `execute` and `startToolAsTask`. That is tidiness; the server's `forbidden` is
   the boundary.
-- **Lifecycle.** A server that does not start refuses the boot, naming the contract, plugin
-  and server. One that exits is restarted on the next call that needs it (the kernel's own
+- **Lifecycle.** The bound servers start together, so boot waits for the slowest, not the
+  sum. A server that does not start refuses the boot, naming the contract, plugin
+  and server, and the ones that started are stopped. One that exits is restarted on the next call that needs it (the kernel's own
   call, or an agent's through `McpSource` recovery); a call in flight when it exited is not
   retried. Shutdown settles queued writes, then stops it; a stopped server is never
   restarted.
