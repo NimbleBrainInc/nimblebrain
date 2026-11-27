@@ -123,8 +123,10 @@ The public tools' behaviour, where a schema cannot state it.
 - **A one-off** is a task with `kind: "oneoff"`, created by `run` or `run_batch` from an inline
   `definition`. With an `idempotencyKey`, its id is derived from the key.
 - **`run`** asks for a run and answers at once with `{ runId, taskId }`; `run_result` reads its
-  state and `cancel` stops it. A run refused when it is claimed (already running, a spent
-  budget) is recorded `skipped` with its reason. Over MCP's task augmentation, `run` is a task
+  state and `cancel` stops it. **One run per task at a time**: `run` of a task that has a run
+  running, or one a `run` asked for still queued, fails `conflict` naming that run, and asks
+  for nothing (a batch's runs and an event run not yet due do not count). A run refused when
+  it is claimed (one began first, a spent budget) is recorded `skipped` with its reason. Over MCP's task augmentation, `run` is a task
   whose id is the run id and whose result is `run_result`'s answer once the run has ended; that
   binding is the host's.
 - **One status vocabulary.** A run's `execution` (`queued`, `running`, `skipped`, `completed`,

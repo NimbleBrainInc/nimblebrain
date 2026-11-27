@@ -379,6 +379,31 @@ describe("schedules", () => {
   });
 });
 
+describe("one run per task", () => {
+  test("run refuses a task with a run queued or running, naming it, and asks for nothing", async () => {
+    await ok("create", { manifest: { name: "Solo" }, body: "p" });
+    const { runId } = await ok("run", { taskId: "solo" });
+    const queued = await call("run", { taskId: "solo" });
+    expect(queued.isError).toBe(true);
+    expect(JSON.parse(queued.content[0]?.text ?? "{}")).toMatchObject({ code: "conflict" });
+    expect(queued.content[0]?.text).toContain(runId);
+    expect((await due(T0)).occurrences).toHaveLength(1);
+    const begun = await begin(`r:${runId}`, T0);
+    expect((await call("run", { taskId: "solo" })).content[0]?.text).toContain("running");
+    await end(begun, outcome(T0));
+    expect((await ok("run", { taskId: "solo" })).runId).not.toBe(runId);
+  });
+
+  test("a scheduled run in flight refuses run too", async () => {
+    await ok("create", { manifest: { name: "Ticker", schedule: { intervalMs: HOUR } }, body: "p" });
+    const occ = (await due(T0)).occurrences[0];
+    await begin(occ.ref, T0);
+    expect(
+      JSON.parse((await call("run", { taskId: "ticker" })).content[0]?.text ?? "{}").code,
+    ).toBe("conflict");
+  });
+});
+
 describe("token budgets", () => {
   test("windows are UTC calendar days and months", () => {
     const at = Date.parse("2031-03-31T23:30:00-10:00"); // 2031-04-01 09:30 UTC

@@ -1408,10 +1408,11 @@ async function pagingCases(c: FullCtx): Promise<void> {
   await h.run(
     "due pages by limit and cursor, repeating now and until, no repeats or skips",
     async () => {
-      const taskId = await createTask(person, { name: taskName(audit, "paging") }, "p");
-      const runIds: string[] = [];
-      for (let i = 0; i < 5; i++)
-        runIds.push(str((await okCall(person, "run", { taskId })).runId, "runId"));
+      // One run per task: a task with a run queued refuses another (§4).
+      for (let i = 0; i < 5; i++) {
+        const taskId = await createTask(person, { name: taskName(audit, `paging ${i}`) }, "p");
+        await okCall(person, "run", { taskId });
+      }
       const keys: string[] = [];
       let cursor: unknown;
       let pages = 0;
@@ -1636,6 +1637,7 @@ async function runFlowCases(c: FullCtx): Promise<void> {
   await runOutcomeCases(c, host, person, taskId);
   await runPagingCase(c, person, taskId, runId);
   await idempotencyCases(c, host, person, taskId);
+  await activeRunCase(c, host, person, taskId);
   await h.run("status and list show the task", async () => {
     const status = await okCall(person, "status", { taskId });
     eq(obj(status.task, "task").prompt, prompt, "prompt");
@@ -1751,6 +1753,25 @@ async function idempotencyCases(
     expectPublicError(other, "conflict", "run");
     await okCall(person, "cancel", { runId: first.runId });
   });
+}
+
+async function activeRunCase(c: FullCtx, host: Host, person: Conn, taskId: string): Promise<void> {
+  const t = CLOCK_START + 2 * HOUR;
+  await c.h.run(
+    "run of a task with a run queued or running is conflict, asking for nothing",
+    async () => {
+      const { runId, occ } = await requestRun(host, person, taskId, t);
+      const made = await occurrencesOf(host, t, async () =>
+        expectPublicError(await person.call("run", { taskId }), "conflict", "run while queued"),
+      );
+      eq(made, [], "occurrences a refused run made");
+      await beginRun(host, occ, 1, t);
+      expectPublicError(await person.call("run", { taskId }), "conflict", "run while running");
+      await host.end(runId, 1, outcome({ start: t }));
+      const next = str((await okCall(person, "run", { taskId })).runId, "runId");
+      await okCall(person, "cancel", { runId: next });
+    },
+  );
 }
 
 // ── Cancel ───────────────────────────────────────────────────────────────
@@ -2225,7 +2246,9 @@ async function retentionCases(c: FullCtx): Promise<void> {
     await host.end(ended.runId, 1, outcome({ start: t, output: "old" }));
     const open = await requestRun(host, person, taskId, t + MINUTE);
     await beginRun(host, open.occ, 1, t + MINUTE);
-    const queued = str((await okCall(person, "run", { taskId })).runId, "runId");
+    // Another task: one with a run running refuses a second (§4).
+    const other = await createTask(person, { name: taskName(audit, "ret queued") }, "q");
+    const queued = str((await okCall(person, "run", { taskId: other })).runId, "runId");
     const future = t + 50 * 365 * DAY;
     await host.due(future, future + DAY);
     expectPublicError(

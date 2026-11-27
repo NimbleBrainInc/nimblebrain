@@ -141,6 +141,10 @@ the sidebar placement (`HOST_META`), through the server SDK's `declareHostMeta`.
   raises a notice.
 - **`run` answers at once** with `{ runId, taskId }`; the run is queued and followed with
   `run_result`. No queue position, no synchronous wait, no MCP Tasks handle.
+- **`run` refuses a task that already has a run** (`activeRunOf`, `src/records.ts`): one
+  outside a batch running, or a `run` still queued, is `conflict` naming it, so the caller
+  learns at once. The claim's `Already running` skip stays as the backstop for what the
+  call cannot see (a scheduled or event run that begins first).
 - **Instants are the host's.** A schedule is placed on the next `due`, not at write time; a
   past `at` is accepted at write and judged on the `due` that would produce it: within its
   grace it is listed and runs, past it it is missed. A once produced in time runs however long

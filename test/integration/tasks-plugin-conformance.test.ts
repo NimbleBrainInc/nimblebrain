@@ -39,7 +39,7 @@ const HOST_META_KEY = "ai.nimblebrain/host";
 const PANEL_URI = "ui://tasks/panel";
 
 /** Every case of the full run: the runner's case list, all of which must pass. */
-const FULL_CASES = 81;
+const FULL_CASES = 82;
 /** Public-only mode against an implementation: it serves the private tools it implements. */
 const PUBLIC_ONLY_EXPECTED_FAILURE = "no private tool is listed";
 

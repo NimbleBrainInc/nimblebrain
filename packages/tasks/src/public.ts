@@ -23,6 +23,7 @@ import {
 import { MAX_RUN_INPUT_BYTES, runInputProblem, schemaProblem } from "./json-schema.ts";
 import type { Batch, DefinitionFields, RunRecord, Schedule, TaskDef } from "./model.ts";
 import {
+  activeRunOf,
   allTasks,
   blobNames,
   clearDisableState,
@@ -433,6 +434,14 @@ export function run(tx: Tx, caller: Caller, args: Checked) {
     if (existing.taskId !== task.id)
       throw conflict("idempotencyKey already asked for a run of another task.");
     return { runId: existing.runId, taskId: task.id, existing: true };
+  }
+  const active = activeRunOf(tx.ws.state, task.uid);
+  if (active) {
+    const where = active.status === "running" ? "running" : "queued";
+    throw conflict(
+      `"${task.id}" already has a run ${where} (${active.id}). Follow it with run_result, ` +
+        "or cancel it to ask for a new one.",
+    );
   }
   const record: RunRecord = {
     id: newRunId(),
