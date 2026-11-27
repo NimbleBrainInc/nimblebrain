@@ -465,10 +465,11 @@ describe("the files contract document", () => {
       mimeType: "application/pdf",
       size: 1024,
       source: "chat",
-      conversationId: "conv_0123456789abcdef",
     };
     expect(input(call)).toBe(true);
-    expect(input({ ...call, runId: "run_1", folder: "Reports", tags: ["q3"] })).toBe(true);
+    expect(input({ ...call, folder: "Reports", tags: ["q3"] })).toBe(true);
+    expect(input({ ...call, conversationId: "conv_1" })).toBe(false);
+    expect(input({ ...call, runId: "run_1" })).toBe(false);
     expect(input({ ...call, source: "agent" })).toBe(false);
     expect(input({ ...call, size: -1 })).toBe(false);
     expect(input({ ...call, ownerId: "u" })).toBe(false);
@@ -480,10 +481,17 @@ describe("the files contract document", () => {
       url: "http://127.0.0.1:41234/u/opaque-token",
       method: "PUT",
       headers: { "content-type": "application/pdf" },
-      maxBytes: 1024,
       expiresAt: at,
     };
     expect(output(answer)).toBe(true);
+    expect(output({ ...answer, maxBytes: 1024 })).toBe(false);
+    const withHeader = (name: string, value: string) => ({ ...answer, headers: { [name]: value } });
+    expect(output(withHeader("x-amz-meta-a", "v\tw"))).toBe(true);
+    expect(output(withHeader("bad name", "v"))).toBe(false);
+    expect(output(withHeader("x-a:b", "v"))).toBe(false);
+    expect(output(withHeader("x-a", "v\r\nInjected: 1"))).toBe(false);
+    expect(output(withHeader("x-a", "v\u0000"))).toBe(false);
+    expect(output(withHeader("x-a", "v".repeat(1025)))).toBe(false);
     expect(output({ ...answer, url: "https://store.example/obj?sig=x" })).toBe(true);
     expect(output({ ...answer, url: "file:///tmp/x" })).toBe(false);
     expect(output({ ...answer, method: "POST" })).toBe(false);
@@ -631,6 +639,13 @@ describe("the files contract document", () => {
     expect(schema("info_output")({ ...file, source: 1 })).toBe(false);
   });
 
+  test("sizes are non-negative integers", () => {
+    expect(schema("info_output")({ ...file, size: 1.5 })).toBe(false);
+    expect(schema("info_output")({ ...file, size: -1 })).toBe(false);
+    const read = { id: file.id, filename: "a", mimeType: "text/plain", extractedText: null };
+    expect(schema("read_output")({ ...read, truncated: false, size: 2.5 })).toBe(false);
+  });
+
   test("its public errors are the closed list the spec names", () => {
     expect(doc.errors.public.map((e) => e.code).sort()).toEqual([
       "conflict",
@@ -644,6 +659,9 @@ describe("the files contract document", () => {
       "type_not_allowed",
       "unknown_tool",
     ]);
+    expect(doc.errors.public.find((e) => e.code === "scope_missing")?.prefix).toBe(
+      "Scope missing: ",
+    );
     expect(doc.errors.private.map((e) => e.code).sort()).toEqual([
       "forbidden",
       "internal_error",

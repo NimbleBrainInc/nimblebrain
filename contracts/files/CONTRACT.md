@@ -82,9 +82,10 @@ No schema in this contract has a workspace, owner or principal input. This contr
   file, folder or upload answers exactly as one that does not exist (`file_not_found`,
   `folder_not_found`, `upload_not_found`, left out of lists, `found: false` from `resolve`).
 - **A call missing what its tool is walled to reads and writes nothing**: `scope_missing`.
-- **Provenance comes from the context, never from arguments.** `create` records the context's
-  `conversationId` and `runId` on the file it makes (absent: `null`). `begin_upload` takes the
-  conversation and the run from its input, because the host takes the body in for them (§10).
+- **Provenance comes from the context, never from arguments.** `create` and `begin_upload`
+  record the context's `conversationId` and `runId` on the file they make (absent: `null`). The
+  host stamps them on a `begin_upload` for a chat turn or a run as on any call it makes for
+  one, after verifying the conversation is the caller's (§10).
 - **Workspaces are the host's.** The implementation never decides whether a workspace exists;
   it creates whatever storage it needs on first use, and a workspace it holds nothing for reads
   as one with no files. Keeping files out of a deleted workspace is the host's invariant.
@@ -172,20 +173,21 @@ a `files://` URI itself, which is always the host's.
 
 ## 6. Private tools
 
-- **`begin_upload({ version, filename, mimeType, size, source, conversationId?, runId?,
-  folder?, tags?, description? })`** opens an upload for a body of exactly `size` bytes, owned
-  by the context's owner in its workspace, and answers `{ uploadId, url, method: "PUT",
-  headers, maxBytes, expiresAt }`. `source` is the door the body comes through: `chat` (an
-  attachment), `app` (an upload through an app or the REST door), `manual` (an upload a person
-  made in the shell); `agent` is `create`'s alone. `conversationId` and `runId` are what the
-  host takes the body in for, `null` on the record when absent. `folder` is a path, as
+- **`begin_upload({ version, filename, mimeType, size, source, folder?, tags?, description?
+  })`** opens an upload for a body of exactly `size` bytes, owned by the context's owner in its
+  workspace, and answers `{ uploadId, url, method: "PUT", headers, expiresAt }`. `source` is
+  the door the body comes through: `chat` (an attachment), `app` (an upload through an app or
+  the REST door), `manual` (an upload a person made in the shell); `agent` is `create`'s alone.
+  The file records the context's `conversationId` and `runId` (§2). `folder` is a path, as
   `create`'s. It fails `type_not_allowed` for a type off the allowlist and `too_large` for a
   `size` past the implementation's per-file limit. It makes no file: a file exists only once
   `complete_upload` answers.
-- **`complete_upload({ version, uploadId })`** makes the file from the body PUT to the upload's
-  URL and answers `{ uri, file }`. The implementation measures the stored body itself: absent,
-  or of a length other than the declared `size`, it fails `upload_incomplete` and the upload
-  stays open until it expires. An unknown, expired or out-of-scope `uploadId` fails
+- **`complete_upload({ version, uploadId })`** makes the file from the body last stored at the
+  upload's URL and answers `{ uri, file }`, where `uri` is `files://<file.id>`. The
+  implementation measures the stored body itself: absent, or of a length other than the
+  declared `size`, it fails `upload_incomplete` and the upload stays open until it expires.
+  It succeeds for a body whose PUT began before `expiresAt` for at least 300 seconds after
+  `expiresAt`. An unknown or out-of-scope `uploadId`, or one past that window, fails
   `upload_not_found`. The record's `size` is the measured length.
 - **`resolve({ version, uris })`** answers, for each URI in the order asked, `{ uri, found:
   true, file, download: { url, expiresAt } }` when the URI names a file the context's owner may
@@ -221,7 +223,8 @@ configuration for it.
 - **expires soon, and says when**: `expiresAt` is at most 300 seconds after issue for a
   download URL and at most 900 seconds for an upload URL. A request begun before `expiresAt`
   runs to its end; one begun after is refused. An upload URL also stops accepting once its
-  upload is completed.
+  upload is completed. The host does not refuse a URL before trying it because of
+  `expiresAt`; the URL's answer decides.
 - **is absolute `https:`**, or `http:` only to a loopback address (`127.0.0.0/8`, `[::1]`,
   `localhost`), at most 4096 characters, on an origin the operator lists for the
   implementation's binding (loopback when none are listed; §10).
@@ -229,9 +232,11 @@ configuration for it.
   notification. It crosses only the private outputs above.
 
 **What a URL serves.** A download URL answers `GET` with status 200, the file's exact body
-streamed, and its `Content-Length`; it MAY answer `Range` requests. An upload URL accepts a
-`PUT` of at most `maxBytes` bytes (at least `size`) with the `headers` `begin_upload` named, and
-answers a 2xx once the body is stored. After `delete` answers, no URL issued since serves the
+streamed, unencoded, and its `Content-Length`. It MUST honour a single `Range: bytes=a-b` with
+206, `Content-Range` and that range's `Content-Length`. An upload URL accepts a `PUT` of the
+body with the `headers` `begin_upload` named, and answers a 2xx once the body is stored. A PUT
+may be repeated until the upload completes or expires; each replaces any earlier body, and
+`complete_upload` measures the last one stored. After `delete` answers, no URL issued since serves the
 file; one issued before serves it at most until it expires. That window is unreachable from
 outside: only the host ever holds a download URL, and it fetches from it at once after the
 `resolve` that answered it, under the caller's context.
@@ -239,7 +244,9 @@ outside: only the host ever holds a download URL, and it fetches from it at once
 **A local implementation** (one the host runs on its own machine, over stdio) serves its URLs
 from an HTTP listener bound to a loopback address on a port it chooses, started with the
 server. The listener answers only `GET` of a live download token and `PUT` of a live upload
-token, and answers every other request alike, with 404. Plain HTTP is acceptable there because
+token, and answers every other request alike, with 404. It binds `127.0.0.1` or `::1`
+explicitly, never `0.0.0.0` or `::`; compares tokens in constant time; keeps tokens out of
+its access logs; and sends no CORS headers. Plain HTTP is acceptable there because
 the traffic never leaves the machine. An implementation the host reaches over a network serves
 `https:` URLs.
 
@@ -250,10 +257,18 @@ the traffic never leaves the machine. An implementation the host reaches over a 
   configuration, not a field of this contract); with none listed, only loopback origins. A URL
   outside the allowed origins is a failed transfer, and the host sends it no request.
 - It follows no redirect: a 3xx answer is a failed transfer.
-- It sends no credential, cookie or header of its own beyond `Content-Length` and, on a `PUT`,
-  the `headers` `begin_upload` named.
-- A transfer that does not answer 2xx, or a download whose length is not the record's `size`,
-  is a failed transfer; the host serves nothing from it.
+- It sends no credential, cookie or header of its own beyond `Content-Length`,
+  `Accept-Encoding: identity`, on a `GET` an optional single `Range`, and on a `PUT` the
+  `headers` `begin_upload` named. It refuses an upload whose `headers` name `Host`,
+  `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade`, `Expect`, `TE`, `Trailer`,
+  `Keep-Alive`, `Cookie`, `Authorization` or any `Proxy-*` field, compared case-insensitively.
+- A transfer that does not answer 2xx is a failed transfer, and so is an answer with a
+  `Content-Encoding` other than `identity`.
+- **Before it writes a byte onward**, the host checks that the answer's `Content-Length` is
+  present and equals the record's `size` (for a 206, the range's length, with a
+  `Content-Range` naming the range it asked for). It sets its own `Content-Length` from the
+  record, counts while streaming, and aborts on an overrun or a short read. A failed transfer
+  serves nothing.
 - It never hands a transfer URL to an agent, an app, a browser or any client. A direct upload
   or download by a client is a later, explicit capability, not part of 1.0.
 
@@ -328,11 +343,11 @@ visibility and bytes.
    bridge, and any later door take the same path:
    - The host checks what it can before opening any upload: the count, each body's size, the
      total, and the allowlist (§7).
-   - When the upload names a `conversationId`, the host verifies that the conversation is the
-     caller's in this workspace before `begin_upload`. For a chat turn the conversation id is
+   - Before it stamps a `conversationId` on `begin_upload`, the host verifies that the
+     conversation is the caller's in this workspace. For a chat turn the conversation id is
      minted before intake, so every file's record names the conversation it was attached in.
    - For each body it calls `begin_upload` as `host`, walled to the workspace and the uploader,
-     streams exactly `size` bytes to the upload URL (§7), and calls `complete_upload`. It never
+     with the turn's `conversationId` or the run's `runId` in the context, streams exactly `size` bytes to the upload URL (§7), and calls `complete_upload`. It never
      holds a whole body in memory to measure it.
    - **The REST door is per file**: each file is taken in, or refused, on its own.
    - **A chat turn is all or none.** The host opens no upload until every file of the turn
@@ -344,14 +359,15 @@ visibility and bytes.
    as `host`, walled to the uploader, with a `maxBytes` of its choosing, and puts the text in
    the message; an image or a PDF travels as a `resource_link` to its `files://` URI. The host
    runs no parser.
-4. **Serving bytes, at every door, through `resolve`.** The browser download route
-   (`GET /v1/workspaces/:workspaceId/files/:id`), `resources/read` of a `files://` URI at the MCP
-   door and the app bridge, an image or a PDF rehydrated into a model's prompt, and a
-   connector's host-resources read: each calls `resolve` as `host` with the caller's own
-   workspace and owner, and, when the file is found, streams the body from its download URL.
-   Absent is not found, at every door alike. There is no download route without the workspace.
+4. **Serving bytes, at every door, through `resolve`.** The browser download door,
+   `resources/read` of a `files://` URI at the MCP door and the app bridge, an image or a PDF
+   rehydrated into a model's prompt, and a connector's host-resources read: each calls
+   `resolve` as `host` with the caller's own workspace and owner, and, when the file is found,
+   streams the body from its download URL. Absent is not found, at every door alike. Every
+   door names the workspace it serves from; none locates a file without one.
    - The host serves the body with its own headers and passes none of the URL's answer through
-     but its length. On the download route: `Content-Type` the record's type when it is on the
+     but its length and, for a range, its `Content-Range`. The browser download door supports
+     `Range` by passing a single range through to the download URL. On that door: `Content-Type` the record's type when it is on the
      allowlist and `application/octet-stream` otherwise, `X-Content-Type-Options: nosniff`, a
      sandboxing `Content-Security-Policy`, `Content-Length` from the answer, and a
      `Content-Disposition` whose filename the host sanitised (no control characters, quotes or
@@ -398,7 +414,8 @@ The document's `errors` is the closed list. A failed call writes nothing.
 
 - **`complete_upload` is idempotent per upload.** A repeat for an upload already completed
   answers the first call's `{ uri, file }` and makes nothing, for as long as that file exists
-  and at least until the upload's `expiresAt`. A host that lost an answer retries it safely.
+  and at least until 300 seconds after the upload's `expiresAt`. The host MAY retry
+  `complete_upload` within that window, and a host that lost an answer retries it safely.
 - **`begin_upload` is not idempotent**: each call opens a new upload. One never completed
   expires and its bytes are removed (§7).
 - **`create` is not idempotent**: each call makes a new file.
@@ -410,7 +427,7 @@ The document's `errors` is the closed list. A failed call writes nothing.
 - **The storage.** No path, file handle, query, table, bucket, object key or layout crosses the
   contract, and the host holds no configuration for it. A transfer URL is opaque to the host.
 - **Bodies on MCP** beyond §7's table.
-- **The host's serving machinery**: routes beyond those §10 names, caches, timeouts.
+- **The host's serving machinery**: routes and their paths, caches, timeouts.
 - **Sharing.** A file is its owner's alone in 1.0. Visibility beyond the owner is a later minor,
   decided in `resolve`, never by widening the host's reads.
 - **Direct transfers by a client.** A transfer URL reaches no agent, app or browser in 1.0.
@@ -459,10 +476,10 @@ difference:
 - **A record's `source` is an open string** in outputs (its four values unchanged), and the
   record carries no `deleted` or `deletedAt`, which a live record never had set.
 - **`runId` comes from the host context** (`runId`, host-context spec §5).
-- **The host's routes change with it** (not tools of this contract): the browser download route
-  names the workspace (`/v1/workspaces/:workspaceId/files/:id`), because `resolve` is walled to
-  the workspace in the caller's context, and the route without a workspace is gone; an
-  attachment's text reaches the prompt through `read`.
+- **Sizes are integers**: a record's `size`, `read`'s and `create`'s are `integer`, at least 0.
+- **The host's doors change with it** (not tools of this contract): every door that serves a
+  file names its workspace, because `resolve` is walled to the workspace in the caller's
+  context; an attachment's text reaches the prompt through `read`.
 
 ## 16. Conformance
 
@@ -475,7 +492,9 @@ every rule this file states; the runner checks at least:
 - that `resolve` called as `host` with a `runId` in the context succeeds;
 - an upload end to end: `begin_upload`, a PUT of the body, `complete_upload`, then `resolve`
   and a GET of the download URL answer the same bytes; `upload_incomplete` for a missing or
-  short body; `upload_not_found` for another owner's upload; `complete_upload` idempotent;
+  short body; a repeated PUT replacing the earlier body; a single `Range` answered 206 with
+  `Content-Range`; `upload_not_found` for another owner's upload; `complete_upload`
+  idempotent and succeeding up to 300 seconds past `expiresAt` for a PUT begun before it;
   `type_not_allowed` and `too_large` from `begin_upload`;
 - that every transfer URL meets §7 (scheme, expiry bound, one operation: a download URL refuses
   `PUT`, an upload URL refuses `GET`), and that none answers a redirect;

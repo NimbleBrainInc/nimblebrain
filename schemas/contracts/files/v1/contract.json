@@ -238,7 +238,7 @@
       },
       {
         "code": "scope_missing",
-        "prefix": "[files] no ",
+        "prefix": "Scope missing: ",
         "meaning": "tools/call reached a public tool with no workspace or no authenticated identity in its scope."
       },
       {
@@ -429,8 +429,9 @@
                 "type": "string"
               },
               "size": {
+                "minimum": 0,
                 "description": "The body's size in bytes.",
-                "type": "number"
+                "type": "integer"
               },
               "tags": {
                 "type": "array",
@@ -697,8 +698,9 @@
                 "type": "string"
               },
               "size": {
+                "minimum": 0,
                 "description": "The body's size in bytes.",
-                "type": "number"
+                "type": "integer"
               },
               "tags": {
                 "type": "array",
@@ -810,8 +812,9 @@
           "type": "string"
         },
         "size": {
+          "minimum": 0,
           "description": "The body's size in bytes.",
-          "type": "number"
+          "type": "integer"
         },
         "tags": {
           "type": "array",
@@ -930,7 +933,8 @@
           "type": "string"
         },
         "size": {
-          "type": "number"
+          "minimum": 0,
+          "type": "integer"
         },
         "extractedText": {
           "description": "The file's text, when its type is extractable and extraction succeeded; null otherwise, and with `pages`.",
@@ -1064,7 +1068,8 @@
           "type": "string"
         },
         "size": {
-          "type": "number"
+          "minimum": 0,
+          "type": "integer"
         },
         "folderId": {
           "description": "The stored file's folder, or `null` at the top level.",
@@ -1390,18 +1395,6 @@
           ],
           "description": "The door the body comes through."
         },
-        "conversationId": {
-          "minLength": 1,
-          "maxLength": 512,
-          "description": "The conversation the file is attached in, minted before intake and verified by the host as the caller's.",
-          "type": "string"
-        },
-        "runId": {
-          "minLength": 1,
-          "maxLength": 512,
-          "description": "The unattended run the body is taken in for.",
-          "type": "string"
-        },
         "folder": {
           "description": "Folder path, '/'-separated; missing levels are created at completion, as create's manifest.folder.",
           "type": "string"
@@ -1427,7 +1420,6 @@
         "url",
         "method",
         "headers",
-        "maxBytes",
         "expiresAt"
       ],
       "properties": {
@@ -1441,7 +1433,7 @@
           "minLength": 1,
           "maxLength": 4096,
           "pattern": "^https?://",
-          "description": "Where the host PUTs the body, once. An absolute http(s) URL and a bearer capability: it MUST NOT appear in a public output, an error, a log or the screen (CONTRACT.md §7).",
+          "description": "Where the host PUTs the body. A repeated PUT replaces the earlier body until the upload completes or expires. An absolute http(s) URL and a bearer capability: it MUST NOT appear in a public output, an error, a log or the screen (CONTRACT.md §7).",
           "type": "string"
         },
         "method": {
@@ -1449,19 +1441,21 @@
           "type": "string"
         },
         "headers": {
+          "additionalProperties": false,
+          "propertyNames": {
+            "minLength": 1,
+            "maxLength": 128
+          },
           "maxProperties": 16,
-          "description": "Headers the host sends with the PUT, verbatim, beside Content-Length. Part of the capability.",
+          "description": "Headers the host sends with the PUT, verbatim, beside its own Content-Length. Part of the capability. The host refuses an upload whose headers name a field it owns (CONTRACT.md §7).",
           "type": "object",
           "patternProperties": {
-            "^(.*)$": {
+            "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$": {
+              "maxLength": 1024,
+              "pattern": "^[\\t\\x20-\\x7e\\x80-\\xff]*$",
               "type": "string"
             }
           }
-        },
-        "maxBytes": {
-          "minimum": 0,
-          "description": "The most bytes the URL accepts; at least size.",
-          "type": "integer"
         },
         "expiresAt": {
           "format": "date-time",
@@ -1529,8 +1523,9 @@
               "type": "string"
             },
             "size": {
+              "minimum": 0,
               "description": "The body's size in bytes.",
-              "type": "number"
+              "type": "integer"
             },
             "tags": {
               "type": "array",
@@ -1683,8 +1678,9 @@
                         "type": "string"
                       },
                       "size": {
+                        "minimum": 0,
                         "description": "The body's size in bytes.",
-                        "type": "number"
+                        "type": "integer"
                       },
                       "tags": {
                         "type": "array",

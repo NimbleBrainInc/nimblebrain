@@ -54,6 +54,12 @@ const MAX_URL_LENGTH = 4096;
 /** The most headers an upload names for the host to send. */
 const MAX_UPLOAD_HEADERS = 16;
 
+/** An HTTP field name: an RFC 9110 token. */
+const HEADER_NAME_PATTERN = "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$";
+
+/** An HTTP field value: visible ASCII, space, tab and obs-text; never CR, LF or NUL. */
+const HEADER_VALUE_PATTERN = "^[\\t\\x20-\\x7e\\x80-\\xff]*$";
+
 /** The sources the host's doors record. `agent` is `create`'s alone. */
 const HOST_SOURCES = ["chat", "app", "manual"] as const;
 
@@ -93,12 +99,6 @@ export const PRIVATE_SCHEMAS = {
           description: "The body's exact length in bytes. The host sends exactly this many.",
         }),
         source: StringEnum(HOST_SOURCES, { description: "The door the body comes through." }),
-        conversationId: Type.Optional(
-          Opaque(
-            "The conversation the file is attached in, minted before intake and verified by the host as the caller's.",
-          ),
-        ),
-        runId: Type.Optional(Opaque("The unattended run the body is taken in for.")),
         folder: Type.Optional(
           Type.String({
             description:
@@ -113,17 +113,21 @@ export const PRIVATE_SCHEMAS = {
     output: Type.Object(
       {
         uploadId: Opaque("Names this upload to complete_upload."),
-        url: TransferUrl("Where the host PUTs the body, once."),
+        url: TransferUrl(
+          "Where the host PUTs the body. A repeated PUT replaces the earlier body until the upload completes or expires.",
+        ),
         method: Type.Literal("PUT"),
-        headers: Type.Record(Type.String({ minLength: 1, maxLength: 128 }), Type.String(), {
-          maxProperties: MAX_UPLOAD_HEADERS,
-          description:
-            "Headers the host sends with the PUT, verbatim, beside Content-Length. Part of the capability.",
-        }),
-        maxBytes: Type.Integer({
-          minimum: 0,
-          description: "The most bytes the URL accepts; at least size.",
-        }),
+        headers: Type.Record(
+          Type.String({ pattern: HEADER_NAME_PATTERN }),
+          Type.String({ maxLength: 1024, pattern: HEADER_VALUE_PATTERN }),
+          {
+            additionalProperties: false,
+            propertyNames: { minLength: 1, maxLength: 128 },
+            maxProperties: MAX_UPLOAD_HEADERS,
+            description:
+              "Headers the host sends with the PUT, verbatim, beside its own Content-Length. Part of the capability. The host refuses an upload whose headers name a field it owns (CONTRACT.md §7).",
+          },
+        ),
         expiresAt: ExpiresAt(MAX_UPLOAD_TTL_SECONDS),
       },
       CLOSED,

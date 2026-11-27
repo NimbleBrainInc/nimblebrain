@@ -92,7 +92,7 @@ export const CONTRACT = {
       },
       {
         code: "scope_missing",
-        prefix: "[files] no ",
+        prefix: "Scope missing: ",
         meaning:
           "tools/call reached a public tool with no workspace or no authenticated identity in its scope.",
       },

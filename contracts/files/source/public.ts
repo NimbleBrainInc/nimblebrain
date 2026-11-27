@@ -117,7 +117,7 @@ export const FileRecord = Type.Object({
   id: Type.String({ description: "The file's id: its URI is files://<id>." }),
   filename: Type.String(),
   mimeType: Type.String(),
-  size: Type.Number({ description: "The body's size in bytes." }),
+  size: Type.Integer({ minimum: 0, description: "The body's size in bytes." }),
   tags: Type.Array(Type.String()),
   source: OpenString(FILE_SOURCES, { description: "Where the file came from." }),
   conversationId: Nullable(Type.String(), {
@@ -297,7 +297,7 @@ const ReadOutput = Type.Object({
   id: Type.String(),
   filename: Type.String(),
   mimeType: Type.String(),
-  size: Type.Number(),
+  size: Type.Integer({ minimum: 0 }),
   extractedText: Nullable(Type.String(), {
     description:
       "The file's text, when its type is extractable and extraction succeeded; null otherwise, and with `pages`.",
@@ -366,7 +366,7 @@ const CreateInput = Type.Object(
 const CreateOutput = Type.Object({
   id: Type.String({ description: "The new file's id: its URI is files://<id>." }),
   filename: Type.String(),
-  size: Type.Number(),
+  size: Type.Integer({ minimum: 0 }),
   folderId: Nullable(Type.String(), {
     description: "The stored file's folder, or `null` at the top level.",
   }),
