@@ -283,7 +283,8 @@ other, and implements each contract with one MCP server named in its `mcp.json`:
 server's **public tools** and screen serve people and agents, and its **private tools**
 serve the kernel. The server refuses a private tool to any principal but `host` (the
 runtime itself), and the runtime never offers private tools to agents. The built-in
-conversations and tasks plugins are system plugins, run by default; files are kernel code.
+conversations and tasks plugins are system plugins, run by default; files are kernel code until
+the built-in files plugin is bound.
 
 ### Catalog policy *(proposed, ADR-0076; not yet built)*
 How far a catalog's plugins reach, set by the operator when attaching the catalog:
@@ -310,12 +311,13 @@ contracts, never plugins. Chat is on exactly when an enabled plugin implements t
 conversations contract; the default configuration binds the built-in one. Scheduled and
 unattended work is on exactly when an enabled plugin implements the tasks contract
 (`ai.nimblebrain.tasks`); the default configuration binds the built-in one, and the kernel's run
-worker runs what it says is due. The files contract (`ai.nimblebrain.files`) is published and not
-yet implemented by any plugin: its implementation owns every agent-facing file tool, the records,
-visibility, text extraction and the bytes and their storage, and the kernel owns upload intake
-and serving. Bytes move between them by short-lived URLs the implementation issues: the kernel
-streams an upload to the URL `begin_upload` answers, and serves a file from the URL `resolve`
-answers once it finds the file.
+worker runs what it says is due. The files contract (`ai.nimblebrain.files`) is implemented by the
+built-in files plugin (`packages/files`), which the kernel does not bind yet: its own file tools
+still serve. The implementation owns every agent-facing file tool, the records, visibility, text
+extraction and the bytes and their storage, and the kernel owns upload intake and serving. Bytes
+move between them by short-lived URLs the implementation issues: the kernel streams an upload to
+the URL `begin_upload` answers, and serves a file from the URL `resolve` answers once it finds
+the file.
 
 ### Run grant *(ADR-0076, tasks contract)*
 The host's signed record that an owner, in a workspace, set up work under a contract that will

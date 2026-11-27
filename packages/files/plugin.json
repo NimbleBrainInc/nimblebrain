@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "files",
+  "version": "0.1.0",
+  "description": "Files people and agents keep: one MCP server implementing the ai.nimblebrain.files contract on the local filesystem.",
+  "author": { "name": "NimbleBrain", "url": "https://nimblebrain.ai" },
+  "license": "Apache-2.0",
+  "keywords": ["files", "uploads", "documents"],
+  "extensions": {
+    "ai.nimblebrain": {
+      "$schema": "https://schemas.nimblebrain.ai/plugin-extension/v1/plugin-extension.schema.json",
+      "implements": [{ "contract": "ai.nimblebrain.files", "version": "1.0", "server": "files" }]
+    }
+  }
+}

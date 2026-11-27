@@ -19,6 +19,8 @@ export interface HostContext {
   ownerId?: string;
   /** The conversation the call is made inside, during a chat turn. */
   conversationId?: string;
+  /** The unattended run the call is made inside, or that a host call is made for. */
+  runId?: string;
   /**
    * The run grant, on a person's call to a tool its contract marks `grant: true`. Opaque: a
    * server stores it and returns it verbatim, and never parses it.
@@ -37,7 +39,7 @@ export type CallContext = Partial<HostContext>;
 /** The request metadata key the host context travels under. */
 export const HOST_CONTEXT_META_KEY = "ai.nimblebrain/context";
 
-const OPTIONAL_STRINGS = ["workspaceId", "ownerId", "conversationId"] as const;
+const OPTIONAL_STRINGS = ["workspaceId", "ownerId", "conversationId", "runId"] as const;
 
 /** The longest grant the schema accepts. */
 const MAX_GRANT_LENGTH = 4096;
