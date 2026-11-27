@@ -225,9 +225,9 @@ configuration for it.
   runs to its end; one begun after is refused. An upload URL also stops accepting once its
   upload is completed. The host does not refuse a URL before trying it because of
   `expiresAt`; the URL's answer decides.
-- **is absolute `https:`**, or `http:` only to a loopback address (`127.0.0.0/8`, `[::1]`,
-  `localhost`), at most 4096 characters, on an origin the operator lists for the
-  implementation's binding (loopback when none are listed; §10).
+- **is absolute `http:` or `https:`**, at most 4096 characters, with no userinfo, on an
+  origin the host is allowed to fetch from for the implementation's binding (§10). Which scheme
+  a deployment uses is the deployment's choice.
 - **MUST NOT appear** in a public output, an error, a log line, a span, the screen or any
   notification. It crosses only the private outputs above.
 
@@ -241,21 +241,26 @@ file; one issued before serves it at most until it expires. That window is unrea
 outside: only the host ever holds a download URL, and it fetches from it at once after the
 `resolve` that answered it, under the caller's context.
 
-**A local implementation** (one the host runs on its own machine, over stdio) serves its URLs
-from an HTTP listener bound to a loopback address on a port it chooses, started with the
-server. The listener answers only `GET` of a live download token and `PUT` of a live upload
-token, and answers every other request alike, with 404. It binds `127.0.0.1` or `::1`
-explicitly, never `0.0.0.0` or `::`; compares tokens in constant time; keeps tokens out of
-its access logs; and sends no CORS headers. Plain HTTP is acceptable there because
-the traffic never leaves the machine. An implementation the host reaches over a network serves
-`https:` URLs.
+**A local implementation** (one the host starts over stdio) serves its URLs from an HTTP
+listener bound to a loopback address, on a port it chooses, started with the server. The
+listener answers only `GET` of a live download token and `PUT` of a live upload token, and
+answers every other request alike, with 404. It binds `127.0.0.1` or `::1` explicitly, never
+`0.0.0.0` or `::`; compares tokens in constant time; keeps tokens out of its access logs; and
+sends no CORS headers. An implementation the host reaches by URL serves its URLs from its own
+origin, or from an origin its operator lists for its binding (an object store's, for presigned
+URLs). It documents which origins it issues so the operator can list them.
 
 **The host's side of a transfer:**
 
-- It accepts only a URL valid against the rules above, and refuses any other scheme.
-- **It fetches only from the origins the operator lists for that binding** (host
-  configuration, not a field of this contract); with none listed, only loopback origins. A URL
-  outside the allowed origins is a failed transfer, and the host sends it no request.
+- It accepts only a URL valid against the rules above.
+- **It fetches only from a destination the binding authorises**: the origin of the binding's
+  own server URL, an origin the operator lists for the binding (exact scheme, host and port),
+  or, for a binding the host starts over stdio, a loopback address on any port. Any other URL
+  is a failed transfer, and the host sends it no request.
+- **It checks the address it connects to.** It resolves the host once, refuses a name that
+  resolves to a loopback, link-local, unspecified or multicast address, and connects to the
+  address it checked. Loopback is reached only as a literal address, and only for a stdio
+  binding.
 - It follows no redirect: a 3xx answer is a failed transfer.
 - It sends no credential, cookie or header of its own beyond `Content-Length`,
   `Accept-Encoding: identity`, on a `GET` an optional single `Range`, and on a `PUT` the
@@ -388,11 +393,10 @@ visibility and bytes.
    on every call it makes for them, and overwrites any a caller supplied. A `host` call never
    carries `unattended`.
 8. **Transfer URLs stay inside the host** (§7): it never logs one, shows one or passes one on.
-9. **Transfer origins are the operator's.** The host fetches a transfer URL only when its
-   origin is one the operator lists for the implementation's binding, or a loopback origin when
-   none are listed; any other URL is a failed transfer (§7). An operator binding a managed
-   implementation lists the origins it issues URLs from (its own HTTPS endpoint, its object
-   store's).
+9. **Transfer destinations are the operator's.** A binding authorises its own server's
+   origin, the origins its operator lists for it, and, when the host starts it over stdio,
+   loopback. Nothing else. The host enforces this on the resolved address (§7). The list, and
+   whether a destination needs TLS, are host configuration, not fields of this contract.
 
 ## 11. Errors
 

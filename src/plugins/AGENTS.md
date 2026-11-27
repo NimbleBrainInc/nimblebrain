@@ -128,3 +128,8 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   call, or an agent's through `McpSource` recovery); a call in flight when it exited is not
   retried. Shutdown settles queued writes, then stops it; a stopped server is never
   restarted.
+- **A contract that moves bytes by URL is fetched through the SSRF-guarded fetch**
+  (`createSsrfGuardedFetch`, `src/tools/ssrf-guarded-fetch.ts`) with redirects refused, against
+  the binding's authorised destinations: its own server's origin, a per-binding
+  `transferOrigins` list in host configuration, and loopback for a stdio binding
+  (`contracts/files/CONTRACT.md` §7, §10). `transferOrigins` lands with the files plugin.
