@@ -76,7 +76,8 @@ How to run it standalone is in `README.md`.
 ## Transfers (`src/transfer.ts`)
 
 - **A transfer URL is `<origin>/t/<id>.<secret>`**: a 128-bit id finds the grant and a 256-bit
-  secret is compared in constant time. Grants live in memory: a restart kills every URL, an
+  secret is compared in constant time as the text issued, never decoded: base64 decoding
+  ignores unused low bits and padding, so another spelling would pass. Grants live in memory: a restart kills every URL, an
   open upload then expires and a host resolves again.
 - **The listener**: over stdio, its own `Bun.serve` bound to `127.0.0.1` on a port the OS
   picks, started before the server answers; over HTTP, the server's own origin under `/t/`

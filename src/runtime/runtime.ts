@@ -1597,7 +1597,7 @@ export class Runtime {
         overlays,
         grants ? (claims) => grants.sign(claims) : undefined,
         guards,
-        // The operator's per-file limit is the files server's too (CONTRACT.md §6).
+        // The operator's per-file limit is the files server's too, by the host's launch convention.
         new Map([[FILES_CONTRACT, filesServerEnv(this.getFilesConfig().maxFileSize)]]),
       );
       // What each contract refuses an unattended run, by the name agents call it.

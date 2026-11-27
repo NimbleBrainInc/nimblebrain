@@ -256,9 +256,9 @@ export type ResultOverlays = ReadonlyMap<
 >;
 
 /**
- * Host configuration a contract defines for the server the host starts, by
- * contract: added to the server's environment over its own `env`, so the
- * server and the host read one value (the files contract's per-file limit).
+ * Host configuration the host passes the server it starts, by contract, as its
+ * launch convention: added to the server's environment over its own `env`, so
+ * the server and the host read one value (the files server's per-file limit).
  */
 export type ServerEnvironments = ReadonlyMap<string, Readonly<Record<string, string>>>;
 
@@ -310,8 +310,8 @@ async function startBoundServer(
     {
       type: "plugin",
       // A minimal environment (the SDK's default: PATH, HOME, USER and the
-      // like) plus the server's own `env`, then what its contract has the host
-      // pass; never the runtime's.
+      // like) plus the server's own `env`, then what the host passes for its
+      // contract; never the runtime's.
       createTransport: () =>
         stamped(
           new StdioClientTransport({

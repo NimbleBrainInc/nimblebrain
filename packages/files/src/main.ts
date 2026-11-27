@@ -40,7 +40,7 @@ import { Store } from "./store.ts";
 import { TRANSFER_PREFIX, Transfers } from "./transfer.ts";
 
 export const TOKEN_ENV = "NB_FILES_TOKEN";
-/** Where a host that starts the server passes its per-file limit (CONTRACT.md §6). */
+/** Where a host that starts the server passes its per-file limit: the host's launch convention. */
 export const MAX_FILE_BYTES_ENV = "NB_FILES_MAX_FILE_BYTES";
 export const MCP_PATH = "/mcp";
 /** The shortest host credential HTTP mode accepts: the token is `host` on every tool. */

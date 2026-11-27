@@ -3,7 +3,8 @@ export const FILES_CONTRACT = "ai.nimblebrain.files";
 
 /**
  * Where a host that starts the implementation passes its per-file limit, in
- * bytes (CONTRACT.md §6), so the intake and `begin_upload` refuse at one size.
+ * bytes, by the host's launch convention, so the intake and `begin_upload`
+ * refuse at one size.
  */
 export const MAX_FILE_BYTES_ENV = "NB_FILES_MAX_FILE_BYTES";
 
