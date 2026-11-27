@@ -5,7 +5,7 @@ description: Attach files to give the agent additional context for your conversa
 
 import { Aside } from '@astrojs/starlight/components';
 
-You can attach files to your messages to give the agent additional context. Drag a document into the chat, and the agent can read, summarize, or analyze its contents. NimbleBrain extracts text from common formats and includes it in the conversation; images are passed straight to vision-capable models.
+You can attach files to your messages to give the agent additional context. Drag a document into the chat, and the agent can read, summarize, or analyze its contents. The files plugin extracts text from common formats and NimbleBrain includes it in the conversation; images are passed straight to vision-capable models.
 
 ## How to attach files
 
@@ -31,12 +31,12 @@ Attached files appear as chips below the input. Remove a file by clicking the X 
 
 When you attach a file to a message:
 
-1. The file is uploaded and stored under your account
-2. Content is extracted based on the file type
-3. The extracted text is included as context in the conversation
+1. Every file of the message is checked (count, size, type), then stored by the files plugin under your account, all or none
+2. For a text, Word, Excel or other document, its text is read from the plugin, up to `maxExtractedTextSize` (200 KB by default)
+3. That text is included as context in the conversation; an image or a PDF goes to the model as the file itself when the model takes it, and a PDF a model cannot take is read as text
 4. The agent can reference the file content when responding
 
-Extraction keeps up to `maxExtractedTextSize` of text per file (200 KB by default) and does only the work that limit needs: a PDF is read until its text passes the limit (at most 2,000 pages or 5 seconds). A Word or Excel file that would expand to far more than the limit, such as a very long document or a sheet of hundreds of thousands of rows, is not extracted. It is still stored and attached, and the agent sees its name, type, and size.
+The plugin bounds its own extraction: a PDF is read until its text passes its limit (at most 2,000 pages or 5 seconds), and a Word or Excel file that would expand to far more is not extracted. It is still stored and attached, and the agent sees its name, type, and size.
 
 Files **live in the workspace you upload them to**, under your own private partition — another member of that workspace can't see your files, and a file uploaded in one workspace isn't reachable from another. A `files://<id>` reference resolves within the workspace the conversation belongs to. Browse and organize them in the [Files app](/using/files/).
 
@@ -50,14 +50,14 @@ Files **live in the workspace you upload them to**, under your own private parti
 - **One file at a time works best** for detailed analysis. You can attach multiple files, but the agent handles focused requests better.
 - **Screenshots work great** for asking about UI issues, error messages, or visual content.
 
-## Feature flag
+## Turning files off
 
-File context is controlled by the `fileContext` feature flag, which defaults to `true`. To disable it:
+Files are served by the built-in files plugin, on by default. To turn files and attachments off:
 
 ```json title="nimblebrain.json"
 {
-  "features": {
-    "fileContext": false
+  "plugins": {
+    "files": false
   }
 }
 ```

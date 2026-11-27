@@ -58,7 +58,6 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
   "features": {
     "skillManagement":     true,
     "toolDiscovery":       true,
-    "fileContext":         true,
     "userManagement":      true,
     "workspaceManagement": true,
     "compaction":          true
@@ -749,7 +748,8 @@ With no `plugins` block the runtime runs its default plugins, exactly as if the 
 {
   "plugins": {
     "conversations": { "source": "builtin", "system": true },
-    "tasks": { "source": "builtin", "system": true }
+    "tasks": { "source": "builtin", "system": true },
+    "files": { "source": "builtin", "system": true }
   }
 }
 ```
@@ -768,7 +768,7 @@ An entry of a default's name replaces it, and `false` turns it off. Other entrie
 }
 ```
 
-That block runs the built-in conversations plugin, a `reports` plugin reached at its URL, and no tasks.
+That block runs the built-in conversations and files plugins, a `reports` plugin reached at its URL, and no tasks.
 
 | Field | Meaning |
 |---|---|
@@ -776,6 +776,7 @@ That block runs the built-in conversations plugin, a `reports` plugin reached at
 | `<name>.source` | `builtin` for the plugin of that name shipped with the runtime, or a directory holding its `plugin.json`, relative to this file's directory. |
 | `<name>.system` | Make it a system plugin: one that holds records the runtime relies on and sees other plugins' data by design. Only this field makes one; a plugin cannot declare itself a system plugin. Default `false`. |
 | `<name>.servers.<key>.url` | Reach that server where it already runs instead of starting it, named by its key in the plugin's `mcp.json`. |
+| `<name>.transferOrigins` | Origins (`https://host` or `https://host:port`, no path) the plugin's servers issue transfer URLs from, beside their own: an object store's, for presigned URLs. See [Files](#files-and-attachments). |
 
 At boot the runtime reads every enabled plugin and refuses to start, naming the plugin, file and field, when:
 
@@ -805,9 +806,18 @@ Scheduled and unattended work is on exactly when an enabled plugin implements th
 - **Turn tasks off** with `"plugins": { "tasks": false }`. No tasks tools or Scheduled page appear, nothing is polled, and a notification route that names a task is answered `tasks_unavailable`. Chat, files, apps and the `/mcp` endpoint work as before. Tasks work with chat off: a run needs no conversation.
 - **Tasks stored by a runtime before this plugin kept them** sit under `<workDir>/workspaces/<wsId>/tasks/` and are not read; the plugin keeps its own layout. To keep a task, copy its definition (`<ownerId>/<taskId>.json`: its name, prompt, schedule and tools) into `tasks__create` as its owner.
 
+### Files and attachments
+
+Files are on exactly when an enabled plugin implements the files contract (`ai.nimblebrain.files`). By default that is the built-in `files` plugin: the runtime starts its server at boot, with its data directory at `<workDir>/plugin-data/files`. It keeps every file's record and body, extracts text, and serves the Files page; its public tools are the `files__*` tools, and its private tools are never listed or callable by agents, MCP clients or apps.
+
+- **The runtime owns the doors.** A chat attachment, an upload (`POST /v1/workspaces/<wsId>/resources`, which app file pickers use too) and every body the runtime serves (`GET /v1/workspaces/<wsId>/files/<id>`, `resources/read` of a `files://` URI, an image or PDF in a prompt, a connector's host-resources read) go through it. It checks a request's count, sizes and types before storing anything, and spools a multipart body to `<workDir>/tmp/intake/` while it is checked; the spool is removed when the request ends. A chat message's files are stored all or none.
+- **Bytes move by short-lived URLs** the plugin issues, never through agents or the browser. The runtime fetches them only from the plugin's own server origin, the origins listed in `transferOrigins`, and loopback for a plugin it starts; it follows no redirect, and refuses a host name that resolves to a loopback, link-local, unspecified or multicast address. A listed origin on plain `http` is allowed only in-cluster (`*.svc`) or for a local install with `allowInsecureRemotes`.
+- **Turn files off** with `"plugins": { "files": false }`. No `files__*` tools or Files page appear, an attachment or upload is refused, and every file route answers `404` with `"error": "files_disabled"`. Chat, tasks, apps and the `/mcp` endpoint work as before.
+- **Files stored by a runtime before this plugin kept them** sit under `<workDir>/workspaces/<wsId>/files/` and are not read; a link to one shows as unavailable. To keep a file, upload it again in its workspace.
+
 ## files
 
-File upload limits applied when `features.fileContext` is enabled.
+Limits the runtime applies when it takes files in, and the text it puts in a prompt. They apply while files are on ([Files and attachments](#files-and-attachments)).
 
 ```json
 {
@@ -825,11 +835,11 @@ File upload limits applied when `features.fileContext` is enabled.
 | `maxFileSize` | `integer` (bytes) | 26 MB | Maximum size of a single uploaded file. |
 | `maxTotalSize` | `integer` (bytes) | 100 MB | Maximum total size of all files per message. |
 | `maxFilesPerMessage` | `integer` | 10 | Maximum number of files per chat message. |
-| `maxExtractedTextSize` | `integer` (bytes) | 200 KB | Maximum extracted text size per file. Extraction work scales with it: a larger value lets larger Word and Excel files through. |
+| `maxExtractedTextSize` | `integer` (bytes) | 200 KB | The most text of one attachment the runtime asks the files plugin for and puts in the prompt, at most 1 MB. The plugin bounds its own extraction work. |
 
 An upload to the workspace file store (the Files app, or an app's file picker) is not a chat message: `maxFilesPerMessage` does not apply to it. It takes up to 100 files at a time, each within `maxFileSize` and all together within `maxTotalSize`. The chat composer shows the per-message limits before you send.
 
-Request bodies are limited by bytes received, including chunked bodies. A JSON request (a chat message, a tool call) takes up to 1 MB, and an upload, a chat message's or the file store's, takes up to `maxTotalSize`; a larger one is refused with `413 payload_too_large`. The server refuses any body more than 8 MB past the larger of the two before a route sees it.
+Request bodies are limited by bytes received, including chunked bodies. A JSON request (a chat message, a tool call) takes up to 1 MB, a request to `/mcp/<wsId>` up to 8 MB (room for `files__create`'s 4 MB body), and an upload, a chat message's or the file store's, takes up to `maxTotalSize`; a larger one is refused with `413 payload_too_large`. The server refuses any body more than 8 MB past the larger of the two before a route sees it.
 
 ## telemetry
 

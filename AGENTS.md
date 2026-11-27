@@ -89,7 +89,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`src/orchestrator/AGENTS.md`](./src/orchestrator/AGENTS.md) | The workspace wall: tool-name shape as scope, `routeToolCall`, name parsing, skill walling |
 | [`src/tools/AGENTS.md`](./src/tools/AGENTS.md) | `CredentialStore`, credential refs, OAuth records, credential ownership; long-running (task-augmented) MCP tools |
 | [`src/conversation/AGENTS.md`](./src/conversation/AGENTS.md) | The one conversation path (the conversations contract), chat off when nothing binds it, corrupted conversations, `active` on relayed lists, workspace binding on resume, no conversation read or listing across workspaces, a workspace purge |
-| [`src/files/AGENTS.md`](./src/files/AGENTS.md) | File store paths, bare `files://` URIs, the file locator |
+| [`src/files/AGENTS.md`](./src/files/AGENTS.md) | The kernel's side of the files contract: files off when nothing binds it, bare `files://` URIs, the one intake and its spool, the transfer client and its checks, serving through `resolve` at every door, `filesWritten`, a purge |
 | [`src/api/AGENTS.md`](./src/api/AGENTS.md) | Three API audiences, tool actions over new routes, named response bodies, router middleware chained per route, `/mcp/<wsId>` wall and which credentials reach it, redirect callbacks bound to the browser that started them, the browser origins `/mcp` and the `/v1` tool-call doors trust, the hosts answered without sign-in, the one protocol revision `/mcp` speaks and the connector prompts it serves, what blocks running more than one replica, `clientAddressFor` |
 | [`src/hooks/AGENTS.md`](./src/hooks/AGENTS.md) | The inbound webhook door: never parse a body, uniform 404, delivery ids, rotation, provisioning |
 | [`src/lifecycle/AGENTS.md`](./src/lifecycle/AGENTS.md) | Connector `on_ready` / `on_removing` notifications |
@@ -102,7 +102,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`packages/server-sdk/AGENTS.md`](./packages/server-sdk/AGENTS.md) | The TypeScript server SDK, counterpart of `nimblebrain-server-sdk` (Python): reading the host context, tool errors, the principal rule, reading a contract document, host metadata on the handshake; no dependencies, the contract document decides |
 | [`packages/conversations/AGENTS.md`](./packages/conversations/AGENTS.md) | The built-in conversations plugin (bound by default): never imports the kernel, call order, context per transport, filesystem layout, `seq`, cursors, the screen and its build, its host metadata, its conformance tests |
 | [`packages/tasks/AGENTS.md`](./packages/tasks/AGENTS.md) | The built-in tasks plugin (bound by default): call order, the clock rule, occurrences, fencing, grants, the change hint, the transactional filesystem layout, retention, the screen, its skill and instructions, behaviour worth knowing, its tests |
-| [`packages/files/AGENTS.md`](./packages/files/AGENTS.md) | The built-in files plugin (not yet bound): call order and walls, the transactional filesystem layout, transfer URLs and the loopback listener, completion windows, extraction and its bounds, the screen and its cursor paging, its skill, its conformance tests |
+| [`packages/files/AGENTS.md`](./packages/files/AGENTS.md) | The built-in files plugin (bound by default): call order and walls, the transactional filesystem layout, transfer URLs and the loopback listener, completion windows, extraction and its bounds, the screen and its cursor paging, its skill, its conformance tests |
 | [`packages/cli/AGENTS.md`](./packages/cli/AGENTS.md) | The `nimblebrain` CLI (`npx nimblebrain`): setup and running, plus a thin client of the local instance's API (`mcp add`) and the agent worker `use` starts, one self-contained file on Node 20, the `{ok, error, fix}` JSON contract, the model key never in output, never touching an install it did not make |
 
 ## Conventions
@@ -176,13 +176,13 @@ src/
 ├── model/         LLM provider registry (AI SDK)
 ├── adapters/      EventSink implementations (logs, console, debug, telemetry)
 ├── cli/           Process entry: the serve HTTP API server (dev tooling is in scripts/)
-└── files/         File context extraction
+└── files/         The kernel's side of the files contract: intake, transfers, serving, rehydration
 web/               Vite + React + TypeScript SPA (separate package.json)
 packages/
 ├── server-sdk/    The TypeScript server SDK: host context, tool errors, the principal rule (see server-sdk/AGENTS.md)
 ├── conversations/ The built-in conversations plugin, bound by default: one MCP server implementing the contract on the local filesystem, and its screen (ui/) (see conversations/AGENTS.md)
 ├── tasks/         The built-in tasks plugin, bound by default: one MCP server implementing the tasks contract on the local filesystem, its screen (ui/) and its skill (skills/) (see tasks/AGENTS.md)
-├── files/         The built-in files plugin, not yet bound: one MCP server implementing the files contract on the local filesystem, its transfer listener, screen (ui/) and skill (skills/) (see files/AGENTS.md)
+├── files/         The built-in files plugin, bound by default: one MCP server implementing the files contract on the local filesystem, its transfer listener, screen (ui/) and skill (skills/) (see files/AGENTS.md)
 ├── cli/           The `nimblebrain` CLI (see cli/AGENTS.md)
 └── server-sdk-py/ The Python Server SDK
 ```
@@ -213,7 +213,7 @@ packages/
 | Max input tokens | 500,000 |
 | Max output tokens | the model's catalog output limit (16,384 for a model the catalog lacks) |
 | Default connectors | none (platform capabilities are built in) |
-| Default plugins | the built-in conversations and tasks plugins, as system plugins (`plugins: { conversations: false }` turns chat off, `plugins: { tasks: false }` scheduled work) |
+| Default plugins | the built-in conversations, tasks and files plugins, as system plugins (`plugins: { conversations: false }` turns chat off, `plugins: { tasks: false }` scheduled work, `plugins: { files: false }` files and attachments) |
 | Work directory | `~/.nimblebrain` |
 | API port | 27247 |
 | Web port | 27246 |

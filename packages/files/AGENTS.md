@@ -3,7 +3,8 @@
 Scope: `packages/files/`. An implementation of the files contract
 (`contracts/files/CONTRACT.md`, `ai.nimblebrain.files` 1.0): an Agent Plugin with one MCP
 server, on the local filesystem, its transfer listener, its screen and its skill. The runtime
-does not bind it yet; its own files tools (`src/platform/files/`, `src/files/`) still serve.
+binds it by default (`plugins: { files: false }` turns files off); the kernel's side of the
+contract is `src/files/AGENTS.md`.
 How to run it standalone is in `README.md`.
 
 ## Boundaries

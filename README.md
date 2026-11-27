@@ -112,8 +112,8 @@ A route that acts on a workspace names it in its path, `/v1/workspaces/:wsId/…
 | POST | /v1/workspaces/:wsId/tools/call | Yes | Direct tool invocation |
 | POST | /v1/workspaces/:wsId/resources/read | Yes | Read an MCP resource |
 | POST | /v1/workspaces/:wsId/resources | Yes | Upload files (multipart) |
+| GET | /v1/workspaces/:wsId/files/:fileId | Yes | Serve a stored file (one `Range` honoured) |
 | GET | /v1/workspaces/:wsId/shell | Yes | Shell configuration (placements, endpoints) |
-| GET | /v1/files/:fileId | Yes | Serve uploaded file (the id locates its workspace) |
 | GET | /v1/events | Yes | SSE workspace event stream |
 | GET | /v1/auth/authorize | No | OAuth authorization redirect |
 | GET | /v1/auth/callback | No | OAuth callback handler |
@@ -619,12 +619,11 @@ All default to `true`. What `false` does depends on the flag: most withhold a to
 |------|----------|---------------------|
 | `skillManagement` | Create, edit, delete, and activate skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore`, `skills__set_status` are never built |
 | `toolDiscovery` | Tool search | `nb__search` stays; `scope: "tools"` returns an error |
-| `fileContext` | File upload, serving, and context extraction | The file endpoints refuse (404, or 415 on a multipart upload) |
 | `userManagement` | Create, update, and delete users | `nb__manage_users` is not registered |
 | `workspaceManagement` | Workspaces and members | `nb__manage_workspaces` is not registered |
 | `compaction` | Folding the oldest turns of a long conversation into a summary at run start | Full history replays every turn |
 
-**Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/workspaces/:wsId/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery` and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
+**Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/workspaces/:wsId/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery` is enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
 
 Full reference: [Feature flags](https://docs.nimblebrain.ai/config/features/) on docs.nimblebrain.ai.
 
