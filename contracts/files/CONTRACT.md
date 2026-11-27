@@ -192,8 +192,14 @@ allowlist on the type recorded.
   | `other` | `text/yaml`, `application/zip`, `application/gzip`, `application/octet-stream` |
 
 **Outputs.** A success carries its payload in `structuredContent`, valid against the tool's
-output schema, and a readable rendering in `content`. `read` also carries a `resource_link`
-block for `files://<id>` with the file's name, type and size, never the body.
+output schema, and a readable rendering in `content`.
+
+- **A public answer about one file names it.** `create`, `info` and `read` each carry, in
+  `content`, one `resource_link` block for the file: `uri` `files://<id>`, `name` its
+  filename, `mimeType` its recorded type and `size` its size; never the body. A host
+  presents it to the person (in a chat, as the file with a way to download it) and reads the
+  body through its own `resources/read` of the URI (§10). Content blocks are presentation:
+  `structuredContent` is unchanged by them, and a client that reads only it loses nothing.
 
 - **Public inputs and outputs are open.** A client ignores an output field it does not know.
 - **A value of a public output that names one of a set** (a record's `source`) is typed as a
@@ -567,6 +573,8 @@ every rule this file states; the runner checks at least:
   bodies and for a folder path §4 refuses;
 - `resolve` found for the owner and absent for another owner, another workspace and a deleted
   file, and that no download URL issued after `delete` serves the body;
+- that `create`, `info` and `read` each answer one `resource_link` to the file, with its
+  recorded type and size;
 - `list`'s cursor (every file once across pages, `invalid_input` for a cursor with other
   filters), `read`'s bound and `maxBytes`, pages (the top-level `truncated` false, each page's
   its own), `not_paged`;

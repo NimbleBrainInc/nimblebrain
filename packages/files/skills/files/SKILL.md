@@ -16,6 +16,7 @@ metadata:
       - "upload"
       - "pdf"
       - "spreadsheet"
+      - "download"
 allowed-tools: files__list files__search files__info files__read files__create files__tag files__move files__create_folder
 ---
 
@@ -50,7 +51,15 @@ workspace and this person. Never ask which workspace a file is in, and never use
   `extractedText: null`. An image the person attached reaches you with their message; do not
   read it again here.
 - **`files__info {id}`** answers the record alone (name, type, size, tags, folder, where it
-  came from), never the content.
+  came from), never the content, and shows the person the file to download.
+
+## Give the person a file
+
+- **To hand the person a file, call `files__info {id}`** (find the id first if you need to).
+  Its answer shows the file in the chat with a preview and a Download button, so that call
+  is the download. A file you just made with `files__create` is already shown the same way.
+- Never say you cannot provide a download or a link, and never send the person to the Files
+  screen to fetch a file you can show. Never paste a `files://` URI as the way to get it.
 
 ## Write a file
 

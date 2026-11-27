@@ -86,13 +86,15 @@ export function search(env: Env, caller: Caller, args: SearchInput) {
   );
 }
 
-export function info(env: Env, caller: Caller, args: { id: string }) {
-  return fileRecord(ownRow(env, caller, args.id), caller.workspaceId);
-}
-
-export interface ReadAnswer {
+/** A public answer about one file: its payload, and the record its `resource_link` names. */
+export interface FileAnswer {
   output: Record<string, unknown>;
   row: FileRow;
+}
+
+export function info(env: Env, caller: Caller, args: { id: string }): FileAnswer {
+  const row = ownRow(env, caller, args.id);
+  return { output: fileRecord(row, caller.workspaceId), row };
 }
 
 /** `read`: the file's text up to the bound, whole or by page (CONTRACT.md §8). */
@@ -100,7 +102,7 @@ export async function read(
   env: Env,
   caller: Caller,
   args: { id: string; pages?: number[]; maxBytes?: number },
-): Promise<ReadAnswer> {
+): Promise<FileAnswer> {
   const row = ownRow(env, caller, args.id);
   const bound = Math.min(args.maxBytes ?? TEXT_BOUND, TEXT_BOUND);
   const base = {
@@ -160,7 +162,7 @@ interface CreateArgs {
 }
 
 /** `create`: a new file from the body the caller sends, provenance from the context. */
-export function create(env: Env, caller: Caller, args: CreateArgs) {
+export function create(env: Env, caller: Caller, args: CreateArgs): FileAnswer {
   const { manifest } = args;
   const data = decodeBody(args.body, args.encoding ?? "base64");
   if (data.length > MAX_CREATE_BYTES) {
@@ -191,7 +193,7 @@ export function create(env: Env, caller: Caller, args: CreateArgs) {
     };
     tx.state.files[row.id] = row;
     tx.putBody(row.id, data);
-    return { id: row.id, filename: row.filename, size: row.size, folderId };
+    return { output: { id: row.id, filename: row.filename, size: row.size, folderId }, row };
   });
 }
 

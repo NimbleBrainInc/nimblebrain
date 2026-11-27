@@ -199,6 +199,13 @@ export function BlockTimeline({
   isLatestMessage = false,
 }: BlockTimelineProps) {
   const items = useMemo(() => foldBlocks(blocks), [blocks]);
+  const linksByCall = useMemo(
+    () =>
+      firstLinksByCall(
+        items.flatMap((item) => (item.kind === "activity" ? collectToolCalls(item.rows) : [])),
+      ),
+    [items],
+  );
 
   return (
     <>
@@ -228,7 +235,11 @@ export function BlockTimeline({
               isReasoningTailStreaming={isTailDelta && lastRow(item.rows)?.kind === "reasoning"}
               displayDetail={displayDetail}
             />
-            <ToolWidgets calls={collectToolCalls(item.rows)} isLatestMessage={isLatestMessage} />
+            <ToolWidgets
+              calls={collectToolCalls(item.rows)}
+              linksByCall={linksByCall}
+              isLatestMessage={isLatestMessage}
+            />
           </div>
         );
       })}
@@ -750,11 +761,41 @@ function CopyButton({ content }: { content: string }) {
 // Tool widgets (inline app views + resource-link cards)
 // ─────────────────────────────────────────────────────────────────────────────
 
+type ResourceLinks = NonNullable<ToolCallDisplay["resourceLinks"]>;
+
+/**
+ * The resource links each call in a turn shows: a link whose source and URI an
+ * earlier call in the turn already showed is left out, so one file named by
+ * several calls (`files__create`, then `files__info`) shows once. A URI is only
+ * an identity within its source, so the same URI from two sources shows twice.
+ */
+function firstLinksByCall(calls: ReadonlyArray<ToolCallDisplay>): Map<string, ResourceLinks> {
+  const shown = new Set<string>();
+  const out = new Map<string, ResourceLinks>();
+  for (const tc of calls) {
+    if (tc.status !== "done" || !tc.appName || !tc.resourceLinks) continue;
+    const source = tc.appName;
+    out.set(
+      tc.id,
+      tc.resourceLinks.filter((link) => {
+        const key = JSON.stringify([source, link.uri]);
+        if (shown.has(key)) return false;
+        shown.add(key);
+        return true;
+      }),
+    );
+  }
+  return out;
+}
+
 function ToolWidgets({
   calls,
+  linksByCall,
   isLatestMessage,
 }: {
   calls: ReadonlyArray<ToolCallDisplay>;
+  /** The links each call shows, decided across the whole turn. */
+  linksByCall: ReadonlyMap<string, ResourceLinks>;
   isLatestMessage: boolean;
 }) {
   // A request for one of the person's own plugins, answered in a card.
@@ -791,7 +832,7 @@ function ToolWidgets({
         />
       ))}
       {resourceLinkCalls.flatMap((tc) =>
-        tc.resourceLinks!.map((link) =>
+        (linksByCall.get(tc.id) ?? []).map((link) =>
           // `artifact://` is the host-resolved capability-output scheme: the
           // host reads it from the data plane as the viewing user (RLS) and the
           // bytes are UNTRUSTED. Route it through ArtifactView → the sanitizing

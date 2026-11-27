@@ -192,3 +192,31 @@ describe("ResourceLinkView — image rendering", () => {
     expect(img.getAttribute("src")).toMatch(/^blob:/);
   });
 });
+
+describe("ResourceLinkView — a files:// link offers a download", () => {
+  /** The header's Download anchor: a blob URL saved under the link's name. */
+  function downloadAnchor(container: HTMLElement): HTMLAnchorElement {
+    const anchor = Array.from(container.getElementsByTagName("a")).find((a) =>
+      a.hasAttribute("download"),
+    );
+    if (!anchor) throw new Error(`download anchor missing. html=${container.innerHTML}`);
+    return anchor;
+  }
+
+  for (const [name, mimeType, content] of [
+    ["red.png", "image/png", { blob: FAKE_BYTES_B64 }],
+    ["report.pdf", "application/pdf", { blob: FAKE_BYTES_B64 }],
+    ["data.csv", "text/csv", { text: "a,b\n1,2\n" }],
+  ] as const) {
+    test(`${mimeType} is read through the host and downloads as ${name}`, async () => {
+      readResourceMock.mockImplementation(async () => ({
+        contents: [{ uri: "files://fl_abc", mimeType, ...content }],
+      }));
+      mounted = await mount({ appName: "files", uri: "files://fl_abc", name, mimeType });
+      expect(readResourceMock.mock.calls[0]).toEqual(["files", "files://fl_abc"]);
+      const anchor = downloadAnchor(mounted.container);
+      expect(anchor.getAttribute("href")).toMatch(/^blob:/);
+      expect(anchor.getAttribute("download")).toBe(name);
+    });
+  }
+});
