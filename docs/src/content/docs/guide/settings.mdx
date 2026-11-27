@@ -9,7 +9,7 @@ NimbleBrain organizes settings by **scope** — what each setting affects:
 
 - **You** — your personal profile (theme, display name, timezone). Lives at `/profile`, reached from the **avatar menu** at the **top-left** of the sidebar.
 - **This Workspace** — settings for the workspace you're currently focused on (its name, members, MCP URL, notification routes, webhooks). Lives under `/w/<id>/settings/*`. Its connectors and skills are on the workspace's **Plugins** page.
-- **Organization** — admin-only settings that affect every workspace (model defaults, the workspace roster, deleted-workspace archives, user management, org-wide usage). Lives under `/org/*`.
+- **Organization** — admin-only settings that affect every workspace (model defaults, the workspace roster, deleted workspaces, user management, org-wide usage). Lives under `/org/*`.
 
 Open profile or sign out from the **avatar menu** at the top-left. Open workspace and org settings from the workspace navigator and the workspace settings nav.
 
@@ -70,7 +70,7 @@ Visible only to organization admins. Hidden from regular members. These settings
 
 The org-wide workspace roster: create and delete workspaces, and see each one's connectors and metadata. Open a workspace here to add or remove its members without joining it, including seating an admin in a workspace that has none. Change an existing member's role from that workspace's **Settings → Members**.
 
-Deleting a workspace asks first. It disappears for everyone in it and its connectors are disconnected, which can't be undone; its conversations and files are kept under **Archives** until an admin purges them.
+Deleting a workspace asks first. It disappears for everyone in it and nobody can use it; an org admin can restore it as it was from [**Deleted workspaces**](#deleted-workspaces-orgdeleted) until its purge time.
 
 To edit a workspace's instructions, switch into it via the navigator and use **This Workspace → General** — and note that editing requires admin membership of that workspace.
 
@@ -113,11 +113,13 @@ Organization-wide usage analytics. All dates are UTC.
   Usage is reported at the **organization** level, on this page. Filter or group by workspace to see one workspace's spend; there is no per-workspace usage tab.
 </Aside>
 
-### Archives (`/org/archives`)
+### Deleted workspaces (`/org/deleted`)
 
-Deleting a workspace archives its data rather than destroying it. This tab lists every archive: the workspace's name and ID, the size on disk, and when it was archived. An archive whose workspace record is missing or unreadable is still listed, with its name and ID shown as unknown.
+Every deleted workspace that is not yet purged: its name and ID, when it was deleted, and when it will be purged (30 days after deletion unless the operator sets [`workspaces.deletedRetentionDays`](/config/nimblebrain-json/#workspaces)).
 
-**Purge** permanently removes one archive from disk. It asks first, stating the size, and cannot be undone. Nothing is purged automatically — archives stay until an admin purges them, so check this tab when disk space runs low.
+**Restore** brings a workspace back as it was: its members, conversations, tasks, files, connectors and settings. It is available until the purge time; once a purge has begun the row shows **Purging** and the workspace cannot come back.
+
+**Purge** removes a workspace for good now instead of at its purge time. It asks first and cannot be undone.
 
 ## Custom-instruction layers
 

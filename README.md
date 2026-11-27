@@ -184,7 +184,7 @@ supply-chain review lives where a server is built and published, not in a proces
 that also holds tenant credentials. Every connector is aggregated into the same
 unified tool namespace by the `ToolRegistry`.
 
-No connectors are installed by default. Platform apps (conversations, files, usage, tasks, and the rest) are built in as in-process MCP sources (see `src/platform/`). Install connectors from the connectors catalog. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
+No connectors are installed by default. Conversations and scheduled tasks are built-in plugins the runtime starts by default (`packages/conversations`, `packages/tasks`); the other platform apps (files, usage, and the rest) are built in as in-process MCP sources (see `src/platform/`). Install connectors from the connectors catalog. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
 
 ## Configuration
 
@@ -307,7 +307,6 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 | `NB_CHAT_RATE_LIMIT` | Chat requests per minute per user (default: 20) |
 | `NB_TOOL_RATE_LIMIT` | Tool calls per minute per user (default: 60) |
 | `NB_CONNECTOR_START_CONCURRENCY` | Max connectors started in parallel at boot (default: 4, set to 1 for sequential) |
-| `NB_TIMEZONE` | Default IANA timezone for time-aware features |
 | `NB_HOST_URL` | Public host URL for OAuth redirects |
 | `NB_HSTS` | `Strict-Transport-Security` value (default: `max-age=31536000; includeSubDomains`). Set to `""` to disable — e.g., when a reverse proxy already emits this header |
 | `NB_CSP` | `Content-Security-Policy` value (default: `default-src 'none'; frame-ancestors 'none'; base-uri 'none'`). Set to `""` to disable |
@@ -512,6 +511,10 @@ Conversations are kept by the plugin bound to the conversations contract (`contr
 
 User-uploaded files are persisted in the workspace `FileStore` and referenced from `user.message` events as MCP `resource_link` blocks (`{type:"resource_link", uri:"files://<id>", mimeType, name}`) — the conversation log never carries inline bytes. At the `model.doStream` boundary the runtime rehydrates image links to AI SDK V3 `file` parts with bytes loaded from the store, so vision content survives across multi-turn agent loops without inflating the JSONL. Files are also addressable as MCP resources at `files://<id>` (any client can fetch via `resources/read`).
 
+### Task Storage
+
+Scheduled and unattended work is kept by the plugin bound to the tasks contract (`contracts/tasks/CONTRACT.md`), by default the built-in plugin in `packages/tasks`, under `<workDir>/plugin-data/tasks/`. The runtime's run worker (`src/runtime/run-worker.ts`) asks it what is due, runs each run through the run-start door as its owner, and reports how it ended; with no plugin bound (`plugins: { tasks: false }`) there are no tasks.
+
 ### Identity System
 
 Pluggable authentication via `IdentityProvider` interface (`src/identity/provider.ts`). Configured via `instance.json` in the work directory:
@@ -681,6 +684,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | HTTP port | 27247 |
 | HTTP host | `127.0.0.1` |
 | Conversation store | the built-in conversations plugin, JSONL in `~/.nimblebrain/plugin-data/conversations/` |
+| Task store | the built-in tasks plugin, in `~/.nimblebrain/plugin-data/tasks/` |
 | Conversation store (programmatic) | In-memory |
 
 ### Dependencies

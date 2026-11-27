@@ -2,7 +2,7 @@
 
 Scope: `src/providers/`, the infrastructure the kernel uses and no agent calls (ADR-0076, "Providers carry the infrastructure"), such as the work queue (`queue/`).
 
-- **The work queue's first consumer is the tasks scheduler** (`src/platform/tasks/scheduler.ts`, guide `src/platform/tasks/AGENTS.md`, "The work queue"): scheduled and requested task runs. The runtime opens the queue at boot (`src/runtime/work-queue.ts`, `<workDir>/queue`), hands it out as `Runtime.getWorkQueue()`, and closes it at shutdown after the sources that use it have stopped. A deployment that names another implementation chooses it in `openWorkQueue`.
+- **The work queue's consumer is the run worker** (`src/runtime/run-worker.ts`, guide `src/runtime/AGENTS.md`, "The run worker"): every occurrence the tasks contract lists as due. The runtime opens the queue at boot (`src/runtime/work-queue.ts`, `<workDir>/queue`), hands it out as `Runtime.getWorkQueue()`, and closes it at shutdown after the sources that use it have stopped. A deployment that names another implementation chooses it in `openWorkQueue`.
 
 - **File bytes are not a provider.** The files contract's implementation owns its bytes and its storage, and moves bytes to and from the kernel by short-lived URLs (`contracts/files/CONTRACT.md` §7). The kernel holds no blob store and no configuration for one; a storage library the files plugin uses is the plugin's own.
 

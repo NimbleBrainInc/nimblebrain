@@ -400,13 +400,15 @@ describe("restart and workspace delete", () => {
     expect(history.filter((m) => m.role === "user")).toHaveLength(2);
   }, 30_000);
 
-  it("deleting a workspace deletes its conversations through the plugin", async () => {
+  it("purging a deleted workspace deletes its conversations through the plugin", async () => {
     const result = await runWithRequestContext(
       { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID },
       () => runtime.deleteWorkspace(TEST_WORKSPACE_ID),
     );
-    expect(result.deleteError).toBeUndefined();
     expect(result.deleted).toBe(true);
+    // Deleted, the workspace is restorable: the plugin was not told.
+    expect(existsSync(pluginFile(conversationId))).toBe(true);
+    expect((await runtime.purgeWorkspace(TEST_WORKSPACE_ID)).purged).toBe(true);
     expect(existsSync(pluginFile(conversationId))).toBe(false);
     expect(existsSync(join(PLUGIN_DATA, "workspaces", TEST_WORKSPACE_ID))).toBe(false);
   });

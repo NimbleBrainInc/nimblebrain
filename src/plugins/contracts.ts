@@ -38,6 +38,10 @@ export interface ContractDefinition {
   cardinality: Cardinality;
   /** The tools the host never offers to agents, by name. */
   privateTools: string[];
+  /** The tools marked `unattended: "refused"`: no call a run makes reaches them. */
+  unattendedRefused: string[];
+  /** The tools marked `grant: true`: a person's call to one carries a run grant. */
+  grantTools: string[];
 }
 
 /** The contracts this kernel consumes, by name. */
@@ -97,19 +101,58 @@ export function parseContractDefinition(raw: unknown, file: string): ContractDef
   if (typeof tools !== "object" || tools === null || Object.keys(tools).length === 0) {
     fail("tools must name at least one tool");
   }
-  const privateTools: string[] = [];
-  for (const [tool, spec] of Object.entries(tools as Record<string, unknown>)) {
-    const visibility = (spec as { visibility?: unknown } | null)?.visibility;
-    if (visibility !== "public" && visibility !== "private") {
-      fail(`tools.${tool}.visibility must be "public" or "private"`);
-    }
-    if (visibility === "private") privateTools.push(tool);
-  }
   return {
     id: obj.contract as string,
     version: obj.version as string,
     cardinality: obj.cardinality as Cardinality,
-    privateTools,
+    ...toolSets(tools as Record<string, unknown>, fail),
+  };
+}
+
+/** The document's tools by marking: private, refused unattended (every private tool too), grant-marked. */
+function toolSets(
+  tools: Record<string, unknown>,
+  fail: (what: string) => never,
+): Pick<ContractDefinition, "privateTools" | "unattendedRefused" | "grantTools"> {
+  const sets = {
+    privateTools: [] as string[],
+    unattendedRefused: [] as string[],
+    grantTools: [] as string[],
+  };
+  for (const [tool, spec] of Object.entries(tools)) {
+    const marks = toolMarks(tool, spec, fail);
+    if (marks.visibility === "private") sets.privateTools.push(tool);
+    if (marks.visibility === "private" || marks.unattended === "refused") {
+      sets.unattendedRefused.push(tool);
+    }
+    if (marks.grant) sets.grantTools.push(tool);
+  }
+  return sets;
+}
+
+/** One tool's markings, checked: visibility, unattended, and grant (only on a public tool refused unattended). */
+function toolMarks(
+  tool: string,
+  spec: unknown,
+  fail: (what: string) => never,
+): { visibility: "public" | "private"; unattended?: "allowed" | "refused"; grant: boolean } {
+  const marks = (spec ?? {}) as { visibility?: unknown; unattended?: unknown; grant?: unknown };
+  const { visibility, unattended, grant } = marks;
+  if (visibility !== "public" && visibility !== "private") {
+    fail(`tools.${tool}.visibility must be "public" or "private"`);
+  }
+  if (unattended !== undefined && unattended !== "allowed" && unattended !== "refused") {
+    fail(`tools.${tool}.unattended must be "allowed" or "refused"`);
+  }
+  if (grant !== undefined && typeof grant !== "boolean")
+    fail(`tools.${tool}.grant must be a boolean`);
+  if (grant === true && (visibility !== "public" || unattended !== "refused")) {
+    fail(`tools.${tool}.grant is allowed only on a public tool refused unattended`);
+  }
+  return {
+    visibility: visibility as "public" | "private",
+    ...(unattended !== undefined ? { unattended: unattended as "allowed" | "refused" } : {}),
+    grant: grant === true,
   };
 }
 
@@ -140,8 +183,14 @@ export interface ContractBinding {
   plugin: string;
   /** The plugin's mcp.json key of the server that implements it. */
   server: string;
+  /** The version of the contract this kernel consumes: what it sends as `version` on a private call. */
+  hostVersion: string;
   /** The contract's private tools on that server, which the host never offers to agents. */
   privateTools: string[];
+  /** The contract's tools no call made inside an unattended run reaches. */
+  unattendedRefused: string[];
+  /** The contract's tools whose person calls carry a run grant. */
+  grantTools: string[];
 }
 
 /** Why a set of plugins cannot run together: the plugin, the contract, and what is wrong. */
@@ -210,7 +259,10 @@ function bindImplementation(
     version: impl.version,
     plugin,
     server: impl.server,
+    hostVersion: def.version,
     privateTools: [...def.privateTools],
+    unattendedRefused: [...def.unattendedRefused],
+    grantTools: [...def.grantTools],
   });
 }
 

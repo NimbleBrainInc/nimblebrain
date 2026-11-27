@@ -798,17 +798,17 @@ export interface ToolCallRecord {
    * `unknown_tool_source`, `workspace_access_denied`, …; see
    * `src/orchestrator/error-mapping.ts`) and a call rejected for its
    * arguments (`bad_input`) from a tool that ran and returned a logical
-   * error the agent handled. The tasks executor reads this to de-mask runs
-   * that "completed" only by writing around an unreachable connector, and to
-   * tell a corrected argument from work left undone. Absent when the call
-   * succeeded or carried no structured reason.
+   * error the agent handled. The run worker reports each failed call's reason
+   * from it (`unavailable`, `bad_input`, `denied`, …), so a run that
+   * "completed" only by writing around an unreachable connector, or left work
+   * undone, is told apart from one that corrected an argument. Absent when the
+   * call succeeded or carried no structured reason.
    */
   errorReason?: string;
   /**
    * The call did not run: the engine held it until the guidance for its tool
    * reached the model (`SKILL_GUIDANCE_PENDING`). `ok` is false, because
-   * nothing happened. The tasks executor does not count it as a failure unless
-   * the run stopped before re-issuing it.
+   * nothing happened. The run worker leaves it out of a run's calls.
    */
   held?: true;
   resourceUri?: string;

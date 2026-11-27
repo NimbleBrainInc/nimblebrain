@@ -33,14 +33,15 @@ let currentIdentity: UserIdentity | null;
 /** What the stub catalog serves; a test that names connectors seeds it. */
 let catalogEntries: ConnectorCatalogEntry[];
 
+const PURGE_AT = "2026-12-26T00:00:00.000Z";
+
 /**
- * A runtime stub whose `deleteWorkspace` archives through the real store and
- * reports no connectors.
+ * A runtime stub whose delete, restore and purge go through the real store.
  *
  * These are the TOOL's tests — the gate, the argument parsing, the prose, the
- * not-found answer. The cascade itself is the runtime's, and is driven against
- * a real `Runtime.start()` in
- * `test/integration/workspace-delete-cascade.test.ts`; stubbing it here would
+ * not-found answer. The tombstone's lifecycle is the runtime's, and is driven
+ * against a real `Runtime.start()` in
+ * `test/integration/workspace-tombstone.test.ts`; stubbing it here would
  * assert a double.
  */
 function makeCtx(): ManageWorkspacesContext {
@@ -48,11 +49,26 @@ function makeCtx(): ManageWorkspacesContext {
     getIdentity: () => currentIdentity,
     workspaceStore: store,
     runtime: stub<Runtime>({
-      deleteWorkspace: async (wsId: string) => ({
-        deleted: await store.delete(wsId),
-        connectors: [],
-        conversationsPurged: 0,
-      }),
+      deleteWorkspace: async (wsId: string) =>
+        (await store.delete(wsId)) ? { deleted: true, purgeAt: PURGE_AT } : { deleted: false },
+      listDeletedWorkspaces: async () =>
+        (await store.listDeleted()).map(({ id, workspace, tombstone }) => ({
+          workspaceId: id,
+          workspaceName: workspace?.name ?? null,
+          memberCount: workspace?.members.length ?? 0,
+          deletedAt: tombstone.deletedAt,
+          deletedBy: tombstone.deletedBy,
+          purgeAt: PURGE_AT,
+          restorable: true,
+        })),
+      restoreWorkspace: async (wsId: string) => {
+        const workspace = await store.restore(wsId);
+        return workspace ? { restored: true, workspace } : { restored: false, reason: "not_found" };
+      },
+      purgeWorkspace: async (wsId: string) => {
+        await store.remove(wsId);
+        return { purged: true, connectors: [] };
+      },
       getConnectorCatalog: () =>
         stub<ConnectorCatalog>({
           catalogByUrl: async () => new Map(catalogEntries.map((e) => [e.url, e])),
@@ -401,78 +417,6 @@ describe("nb__manage_workspaces", () => {
       }
     });
 
-    test("a failed purge says the workspace is deleted and how to retry the purge", async () => {
-      const created = parseResult(await tool.handler({ action: "create", name: "Purge" })) as {
-        workspace: { id: string };
-      };
-      tool = createManageWorkspacesTool({
-        ...makeCtx(),
-        runtime: stub<Runtime>({
-          deleteWorkspace: async () => ({
-            deleted: true,
-            connectors: [],
-            conversationsPurged: 0,
-            purgeError: "the conversations plugin is not running",
-          }),
-        }),
-      });
-      const result = await tool.handler({ action: "delete", workspaceId: created.workspace.id });
-      expect(result.isError).toBe(true);
-      expect(resultText(result)).toContain(`Deleted workspace ${created.workspace.id}.`);
-      expect(resultText(result)).toContain("not purged");
-      expect(resultText(result)).toContain("again to retry the purge");
-    });
-
-    test("deleting an already deleted workspace again reports the conversations it purged", async () => {
-      tool = createManageWorkspacesTool({
-        ...makeCtx(),
-        runtime: stub<Runtime>({
-          deleteWorkspace: async () => ({ deleted: false, connectors: [], conversationsPurged: 2 }),
-        }),
-      });
-      const result = await tool.handler({ action: "delete", workspaceId: "ws_0123456789abcdef" });
-      expect(result.isError).toBe(false);
-      expect(resultText(result)).toContain("Purged 2 conversations");
-    });
-
-    test("an archive failure names the teardown that already ran, not a no-op", async () => {
-      const created = parseResult(await tool.handler({ action: "create", name: "Stuck" })) as {
-        workspace: { id: string };
-      };
-
-      tool = createManageWorkspacesTool({
-        ...makeCtx(),
-        runtime: stub<Runtime>({
-          deleteWorkspace: async () => ({
-            deleted: false,
-            deleteError: "EEXIST: file already exists",
-            conversationsPurged: 0,
-            connectors: [
-              { serverName: "com-example-alpha", ok: true, secrets: { deleted: [], failed: [] } },
-            ],
-          }),
-        }),
-      });
-
-      const result = await tool.handler({
-        action: "delete",
-        workspaceId: created.workspace.id,
-      });
-
-      expect(result.isError).toBe(true);
-      // `deleted: false` with a `deleteError` is NOT the store's idempotent
-      // not-found, and must not be reported as one: the connectors are gone.
-      expect(resultText(result)).not.toContain("Workspace not found");
-      expect(resultText(result)).toContain("EEXIST");
-      expect(resultText(result)).toContain("Tore down 1 connector.");
-      expect(resultText(result)).toContain("cannot be undone");
-      // And it claims nothing about where the record ended up. The store
-      // throws on both sides of its rename, so either claim is wrong half the
-      // time — see `handleDelete`.
-      expect(resultText(result)).not.toContain("still on disk");
-      expect(resultText(result)).not.toContain("is archived");
-    });
-
     test("requires workspaceId", async () => {
       const result = await tool.handler({
         action: "update",
@@ -614,15 +558,10 @@ describe("nb__manage_workspaces", () => {
   });
 
   describe("delete", () => {
-    test("deletes workspace and removes directory", async () => {
-      const createResult = await tool.handler({
-        action: "create",
-        name: "Deletable",
-      });
-      const created = parseResult(createResult) as { workspace: { id: string } };
-
-      const wsDir = join(workDir, "workspaces", created.workspace.id);
-      expect(existsSync(wsDir)).toBe(true);
+    test("deletes the workspace and says until when it can be restored", async () => {
+      const created = parseResult(await tool.handler({ action: "create", name: "Deletable" })) as {
+        workspace: { id: string };
+      };
 
       const deleteResult = await tool.handler({
         action: "delete",
@@ -630,54 +569,63 @@ describe("nb__manage_workspaces", () => {
       });
 
       expect(deleteResult.isError).toBe(false);
-      const parsed = parseResult(deleteResult) as { deleted: boolean; workspaceId: string };
-      expect(parsed.deleted).toBe(true);
-
-      // Verify directory is gone
-      expect(existsSync(wsDir)).toBe(false);
+      expect(parseResult(deleteResult)).toEqual({
+        deleted: true,
+        workspaceId: created.workspace.id,
+        purgeAt: PURGE_AT,
+      });
+      expect(resultText(deleteResult)).toContain(`restore it until ${PURGE_AT}`);
+      expect(await store.get(created.workspace.id)).toBeNull();
     });
 
-    test("reports what the delete tore down, and names what did not", async () => {
-      const created = parseResult(await tool.handler({ action: "create", name: "Wired" })) as {
-        workspace: { id: string };
-      };
-
+    test("with a window of 0 it reports the purge, and names a connector that did not tear down", async () => {
       tool = createManageWorkspacesTool({
         ...makeCtx(),
         runtime: stub<Runtime>({
-          deleteWorkspace: async (wsId: string) => ({
-            deleted: await store.delete(wsId),
-            conversationsPurged: 0,
-            connectors: [
-              { serverName: "com-example-alpha", ok: true, secrets: { deleted: [], failed: [] } },
-              {
-                serverName: "com-example-beta",
-                ok: false,
-                error: "vendor unreachable",
-                secrets: { deleted: [], failed: [] },
-              },
-            ],
+          deleteWorkspace: async () => ({
+            deleted: true,
+            purgeAt: PURGE_AT,
+            purge: {
+              purged: true,
+              connectors: [
+                { serverName: "com-example-alpha", ok: true, secrets: { deleted: [], failed: [] } },
+                {
+                  serverName: "com-example-beta",
+                  ok: false,
+                  error: "vendor unreachable",
+                  secrets: { deleted: [], failed: [] },
+                },
+              ],
+            },
           }),
         }),
       });
 
-      const result = await tool.handler({
-        action: "delete",
-        workspaceId: created.workspace.id,
-      });
+      const result = await tool.handler({ action: "delete", workspaceId: "ws_0123456789abcdef" });
 
       expect(result.isError).toBe(false);
-      // The record is archived, so this sentence is the last place the connector
+      // The record is gone, so this sentence is the last place the connector
       // whose grant may still be live at a vendor is nameable.
-      expect(resultText(result)).toContain("Tore down 2 connectors.");
+      expect(resultText(result)).toContain("Purged it. Tore down 2 connectors.");
       expect(resultText(result)).toContain('"com-example-beta"');
       expect(resultText(result)).not.toContain('"com-example-alpha"');
+    });
 
-      const parsed = parseResult(result) as { connectors: Array<{ serverName: string }> };
-      expect(parsed.connectors.map((c) => c.serverName)).toEqual([
-        "com-example-alpha",
-        "com-example-beta",
-      ]);
+    test("a purge that stopped says the workspace stays deleted and is retried", async () => {
+      tool = createManageWorkspacesTool({
+        ...makeCtx(),
+        runtime: stub<Runtime>({
+          deleteWorkspace: async () => ({
+            deleted: true,
+            purgeAt: PURGE_AT,
+            purge: { purged: false, connectors: [], error: "the plugin is not running" },
+          }),
+        }),
+      });
+      const result = await tool.handler({ action: "delete", workspaceId: "ws_0123456789abcdef" });
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain("the plugin is not running");
+      expect(resultText(result)).toContain("retried on the next pass");
     });
 
     test("requires workspaceId", async () => {
@@ -869,7 +817,7 @@ describe("nb__manage_workspaces", () => {
     });
   });
 
-  describe("archives", () => {
+  describe("deleted workspaces", () => {
     async function deleteViaTool(name: string): Promise<string> {
       const created = parseResult(await tool.handler({ action: "create", name })) as {
         workspace: { id: string };
@@ -878,68 +826,76 @@ describe("nb__manage_workspaces", () => {
       return created.workspace.id;
     }
 
-    test("list_archives shows a deleted workspace, and an archive with no workspace.json as unknown", async () => {
+    test("list_deleted shows a deleted workspace with its purge time", async () => {
       const id = await deleteViaTool("Gone");
-      await mkdir(join(store.getArchivedDir(), "ws_0057ae5b54fe4216"), { recursive: true });
 
-      const result = await tool.handler({ action: "list_archives" });
+      const result = await tool.handler({ action: "list_deleted" });
 
       expect(result.isError).toBe(false);
-      const { archives } = parseResult(result) as {
-        archives: Array<{ name: string; workspaceId: string | null; workspaceName: string | null }>;
+      const { deleted } = parseResult(result) as {
+        deleted: Array<{ workspaceId: string; workspaceName: string | null; purgeAt: string }>;
       };
-      expect(archives.find((a) => a.name === id)?.workspaceName).toBe("Gone");
-      const orphan = archives.find((a) => a.name === "ws_0057ae5b54fe4216");
-      expect(orphan?.workspaceId).toBeNull();
-      expect(orphan?.workspaceName).toBeNull();
+      expect(deleted).toEqual([
+        expect.objectContaining({ workspaceId: id, workspaceName: "Gone", purgeAt: PURGE_AT }),
+      ]);
     });
 
     test("a non-admin gets the permission-denied result, not an empty list", async () => {
-      await deleteViaTool("Gone");
+      const id = await deleteViaTool("Gone");
       currentIdentity = { ...currentIdentity!, orgRole: "member" };
       tool = createManageWorkspacesTool(makeCtx());
 
-      for (const action of ["list_archives", "purge_archive"]) {
-        const result = await tool.handler({ action, archive: "ws_00194decd292a0f6" });
+      for (const action of ["list_deleted", "restore", "purge"]) {
+        const result = await tool.handler({ action, workspaceId: id });
         expect(result.structuredContent).toBeUndefined();
         expect(resultText(result)).toContain("You don't have permission to manage workspaces");
       }
+      expect(await store.getDeleted(id)).not.toBeNull();
     });
 
-    test("purge_archive removes one archive; purging it again is a clean no-op", async () => {
-      const gone = await deleteViaTool("Gone");
-      const kept = await deleteViaTool("Kept");
+    test("restore brings a deleted workspace back", async () => {
+      const id = await deleteViaTool("Back");
 
-      const first = await tool.handler({ action: "purge_archive", archive: gone });
+      const result = await tool.handler({ action: "restore", workspaceId: id });
+
+      expect(result.isError).toBe(false);
+      expect(resultText(result)).toContain(`Restored workspace ${id}.`);
+      expect((await store.get(id))?.name).toBe("Back");
+    });
+
+    test("restore says why it cannot, once the purge has begun", async () => {
+      tool = createManageWorkspacesTool({
+        ...makeCtx(),
+        runtime: stub<Runtime>({
+          restoreWorkspace: async () => ({ restored: false, reason: "purging" }),
+        }),
+      });
+      const result = await tool.handler({ action: "restore", workspaceId: "ws_0123456789abcdef" });
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain("is being purged and cannot be restored");
+    });
+
+    test("purge removes a deleted workspace now, and refuses a live one", async () => {
+      const gone = await deleteViaTool("Gone");
+      const live = await store.create("Live");
+
+      const first = await tool.handler({ action: "purge", workspaceId: gone });
       expect(first.isError).toBe(false);
       expect((parseResult(first) as { purged: boolean }).purged).toBe(true);
-      expect(existsSync(join(store.getArchivedDir(), gone))).toBe(false);
-      expect(existsSync(join(store.getArchivedDir(), kept))).toBe(true);
+      expect(existsSync(join(workDir, "workspaces", gone))).toBe(false);
 
-      const second = await tool.handler({ action: "purge_archive", archive: gone });
-      expect(second.isError).toBe(false);
-      expect((parseResult(second) as { purged: boolean }).purged).toBe(false);
+      const refused = await tool.handler({ action: "purge", workspaceId: live.id });
+      expect(refused.isError).toBe(true);
+      expect(resultText(refused)).toContain("No deleted workspace");
+      expect(existsSync(join(workDir, "workspaces", live.id))).toBe(true);
     });
 
-    test("purge_archive refuses a traversal and touches nothing", async () => {
-      const live = await store.create("Live");
-      const liveDir = join(workDir, "workspaces", live.id);
-
-      const result = await tool.handler({
-        action: "purge_archive",
-        archive: `../workspaces/${live.id}`,
-      });
-
-      expect(result.isError).toBe(true);
-      expect(resultText(result)).toContain("is not an archive name");
-      expect(existsSync(liveDir)).toBe(true);
-    });
-
-    test("purge_archive requires an archive name", async () => {
-      const result = await tool.handler({ action: "purge_archive" });
-
-      expect(result.isError).toBe(true);
-      expect(resultText(result)).toContain("archive is required");
+    test("restore and purge require a workspaceId", async () => {
+      for (const action of ["restore", "purge"]) {
+        const result = await tool.handler({ action });
+        expect(result.isError).toBe(true);
+        expect(resultText(result)).toContain(`workspaceId is required for ${action}`);
+      }
     });
   });
 

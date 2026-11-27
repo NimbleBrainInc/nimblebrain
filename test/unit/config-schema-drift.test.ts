@@ -4,12 +4,13 @@ import { resolve } from "node:path";
 import { AGENT_RUNTIME_CONFIG_KEYS, EXECUTION_CONFIG_KEYS } from "../../src/config/execution.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import { PLUGIN_CONFIG_KEYS, PLUGIN_SERVER_CONFIG_KEYS } from "../../src/config/plugins.ts";
+import { RUNS_CONFIG_BOUNDS, RUNS_CONFIG_KEYS, resolveRunsConfig } from "../../src/config/runs.ts";
 import { SECRETS_CONFIG_KEYS } from "../../src/config/secrets.ts";
 import {
-  resolveTasksConfig,
-  TASKS_CONFIG_BOUNDS,
-  TASKS_CONFIG_KEYS,
-} from "../../src/config/tasks.ts";
+  resolveWorkspacesConfig,
+  WORKSPACES_CONFIG_BOUNDS,
+  WORKSPACES_CONFIG_KEYS,
+} from "../../src/config/workspaces.ts";
 import {
   COMPOSIO_PROVIDER_CONFIG_KEYS,
   CONNECTORS_CONFIG_KEYS,
@@ -49,7 +50,10 @@ const schema = JSON.parse(
 ) as {
   properties: {
     features: SchemaObject;
-    tasks: SchemaObject & {
+    runs: SchemaObject & {
+      properties: Record<string, { minimum: number; maximum: number; default?: number }>;
+    };
+    workspaces: SchemaObject & {
       properties: Record<string, { minimum: number; maximum: number; default?: number }>;
     };
     models: SchemaObject;
@@ -186,22 +190,37 @@ describe("config schema ↔ notification poll config", () => {
   expectLockstep("notifications", schema.properties.notifications, ["poll"]);
 });
 
-describe("config schema ↔ tasks config", () => {
-  // `TASKS_CONFIG_KEYS` is derived from the bounds the resolver clamps
+describe("config schema ↔ runs config", () => {
+  // `RUNS_CONFIG_KEYS` is derived from the bounds the resolver clamps
   // against, so a key the runtime reads is a key the schema must declare.
-  expectLockstep("tasks", schema.properties.tasks, TASKS_CONFIG_KEYS);
+  expectLockstep("runs", schema.properties.runs, RUNS_CONFIG_KEYS);
 
   // The schema's range and default are what an editor offers, and the
   // resolver's are what runs; a ceiling with no default must not advertise one.
-  test("tasks: each key's range and default match the resolver's", () => {
-    const resolved = resolveTasksConfig();
-    for (const key of TASKS_CONFIG_KEYS) {
-      const declared = schema.properties.tasks.properties[key];
+  test("runs: each key's range and default match the resolver's", () => {
+    const resolved = resolveRunsConfig();
+    for (const key of RUNS_CONFIG_KEYS) {
+      const declared = schema.properties.runs.properties[key];
       expect({ key, min: declared?.minimum, max: declared?.maximum }).toEqual({
         key,
-        ...TASKS_CONFIG_BOUNDS[key],
+        ...RUNS_CONFIG_BOUNDS[key],
       });
       expect({ key, default: declared?.default }).toEqual({ key, default: resolved[key] });
+    }
+  });
+});
+
+describe("config schema ↔ workspaces config", () => {
+  expectLockstep("workspaces", schema.properties.workspaces, WORKSPACES_CONFIG_KEYS);
+
+  test("workspaces: each key's range and default match the resolver's", () => {
+    const resolved = resolveWorkspacesConfig();
+    for (const key of WORKSPACES_CONFIG_KEYS) {
+      const declared = schema.properties.workspaces.properties[key];
+      expect({ min: declared?.minimum, max: declared?.maximum }).toEqual(
+        WORKSPACES_CONFIG_BOUNDS[key],
+      );
+      expect(declared?.default).toBe(resolved[key]);
     }
   });
 });

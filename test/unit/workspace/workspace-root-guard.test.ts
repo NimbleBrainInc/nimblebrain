@@ -1,26 +1,28 @@
 /**
  * A writer may create a file inside a workspace; it may not create the workspace.
  *
- * `WorkspaceStore.delete` renames a workspace's subtree out from under every
- * writer holding a path into it. Those writers mkdir recursively, so the first
- * one to fire after the rename used to re-create the deleted workspace's
+ * A purge removes a deleted workspace's directory out from under every writer
+ * holding a path into it. Those writers mkdir recursively, so without the guard
+ * the first one to fire afterwards would re-create the purged workspace's
  * directory and write into it — invisibly, because `list()` skips a workspace
- * directory with no parseable `workspace.json`, so the resurrected tree
- * appeared nowhere and was never deleted again.
+ * directory with no parseable `workspace.json`, so the resurrected tree would
+ * appear nowhere and never be removed again.
  *
  * The rule is therefore at the mkdir rather than in each writer: a workspace
  * root comes from `WorkspaceStore.create`, and everything else may only create
  * paths inside a root that is already there. This file drives each
  * workspace-scoped writer against a workspace that is gone and asserts the
- * refusal names the workspace — and then drives the same write inside a live
+ * refusal names the workspace, then against a deleted workspace whose
+ * directory the retention window keeps (refused until its purge begins), and
+ * then drives the same write inside a live
  * root, because "create your own subdirectory on first write" is still how
- * files, notifications and tasks are meant to behave. Conversations are the
- * conversations plugin's storage; the kernel checks the workspace before the
- * plugin's `create` instead (`src/conversation/contract-store.ts`).
+ * files and notifications are meant to behave. Conversations and tasks are
+ * their plugins' storage; the kernel stamps only a live workspace on their
+ * calls instead (`src/conversation/contract-store.ts`, the run worker).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
@@ -31,9 +33,6 @@ import { parseNotificationEnvelope } from "../../../src/notifications/envelope.t
 import { NotificationStore } from "../../../src/notifications/store.ts";
 import type { NotificationEnvelope } from "../../../src/notifications/types.ts";
 import { PermissionStore } from "../../../src/permissions/permission-store.ts";
-import { taskRunsDir, workspaceTasksDir } from "../../../src/platform/tasks/paths.ts";
-import { appendRun, saveTask } from "../../../src/platform/tasks/store.ts";
-import type { Task, TaskRun } from "../../../src/platform/tasks/types.ts";
 import { materializeConnectorSkill } from "../../../src/skills/connector-skill-store.ts";
 import { writeSkill } from "../../../src/skills/writer.ts";
 import { FileCredentialStore } from "../../../src/tools/credential-store.ts";
@@ -61,39 +60,6 @@ function ctx(): WorkspaceContext {
   return new WorkspaceContext({ wsId: WS, workDir });
 }
 
-function task(): Task {
-  return {
-    id: "daily-digest",
-    name: "Daily digest",
-    prompt: "summarize",
-    schedule: { type: "interval", intervalMs: 60_000 },
-    enabled: true,
-    workspaceId: WS,
-    ownerId: OWNER,
-    source: "user",
-    runCount: 0,
-    consecutiveErrors: 0,
-    cumulativeInputTokens: 0,
-    cumulativeOutputTokens: 0,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-  };
-}
-
-function run(): TaskRun {
-  return {
-    id: "run_1",
-    taskId: "daily-digest",
-    startedAt: "2026-01-01T00:00:00.000Z",
-    completedAt: "2026-01-01T00:00:01.000Z",
-    status: "success",
-    inputTokens: 1,
-    outputTokens: 1,
-    toolCalls: 0,
-    iterations: 1,
-  };
-}
-
 function envelope(): NotificationEnvelope {
   const parsed = parseNotificationEnvelope({
     eventId: "evt_01",
@@ -116,17 +82,9 @@ Confirm the recipient before calling gmail__send.
 /**
  * One entry per workspace-scoped writer the delete path leaves holding a stale
  * path. Each `write` is the first touch — the call that could mkdir its way
- * back into a workspace that had just been archived.
+ * back into a workspace that had just been purged.
  */
 const WRITERS: Array<{ name: string; write: () => void | Promise<void> }> = [
-  {
-    name: "tasks — a definition",
-    write: () => saveTask(workDir, WS, OWNER, task()),
-  },
-  {
-    name: "tasks — a run summary",
-    write: () => appendRun(workDir, WS, OWNER, "daily-digest", run()),
-  },
   {
     name: "files — the owner partition",
     write: () => createFileStore(workspaceFilesDir(workDir, WS, OWNER)).ensureFilesDir(),
@@ -168,7 +126,7 @@ const WRITERS: Array<{ name: string; write: () => void | Promise<void> }> = [
   },
   // The three below keep their own `mkdir` (mode 0o700, or the async form) and
   // call `assertWorkspaceRootExists` directly ahead of it. Two write secret
-  // material the delete path destroys rather than archives.
+  // material.
   {
     name: "permissions — permissions.json at the workspace root",
     write: () =>
@@ -197,8 +155,8 @@ const WRITERS: Array<{ name: string; write: () => void | Promise<void> }> = [
 describe("a write into a workspace that is gone", () => {
   for (const { name, write } of WRITERS) {
     test(`${name} refuses, and names the workspace`, async () => {
-      // No root: the shape a writer is left in the instant after the
-      // archive-rename. The leaf path it holds is unchanged.
+      // No root: the shape a writer is left in the instant after a purge
+      // removes the directory. The leaf path it holds is unchanged.
       let thrown: unknown;
       try {
         await write();
@@ -217,6 +175,46 @@ describe("a write into a workspace that is gone", () => {
   }
 });
 
+describe("a write into a deleted workspace", () => {
+  function tombstone(purgeAt?: string): void {
+    const root = seedWorkspaceRoot(workDir, WS);
+    writeFileSync(
+      join(root, "deleted.json"),
+      JSON.stringify({ deletedAt: "2026-01-01T00:00:00.000Z", deletedBy: null, purgeAt }),
+    );
+  }
+
+  for (const { name, write } of WRITERS) {
+    test(`${name} refuses while it can be restored`, async () => {
+      // The directory stays for the retention window, so existence alone would
+      // admit a writer that took its path before the delete.
+      tombstone();
+      let thrown: unknown;
+      try {
+        await write();
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(WorkspaceRootMissingError);
+      expect((thrown as WorkspaceRootMissingError).workspaceId).toBe(WS);
+      expect(readdirSync(join(workDir, "workspaces", WS))).toEqual(["deleted.json"]);
+    });
+
+    test(`${name} is admitted once its purge has begun`, async () => {
+      // The purge's own teardown writes here; its final rm takes what it wrote.
+      tombstone("2026-02-01T00:00:00.000Z");
+      await write();
+      expect(readdirSync(join(workDir, "workspaces", WS)).length).toBeGreaterThan(1);
+    });
+  }
+
+  test("a tombstone that will not parse refuses", () => {
+    const root = seedWorkspaceRoot(workDir, WS);
+    writeFileSync(join(root, "deleted.json"), "{");
+    expect(() => ensureWorkspaceDir(join(root, "files"))).toThrow(WorkspaceRootMissingError);
+  });
+});
+
 describe("the same write inside a live workspace", () => {
   for (const { name, write } of WRITERS) {
     test(`${name} creates its own directory`, async () => {
@@ -231,11 +229,10 @@ describe("the same write inside a live workspace", () => {
     // `scaffoldWorkspace` deliberately does not pre-create these: an empty dir
     // in every workspace that never uses the feature is worse than one made on
     // demand. That stays true — the guard is about the ROOT, not the subtree.
-    expect(existsSync(workspaceTasksDir(workDir, WS, OWNER))).toBe(false);
-    saveTask(workDir, WS, OWNER, task());
-    expect(existsSync(taskRunsDir(workDir, WS, OWNER, "daily-digest"))).toBe(false);
-    appendRun(workDir, WS, OWNER, "daily-digest", run());
-    expect(existsSync(taskRunsDir(workDir, WS, OWNER, "daily-digest"))).toBe(true);
+    const files = workspaceFilesDir(workDir, WS, OWNER);
+    expect(existsSync(files)).toBe(false);
+    ensureWorkspaceDir(files);
+    expect(existsSync(files)).toBe(true);
   });
 });
 
@@ -257,18 +254,15 @@ describe("outside any workspace tree", () => {
     // The leak this guard shipped with: the scan tested the segment after the
     // LAST `workspaces`, so a path ENDING in `workspaces` had no successor to
     // test, read as "not a workspace tree", and fell through to the unguarded
-    // mkdir. `taskRunsDir` ends in `runs/<taskId>` and a
-    // task named "Workspaces" slugs to exactly that, so this was
-    // reachable by naming one.
-    expect(() => appendRun(workDir, WS, OWNER, "workspaces", run())).toThrow(
-      WorkspaceRootMissingError,
-    );
+    // mkdir. A record named for its user-chosen name can end in exactly that.
+    const nested = join(workDir, "workspaces", WS, "records", "workspaces");
+    expect(() => ensureWorkspaceDir(nested)).toThrow(WorkspaceRootMissingError);
     expect(existsSync(join(workDir, "workspaces", WS))).toBe(false);
 
     // And it still creates the dir inside a live root.
     seedWorkspaceRoot(workDir, WS);
-    appendRun(workDir, WS, OWNER, "workspaces", run());
-    expect(existsSync(taskRunsDir(workDir, WS, OWNER, "workspaces"))).toBe(true);
+    ensureWorkspaceDir(nested);
+    expect(existsSync(nested)).toBe(true);
   });
 
   test("a `workspaces/` segment followed by a non-workspace id is not a root", () => {
@@ -278,13 +272,5 @@ describe("outside any workspace tree", () => {
     const notAWorkspace = join(workDir, "workspaces", "README", "x");
     ensureWorkspaceDir(notAWorkspace);
     expect(existsSync(notAWorkspace)).toBe(true);
-  });
-
-  test("the archived copy of a workspace is writable — the rename is not a wall", () => {
-    // `archived/<wsId>/` holds the tombstoned subtree. It is outside
-    // `workspaces/`, so an operator export path is untouched by the guard.
-    const archived = join(workDir, "archived", WS, "conversations", OWNER);
-    ensureWorkspaceDir(archived);
-    expect(existsSync(archived)).toBe(true);
   });
 });

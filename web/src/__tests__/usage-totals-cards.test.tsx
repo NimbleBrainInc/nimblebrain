@@ -272,7 +272,7 @@ describe("the per-user breakdown row carries the same two signals", () => {
 });
 
 describe("the table follows the group-by dimension", () => {
-  test("workspace rows resolve names from the roster, then from deleted workspaces' archives", () => {
+  test("workspace rows resolve names from the roster, then from deleted workspaces", () => {
     const labels = {
       users: new Map(),
       workspaces: new Map([

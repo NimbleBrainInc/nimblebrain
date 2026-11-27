@@ -129,14 +129,14 @@ describe("the workspace list", () => {
     expect(link?.getAttribute("href")).toBe("/org/workspaces/00000000000000aa");
   });
 
-  test("delete asks first, saying what is kept and what can't be undone", async () => {
+  test("delete asks first, saying until when it can be restored", async () => {
     const c = await mount();
     await click(c.querySelector("button[aria-label='Delete Acme']"));
 
     const text = document.body.textContent ?? "";
     expect(text).toContain("Delete Acme?");
-    expect(text).toContain("connectors are disconnected");
-    expect(text).toContain("Organization → Archives");
+    expect(text).toContain("nobody can use it");
+    expect(text).toContain("Organization → Deleted workspaces");
     expect(calls.some((x) => x.action === "delete")).toBe(false);
 
     await click(buttonByText("Delete workspace"));

@@ -82,9 +82,13 @@ export interface ServerOptions {
   screenPath?: string;
 }
 
-/** The scope a context names, when both halves are present and each is one path segment. */
-function scopeOf(ctx: CallContext): Scope | { missing: "workspace" | "owner" } {
+/**
+ * The scope a context names, when each half the tool needs is present and one path
+ * segment. `delete_workspace` crosses owners, so it needs the workspace alone.
+ */
+function scopeOf(name: string, ctx: CallContext): Scope | { missing: "workspace" | "owner" } {
   if (!ctx.workspaceId || !isPathSegment(ctx.workspaceId)) return { missing: "workspace" };
+  if (name === "delete_workspace") return { workspaceId: ctx.workspaceId, ownerId: "" };
   if (!ctx.ownerId || !isPathSegment(ctx.ownerId)) return { missing: "owner" };
   return { workspaceId: ctx.workspaceId, ownerId: ctx.ownerId };
 }
@@ -249,7 +253,7 @@ export async function callTool(
         : invalid,
     );
   }
-  const scope = scopeOf(ctx);
+  const scope = scopeOf(name, ctx);
   if ("missing" in scope) return scopeMissing(visibility, scope.missing);
   const handler = (visibility === "public" ? PUBLIC : PRIVATE)[name];
   if (!handler) throw new Error(`no handler for contract tool "${name}"`);

@@ -70,20 +70,20 @@ A workspace admin installs a connector from the workspace's connectors catalog (
 
 ## Deleting a workspace
 
-Deleting a workspace runs the same teardown as removing each connector it holds, one connector at a time, **before** anything is archived. For every installed connector that means: the app is told it is being removed (`on_removing`), its OAuth tokens are revoked upstream, a brokered connection is revoked at the broker, its webhook registrations and notification cursors are retired, and its tool permissions are dropped.
+Deleting a workspace takes it away from everyone at once: it leaves every list, every request to it (the web app, `/mcp/<wsId>`, an app inside it) is answered as if it did not exist, its scheduled tasks stop, and its connectors are disconnected. Nothing in it is removed and no app is told, so until its purge time an org admin can restore it as it was from [Organization → Deleted workspaces](/guide/settings/#deleted-workspaces-orgdeleted): members, conversations, tasks, files, connectors and settings.
 
-Scheduled tasks stop at the same moment. They are disarmed before any teardown begins, so none of them fires against a workspace that is halfway removed, and none of them can write the workspace back onto disk after it is archived.
+The purge comes once the retention window has passed (30 days by default, set by the operator with [`workspaces.deletedRetentionDays`](/config/nimblebrain-json/#workspaces); `0` purges inside the delete), or when an admin purges it now. It removes, in order:
 
-The workspace's own data — files, tasks, and the workspace secrets an operator set — is then **archived**, not destroyed: the subtree moves to `archived/<wsId>/` with a marker file. From every other surface the workspace is gone the moment the delete returns. The archive stays on disk until an org admin purges it from [Organization → Archives](/guide/settings/#archives-orgarchives); nothing purges it automatically.
+1. Each plugin's records for the workspace: its conversations, and its tasks with their runs and batches.
+2. Its connectors, each through the same teardown as removing it: the app is told it is being removed (`on_removing`), its OAuth tokens are revoked upstream, a brokered connection is revoked at the broker, and its webhook registrations, notification cursors and tool permissions are dropped.
+3. Its secrets, its files and the workspace record.
 
-Its conversations are not archived; they are deleted. Once the workspace is archived, so no new conversation can start in it, the conversations plugin deletes every conversation it holds for the workspace. If that step fails, the workspace stays deleted and the delete reports it; deleting the same workspace again deletes the conversations left behind.
+A purge that stops partway, because a plugin answered an error or the runtime stopped, leaves the workspace deleted and is finished on a later pass; it can no longer be restored once it began. Organization usage keeps the workspace's spend after the purge.
 
-Each connector's own credentials are the exception, and go for good: its stored OAuth records and any brokered credential directory are cleared during teardown, because the grant behind them has just been revoked upstream. Archiving a revoked token would keep a secret that no longer opens anything.
-
-Teardown is best-effort per connector. A vendor that cannot be reached does not block the delete; the connector is reported on the result so you know whose grant may still be live and can revoke it in that vendor's own portal.
+Teardown is best-effort per connector. A vendor that cannot be reached does not block the purge; the connector is reported so you know whose grant may still be live and can revoke it in that vendor's own portal.
 
 <Aside type="caution">
-Deleting a workspace requires an org admin. A connector that fails to tear down is named in the result — check it, because once the workspace record is archived nothing in the product points at that grant any more.
+Deleting, restoring and purging a workspace require an org admin. A connector that fails to tear down in a purge is named in an admin's purge result and in the runtime's log — check it, because once the workspace is purged nothing in the product points at that grant any more.
 </Aside>
 
 ## Switching workspaces

@@ -12,38 +12,31 @@ workspace-record strip, the hook revoke, the cursor reset, the tool-surface
 watches, the ready-notification record, the tool permissions, the owned secrets.
 Order is the contract — see the file header.
 
-**Deleting a container runs the same teardown as removing each thing it holds.**
-`Runtime.deleteWorkspace` walks `ws.connectors`, calls it for each, and only
-then hands the id to `WorkspaceStore.delete` for the archive-rename, and after
-it purges the workspace's conversations (`src/conversation/AGENTS.md`). Teardown
-runs BEFORE the rename: `on_removing` needs the connector reachable, and the
-credential cleanup needs the credential directory at its live path.
+**Purging a deleted workspace runs the same teardown as removing each thing it holds.**
+Deleting a workspace only stops its connectors (`Runtime.unloadWorkspaceConnectors`: the
+registry, lifecycle instances, placements and per-process records go, nothing stored
+changes and no connector is told), so a restore starts them again as boot does. The
+teardown is the purge's (`Runtime.purgeWorkspaceConnectors`, `src/workspace/AGENTS.md`).
 
-- **The workspace's tasks are disarmed first**, before the connector
-  teardown and long before the rename: `TaskQuiescer.dropWorkspace` (the
-  scheduler, handed over by the tasks source — the runtime may not import
-  it) drops them from the in-memory `definitions` map. Nothing else does:
-  `scheduler.reload()` is called only from the tasks tool surface, so a
-  deleted workspace's tasks stayed armed until the process restarted. A
-  targeted drop, never `reload()` — that rescans every workspace and owner on
-  disk to learn one thing the caller already knows.
+- **The purge starts the connectors first**, as a restore would
+  (`loadWorkspaceConnectors`), because `on_removing` needs the connector reachable and the
+  revoke needs its lifecycle instance and ref. Then it walks the record's `connectors`,
+  calls this function for each, and drops what is left in the process.
 - `WorkspaceStore` imports nothing from `src/connectors/` and holds no lifecycle
-  handle. The cascade is the runtime's; the store does the rename.
-- `manage_workspaces delete` calls `Runtime.deleteWorkspace`, never
-  `workspaceStore.delete` — which is why `ManageWorkspacesContext` carries a
-  runtime handle.
-- Best-effort per connector. Outcomes are collected and returned, not thrown: a
-  vendor nobody can reach must not strand a workspace half-deleted, and a failed
-  revoke has to stay nameable after the record that named it is archived.
+  handle. The cascade is the runtime's; the store writes the tombstone and removes the
+  directory.
+- `manage_workspaces delete`, `restore` and `purge` call the runtime, never the store's
+  `delete` — which is why `ManageWorkspacesContext` carries a runtime handle.
+- Best-effort per connector. Outcomes are collected and returned, not thrown: a vendor
+  nobody can reach must not strand a purge, and a failed revoke is logged and named in
+  an admin's purge answer.
 - `ConnectorTeardownDeps` is a structural interface `Runtime` satisfies, so
   `src/connectors/` keeps no edge to the composition root.
-- Which secrets an uninstall may delete is the CALLER's question, passed in. The
-  tool subtracts keys a surviving sibling still names; a workspace delete passes
-  none, because every connector is going and those keys are operator-set
-  workspace secrets, which survive the rename into the archive. The connector's
-  own credentials do NOT survive it — `lifecycle.uninstall` clears its
-  `mcp-oauth.<server>.*` keys and any brokered credential dir a step before the
-  rename. That asymmetry is the design: revoking upstream is the point.
+- Which secrets an uninstall may delete is the CALLER's question, passed in. The tool
+  subtracts keys a surviving sibling still names; a purge passes none and deletes every
+  workspace secret itself afterwards. The connector's own credentials go either way:
+  `lifecycle.uninstall` clears its `mcp-oauth.<server>.*` keys and any brokered
+  credential dir, because revoking upstream is the point.
 
 ## Connection credential re-validation
 

@@ -60,9 +60,7 @@ function writeCalls(
       model: ev.model,
       usage: ev.usage,
       llmMs: ev.llmMs ?? 0,
-      ...((meta.origin ?? "chat") === "task"
-        ? { taskRunId: meta.id }
-        : { conversationId: meta.id }),
+      ...((meta.origin ?? "chat") === "task" ? { runId: meta.id } : { conversationId: meta.id }),
       userId: meta.ownerId ?? "usr_test",
       workspaceId: "ws_0076759dbbe19fcc",
       ...(rates ? { rates } : {}),
@@ -644,9 +642,9 @@ describe("the ledger's id split", () => {
     expect(report.totals.runs ?? 0).toBe(0);
   });
 
-  it("counts a new-shape task record as a run, not a conversation", async () => {
+  it("counts a line with a run and no conversation as a run, not a conversation", async () => {
     const dir = makeTmpDir();
-    writeRecord(dir, { origin: "task", taskRunId: "run_new", runId: "turn-1" });
+    writeRecord(dir, { origin: "task", runId: "run_new" });
 
     const report = await aggregateUsage(dir, "all", "day");
     expect(report.totals.runs).toBe(1);
@@ -657,7 +655,7 @@ describe("the ledger's id split", () => {
     // A task run and a background job have no conversation. They are neither
     // listed as one under their own id nor gathered into a row standing for none.
     const dir = makeTmpDir();
-    writeRecord(dir, { origin: "task", taskRunId: "run_x", runId: "turn-1" });
+    writeRecord(dir, { origin: "task", runId: "run_x" });
     writeRecord(dir, { origin: "system" });
     writeRecord(dir, { conversationId: "conv_x", runId: "turn-2" });
 
@@ -830,7 +828,7 @@ describe("workspace grouping and filters", () => {
       userId: "usr_a",
       workspaceId: "ws_002038aa71ea4b8a",
       origin: "task",
-      taskRunId: "run_1",
+      runId: "run_1",
       model: "anthropic:claude-haiku-4-5-20251001",
       usage: { inputTokens: 10, outputTokens: 0 },
       ts: "2026-04-10T13:00:00Z",

@@ -46,7 +46,7 @@ beforeAll(async () => {
     languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
-    tasks: { maxRunDurationMs: 120_000 },
+    runs: { maxRunDurationMs: 120_000 },
   });
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;

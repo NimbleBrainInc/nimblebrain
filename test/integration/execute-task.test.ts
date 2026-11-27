@@ -559,8 +559,9 @@ describe("runtime.executeTask", () => {
   it("refuses the task-authoring surface from inside a run, even when named directly", async () => {
     // The self-modification boundary. A task runs unattended and can
     // ingest untrusted content, so it must not be able to rewrite/spawn/fire
-    // tasks from within its own run. Surfacing subtraction keeps the model
-    // from seeing these tools; this test pins the HARD half — the source refuses
+    // tasks from within its own run: the contract marks these tools
+    // `unattended: "refused"`. Surfacing subtraction keeps the model from seeing
+    // them; this test pins the HARD half — the bound source refuses
     // the call even when the model emits the name directly (the injection /
     // hallucination path), with VALID input so the refusal is the run-wall, not
     // schema validation.
@@ -596,7 +597,7 @@ describe("runtime.executeTask", () => {
       const refused = result.toolCalls.at(-1);
       expect(refused?.name).toBe(tool);
       expect(refused?.ok).toBe(false);
-      expect(refused?.output).toMatch(/unattended task run/i);
+      expect(refused?.output).toMatch(/unattended_refused/);
 
       await runtime.shutdown();
       runtime = null;
@@ -628,10 +629,10 @@ describe("runtime.executeTask", () => {
     });
 
     expect(result.toolCalls[0]?.name).toBe("tasks__list");
-    expect(result.toolCalls[0]?.output).not.toMatch(/unattended task run/i);
+    expect(result.toolCalls[0]?.output).not.toMatch(/unattended_refused/);
   });
 
-  it("creates no conversation even when caller passes metadata", async () => {
+  it("creates no conversation", async () => {
     runtime = await bootRuntime(undefined);
     const { defaultWsId } = await provisionWorkspaces(runtime);
 
@@ -639,11 +640,9 @@ describe("runtime.executeTask", () => {
       workspaceId: defaultWsId,
       prompt: "tag check",
       identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
-      metadata: { taskId: "auto_test_123" },
     });
 
-    // A task is not a conversation: the caller's metadata has nowhere to be
-    // persisted as a chat, and no conversation is written under the runId.
+    // A task is not a conversation: no conversation is written under the runId.
     expect(result.runId).toMatch(/^run_[a-z0-9_-]+$/i);
     const store = await runtime.resolveConversationStore(defaultWsId, result.runId, TEST_USER_ID);
     const convo = store ? await store.load(result.runId) : null;

@@ -104,6 +104,10 @@ export interface Machine {
   loaded: Map<string, { pid?: number; lastExit?: number }>;
   /** The servers registered in Claude Code and Codex, by name: `mcp add` adds one, `mcp remove` removes it. */
   servers: { claude: Set<string>; codex: Set<string> };
+  /** Milliseconds passed, as `sleep` counts them. */
+  now: number;
+  /** Ports a stopped worker still holds while it drains, until the time each is let go. */
+  draining: Map<number, number>;
   /** Ollama's models after the run, by name. */
   ollamaModels: Record<string, OllamaModel>;
   /** Whether Ollama answers. */
@@ -153,6 +157,11 @@ export interface MachineOptions {
   worker?: "listens" | "refuses";
   /** Agent workers already running when the run starts, by pid. */
   workers?: Record<number, { port: number; command: string }>;
+  /**
+   * How long a worker that launchd stops (`bootout`) keeps holding its port
+   * while it drains, in the milliseconds `sleep` passes; default 0, released at once.
+   */
+  drainMs?: number;
   /** The CLI's npm `latest`; absent, the registry does not answer. */
   npmLatest?: string;
 }
@@ -181,6 +190,8 @@ export function machine(opts: MachineOptions = {}): Machine {
     ),
     spawned: [] as Array<{ line: string; logPath: string }>,
     loaded: new Map<string, { pid?: number; lastExit?: number }>(),
+    now: 0,
+    draining: new Map<number, number>(),
     ollamaUp: Boolean(opts.ollama && !opts.ollama.down),
     servers: {
       claude: new Set(opts.servers?.claude ?? []),
@@ -245,7 +256,10 @@ export function machine(opts: MachineOptions = {}): Machine {
     },
     which: async (cmd) =>
       (opts.programs ?? []).includes(cmd) ? `/opt/homebrew/bin/${cmd}` : undefined,
-    portFree: async (port) => (opts.portFree ?? true) && !(opts.busyPorts ?? []).includes(port),
+    portFree: async (port) =>
+      (opts.portFree ?? true) &&
+      !(opts.busyPorts ?? []).includes(port) &&
+      (m.draining.get(port) ?? 0) <= m.now,
     async getText(url) {
       const page = url.match(/^http:\/\/127\.0\.0\.1:(\d+)\/$/);
       if (page) {
@@ -330,7 +344,9 @@ export function machine(opts: MachineOptions = {}): Machine {
       return answers.shift() ?? "";
     },
     interactive: opts.interactive ?? false,
-    sleep: async () => {},
+    sleep: async (ms) => {
+      m.now += ms;
+    },
     say: (line) => {
       m.said.push(line);
     },
@@ -385,7 +401,11 @@ export function machine(opts: MachineOptions = {}): Machine {
     const label = target.split("/").slice(2).join("/");
     if (verb === "bootout") {
       if (!m.loaded.delete(label)) return fail("Boot-out failed: 3: No such process", 3);
-      for (const [pid, w] of m.workers) if (w.label === label) m.workers.delete(pid);
+      for (const [pid, w] of m.workers) {
+        if (w.label !== label) continue;
+        m.workers.delete(pid);
+        if (opts.drainMs) m.draining.set(w.port, m.now + opts.drainMs);
+      }
       return ok();
     }
     if (verb === "print") {

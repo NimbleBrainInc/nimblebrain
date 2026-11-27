@@ -85,11 +85,6 @@ function derivedCandidates(): { file: string; selector: string }[] {
 const GUARDED = [
   {
     what: "tasks running dot",
-    file: join(REPO, "src", "platform", "tasks", "ui", "src", "styles.ts"),
-    selector: ".dot-running",
-  },
-  {
-    what: "tasks plugin running dot",
     file: join(REPO, "packages", "tasks", "ui", "src", "styles.ts"),
     selector: ".dot-running",
   },

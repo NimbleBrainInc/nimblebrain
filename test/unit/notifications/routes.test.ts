@@ -20,6 +20,7 @@ import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
 import type { NotificationRoute } from "../../../src/notifications/config.ts";
 import { parseNotificationEnvelope } from "../../../src/notifications/envelope.ts";
+import type { TaskEventAnswer, TaskEventOffer } from "../../../src/notifications/routes.ts";
 import {
   RETRY_TICK_MS,
   RouteDispatcher,
@@ -35,7 +36,6 @@ import type {
   DeliveryRecord,
   NotificationLevel,
 } from "../../../src/platform/schemas/notifications.ts";
-import type { EventWakeAck, EventWakeRequest } from "../../../src/platform/tasks/event-trigger.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { stub } from "../../helpers/stub.ts";
@@ -97,6 +97,13 @@ function dispatcher(overrides: Partial<RouteDispatcherDeps> = {}): RouteDispatch
       calls.push(opts);
       return answers.length > 1 ? (answers.shift() as UnattendedDispatchResult) : answers[0]!;
     },
+    // A runtime with no tasks plugin answers every offer so.
+    offerToTask: async () => ({
+      accepted: false,
+      outcome: "denied",
+      classification: "tasks_unavailable",
+      reason: "this runtime runs no tasks plugin",
+    }),
     ...overrides,
   });
   teardown.push(() => made.stop());
@@ -703,9 +710,9 @@ describe("a route naming one tool twice", () => {
 
 describe("an agent target", () => {
   /** Every offer the dispatcher made to the tasks side, in order. */
-  let offers: EventWakeRequest[];
+  let offers: TaskEventOffer[];
   /** What the stub answers; the last entry repeats. */
-  let acks: EventWakeAck[];
+  let acks: TaskEventAnswer[];
 
   beforeEach(() => {
     offers = [];
@@ -714,21 +721,34 @@ describe("an agent target", () => {
 
   function waking(): Partial<RouteDispatcherDeps> {
     return {
-      wakeTask: (req) => {
-        offers.push(req);
-        return acks.length > 1 ? (acks.shift() as EventWakeAck) : acks[0]!;
+      offerToTask: async (offer) => {
+        offers.push(offer);
+        return acks.length > 1 ? (acks.shift() as TaskEventAnswer) : acks[0]!;
       },
     };
   }
+
+  /** An offer that is never answered: the process stops while it is outstanding. */
+  function hanging(): Partial<RouteDispatcherDeps> {
+    return {
+      offerToTask: (offer) => {
+        offers.push(offer);
+        return new Promise<TaskEventAnswer>(() => {});
+      },
+    };
+  }
+
+  /** Let the offer's answer land. */
+  const answered = () => Bun.sleep(0);
 
   function agentRoute(id = "rt_triage", task = "auto_triage"): Record<string, unknown> {
     return { id, createdBy: AUTHOR, match: {}, deliver: [{ kind: "agent", task }] };
   }
 
-  test("offers the item to the task and leaves the row deferred", async () => {
+  test("offers the item to the task, deferred until it answers", async () => {
     await configure({ routes: [agentRoute()] });
     const item = seed();
-    await dispatcher(waking()).onItem(wsId, item);
+    await dispatcher(hanging()).onItem(wsId, item);
 
     expect(calls).toHaveLength(0);
     expect(offers).toHaveLength(1);
@@ -736,7 +756,7 @@ describe("an agent target", () => {
       wsId,
       taskId: "auto_triage",
       // The route's author is the task's owner, which is what scopes the
-      // lookup — a route cannot reach somebody else's task by naming it.
+      // offer — a route cannot reach somebody else's task by naming it.
       ownerId: AUTHOR,
     });
     expect(offers[0]?.item.envelope.eventId).toBe(item.envelope.eventId);
@@ -748,21 +768,18 @@ describe("an agent target", () => {
         kind: "agent",
         attempts: 0,
         outcome: "deferred",
-        classification: "awaiting_batch",
+        classification: "awaiting_offer",
         updatedAt: new Date(clock).toISOString(),
       },
     ]);
-    // Nothing has failed. A batch inside its window is not a broken route.
     expect(eventsOfType("notification.delivery_failed")).toHaveLength(0);
   });
 
-  test("the batch settles later, and the row carries the run it started", async () => {
+  test("an accepted offer is delivered: the task holds the item", async () => {
     await configure({ routes: [agentRoute()] });
     const item = seed();
     await dispatcher(waking()).onItem(wsId, item);
-
-    advance(30_000);
-    offers[0]?.settle({ outcome: "delivered", runId: "run_abc123" });
+    await answered();
 
     expect(ledger(item)[0]).toEqual({
       routeId: "rt_triage",
@@ -771,13 +788,12 @@ describe("an agent target", () => {
       kind: "agent",
       attempts: 1,
       outcome: "delivered",
-      runId: "run_abc123",
       updatedAt: new Date(clock).toISOString(),
     });
     expect(eventsOfType("notification.delivered")).toHaveLength(1);
   });
 
-  test("a refused offer is terminal at once, with the outcome the tasks side chose", async () => {
+  test("a refused offer is terminal, with the outcome the tasks side chose", async () => {
     acks = [
       {
         accepted: false,
@@ -789,6 +805,7 @@ describe("an agent target", () => {
     await configure({ routes: [agentRoute()] });
     const item = seed();
     await dispatcher(waking()).onItem(wsId, item);
+    await answered();
 
     expect(ledger(item)[0]).toMatchObject({
       outcome: "denied",
@@ -802,10 +819,28 @@ describe("an agent target", () => {
     });
   });
 
+  test("an offer that throws fails the row", async () => {
+    await configure({ routes: [agentRoute()] });
+    const item = seed();
+    await dispatcher({
+      offerToTask: async () => {
+        throw new Error("plugin down");
+      },
+    }).onItem(wsId, item);
+    await answered();
+
+    expect(ledger(item)[0]).toMatchObject({
+      outcome: "failed",
+      classification: "offer_error",
+      lastError: "plugin down",
+    });
+  });
+
   test("a runtime with no tasks answers the route rather than staying silent", async () => {
     await configure({ routes: [agentRoute()] });
     const item = seed();
     await dispatcher().onItem(wsId, item);
+    await answered();
 
     expect(ledger(item)[0]).toMatchObject({
       outcome: "denied",
@@ -829,9 +864,10 @@ describe("an agent target", () => {
     });
     const item = seed();
     await dispatcher(waking()).onItem(wsId, item);
+    await answered();
 
     expect(calls).toHaveLength(1);
-    expect(ledger(item).map((row) => row.outcome)).toEqual(["deferred", "delivered"]);
+    expect(ledger(item).map((row) => row.outcome)).toEqual(["delivered", "delivered"]);
   });
 
   test("is never resumed as a tool retry on a restart", async () => {
@@ -845,17 +881,16 @@ describe("an agent target", () => {
     expect(calls).toHaveLength(0);
   });
 
-  test("a batch open at a restart is dropped, and the ledger says so", async () => {
+  test("an offer unanswered at a restart is dropped, and the ledger says so", async () => {
     await configure({ routes: [agentRoute()] });
     const item = seed();
-    const first = dispatcher(waking());
+    const first = dispatcher(hanging());
     await first.onItem(wsId, item);
     expect(ledger(item)[0]).toMatchObject({ outcome: "deferred" });
     first.stop();
 
-    // A debounce window lives only in the memory of the process that opened it.
-    // The successor must close the row rather than leave it deferred forever or
-    // re-fire a batch it cannot reconstruct.
+    // The offer's answer would have reached only the process that made it. The
+    // successor closes the row rather than leave it deferred forever.
     offers = [];
     const second = dispatcher(waking());
     await second.resume();
@@ -863,10 +898,10 @@ describe("an agent target", () => {
     expect(offers).toHaveLength(0);
     expect(ledger(item)[0]).toMatchObject({
       outcome: "failed",
-      classification: "batch_not_resumed",
+      classification: "offer_not_answered",
     });
     expect(eventsOfType("notification.delivery_failed")[0]).toMatchObject({
-      classification: "batch_not_resumed",
+      classification: "offer_not_answered",
     });
   });
 });

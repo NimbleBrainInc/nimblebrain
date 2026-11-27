@@ -104,6 +104,25 @@ describe("the sweep converts what is already there", () => {
     }
   });
 
+  test("a deleted workspace's secret is re-sealed too, so a restore can open it", async () => {
+    // A put into a deleted workspace is refused; the sweep rewrites a value
+    // already there, which adds nothing to it.
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      writeFileSync(
+        join(dir, "workspaces", "ws_0076759dbbe19fcc", "deleted.json"),
+        JSON.stringify({ deletedAt: "2026-01-01T00:00:00.000Z", deletedBy: null }),
+      );
+      seed(dir, SCOPE_DIRS[1][1], "acme.key", "s3cret");
+      await expect(store.put(WS, "other.key", "v")).rejects.toThrow("does not exist");
+      await store.reconcile?.();
+      expect(readRaw(dir, SCOPE_DIRS[1][1], "acme.key").startsWith("NBS1.")).toBe(true);
+      expect((await store.get(WS, "acme.key", READ))?.reveal()).toBe("s3cret");
+    } finally {
+      cleanup();
+    }
+  });
+
   test("a value sealed under an older key is re-wrapped under the current one", async () => {
     // The rotation seam: prepend a key, restart, and this runs on the way up
     // while the outgoing key still opens what it has not reached.

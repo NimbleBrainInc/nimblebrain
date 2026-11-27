@@ -85,7 +85,7 @@ import { NewSkillPage, SkillPage } from "./pages/SkillPage";
 import { SkillsPage } from "./pages/SkillsPage";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { OrgAboutTab } from "./pages/settings/OrgAboutTab";
-import { OrgArchivesTab } from "./pages/settings/OrgArchivesTab";
+import { OrgDeletedWorkspacesTab } from "./pages/settings/OrgDeletedWorkspacesTab";
 import { OrgSettingsPage } from "./pages/settings/OrgSettingsPage";
 import { OrgSkillsTab } from "./pages/settings/OrgSkillsTab";
 import { OrgUsageTab } from "./pages/settings/OrgUsageTab";
@@ -595,10 +595,10 @@ function AuthenticatedAppContent({
                 }
               />
               <Route
-                path="archives"
+                path="deleted"
                 element={
                   <RouteGuard requireRole="org_admin">
-                    <OrgArchivesTab />
+                    <OrgDeletedWorkspacesTab />
                   </RouteGuard>
                 }
               />

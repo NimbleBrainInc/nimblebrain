@@ -10,7 +10,7 @@
  * the existing test files for completeness.
  */
 
-import { beforeEach, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,9 +23,6 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 // NB-003: Engine input validation
 import { AgentEngine } from "../../src/engine/engine.ts";
 import type { EngineConfig, ToolSchema } from "../../src/engine/types.ts";
-// NB-001 (task): Task ID path traversal
-import { appendRun, readRuns } from "../../src/platform/tasks/store.ts";
-import type { TaskRun } from "../../src/platform/tasks/types.ts";
 // NB-002: Prompt injection — skill body XML containment
 // NB-007: App guide trust gating
 import { composeSystemPrompt, type FocusedAppInfo } from "../../src/prompt/compose.ts";
@@ -41,20 +38,6 @@ function freshTmpDir(prefix: string): string {
   const dir = join(tmpdir(), `nb-sec-reg-${prefix}-${Date.now()}-${++tmpCounter}`);
   mkdirSync(dir, { recursive: true });
   return dir;
-}
-
-function makeRun(overrides: Partial<TaskRun> = {}): TaskRun {
-  return {
-    id: `run_${Math.random().toString(36).slice(2, 8)}`,
-    taskId: "test-auto",
-    startedAt: new Date().toISOString(),
-    status: "success",
-    inputTokens: 100,
-    outputTokens: 50,
-    toolCalls: 2,
-    iterations: 1,
-    ...overrides,
-  };
 }
 
 const defaultEngineConfig: EngineConfig = {
@@ -89,41 +72,6 @@ describe("Security Hardening Regression Tests", () => {
       const dir = freshTmpDir("conv-embedded");
       const store = conversationStore(dir, "ws_0076759dbbe19fcc", "user_test");
       expect(await store.load("conv_../../../etc").catch(() => null)).toBeNull();
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // NB-001 (task): Task ID path traversal
-  // ---------------------------------------------------------------------------
-
-  describe("NB-001 (task): Task ID path traversal", () => {
-    // Primary coverage: test/unit/platform/tasks/store.test.ts
-    // (covers ../../etc/passwd, empty, slashes, dots, uppercase, leading/trailing hyphens)
-
-    let tmpDir: string;
-
-    beforeEach(() => {
-      tmpDir = freshTmpDir("auto-pt");
-    });
-
-    it("rejects null byte injection in task ID", () => {
-      const run = makeRun({ taskId: "valid\x00../../etc/passwd" });
-      expect(() =>
-        appendRun(tmpDir, "ws_0076759dbbe19fcc", "usr_test", "valid\x00../../etc/passwd", run),
-      ).toThrow(/Invalid task id/i);
-    });
-
-    it("rejects URL-encoded path traversal in task ID", () => {
-      const run = makeRun({ taskId: "%2e%2e%2fpasswd" });
-      expect(() =>
-        appendRun(tmpDir, "ws_0076759dbbe19fcc", "usr_test", "%2e%2e%2fpasswd", run),
-      ).toThrow(/Invalid task id/i);
-    });
-
-    it("validation applies to readRuns with traversal payload", () => {
-      expect(() =>
-        readRuns(tmpDir, "ws_0076759dbbe19fcc", "usr_test", "../../../etc/shadow"),
-      ).toThrow(/Invalid task id/i);
     });
   });
 

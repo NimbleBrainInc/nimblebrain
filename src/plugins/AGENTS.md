@@ -48,10 +48,14 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
 ## Defaults ship in the box
 
 - **The default plugins are configuration, in `src/config/plugins.ts` (`DEFAULT_PLUGINS`)**: the
-  built-in conversations plugin as a system plugin, which turns chat on. `withDefaultPlugins`
-  lays the operator's `plugins` block over them: an entry of a default's name replaces it, and
-  `false` turns it off. With no block the instance runs the defaults exactly as an explicit
-  entry would.
+  built-in conversations plugin (chat) and the built-in tasks plugin (scheduled and unattended
+  work), each a system plugin. `withDefaultPlugins` lays the operator's `plugins` block over
+  them: an entry of a default's name replaces it, and `false` turns it off. With no block the
+  instance runs the defaults exactly as an explicit entry would.
+- **A system plugin's skills join the core pool** while it is enabled: every
+  `<root>/skills/<name>/SKILL.md` (`loadSystemPluginSkills`), marked vendored. The tasks plugin's
+  authoring guide (`task-authoring`, bound to `tasks__*`) arrives this way; the plugin also serves
+  the same body as its server instructions for MCP clients that load no skills.
 - **Binding another implementation of a singleton contract turns the default off.** Two
   enabled implementations refuse boot, so an operator writes `"conversations": false` beside
   their own plugin's entry.
@@ -70,9 +74,12 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   contract in code.** Matched by the document's `contract` name. Version: same major, minor
   at least the document's. Cardinality: a `singleton` has at most one enabled
   implementation. A document under a `v<major>` its version does not state is refused.
-- **A binding carries the contract's private tool names**, projected from the document's
-  `tools[].visibility`, so the code that registers the server never offers them to agents.
-  Which tools are private is the contract's decision, never the plugin's.
+- **A binding carries the contract's markings**, projected from the document: its private tools
+  (`visibility`), the tools refused unattended (`unattended: "refused"`, every private tool too),
+  the tools that take a run grant (`grant: true`, refused at load on any other than a public tool
+  refused unattended), and the version the kernel consumes (`hostVersion`, sent as `version` on
+  a private call). Which tools carry which marking is the contract's decision, never the
+  plugin's.
 - **The kernel never names a plugin.** A kernel feature that needs a capability names the
   contract and asks for its binding; nothing here branches on a plugin's name.
 - **`checkConfiguredPlugins` is the boot hook.** It resolves the defaults with the operator's
@@ -110,15 +117,33 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   `conversations__*` is the namespace whichever plugin implements the contract; the
   implementation's `mcp.json` key only says which server to launch. The contract document
   carries no host name: how a host exposes the public tools is the host's (`CONTRACT.md` §5).
+  `ai.nimblebrain.tasks` is `tasks`.
 - **The host context is stamped in one place: the transport's `send`.** Every request to a
   bound server passes it, after every other `_meta` merge, and it overwrites
   `params._meta["ai.nimblebrain/context"]` (`contracts/host-context/CONTEXT.md`). Never set
   the context anywhere else, and never build a second transport to a bound server.
 - **The principal comes from the call path, not from data.** `host` only inside
-  `BoundServer.call`, whose scope lives in a module-private `AsyncLocalStorage` nothing
-  exports; every other request presents `person`, with the workspace, signed-in identity and
-  turn conversation from the request context. Do not export that scope or add a second way
-  to present `host`.
+  `BoundServer.call` and `BoundServer.watch`, whose scope lives in a module-private
+  `AsyncLocalStorage` nothing exports; every other request presents `person`, with the
+  workspace, signed-in identity and turn conversation from the request context. Do not export
+  that scope or add a second way to present `host`.
+- **The send stamps `unattended` and `grant` from the same facts** (`contextFor`). A `person`
+  request made inside an unattended run (`RequestContext.unattended`) carries `unattended: true`.
+  A `person` `tools/call` to a grant-marked tool, with a workspace and an owner and outside any
+  run, carries the host's run grant for them, signed by the runtime's grant key
+  (`src/runtime/run-grant.ts`). A host call, any other tool, and an unattended call never carry
+  one, so no run obtains authority for another; a value a caller put in `_meta` is overwritten.
+- **Refused-unattended tools are refused by the source** (`refusedUnattended`): a call made
+  inside an unattended run to one answers `unattended_refused` before the server sees it, and
+  `Runtime.listRunTools` leaves them out of a run's tools (`Runtime.isUnattendedRefused`, which
+  the unattended dispatch asks too). The server's own refusal is the boundary.
+- **A change hint is watched as `host`** (`BoundServer.watch`): a `subscriptions/listen` of its
+  own on a 2026-07-28 connection (one per workspace, since the server answers a subscription
+  only for the workspace in its context), `resources/subscribe` on a 2025-era one. The source's
+  own listen stream carries no contract URI. A restarted server holds no subscription, so the
+  watcher watches again when `BoundServer.connection()` changes.
+- **A purge calls `delete_workspace` on every binding whose contract marks it private**
+  (`BoundServer.privateTools`), never on a binding named in code (`src/workspace/AGENTS.md`).
 - **Private tools are hidden by the source** (`hiddenTools`, from the binding's
   `privateTools`): left out of `tools/list` and so of every agent listing and the door, and
   refused by `execute` and `startToolAsTask`. That is tidiness; the server's `forbidden` is

@@ -100,7 +100,7 @@ Deactivating is a soft delete: the user can no longer sign in, but their record 
 Deactivating a user revokes their access on the next request. Their existing conversations are owned by them and are not deleted, but become inaccessible while they're deactivated.
 </Aside>
 
-Work that runs as the user without them signed in stops too. Their scheduled tasks are recorded as skipped instead of running, and notification routes they set up dispatch nothing. Nothing is deleted or disabled, so restoring the user brings it back on its next run. A run already in progress when you deactivate them finishes.
+Work that runs as the user without them signed in stops too. Their scheduled task's next run is skipped and the task is turned off, with a notice in the workspace inbox; notification routes they set up dispatch nothing. Nothing is deleted: after restoring the user, they turn the task back on (or run it) to resume it. A run already in progress when you deactivate them finishes.
 
 ## Workspace membership
 

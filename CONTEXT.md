@@ -58,8 +58,10 @@ URL is the only thing that names a workspace: bootstrap returns the caller's
 workspaces and no focus (ADR-0044). A kernel tool that acts on the caller or
 the org needs no workspace and is called without one (ADR-0043).
 
-A workspace exists because `create` made it and stops existing because `delete`
-archived it. **No write brings one into being**: a writer may create paths
+A workspace exists because `create` made it. `delete` makes it a tombstone that
+every door answers as not found and that an org admin can restore, as it was,
+until the retention window passes; then the kernel purges it, each plugin's
+records for it and its own. **No write brings one into being**: a writer may create paths
 inside a workspace root, and fails naming the workspace when the root is gone.
 So a workspace directory on disk is always one a create produced, which is what
 lets `list()` treat an unparseable `workspace.json` as corruption rather than as
@@ -139,9 +141,9 @@ fields it defined and never the server's opaque `data`.
 ### Source
 Any tool/resource provider behind the MCP boundary. Every source is one
 `McpSource` over one transport union (ADR-0022): a remote server over HTTPS, or
-one of the kernel's own capabilities — files, tasks, skills — served by a real
+one of the kernel's own capabilities — files, skills — served by a real
 MCP server on an in-memory linked-pair transport, or a system plugin's server
-the runtime starts over stdio (conversations). The
+the runtime starts over stdio (conversations, tasks). The
 platform's own capabilities are MCP servers to themselves, so nothing above the
 source can tell them apart.
 
@@ -157,7 +159,7 @@ the process, which is what host-owned `_meta` markers are conditioned on
 
 ### Platform app
 One of the kernel's own capabilities, expressed as a source:
-files, tasks, usage, skills, instructions, hooks, notifications, compose. Each is an in-process MCP server the runtime hosts
+files, usage, skills, instructions, hooks, notifications, compose. Each is an in-process MCP server the runtime hosts
 rather than connects to — there is no URL, no credential, and no connection
 to supervise, so none of what the *Connection* entry below describes applies
 to one.
@@ -281,7 +283,7 @@ other, and implements each contract with one MCP server named in its `mcp.json`:
 server's **public tools** and screen serve people and agents, and its **private tools**
 serve the kernel. The server refuses a private tool to any principal but `host` (the
 runtime itself), and the runtime never offers private tools to agents. The built-in
-conversations plugin is one, run by default; tasks and files are kernel code.
+conversations and tasks plugins are system plugins, run by default; files are kernel code.
 
 ### Catalog policy *(proposed, ADR-0076; not yet built)*
 How far a catalog's plugins reach, set by the operator when attaching the catalog:
@@ -305,10 +307,11 @@ MCP. The scope and principal are the **host context**, one spec shared by every 
 from an authenticated host transport. A
 plugin declares the contracts it `implements` and `requires`; the kernel names
 contracts, never plugins. Chat is on exactly when an enabled plugin implements the
-conversations contract; the default configuration binds the built-in one. The tasks contract
-(`ai.nimblebrain.tasks`) is published and not yet implemented by any plugin; scheduled work is
-kernel code until one is. The files contract (`ai.nimblebrain.files`) is published and not yet
-implemented by any plugin: its implementation owns every agent-facing file tool, the records,
+conversations contract; the default configuration binds the built-in one. Scheduled and
+unattended work is on exactly when an enabled plugin implements the tasks contract
+(`ai.nimblebrain.tasks`); the default configuration binds the built-in one, and the kernel's run
+worker runs what it says is due. The files contract (`ai.nimblebrain.files`) is published and not
+yet implemented by any plugin: its implementation owns every agent-facing file tool, the records,
 visibility, text extraction and the bytes and their storage, and the kernel owns upload intake
 and serving. Bytes move between them by short-lived URLs the implementation issues: the kernel
 streams an upload to the URL `begin_upload` answers, and serves a file from the URL `resolve`

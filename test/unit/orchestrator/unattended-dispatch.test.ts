@@ -82,6 +82,8 @@ interface StubOpts {
   events?: EngineEvent[];
   /** Sink that fails to write — for the audit-emit guard. */
   sinkThrows?: boolean;
+  /** Wire names a bound contract marks `unattended: "refused"`. */
+  refused?: ReadonlySet<string>;
 }
 
 function makeStubRuntime(opts: StubOpts): UnattendedDispatchRuntime {
@@ -97,6 +99,9 @@ function makeStubRuntime(opts: StubOpts): UnattendedDispatchRuntime {
     },
     getEventSink(): EventSink {
       return sink;
+    },
+    isUnattendedRefused(wireName: string): boolean {
+      return opts.refused?.has(wireName) ?? false;
     },
     getWorkspaceContext(wsId: string): WorkspaceContext {
       return new WorkspaceContext({ wsId, workDir: opts.workDir });
@@ -191,12 +196,13 @@ describe("dispatchUnattended — the unattended subtraction", () => {
   // Pins that the authoring surfaces are refused BY NAME, before routing. A
   // scheduled run gets this from surfacing (the tool is never shown); a single
   // dispatch has no listing to inherit it from, so the door has to say it.
-  test("denies tasks__create, and it never reaches the source", async () => {
+  test("denies a tool its contract refuses unattended, and it never reaches the source", async () => {
     const tasks = makeSpySource("tasks");
     const runtime = makeStubRuntime({
       workDir,
       members: [PRINCIPAL],
       identitySources: new Map([["tasks", tasks]]),
+      refused: new Set(["tasks__create"]),
     });
 
     const res = await call(runtime, "tasks__create");
@@ -206,14 +212,15 @@ describe("dispatchUnattended — the unattended subtraction", () => {
     expect(tasks.calls).toHaveLength(0);
   });
 
-  // The read half of the same namespace stays reachable — the policy is an
-  // allowlist over authoring, not a ban on the namespace.
-  test("allows tasks__list, which is on the task-safe allowlist", async () => {
+  // The rest of the same namespace stays reachable: the contract marks each
+  // tool, so the read the document allows is not refused.
+  test("allows a tool its contract allows unattended", async () => {
     const tasks = makeSpySource("tasks");
     const runtime = makeStubRuntime({
       workDir,
       members: [PRINCIPAL],
       identitySources: new Map([["tasks", tasks]]),
+      refused: new Set(["tasks__create"]),
     });
 
     const res = await call(runtime, "tasks__list");

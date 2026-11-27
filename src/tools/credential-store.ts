@@ -473,9 +473,10 @@ export class FileCredentialStore implements CredentialStore {
   async put(scope: CredentialScope, key: string, value: string): Promise<void> {
     const dir = this.#dir(scope);
     // `workspace` scope resolves under the workspace tree, so a put racing a
-    // delete would resurrect it carrying secret material. The `instance` and
-    // `user` arms address no workspace and pass. Keeps its own `mkdir` for the
-    // 0o700 mode. See `assertWorkspaceRootExists`.
+    // delete would write secret material into a deleted workspace, or resurrect
+    // a purged one. The `instance` and `user` arms address no workspace and
+    // pass. Keeps its own `mkdir` for the 0o700 mode. See
+    // `assertWorkspaceRootExists`.
     assertWorkspaceRootExists(dir);
     await mkdir(dir, { recursive: true, mode: 0o700 });
     try {
@@ -484,6 +485,19 @@ export class FileCredentialStore implements CredentialStore {
       // mkdir succeeded; chmod failure is non-fatal — file mode 0o600 below
       // still protects the contents.
     }
+    await this.#write(scope, key, value);
+  }
+
+  /**
+   * Write one value into its scope's existing directory, sealed when a sealer
+   * is set. `put` admits the workspace and creates the directory first; the
+   * reconcile's re-seal comes here directly, because it rewrites a value
+   * already on disk: it adds nothing to a deleted workspace, a restore must
+   * find that value under the current key, and a directory removed meanwhile
+   * fails the write instead of coming back.
+   */
+  async #write(scope: CredentialScope, key: string, value: string): Promise<void> {
+    const dir = this.#dir(scope);
     const path = this.#filePath(scope, key);
     // Leading dot, so the temp name falls OUTSIDE the key grammar: a `put` that
     // dies between write and rename leaves this file behind, and `list` filters
@@ -636,9 +650,9 @@ export class FileCredentialStore implements CredentialStore {
    * would stay plaintext forever, and the rarely-read key is exactly the one an
    * operator forgets they have.
    *
-   * `archived/<wsId>/` is deliberately NOT walked. A deleted workspace's
-   * secrets are a retention problem, not an encryption one — they should be
-   * gone, and sealing them would make them look handled instead.
+   * A deleted workspace's secrets stay under `workspaces/<wsId>/` until its
+   * purge, so they are walked and sealed like any live workspace's: a restore
+   * must find them readable.
    */
   async reconcile(): Promise<void> {
     const sealer = this.#sealer;
@@ -835,7 +849,7 @@ export class FileCredentialStore implements CredentialStore {
         value = readUnsealed(raw);
       }
 
-      await this.put(scope, key, value);
+      await this.#write(scope, key, value);
     } catch (err) {
       this.#auditSealFailure(scope, key, undefined, "reseal_skipped");
       log.warn("[credential-store] could not re-seal a secret; leaving it as it is", {

@@ -59,16 +59,12 @@ export interface UninstallConnectorOptions {
    * still standing.
    *
    * `manage_connectors` subtracts the keys a surviving sibling still names. A
-   * workspace delete passes none: every connector is going, so the subtraction
-   * has no meaning, and these keys are operator-set workspace secrets, which
-   * survive the archive-rename — deleting them out from under it would destroy
-   * exactly what the archive exists to keep.
+   * workspace purge passes none: every connector is going, and the purge
+   * deletes every workspace secret itself once the connectors are torn down.
    *
-   * Not everything under `credentials/` survives, and that is deliberate rather
-   * than an oversight this argument papers over: `lifecycle.uninstall` clears
-   * the connector's own OAuth record keys (`mcp-oauth.<server>.*`) and any
-   * brokered credential directory one step before the rename, because revoking
-   * upstream is the point and a revoked token is not worth archiving.
+   * `lifecycle.uninstall` clears the connector's own OAuth record keys
+   * (`mcp-oauth.<server>.*`) and any brokered credential directory whatever is
+   * passed here, because revoking upstream is the point.
    */
   secretKeys?: string[];
 }

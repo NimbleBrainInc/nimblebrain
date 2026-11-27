@@ -76,10 +76,11 @@ whose conversations are read and written.
    out, `delete` answers `false`, `append_events` fails `conversation_not_found`. No answer
    reveals that another scope's conversation exists.
 2. **A call with no scope reads and writes nothing.** A call that reaches the server with no
-   workspace or no owner fails `scope_missing`. A transport MAY refuse such a request before
+   workspace, or with no owner on any tool but `delete_workspace`, fails `scope_missing`. A transport MAY refuse such a request before
    any tool runs; that refusal is the transport's and outside the contract's errors.
-3. **`delete_workspace` is the one call that crosses owners**: it removes every owner's
-   conversations in the scope's workspace and ignores the scope's owner.
+3. **`delete_workspace` is the one call that crosses owners**: it is walled to the workspace
+   alone, removes every owner's conversations there, and needs no owner (one present is
+   ignored). The host makes it as `host` with a workspace and no owner.
 4. **A call MAY carry the conversation it is made inside.** Inside a chat, the context names
    the current conversation; an omitted `id` (or `"current"`) on `get`, `update` and `export`
    means that one. Outside a chat there is none, and the call fails

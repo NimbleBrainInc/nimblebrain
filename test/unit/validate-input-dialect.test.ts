@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { assertJsonSchema, checkAgainstSchema } from "../../src/platform/tasks/json-schema.ts";
 import { validateToolInput } from "../../src/tools/validate-input.ts";
 
 const DRAFT_2020 = "https://json-schema.org/draft/2020-12/schema";
@@ -79,18 +78,5 @@ describe("validateToolInput: the schema's declared dialect", () => {
     const b = { $id: "https://example.com/shared.json", type: "object", required: ["b"] };
     expect(validateToolInput({}, a).valid).toBe(false);
     expect(validateToolInput({}, b).valid).toBe(false);
-  });
-});
-
-describe("task schemas: the schema's declared dialect", () => {
-  test("test_task_schema_2020_12_is_accepted_and_checked", () => {
-    const schema = { $schema: DRAFT_2020, type: "object", required: ["x"] };
-    expect(() => assertJsonSchema(schema, "outputSchema")).not.toThrow();
-    expect(checkAgainstSchema(schema, {}).valid).toBe(false);
-  });
-
-  test("test_task_schema_uncompilable_is_refused", () => {
-    const schema = { $schema: "http://json-schema.org/draft-04/schema#", type: "object" };
-    expect(() => assertJsonSchema(schema, "outputSchema")).toThrow(/not a valid JSON Schema/);
   });
 });

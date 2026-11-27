@@ -1,4 +1,5 @@
 import { CONVERSATIONS_CONTRACT } from "../conversation/contract-store.ts";
+import { TASKS_CONTRACT } from "../runtime/run-worker.ts";
 
 /**
  * Kernel identity sources — owned by the user, hosted OUTSIDE any workspace.
@@ -16,8 +17,8 @@ import { CONVERSATIONS_CONTRACT } from "../conversation/contract-store.ts";
  * (it can't import from `src/`); keep the two in lockstep.
  *
  * Set: `conversations`, `files`, `tasks` — each identity-owned and reached
- * through the identity door. Task data lives under the workspace
- * (`workspaces/<wsId>/tasks/<ownerId>/`); a run fires as its owner.
+ * through the identity door. `conversations` and `tasks` are the servers bound
+ * to their contracts ({@link CONTRACT_SOURCE_NAMES}); `files` is in-process.
  */
 export const IDENTITY_SOURCES: ReadonlySet<string> = new Set(["conversations", "files", "tasks"]);
 
@@ -30,6 +31,7 @@ export const IDENTITY_SOURCES: ReadonlySet<string> = new Set(["conversations", "
  */
 export const CONTRACT_SOURCE_NAMES: ReadonlyMap<string, string> = new Map([
   [CONVERSATIONS_CONTRACT, "conversations"],
+  [TASKS_CONTRACT, "tasks"],
 ]);
 
 /** Whether a source (by name) is a kernel identity source. */
@@ -98,51 +100,4 @@ export function personalConnectorServerName(sourceName: string): string {
  */
 export function personalConnectorWireName(name: string): string {
   return `${PERSONAL_CONNECTOR_PREFIX}${name}`;
-}
-
-/**
- * Task tools that stay reachable inside an unattended run: read-only
- * introspection plus `cancel`. They surface run health without persisting a new
- * instruction. Everything else in the `tasks__*` namespace — the authoring
- * and run-triggering tools, and any tool added to the namespace later — is
- * barred, so the boundary fails CLOSED as the surface grows (an allowlist, not a
- * denylist).
- */
-export const TASK_RUN_SAFE_TOOLS: ReadonlySet<string> = new Set([
-  "tasks__list",
-  "tasks__status",
-  "tasks__runs",
-  "tasks__run_result",
-  "tasks__batch",
-  "tasks__batches",
-  "tasks__upcoming",
-  "tasks__stats",
-  "tasks__judges",
-  "tasks__cancel",
-]);
-
-/**
- * Whether an identity tool is barred from an unattended task run. A task run
- * fires as its owner with no human present to
- * confirm, and routinely ingests untrusted content (email, web pages, tickets).
- * Reaching the task-authoring surface from inside a run lets an injected
- * instruction rewrite the run's own prompt/schedule, spawn new tasks, or
- * fire them — a foothold that outlives the run and is then scheduler-driven.
- *
- * Only the `tasks__*` namespace is gated — `conversations__*` / `files__*`
- * are safe in a run. Within it, the check is an allowlist: anything not in
- * {@link TASK_RUN_SAFE_TOOLS} is forbidden, so a newly-added authoring
- * tool is denied by default rather than silently reopening the vector.
- *
- * The boundary is enforced ambiently: the tasks source refuses these
- * tools whenever `RequestContext.unattended` is set (see
- * `createTasksSource`), and that flag rides the request context down to
- * every tool the run dispatches. Surfacing subtraction in `executeTask` keeps
- * them out of the model's view; this predicate is the shared policy both layers
- * read.
- * `executor.ts::containsRecursiveTool` is a separate, narrower guard on
- * operator/connector-authored `allowedTools`.
- */
-export function isTaskForbiddenIdentityTool(name: string): boolean {
-  return name.startsWith("tasks__") && !TASK_RUN_SAFE_TOOLS.has(name);
 }

@@ -4,7 +4,7 @@
  * Every call path that spends tokens goes through here. A new one that does not
  * is invisible to cost accounting by construction — which is the defect this
  * module exists to prevent, and which the runtime has already hit four times
- * (task runs, sub-agent runs, background briefing refresh, and archived
+ * (task runs, sub-agent runs, background briefing refresh, and deleted
  * workspaces all spent money no in-product surface showed).
  *
  * Two rules hold this together:
@@ -143,11 +143,11 @@ export function recordLlmCall(args: {
     userId,
     workspaceId,
     // Each id under its own name, so no reader has to consult `origin` to learn
-    // what it is holding. `runId` is the run's, and it is the only one of the
-    // three that is per-TURN, so it is what makes "what did this turn cost"
-    // answerable at all.
+    // what it is holding. `runId` is the run's (per TURN in a chat, the whole
+    // run when unattended), which is what makes "what did this run cost"
+    // answerable at all; a line with a run and no conversation is an unattended
+    // run's.
     ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {}),
-    ...(ctx.runId ? { taskRunId: ctx.runId } : {}),
     ...(ctx.credentialSubject ? { runId: ctx.credentialSubject } : {}),
     ...(ctx.agentRuntime ? { runtime: ctx.agentRuntime } : {}),
     ...(rates ? { rates } : {}),

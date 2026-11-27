@@ -5,7 +5,7 @@
  * per priced LLM call. Scanning `llm.response` events out of conversation
  * JSONL files would make usage a function of whether a conversation file
  * happened to exist — so task runs, sub-agent runs, the background briefing
- * and archived workspaces would all spend money it never saw.
+ * and deleted workspaces would all spend money it never saw.
  *
  * **There is exactly one reader, deliberately.** Two readers can disagree,
  * and the disagreement hides an undercount. Per-conversation display still reads `llm.response` from the
@@ -645,6 +645,11 @@ function getModelUsage(map: Map<string, ModelUsage>, modelKey: string): ModelUsa
   return usage;
 }
 
+/** The unattended run a line belongs to: its run, when it has no conversation. */
+function unattendedRunId(record: LlmCallRecord): string | undefined {
+  return record.conversationId ? undefined : record.runId;
+}
+
 /** Fold one record's tokens/cost into totals, per-model, and every groupBy breakdown. */
 function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
   const { tokens, cost } = decomposeUsage(record);
@@ -654,7 +659,8 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
   sink.totals.llmMs += record.llmMs;
   // Each id under its own name, so a task is never counted as a conversation.
   if (record.conversationId) sink.conversationIds.add(record.conversationId);
-  if (record.taskRunId) sink.runIds.add(record.taskRunId);
+  const runId = unattendedRunId(record);
+  if (runId) sink.runIds.add(runId);
   // Unpriced is not free. A line the catalog cannot price contributes tokens
   // and zero dollars, and this is the count that says the dollar figure is
   // incomplete rather than the spend being zero.
@@ -679,7 +685,7 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
     // Same split as `totals`, so a breakdown row cannot report a task as a
     // conversation while the totals disagree.
     if (record.conversationId) bucket.sids.add(record.conversationId);
-    if (record.taskRunId) bucket.runIds.add(record.taskRunId);
+    if (runId) bucket.runIds.add(runId);
     if (!priced) bucket.unpricedCalls++;
     if (dimension === "day" && sink.stackBy) {
       addToStack(bucket, keyFor(record, sink.stackBy, modelKey), cost.total);
@@ -778,40 +784,64 @@ export async function aggregateUsage(
 }
 
 // ---------------------------------------------------------------------------
-// Spend of named task runs
+// Usage of named unattended runs
 // ---------------------------------------------------------------------------
 
+/** What the ledger recorded for one unattended run. */
+export interface MeteredRun {
+  inputTokens: number;
+  outputTokens: number;
+  /** Priced as the report prices it; an unpriced line adds nothing. */
+  costUsd: number;
+  /** The earliest line's time. */
+  firstAt: string;
+}
+
 /**
- * What the ledger says each of a set of task runs cost, in USD, by run id:
- * every line from `range.from` onward whose task run is one of `taskRunIds`
- * (and, when given, bound to `workspaceId`), priced the way the report prices
- * it (stored rates first, then the catalog; an unpriced line adds nothing). A
- * line is written as each model call completes, so a run that never reached
- * its record (lost in a crash) is counted too. Synchronous, and reads only the
- * month shards the range spans.
+ * What the ledger says each of a set of unattended runs used, by run id: every
+ * line from `range.from` onward with no conversation whose `runId` is one of
+ * `runIds` (and, when given, bound to `workspaceId`). A line is written as each
+ * model call completes, so a run that never reported its end (lost in a crash)
+ * is counted too. Synchronous, and reads only the month shards the range spans.
  */
-export function ledgerCostByTaskRun(
+export function ledgerUsageByRun(
   workDir: string,
-  taskRunIds: ReadonlySet<string>,
+  runIds: ReadonlySet<string>,
   range: { from: string; to: string },
   workspaceId?: string,
-): Map<string, number> {
-  const costs = new Map<string, number>();
-  if (taskRunIds.size === 0) return costs;
+): Map<string, MeteredRun> {
+  const out = new Map<string, MeteredRun>();
+  if (runIds.size === 0) return out;
   const filters = workspaceId !== undefined ? { workspaceId } : {};
   for (const month of usageMonthsInRange(range.from, range.to)) {
     const dir = usageMonthDir(workDir, month);
     for (const shard of shardsForMonth(dir)) {
       for (const record of parseShard(readShardSync(join(dir, shard)), range, undefined, filters)) {
-        const runId = record.taskRunId;
-        if (runId && taskRunIds.has(runId)) {
-          const cost = costBreakdown(record.model, record.usage, record.rates).total;
-          costs.set(runId, (costs.get(runId) ?? 0) + cost);
-        }
+        const runId = unattendedRunId(record);
+        if (runId && runIds.has(runId)) out.set(runId, meteredWith(out.get(runId), record));
       }
     }
   }
-  return costs;
+  return out;
+}
+
+/** A run's metering with one more line added. */
+function meteredWith(seen: MeteredRun | undefined, record: LlmCallRecord): MeteredRun {
+  const cost = costBreakdown(record.model, record.usage, record.rates).total;
+  if (!seen) {
+    return {
+      inputTokens: record.usage.inputTokens,
+      outputTokens: record.usage.outputTokens,
+      costUsd: cost,
+      firstAt: record.ts,
+    };
+  }
+  return {
+    inputTokens: seen.inputTokens + record.usage.inputTokens,
+    outputTokens: seen.outputTokens + record.usage.outputTokens,
+    costUsd: seen.costUsd + cost,
+    firstAt: seen.firstAt < record.ts ? seen.firstAt : record.ts,
+  };
 }
 
 /** A shard's text, or empty when it vanished between listing and read (retention sweep). */

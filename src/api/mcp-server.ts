@@ -85,7 +85,6 @@ import {
   type SkillEntry,
 } from "../skills/skills-extension.ts";
 import { IDENTITY_SOURCES, isPersonalConnectorName } from "../tools/identity-sources.ts";
-import type { IdentityTaskSource } from "../tools/identity-task-source.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { McpCaller, TaskOwnerContext, ToolSource } from "../tools/types.ts";
@@ -994,11 +993,10 @@ function runsAsTask(
 }
 
 /**
- * Where a task request resolves: the request's (workspace, identity), and
- * the task-aware sources it can reach: a kernel identity source's task surface
- * (`tasks` runs) by that name, else a connector in that workspace. Null
- * without a runtime or an identity, which reach no task. Either kind checks the
- * task's (workspace, identity, source) owner against the request's.
+ * Where a task request resolves: the request's (workspace, identity), and the
+ * task-aware connectors it can reach in that workspace. Null without a runtime
+ * or an identity, which reach no task. A task's (workspace, identity, source)
+ * owner is checked against the request's.
  */
 function modernTaskContext(
   runtime: Runtime | null,
@@ -1011,8 +1009,7 @@ function modernTaskContext(
     workspaceId: wsId,
     identityId,
     findSource: (name) =>
-      runtime.getIdentityTaskSource(name) ??
-      (runtime.getRegistryForWorkspace(wsId).findTaskAwareSource(name) as TaskAwareSource | null),
+      runtime.getRegistryForWorkspace(wsId).findTaskAwareSource(name) as TaskAwareSource | null,
   };
 }
 
@@ -1194,66 +1191,12 @@ async function executeIdentityToolCall(
     ...(clientName ? { clientName } : {}),
   };
 
-  if (!routed.policyOwner) {
-    const tasked = await answerIdentityTask(
-      runtime.getIdentityTaskSource(sourcePrefix),
-      { name, bare, args, ask },
-      identityCtx,
-      requestCtx,
-    );
-    if (tasked) return tasked;
-  }
-
   const idResult = await runWithRequestContext(identityCtx, () =>
     routed.source.execute(bare, (args ?? {}) as Record<string, unknown>, undefined, {
       ...(ask.caller ? { caller: ask.caller } : {}),
     }),
   );
   return toToolCallAnswer(idResult, routed.source.name, runtime);
-}
-
-/**
- * Run an identity tool call as a task, or null to run it
- * inline: the source has no task surface, the tool cannot run as a task, or the
- * client did not opt in to the tasks extension. A `required` tool the client
- * did not opt in for is refused naming the extension, as on the workspace door.
- * A call the source refuses before any run exists is answered inline with its
- * error.
- */
-async function answerIdentityTask(
-  taskSource: IdentityTaskSource | null,
-  call: {
-    name: string;
-    bare: string;
-    args: Record<string, unknown> | undefined;
-    ask: TaskAsk;
-  },
-  identityCtx: RequestContext,
-  requestCtx: McpRequestContext,
-): Promise<ToolCallAnswer | null> {
-  if (!taskSource) return null;
-  const taskSupport = taskSource.taskSupport(call.bare);
-  if (taskSupport === "required" && !call.ask.optedIn) {
-    throw new MissingRequiredClientCapabilityError(
-      { requiredCapabilities: { extensions: { [TASKS_EXTENSION_ID]: {} } } },
-      `Tool ${call.name} runs only as a task; declare the ${TASKS_EXTENSION_ID} extension to call it`,
-    );
-  }
-  if (!runsAsTask(call.ask, taskSupport)) return null;
-  const started = await runWithRequestContext(identityCtx, () =>
-    taskSource.startToolAsTask(call.bare, call.args ?? {}, {
-      ownerContext: ownerContextFor(identityCtx.workspaceId ?? "", requestCtx, taskSource.name),
-    }),
-  );
-  if ("result" in started) {
-    const { content, structuredContent, isError } = started.result;
-    return {
-      content,
-      ...(structuredContent ? { structuredContent } : {}),
-      isError: isError ?? false,
-    };
-  }
-  return modernCreateTaskResult(taskSource.name, started.task);
 }
 
 /**

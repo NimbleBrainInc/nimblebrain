@@ -15,7 +15,8 @@ import { loadBrand } from "../brand/index.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
-import { type ResolvedTasksConfig, resolveTasksConfig } from "../config/tasks.ts";
+import { effectiveRunLimits, type ResolvedRunsConfig, resolveRunsConfig } from "../config/runs.ts";
+import { resolveWorkspacesConfig } from "../config/workspaces.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import {
   ConnectorCatalog,
@@ -103,6 +104,7 @@ import { workspaceFilesDir } from "../files/paths.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
+import { fileIdToUri } from "../files/uri.ts";
 import { generateTitleWith } from "../history/auto-title.ts";
 
 import {
@@ -150,7 +152,11 @@ import {
   type WireLifecycle,
 } from "../lifecycle/bindings.ts";
 import type { LifecycleNotifyDeps } from "../lifecycle/notify.ts";
-import { notifyReadyOnRunning, resetReadyNotifications } from "../lifecycle/notify.ts";
+import {
+  forgetReadyNotification,
+  notifyReadyOnRunning,
+  resetReadyNotifications,
+} from "../lifecycle/notify.ts";
 import type { LifecycleBinding } from "../lifecycle/types.ts";
 import {
   getModelByString,
@@ -174,8 +180,10 @@ import {
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
 import { type ResolvedPollConfig, resolvePollConfig } from "../notifications/poll-config.ts";
 import { positionOutbox } from "../notifications/position.ts";
+import type { TaskEventAnswer, TaskEventOffer } from "../notifications/routes.ts";
 import { NotificationStore } from "../notifications/store.ts";
 import type { NotificationsDeclaration } from "../notifications/types.ts";
+import { notificationEffectiveLevel, notificationPresentation } from "../notifications/types.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { publicOrigin } from "../oauth/public-origin.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
@@ -204,12 +212,6 @@ import {
   PermissionStore,
 } from "../permissions/permission-store.ts";
 import { isTaskForbiddenSkillTool } from "../platform/skills/source.ts";
-import type { TaskDomainContext } from "../platform/tasks/domain.ts";
-import type {
-  EventWakeAck,
-  EventWakeRequest,
-  TaskEventTrigger,
-} from "../platform/tasks/event-trigger.ts";
 import { type BoundServer, startBoundServers, stopBoundServers } from "../plugins/bound-servers.ts";
 import { checkConfiguredPlugins, type ResolvedPlugins } from "../plugins/index.ts";
 import type {
@@ -219,6 +221,7 @@ import type {
   PromptAppInfo,
 } from "../prompt/compose.ts";
 import { composeSystemSegments } from "../prompt/compose.ts";
+import { renderUnattendedPrompt } from "../prompt/unattended-work.ts";
 import type { WorkQueue } from "../providers/queue/types.ts";
 import {
   type ActivatableSkill,
@@ -250,6 +253,7 @@ import {
   loadCoreSkills,
   loadScopedSkills,
   loadSkillDir,
+  loadSystemPluginSkills,
   mergeScopedSkills,
   parseSkillFile,
   partitionSkills,
@@ -272,6 +276,7 @@ import {
   type ConnectorPort,
   connectorPortForSource,
   stopAllToolSurfaceWatches,
+  stopWatchingToolSurface,
   watchToolSurface,
 } from "../tools/connector-surface.ts";
 import {
@@ -285,11 +290,10 @@ import {
 } from "../tools/credential-store-backend.ts";
 import { registerCredentialTransportCredentialProvider } from "../tools/credential-transport-credential.ts";
 import {
+  CONTRACT_SOURCE_NAMES,
   isIdentitySource,
-  isTaskForbiddenIdentityTool,
   personalConnectorWireName,
 } from "../tools/identity-sources.ts";
-import type { IdentityTaskSource } from "../tools/identity-task-source.ts";
 import {
   resolveInstanceCredentialRefs,
   type WithCredentialRefs,
@@ -311,6 +315,7 @@ import {
 import { isToolAllowedForRun, unmatchedAllowedTools } from "../tools/tool-pattern.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { toToolSchema } from "../tools/types.ts";
+import { ledgerUsageByRun } from "../usage/aggregate.ts";
 import { callCostUsd, resolveRates } from "../usage/cost.ts";
 import { createProcessLedger, type UsageLedger } from "../usage/ledger.ts";
 import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record.ts";
@@ -318,7 +323,11 @@ import type { TokenUsage } from "../usage/types.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import { assertWorkspaceRootExists, WorkspaceContext } from "../workspace/context.ts";
 import type { Workspace } from "../workspace/types.ts";
-import { WorkspaceStore } from "../workspace/workspace-store.ts";
+import {
+  WorkspaceNotFoundError,
+  WorkspaceStore,
+  type WorkspaceTombstone,
+} from "../workspace/workspace-store.ts";
 import { createRunAdmission, type RunAdmission } from "./admission.ts";
 import { chatResponseBody } from "./chat-response.ts";
 import {
@@ -350,6 +359,12 @@ import {
 import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
 import { type RunDeadline, runDeadline } from "./run-deadline.ts";
 import {
+  createRunGrants,
+  newRunGrantKey,
+  RUN_GRANT_KEY_CREDENTIAL,
+  type RunGrants,
+} from "./run-grant.ts";
+import {
   createRunKey,
   parseRunKeyRing,
   RUN_KEY_CREDENTIAL,
@@ -366,6 +381,13 @@ import type {
   UserResourceLinkPart,
   UserTextPart,
 } from "./run-spec.ts";
+import {
+  createRunWorker,
+  type RunNotice,
+  type RunOutcome,
+  type RunWorker,
+  TASKS_CONTRACT,
+} from "./run-worker.ts";
 import { buildSkillsLoadedPayload, collectLoadedSkills } from "./skills-loaded-payload.ts";
 import { createSpendBalances, type SpendBalances } from "./spend.ts";
 import { isStreamedRunEvent } from "./turn-stream.ts";
@@ -497,7 +519,7 @@ export type DeclaredRuntimeConfig = Pick<RuntimeConfig, PreStoreConfigKey> &
  */
 async function loadRunKey(
   store: CredentialStore,
-  config: Pick<RuntimeConfig, "tasks" | "secrets">,
+  config: Pick<RuntimeConfig, "runs" | "secrets">,
 ): Promise<RunKey | null> {
   const ringJson = await readRunKeyRingJson(store, config.secrets?.runKeyEnv);
   if (ringJson === null) return null;
@@ -506,7 +528,7 @@ async function loadRunKey(
     issuer: publicOrigin(),
     // The operator's wall-clock ceiling on a run is the longest turn this
     // installation allows; a model credential outlives it by the leeway only.
-    maxRunMs: resolveTasksConfig(config.tasks).maxRunDurationMs,
+    maxRunMs: resolveRunsConfig(config.runs).maxRunDurationMs,
   });
 }
 
@@ -532,6 +554,94 @@ async function readRunKeyRingJson(
     purpose: "run key",
   });
   return stored ? stored.reveal() : null;
+}
+
+/**
+ * The installation's run-grant key: one instance-scope secret in the credential
+ * store (`RUN_GRANT_KEY_CREDENTIAL`), so a sealing backend holds it sealed like
+ * any other. Minted on first boot when absent. Deleting it makes the next boot
+ * mint another, and every stored grant then fails until it is re-stamped.
+ */
+async function loadRunGrants(store: CredentialStore): Promise<RunGrants> {
+  const scope = { kind: "instance" } as const;
+  const read = { caller: "runtime", purpose: "run grants" };
+  let stored = (await store.get(scope, RUN_GRANT_KEY_CREDENTIAL, read))?.reveal();
+  if (!stored) {
+    await store.put(scope, RUN_GRANT_KEY_CREDENTIAL, newRunGrantKey());
+    stored = (await store.get(scope, RUN_GRANT_KEY_CREDENTIAL, read))?.reveal();
+  }
+  if (!stored)
+    throw new Error(`[runtime] the credential store did not keep ${RUN_GRANT_KEY_CREDENTIAL}`);
+  return createRunGrants(stored);
+}
+
+/** Where each enabled system plugin lives. */
+function systemPluginRoots(resolved: ResolvedPlugins | null): string[] {
+  return (resolved?.plugins ?? []).filter((plugin) => plugin.system).map((plugin) => plugin.root);
+}
+
+/** One row of the tasks contract's `list`, as a route target, or null when it names no task. */
+function ownTaskOf(row: unknown): { id: string; name: string; eventScheduled: boolean } | null {
+  const task = row as { id?: unknown; name?: unknown; scheduleType?: unknown } | null;
+  if (typeof task?.id !== "string") return null;
+  return {
+    id: task.id,
+    name: typeof task.name === "string" ? task.name : task.id,
+    eventScheduled: task.scheduleType === "event",
+  };
+}
+
+/** What a run's outcome reads as on `automation.run_completed`. */
+function runStatusOf(outcome: RunOutcome): string {
+  switch (outcome.stopReason) {
+    case "complete":
+      return "success";
+    case "cancelled":
+      return "cancelled";
+    case "timeout":
+    case "max_iterations":
+      return "timeout";
+    case "not_started":
+      return "skipped";
+    default:
+      return "failure";
+  }
+}
+
+const RUN_TRIGGER_TELEMETRY: Readonly<Record<string, string>> = {
+  scheduled: "schedule",
+  manual: "manual",
+  event: "event",
+};
+
+/**
+ * An unattended run that ended, on an identified deployment: its outcome,
+ * never its output. `run_id` joins it to the run's `agent.chat_*` and
+ * `tool.called`, which carry its steps.
+ */
+function captureUnattendedRunEnded(
+  runtime: Pick<Runtime, "getTelemetryManager">,
+  wsId: string,
+  ownerId: string,
+  run: { runId: string; outcome: RunOutcome; trigger?: string },
+): void {
+  const { outcome } = run;
+  const duration = Date.parse(outcome.endedAt) - Date.parse(outcome.startedAt);
+  runtime.getTelemetryManager().captureAbout(
+    "automation.run_completed",
+    {
+      status: runStatusOf(outcome),
+      trigger: (run.trigger && RUN_TRIGGER_TELEMETRY[run.trigger]) ?? "none",
+      run_id: run.runId,
+      ...(Number.isFinite(duration) ? { duration_ms: duration } : {}),
+      // An incomplete cost (a call no rates were known for) is left out, never
+      // reported as a lower figure.
+      ...(!outcome.unpricedCalls && outcome.stopReason !== "not_started"
+        ? { cost_usd: outcome.costUsd }
+        : {}),
+    },
+    { userId: ownerId, workspaceId: wsId },
+  );
 }
 
 function resolveWorkDir(config: Pick<RuntimeConfig, "workDir">): string {
@@ -565,53 +675,47 @@ class MultiEventSink implements EventSink {
   }
 }
 
-/**
- * What a workspace delete needs from the tasks scheduler.
- *
- * A structural interface `Scheduler` already satisfies, so the scheduler is
- * handed over by the tasks source at construction (like the event
- * trigger) rather than imported here — `src/runtime/` may not reach into
- * `src/platform/`, and a runtime without tasks simply has nothing
- * registered.
- */
-export interface TaskQuiescer {
-  /** Forget every task belonging to `wsId`; returns how many. */
-  dropWorkspace(wsId: string): number;
+/** What {@link Runtime.deleteWorkspace} did. */
+export interface WorkspaceDeleteResult {
+  /** `false` when no live workspace had the id (unknown, or already deleted). */
+  deleted: boolean;
+  /** When the purge is due; restorable until then. Present when `deleted`. */
+  purgeAt?: string;
+  /** The purge, when the retention window is 0 and it ran at once. */
+  purge?: WorkspacePurgeResult;
 }
 
-/**
- * What {@link Runtime.deleteWorkspace} did.
- *
- * `deleted` is the store's own idempotent answer — `false` when no such
- * workspace dir existed. `connectors` is one entry per connector the workspace
- * held, in teardown order, so a revoke that failed at a vendor is nameable
- * afterwards rather than lost with the record it belonged to.
- */
-export interface WorkspaceDeleteResult {
-  deleted: boolean;
+/** What {@link Runtime.purgeWorkspace} did. */
+export interface WorkspacePurgeResult {
+  /** `true` once nothing of the workspace is left; `false` leaves its tombstone for the next pass. */
+  purged: boolean;
+  /** One entry per connector the workspace held, in teardown order. */
   connectors: ConnectorTeardownOutcome[];
-  /**
-   * Why the archive-rename failed, when it did. Present only for a throw —
-   * `deleted: false` with no `deleteError` is the store's idempotent "no such
-   * workspace", which tore nothing down.
-   *
-   * It is reported rather than thrown for the same reason the per-connector
-   * outcomes are, only more urgently: the teardown has already run and is not
-   * reversible, so a caller that sees only the exception would tell an operator
-   * the delete was a no-op while the workspace sits on disk with every
-   * connector uninstalled and every grant revoked.
-   */
-  deleteError?: string;
-  /**
-   * Why purging the workspace's conversations failed, when it did. The
-   * workspace is already deleted (archived) when the purge runs, so a failed
-   * purge leaves no live workspace; deleting the same id again runs the
-   * idempotent purge again.
-   */
-  purgeError?: string;
-  /** How many conversations the purge removed. */
-  conversationsPurged: number;
+  /** Why the purge stopped, when it did: a plugin's `delete_workspace` failed, or the kernel's own removal. */
+  error?: string;
 }
+
+/** A deleted workspace as an admin sees it. */
+export interface DeletedWorkspaceRow {
+  workspaceId: string;
+  /** `null` once a purge has removed the record. */
+  workspaceName: string | null;
+  memberCount: number;
+  deletedAt: string;
+  deletedBy: string | null;
+  /** When the purge is (or was) due. */
+  purgeAt: string;
+  /** Whether {@link Runtime.restoreWorkspace} would bring it back now. */
+  restorable: boolean;
+}
+
+/** What {@link Runtime.restoreWorkspace} did. */
+export type WorkspaceRestoreResult =
+  | { restored: true; workspace: Workspace }
+  | { restored: false; reason: "not_found" | "purging" };
+
+/** How often the purge reconcile runs after the one at boot. */
+const WORKSPACE_PURGE_INTERVAL_MS = 60 * 60_000;
 
 /**
  * What narrows who may call a connector's tools: the catalog's `adminTools`,
@@ -681,9 +785,9 @@ export class Runtime {
    *
    * The run doors (`startRun`, `dispatchUnattended`) wait on it. Nothing reaches
    * them over HTTP before `start()` returns, but the sources started inside
-   * `start()` (the tasks scheduler, the notifications dispatcher) run
-   * their timers from the moment they are created, and a scheduler that boots
-   * with an overdue task fires it at once.
+   * `start()` (the notifications dispatcher) run their timers from the
+   * moment they are created. The run worker starts last, after this barrier's
+   * dependencies are in place.
    */
   private readonly _bootReady = bootBarrier();
   // Protected sources are captured in start() and passed to startWorkspaceConnectors directly.
@@ -714,18 +818,25 @@ export class Runtime {
    * sources reach the user only through the identity door.
    */
   private _workspaceSources: ToolSource[] = [];
+  /** Where the enabled system plugins live: their `skills/` join the core pool. */
+  private _pluginSkillRoots: readonly string[] = [];
+  /** The server bound to the tasks contract, or null when nothing implements it (tasks off). */
+  private _tasks: BoundServer | null = null;
+  /** The run worker over {@link _tasks}: what turns the tasks contract's due work into runs. */
+  private _runWorker: RunWorker | null = null;
+  /** Signs the run grant a person's call to a grant-marked contract tool carries. */
+  private _runGrants: RunGrants | null = null;
+  /** The last delete, restore or purge queued for each workspace (`oneAtATime`). */
+  private readonly _tombstoneOps = new Map<string, Promise<void>>();
+  /** The purge reconcile's pass in flight, and its timer. */
+  private _purgePass: Promise<void> | null = null;
+  private _purgeTimer: ReturnType<typeof setInterval> | null = null;
   /**
-   * Domain-context getter for the tasks app. Set by the tasks
-   * source factory; consumed by an internal caller that needs the full
-   * domain shape — including the operator-only `source` field the
-   * LLM-facing tool schema deliberately doesn't expose. See
-   * `src/platform/AGENTS.md` § 1.4.
+   * Every bound contract tool, by wire name (`<source>__<tool>`), that no call
+   * made inside an unattended run reaches: what each contract document marks
+   * `unattended: "refused"`.
    */
-  private _tasksContextGetter: (() => TaskDomainContext) | null = null;
-  private _taskEventTrigger: TaskEventTrigger | null = null;
-  private _taskQuiescer: TaskQuiescer | null = null;
-  /** Identity sources' task surfaces, by source name (see {@link registerIdentityTaskSource}). */
-  private readonly _identityTaskSources = new Map<string, IdentityTaskSource>();
+  private _unattendedRefused: ReadonlySet<string> = new Set();
   /**
    * Per-workspace host-resources deps factory. Set in `Runtime.start()`
    * after the resolver + rate-limit are constructed; consumed by every
@@ -1153,7 +1264,9 @@ export class Runtime {
       // resolved `maxOutputTokens`). See `resolveMessageBudget`.
     };
 
-    const { contextSkills, skillMatcher } = buildSkills(config);
+    // The skills each system plugin ships join the core pool while it is enabled.
+    const pluginSkillRoots = systemPluginRoots(resolvedPlugins);
+    const { contextSkills, skillMatcher } = buildSkills(config, pluginSkillRoots);
 
     // Request-scoped context — all identity/workspace reads go through AsyncLocalStorage.
     // Set via runWithRequestContext() in chat(), handleToolCall(), and MCP handler.
@@ -1213,6 +1326,7 @@ export class Runtime {
       getWorkspaceId,
     );
     rt._hostLoopback = hostLoopback;
+    rt._pluginSkillRoots = pluginSkillRoots;
     rtHolder.rt = rt;
 
     // Everything from here to `return rt` builds what a run is composed over, so
@@ -1220,8 +1334,8 @@ export class Runtime {
     // the error rather than leaving a scheduled run parked forever.
     try {
       // Declared here rather than beside `manageUsersCtx` above: both carry the
-      // runtime, because `manage_workspaces delete` cascades connector teardown
-      // through `Runtime.deleteWorkspace` rather than calling the store.
+      // runtime, because `manage_workspaces` deletes, restores and purges
+      // through the runtime rather than calling the store.
       const manageWorkspacesCtx = { getIdentity, workspaceStore, userStore, runtime: rt };
 
       // Brokered teardown and boot-state derivation dispatch through the
@@ -1323,37 +1437,17 @@ export class Runtime {
       const workspaceSources = platformSources.filter((s) => !isIdentitySource(s.name));
 
       // Phase 3: Start workspace connectors with per-workspace registries
+      rt._workspaceSources = workspaceSources;
       const { registries: workspaceRegistries, entries: workspaceConnectorEntries } =
-        await startWorkspaceConnectors(workspaceStore, workspaceSources, systemTools, events, {
-          workDir: resolveWorkDir(config),
-          allowInsecureRemotes,
-          // Boot re-spawn picks up host-resources handlers per workspace so
-          // a platform restart doesn't silently drop the capability for
-          // already-installed connectors.
-          getConnectorMcpDeps: connectorMcpDepsFactory,
-          // A minted fleet connector starts with its catalog entry's credential
-          // settings, or not at all. A fresh catalog per read: the source keeps
-          // this reader for its restarts, which must see the operator's edits.
-          readCatalog: () => rt.getConnectorCatalog().catalogEntries(),
-          // A brokered connector's boot readiness is its provider's answer, not a
-          // token file — the same predicate `seedUrlConnectionState` consumes.
-          managedConnectors: rt.getManagedConnectorRegistry(),
-          // Late-bound: a boot-started connection that loses auth mid-session
-          // fires this on a post-boot tool call, by which point `rt.lifecycle`
-          // is constructed. Flip the Connection to reauth_required so the UI
-          // offers "Reconnect" instead of every call failing silently.
-          onAuthLost: (wsId: string, serverName: string) => {
-            rt.lifecycle?.recordConnectionStateChange(
-              serverName,
-              wsId,
-              "_workspace",
-              "reauth_required",
-            );
-          },
-        });
+        await startWorkspaceConnectors(
+          workspaceStore,
+          workspaceSources,
+          systemTools,
+          events,
+          rt.connectorStartOptions(),
+        );
       rt._workspaceRegistries = workspaceRegistries;
       rt._platformSources = platformSources;
-      rt._workspaceSources = workspaceSources;
       // Identity sources are in no workspace registry, so no registry relays
       // their servers' notifications. This does, each to the person it names.
       relayIdentitySourceNotifications(platformSources, events);
@@ -1408,6 +1502,12 @@ export class Runtime {
       // than silent.
       await warnIfCatalogEmpty(rt.getConnectorCatalog());
 
+      // Unattended work starts once everything a run reaches is in place.
+      await rt._runWorker?.start();
+      // Deleted workspaces whose window has passed are purged now and on an
+      // interval: their purge needs the bound plugins and the connector machinery.
+      rt.startPurgeReconcile();
+
       rt._bootReady.resolve();
       return rt;
     } catch (err) {
@@ -1446,7 +1546,23 @@ export class Runtime {
           },
         ],
       ]);
-      this._boundServers = await startBoundServers(resolved, events, overlays);
+      // A grant-marked contract tool needs the key its grants are signed with.
+      const signs = resolved.bindings.some((b) => b.grantTools.length > 0);
+      if (signs) this._runGrants = await loadRunGrants(this.getCredentialStore());
+      const grants = this._runGrants;
+      this._boundServers = await startBoundServers(
+        resolved,
+        events,
+        overlays,
+        grants ? (claims) => grants.sign(claims) : undefined,
+      );
+      // What each contract refuses an unattended run, by the name agents call it.
+      this._unattendedRefused = new Set(
+        [...this._boundServers.values()].flatMap((server) => {
+          const name = CONTRACT_SOURCE_NAMES.get(server.contract);
+          return name ? [...server.unattendedRefused].map((tool) => `${name}__${tool}`) : [];
+        }),
+      );
     }
     const conversations = this._boundServers.get(CONVERSATIONS_CONTRACT);
     if (conversations) {
@@ -1455,11 +1571,105 @@ export class Runtime {
         logLevel: this.config.logging?.level ?? "normal",
         // Identity and scope are the kernel's: the plugin creates storage for any
         // workspace the kernel stamps, so the kernel stamps only a live one.
-        assertWorkspace: ({ workspaceId }) =>
-          assertWorkspaceRootExists(join(workspacesDir, workspaceId)),
+        assertWorkspace: ({ workspaceId }) => {
+          assertWorkspaceRootExists(join(workspacesDir, workspaceId));
+          if (this._workspaceStore.isDeleted(workspaceId)) {
+            throw new WorkspaceNotFoundError(workspaceId);
+          }
+        },
       });
     }
+    const tasks = this._boundServers.get(TASKS_CONTRACT);
+    if (tasks && this._runGrants) {
+      this._tasks = tasks;
+      this._runWorker = this.createTasksRunWorker(tasks, this._runGrants);
+    }
     return [...this._boundServers.values()].map((server) => server.source);
+  }
+
+  /**
+   * The run worker over the bound tasks server (`run-worker.ts`): it asks the
+   * server what is due, runs each occurrence through the door as the grant's
+   * owner, reports how it ended, and delivers the notices it is answered.
+   */
+  private createTasksRunWorker(tasks: BoundServer, grants: RunGrants): RunWorker {
+    return createRunWorker({
+      server: {
+        hostVersion: tasks.hostVersion,
+        call: (tool, args, scope) => tasks.call(tool, args, scope),
+        watch: (uri, scope) => tasks.watch(uri, scope),
+        connection: () => tasks.connection(),
+        onResourceUpdated: (listener) => tasks.source.subscribeResourceUpdated(listener),
+      },
+      queue: this.getWorkQueue(),
+      admission: this.getRunAdmission(),
+      spend: this.getSpendBalances(),
+      grants,
+      execute: (request) => this.executeTask(request),
+      limitsOf: (limits) =>
+        effectiveRunLimits(limits ?? {}, this.getRunsConfig(), this.getMaxIterations()),
+      isMember: (wsId, ownerId) => this.isPrincipalWorkspaceMember(wsId, ownerId),
+      workspaceIds: async () => (await this._workspaceStore.list()).map((ws) => ws.id),
+      deliver: (wsId, notices) => this.deliverContractNotices(TASKS_CONTRACT, wsId, notices),
+      ended: (wsId, ownerId, run) => {
+        const name = CONTRACT_SOURCE_NAMES.get(TASKS_CONTRACT);
+        if (name) this.announceIdentitySourceChange(name, ownerId);
+        captureUnattendedRunEnded(this, wsId, ownerId, run);
+      },
+      metered: (wsId, runId, range) =>
+        ledgerUsageByRun(this.getWorkDir(), new Set([runId]), range, wsId).get(runId),
+    });
+  }
+
+  /**
+   * Put a contract implementation's notices in a workspace's inbox, under the
+   * kernel's source name for the contract. The inbox keeps one item per
+   * (source, id), so a notice answered twice is delivered once. Best-effort: a
+   * refused write is logged and changes nothing else.
+   */
+  private deliverContractNotices(
+    contract: string,
+    wsId: string,
+    notices: readonly RunNotice[],
+  ): void {
+    const source = CONTRACT_SOURCE_NAMES.get(contract) ?? contract;
+    for (const notice of notices) {
+      try {
+        this.getNotificationStore(wsId).append(source, {
+          eventId: notice.id,
+          name: "notice",
+          timestamp: new Date().toISOString(),
+          data: {},
+          _meta: {
+            "ai.nimblebrain/notification": {
+              level: notice.level,
+              title: notice.title,
+              body: notice.body,
+            },
+          },
+        });
+      } catch (err) {
+        log.warn("[runtime] could not deliver a notice", {
+          contract,
+          workspaceId: wsId,
+          noticeId: notice.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  /** Whether this instance runs scheduled and unattended work: a plugin implements the tasks contract. */
+  isTasksEnabled(): boolean {
+    return this._tasks !== null;
+  }
+
+  /**
+   * Whether a bound contract refuses this tool (`<source>__<tool>`) to a call
+   * made inside an unattended run, as its contract document marks it.
+   */
+  isUnattendedRefused(wireName: string): boolean {
+    return this._unattendedRefused.has(wireName);
   }
 
   /**
@@ -1943,7 +2153,7 @@ export class Runtime {
       workspaceId: runWsId,
       briefingWorkspaceId: runWsId,
       input: {
-        content: [{ type: "text", text: request.prompt }],
+        content: [{ type: "text", text: renderUnattendedPrompt(request) }],
         userId: requestIdentity.id,
         ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
         ...(request.skills?.length ? { skills: request.skills } : {}),
@@ -1966,8 +2176,8 @@ export class Runtime {
       onAbort: "partial",
     });
 
-    // The deliverable (output), the activity log (toolCalls), and the usage go
-    // back to the caller, which persists the run result under `runId`.
+    // The deliverable (output), the activity log (toolCalls), the usage and
+    // the files it wrote go back to the caller, which reports the run.
     return {
       output: handle.output,
       runId: handle.runId,
@@ -1978,7 +2188,29 @@ export class Runtime {
       costUsd: handle.costUsd,
       ...(handle.unpricedCalls ? { unpricedCalls: handle.unpricedCalls } : {}),
       skillsDelivered: handle.skillsDelivered,
+      filesWritten: await this.filesWrittenBy(runWsId, ownerId, handle.runId),
     };
+  }
+
+  /**
+   * The files a run wrote, from the file store's own records: every live entry
+   * in the owner's partition the run's id stamped (`FileEntry.runId`, from the
+   * request context). Never read from a tool's output. Best-effort: a store
+   * that cannot be read reports none.
+   */
+  private async filesWrittenBy(
+    wsId: string,
+    ownerId: string,
+    runId: string,
+  ): Promise<TaskResult["filesWritten"]> {
+    try {
+      const entries = await this.getWorkspaceFileStore(wsId, ownerId).readRegistry();
+      return entries
+        .filter((entry) => entry.runId === runId)
+        .map((entry) => ({ uri: fileIdToUri(entry.id), name: entry.filename }));
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -2177,7 +2409,7 @@ export class Runtime {
       signal: spec.signal,
       ownLimitMs: spec.budget.maxRunDurationMs,
       credentialed: this.mintsModelCredential(agentRuntime),
-      ceilingMs: this.getTasksConfig().maxRunDurationMs,
+      ceilingMs: this.getRunsConfig().maxRunDurationMs,
       runtimeId: agentRuntime.id,
     });
     const engineConfig = this.buildTurnEngineConfig({
@@ -2851,12 +3083,13 @@ export class Runtime {
    * operates WITHIN it.
    *
    * An unattended run can ingest untrusted content with nobody watching, so
-   * both durable-authoring surfaces are subtracted: it must not rewrite, spawn,
-   * or fire tasks (`isTaskForbiddenIdentityTool`), nor author a skill
-   * (`isTaskForbiddenSkillTool` — durable guidance that would load itself into
-   * later conversations). An attended run keeps both; there is a human in the
-   * loop. Neither filter needs its own `unattended` check — `attended` is the
-   * one axis the run's trigger decides.
+   * both durable-authoring surfaces are subtracted: every contract tool its
+   * document marks `unattended: "refused"` (`isUnattendedRefused`: authoring,
+   * starting or stopping tasks), and skill authoring (`isTaskForbiddenSkillTool`
+   * — durable guidance that would load itself into later conversations). An
+   * attended run keeps both; there is a human in the loop. Neither filter needs
+   * its own `unattended` check — `attended` is the one axis the run's trigger
+   * decides.
    */
   private async listRunTools(
     wsId: string,
@@ -2876,7 +3109,7 @@ export class Runtime {
         .filter((t) => visible(t.name) && (attended || !isTaskForbiddenSkillTool(t.name)))
         .map(toToolSchema),
       ...identityTools
-        .filter((t) => visible(t.name) && (attended || !isTaskForbiddenIdentityTool(t.name)))
+        .filter((t) => visible(t.name) && (attended || !this.isUnattendedRefused(t.name)))
         .map(toToolSchema),
     ];
   }
@@ -3356,7 +3589,7 @@ export class Runtime {
 
   async reloadSkills(): Promise<void> {
     const all = loadAllSkills(this.config.skillDirs, globalSkillDir(this.config));
-    const core = loadCoreSkills();
+    const core = [...loadCoreSkills(), ...loadSystemPluginSkills(this._pluginSkillRoots)];
     const combined = [...core, ...all];
     const { context, skills } = partitionSkills(combined);
     this.contextSkills = context;
@@ -4445,6 +4678,9 @@ export class Runtime {
       this._systemSource,
       this.defaultEvents,
     );
+    // A workspace reached for the first time is served by the run worker now
+    // rather than at its next interval.
+    this._runWorker?.serve(wsId);
     // Wire permission context so the registry can gate disallowed tools
     // before they reach the source.execute() path.
     wsRegistry.setPermissionContext(
@@ -4625,125 +4861,345 @@ export class Runtime {
   }
 
   /**
-   * Delete a workspace, tearing down every connector it holds first.
+   * Delete a workspace: it becomes a tombstone (`WorkspaceStore.delete`), and
+   * from that moment every door answers it as not found. Nothing it holds is
+   * removed and no plugin is called: the run worker stops serving it and stops
+   * its runs, and its connectors are stopped and dropped from this process as a
+   * boot that skips it would leave them, so a restore within the retention
+   * window brings everything back. The purge comes after the window
+   * ({@link purgeDeletedWorkspaces}); with a window of 0 it runs now and its
+   * result is returned.
    *
-   * **The cascade goes here, not in the store.** A workspace owns its
-   * connectors, so deleting the container has to run the same teardown as
-   * removing each thing it holds — otherwise the grants stay live at the
-   * vendor, the subprocesses keep running, and the hooks keep their key ids.
-   * `WorkspaceStore.delete` knows nothing about connectors and must not: it
-   * does the rename, and a store reaching for a lifecycle handle is the cycle
-   * this seam exists to avoid.
-   *
-   * **Order is not a preference.** Teardown runs BEFORE the rename.
-   * `on_removing` needs the connector still reachable, and the credential cleanup
-   * inside `lifecycle.uninstall` needs the credential directory at its live
-   * path; after the rename both address a tree that has moved.
-   *
-   * **Best-effort per connector**, like `notifyRemoving` already is. One
-   * connector that cannot be reached must not strand the workspace
-   * half-deleted, so outcomes are collected and returned rather than thrown —
-   * a failed revoke is visible instead of silent.
-   *
-   * No secret keys are passed to the teardown: every connector is going, so
-   * "does a sibling still name this key" has no answer worth acting on, and the
-   * keys in question are operator-set workspace secrets, which survive the
-   * rename into the archive. The connector's OWN credentials do not — the
-   * teardown clears its OAuth records and brokered credential dir a step
-   * earlier, deliberately, since revoking upstream is the point.
+   * The deleting identity is recorded on the tombstone, for an admin's view.
+   * Queued with the workspace's restores and purges, so a restore never lands
+   * while the delete is still stopping what the restore starts.
    */
-  async deleteWorkspace(wsId: string): Promise<WorkspaceDeleteResult> {
-    // First, before the teardown and long before the rename: disarm this
-    // workspace's tasks. The scheduler holds them in memory and nothing
-    // else drops them, so one firing mid-teardown would run against
-    // half-removed connectors, and one firing after the rename would have its
-    // store re-create the archived directory. Dropping them is what makes the
-    // correct behaviour independent of a write failing — the guard in
-    // `ensureWorkspaceDir` is the floor under it, not the mechanism.
-    const disarmed = this._taskQuiescer?.dropWorkspace(wsId) ?? 0;
-    if (disarmed > 0)
-      log.info("[runtime] disarmed tasks for deleted workspace", { wsId, disarmed });
-
-    const ws = await this.getWorkspaceStore().get(wsId);
-    const connectors: ConnectorTeardownOutcome[] = [];
-    // The rows are read once, ahead of the loop, and that matters: each
-    // teardown rewrites `workspace.json#connectors[]`, so re-reading per
-    // iteration would walk a shrinking list and skip entries. Deduplicated
-    // because two rows can name one server, and the second pass would
-    // tear down nothing and report a failure that never happened.
-    const seen = new Set<string>();
-    for (const ref of ws?.connectors ?? []) {
-      // The same predicate boot skips on (`buildWorkspaceProcessInventory` in
-      // `workspace-runtime.ts`): "does this row name a server at all".
-      const serverName = serverNameFromRef(ref);
-      if (!serverName) {
-        // A row with no serverName addresses no live connection — every
-        // teardown step keys on a server name, and `matchesServerName` reads
-        // such a row as matching nothing. Reported rather than skipped: a
-        // delete is the last moment anyone looks.
-        connectors.push({
-          serverName: "",
-          ok: false,
-          error: "Connector row names no serverName.",
-          secrets: { deleted: [], failed: [] },
-        });
-        continue;
+  deleteWorkspace(wsId: string): Promise<WorkspaceDeleteResult> {
+    const deletedBy = getRequestContext()?.identity?.id ?? null;
+    return this.oneAtATime(wsId, async () => {
+      if (!(await this._workspaceStore.delete(wsId, { deletedBy }))) return { deleted: false };
+      await this._runWorker?.drop(wsId);
+      await this.unloadWorkspaceConnectors(wsId);
+      const deleted = await this._workspaceStore.getDeleted(wsId);
+      const purgeAt = deleted ? this.purgeTimeOf(deleted.tombstone) : new Date();
+      if (purgeAt.getTime() > Date.now()) {
+        return { deleted: true, purgeAt: purgeAt.toISOString() };
       }
-      if (seen.has(serverName)) continue;
-      seen.add(serverName);
-      connectors.push(await uninstallWorkspaceConnector(this, wsId, serverName));
-    }
-    // The rename is guarded because the teardown above it is not reversible.
-    // `WorkspaceStore.delete` throws on a filesystem it cannot rename into
-    // (ENOSPC, EROFS, a collided archive destination), and letting that escape
-    // would hand the caller an exception carrying none of what was just torn
-    // down — reported as a failed delete, which before this cascade existed was
-    // a true no-op and now is not.
-    let deleted = false;
-    let deleteError: string | undefined;
-    try {
-      deleted = await this.getWorkspaceStore().delete(wsId);
-    } catch (err) {
-      deleteError = err instanceof Error ? err.message : String(err);
-    }
-    if (deleteError) return { deleted, connectors, deleteError, conversationsPurged: 0 };
-
-    // The purge runs after the rename: with the workspace gone no new
-    // conversation can be created in it (`create` asserts the workspace root),
-    // and the purge waits for any create already past that check. It runs
-    // whether or not the store still held the workspace, so deleting an id
-    // again retries a purge that failed; `delete_workspace` is idempotent.
-    return { deleted, connectors, ...(await this.purgeWorkspaceConversations(wsId)) };
+      // Already this workspace's turn in the queue, so the purge runs here.
+      return {
+        deleted: true,
+        purgeAt: purgeAt.toISOString(),
+        purge: await this.purgeOnce(wsId, {}),
+      };
+    });
   }
 
-  /** {@link deleteWorkspaceConversations}, with a failure reported rather than thrown. */
-  private async purgeWorkspaceConversations(
-    wsId: string,
-  ): Promise<Pick<WorkspaceDeleteResult, "conversationsPurged" | "purgeError">> {
-    try {
-      return { conversationsPurged: await this.deleteWorkspaceConversations(wsId) };
-    } catch (err) {
+  /** The retention window for a deleted workspace, in ms (`workspaces.deletedRetentionDays`). */
+  private deletedRetentionMs(): number {
+    return resolveWorkspacesConfig(this.config.workspaces).deletedRetentionDays * 86_400_000;
+  }
+
+  /** When a tombstone's purge is due: when it began or was asked for, else the end of its window. */
+  private purgeTimeOf(tombstone: WorkspaceTombstone): Date {
+    if (tombstone.purgeAt) return new Date(tombstone.purgeAt);
+    return new Date(new Date(tombstone.deletedAt).getTime() + this.deletedRetentionMs());
+  }
+
+  /** Every deleted workspace, with when its purge is due and whether it can still be restored. */
+  async listDeletedWorkspaces(now: Date = new Date()): Promise<DeletedWorkspaceRow[]> {
+    return (await this._workspaceStore.listDeleted()).map(({ id, workspace, tombstone }) => {
+      const purgeAt = this.purgeTimeOf(tombstone);
       return {
-        conversationsPurged: 0,
-        purgeError: err instanceof Error ? err.message : String(err),
+        workspaceId: id,
+        workspaceName: workspace?.name ?? null,
+        memberCount: workspace?.members.length ?? 0,
+        deletedAt: tombstone.deletedAt,
+        deletedBy: tombstone.deletedBy,
+        purgeAt: purgeAt.toISOString(),
+        restorable: workspace !== null && !tombstone.purgeAt && purgeAt > now,
       };
+    });
+  }
+
+  /**
+   * Bring a deleted workspace back as it was, within its retention window. No
+   * plugin was told it was deleted, so its records there are intact; its
+   * connectors start again as at boot and the run worker serves it again. Once
+   * its purge is due or has begun it cannot come back (`purging`).
+   */
+  async restoreWorkspace(wsId: string, now: Date = new Date()): Promise<WorkspaceRestoreResult> {
+    return this.oneAtATime(wsId, async () => {
+      const deleted = await this._workspaceStore.getDeleted(wsId);
+      if (!deleted?.workspace) return { restored: false, reason: "not_found" } as const;
+      if (deleted.tombstone.purgeAt || this.purgeTimeOf(deleted.tombstone) <= now) {
+        return { restored: false, reason: "purging" } as const;
+      }
+      const workspace = await this._workspaceStore.restore(wsId);
+      if (!workspace) return { restored: false, reason: "not_found" } as const;
+      await this.loadWorkspaceConnectors(workspace);
+      this._runWorker?.serve(wsId);
+      return { restored: true, workspace } as const;
+    });
+  }
+
+  /**
+   * Run `fn` after every delete, restore and purge of `wsId` already queued,
+   * so none of them lands in the middle of another. `fn` never queues on the
+   * same workspace: it would wait on itself.
+   */
+  private oneAtATime<T>(wsId: string, fn: () => Promise<T>): Promise<T> {
+    const result = (this._tombstoneOps.get(wsId) ?? Promise.resolve()).then(fn);
+    const tail = result.then(
+      () => {},
+      () => {},
+    );
+    this._tombstoneOps.set(wsId, tail);
+    void tail.then(() => {
+      if (this._tombstoneOps.get(wsId) === tail) this._tombstoneOps.delete(wsId);
+    });
+    return result;
+  }
+
+  /**
+   * The purge reconcile: purge every deleted workspace whose window has passed,
+   * and every directory an earlier release archived as long ago. Runs at boot
+   * and every {@link WORKSPACE_PURGE_INTERVAL_MS}. Idempotent, and a purge that
+   * stopped halfway (a crash, a plugin's error) is finished by a later pass.
+   */
+  async purgeDeletedWorkspaces(now: Date = new Date()): Promise<Map<string, WorkspacePurgeResult>> {
+    const results = new Map<string, WorkspacePurgeResult>();
+    for (const { id, tombstone } of await this._workspaceStore.listDeleted()) {
+      if (this.purgeTimeOf(tombstone) > now) continue;
+      results.set(id, await this.purgeWorkspace(id, { at: now }));
+    }
+    const cutoff = new Date(now.getTime() - this.deletedRetentionMs());
+    for (const name of await this._workspaceStore.removeArchivedBefore(cutoff)) {
+      log.info("[workspace] removed an archived workspace directory", { archive: name });
+    }
+    return results;
+  }
+
+  /**
+   * Purge one deleted workspace now, whether or not its window has passed: the
+   * reconcile's step for one workspace, and an admin's "purge now".
+   *
+   * The tombstone first records that the purge began, so it can no longer be
+   * restored. Then each bound plugin whose contract has a private
+   * `delete_workspace` is called for it as `host`, walled to the workspace with
+   * no owner: it removes every owner's records; an error stops the purge here
+   * and leaves the tombstone for the next pass. Then the kernel's own data: the connectors are torn down
+   * (each told `on_removing`, its grants revoked, as an uninstall does), the
+   * workspace's secrets deleted from the credential store, and the directory
+   * removed, record last. Every step is idempotent, so a pass that stopped
+   * anywhere is finished by running it again.
+   */
+  purgeWorkspace(wsId: string, opts: { at?: Date } = {}): Promise<WorkspacePurgeResult> {
+    return this.oneAtATime(wsId, () => this.purgeOnce(wsId, opts));
+  }
+
+  private async purgeOnce(wsId: string, opts: { at?: Date }): Promise<WorkspacePurgeResult> {
+    const tombstone = await this._workspaceStore.markPurging(wsId, opts.at ?? new Date());
+    if (!tombstone) {
+      // Nothing deleted to purge: done already, or never deleted.
+      return (await this._workspaceStore.get(wsId))
+        ? { purged: false, connectors: [], error: "the workspace is not deleted" }
+        : { purged: true, connectors: [] };
+    }
+    try {
+      await this.purgeWorkspacePlugins(wsId);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      log.warn("[workspace] purge stopped at a plugin; the next pass retries it", {
+        workspaceId: wsId,
+        error,
+      });
+      return { purged: false, connectors: [], error };
+    }
+    const connectors = await this.purgeWorkspaceConnectors(wsId);
+    try {
+      const scope = { kind: "workspace", wsId } as const;
+      const credentials = this.getCredentialStore();
+      for (const { key } of await credentials.list(scope)) await credentials.delete(scope, key);
+      await this._workspaceStore.remove(wsId);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      log.warn("[workspace] purge could not remove the workspace's data; the next pass retries", {
+        workspaceId: wsId,
+        error,
+      });
+      return { purged: false, connectors, error };
+    }
+    log.info("[workspace] purged a deleted workspace", { workspaceId: wsId });
+    return { purged: true, connectors };
+  }
+
+  /**
+   * Call `delete_workspace` on every bound plugin whose contract makes it a
+   * private tool, as `host` walled to the workspace alone (no owner: the call
+   * is the host's and crosses every owner). The conversation writes this
+   * process still holds for the workspace settle first. Throws on the first
+   * error; each call is idempotent, so the next pass repeats them all.
+   */
+  private async purgeWorkspacePlugins(wsId: string): Promise<void> {
+    await this._conversations?.settle(wsId);
+    for (const server of this._boundServers.values()) {
+      if (!server.privateTools.has("delete_workspace")) continue;
+      try {
+        await server.call(
+          "delete_workspace",
+          { version: server.hostVersion },
+          { workspaceId: wsId },
+        );
+      } catch (err) {
+        throw new Error(
+          `${server.contract} delete_workspace: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   }
 
   /**
-   * Purge a workspace's conversations through the bound conversations plugin
-   * (the contract's `delete_workspace`), which holds them apart from the
-   * workspace's directory, so the archive rename does not carry them. With
-   * nothing bound there are none. The contract walls the call by an owner it
-   * ignores; the deleting identity is the verified one. Answers how many it
-   * removed.
+   * Tear down every connector a deleted workspace's record still names, through
+   * the one teardown an uninstall uses. Its connectors are started first, as a
+   * restore would, so each is reachable for `on_removing` and holds the ref its
+   * revoke needs; whatever is left in this process afterwards is dropped.
+   * Best-effort per connector: outcomes are collected, never thrown.
    */
-  private async deleteWorkspaceConversations(wsId: string): Promise<number> {
-    if (!this._conversations) return 0;
-    const ownerId = getRequestContext()?.identity?.id;
-    if (!ownerId)
-      throw new Error("deleting a workspace's conversations needs a signed-in identity");
-    return this._conversations.deleteWorkspace({ workspaceId: wsId, ownerId });
+  private async purgeWorkspaceConnectors(wsId: string): Promise<ConnectorTeardownOutcome[]> {
+    const workspace = (await this._workspaceStore.getDeleted(wsId))?.workspace;
+    const outcomes: ConnectorTeardownOutcome[] = [];
+    if (!workspace || workspace.connectors.length === 0) return outcomes;
+    await this.loadWorkspaceConnectors(workspace);
+    try {
+      // Deduplicated: two rows can name one server, and a second teardown would
+      // report a failure that never happened.
+      const seen = new Set<string>();
+      for (const ref of workspace.connectors) {
+        const serverName = serverNameFromRef(ref);
+        if (!serverName) {
+          outcomes.push({
+            serverName: "",
+            ok: false,
+            error: "Connector row names no serverName.",
+            secrets: { deleted: [], failed: [] },
+          });
+          continue;
+        }
+        if (seen.has(serverName)) continue;
+        seen.add(serverName);
+        outcomes.push(await uninstallWorkspaceConnector(this, wsId, serverName));
+      }
+    } finally {
+      await this.unloadWorkspaceConnectors(wsId);
+    }
+    for (const outcome of outcomes.filter((o) => !o.ok || o.revokeError)) {
+      log.warn("[workspace] a connector did not tear down cleanly in a purge", {
+        workspaceId: wsId,
+        serverName: outcome.serverName,
+        error: outcome.error ?? outcome.revokeError,
+      });
+    }
+    return outcomes;
+  }
+
+  /**
+   * Start a workspace's connectors and seed their lifecycle instances, exactly
+   * as boot does for every live workspace. A restore and a purge's teardown
+   * use it.
+   */
+  private async loadWorkspaceConnectors(workspace: Workspace): Promise<void> {
+    await this.unloadWorkspaceConnectors(workspace.id);
+    const { registries, entries } = await startWorkspaceConnectors(
+      { list: async () => [workspace] },
+      this._workspaceSources,
+      this._systemSource,
+      this.defaultEvents,
+      this.connectorStartOptions(),
+    );
+    for (const [wsId, registry] of registries) this._workspaceRegistries.set(wsId, registry);
+    await seedWorkspaceConnectorInstances(
+      this.lifecycle,
+      this.placementRegistry,
+      withCatalogUi(entries, await bootCatalogEntries(this), (wsId, serverName, entry) =>
+        this.warnCatalogMismatch(wsId, serverName, entry),
+      ),
+    );
+  }
+
+  /**
+   * Stop a workspace's connectors and forget them in this process: its registry,
+   * their lifecycle instances, placements and per-process records. Nothing
+   * stored changes, so this is the state a boot that skips the workspace
+   * leaves.
+   */
+  private async unloadWorkspaceConnectors(wsId: string): Promise<void> {
+    for (const instance of this.lifecycle.getInstances()) {
+      if (instance.wsId !== wsId) continue;
+      this.placementRegistry.unregister(instance.serverName, wsId);
+      this.lifecycle.removeInstance(instance.serverName, wsId);
+      stopWatchingToolSurface(wsId, instance.serverName);
+      forgetReadyNotification(wsId, instance.serverName);
+      forgetLifecycleBinding(wsId, instance.serverName);
+    }
+    const registry = this._workspaceRegistries.get(wsId);
+    this._workspaceRegistries.delete(wsId);
+    for (const name of registry?.sourceNames() ?? []) {
+      await registry?.removeSource(name).catch((err: unknown) => {
+        log.warn("[workspace] a connector did not stop", {
+          workspaceId: wsId,
+          serverName: name,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+  }
+
+  /** Run the purge reconcile now (boot) and on an interval, until shutdown. */
+  private startPurgeReconcile(): void {
+    const pass = () => {
+      if (this._purgePass) return;
+      this._purgePass = this.purgeDeletedWorkspaces()
+        .then(() => {})
+        .catch((err: unknown) => {
+          log.warn("[workspace] purge reconcile failed; the next pass retries", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        })
+        .finally(() => {
+          this._purgePass = null;
+        });
+    };
+    pass();
+    this._purgeTimer = setInterval(pass, WORKSPACE_PURGE_INTERVAL_MS);
+    this._purgeTimer.unref?.();
+  }
+
+  /** The options every start of installed workspace connectors uses, at boot and after. */
+  private connectorStartOptions(): Parameters<typeof startWorkspaceConnectors>[4] {
+    return {
+      workDir: this.getWorkDir(),
+      allowInsecureRemotes: this.getAllowInsecureRemotes(),
+      // A respawned connector keeps its host-resources handlers.
+      getConnectorMcpDeps: (wsId) => this.getConnectorMcpDeps(wsId),
+      // A minted fleet connector starts with its catalog entry's credential
+      // settings, or not at all. A fresh catalog per read: the source keeps
+      // this reader for its restarts, which must see the operator's edits.
+      readCatalog: () => this.getConnectorCatalog().catalogEntries(),
+      // A brokered connector's boot readiness is its provider's answer, not a
+      // token file — the same predicate `seedUrlConnectionState` consumes.
+      managedConnectors: this.getManagedConnectorRegistry(),
+      // Late-bound: a started connection that loses auth mid-session fires this
+      // on a later tool call, by which point the lifecycle is constructed. Flip
+      // the Connection to reauth_required so the UI offers "Reconnect".
+      onAuthLost: (wsId: string, serverName: string) => {
+        this.lifecycle?.recordConnectionStateChange(
+          serverName,
+          wsId,
+          "_workspace",
+          "reauth_required",
+        );
+      },
+    };
   }
 
   /**
@@ -5413,85 +5869,78 @@ export class Runtime {
   }
 
   /**
-   * Register the tasks domain context getter. Called by the
-   * tasks platform source during construction. Internal callers
-   * (CLI, lifecycle) read it back via `getTasksContext()` to bypass
-   * the LLM-facing tool surface and call the domain API directly.
+   * Offer one routed notification to the task a route names: the tasks
+   * contract's private `offer_event`, as `host`, walled to the workspace and the
+   * route's author (the task's owner). The event carries its presentation only,
+   * never the connector's data. Any notices the answer carries are delivered.
+   * With no tasks plugin bound the route is answered `tasks_unavailable`.
    */
-  registerTasksContext(getter: () => TaskDomainContext): void {
-    this._tasksContextGetter = getter;
-  }
-
-  /**
-   * Get a workspace-scoped tasks domain context. Throws if the
-   * tasks source isn't registered (e.g. minimal test runtimes).
-   * Each call returns a fresh context bound to the current request's
-   * workspace — workspace switching between calls is safe.
-   */
-  getTasksContext(): TaskDomainContext {
-    if (!this._tasksContextGetter) {
-      throw new Error("Tasks source not registered — runtime started without platform sources?");
-    }
-    return this._tasksContextGetter();
-  }
-
-  /**
-   * Register the tasks event trigger. Called by the tasks platform
-   * source during construction; the notifications source reads it back through
-   * {@link wakeTaskOnNotification}.
-   *
-   * A registration rather than a direct import for the reason
-   * {@link registerTasksContext} is one: the two sources are built
-   * independently and neither may depend on the other's construction order. A
-   * runtime without tasks simply has no trigger, and a route naming one
-   * gets a ledger row saying so.
-   */
-  registerTaskEventTrigger(trigger: TaskEventTrigger): void {
-    this._taskEventTrigger = trigger;
-  }
-
-  /**
-   * Register the tasks scheduler as the thing {@link deleteWorkspace}
-   * quiesces. Called by the tasks platform source during construction,
-   * for the same reason the two registrations above are: the runtime may not
-   * import the app that owns the scheduler.
-   */
-  registerTaskQuiescer(quiescer: TaskQuiescer): void {
-    this._taskQuiescer = quiescer;
-  }
-
-  /**
-   * Register a kernel identity source's task surface, so the `/mcp` identity
-   * door can run its tools as tasks and answer lookups for them. Called by the
-   * source during construction, like the registrations above.
-   */
-  registerIdentityTaskSource(source: IdentityTaskSource): void {
-    this._identityTaskSources.set(source.name, source);
-  }
-
-  /** The task surface of the identity source by that name, or null when it has none. */
-  getIdentityTaskSource(name: string): IdentityTaskSource | null {
-    if (!isIdentitySource(name)) return null;
-    return this._identityTaskSources.get(name) ?? null;
-  }
-
-  /**
-   * Hand one routed notification to a task.
-   *
-   * The only path from a delivery to an agent run, and it starts at a route a
-   * workspace admin wrote — this function does not decide that a path exists,
-   * it carries an item down one that already does.
-   */
-  wakeTaskOnNotification(req: EventWakeRequest): EventWakeAck {
-    if (!this._taskEventTrigger) {
+  async offerTaskEvent(req: TaskEventOffer): Promise<TaskEventAnswer> {
+    if (!this._tasks) {
       return {
         accepted: false,
         outcome: "denied",
         classification: "tasks_unavailable",
-        reason: "this runtime has no tasks source, so nothing can be woken",
+        reason: "this runtime runs no tasks plugin, so no task can take the notification",
       };
     }
-    return this._taskEventTrigger.offer(req);
+    const { item } = req;
+    const presentation = notificationPresentation(item.envelope);
+    const answer = await this._tasks.call(
+      "offer_event",
+      {
+        version: this._tasks.hostVersion,
+        taskId: req.taskId,
+        event: {
+          id: item.envelope.eventId,
+          source: item.source,
+          name: item.envelope.name,
+          level: notificationEffectiveLevel(item),
+          title: presentation.title,
+          ...(presentation.subject ? { subject: presentation.subject } : {}),
+          ...(presentation.body ? { body: presentation.body } : {}),
+          receivedAt: item.receivedAt,
+        },
+        now: new Date().toISOString(),
+      },
+      { workspaceId: req.wsId, ownerId: req.ownerId },
+    );
+    const notices = Array.isArray(answer.notices) ? (answer.notices as RunNotice[]) : [];
+    if (notices.length > 0) this.deliverContractNotices(TASKS_CONTRACT, req.wsId, notices);
+    if (answer.accepted === true) return { accepted: true };
+    return {
+      accepted: false,
+      outcome: answer.outcome === "skipped" ? "skipped" : "denied",
+      classification: typeof answer.classification === "string" ? answer.classification : "refused",
+      reason:
+        typeof answer.reason === "string" ? answer.reason : "the task refused the notification",
+    };
+  }
+
+  /**
+   * An owner's saved tasks in a workspace, from the bound tasks server's public
+   * `list` (as `host`, walled to the workspace and the owner), every page. Empty
+   * with no tasks plugin bound. `eventScheduled` reads the list's optional
+   * `scheduleType`, which an implementation may leave out.
+   */
+  async listOwnTasks(
+    wsId: string,
+    ownerId: string,
+  ): Promise<Array<{ id: string; name: string; eventScheduled: boolean }>> {
+    if (!this._tasks) return [];
+    const out: Array<{ id: string; name: string; eventScheduled: boolean }> = [];
+    let cursor: string | null = null;
+    do {
+      const page = await this._tasks.call(
+        "list",
+        { limit: 100, ...(cursor ? { cursor } : {}) },
+        { workspaceId: wsId, ownerId },
+      );
+      const rows: unknown[] = Array.isArray(page.tasks) ? page.tasks : [];
+      for (const task of rows.map(ownTaskOf)) if (task) out.push(task);
+      cursor = typeof page.nextCursor === "string" ? page.nextCursor : null;
+    } while (cursor);
+    return out;
   }
 
   /** Get the loaded InstanceConfig (null when no instance.json exists). */
@@ -6319,24 +6768,21 @@ export class Runtime {
     return resolvePollConfig(this.config.notifications?.poll);
   }
 
-  /**
-   * The tasks block, resolved with its defaults and clamps. Read once,
-   * when the tasks source builds its scheduler and executor.
-   */
-  getTasksConfig(): ResolvedTasksConfig {
-    return resolveTasksConfig(this.config.tasks);
+  /** The `runs` block, resolved with its defaults and clamps. */
+  getRunsConfig(): ResolvedRunsConfig {
+    return resolveRunsConfig(this.config.runs);
   }
 
   /**
    * The pool every unattended run is admitted through (`executeTask`). Sized by
-   * `tasks.maxConcurrentRuns` / `maxQueuedRuns`. Exposed so a source that
-   * must answer at request time whether its run started or queued can hold a
-   * slot itself and hand it to `executeTask` (`TaskRequest.admission`).
-   * Created on first use, so a prototype-built test double gets one too.
+   * `runs.maxConcurrentRuns` / `maxQueuedRuns`. Exposed so a caller that takes
+   * a slot before the run starts (the run worker, with each claim) can hold it
+   * and hand it to `executeTask` (`TaskRequest.admission`). Created on first
+   * use, so a prototype-built test double gets one too.
    */
   getRunAdmission(): RunAdmission {
     if (!this._runAdmission) {
-      const { maxConcurrentRuns, maxQueuedRuns } = resolveTasksConfig(this.config?.tasks);
+      const { maxConcurrentRuns, maxQueuedRuns } = resolveRunsConfig(this.config?.runs);
       this._runAdmission = createRunAdmission({ maxConcurrentRuns, maxQueuedRuns });
     }
     return this._runAdmission;
@@ -6353,8 +6799,8 @@ export class Runtime {
   }
 
   /**
-   * The work queue (ADR-0076): triggers enqueue runs here, and the tasks
-   * scheduler's worker claims and executes them through the door. Opened at
+   * The work queue (ADR-0076): the run worker enqueues the tasks contract's
+   * due occurrences here, claims them, and executes them through the door. Opened at
    * boot (`openWorkQueue`) and closed at shutdown, after the sources that use
    * it have stopped. Created on first use, so a prototype-built test double
    * gets one too.
@@ -6493,6 +6939,8 @@ export class Runtime {
   }
 
   async shutdown(): Promise<void> {
+    if (this._purgeTimer) clearInterval(this._purgeTimer);
+    this._purgeTimer = null;
     await this.telemetryManager.shutdown();
     // Detach the tool-set watches first: each holds a source, and through its
     // listener the reconcile deps that close over this runtime. The lifecycle
@@ -6513,6 +6961,9 @@ export class Runtime {
     // The conversations plugin receives a turn's writes after the engine emits
     // them; settle them before its server stops.
     await this._conversations?.flush();
+    // Stop unattended runs and let them report their end (error `internal`,
+    // transient: a shutdown is not a cancel) while the tasks server still runs.
+    await this._runWorker?.stop();
     // Stop all sources across all workspace registries. A shared source (the
     // system source, the platform apps) is not stopped by a registry; the
     // runtime created them, so it stops them here, each once.
@@ -6522,10 +6973,8 @@ export class Runtime {
       }
     }
     // Every platform source (each bound plugin server among them) and the system
-    // source, workspace-scoped and identity alike, stopped once each. Identity sources (tasks, files, conversations) sit
-    // in no workspace registry at all, and the tasks source's stop is what ends its
-    // scheduler, whose timer otherwise outlives the runtime and keeps the process
-    // alive.
+    // source, workspace-scoped and identity alike, stopped once each. Identity
+    // sources (tasks, files, conversations) sit in no workspace registry at all.
     for (const source of [...this._platformSources, this._systemSource]) {
       await source?.stop();
     }
@@ -6787,12 +7236,15 @@ function buildRuntimeEventSink(
   return new MultiEventSink([buildEventSink(config), new MetricsEventSink(), telemetry]);
 }
 
-function buildSkills(config: RuntimeConfig): {
+function buildSkills(
+  config: RuntimeConfig,
+  pluginSkillRoots: readonly string[],
+): {
   contextSkills: Skill[];
   skillMatcher: SkillMatcher;
 } {
   const all = loadAllSkills(config.skillDirs, globalSkillDir(config));
-  const core = loadCoreSkills();
+  const core = [...loadCoreSkills(), ...loadSystemPluginSkills(pluginSkillRoots)];
   const combined = [...core, ...all];
   const { context, skills } = partitionSkills(combined);
   const matcher = new SkillMatcher();
@@ -6941,10 +7393,10 @@ function buildRunContext(
     // conversation of a one-shot run correctly gets nothing.
     ...(spec.conversation ? { conversationId: spec.conversation.conversation.id } : { runId }),
     credentialSubject: runId,
-    // Unattended runs bar the task-authoring surface at tool-dispatch
-    // depth. Rides the ALS context and is preserved across the per-call
-    // restamp, so the wall is enforced at the tasks source rather than
-    // per-router-construction. See `createTasksSource`.
+    // Unattended runs bar every tool a contract marks `unattended: "refused"`
+    // at tool-dispatch depth. Rides the ALS context and is preserved across
+    // the per-call restamp, so the bound source refuses them (and stamps
+    // `unattended: true` on each call it sends) whatever router dispatched it.
     ...(attended ? {} : { unattended: true }),
     runTrigger: spec.trigger,
   };
