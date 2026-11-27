@@ -6,9 +6,9 @@
 
 import { ToolCallError } from "../../server-sdk/src/index.ts";
 import {
+  type DisplayConversation,
   type DisplayMessage,
   type DisplayToolCall,
-  isRecord,
   projectConversation,
 } from "./display.ts";
 import { CorruptConversationError, summaryOf } from "./scan.ts";
@@ -276,38 +276,38 @@ function extractSnippet(text: string, at: number, length: number): string {
   return snippet;
 }
 
-/** A line's message text: its `content` text parts, or the raw line when it has none. */
-function lineText(line: string): string {
-  try {
-    const msg: unknown = JSON.parse(line);
-    const content = isRecord(msg) ? msg.content : undefined;
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      return content
-        .filter(isRecord)
-        .flatMap((b) => (b.type === "text" && typeof b.text === "string" && b.text ? [b.text] : []))
-        .join(" ");
+/**
+ * The text a person sees in a conversation: its title, then each message's text blocks in
+ * order. Tool calls, reasoning, usage and the stored events' own fields are not text a
+ * person reads, so a search never matches them.
+ */
+function visibleTexts(conv: DisplayConversation): string[] {
+  const texts = conv.meta.title ? [conv.meta.title] : [];
+  for (const message of conv.messages) {
+    for (const block of message.blocks) {
+      if (block.type === "text" && block.text) texts.push(block.text);
     }
-  } catch {
-    // not JSON: the raw line is searched
   }
-  return line;
+  return texts;
 }
 
-function snippetsOf(raw: string, query: string): Array<{ snippet: string }> {
+function snippetsOf(texts: string[], query: string): Array<{ snippet: string }> {
   const q = query.toLowerCase();
-  const lines = raw.split("\n");
   const matches: Array<{ snippet: string }> = [];
-  // Line 1 is the header, not a message.
-  for (let i = 1; i < lines.length && matches.length < MAX_SNIPPETS_PER_CONVERSATION; i++) {
-    const line = lines[i]!;
-    if (!line.toLowerCase().includes(q)) continue;
-    const text = lineText(line);
+  for (const text of texts) {
+    if (matches.length >= MAX_SNIPPETS_PER_CONVERSATION) break;
     const pos = text.toLowerCase().indexOf(q);
     if (pos >= 0) matches.push({ snippet: extractSnippet(text, pos, query.length) });
   }
   return matches;
 }
+
+/**
+ * Whether a query can match a file only if its stored text contains it as written: true
+ * when JSON writes the query unescaped. A file that lacks such a query is skipped without
+ * projecting it.
+ */
+const storedAsWritten = (query: string) => JSON.stringify(query).slice(1, -1) === query;
 
 export async function searchTool(
   store: ConversationStore,
@@ -322,13 +322,19 @@ export async function searchTool(
     );
   }
   const limit = input.limit ?? 10;
+  const q = query.toLowerCase();
+  const prefilter = storedAsWritten(q);
   const results: Array<{ id: string; title: string | null; matches: Array<{ snippet: string }> }> =
     [];
   for (const row of await rowsInScope(store, scope, {})) {
     if (results.length >= limit) break;
     const loaded = await store.load(scope, row.id).catch(() => null);
-    if (!loaded?.text.toLowerCase().includes(query.toLowerCase())) continue;
-    const matches = snippetsOf(loaded.text, query);
+    if (!loaded || (prefilter && !loaded.text.toLowerCase().includes(q))) continue;
+    const lines = loaded.text.split("\n").filter(Boolean);
+    const matches = snippetsOf(
+      visibleTexts(projectConversation(loaded.header, lines.slice(1), false)),
+      query,
+    );
     if (matches.length > 0) results.push({ id: row.id, title: row.title, matches });
   }
   return { results, totalMatches: results.length };
