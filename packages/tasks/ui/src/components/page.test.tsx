@@ -95,7 +95,6 @@ const STATS = {
   runs: 4,
   pass: 3,
   fail: 1,
-  uncertain: 0,
   passRate: 0.75,
   costUsd: 1.2,
 };

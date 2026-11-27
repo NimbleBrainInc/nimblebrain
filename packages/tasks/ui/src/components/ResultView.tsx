@@ -4,9 +4,8 @@ import { useCallback, useEffect, useEffectEvent, useState } from "react";
 import { STARTED_BY_TEXT, startedByOf } from "../lib/activity.ts";
 import { attentionOf, askMessage } from "../lib/needs-you.ts";
 import { outcomeOf } from "../lib/outcome.ts";
-import { assessmentReasonText, inputSummary, runName, runTime } from "../lib/plain.ts";
+import { inputSummary, runName, runTime } from "../lib/plain.ts";
 import { readResult } from "../lib/runResult.ts";
-import { effectiveVerdict } from "../lib/verdict.ts";
 import { renderMarkdown } from "../markdown.ts";
 import {
   isOpenExecution,
@@ -17,11 +16,10 @@ import {
 } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatDuration, formatTokens, formatUsd, toolErrorText } from "../utils.ts";
-import { AssessmentPanel } from "./AssessmentPanel.tsx";
 import { PageHeader } from "./Chrome.tsx";
 import { NeedsYouCallout } from "./NeedsYou.tsx";
 import { RowMenu } from "./RowMenu.tsx";
-import { RunBadge, StatusBadge } from "./RunBadge.tsx";
+import { RunBadge } from "./RunBadge.tsx";
 import { Elapsed, RunSteps } from "./RunSteps.tsx";
 import { Section, Sections, SummaryStrip, type Tile } from "./Section.tsx";
 import { asJson, ResultPreview } from "./StructuredView.tsx";
@@ -185,11 +183,9 @@ function CostDetail({ run, result }: { run?: TaskRun; result: TaskRunResult | nu
   );
 }
 
-/** The run's report card: outcome, verdict, input, how long it took, what it cost. */
+/** The run's report card: outcome, input, how long it took, what it cost. */
 export function RunSummary({ run, result }: { run?: TaskRun; result: TaskRunResult | null }) {
   const outcome = outcomeText(run, result);
-  const assessment = run?.assessment ?? result?.assessment;
-  const verdict = effectiveVerdict(assessment);
   const total = run?.costUsd ?? 0;
   const input = inputSummary(run?.input);
   const tiles: Tile[] = [
@@ -202,18 +198,6 @@ export function RunSummary({ run, result }: { run?: TaskRun; result: TaskRunResu
         run?.error || run?.unrecoveredToolFailures?.length || run?.spendAccountId ? (
           <OutcomeDetail run={run} />
         ) : undefined,
-    },
-    {
-      id: "verdict",
-      label: "Verdict",
-      value: verdict ? (
-        <StatusBadge tone={verdict.tone} label={verdict.word} />
-      ) : (
-        "Not assessed yet"
-      ),
-      sub: assessment?.reason
-        ? firstSentence(assessmentReasonText(assessment.reason.code))
-        : undefined,
     },
     {
       id: "input",
@@ -244,11 +228,6 @@ export function RunSummary({ run, result }: { run?: TaskRun; result: TaskRunResu
     },
   ];
   return <SummaryStrip tiles={tiles} label="Run summary" />;
-}
-
-function firstSentence(text: string): string {
-  const end = text.indexOf(". ");
-  return end > 0 ? text.slice(0, end + 1) : text;
 }
 
 /** What a run result screen holds once loaded. */
@@ -435,7 +414,6 @@ export function ResultBody({
   const status = <ResultStatus state={state} />;
   if (state.status !== "ready" && (state.status !== "loading" || !state.run)) return status;
   const { run, result } = state;
-  const assessment = run?.assessment ?? result?.assessment;
   const sentence = attentionOf(run, {
     log: result?.activityLog,
     allowedTools: state.allowedTools,
@@ -453,7 +431,6 @@ export function ResultBody({
       )}
       <RunSummary run={run} result={result} />
       <Deliverable result={result} run={run} onOpenFile={onOpenFile} />
-      <AssessmentPanel assessment={assessment} />
       <RunSteps log={result?.activityLog ?? []} />
       <RelatedLinks run={run} onOpenRun={onOpenRun} onOpenBatch={onOpenBatch} />
     </Sections>

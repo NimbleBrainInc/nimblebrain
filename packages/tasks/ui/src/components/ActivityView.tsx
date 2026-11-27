@@ -11,7 +11,7 @@ import {
   sinceOf,
   startedByOf,
 } from "../lib/activity.ts";
-import { assessmentReasonText, inputSummary } from "../lib/plain.ts";
+import { inputSummary } from "../lib/plain.ts";
 import type { RunLabel, TaskBatch, TaskRun, TaskSummary } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatDuration, formatUsd, relativeTime, toolErrorText } from "../utils.ts";
@@ -55,7 +55,7 @@ export function mergeNewest(loaded: TaskRun[], newest: TaskRun[]): TaskRun[] {
 /** The short reason a run that did not succeed reads as, for its row. */
 export function rowNote(run: TaskRun): string {
   if (run.error) return run.error.split("\n")[0]?.slice(0, 120) ?? "";
-  if (run.assessment?.reason) return assessmentReasonText(run.assessment.reason.code);
+  if (run.label === "Poor result") return "The result doesn't match the task's output schema.";
   return "";
 }
 
@@ -218,8 +218,7 @@ function BatchRowItem({
         <span className="act-task">
           {taskName ?? batch.taskId}
           <span className="cell-sub">
-            {batch.done ?? "?"}/{batch.items ?? "?"} · {counts.pass} pass · {counts.fail} fail ·{" "}
-            {counts.uncertain} uncertain
+            {batch.done ?? "?"}/{batch.items ?? "?"} · {counts.pass} pass · {counts.fail} fail
             {counts.failed > 0 ? ` · ${counts.failed} failed` : ""}
           </span>
         </span>

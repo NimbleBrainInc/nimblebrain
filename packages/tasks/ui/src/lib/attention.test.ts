@@ -17,7 +17,6 @@ const stats = (label: NonNullable<TaskStats["lastRun"]>["label"]): TaskStats => 
   runs: 3,
   pass: 2,
   fail: 1,
-  uncertain: 0,
   passRate: 0.67,
   costUsd: 1,
   lastRun: { id: "run_1", startedAt: "2026-10-04T00:00:00Z", label },

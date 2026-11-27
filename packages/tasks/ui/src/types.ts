@@ -89,15 +89,6 @@ export interface TaskDetail {
 /** A task's reasoning depth. */
 export type ThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
-/** Whether a run's deliverable is acceptable. */
-export interface RunAssessment {
-  /** pass, fail, uncertain or not_assessed; another value is unknown. */
-  verdict: string;
-  reason?: { code: string; message: string };
-  schema?: { valid: boolean; errors?: string[] };
-  assessedAt?: string;
-}
-
 /** How a run ended, or that it has not. */
 export type RunExecution =
   | "queued"
@@ -134,7 +125,6 @@ export interface TaskRun {
   error?: string;
   transient?: boolean;
   resultPreview?: string;
-  assessment?: RunAssessment;
   unrecoveredToolFailures?: string[];
   /** Each tool in `unrecoveredToolFailures`, with the reason its last failed call failed. */
   toolFailures?: { name: string; errorReason?: string }[];
@@ -196,7 +186,6 @@ export interface TaskRunResult extends TaskRunResultBody {
   taskId: string;
   execution: string;
   label: string;
-  assessment?: RunAssessment;
 }
 
 /** Whether a run has not ended yet. Any execution this screen does not know reads as ended. */
@@ -211,7 +200,6 @@ export interface BatchCounts {
   running: number;
   pass: number;
   fail: number;
-  uncertain: number;
   not_assessed: number;
   failed: number;
   skipped: number;
@@ -329,7 +317,6 @@ export interface TaskStats {
   runs: number;
   pass: number;
   fail: number;
-  uncertain?: number;
   passRate?: number;
   costUsd?: number;
   lastRun?: { id: string; label: string; startedAt?: string };

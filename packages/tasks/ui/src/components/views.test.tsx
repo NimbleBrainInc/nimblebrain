@@ -34,7 +34,6 @@ const BATCH: TaskBatch = {
     running: 1,
     pass: 5,
     fail: 1,
-    uncertain: 1,
     not_assessed: 0,
     failed: 0,
     skipped: 0,
@@ -96,7 +95,6 @@ const STATS = (label: "Succeeded" | "Poor result" | "Needs review") =>
         runs: 4,
         pass: 3,
         fail: 1,
-        uncertain: 0,
         passRate: 0.75,
         costUsd: 1.2,
         lastRun: { id: "run_1", startedAt: new Date().toISOString(), label },
@@ -390,7 +388,8 @@ describe("Activity", () => {
     expect(html).toContain("Schedule");
     expect(html).toContain("web_fetch errors");
     expect(html).not.toContain("more</");
-    expect(html).toContain("7/10 · 5 pass · 1 fail · 1 uncertain");
+    expect(html).toContain("7/10 · 5 pass · 1 fail");
+    expect(html).not.toContain("uncertain");
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("Load older runs");
   });
@@ -408,12 +407,6 @@ describe("Result", () => {
     costUsd: 0.41,
     input: { company: "Acme" },
     retryOf: "run_8",
-    assessment: {
-      verdict: "fail",
-      assessedAt: "2026-10-02T20:53:00Z",
-      reason: { code: "schema_invalid", message: "does not match" },
-      schema: { valid: false, errors: ["/grade: must be string"] },
-    },
   };
   const RESULT = {
     runId: "run_9",
@@ -440,25 +433,24 @@ describe("Result", () => {
     );
   });
 
-  test("deliverable first, as values and a table, then the read-only assessment", () => {
+  test("the deliverable as values and a table, with no verdict or assessment", () => {
     const html = body({ status: "ready", run: RUN, result: RESULT });
-    expect(html.indexOf("Acme")).toBeLessThan(html.indexOf("Assessment"));
+    expect(html).not.toContain("Assessment");
+    expect(html).not.toContain("Verdict");
+    expect(html).not.toContain("Not assessed");
+    // The schema check reads as the run's Needs you line.
+    expect(html).toContain("The output didn&#x27;t match the expected shape.");
     expect(html).toContain("<dt>company</dt>");
     expect(html).toContain('<th scope="col">role</th>');
     expect(html).toContain("acme-research.md");
-    expect(html).toContain("The result doesn&#x27;t match the task&#x27;s output schema.");
-    expect(html).toContain("does not match: /grade: must be string");
     expect(html).not.toContain("Accept");
     expect(html).not.toContain("Re-judge");
     expect(html).toContain("1 tool call");
     expect(html).toContain('Fetch<span class="muted"> in web</span>');
-    // The report card: outcome, verdict, input, time, and cost.
+    // The report card: outcome, input, time, and cost.
     expect(html).toMatch(/Outcome<\/span><span class="tile-value">Completed/);
     expect(html).toMatch(/Input<\/span><span class="tile-value">Acme/);
     expect(html).toMatch(/Cost<\/span><span class="tile-value">\$0\.41/);
-    expect(html).toMatch(
-      /Assessment<\/h2><div class="card-aside"><span class="status-badge tone-danger">.*Failed/,
-    );
     expect(html).toContain("Show raw");
     expect(html).toContain("Open the run this retried");
   });
@@ -467,7 +459,6 @@ describe("Result", () => {
     const review = {
       ...RUN,
       label: "Needs review",
-      assessment: undefined,
       unrecoveredToolFailures: ["tasks__create", "tasks__cancel"],
     };
     const html = render(
@@ -502,15 +493,6 @@ describe("Result", () => {
     );
     expect(readOnly).toContain("This task had Create in tasks and Cancel in tasks fail.");
     expect(readOnly).not.toContain(">Edit instructions<");
-  });
-
-  test("a verdict this screen does not know is shown verbatim", () => {
-    const html = body({
-      status: "ready",
-      run: { ...RUN, assessment: { verdict: "graded" } },
-      result: { ...RESULT, structured: undefined, output: "plain text" },
-    });
-    expect(html).toContain("graded");
   });
 
   /** The result a run that failed before the engine returned, or never started, leaves. */
@@ -565,7 +547,7 @@ describe("Result", () => {
   test("the deliverable is the result's output, never the run's preview", () => {
     const html = body({
       status: "ready",
-      run: { ...RUN, assessment: undefined, resultPreview: "Three prospects found." },
+      run: { ...RUN, resultPreview: "Three prospects found." },
       result: null,
     });
     expect(html).not.toContain("Three prospects found.");
