@@ -7,7 +7,9 @@
  *                                              /t/ on the same origin
  *       [--host <host>]              the address to listen on (default 127.0.0.1)
  *       [--transfer-origin <url>]    the origin transfer URLs name (default: the listener's)
- *   [--max-file-bytes <n>]           the largest upload begin_upload accepts (default 25 MiB)
+ *   [--max-file-bytes <n>]           the largest upload begin_upload accepts (default
+ *                                    $NB_FILES_MAX_FILE_BYTES, which a host that starts the
+ *                                    server sets to its own limit, else 25 MiB)
  *   [--upload-ttl <seconds>]         how long an upload URL lives (default and most 900)
  *   [--download-ttl <seconds>]       how long a download URL lives (default and most 300)
  *   [--screen <file>]                the built screen HTML (default: ui/dist/index.html here)
@@ -38,6 +40,8 @@ import { Store } from "./store.ts";
 import { TRANSFER_PREFIX, Transfers } from "./transfer.ts";
 
 export const TOKEN_ENV = "NB_FILES_TOKEN";
+/** Where a host that starts the server passes its per-file limit (CONTRACT.md §6). */
+export const MAX_FILE_BYTES_ENV = "NB_FILES_MAX_FILE_BYTES";
 export const MCP_PATH = "/mcp";
 /** The shortest host credential HTTP mode accepts: the token is `host` on every tool. */
 export const MIN_TOKEN_LENGTH = 32;
@@ -188,15 +192,22 @@ function seconds(argv: string[], name: string, most: number): number | undefined
   return n * 1000;
 }
 
+/** The per-file limit: `--max-file-bytes`, else the host's {@link MAX_FILE_BYTES_ENV}, else none (the default). */
+function fileLimit(argv: string[]): number | undefined {
+  const raw = arg(argv, "max-file-bytes") ?? process.env[MAX_FILE_BYTES_ENV];
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!(Number.isInteger(n) && n > 0)) {
+    fail(`--max-file-bytes (or ${MAX_FILE_BYTES_ENV}) wants a positive number of bytes`);
+  }
+  return n;
+}
+
 export async function main(argv: string[]): Promise<void> {
   const dataDir = arg(argv, "data-dir");
   if (!dataDir) fail("--data-dir <dir> is required");
   const screenPath = arg(argv, "screen") ?? resolve(import.meta.dir, "../ui/dist/index.html");
-  const maxRaw = arg(argv, "max-file-bytes");
-  const maxFileBytes = maxRaw === undefined ? undefined : Number(maxRaw);
-  if (maxFileBytes !== undefined && !(Number.isInteger(maxFileBytes) && maxFileBytes > 0)) {
-    fail("--max-file-bytes wants a positive number of bytes");
-  }
+  const maxFileBytes = fileLimit(argv);
   const opts: PluginOptions = {
     dataDir,
     screenPath,

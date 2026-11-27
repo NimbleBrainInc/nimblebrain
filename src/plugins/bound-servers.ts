@@ -255,6 +255,13 @@ export type ResultOverlays = ReadonlyMap<
   (toolName: string, result: ToolResult) => ToolResult
 >;
 
+/**
+ * Host configuration a contract defines for the server the host starts, by
+ * contract: added to the server's environment over its own `env`, so the
+ * server and the host read one value (the files contract's per-file limit).
+ */
+export type ServerEnvironments = ReadonlyMap<string, Readonly<Record<string, string>>>;
+
 /** Start one binding's server and connect to it. */
 async function startBoundServer(
   resolved: ResolvedPlugins,
@@ -263,6 +270,7 @@ async function startBoundServer(
   overlays: ResultOverlays,
   signGrant: GrantSigner | undefined,
   guard: CallGuard | undefined,
+  hostEnv: Readonly<Record<string, string>> = {},
 ): Promise<BoundServer> {
   const name = `${binding.contract}: the ${binding.plugin} plugin's server "${binding.server}"`;
   const plugin = resolved.plugins.find((p) => p.name === binding.plugin);
@@ -302,13 +310,14 @@ async function startBoundServer(
     {
       type: "plugin",
       // A minimal environment (the SDK's default: PATH, HOME, USER and the
-      // like) plus the server's own `env`, never the runtime's.
+      // like) plus the server's own `env`, then what its contract has the host
+      // pass; never the runtime's.
       createTransport: () =>
         stamped(
           new StdioClientTransport({
             command: spec.command,
             args: spec.args,
-            env: { ...getDefaultEnvironment(), ...spec.env },
+            env: { ...getDefaultEnvironment(), ...spec.env, ...hostEnv },
             cwd: spec.cwd,
             stderr: "inherit",
           }),
@@ -409,6 +418,7 @@ export async function startBoundServers(
   overlays: ResultOverlays = new Map(),
   signGrant?: GrantSigner,
   guards: ReadonlyMap<string, CallGuard> = new Map(),
+  environments: ServerEnvironments = new Map(),
 ): Promise<Map<string, BoundServer>> {
   const settled = await Promise.allSettled(
     resolved.bindings.map((binding) =>
@@ -419,6 +429,7 @@ export async function startBoundServers(
         overlays,
         signGrant,
         guards.get(binding.contract),
+        environments.get(binding.contract),
       ),
     ),
   );

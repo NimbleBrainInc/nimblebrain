@@ -95,7 +95,8 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   looks a server up by contract id (`BoundServer` per contract), never by plugin name. A
   stdio server is started from `mcp.json` with `${PLUGIN_DATA}` at
   `<workDir>/plugin-data/<name>` (created before the start), the SDK's minimal environment
-  plus the server's own `env`, never the runtime's. A binding whose server the operator placed
+  plus the server's own `env`, then the host configuration its contract has the host pass
+  (`ServerEnvironments`, by contract), never the runtime's. A binding whose server the operator placed
   at a `url` is refused at boot until the kernel holds a host credential for it.
 - **One connection per bound server, one `McpSource` (mode `plugin`).** Agents (the
   ToolRouter), the `/mcp/<wsId>` door and the app bridge reach the server through that

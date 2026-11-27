@@ -25,6 +25,9 @@ code implements. The built-in implementation is `packages/files/` (`packages/fil
 
 - **Every door takes files in through it**: a chat turn's attachments, the REST upload
   (`POST /v1/workspaces/:wsId/resources`), which the app bridge's uploads use too.
+- **The per-file limit is one value**: `files.maxFileSize` is passed to the bound server as
+  `NB_FILES_MAX_FILE_BYTES` (`filesServerEnv`, `contract.ts`) when it starts, so the intake and
+  `begin_upload` never disagree. Never give the plugin a limit of its own in `mcp.json`.
 - **Check before opening any upload**: count, each size, the total, the allowlist
   (`mime.ts`, held to the contract document by `test/unit/contracts/contract-documents.test.ts`).
   A part with no type is sent as `application/octet-stream`; the plugin records a text type

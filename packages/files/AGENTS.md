@@ -95,7 +95,8 @@ How to run it standalone is in `README.md`.
   same window. Past the window an upload is retired with its bytes: on the next
   call into its workspace, and every minute for a loaded workspace.
 - **A download GET re-checks the record**: a file deleted since its URL was issued is 404.
-- **The per-file limit** for `begin_upload` is `--max-file-bytes` (default 25 MiB).
+- **The per-file limit** for `begin_upload` is `--max-file-bytes`, else `NB_FILES_MAX_FILE_BYTES`
+  (which a host that starts the server sets to its own limit, CONTRACT.md §6), else 25 MiB.
 
 ## Extraction (`src/extract.ts`)
 

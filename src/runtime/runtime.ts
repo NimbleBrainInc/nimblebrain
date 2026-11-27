@@ -99,7 +99,7 @@ import { AgentRuntimeError } from "../execution/agent-runtime-error.ts";
 import { NATIVE_RUNTIME_ID } from "../execution/native-runtime.ts";
 import { type AgentRuntimes, createAgentRuntimes } from "../execution/registry.ts";
 import type { AgentRuntime } from "../execution/types.ts";
-import { FILES_CONTRACT } from "../files/contract.ts";
+import { FILES_CONTRACT, filesServerEnv } from "../files/contract.ts";
 import { createFilesHost, type FilesHost, type OwnerScope } from "../files/host.ts";
 import { type RehydrateFiles, rehydrateUserResources } from "../files/rehydrate.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig, READ_TEXT_BOUND } from "../files/types.ts";
@@ -1593,6 +1593,8 @@ export class Runtime {
         overlays,
         grants ? (claims) => grants.sign(claims) : undefined,
         guards,
+        // The operator's per-file limit is the files server's too (CONTRACT.md §6).
+        new Map([[FILES_CONTRACT, filesServerEnv(this.getFilesConfig().maxFileSize)]]),
       );
       // What each contract refuses an unattended run, by the name agents call it.
       this._unattendedRefused = new Set(
