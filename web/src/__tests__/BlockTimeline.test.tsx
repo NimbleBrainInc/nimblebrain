@@ -27,7 +27,9 @@ const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { BlockTimeline } = await import("../components/BlockTimeline");
+const { ArtifactPanelProvider } = await import("../context/ArtifactPanelContext");
 type ContentBlock = import("../hooks/chat-store").ContentBlock;
+type ToolCallDisplay = import("../hooks/chat-store").ToolCallDisplay;
 
 function byClass(root: Element, cls: string): Element[] {
   return Array.from(root.getElementsByTagName("*")).filter((el) => el.classList.contains(cls));
@@ -146,5 +148,78 @@ describe("BlockTimeline phase segmentation", () => {
         search("t2", "acme", 5),
       ]),
     ).toEqual({ chips: 1, textItems: 0, blankTextItems: 0 });
+  });
+});
+
+describe("BlockTimeline resource links", () => {
+  /** A completed call from `appName` that returns one markdown resource link. */
+  function linkCall(id: string, appName: string, uri: string): ToolCallDisplay {
+    return {
+      id,
+      name: `${appName}__info`,
+      status: "done",
+      appName,
+      resourceLinks: [{ uri, name: "notes.md", mimeType: "text/markdown" }],
+      result: { content: [{ type: "text", text: "ok" }], isError: false },
+      ms: 3,
+    };
+  }
+
+  function linked(id: string, appName: string, uri: string): ContentBlock {
+    return { type: "tool", toolCalls: [linkCall(id, appName, uri)] };
+  }
+
+  /** The `Open <title>` document chips the turn renders, one per shown link. */
+  async function linkCards(blocks: ContentBlock[]): Promise<number> {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = ReactDOMClient.createRoot(container);
+    await act(async () => {
+      root.render(
+        React.createElement(
+          ArtifactPanelProvider,
+          null,
+          React.createElement(BlockTimeline, {
+            blocks,
+            isCurrentMessage: false,
+            streamingState: null,
+            preparingTool: null,
+            displayDetail: "balanced",
+          }),
+        ),
+      );
+    });
+    const cards = Array.from(container.getElementsByTagName("button")).filter((b) =>
+      (b.getAttribute("aria-label") ?? "").startsWith("Open "),
+    ).length;
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    return cards;
+  }
+
+  test("one file named twice in a turn shows once, even across prose", async () => {
+    expect(
+      await linkCards([
+        linked("t1", "files", "files://fl_abc"),
+        text("Saved it. Here it is again."),
+        linked("t2", "files", "files://fl_abc"),
+      ]),
+    ).toBe(1);
+  });
+
+  test("the same URI from two sources is two resources and shows twice", async () => {
+    expect(
+      await linkCards([
+        {
+          type: "tool",
+          toolCalls: [
+            linkCall("t1", "docs", "report://latest"),
+            linkCall("t2", "my_docs", "report://latest"),
+          ],
+        },
+      ]),
+    ).toBe(2);
   });
 });

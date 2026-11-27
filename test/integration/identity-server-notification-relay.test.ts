@@ -168,8 +168,7 @@ describe("a person's own apps announce their writes to that person", () => {
           encoding: "text",
         },
       });
-      const [block] = created.content as Array<{ type: string; text: string }>;
-      const { id } = JSON.parse(block?.text ?? "{}") as { id: string };
+      const { id } = created.structuredContent as { id: string };
       // Let the create's coalescing window close, so what arrives next is the delete's.
       await new Promise((resolve) => setTimeout(resolve, 400));
 
