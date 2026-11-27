@@ -72,6 +72,8 @@ const EXTEND_MS = 20_000;
 const CLAIM_POLL_MS = 5_000;
 /** Waits between attempts to report a run's end before the claim is let go. */
 const END_RUN_RETRY_MS = [1_000, 5_000, 15_000];
+/** How long an item whose run's end is not acknowledged waits before it is claimed again. */
+const END_PENDING_RETRY_MS = 1_000;
 /** How long a `begin_run` that failed waits before its item is claimed again. */
 const BEGIN_RETRY_MS = 30_000;
 /** How long shutdown waits for stopped runs to report their end. */
@@ -411,6 +413,11 @@ function retryLater(): string {
   return new Date(Date.now() + BEGIN_RETRY_MS).toISOString();
 }
 
+/** When an item whose run's end is not acknowledged yet is claimed again, to close it. */
+function endPendingRetryAt(): string {
+  return new Date(Date.now() + END_PENDING_RETRY_MS).toISOString();
+}
+
 /** The caps a run executed under, as the outcome states them. */
 function limitsOf(limits: EffectiveRunLimits): NonNullable<RunOutcome["limits"]> {
   return {
@@ -473,6 +480,12 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
   const running = new Map<string, { workspaceId: string; stop: (cause: StopCause) => void }>();
   /** Exclusive keys held, as `<workspace>\0<key>`. */
   const exclusive = new Set<string>();
+  /**
+   * What each run holds until its end is acknowledged (its exclusive key and
+   * spend anchor), by run id. It outlives the claim that ran it: a later claim
+   * that closes the run as interrupted releases it when that end lands.
+   */
+  const holds = new Map<string, { workspaceId: string; release: () => void }>();
   /** Runs holding each spend account, this process. */
   const accountHolders = new Map<string, number>();
   const inflight = new Set<Promise<void>>();
@@ -686,7 +699,11 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
         false,
         "The run's work names what this host does not know.",
       );
-      await endRun(workspaceId, runId, claim.token, outcome);
+      if ((await endRun(workspaceId, runId, claim.token, outcome)) === null) {
+        // The next claim's `begin_run` answers it interrupted, and the host closes it then.
+        await settle(claim, endPendingRetryAt(), "end_run was not acknowledged");
+        return null;
+      }
     } else {
       log.warn("[run-worker] begin_run answered outside its schema", { workspaceId });
     }
@@ -706,7 +723,6 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
       lost = true;
       stopRun?.("lost");
     });
-    let release: () => void = () => {};
     try {
       // A workspace no longer served (deleted) settles its items unrun.
       if (!served.has(workspaceId)) {
@@ -716,37 +732,41 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
       const answer = await beginRun(claim, workspaceId, ref);
       if (!answer) return;
       if (answer.decision === "skip") {
-        await skipped(workspaceId, answer);
-        await settle(claim);
+        if (await skipped(workspaceId, answer)) await settle(claim);
+        else await settle(claim, endPendingRetryAt(), "an interrupted run is not closed yet");
         return;
       }
       const run = await runWork(workspaceId, answer, lease, (stop) => {
         stopRun = stop;
         if (lost) stop("lost");
       });
-      release = run.release;
       await reportEnd(claim, workspaceId, answer, run);
     } catch (err) {
       log.error("[run-worker] run item failed", { workspaceId, error: messageOf(err) });
       await settle(claim, retryLater(), messageOf(err));
     } finally {
       keeping.stop();
-      release();
       lease.release();
       void pump();
     }
   }
 
-  /** A skip: its notices delivered, an earlier claim's interrupted run closed. */
+  /**
+   * A skip: its notices delivered, an earlier claim's interrupted run closed.
+   * False while that run's end is not acknowledged: the item is claimed again.
+   */
   async function skipped(
     workspaceId: string,
     answer: Extract<BeginAnswer, { decision: "skip" }>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (answer.notices?.length) deps.deliver(workspaceId, answer.notices);
-    if (answer.interrupted) await closeInterrupted(workspaceId, answer.interrupted);
+    return answer.interrupted ? closeInterrupted(workspaceId, answer.interrupted) : true;
   }
 
-  /** Report a run's end and settle its item; an unacknowledged end lets the item go for the next claim to close. */
+  /**
+   * Report a run's end and settle its item. An unacknowledged end lets the item
+   * go for the next claim to close, and the run keeps what it holds until then.
+   */
   async function reportEnd(
     claim: Claim,
     workspaceId: string,
@@ -756,9 +776,10 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
     const notices = await endRun(workspaceId, answer.runId, claim.token, run.outcome);
     if (notices === null) {
       // The next claim's `begin_run` answers it interrupted, and the host closes it then.
-      await settle(claim, new Date().toISOString(), "end_run was not acknowledged");
+      await settle(claim, endPendingRetryAt(), "end_run was not acknowledged");
       return;
     }
+    releaseHold(answer.runId);
     if (notices.length > 0) deps.deliver(workspaceId, notices);
     if (run.ownerId) {
       deps.ended(workspaceId, run.ownerId, {
@@ -791,11 +812,6 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
       const why = "The run's owner is no longer a member of the workspace.";
       return { outcome: notStarted("membership_revoked", false, why), ownerId };
     }
-    const key = answer.work.exclusiveKey;
-    if (key && exclusive.has(`${workspaceId}\u0000${key}`)) {
-      const why = "Another run with the same exclusive key is in flight.";
-      return { outcome: notStarted("exclusive_busy", true, why), ownerId };
-    }
     return { ownerId };
   }
 
@@ -803,16 +819,18 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
    * Take what a run holds until its end is acknowledged: its exclusive key, and
    * an anchor on its spend accounts (a hold that never spends), so the live
    * balance still carries its spend for any run that starts before its end
-   * lands. Returns the release.
+   * lands. False, taking nothing, when its exclusive key is held. Checks and
+   * takes in one synchronous step, so two runs cannot both pass the check.
    */
-  function hold(workspaceId: string, work: WorkSpec): () => void {
+  function hold(workspaceId: string, runId: string, work: WorkSpec): boolean {
     const key = work.exclusiveKey ? `${workspaceId}\u0000${work.exclusiveKey}` : undefined;
+    if (key && exclusive.has(key)) return false;
     if (key) exclusive.add(key);
     const accounts = work.spendAccounts ?? [];
     const anchor: SpendHold | null =
       accounts.length > 0 ? deps.spend.open(accounts, { model: "", rates: null }) : null;
     for (const a of accounts) accountHolders.set(a.id, (accountHolders.get(a.id) ?? 0) + 1);
-    return () => {
+    const release = () => {
       if (key) exclusive.delete(key);
       anchor?.release();
       for (const a of accounts) {
@@ -821,18 +839,27 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
         else accountHolders.delete(a.id);
       }
     };
+    holds.set(runId, { workspaceId, release });
+    return true;
+  }
+
+  /** Release what a run holds: its end was acknowledged, or its workspace is gone. */
+  function releaseHold(runId: string): void {
+    const held = holds.get(runId);
+    holds.delete(runId);
+    held?.release();
   }
 
   /**
-   * Run one answered run through the door. Resolves with its outcome, its
-   * owner, and the release of what it holds until its end is acknowledged.
+   * Run one answered run through the door. Resolves with its outcome and its
+   * owner; what it holds stays held until its end is acknowledged.
    */
   async function runWork(
     workspaceId: string,
     answer: Extract<BeginAnswer, { decision: "run" }>,
     lease: AdmissionLease,
     onStop: (stop: (cause: StopCause) => void) => void,
-  ): Promise<{ outcome: RunOutcome; ownerId?: string; release: () => void }> {
+  ): Promise<{ outcome: RunOutcome; ownerId?: string }> {
     const { runId, work } = answer;
     const startedAt = new Date();
     const refused = await refusal(workspaceId, answer);
@@ -841,10 +868,13 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
       return {
         outcome: refused.outcome ?? notStarted("grant_invalid", false, "No owner."),
         ...(ownerId ? { ownerId } : {}),
-        release: () => {},
       };
     }
-    const release = hold(workspaceId, work);
+    // No await between the check and the take: see `hold`.
+    if (!hold(workspaceId, runId, work)) {
+      const why = "Another run with the same exclusive key is in flight.";
+      return { outcome: notStarted("exclusive_busy", true, why), ownerId };
+    }
     const limits = deps.limitsOf(work.limits);
     const controller = new AbortController();
     let cause: StopCause | undefined;
@@ -860,9 +890,9 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
     try {
       const request = doorRequest(work, { ownerId, workspaceId, runId, lease, limits });
       const result = await deps.execute({ ...request, signal: controller.signal });
-      return { outcome: outcomeOf(result, cause, startedAt, limits), ownerId, release };
+      return { outcome: outcomeOf(result, cause, startedAt, limits), ownerId };
     } catch (err) {
-      return { outcome: thrownOutcome(err, cause, startedAt), ownerId, release };
+      return { outcome: thrownOutcome(err, cause, startedAt), ownerId };
     } finally {
       clearTimeout(timer);
       running.delete(runId);
@@ -978,16 +1008,17 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
   /**
    * End an earlier claim's run that began and never reported: stop it if this
    * process still runs it (it then reports its own end), else report it
-   * interrupted with what the ledger recorded for it.
+   * interrupted with what the ledger recorded for it. True once its end is
+   * acknowledged; false while it is not, so the item is claimed again.
    */
   async function closeInterrupted(
     workspaceId: string,
     interrupted: { runId: string; token: number },
-  ): Promise<void> {
+  ): Promise<boolean> {
     const here = running.get(interrupted.runId);
     if (here) {
       here.stop("lost");
-      return;
+      return false;
     }
     const now = new Date();
     const metered = deps.metered(workspaceId, interrupted.runId, {
@@ -1010,7 +1041,10 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
       filesWritten: [],
     };
     const notices = await endRun(workspaceId, interrupted.runId, interrupted.token, outcome);
-    if (notices?.length) deps.deliver(workspaceId, notices);
+    if (notices === null) return false;
+    releaseHold(interrupted.runId);
+    if (notices.length > 0) deps.deliver(workspaceId, notices);
+    return true;
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -1070,6 +1104,7 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
         }),
       ]);
       clearTimeout(timer);
+      for (const runId of [...holds.keys()]) releaseHold(runId);
       for (const st of served.values()) await st.closeWatch?.().catch(() => {});
       served.clear();
     },
@@ -1080,6 +1115,9 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
       await st?.closeWatch?.().catch(() => {});
       for (const run of running.values()) {
         if (run.workspaceId === workspaceId) run.stop("cancelled");
+      }
+      for (const [runId, held] of holds) {
+        if (held.workspaceId === workspaceId) releaseHold(runId);
       }
     },
   };
