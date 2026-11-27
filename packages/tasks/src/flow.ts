@@ -610,7 +610,7 @@ function applyToTask(task: TaskDef, run: RunRecord, outcome: Outcome): Notice[] 
   const ended = Date.parse(outcome.endedAt);
   if (task.inFlight === run.id) delete task.inFlight;
   task.runCount++;
-  addUsage(task, Date.parse(outcome.startedAt), run.inputTokens, run.outputTokens);
+  addUsage(task, Date.parse(run.startedAt ?? outcome.startedAt), run.inputTokens, run.outputTokens);
   const notices = run.batchId === undefined ? applyToSchedule(task, run, outcome, ended) : [];
   const spent = budgetSpent(task, ended) ?? budgetStop(task, run);
   if (spent && disable(task, spent, outcome.endedAt))

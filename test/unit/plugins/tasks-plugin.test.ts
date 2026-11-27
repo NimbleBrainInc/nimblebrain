@@ -403,6 +403,29 @@ describe("schedules", () => {
   });
 });
 
+describe("an interrupted run", () => {
+  test("closed by a later claim, keeps the start its begin_run recorded", async () => {
+    await ok("create", { manifest: { name: "Crashy" }, body: "p" });
+    const { runId } = await ok("run", { taskId: "crashy" });
+    const begun = await begin(`r:${runId}`, T0);
+    // A restart: the next claim reports it interrupted, and the host closes it later.
+    const skip = await begin(`r:${runId}`, T0 + MIN);
+    expect(skip.interrupted).toEqual({ runId, token: begun.__token ?? token - 2 });
+    const closedAt = T0 + 2 * MIN;
+    await end(
+      { runId, __token: skip.interrupted.token },
+      outcome(closedAt, {
+        output: "",
+        stopReason: "error",
+        error: { code: "interrupted", transient: true },
+      }),
+    );
+    const { run } = await ok("run_result", { runId });
+    expect(run.startedAt).toBe(iso(T0));
+    expect(run.completedAt).toBe(iso(closedAt + MIN));
+  });
+});
+
 describe("one run per task", () => {
   test("run refuses a task with a run queued or running, naming it, and asks for nothing", async () => {
     await ok("create", { manifest: { name: "Solo" }, body: "p" });

@@ -84,7 +84,8 @@ produce it: whether the host was down at its time is knowable only there.
   definition's limits, model, thinking effort, spend accounts (`task-budget:<uid>@<window>:<unit>`
   per token cap, `task-batch:<batch id>` in USD), `exclusiveKey: task:<uid>` (none for a batch
   run) and the trigger. No prompt text wraps any of it.
-- **`end_run`** derives the record from the outcome (`src/runs.ts`): status, execution and
+- **`end_run`** derives the record from the outcome (`src/runs.ts`): its start (the outcome's,
+  except an `interrupted` close keeps `begin_run`'s `now`, since that host never saw the run), status, execution and
   label, unrecovered tool failures, the output-schema verdict; then the task's state: run count,
   budget window usage, last run, the failure streak (backoff, auto-disable, the one run-failed
   notice per stretch), a once retired, the next occurrence; then the batch's item.

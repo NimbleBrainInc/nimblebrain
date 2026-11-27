@@ -1549,8 +1549,9 @@ async function fencingCases(c: FullCtx): Promise<void> {
   await h.run(
     "end_run from the interrupted run's token replaces the provisional record",
     async () => {
+      // The host closing it never saw it start: its outcome's start is the close's.
       const o = outcome({
-        start: t,
+        start: t + 3 * MINUTE,
         stop: "error",
         error: { code: "interrupted", transient: true },
       });
@@ -1563,6 +1564,7 @@ async function fencingCases(c: FullCtx): Promise<void> {
       assert(!(await host.dueAll(t, t + DAY)).cancel.includes(runId), "the ended run in cancel");
       const ran = obj((await runResult(person, runId)).run, "run");
       assert(typeof ran.completedAt === "string", "the ended run has no completedAt");
+      eq(ran.startedAt, at(t), "the start, its begin_run's now");
     },
   );
   await h.run(

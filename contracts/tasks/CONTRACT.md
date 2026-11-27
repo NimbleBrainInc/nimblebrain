@@ -253,6 +253,8 @@ runs**, runs it, and enforces every limit. Nothing runs except through this flow
    earlier token). The host then stops that run if it still runs, and ends it with `end_run`,
    `stopReason: "error"`, `error: { code: "interrupted", transient: true }` and the usage and
    cost its metering recorded for the run, which closes the record, its budget and its notices.
+   That host never saw the run start, so the record keeps the `now` of the `begin_run` that
+   answered it as its start, whatever the outcome's `startedAt` says.
    A scheduled run that crashed after `begin_run` is recorded, never run again: running it
    again would repeat what it already sent or wrote.
 
