@@ -123,10 +123,10 @@ establishment, so offboarding revokes reach; **reading** your own authored
 primitive stays owner-gated (ADR-0007).
 
 ### File
-A workspace-owned primitive with a globally-unique id (`fl_<24 hex>`). Addressed
-by the bare id: the server resolves its workspace from the id within the caller's
-own owner partitions, via the `FileLocator` (ADR-0002). The owner partition is
-both the gate and the search scope.
+A record and a body the files contract's implementation keeps, private to its owner in its
+workspace, with an id the implementation mints. Addressed as `files://<id>`, bare: the
+workspace comes from the door that reads it and the owner from its identity, so the same URI
+resolves for its owner in its workspace and nowhere else (`contracts/files/CONTRACT.md` §4).
 
 ### Notification
 A fact a connector recorded that nobody asked for, pulled from an outbox the
@@ -283,8 +283,7 @@ other, and implements each contract with one MCP server named in its `mcp.json`:
 server's **public tools** and screen serve people and agents, and its **private tools**
 serve the kernel. The server refuses a private tool to any principal but `host` (the
 runtime itself), and the runtime never offers private tools to agents. The built-in
-conversations and tasks plugins are system plugins, run by default; files are kernel code until
-the built-in files plugin is bound.
+conversations, tasks and files plugins are system plugins, run by default.
 
 ### Catalog policy *(proposed, ADR-0076; not yet built)*
 How far a catalog's plugins reach, set by the operator when attaching the catalog:
@@ -311,9 +310,9 @@ contracts, never plugins. Chat is on exactly when an enabled plugin implements t
 conversations contract; the default configuration binds the built-in one. Scheduled and
 unattended work is on exactly when an enabled plugin implements the tasks contract
 (`ai.nimblebrain.tasks`); the default configuration binds the built-in one, and the kernel's run
-worker runs what it says is due. The files contract (`ai.nimblebrain.files`) is implemented by the
-built-in files plugin (`packages/files`), which the kernel does not bind yet: its own file tools
-still serve. The implementation owns every agent-facing file tool, the records, visibility, text
+worker runs what it says is due. Files are on exactly when an enabled plugin implements the files contract
+(`ai.nimblebrain.files`); the default configuration binds the built-in one (`packages/files`).
+The implementation owns every agent-facing file tool, the records, visibility, text
 extraction and the bytes and their storage, and the kernel owns upload intake and serving. Bytes
 move between them by short-lived URLs the implementation issues: the kernel streams an upload to
 the URL `begin_upload` answers, and serves a file from the URL `resolve` answers once it finds

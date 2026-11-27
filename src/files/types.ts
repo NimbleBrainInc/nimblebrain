@@ -1,112 +1,52 @@
 /**
- * Cached extracted-text sidecar for a stored file.
- *
- * Persisted next to the bytes (`${id}.extracted.json`) so derived text is
- * computed once per file and reused on every rehydration. Invalidated by
- * `maxSize` mismatch — if the runtime's `maxExtractedTextSize` changes,
- * the cache is regenerated on next read.
+ * A file's record, as the files contract answers it (`$defs` file record,
+ * `contracts/files/CONTRACT.md` §5). Open: a later minor may add fields.
  */
-export interface ExtractedTextSidecar {
-  text: string;
-  maxSize: number;
-  truncated: boolean;
-}
-
-/** File entry in the workspace registry (`workspaces/<wsId>/files/registry.jsonl`). */
-export interface FileEntry {
+export interface FileRecord {
   id: string;
   filename: string;
   mimeType: string;
   size: number;
   tags: string[];
-  source: "chat" | "agent" | "app" | "manual";
+  /** Known values: `chat`, `agent`, `app`, `manual`. */
+  source: string;
   conversationId: string | null;
-  /**
-   * The unattended run that wrote the file (`RequestContext.runId`), so a run's
-   * outputs can be found from the run. Absent when no run wrote it.
-   */
   runId?: string | null;
   createdAt: string;
   description: string | null;
-  /**
-   * The folder the file sits in (a `FolderEntry.id` in the same partition).
-   * Absent or `null` is the top level. A folder is metadata only: the bytes stay
-   * flat on disk, so moving a file rewrites this field and nothing else.
-   */
   folderId?: string | null;
-  /**
-   * Denormalised owner of the file. The store is rooted at the owner partition
-   * (`workspaces/<wsId>/files/<ownerId>/`), so the DIRECTORY is the authority —
-   * this field is a convenience the migration stamps for audit / future
-   * cross-owner views. Absent on entries created without it.
-   *
-   * ADVISORY ONLY — never resolve a file by this field. The owner partition the
-   * store is constructed with (via `getWorkspaceFileStore(wsId, ownerId)`) is
-   * the storage key; this denormalised copy can drift from it and must not be
-   * trusted to locate bytes.
-   */
   ownerId?: string;
-  /**
-   * Denormalised workspace the file lives in. Stored under
-   * `workspaces/<workspaceId>/files/<ownerId>/`, so the path is authoritative
-   * and this field is the convenience. Absent on records written without it.
-   *
-   * ADVISORY ONLY — see `ownerId`. The workspace comes from the ambient request
-   * (`RequestContext.workspaceId`), never from this field.
-   */
   workspaceId?: string;
-  deleted?: true;
-  deletedAt?: string;
 }
 
-/**
- * A folder in an owner's partition (`folders.jsonl`, beside `registry.jsonl`).
- * Last write per id wins, as in the file registry; a tombstone deletes.
- */
-export interface FolderEntry {
-  id: string;
-  name: string;
-  /** The containing folder's id, or `null` at the top level. */
-  parentId: string | null;
-  createdAt: string;
-  deleted?: true;
-  deletedAt?: string;
-}
-
-/** Reference to a workspace file, stored in conversation message metadata */
+/** Reference to a file attached to a chat message, stored in the message's metadata. */
 export interface FileReference {
   id: string;
   filename: string;
   mimeType: string;
   size: number;
+  /** Whether the message carries the file's text. */
   extracted: boolean;
-}
-
-/** Result of the file ingest pipeline */
-export interface IngestResult {
-  contentParts: ContentPart[];
-  fileRefs: FileReference[];
-  errors: string[];
 }
 
 /**
  * A content part for the LLM message.
  *
- * Text and MCP `resource_link` only — bytes for binary attachments are
- * persisted in the workspace `FileStore` and referenced by URI. The
- * runtime rehydrates supported resource_links into AI SDK V4 `file` parts
- * at the `model.doStream` boundary; unsupported resource_links are
- * surfaced to the model as text references.
+ * Text and MCP `resource_link` only: an attachment's body stays with the files
+ * plugin and the message carries its URI. The runtime rehydrates supported
+ * resource links into AI SDK V4 `file` parts at the `model.doStream` boundary;
+ * unsupported ones reach the model as text references.
  */
 export type ContentPart =
   | { type: "text"; text: string }
   | { type: "resource_link"; uri: string; mimeType: string; name: string };
 
-/** Config for file operations */
+/** Limits the runtime applies when it takes files in and puts their text in a prompt. */
 export interface FileConfig {
   maxFileSize: number;
   maxTotalSize: number;
   maxFilesPerMessage: number;
+  /** The `maxBytes` the runtime passes to the plugin's `read` (at most 1 MiB, the contract's bound). */
   maxExtractedTextSize: number;
 }
 
@@ -116,3 +56,6 @@ export const DEFAULT_FILE_CONFIG: FileConfig = {
   maxFilesPerMessage: 10,
   maxExtractedTextSize: 204_800,
 };
+
+/** The most text the files contract's `read` answers (CONTRACT.md §7). */
+export const READ_TEXT_BOUND = 1_048_576;

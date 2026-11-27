@@ -315,7 +315,7 @@ whose result does not match the published one.
 
 **Override.** None. Declare the output schema in `schemas/`; when it mirrors a
 domain type the schemas tree cannot import, hold the two together with a
-drift guard (`src/platform/files/output-types-drift-guard.ts`).
+drift guard (`src/api/schemas/responses-drift-guard.ts` is the pattern).
 
 ---
 

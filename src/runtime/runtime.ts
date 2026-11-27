@@ -99,11 +99,10 @@ import { AgentRuntimeError } from "../execution/agent-runtime-error.ts";
 import { NATIVE_RUNTIME_ID } from "../execution/native-runtime.ts";
 import { type AgentRuntimes, createAgentRuntimes } from "../execution/registry.ts";
 import type { AgentRuntime } from "../execution/types.ts";
-import { FileLocator } from "../files/locator.ts";
-import { workspaceFilesDir } from "../files/paths.ts";
-import { rehydrateUserResources } from "../files/rehydrate.ts";
-import { createFileStore, type FileStore } from "../files/store.ts";
-import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
+import { FILES_CONTRACT } from "../files/contract.ts";
+import { createFilesHost, type FilesHost, type OwnerScope } from "../files/host.ts";
+import { type RehydrateFiles, rehydrateUserResources } from "../files/rehydrate.ts";
+import { DEFAULT_FILE_CONFIG, type FileConfig, READ_TEXT_BOUND } from "../files/types.ts";
 import { fileIdToUri } from "../files/uri.ts";
 import { generateTitleWith } from "../history/auto-title.ts";
 
@@ -128,7 +127,7 @@ import { ensureHooksOnRunning } from "../hooks/reconcile.ts";
 import { readHookIdentity } from "../hooks/token.ts";
 import {
   createResourceArgumentsResolver,
-  FileBackedHostResourcesResolver,
+  FilesHostResourcesResolver,
   type RecordArgumentsGrant,
   TokenBucketRateLimit,
 } from "../host-resources/index.ts";
@@ -744,7 +743,6 @@ export class Runtime {
   private skillMatcher: SkillMatcher;
   private config: RuntimeConfig;
   private contextSkills: Skill[];
-  private _fileLocator?: FileLocator;
   private hooks: EngineHooks;
   private defaultEvents: EventSink;
   private lifecycle: ConnectorLifecycleManager;
@@ -822,6 +820,14 @@ export class Runtime {
   private _pluginSkillRoots: readonly string[] = [];
   /** The server bound to the tasks contract, or null when nothing implements it (tasks off). */
   private _tasks: BoundServer | null = null;
+  /** The kernel's client of the files contract, or null when nothing implements it (files off). */
+  private _files: FilesHost | null = null;
+  /**
+   * The files each run in flight wrote, by run id: the host's own record of
+   * the run's successful `files__create` calls (`contracts/files/CONTRACT.md`
+   * §10.5). Taken by the run's result.
+   */
+  private readonly _filesWritten = new Map<string, Array<{ uri: string; name: string }>>();
   /** The run worker over {@link _tasks}: what turns the tasks contract's due work into runs. */
   private _runWorker: RunWorker | null = null;
   /** Signs the run grant a person's call to a grant-marked contract tool carries. */
@@ -1163,30 +1169,18 @@ export class Runtime {
     // Host-resources subsystem. One resolver + one rate-limit shared
     // across every connector spawned through this runtime, parameterized
     // per-call by workspace id. Construction lives here (not inside
-    // lifecycle) because the resolver depends on the workspace-scoped
-    // data layout, which is a Runtime concern; lifecycle consumes via
-    // `setConnectorMcpDepsFactory`, other install paths consume via
-    // `Runtime.getConnectorMcpDeps(wsId)`.
-    const hostResourcesWorkDir = resolveWorkDir(config);
-    // Files are workspace-owned: a connector's `files://` read/list resolves in the
-    // workspace the connector runs in (`ctx.workspaceId`) under the partition of
-    // the user its tool call was made for (`ctx.ownerId`). McpSource answers a
-    // host-resources request only inside one of the connector's own inline tool
-    // calls and passes that call's owner id (resolved with the same rule `chat()`
-    // uses, `resolveRequestOwnerId`), so reads see exactly the files the agent
-    // does. Identity is never read from ambient context here: a request from the
-    // connection itself has no user.
-    // Memoize per (workspace, user) — FileStore is cheap closures today, but
-    // per-call construction would leak if it gained state (fd handles, watchers).
-    const hostResourcesFileStoreCache = new Map<string, ReturnType<typeof createFileStore>>();
-    const hostResourcesResolver = new FileBackedHostResourcesResolver((wsId, userId) => {
-      const cacheKey = `${wsId}:${userId}`;
-      const cached = hostResourcesFileStoreCache.get(cacheKey);
-      if (cached) return cached;
-      const store = createFileStore(workspaceFilesDir(hostResourcesWorkDir, wsId, userId));
-      hostResourcesFileStoreCache.set(cacheKey, store);
-      return store;
-    });
+    // lifecycle) because the resolver reads through the runtime's bound files
+    // plugin; lifecycle consumes via `setConnectorMcpDepsFactory`, other
+    // install paths consume via `Runtime.getConnectorMcpDeps(wsId)`.
+    // A connector's `files://` read/list goes through the files contract:
+    // `resolve` and `list` as `host` in the workspace the connector runs in
+    // (`ctx.workspaceId`), walled to the user its tool call was made for
+    // (`ctx.ownerId`). McpSource answers a host-resources request only inside
+    // one of the connector's own inline tool calls and passes that call's owner
+    // id (resolved with the same rule `chat()` uses, `resolveRequestOwnerId`),
+    // so reads see exactly the files the agent does. Late-bound to `rt`: the
+    // files plugin binds below, and a request arrives only on a tool call.
+    const hostResourcesResolver = new FilesHostResourcesResolver(() => rt.getFiles());
     const hostResourcesRateLimit = new TokenBucketRateLimit();
     // `ai.nimblebrain/resource-arguments`: a tool's declared URIs are read,
     // under the calling connector's record-arguments grant, from the
@@ -1545,6 +1539,28 @@ export class Runtime {
             );
           },
         ],
+        // The files a run wrote are the host's own record of its successful
+        // `create` calls (CONTRACT.md §10.5): seen here, as they pass.
+        [
+          FILES_CONTRACT,
+          (tool: string, result: ToolResult) => {
+            this.recordFileWritten(tool, result);
+            return result;
+          },
+        ],
+      ]);
+      // Nothing is written to a workspace the kernel is purging, at any door
+      // (CONTRACT.md §10.6); `delete_workspace` is the purge itself.
+      const guards = new Map([
+        [
+          FILES_CONTRACT,
+          (tool: string, workspaceId: string | undefined) =>
+            tool !== "delete_workspace" &&
+            workspaceId !== undefined &&
+            this._workspaceStore.isDeleted(workspaceId)
+              ? `workspace_deleted: ${workspaceId} is deleted; its files take no call`
+              : null,
+        ],
       ]);
       // A grant-marked contract tool needs the key its grants are signed with.
       const signs = resolved.bindings.some((b) => b.grantTools.length > 0);
@@ -1555,6 +1571,7 @@ export class Runtime {
         events,
         overlays,
         grants ? (claims) => grants.sign(claims) : undefined,
+        guards,
       );
       // What each contract refuses an unattended run, by the name agents call it.
       this._unattendedRefused = new Set(
@@ -1578,6 +1595,10 @@ export class Runtime {
           }
         },
       });
+    }
+    const files = this._boundServers.get(FILES_CONTRACT);
+    if (files) {
+      this._files = createFilesHost(files);
     }
     const tasks = this._boundServers.get(TASKS_CONTRACT);
     if (tasks && this._runGrants) {
@@ -1819,6 +1840,7 @@ export class Runtime {
       // reach `_chatInner` already existing and unpinned.
       model: this.resolveRequestModelString(request.model),
       ...(request.metadata ? { metadata: request.metadata } : {}),
+      ...(request.newConversationId ? { id: request.newConversationId } : {}),
     });
 
     // The conversation's store: the caller's partition of the workspace this
@@ -2004,6 +2026,7 @@ export class Runtime {
       // The conversation's model binding, fixed for its whole life.
       model: this.resolveRequestModelString(request.model),
       ...(request.metadata ? { metadata: request.metadata } : {}),
+      ...(request.newConversationId ? { id: request.newConversationId } : {}),
     });
 
     // Resume an existing conversation only if the caller owns it (the ownerId
@@ -2188,29 +2211,45 @@ export class Runtime {
       costUsd: handle.costUsd,
       ...(handle.unpricedCalls ? { unpricedCalls: handle.unpricedCalls } : {}),
       skillsDelivered: handle.skillsDelivered,
-      filesWritten: await this.filesWrittenBy(runWsId, ownerId, handle.runId),
+      filesWritten: this.takeFilesWritten(handle.runId),
     };
   }
 
   /**
-   * The files a run wrote, from the file store's own records: every live entry
-   * in the owner's partition the run's id stamped (`FileEntry.runId`, from the
-   * request context). Never read from a tool's output. Best-effort: a store
-   * that cannot be read reports none.
+   * The files a run reads its attachments' bodies from: the bound plugin, as
+   * `host` walled to the run's workspace and owner, with the turn's
+   * conversation or the run's id in the context. Null when files are off.
    */
-  private async filesWrittenBy(
-    wsId: string,
-    ownerId: string,
-    runId: string,
-  ): Promise<TaskResult["filesWritten"]> {
-    try {
-      const entries = await this.getWorkspaceFileStore(wsId, ownerId).readRegistry();
-      return entries
-        .filter((entry) => entry.runId === runId)
-        .map((entry) => ({ uri: fileIdToUri(entry.id), name: entry.filename }));
-    } catch {
-      return [];
-    }
+  private runFiles(workspaceId: string, ownerId: string, ctx: RequestContext): RehydrateFiles {
+    const host = this.getFiles();
+    if (!host) return null;
+    const scope: OwnerScope = { workspaceId, ownerId };
+    if (ctx.conversationId) scope.conversationId = ctx.conversationId;
+    if (ctx.runId) scope.runId = ctx.runId;
+    return { host, scope };
+  }
+
+  /**
+   * Record a successful `create` on the files contract made inside a run: its
+   * `files://<id>` and the `filename` from the call's own output. No other
+   * tool's output is read for files.
+   */
+  private recordFileWritten(tool: string, result: ToolResult): void {
+    const runId = getRequestContext()?.runId;
+    if (tool !== "create" || result.isError || !runId) return;
+    const out = (result.structuredContent ?? {}) as { id?: unknown; filename?: unknown };
+    if (typeof out.id !== "string" || typeof out.filename !== "string") return;
+    const written = this._filesWritten.get(runId) ?? [];
+    written.push({ uri: fileIdToUri(out.id), name: out.filename });
+    this._filesWritten.set(runId, written);
+  }
+
+  /** The files a run wrote (see {@link recordFileWritten}), taken: the record is the run's alone. */
+  private takeFilesWritten(runId: string): TaskResult["filesWritten"] {
+    // Optional because a prototype-built test double has no fields.
+    const written = this._filesWritten?.get(runId) ?? [];
+    this._filesWritten?.delete(runId);
+    return written;
   }
 
   /**
@@ -2355,17 +2394,17 @@ export class Runtime {
       recordedHistory,
     );
 
-    // Files are workspace-owned: rehydrate a `files://` URI from the workspace
-    // the run acts in, under the owner's partition — never another workspace's
-    // store. For a chat that is the workspace its request addresses, where a
-    // resumed conversation and its attachments are stored. For a one-shot run this is a pass-through
-    // unless the prompt carries file refs, run for shape consistency with the
-    // engine's message contract.
-    const fileStore = this.getWorkspaceFileStore(spec.workspaceId, ownerId);
-    const messages = await rehydrateUserResources(effectiveHistory, fileStore, {
-      model: spec.model,
-      maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
-    });
+    // An attachment's `files://` URI is resolved in the workspace the run acts
+    // in, walled to its owner, never another workspace's. For a chat that is
+    // the workspace its request addresses, where a resumed conversation and its
+    // attachments live. For a one-shot run this is a pass-through unless the
+    // prompt carries file refs, run for shape consistency with the engine's
+    // message contract.
+    const messages = await rehydrateUserResources(
+      effectiveHistory,
+      this.runFiles(spec.workspaceId, ownerId, reqCtx),
+      { model: spec.model, maxExtractedTextSize: this.getFileReadMaxBytes() },
+    );
 
     const perRequestHooks = this.buildRunHooks(spec, binding, messageBudget.budget);
 
@@ -4455,43 +4494,32 @@ export class Runtime {
   }
 
   /**
-   * The workspace-owned file store for one owner in one workspace
-   * (`workspaces/<wsId>/files/<ownerId>/`). Files are workspace-owned, so the
-   * workspace is the boundary: this is the single sanctioned `FileStore`
-   * constructor outside the store module itself — `check:file-paths` rejects the
-   * identity-scoped files dir. Cheap (closures over a path); not memoized here
-   * because callers are per-request.
+   * The kernel's client of the files contract: the calls it makes as `host`
+   * on the bound files plugin and its transfer client. Null when no plugin
+   * implements the contract (files off), so no door takes or serves a file.
    */
-  getWorkspaceFileStore(wsId: string, ownerId: string): FileStore {
-    const store = createFileStore(workspaceFilesDir(resolveWorkDir(this.config), wsId, ownerId));
-    // Keep the file locator's `fileId → wsId` memo current at the write sites,
-    // where the workspace is known — so a freshly uploaded file serves O(1) and
-    // a deleted one is forgotten. The locator stays correct without these (a
-    // cold miss walks disk); they just keep the hot path hot.
-    //
-    // The same sites announce the write to the owner's file views. Every file
-    // write passes through here — the `files__*` tools, REST uploads, chat
-    // attachments — so no door can write without announcing.
-    const locator = this.getFileLocator();
-    const announce = () => this.announceIdentitySourceChange("files", ownerId);
-    return {
-      ...store,
-      saveFile: async (data, filename, mimeType) => {
-        const result = await store.saveFile(data, filename, mimeType);
-        locator.remember(ownerId, result.id, wsId);
-        announce();
-        return result;
-      },
-      appendRegistry: async (entry) => {
-        await store.appendRegistry(entry);
-        announce();
-      },
-      deleteFile: async (id) => {
-        await store.deleteFile(id);
-        locator.forget(ownerId, id);
-        announce();
-      },
-    };
+  getFiles(): FilesHost | null {
+    return this._files;
+  }
+
+  /** Whether files are on: a plugin implements the files contract. */
+  isFilesEnabled(): boolean {
+    return this._files !== null;
+  }
+
+  /**
+   * Announce a write the kernel made to an owner's files (an intake) to that
+   * owner's file views, as the plugin's own tools are announced.
+   */
+  announceFilesChange(ownerId: string): void {
+    const name = CONTRACT_SOURCE_NAMES.get(FILES_CONTRACT);
+    if (name) this.announceIdentitySourceChange(name, ownerId);
+  }
+
+  /** The `maxBytes` the kernel passes to the files plugin's `read`: the text budget, within the contract's bound. */
+  getFileReadMaxBytes(): number {
+    const budget = Math.floor(this.getFilesConfig().maxExtractedTextSize);
+    return Math.min(READ_TEXT_BOUND, Math.max(1, Number.isFinite(budget) ? budget : 1));
   }
 
   /** Get the ToolRegistry for the current request's workspace (from AsyncLocalStorage context). */
@@ -4694,19 +4722,6 @@ export class Runtime {
     );
     this._workspaceRegistries.set(wsId, wsRegistry);
     return wsRegistry;
-  }
-
-  /**
-   * Process-wide file locator: resolves a globally-unique `fileId` to the
-   * workspace it lives under, within the caller's own owner partitions. Backs
-   * the bare `GET /v1/files/:fileId` serve path (no workspace in the URL, so a
-   * browser `<img src>` can load it — the id alone resolves it). Lazily built; its memo is kept current by `getWorkspaceFileStore`.
-   */
-  getFileLocator(): FileLocator {
-    if (!this._fileLocator) {
-      this._fileLocator = new FileLocator(resolveWorkDir(this.config));
-    }
-    return this._fileLocator;
   }
 
   /**

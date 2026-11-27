@@ -46,8 +46,7 @@ export function chatRoutes(ctx: AppContext) {
         chatBodyLimit,
         rl,
         requireWorkspace(ctx),
-        (c) =>
-          handleChatStart(c.req.raw, ctx.runtime, ctx.features, c.var.identity, c.var.workspaceId),
+        (c) => handleChatStart(c.req.raw, ctx.runtime, c.var.identity, c.var.workspaceId),
       )
       // Explicit Stop — the only way to abort an in-flight turn.
       .post(

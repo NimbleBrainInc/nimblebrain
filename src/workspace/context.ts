@@ -63,7 +63,6 @@ export type WorkspaceScope =
   | "conversations"
   | "skills"
   | "connector-skills"
-  | "files"
   | "notifications";
 
 const SUBPATH_FORBIDDEN_RE = /\0/;

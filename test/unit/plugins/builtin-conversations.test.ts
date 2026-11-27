@@ -40,6 +40,7 @@ describe("the built-in conversations plugin", () => {
         privateTools: ["create", "events", "append_events", "delete", "delete_workspace"],
         unattendedRefused: ["create", "events", "append_events", "delete", "delete_workspace"],
         grantTools: [],
+        writeTools: [],
       },
     ]);
   });

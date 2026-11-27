@@ -4,11 +4,7 @@ import { resolve } from "node:path";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { CONVERSATION_ID_RE } from "../conversation/types.ts";
 import type { EventSink } from "../engine/types.ts";
-import { humanSize } from "../files/human-size.ts";
-import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.ts";
-import { resolveMimeType } from "../files/mime.ts";
-import type { FileEntry } from "../files/types.ts";
-import { FILE_ID_RE } from "../files/uri.ts";
+import { FILE_URI_SCHEME } from "../files/uri.ts";
 import {
   ArtifactNotFoundError,
   ArtifactTooLargeError,
@@ -52,9 +48,15 @@ import { splitInnerToolName } from "../util/tool-name.ts";
 import { ensureUserWorkspace } from "../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { SseEventManager } from "./events.ts";
+import {
+  filesDisabledResponse,
+  handleUpload,
+  readFileResource,
+  readMultipart,
+  takeInTurnAttachments,
+} from "./file-doors.ts";
 import { mcpResourceUrl } from "./mcp-resource.ts";
 import { artifactResolutionsTotal } from "./metrics.ts";
-import { DEFAULT_CSP } from "./middleware/security-headers.ts";
 import type {
   AuthOkResponse,
   BootstrapResponse,
@@ -66,7 +68,6 @@ import type {
   ResourceContents,
   ShellResponse,
   ToolCallResponse,
-  UploadResourceResponse,
 } from "./schemas/responses.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
 import { validateAgainst } from "./schemas/validate.ts";
@@ -132,11 +133,10 @@ function runInProgressResponse(conversationId: string): Response {
 export async function handleChatStart(
   request: Request,
   runtime: Runtime,
-  features: ResolvedFeatures,
   identity: UserIdentity | undefined,
   workspaceId: string,
 ): Promise<Response> {
-  const parsed = await parseChatBody(request, runtime, features, identity, workspaceId);
+  const parsed = await parseChatBody(request, runtime, identity, workspaceId);
   if (parsed instanceof Response) return parsed;
   try {
     const { conversationId } = await runtime.startTurn(parsed);
@@ -682,6 +682,13 @@ export async function handleReadResource(
     return readArtifactResource(uri, options.workspaceId);
   }
 
+  // `files://` is the host's to answer, whichever server the read names: the
+  // files plugin never serves one (CONTRACT.md §5). Resolved as `host` with the
+  // caller's own workspace and owner; absent and another owner's read alike.
+  if (uri.startsWith(`${FILE_URI_SCHEME}://`)) {
+    return readFilesUriResource(runtime, uri, options);
+  }
+
   if (!server || typeof server !== "string") {
     return apiError(400, "bad_request", "'server' is required");
   }
@@ -736,6 +743,29 @@ export async function handleReadResource(
   }
 
   return json<ReadResourceResponse>({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
+}
+
+/** A `files://` read at the REST door: the body through `resolve`, or the miss as an error. */
+async function readFilesUriResource(
+  runtime: Runtime,
+  uri: string,
+  options: { workspaceId: string; identity?: UserIdentity },
+): Promise<Response> {
+  const read = await readFileResource(runtime, uri, {
+    workspaceId: options.workspaceId,
+    ownerId: runtime.resolveRequestUserId(options.identity),
+  });
+  if (read === "disabled") return filesDisabledResponse();
+  if (read === "too_large") {
+    return apiError(413, "payload_too_large", "The file is too large to read whole", { uri });
+  }
+  if (read === "unavailable") {
+    return apiError(502, "file_unavailable", "The file could not be read", { uri });
+  }
+  if (read === "not_found") {
+    return apiError(404, "resource_not_found", `Resource "${uri}" not found`, { uri });
+  }
+  return json<ReadResourceResponse>({ contents: [buildResourceEnvelopeEntry(uri, read)] });
 }
 
 /** Parse + validate a POST …/tools/call envelope, or return an error Response. */
@@ -1164,7 +1194,6 @@ function fileLimits(config: ReturnType<Runtime["getFilesConfig"]>): FileLimits {
 export async function handleBootstrap(
   runtime: Runtime,
   identity?: UserIdentity,
-  features?: ResolvedFeatures,
 ): Promise<Response> {
   if (!identity) {
     return apiError(401, "authentication_required", "Authentication is required");
@@ -1226,9 +1255,9 @@ export async function handleBootstrap(
       maxOutputTokens,
       ...(runsOn ? { runsOn } : {}),
       // Attachment limits, so the composer states them before a send rather
-      // than after a refusal. Absent when file context is off: there is no
-      // attachment to limit.
-      ...(features?.fileContext ? { files: fileLimits(runtime.getFilesConfig()) } : {}),
+      // than after a refusal. Absent when files are off (no plugin implements
+      // the files contract): there is no attachment to limit.
+      ...(runtime.isFilesEnabled() ? { files: fileLimits(runtime.getFilesConfig()) } : {}),
     },
     version: VERSION,
     buildSha: process.env.NB_BUILD_SHA || null,
@@ -1547,80 +1576,6 @@ export async function handleOidcRefresh(
   }
 }
 
-// --- File Serve ---
-
-/** Strip characters that could break or inject Content-Disposition headers. */
-export function sanitizeFilename(name: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: a control byte in the name could split or inject the Content-Disposition header, so matching them is the point
-  return name.replace(/["\r\n\x00-\x1f]/g, "_");
-}
-
-/**
- * The policy stored bytes are served under, whatever the operator sets as `NB_CSP`. A stored file
- * is a person's or an agent's upload, served on the shell's origin, so an HTML or SVG file opened
- * directly must never run script there. `sandbox` gives the document an opaque origin with
- * scripts, forms and popups off; the rest is the platform's default policy. An image in an
- * `<img>` and a PDF in the browser's viewer render under it unchanged.
- */
-export const FILE_BYTES_CSP = `sandbox; ${DEFAULT_CSP}`;
-
-/** Handle GET /v1/files/:fileId — serve a stored file by its globally-unique id.
- * Files are workspace-owned, but the id alone addresses them: the file locator
- * resolves the id to its workspace within the caller's OWN owner partitions
- * (`resolveRequestUserId`), and the store reads from `(wsId, ownerId)`. The owner
- * partition is both the gate and the search scope — there is no client-supplied
- * workspace to forge, and a request can only ever reach the caller's own bytes.
- * The route carries no workspace, so a browser `<img src>` or download link
- * can load it; the bare id is sufficient. */
-export async function handleFileServe(
-  fileId: string,
-  runtime: Runtime,
-  features: ResolvedFeatures,
-  identity: UserIdentity | undefined,
-): Promise<Response> {
-  if (!features.fileContext) {
-    return apiError(404, "not_found", "Not found");
-  }
-
-  if (!FILE_ID_RE.test(fileId)) {
-    return apiError(400, "bad_request", "Invalid file ID format");
-  }
-
-  const ownerId = runtime.resolveRequestUserId(identity);
-  const locator = runtime.getFileLocator();
-
-  const readAt = async (wsId: string): Promise<Response | null> => {
-    try {
-      const file = await runtime.getWorkspaceFileStore(wsId, ownerId).readFile(fileId);
-      const safeName = sanitizeFilename(file.filename);
-      return new Response(new Uint8Array(file.data), {
-        headers: {
-          "Content-Type": file.mimeType,
-          "Content-Disposition": `inline; filename="${safeName}"`,
-          "Content-Security-Policy": FILE_BYTES_CSP,
-        },
-      });
-    } catch {
-      return null; // not at this location
-    }
-  };
-
-  // Memo fast-path. A stale hit (file moved/removed out of this process under
-  // `replicas > 1`) self-heals: drop it and fall through to the disk resolve.
-  const cached = locator.peek(ownerId, fileId);
-  if (cached) {
-    const hit = await readAt(cached);
-    if (hit) return hit;
-    locator.forget(ownerId, fileId);
-  }
-
-  // Disk-authoritative: one owner-scoped walk, memoised. Absent ⇒ 404 (a pure
-  // miss walks once and stops — no retry, since there's nothing to heal).
-  const wsId = await locator.resolve(ownerId, fileId);
-  if (!wsId) return apiError(404, "not_found", "File not found");
-  return (await readAt(wsId)) ?? apiError(404, "not_found", "File not found");
-}
-
 // --- Chat Body Parsing ---
 
 /**
@@ -1630,16 +1585,12 @@ export async function handleFileServe(
 async function parseChatBody(
   request: Request,
   runtime: Runtime,
-  features: ResolvedFeatures,
   identity: UserIdentity | undefined,
   workspaceId: string,
 ): Promise<ChatRequest | Response> {
   const contentType = request.headers.get("content-type") ?? "";
 
   if (contentType.includes("multipart/form-data")) {
-    if (!features.fileContext) {
-      return apiError(415, "unsupported_media_type", "File uploads are not enabled");
-    }
     return parseMultipartChatBody(request, runtime, identity, workspaceId);
   }
 
@@ -1681,31 +1632,6 @@ async function parseChatBody(
   };
 }
 
-/** Form-data as produced by `Request.formData()` (avoids naming the DOM-less `FormData` global). */
-type MultipartForm = Awaited<ReturnType<Request["formData"]>>;
-
-/**
- * Collect uploaded files from a chat multipart body. FormDataEntryValue is
- * `string | File` in Bun, so a part that is not a string is a `File`.
- */
-async function collectMultipartChatFiles(formData: MultipartForm): Promise<UploadedFile[]> {
-  const uploadedFiles: UploadedFile[] = [];
-  for (const [_key, value] of formData.entries()) {
-    if (typeof value === "string") continue;
-    if (typeof value.arrayBuffer !== "function") continue;
-    const buffer = Buffer.from(await value.arrayBuffer());
-    uploadedFiles.push({
-      data: buffer,
-      filename: value.name || "unnamed",
-      // Browsers leave the part's Content-Type empty for extensions they
-      // don't recognise (.typ etc.); recover a text type from the filename
-      // so the file isn't stored as opaque binary. See resolveMimeType.
-      mimeType: resolveMimeType(value.name, value.type),
-    });
-  }
-  return uploadedFiles;
-}
-
 /** Parse the optional `appContext` JSON field: value, undefined (absent), or an error Response. */
 function parseMultipartAppContext(
   raw: unknown,
@@ -1719,8 +1645,8 @@ function parseMultipartAppContext(
 }
 
 /**
- * Reject a malformed multipart `conversationId` (400) before it reaches store
- * path-building / ingestFiles. The JSON surface gets this from the
+ * Reject a malformed multipart `conversationId` (400) before it reaches the
+ * intake or the conversation store. The JSON surface gets this from the
  * ChatRequestBody schema pattern; multipart parses raw, so validate the same
  * canonical `conv_<16 hex>` shape here. Null when absent or valid.
  */
@@ -1759,8 +1685,10 @@ function multipartChatRequestBase(
 }
 
 /**
- * Parse a multipart/form-data chat request with file uploads.
- * Extracts message, optional fields, and uploaded files.
+ * Parse a multipart/form-data chat request with file uploads: the message and
+ * its fields, then the turn's files through the one intake, all or none
+ * (`file-doors.ts`). Each file part is spooled as it streams and removed when
+ * the intake is done.
  */
 async function parseMultipartChatBody(
   request: Request,
@@ -1768,41 +1696,33 @@ async function parseMultipartChatBody(
   identity: UserIdentity | undefined,
   workspaceId: string,
 ): Promise<ChatRequest | Response> {
-  let formData: MultipartForm;
+  const config = runtime.getFilesConfig();
+  // With files off, a file part is counted and never written, and refused below.
+  const parsed = await readMultipart(request, runtime, {
+    maxFiles: runtime.isFilesEnabled() ? config.maxFilesPerMessage : 0,
+  });
+  if (parsed instanceof Response) return parsed;
   try {
-    formData = await request.formData();
-  } catch {
-    return apiError(400, "bad_request", "Invalid multipart form data");
-  }
+    const message = parsed.fields.get("message") ?? "";
+    const conversationId = parsed.fields.get("conversationId");
+    const badConversationId = invalidMultipartConversationId(conversationId);
+    if (badConversationId) return badConversationId;
+    const convId = conversationId || undefined;
+    const outside = await refuseConversationOutsideWorkspace(
+      runtime,
+      convId,
+      workspaceId,
+      identity,
+    );
+    if (outside) return outside;
+    const model = parsed.fields.get("model");
+    const appContext = parseMultipartAppContext(parsed.fields.get("appContext"));
+    if (appContext instanceof Response) return appContext;
 
-  const messageRaw = formData.get("message");
-  // Allow empty/missing message when files are attached (validated after file collection)
-  const message = typeof messageRaw === "string" ? messageRaw : "";
-
-  const conversationId = formData.get("conversationId");
-  const badConversationId = invalidMultipartConversationId(conversationId);
-  if (badConversationId) return badConversationId;
-  // The real conversation id, or undefined when the chat doesn't exist yet
-  // (`runtime.chat()` stamps the id later; `ingestFiles` gets a "pending"
-  // placeholder for the FileEntry until then).
-  const convId = (typeof conversationId === "string" && conversationId) || undefined;
-  const outside = await refuseConversationOutsideWorkspace(runtime, convId, workspaceId, identity);
-  if (outside) return outside;
-  const model = formData.get("model");
-
-  const appContext = parseMultipartAppContext(formData.get("appContext"));
-  if (appContext instanceof Response) return appContext;
-
-  const uploadedFiles = await collectMultipartChatFiles(formData);
-
-  // Require either a non-empty message or at least one uploaded file
-  if (!message && uploadedFiles.length === 0) {
-    return apiError(400, "bad_request", "message or file attachment is required");
-  }
-
-  // If no files, treat as a plain text request (no ingest needed).
-  if (uploadedFiles.length === 0) {
-    return multipartChatRequestBase(
+    if (!message && parsed.files.length === 0) {
+      return apiError(400, "bad_request", "message or file attachment is required");
+    }
+    const base = multipartChatRequestBase(
       message,
       conversationId,
       model,
@@ -1810,34 +1730,24 @@ async function parseMultipartChatBody(
       workspaceId,
       identity,
     );
-  }
+    if (parsed.files.length === 0) return base;
+    if (!runtime.isFilesEnabled()) return filesDisabledResponse();
 
-  // Ingest files: validate, store, extract text, build content parts. Files are
-  // workspace-owned and land in the workspace in the URL — the one the turn runs
-  // in, so the partition `runtime.chat()` reads from when it rehydrates.
-  const uploadOwner = runtime.resolveRequestUserId(identity);
-  const wsId = workspaceId;
-  const store = runtime.getWorkspaceFileStore(wsId, uploadOwner);
-  const filesConfig = runtime.getFilesConfig();
-  const ingestResult = await ingestFiles(
-    uploadedFiles,
-    convId ?? "pending",
-    store,
-    filesConfig,
-    wsId,
-    uploadOwner,
-  );
-
-  if (ingestResult.errors.length > 0) {
-    return apiError(400, "file_upload_error", "File upload failed", {
-      errors: ingestResult.errors,
+    const attached = await takeInTurnAttachments(runtime, parsed, {
+      workspaceId,
+      identity,
+      ...(convId ? { conversationId: convId } : {}),
     });
+    if (attached instanceof Response) return attached;
+    return {
+      ...base,
+      ...(attached.newConversationId ? { newConversationId: attached.newConversationId } : {}),
+      contentParts: attached.contentParts,
+      fileRefs: attached.fileRefs,
+    };
+  } finally {
+    await parsed.dispose();
   }
-  return {
-    ...multipartChatRequestBase(message, conversationId, model, appContext, workspaceId, identity),
-    contentParts: ingestResult.contentParts,
-    fileRefs: ingestResult.fileRefs,
-  };
 }
 
 // --- Helpers ---
@@ -1855,196 +1765,24 @@ async function parseJsonBody(request: Request): Promise<Record<string, unknown> 
 }
 
 /**
- * Collect uploaded files from a resource-upload multipart body. Files MUST be
- * sent under the `file` or `files` key; other non-string entries (e.g. a Blob
- * accidentally appended under `tags`) are ignored rather than silently treated
- * as uploads. Returns an error Response on a malformed part.
- */
-async function collectResourceUploads(formData: MultipartForm): Promise<UploadedFile[] | Response> {
-  const uploads: UploadedFile[] = [];
-  try {
-    for (const [key, value] of formData.entries()) {
-      if (typeof value === "string") continue;
-      if (key !== "file" && key !== "files") continue;
-      if (typeof value.arrayBuffer !== "function") continue;
-      uploads.push({
-        data: Buffer.from(await value.arrayBuffer()),
-        filename: value.name || "unnamed",
-        // Recover a text type from the filename when the browser sent no
-        // usable Content-Type (see resolveMimeType) — same recovery as the
-        // chat-multipart path.
-        mimeType: resolveMimeType(value.name, value.type),
-      });
-    }
-  } catch {
-    return apiError(400, "bad_request", "Malformed file entry in multipart body");
-  }
-  return uploads;
-}
-
-/** Parse the optional `tags` field as a JSON array of strings ([] when absent), or an error Response. */
-function parseResourceUploadTags(raw: unknown): string[] | Response {
-  if (typeof raw !== "string" || !raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || !parsed.every((t) => typeof t === "string")) {
-      return apiError(400, "bad_request", "tags must be a JSON array of strings");
-    }
-    return parsed;
-  } catch {
-    return apiError(400, "bad_request", "tags must be a valid JSON array");
-  }
-}
-
-/** A multipart text field as a non-empty string, or null. */
-function optionalStringField(raw: unknown): string | null {
-  return typeof raw === "string" && raw ? raw : null;
-}
-
-/** Validate size/MIME, store, and register each upload; returns the saved entries + per-file rejection reasons. */
-async function persistResourceUploads(
-  uploads: UploadedFile[],
-  config: ReturnType<Runtime["getFilesConfig"]>,
-  store: ReturnType<Runtime["getWorkspaceFileStore"]>,
-  meta: {
-    tags: string[];
-    description: string | null;
-    conversationId: string | null;
-    uploadOwner: string;
-    wsId: string;
-  },
-): Promise<{ entries: FileEntry[]; errors: string[] }> {
-  const entries: FileEntry[] = [];
-  const errors: string[] = [];
-  for (const file of uploads) {
-    if (file.data.length > config.maxFileSize) {
-      errors.push(
-        `File "${file.filename}" (${humanSize(file.data.length)}) exceeds per-file limit of ${humanSize(config.maxFileSize)}`,
-      );
-      continue;
-    }
-    if (!isAllowedMime(file.mimeType)) {
-      errors.push(`File "${file.filename}" has disallowed type: ${file.mimeType}`);
-      continue;
-    }
-    const saved = await store.saveFile(file.data, file.filename, file.mimeType);
-    const entry: FileEntry = {
-      id: saved.id,
-      filename: file.filename,
-      mimeType: file.mimeType,
-      size: saved.size,
-      tags: meta.tags,
-      source: "app",
-      conversationId: meta.conversationId,
-      createdAt: new Date().toISOString(),
-      description: meta.description,
-      // Stamp the resolved workspace/owner the bytes physically landed in (the
-      // conversation's authoritative workspace) — advisory denormalisation that
-      // lets the upload response report where the file lives.
-      ownerId: meta.uploadOwner,
-      workspaceId: meta.wsId,
-    };
-    await store.appendRegistry(entry);
-    entries.push(entry);
-  }
-  return { entries, errors };
-}
-
-/**
- * Files one store upload may carry. An upload adds files to the workspace store
- * and makes no chat message, so `maxFilesPerMessage` (a bound on one model
- * turn's attachments) does not apply; bytes are bounded by `maxTotalSize`, and
- * this caps the per-file writes a request of many tiny parts can cause.
- */
-const MAX_FILES_PER_UPLOAD = 100;
-
-/**
- * Handle POST /v1/workspaces/:wsId/resources — multipart file upload to the workspace
- * file store. Stores each uploaded file, registers it, returns the
- * resulting FileEntry list. This is the byte-transport entry point used
- * by the bridge's `ai.nimblebrain/request-file` flow so the iframe never has
- * to base64-encode bytes into a tool-call argument.
- *
- * Workspace isolation comes from `workspaceId` (the workspace in the URL) flowing into
- * `getWorkspaceFileStore` — bytes physically land under that workspace's own
- * `files/<ownerId>/` partition.
+ * Handle POST /v1/workspaces/:wsId/resources — the multipart upload of the REST
+ * door, which the app bridge's `ai.nimblebrain/request-file` and
+ * `ai.nimblebrain/upload-files` use, so the iframe never base64-encodes bytes
+ * into a tool-call argument. Each file is taken in, or refused, on its own,
+ * into the caller's files in the workspace in the URL (`file-doors.ts`).
  */
 export async function handleResourceUpload(
   request: Request,
   runtime: Runtime,
-  features: ResolvedFeatures,
   identity: UserIdentity | undefined,
   workspaceId: string,
 ): Promise<Response> {
-  if (!features.fileContext) {
-    return apiError(404, "not_found", "Not found");
-  }
-
-  let formData: MultipartForm;
-  try {
-    formData = await request.formData();
-  } catch {
-    return apiError(400, "bad_request", "Invalid multipart form data");
-  }
-
-  const uploads = await collectResourceUploads(formData);
-  if (uploads instanceof Response) return uploads;
-
-  if (uploads.length === 0) {
-    return apiError(400, "bad_request", "No files in request (use the 'file' or 'files' field)");
-  }
-
-  const config = runtime.getFilesConfig();
-  if (uploads.length > MAX_FILES_PER_UPLOAD) {
-    return apiError(
-      413,
-      "payload_too_large",
-      `Too many files: ${uploads.length} in one upload; the limit is ${MAX_FILES_PER_UPLOAD}.`,
-      { count: uploads.length, limit: MAX_FILES_PER_UPLOAD },
-    );
-  }
-  const totalSize = uploads.reduce((s, f) => s + f.data.length, 0);
-  if (totalSize > config.maxTotalSize) {
-    return apiError(
-      413,
-      "payload_too_large",
-      `Upload is ${humanSize(totalSize)}; the limit is ${humanSize(config.maxTotalSize)} per upload.`,
-      { size: totalSize, limit: config.maxTotalSize },
-    );
-  }
-
-  // Optional metadata applied to every uploaded file. The picker flow sends
-  // none of these today; they exist so future callers (agent tools, drag-drop
-  // with tag) don't need a follow-up tool call.
-  const tags = parseResourceUploadTags(formData.get("tags"));
-  if (tags instanceof Response) return tags;
-  const description = optionalStringField(formData.get("description"));
-  const conversationId = optionalStringField(formData.get("conversationId"));
-
-  // A conversation named here is tagged on the files, so it must be one of the
-  // caller's conversations in this workspace — the same rule the chat door keeps.
-  const outside = await refuseConversationOutsideWorkspace(
-    runtime,
-    conversationId ?? undefined,
+  return handleUpload(request, runtime, {
     workspaceId,
     identity,
-  );
-  if (outside) return outside;
-
-  const uploadOwner = runtime.resolveRequestUserId(identity);
-  const wsId = workspaceId;
-  const store = runtime.getWorkspaceFileStore(wsId, uploadOwner);
-
-  const { entries, errors } = await persistResourceUploads(uploads, config, store, {
-    tags,
-    description,
-    conversationId,
-    uploadOwner,
-    wsId,
+    // A conversation named here is stamped on the files, so it must be one of
+    // the caller's conversations in this workspace, the rule the chat door keeps.
+    refuseConversation: (conversationId) =>
+      refuseConversationOutsideWorkspace(runtime, conversationId, workspaceId, identity),
   });
-
-  if (entries.length === 0) {
-    return apiError(400, "file_upload_error", "All uploads were rejected", { errors });
-  }
-  return json<UploadResourceResponse>({ files: entries, ...(errors.length > 0 ? { errors } : {}) });
 }

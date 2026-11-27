@@ -64,10 +64,11 @@ describe("hostExtensions", () => {
     });
   });
 
-  it("references the same capability object — no defensive copy needed", () => {
-    // Connectors read this through the SDK; serialization happens at the
-    // transport boundary. Mutating the result would mutate the source, but
-    // nothing in the runtime does that.
-    expect(hostExtensions()[HOST_RESOURCES_CAPABILITY_KEY]).toBe(HOST_RESOURCES_CAPABILITY_V1);
+  it("names the schemes it is given, and the v1 set by default", () => {
+    expect(hostExtensions()[HOST_RESOURCES_CAPABILITY_KEY]).toEqual(HOST_RESOURCES_CAPABILITY_V1);
+    expect(hostExtensions([])[HOST_RESOURCES_CAPABILITY_KEY]).toEqual({
+      ...HOST_RESOURCES_CAPABILITY_V1,
+      schemes: [],
+    });
   });
 });

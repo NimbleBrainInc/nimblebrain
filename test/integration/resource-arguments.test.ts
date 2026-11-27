@@ -150,6 +150,7 @@ describe.each([
         workspaceId: WS,
         connectorId: "outbound",
         hostResources: {
+          schemes: () => ["files"],
           read: async () => ({ contents: [] }),
           list: async () => ({ resources: [] }),
         },
@@ -221,6 +222,7 @@ describe("resource arguments beside the client capabilities in one 2026-07-28 _m
         workspaceId: WS,
         connectorId: "outbound",
         hostResources: {
+          schemes: () => ["files"],
           read: async () => ({ contents: [] }),
           list: async () => ({ resources: [] }),
         },

@@ -214,8 +214,9 @@ describe("X-Workspace-Id has no effect on a workspace-scoped route", () => {
     expect(res.status).toBe(200);
     const { files } = await readJson<UploadResourceResponse>(res);
     const fileId = files[0]!.id;
-    const locator = runtime.getFileLocator();
-    expect(await locator.resolve(TEST_IDENTITY.id, fileId)).toBe(wsA);
+    // Served from the path's workspace, and absent from the other.
+    expect((await send("GET", `/v1/workspaces/${wsA}/files/${fileId}`)).status).toBe(200);
+    expect((await send("GET", `/v1/workspaces/${wsB}/files/${fileId}`)).status).toBe(404);
   });
 });
 
@@ -308,13 +309,16 @@ describe("identity-scoped routes need no workspace", () => {
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     await res.body?.cancel();
   });
+});
 
-  it("a file by its bare id", async () => {
+describe("a file is served from the workspace it was stored in", () => {
+  it("names that workspace, and no route serves a file by its bare id", async () => {
     const uploaded = await send("POST", `/v1/workspaces/${wsB}/resources`, { body: uploadForm() });
     const { files } = await readJson<UploadResourceResponse>(uploaded);
-    const res = await send("GET", `/v1/files/${files[0]!.id}`);
+    const res = await send("GET", `/v1/workspaces/${wsB}/files/${files[0]!.id}`);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("hello");
+    expect((await send("GET", `/v1/files/${files[0]!.id}`)).status).toBe(404);
   });
 });
 

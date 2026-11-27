@@ -118,6 +118,7 @@ describe("resolvePlugins", () => {
         privateTools: ["create", "events", "append_events", "delete", "delete_workspace"],
         unattendedRefused: ["create", "events", "append_events", "delete", "delete_workspace"],
         grantTools: [],
+        writeTools: [],
       },
     ]);
   });
@@ -310,16 +311,20 @@ describe("checkConfiguredPlugins", () => {
       },
     }) as ContractRegistry;
     expect(
-      checkConfiguredPlugins({ conversations: false, tasks: false }, { workDir: "/w", contracts }),
+      checkConfiguredPlugins(
+        { conversations: false, tasks: false, files: false },
+        { workDir: "/w", contracts },
+      ),
     ).toBeNull();
   });
 
-  test("with no plugins block it binds the built-in conversations and tasks plugins, as explicit entries do", () => {
+  test("with no plugins block it binds the built-in conversations, tasks and files plugins, as explicit entries do", () => {
     const byDefault = checkConfiguredPlugins(undefined, { workDir: "/w" });
     const explicit = checkConfiguredPlugins(
       {
         conversations: { source: "builtin", system: true },
         tasks: { source: "builtin", system: true },
+        files: { source: "builtin", system: true },
       },
       { workDir: "/w" },
     );
@@ -327,23 +332,70 @@ describe("checkConfiguredPlugins", () => {
     expect(byDefault?.plugins.map((p) => [p.name, p.system])).toEqual([
       ["conversations", true],
       ["tasks", true],
+      ["files", true],
     ]);
     expect(byDefault?.bindings.map((b) => b.contract)).toEqual([
       "ai.nimblebrain.conversations",
       "ai.nimblebrain.tasks",
+      "ai.nimblebrain.files",
     ]);
   });
 
-  test("tasks: false leaves the conversations plugin alone", () => {
+  test("tasks: false leaves the conversations and files plugins alone", () => {
     const resolved = checkConfiguredPlugins({ tasks: false }, { workDir: "/w" });
-    expect(resolved?.plugins.map((p) => p.name)).toEqual(["conversations"]);
+    expect(resolved?.plugins.map((p) => p.name)).toEqual(["conversations", "files"]);
+  });
+
+  test("files: false leaves the conversations and tasks plugins alone", () => {
+    const resolved = checkConfiguredPlugins({ files: false }, { workDir: "/w" });
+    expect(resolved?.plugins.map((p) => p.name)).toEqual(["conversations", "tasks"]);
+    expect(resolved?.bindings.map((b) => b.contract)).not.toContain("ai.nimblebrain.files");
+  });
+
+  test("the files binding carries the contract's writing tools, from its annotations", () => {
+    const resolved = checkConfiguredPlugins(undefined, { workDir: "/w" });
+    const files = resolved?.bindings.find((b) => b.contract === "ai.nimblebrain.files");
+    expect(files?.privateTools.sort()).toEqual(
+      ["begin_upload", "complete_upload", "delete_workspace", "resolve"].sort(),
+    );
+    expect(files?.writeTools.sort()).toEqual(
+      ["create", "create_folder", "delete", "delete_folder", "move", "tag", "update_folder"].sort(),
+    );
+  });
+
+  test("transferOrigins are origins, normalised, and anything else names the field", () => {
+    const resolved = checkConfiguredPlugins(
+      {
+        files: {
+          source: "builtin",
+          system: true,
+          transferOrigins: ["https://Store.Example.com:443"],
+        },
+      },
+      { workDir: "/w" },
+    );
+    expect(resolved?.plugins.find((p) => p.name === "files")?.transferOrigins).toEqual([
+      "https://store.example.com",
+    ]);
+    expect(() =>
+      checkConfiguredPlugins(
+        {
+          files: {
+            source: "builtin",
+            system: true,
+            transferOrigins: ["https://store.example.com/bucket", "ftp://x", "nope"],
+          },
+        },
+        { workDir: "/w" },
+      ),
+    ).toThrow(/transferOrigins\[0\].*\n.*transferOrigins\[1\].*\n.*transferOrigins\[2\]/);
   });
 
   test("an operator's entry of the default's name replaces it", () => {
     const base = tmp();
     writeConversations(base);
     const resolved = checkConfiguredPlugins(
-      { conversations: { source: "./conversations", system: true }, tasks: false },
+      { conversations: { source: "./conversations", system: true }, tasks: false, files: false },
       { workDir: "/w", configPath: join(base, "nimblebrain.json") },
     );
     expect(resolved?.plugins.map((p) => p.root)).toEqual([join(base, "conversations")]);
@@ -353,7 +405,7 @@ describe("checkConfiguredPlugins", () => {
     const base = tmp();
     writeConversations(base);
     const resolved = checkConfiguredPlugins(
-      { conversations: { source: "./conversations", system: true }, tasks: false },
+      { conversations: { source: "./conversations", system: true }, tasks: false, files: false },
       { workDir: "/w", configPath: join(base, "nimblebrain.json") },
     );
     if (!resolved) throw new Error("expected a resolved set");
@@ -367,6 +419,7 @@ describe("checkConfiguredPlugins", () => {
         {
           conversations: { source: "./conversations" },
           tasks: false,
+          files: false,
           gone: { source: "./gone" },
         },
         { workDir: "/w", configPath: join(base, "nimblebrain.json") },

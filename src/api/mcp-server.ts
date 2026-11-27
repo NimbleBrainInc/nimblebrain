@@ -64,6 +64,7 @@ import {
   type ToolResult,
 } from "../engine/types.ts";
 import { humanSize } from "../files/human-size.ts";
+import { FILE_URI_SCHEME } from "../files/uri.ts";
 import type { TokenGrant, UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import {
@@ -90,6 +91,8 @@ import type { ToolRegistry } from "../tools/registry.ts";
 import type { McpCaller, TaskOwnerContext, ToolSource } from "../tools/types.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import { toWireJson } from "../util/wire-json.ts";
+import { listFileResources, readFileResource } from "./file-doors.ts";
+import { buildResourceEnvelopeEntry } from "./handlers.ts";
 import { argsDigest, relayInputRequests } from "./mcp-input-relay.ts";
 import {
   answerModernTaskRequest,
@@ -104,13 +107,18 @@ import {
 import { apiError } from "./types.ts";
 
 /**
- * The most bytes one `/mcp` request body may hold. The route's `bodyLimit`
- * refuses a larger declared `Content-Length`; `handle` counts the bytes that
- * actually arrive, so a chunked body meets the same bound. Keep it under a
- * third of the SDK's 4 MiB default, which still reads the rebuilt body: each
- * invalid UTF-8 byte becomes a three-byte U+FFFD.
+ * The most bytes one `/mcp` request body may hold: room for the files
+ * contract's `create`, whose body is at most 4 MiB decoded (5.6 MiB as
+ * base64), with its JSON-RPC envelope. The route's `bodyLimit` refuses a
+ * larger declared `Content-Length`; `handle` counts the bytes that actually
+ * arrive, so a chunked body meets the same bound. The SDK reads the rebuilt
+ * body again under {@link SDK_REQUEST_BODY_BYTES}, three times this, since
+ * each invalid UTF-8 byte becomes a three-byte U+FFFD.
  */
-export const MAX_MCP_REQUEST_BODY_BYTES = 1_048_576;
+export const MAX_MCP_REQUEST_BODY_BYTES = 8 * 1_048_576;
+
+/** What the SDK may read of the rebuilt body: three bytes for each one {@link MAX_MCP_REQUEST_BODY_BYTES} admits. */
+const SDK_REQUEST_BODY_BYTES = 3 * MAX_MCP_REQUEST_BODY_BYTES;
 
 /**
  * JSON-RPC error code for a `resources/read` whose URI resolves nowhere:
@@ -219,6 +227,7 @@ export class McpServerHost {
         ),
       {
         legacy: "reject",
+        maxRequestBodySize: SDK_REQUEST_BODY_BYTES,
         onerror: (err) => log.warn(`[mcp] request failed: ${err.message}`),
       },
     );
@@ -472,6 +481,14 @@ function createHandlers(
       const src = runtime.getIdentitySource(sourceName);
       await runWithRequestContext(identityReqCtx, () => collectSourceResources(src, resources));
     }
+    // The caller's files, from the files contract's `list` (the plugin lists
+    // only its screen as a resource).
+    resources.push(
+      ...(await listFileResources(runtime, {
+        workspaceId: wsId,
+        ownerId: runtime.resolveRequestUserId(requestCtx.identity ?? undefined),
+      })),
+    );
 
     let wsRegistry: ToolRegistry;
     try {
@@ -538,6 +555,15 @@ function createHandlers(
     const uri = request.params.uri;
     if (!runtime || !identityId) {
       throw mcpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
+    }
+
+    // `files://` is the host's to answer at every door, scoped to a source or
+    // not: the files plugin never serves one (CONTRACT.md §5, §10.4).
+    if (uri.startsWith(`${FILE_URI_SCHEME}://`)) {
+      return readFileAtDoor(runtime, uri, {
+        workspaceId: wsId,
+        ownerId: runtime.resolveRequestUserId(requestCtx.identity ?? undefined),
+      });
     }
 
     const scoped = scopedSourceName(request.params._meta);
@@ -1628,6 +1654,20 @@ async function scopedSource(
  * source cannot resolve both answer `RESOURCE_NOT_FOUND_CODE`, so a probe
  * learns nothing about what exists.
  */
+/** A `files://` read at the door: the body through `resolve`, or not found. */
+async function readFileAtDoor(
+  runtime: Runtime,
+  uri: string,
+  scope: { workspaceId: string; ownerId: string },
+): Promise<ReadResourceResult> {
+  const read = await readFileResource(runtime, uri, scope);
+  if (typeof read === "string") {
+    throw mcpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
+  }
+  const entry = buildResourceEnvelopeEntry(uri, read);
+  return { contents: [entry as ReadResourceResult["contents"][number]] };
+}
+
 async function readFromOneSource(
   runtime: Runtime,
   requestCtx: McpRequestContext,

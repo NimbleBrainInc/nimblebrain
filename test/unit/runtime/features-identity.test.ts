@@ -33,7 +33,6 @@ describe("identity & workspace feature flags", () => {
       });
       expect(features.skillManagement).toBe(true);
       expect(features.toolDiscovery).toBe(true);
-      expect(features.fileContext).toBe(true);
     });
   });
 

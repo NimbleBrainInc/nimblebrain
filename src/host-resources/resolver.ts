@@ -1,7 +1,9 @@
 import type { ListResourcesResult, ReadResourceResult } from "@modelcontextprotocol/server";
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import type { FilesHost } from "../files/host.ts";
 import { isTextMime } from "../files/mime.ts";
-import type { FileStore } from "../files/store.ts";
+import { FileTooLargeError, readFileBody } from "../files/serve.ts";
+import type { FileRecord } from "../files/types.ts";
 import { FILE_URI_SCHEME, fileIdToUri, uriToFileId } from "../files/uri.ts";
 import { log } from "../observability/log.ts";
 import { HOST_RESOURCES_MAX_READ_SIZE } from "./capability.ts";
@@ -26,6 +28,9 @@ const RESOURCE_NOT_FOUND = -32602;
  * ship in v2).
  */
 const RESPONSE_TOO_LARGE = -32005;
+
+/** Files per `list` page the resolver asks for while it follows the cursor. */
+const LIST_PAGE_SIZE = 100;
 
 /**
  * Per-request context for resolving a host resource. The workspace id comes
@@ -53,153 +58,127 @@ export interface ListResourcesParams {
 
 /**
  * The single chokepoint a connector's inbound `ai.nimblebrain/resources/*`
- * request goes through (today the workspace-owned `FileStore`; future schemes like
+ * request goes through (today the files contract; future schemes like
  * `entities://` would land here as additional read/list paths). Files are
  * workspace-owned: every read/list resolves in the connector's request workspace
  * (`ctx.workspaceId`) under the calling user's partition (`ctx.ownerId`) — never against any
  * wsId the URI might encode (the URI is bare), and never across workspaces.
  */
 export interface HostResourcesResolver {
+  /** The URI schemes this resolver serves now: advertised in the capability. */
+  schemes(): string[];
   read(uri: string, ctx: HostResourceContext): Promise<ReadResourceResult>;
   list(params: ListResourcesParams, ctx: HostResourceContext): Promise<ListResourcesResult>;
 }
 
 /**
- * Resolves `files://<id>` URIs through the workspace-owned `FileStore` for the
- * connector's request workspace and the calling user's partition.
- * Reuses `isTextMime`/`fileIdToUri` from the platform's `files` source
- * so the byte/text discrimination matches what the agent sees via
- * `files__read` exactly. Audit events ride the platform's existing
- * event sink alongside other tool activity.
+ * Resolves `files://<id>` URIs through the files contract: `resolve` as `host`
+ * with the connector's workspace (`ctx.workspaceId`) and the user its tool call
+ * was made for (`ctx.ownerId`), then the body streamed from its download URL;
+ * a listing is the plugin's `list`, every page of it. Text types return as
+ * `text`, everything else as base64 `blob`, the split `resources/read` uses.
  *
- * Files are workspace-owned: `getFileStore(wsId, ownerId)` resolves the caller's store in one
- * workspace. The resolver passes `ctx.workspaceId` (the workspace the connector ran in), so a
- * `files://` read resolves in that workspace only — a file from another workspace is not
- * on disk there and collapses to resource-not-found.
+ * With no files plugin bound the resolver serves no scheme: the capability
+ * advertises none, and every request is refused as an unsupported scheme.
  */
-export class FileBackedHostResourcesResolver implements HostResourcesResolver {
+export class FilesHostResourcesResolver implements HostResourcesResolver {
   constructor(
-    private readonly getFileStore: (wsId: string, ownerId: string) => FileStore,
+    private readonly filesHost: () => FilesHost | null,
     private readonly maxReadSize: number = HOST_RESOURCES_MAX_READ_SIZE,
   ) {}
 
+  schemes(): string[] {
+    return this.filesHost() ? [FILE_URI_SCHEME] : [];
+  }
+
   async read(uri: string, ctx: HostResourceContext): Promise<ReadResourceResult> {
     const start = Date.now();
-    const fileId = this.requireFileScheme(uri);
-    const store = this.getFileStore(ctx.workspaceId, ctx.ownerId);
+    const host = this.requireFiles(uri);
+    this.requireFileScheme(uri);
+    const scope = { workspaceId: ctx.workspaceId, ownerId: ctx.ownerId };
 
-    let result: Awaited<ReturnType<typeof store.readFile>>;
+    let result: Awaited<ReturnType<typeof readFileBody>>;
     try {
-      result = await store.readFile(fileId);
+      result = await readFileBody(host, scope, uri, this.maxReadSize);
     } catch (err) {
-      // Multiple failure modes collapse into one error code here on
-      // purpose: file genuinely doesn't exist in the user's store, file
-      // belongs to a different user (we never look across identities),
-      // disk I/O / permission / corruption errors. The collapse
-      // prevents cross-identity inventory enumeration AND keeps the wire
-      // contract simple for connector SDKs. But operators chasing a real
-      // disk-side issue need visibility — log the actual error before
-      // collapsing so the ops trail isn't blind.
+      if (err instanceof FileTooLargeError) {
+        throw new ProtocolError(RESPONSE_TOO_LARGE, "Response too large", {
+          uri,
+          size: err.size,
+          maxSize: err.maxSize,
+        });
+      }
+      // A failed resolve or transfer collapses to not-found, as a file of
+      // another owner does; the cause goes to the operator's log only.
       log.warn(
-        `[host-resources] [${ctx.connectorId}:${ctx.workspaceId}] read ${uri} failed (collapsing to resource-not-found): ${err instanceof Error ? err.message : String(err)}`,
+        `[host-resources] [${ctx.connectorId}:${ctx.workspaceId}] read failed (collapsing to resource-not-found): ${err instanceof Error ? err.message : String(err)}`,
       );
       throw new ProtocolError(RESOURCE_NOT_FOUND, "Resource not found", { uri });
     }
+    if (!result) throw new ProtocolError(RESOURCE_NOT_FOUND, "Resource not found", { uri });
 
-    if (result.size > this.maxReadSize) {
-      throw new ProtocolError(RESPONSE_TOO_LARGE, "Response too large", {
-        uri,
-        size: result.size,
-        maxSize: this.maxReadSize,
-      });
-    }
-
-    const contents = isTextMime(result.mimeType)
-      ? [
-          {
-            uri,
-            mimeType: result.mimeType,
-            text: result.data.toString("utf-8"),
-          },
-        ]
-      : [
-          {
-            uri,
-            mimeType: result.mimeType,
-            blob: result.data.toString("base64"),
-          },
-        ];
+    const { file, bytes } = result;
+    const contents = isTextMime(file.mimeType)
+      ? [{ uri, mimeType: file.mimeType, text: new TextDecoder().decode(bytes) }]
+      : [{ uri, mimeType: file.mimeType, blob: Buffer.from(bytes).toString("base64") }];
 
     log.debug(
       "host-resources",
-      `[${ctx.connectorId}:${ctx.workspaceId}] read ${uri} → ${result.size}B (${Date.now() - start}ms)`,
+      `[${ctx.connectorId}:${ctx.workspaceId}] read ${uri} → ${file.size}B (${Date.now() - start}ms)`,
     );
 
     return { contents };
   }
 
   async list(params: ListResourcesParams, ctx: HostResourceContext): Promise<ListResourcesResult> {
-    // Workspace-scoped: returns the calling user's files in the connector's
-    // request workspace (`ctx.workspaceId`) only — never across the user's other
-    // workspaces. The store is rooted at that one owner partition, so the
-    // boundary is the directory, not a filter here.
-    if (params.filter?.scheme && params.filter.scheme !== FILE_URI_SCHEME) {
+    // The calling user's files in the connector's workspace only.
+    const host = this.filesHost();
+    if (!host || (params.filter?.scheme && params.filter.scheme !== FILE_URI_SCHEME)) {
       throw new ProtocolError(ProtocolErrorCode.InvalidParams, "Unsupported URI scheme", {
-        scheme: params.filter.scheme,
-        supported: [FILE_URI_SCHEME],
+        scheme: params.filter?.scheme ?? FILE_URI_SCHEME,
+        supported: this.schemes(),
       });
     }
-    // Pagination isn't supported in v1 — listing the user's files
-    // returns the full set in a single call. A connector that passes a
-    // cursor would otherwise silently get the full set every call,
-    // breaking polite pagination loops. Reject loudly so the connector
-    // SDK can detect the missing feature.
+    // Pagination isn't offered: a listing is the whole set in one answer, so a
+    // cursor would be silently ignored. Refuse it so a connector can tell.
     if (params.cursor && params.cursor.length > 0) {
       throw new ProtocolError(
         ProtocolErrorCode.InvalidParams,
         "Pagination is not supported in this version",
-        {
-          cursor: params.cursor,
-        },
+        { cursor: params.cursor },
       );
     }
-
-    const store = this.getFileStore(ctx.workspaceId, ctx.ownerId);
-    const all = await store.readRegistry();
-
-    const filteredByMime = params.filter?.mimeType
-      ? all.filter((entry) => entry.mimeType === params.filter?.mimeType)
-      : all;
-
-    // Validate `tags` shape before iterating. A buggy connector that sends
-    // `tags: "single-tag"` (string) instead of `tags: ["single-tag"]`
-    // would otherwise throw TypeError on `.every` and surface as a
-    // generic dispatch failure with no diagnostic. Reject with
-    // `-32602 Invalid params`, mirroring the unsupported-scheme branch
-    // above: same error code, same actionable shape for the connector
-    // author. Treating non-array as "no filter" was considered and
-    // rejected — silently returning all files lies about whether the
-    // filter ran.
+    // A `tags` that is not an array is refused rather than read as no filter,
+    // which would lie about whether the filter ran.
     if (params.filter?.tags !== undefined && !Array.isArray(params.filter.tags)) {
       throw new ProtocolError(
         ProtocolErrorCode.InvalidParams,
         "filter.tags must be an array of strings",
-        {
-          receivedType: typeof params.filter.tags,
-        },
+        { receivedType: typeof params.filter.tags },
       );
     }
-    const tagFilter = params.filter?.tags ?? [];
-    const filteredByTags =
-      tagFilter.length > 0
-        ? filteredByMime.filter((entry) => tagFilter.every((tag) => entry.tags?.includes(tag)))
-        : filteredByMime;
+    const scope = { workspaceId: ctx.workspaceId, ownerId: ctx.ownerId };
+    const all: FileRecord[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await host.list(scope, {
+        limit: LIST_PAGE_SIZE,
+        ...(cursor ? { cursor } : {}),
+      });
+      all.push(...(page.files ?? []));
+      cursor = page.nextCursor ?? null;
+    } while (cursor);
 
-    const resources = filteredByTags.map((entry) => ({
-      uri: fileIdToUri(entry.id),
-      name: entry.filename,
-      mimeType: entry.mimeType,
-    }));
+    const mime = params.filter?.mimeType;
+    const tagFilter = params.filter?.tags ?? [];
+    const resources = all
+      .filter((entry) => (mime ? entry.mimeType === mime : true))
+      .filter((entry) => tagFilter.every((tag) => entry.tags?.includes(tag)))
+      .map((entry) => ({
+        uri: fileIdToUri(entry.id),
+        name: entry.filename,
+        mimeType: entry.mimeType,
+      }));
 
     log.debug(
       "host-resources",
@@ -207,6 +186,16 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
     );
 
     return { resources };
+  }
+
+  /** The files client, or the unsupported-scheme refusal when no plugin is bound. */
+  private requireFiles(uri: string): FilesHost {
+    const host = this.filesHost();
+    if (host) return host;
+    throw new ProtocolError(ProtocolErrorCode.InvalidParams, "Unsupported URI scheme", {
+      uri,
+      supported: [],
+    });
   }
 
   /**
@@ -221,7 +210,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
     if (id) return id;
     throw new ProtocolError(ProtocolErrorCode.InvalidParams, "Unsupported URI scheme", {
       uri,
-      supported: [FILE_URI_SCHEME],
+      supported: this.schemes(),
     });
   }
 }

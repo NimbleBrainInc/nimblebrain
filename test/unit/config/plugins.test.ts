@@ -56,10 +56,11 @@ describe("enabledPlugins", () => {
 });
 
 describe("withDefaultPlugins", () => {
-  test("with no block the instance runs the built-in conversations and tasks plugins as system plugins", () => {
+  test("with no block the instance runs the built-in conversations, tasks and files plugins as system plugins", () => {
     expect(DEFAULT_PLUGINS).toEqual({
       conversations: { source: "builtin", system: true },
       tasks: { source: "builtin", system: true },
+      files: { source: "builtin", system: true },
     });
     expect(withDefaultPlugins(undefined)).toEqual(DEFAULT_PLUGINS);
   });
@@ -67,17 +68,21 @@ describe("withDefaultPlugins", () => {
   test("false turns a default off, and an entry of its name replaces it", () => {
     expect(enabledPlugins(withDefaultPlugins({ conversations: false })).map(([n]) => n)).toEqual([
       "tasks",
+      "files",
     ]);
-    expect(enabledPlugins(withDefaultPlugins({ conversations: false, tasks: false }))).toEqual([]);
+    expect(
+      enabledPlugins(withDefaultPlugins({ conversations: false, tasks: false, files: false })),
+    ).toEqual([]);
     expect(withDefaultPlugins({ tasks: { source: "./mine", system: true } })).toEqual({
       conversations: { source: "builtin", system: true },
       tasks: { source: "./mine", system: true },
+      files: { source: "builtin", system: true },
     });
   });
 
   test("an operator's other plugins run beside the defaults", () => {
     expect(
       enabledPlugins(withDefaultPlugins({ reports: { source: "./reports" } })).map(([n]) => n),
-    ).toEqual(["conversations", "tasks", "reports"]);
+    ).toEqual(["conversations", "tasks", "files", "reports"]);
   });
 });

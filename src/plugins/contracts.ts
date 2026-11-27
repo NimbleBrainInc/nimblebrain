@@ -42,6 +42,8 @@ export interface ContractDefinition {
   unattendedRefused: string[];
   /** The tools marked `grant: true`: a person's call to one carries a run grant. */
   grantTools: string[];
+  /** The public tools annotated `readOnlyHint: false`: a call to one changes what its caller's views show. */
+  writeTools: string[];
 }
 
 /** The contracts this kernel consumes, by name. */
@@ -109,15 +111,19 @@ export function parseContractDefinition(raw: unknown, file: string): ContractDef
   };
 }
 
-/** The document's tools by marking: private, refused unattended (every private tool too), grant-marked. */
+/**
+ * The document's tools by marking: private, refused unattended (every private
+ * tool too), grant-marked, and the public tools whose annotations say they write.
+ */
 function toolSets(
   tools: Record<string, unknown>,
   fail: (what: string) => never,
-): Pick<ContractDefinition, "privateTools" | "unattendedRefused" | "grantTools"> {
+): Pick<ContractDefinition, "privateTools" | "unattendedRefused" | "grantTools" | "writeTools"> {
   const sets = {
     privateTools: [] as string[],
     unattendedRefused: [] as string[],
     grantTools: [] as string[],
+    writeTools: [] as string[],
   };
   for (const [tool, spec] of Object.entries(tools)) {
     const marks = toolMarks(tool, spec, fail);
@@ -126,6 +132,7 @@ function toolSets(
       sets.unattendedRefused.push(tool);
     }
     if (marks.grant) sets.grantTools.push(tool);
+    if (marks.visibility === "public" && marks.writes) sets.writeTools.push(tool);
   }
   return sets;
 }
@@ -135,8 +142,18 @@ function toolMarks(
   tool: string,
   spec: unknown,
   fail: (what: string) => never,
-): { visibility: "public" | "private"; unattended?: "allowed" | "refused"; grant: boolean } {
-  const marks = (spec ?? {}) as { visibility?: unknown; unattended?: unknown; grant?: unknown };
+): {
+  visibility: "public" | "private";
+  unattended?: "allowed" | "refused";
+  grant: boolean;
+  writes: boolean;
+} {
+  const marks = (spec ?? {}) as {
+    visibility?: unknown;
+    unattended?: unknown;
+    grant?: unknown;
+    annotations?: { readOnlyHint?: unknown } | null;
+  };
   const { visibility, unattended, grant } = marks;
   if (visibility !== "public" && visibility !== "private") {
     fail(`tools.${tool}.visibility must be "public" or "private"`);
@@ -153,6 +170,7 @@ function toolMarks(
     visibility: visibility as "public" | "private",
     ...(unattended !== undefined ? { unattended: unattended as "allowed" | "refused" } : {}),
     grant: grant === true,
+    writes: marks.annotations?.readOnlyHint === false,
   };
 }
 
@@ -191,6 +209,8 @@ export interface ContractBinding {
   unattendedRefused: string[];
   /** The contract's tools whose person calls carry a run grant. */
   grantTools: string[];
+  /** The contract's public tools that write, by their annotations. */
+  writeTools: string[];
 }
 
 /** Why a set of plugins cannot run together: the plugin, the contract, and what is wrong. */
@@ -263,6 +283,7 @@ function bindImplementation(
     privateTools: [...def.privateTools],
     unattendedRefused: [...def.unattendedRefused],
     grantTools: [...def.grantTools],
+    writeTools: [...def.writeTools],
   });
 }
 

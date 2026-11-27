@@ -93,14 +93,15 @@ export interface PlacementEntry {
     /** Workspace this placement belongs to (absent = global). */
     wsId?: string;
 }
-/** Mirrors `FileEntry` (`src/files/types.ts`). */
-export interface FileEntry {
+/** A file's record as the files contract answers it. Mirrors `FileRecord` (`src/files/types.ts`). */
+export interface FileRecord {
     id: string;
     filename: string;
     mimeType: string;
     size: number;
     tags: string[];
-    source: "chat" | "agent" | "app" | "manual";
+    /** Known values: `chat`, `agent`, `app`, `manual`. */
+    source: string;
     conversationId: string | null;
     runId?: string | null;
     createdAt: string;
@@ -108,8 +109,6 @@ export interface FileEntry {
     folderId?: string | null;
     ownerId?: string;
     workspaceId?: string;
-    deleted?: true;
-    deletedAt?: string;
 }
 /** The limits a chat message's attachments are held to. */
 export interface FileLimits {
@@ -305,7 +304,7 @@ export interface ReadResourceResponse {
     _meta?: Record<string, unknown>;
 }
 export interface UploadResourceResponse {
-    files: FileEntry[];
+    files: FileRecord[];
     /** One message per file that was refused; absent when none was. */
     errors?: string[];
 }

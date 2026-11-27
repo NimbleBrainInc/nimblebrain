@@ -53,7 +53,7 @@ interface HastNode {
 
 /**
  * Whether `src` resolves to the page's own origin. Relative URLs (a stored
- * file at `/v1/files/<id>`) resolve against the page and pass; anything that
+ * file at `/v1/workspaces/<wsId>/files/<id>`) resolve against the page and pass; anything that
  * does not parse, or names another host, does not.
  */
 function isOwnOrigin(src: unknown): boolean {

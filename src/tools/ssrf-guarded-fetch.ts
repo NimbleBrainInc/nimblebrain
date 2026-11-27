@@ -10,6 +10,45 @@ import { validateConnectorUrl } from "../connectors/runtime/url-validator.ts";
  */
 const MAX_REDIRECT_HOPS = 5;
 
+/** How {@link createSsrfGuardedFetch} validates, dials and follows. */
+export type SsrfGuardOptions = SsrfGuardTransport & (ConnectorUrlPolicy | DestinationPolicy);
+
+/** Each hop checked by `validateConnectorUrl`: the policy for a connector's endpoint. */
+interface ConnectorUrlPolicy {
+  allowInsecure: boolean;
+  fleetInternal: boolean;
+  authorize?: never;
+}
+
+/**
+ * Each hop checked by the caller's own destination policy instead of
+ * `validateConnectorUrl`: it throws to refuse the URL. A caller whose
+ * destinations are not connector endpoints (a files transfer) owns the whole
+ * rule, so the connector rule is not applied on top of it.
+ */
+interface DestinationPolicy {
+  authorize: (url: URL) => void;
+  allowInsecure?: never;
+  fleetInternal?: never;
+}
+
+/** How a request is dialed and its redirects handled, whichever policy checks it. */
+interface SsrfGuardTransport {
+  /**
+   * `"same-origin"` (the default) follows a same-origin redirect and refuses a
+   * cross-origin one; `"refuse"` answers every 3xx with an error, and sends the
+   * request body as given, unbuffered, since nothing replays it.
+   */
+  redirects?: "same-origin" | "refuse";
+  /**
+   * Where the request is actually sent, given the validated URL: replaces the
+   * local-install loopback dial. Called after validation and never fed back,
+   * so validation always sees the stored URL. A caller that resolves the name
+   * itself connects to the address it checked here.
+   */
+  dial?: (url: URL, init: RequestInit) => Promise<{ url: URL; init: RequestInit }>;
+}
+
 /**
  * Wrap a `FetchLike` so HTTP redirects are followed MANUALLY with an SSRF
  * check on every hop.
@@ -42,31 +81,32 @@ const MAX_REDIRECT_HOPS = 5;
  */
 export function createSsrfGuardedFetch(
   baseFetch: FetchLike | undefined,
-  opts: { allowInsecure: boolean; fleetInternal: boolean },
+  opts: SsrfGuardOptions,
 ): FetchLike {
   const doFetch: FetchLike = baseFetch ?? ((u, i) => fetch(u, i));
+  const refuseRedirects = opts.redirects === "refuse";
 
   return async (input, init) => {
     let currentUrl = typeof input === "string" ? new URL(input) : new URL(input.toString());
-    let currentInit = await bufferReplayableBody({ ...init });
+    // A request that is never replayed keeps its body as given, so a streamed
+    // body is sent as it arrives instead of buffered whole.
+    let currentInit = await replayableInit(init, refuseRedirects);
 
     for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
       // Redirects are same-origin only (enforced in `resolveRedirect`), so the
       // configured endpoint's opts — including `fleetInternal` for an
       // operator-vetted in-cluster http source — apply unchanged on every hop.
       // This validation is a backstop; the same-origin rule is the primary control.
-      validateConnectorUrl(currentUrl, {
-        allowInsecure: opts.allowInsecure,
-        fleetInternal: opts.fleetInternal,
-      });
+      checkHop(opts, currentUrl);
 
       // On a local install a loopback URL is dialed at the host alias, with
       // its own `Host` kept (`loopbackDial`). Applied after validation and
       // never fed back into the loop: validation and the same-origin rule
       // always see the stored URL.
-      const dial = loopbackDial(currentUrl, { ...currentInit, redirect: "manual" });
+      const dial = await dialFor(opts, currentUrl, { ...currentInit, redirect: "manual" });
       const res = await doFetch(dial.url, dial.init);
 
+      if (refuseRedirects) return refusingRedirect(res);
       const outcome = resolveRedirect(res, currentUrl, currentInit);
       if (!outcome.follow) return outcome.response;
 
@@ -78,6 +118,34 @@ export function createSsrfGuardedFetch(
   };
 }
 
+/** Refuse `url` unless the caller's destination policy, else the connector URL rule, admits it. */
+function checkHop(opts: SsrfGuardOptions, url: URL): void {
+  if (opts.authorize) {
+    opts.authorize(url);
+    return;
+  }
+  validateConnectorUrl(url, {
+    allowInsecure: opts.allowInsecure,
+    fleetInternal: opts.fleetInternal,
+  });
+}
+
+/** Where to send a request for the validated `url`: the caller's dial, else the local-install loopback dial. */
+async function dialFor(
+  opts: SsrfGuardOptions,
+  url: URL,
+  init: RequestInit,
+): Promise<{ url: URL; init: RequestInit | undefined }> {
+  return opts.dial ? opts.dial(url, init) : loopbackDial(url, init);
+}
+
+/** `res`, unless it is a redirect, which a transfer that refuses redirects answers with an error. */
+function refusingRedirect(res: Response): Response {
+  if (res.status < 300 || res.status >= 400) return res;
+  void res.body?.cancel().catch(() => {});
+  throw new Error(`SSRF guard: refusing a redirect (${res.status})`);
+}
+
 /**
  * The result of inspecting one `redirect: "manual"` response: either a terminal
  * response to hand back to the caller, or the next same-origin hop to follow.
@@ -85,6 +153,14 @@ export function createSsrfGuardedFetch(
 type RedirectOutcome =
   | { follow: false; response: Response }
   | { follow: true; url: URL; init: RequestInit };
+
+/** The request's init: its body as given when nothing replays it, else buffered for replay. */
+async function replayableInit(
+  init: RequestInit | undefined,
+  refuseRedirects: boolean,
+): Promise<RequestInit> {
+  return refuseRedirects ? { ...init } : bufferReplayableBody({ ...init });
+}
 
 /** Buffer a non-string request body to BYTES so it survives replay across 307/308 redirect hops. */
 async function bufferReplayableBody(init: RequestInit): Promise<RequestInit> {

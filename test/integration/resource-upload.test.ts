@@ -65,13 +65,9 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
     expect(entry.mimeType.split(";")[0]).toBe("text/plain");
     expect(entry.size).toBe(11);
 
-    // Bytes land under the workspace store (files are workspace-owned) — keyed by the
-    // workspace in the request path with the uploader as
-    // the owner sub-partition: `workspaces/{wsId}/files/{ownerId}/`. The dev
-    // server authenticates as DEV_IDENTITY.
-    const filesDir = join(testDir, "workspaces", TEST_WORKSPACE_ID, "files", DEV_IDENTITY.id);
-    const onDisk = readdirSync(filesDir);
-    expect(onDisk.some((name) => name.startsWith(`${entry.id}_`))).toBe(true);
+    // The files plugin holds the body; the workspace in the request path serves it.
+    const served = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/files/${entry.id}`);
+    expect(await served.text()).toBe("hello world");
   });
 
   it("accepts multiple files in a single request", async () => {

@@ -33,7 +33,6 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
 import { createComposeSource } from "../../../src/platform/compose/source.ts";
-import { createFilesSource } from "../../../src/platform/files/source.ts";
 import { createHooksSource } from "../../../src/platform/hooks/source.ts";
 import { createNotificationsSource } from "../../../src/platform/notifications/source.ts";
 import { createSkillsSource } from "../../../src/platform/skills/source.ts";
@@ -77,7 +76,6 @@ function makeRuntimeStub(workDir: string): unknown {
 
 const SOURCES = [
   { name: "skills", factory: createSkillsSource },
-  { name: "files", factory: createFilesSource },
   { name: "notifications", factory: createNotificationsSource },
   { name: "usage", factory: createUsageSource },
   { name: "hooks", factory: createHooksSource },

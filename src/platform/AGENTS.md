@@ -109,7 +109,7 @@ Tools that author a persistent thing use:
 
 - `manifest` mirrors the on-disk metadata field-for-field. For skills,
   it's the YAML frontmatter; for tasks, the stored Task
-  config; for files, the FileEntry metadata.
+  config; for a file, its record.
 - `body` is the content payload — markdown for skills, prompt for
   tasks, base64 for files.
 - `scope` (when present) selects where to write — typically

@@ -1,4 +1,5 @@
 import { CONVERSATIONS_CONTRACT } from "../conversation/contract-store.ts";
+import { FILES_CONTRACT } from "../files/contract.ts";
 import { TASKS_CONTRACT } from "../runtime/run-worker.ts";
 
 /**
@@ -17,8 +18,8 @@ import { TASKS_CONTRACT } from "../runtime/run-worker.ts";
  * (it can't import from `src/`); keep the two in lockstep.
  *
  * Set: `conversations`, `files`, `tasks` — each identity-owned and reached
- * through the identity door. `conversations` and `tasks` are the servers bound
- * to their contracts ({@link CONTRACT_SOURCE_NAMES}); `files` is in-process.
+ * through the identity door. Each is the server bound to its contract
+ * ({@link CONTRACT_SOURCE_NAMES}), present only while a plugin implements it.
  */
 export const IDENTITY_SOURCES: ReadonlySet<string> = new Set(["conversations", "files", "tasks"]);
 
@@ -32,6 +33,7 @@ export const IDENTITY_SOURCES: ReadonlySet<string> = new Set(["conversations", "
 export const CONTRACT_SOURCE_NAMES: ReadonlyMap<string, string> = new Map([
   [CONVERSATIONS_CONTRACT, "conversations"],
   [TASKS_CONTRACT, "tasks"],
+  [FILES_CONTRACT, "files"],
 ]);
 
 /** Whether a source (by name) is a kernel identity source. */

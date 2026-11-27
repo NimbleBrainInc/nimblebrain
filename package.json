@@ -65,7 +65,6 @@
     "check:workspace-splat-nesting": "bun run scripts/check-workspace-splat-nesting.ts",
     "check:credential-paths": "bun run scripts/check-credential-paths.ts",
     "check:public-origin": "bun run scripts/check-public-origin.ts",
-    "check:file-paths": "bun run scripts/check-file-paths.ts",
     "check:resource-schemes": "bun run scripts/check-resource-schemes.ts",
     "check:rest-responses": "bun run scripts/check-rest-responses.ts",
     "check:internal-hosts": "bun run scripts/check-internal-hosts.ts",

@@ -48,8 +48,8 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
 ## Defaults ship in the box
 
 - **The default plugins are configuration, in `src/config/plugins.ts` (`DEFAULT_PLUGINS`)**: the
-  built-in conversations plugin (chat) and the built-in tasks plugin (scheduled and unattended
-  work), each a system plugin. `withDefaultPlugins` lays the operator's `plugins` block over
+  built-in conversations plugin (chat), the built-in tasks plugin (scheduled and unattended
+  work) and the built-in files plugin (files and attachments), each a system plugin. `withDefaultPlugins` lays the operator's `plugins` block over
   them: an entry of a default's name replaces it, and `false` turns it off. With no block the
   instance runs the defaults exactly as an explicit entry would.
 - **A system plugin's skills join the core pool** while it is enabled: every
@@ -76,6 +76,8 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   implementation. A document under a `v<major>` its version does not state is refused.
 - **A binding carries the contract's markings**, projected from the document: its private tools
   (`visibility`), the tools refused unattended (`unattended: "refused"`, every private tool too),
+  the public tools that write (annotated `readOnlyHint: false`, announced to the caller's views
+  after a successful call),
   the tools that take a run grant (`grant: true`, refused at load on any other than a public tool
   refused unattended), and the version the kernel consumes (`hostVersion`, sent as `version` on
   a private call). Which tools carry which marking is the contract's decision, never the
@@ -117,15 +119,16 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   `conversations__*` is the namespace whichever plugin implements the contract; the
   implementation's `mcp.json` key only says which server to launch. The contract document
   carries no host name: how a host exposes the public tools is the host's (`CONTRACT.md` §5).
-  `ai.nimblebrain.tasks` is `tasks`.
+  `ai.nimblebrain.tasks` is `tasks`, `ai.nimblebrain.files` is `files`.
 - **The host context is stamped in one place: the transport's `send`.** Every request to a
   bound server passes it, after every other `_meta` merge, and it overwrites
   `params._meta["ai.nimblebrain/context"]` (`contracts/host-context/CONTEXT.md`). Never set
   the context anywhere else, and never build a second transport to a bound server.
 - **The principal comes from the call path, not from data.** `host` only inside
   `BoundServer.call` and `BoundServer.watch`, whose scope lives in a module-private
-  `AsyncLocalStorage` nothing exports; every other request presents `person`, with the
-  workspace, signed-in identity and turn conversation from the request context. Do not export
+  `AsyncLocalStorage` nothing exports (a host scope may name the turn's conversation or the
+  run it is made for); every other request presents `person`, with the workspace, signed-in
+  identity, turn conversation and run id from the request context. Do not export
   that scope or add a second way to present `host`.
 - **The send stamps `unattended` and `grant` from the same facts** (`contextFor`). A `person`
   request made inside an unattended run (`RequestContext.unattended`) carries `unattended: true`.
@@ -148,8 +151,9 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   `privateTools`): left out of `tools/list` and so of every agent listing and the door, and
   refused by `execute` and `startToolAsTask`. That is tidiness; the server's `forbidden` is
   the boundary.
-- **Lifecycle.** A server that does not start refuses the boot, naming the contract, plugin
-  and server. One that exits is restarted on the next call that needs it (the kernel's own
+- **Lifecycle.** The bound servers start together, so boot waits for the slowest, not the
+  sum. A server that does not start refuses the boot, naming the contract, plugin
+  and server, and the ones that started are stopped. One that exits is restarted on the next call that needs it (the kernel's own
   call, or an agent's through `McpSource` recovery); a call in flight when it exited is not
   retried. Shutdown settles queued writes, then stops it; a stopped server is never
   restarted.
@@ -157,4 +161,11 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   (`createSsrfGuardedFetch`, `src/tools/ssrf-guarded-fetch.ts`) with redirects refused, against
   the binding's authorised destinations: its own server's origin, a per-binding
   `transferOrigins` list in host configuration, and loopback for a stdio binding
-  (`contracts/files/CONTRACT.md` §7, §10). `transferOrigins` lands with the files plugin.
+  (`contracts/files/CONTRACT.md` §7, §10): `BoundServer.transferDestinations`, with the
+  plugin's `transferOrigins` (`nimblebrain.json`, each an http or https origin, normalised at
+  boot). The runtime binds only a server it starts over stdio, so today that is loopback and
+  the listed origins. The client is `src/files/transfer.ts` (`src/files/AGENTS.md`).
+- **A contract can refuse calls the host knows to refuse** (`CallGuard`, by contract, passed to
+  `startBoundServers`): checked on the kernel's own call and, through the source's
+  `refuseCall`, on every person call. The files binding refuses every call but
+  `delete_workspace` for a tombstoned workspace.

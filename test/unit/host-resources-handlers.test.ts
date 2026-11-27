@@ -1,20 +1,18 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { ListResourcesResultSchema, ReadResourceResultSchema } from "@modelcontextprotocol/core";
 import type { ListResourcesResult, ReadResourceResult } from "@modelcontextprotocol/server";
 import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import type { EventSink } from "../../src/engine/types.ts";
-import { createFileStore, type FileStore } from "../../src/files/store.ts";
 import {
-  FileBackedHostResourcesResolver,
+  FilesHostResourcesResolver,
   HOST_RESOURCES_LIST_METHOD,
   HOST_RESOURCES_READ_METHOD,
   TokenBucketRateLimit,
 } from "../../src/host-resources/index.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { asDevUser } from "../helpers/dev-provider.ts";
+import { createFakeFilesHost, type FakeFilesHost } from "../helpers/fake-files-host.ts";
 import { textOf } from "../helpers/resource-contents.ts";
 
 // End-to-end wire test for the inbound host-resources handlers, without
@@ -30,38 +28,18 @@ import { textOf } from "../helpers/resource-contents.ts";
 
 const NoopSink: EventSink = { emit: () => {} };
 
-let rootDir: string;
-let wsAStore: FileStore;
+let files: FakeFilesHost;
 
-beforeEach(async () => {
-  rootDir = await mkdtemp(join(tmpdir(), "nb-host-resources-handlers-"));
-  wsAStore = createFileStore(join(rootDir, "ws_00079598e311c160", "files"));
+beforeEach(() => {
+  files = createFakeFilesHost();
 });
 
-afterEach(async () => {
-  await rm(rootDir, { recursive: true, force: true });
-});
-
-async function seedFile(
-  store: FileStore,
-  name: string,
-  body: string,
-  mime: string,
-  tags: string[] = [],
-) {
-  const saved = await store.saveFile(Buffer.from(body), name, mime);
-  await store.appendRegistry({
-    id: saved.id,
-    filename: name,
-    mimeType: mime,
-    size: saved.size,
-    createdAt: new Date().toISOString(),
-    description: null,
-    tags,
-    source: "manual",
-    conversationId: null,
-  });
-  return saved.id;
+/** Seed a file for the dev user in the connector's workspace; answers its id. */
+function seedFile(name: string, body: string, mime: string, tags: string[] = []): string {
+  return files.seed(
+    { workspaceId: "ws_00079598e311c160", ownerId: DEV_IDENTITY.id },
+    { filename: name, mimeType: mime, body, tags },
+  ).id;
 }
 
 /**
@@ -118,12 +96,12 @@ async function buildFakeConnector(uriToRead: string) {
 
 describe("McpSource inbound host-resources handlers", () => {
   it("dispatches ai.nimblebrain/resources/read through the resolver and back to the connector", async () => {
-    const fileId = await seedFile(wsAStore, "brokers.csv", "hello,world", "text/csv");
+    const fileId = seedFile("brokers.csv", "hello,world", "text/csv");
     const uri = `files://${fileId}`;
 
     const fake = await buildFakeConnector(uri);
 
-    const resolver = new FileBackedHostResourcesResolver(() => wsAStore);
+    const resolver = new FilesHostResourcesResolver(() => files);
     const rateLimit = new TokenBucketRateLimit();
 
     const source = new McpSource(
@@ -176,8 +154,8 @@ describe("McpSource inbound host-resources handlers", () => {
   // filtered for unfiltered results and the resolver-level tests would
   // still pass.
   it("dispatches ai.nimblebrain/resources/list with _meta.filter through to the resolver", async () => {
-    await seedFile(wsAStore, "rows.csv", "x", "text/csv");
-    await seedFile(wsAStore, "doc.md", "y", "text/markdown");
+    seedFile("rows.csv", "x", "text/csv");
+    seedFile("doc.md", "y", "text/markdown");
 
     const server = new Server(
       { name: "fake-connector", version: "0.0.1" },
@@ -215,7 +193,7 @@ describe("McpSource inbound host-resources handlers", () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
 
-    const resolver = new FileBackedHostResourcesResolver(() => wsAStore);
+    const resolver = new FilesHostResourcesResolver(() => files);
     const rateLimit = new TokenBucketRateLimit();
     const source = new McpSource(
       "fake-connector",
@@ -256,8 +234,8 @@ describe("McpSource inbound host-resources handlers", () => {
   // that narrows the cast (e.g. drops `tags` for "simpler typing") would
   // pass the mimeType test and break this one.
   it("dispatches ai.nimblebrain/resources/list with _meta.filter.tags through to the resolver", async () => {
-    await seedFile(wsAStore, "draft.md", "x", "text/markdown", ["draft"]);
-    await seedFile(wsAStore, "final.md", "y", "text/markdown", ["published"]);
+    seedFile("draft.md", "x", "text/markdown", ["draft"]);
+    seedFile("final.md", "y", "text/markdown", ["published"]);
 
     const server = new Server(
       { name: "fake-connector", version: "0.0.1" },
@@ -295,7 +273,7 @@ describe("McpSource inbound host-resources handlers", () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
 
-    const resolver = new FileBackedHostResourcesResolver(() => wsAStore);
+    const resolver = new FilesHostResourcesResolver(() => files);
     const rateLimit = new TokenBucketRateLimit();
     const source = new McpSource(
       "fake-connector",
@@ -328,7 +306,7 @@ describe("McpSource inbound host-resources handlers", () => {
 
   it("propagates resolver errors (e.g. unknown file id) as JSON-RPC error responses", async () => {
     const fake = await buildFakeConnector("files://fl_does_not_exist");
-    const resolver = new FileBackedHostResourcesResolver(() => wsAStore);
+    const resolver = new FilesHostResourcesResolver(() => files);
     const rateLimit = new TokenBucketRateLimit();
 
     const source = new McpSource(
@@ -367,6 +345,7 @@ describe("McpSource inbound host-resources handlers", () => {
         workspaceId: "ws_00079598e311c160",
         connectorId: "fake-connector",
         hostResources: {
+          schemes: () => ["files"],
           read: async () => {
             resolverCalls++;
             return { contents: [] };
@@ -420,6 +399,7 @@ describe("McpSource inbound host-resources handlers", () => {
       workspaceId: "ws_00079598e311c160",
       connectorId,
       hostResources: {
+        schemes: () => ["files"],
         read: async () => ({ contents: [] }),
         list: async () => {
           listed.push(connectorId);

@@ -8,7 +8,6 @@ import { ORG_ADMIN_ROLES, type OrgRole } from "../identity/types.ts";
 export interface FeatureFlags {
   skillManagement?: boolean;
   toolDiscovery?: boolean;
-  fileContext?: boolean;
   userManagement?: boolean;
   workspaceManagement?: boolean;
   /**
@@ -27,7 +26,6 @@ export type ResolvedFeatures = Required<FeatureFlags>;
 const DEFAULTS: ResolvedFeatures = {
   skillManagement: true,
   toolDiscovery: true,
-  fileContext: true,
   userManagement: true,
   workspaceManagement: true,
   compaction: true,
@@ -39,7 +37,6 @@ export function resolveFeatures(config?: FeatureFlags): ResolvedFeatures {
   return {
     skillManagement: config.skillManagement ?? true,
     toolDiscovery: config.toolDiscovery ?? true,
-    fileContext: config.fileContext ?? true,
     userManagement: config.userManagement ?? true,
     workspaceManagement: config.workspaceManagement ?? true,
     compaction: config.compaction ?? true,

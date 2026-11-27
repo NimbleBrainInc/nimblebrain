@@ -139,10 +139,13 @@ describe("markdown images", () => {
 
   test("an image on the app's own origin renders inline", () => {
     const { host, unmount } = render(
-      "![file](/v1/files/fl_abc)\n\n![abs](http://localhost/v1/files/fl_def)",
+      "![file](/v1/workspaces/ws_0123456789abcdef/files/fl_abc)\n\n![abs](http://localhost/v1/workspaces/ws_0123456789abcdef/files/fl_def)",
     );
     try {
-      expect(imageSources(host)).toEqual(["/v1/files/fl_abc", "http://localhost/v1/files/fl_def"]);
+      expect(imageSources(host)).toEqual([
+        "/v1/workspaces/ws_0123456789abcdef/files/fl_abc",
+        "http://localhost/v1/workspaces/ws_0123456789abcdef/files/fl_def",
+      ]);
     } finally {
       unmount();
     }

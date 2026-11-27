@@ -11,7 +11,7 @@ const RATE_LIMITED = -32004;
 
 /**
  * Per-(workspace, connector) rate limit on inbound host-resources requests.
- * Prevents a buggy or runaway connector from DoSing the FileStore. Resets
+ * Prevents a buggy or runaway connector from DoSing the files plugin. Resets
  * on platform restart — no persistence needed, the limit is a guard
  * rail not an audit trail.
  *

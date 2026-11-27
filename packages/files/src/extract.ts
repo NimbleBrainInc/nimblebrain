@@ -12,9 +12,6 @@
 
 import { promisify } from "node:util";
 import { inflateRaw } from "node:zlib";
-import * as XLSX from "@e965/xlsx";
-import mammoth from "mammoth";
-import { getDocumentProxy } from "unpdf";
 import { bareType, DOCX, isPlainText, PDF, XLSX as XLSX_MIME } from "./mime.ts";
 
 /** The most UTF-8 bytes of text one extraction keeps (the contract's 1 MiB, CONTRACT.md §7). */
@@ -45,6 +42,12 @@ const OOXML_MAX_ENTRIES = 10_000;
  */
 const PDF_MAX_PAGES = 2_000;
 const PDF_TIME_BUDGET_MS = 5_000;
+
+// The parsers are imported on first use, not at load: together they are most of the server's
+// start time, and a server that extracts nothing (every boot, every test) never needs them.
+const loadPdf = () => import("unpdf");
+const loadMammoth = async () => (await import("mammoth")).default;
+const loadXlsx = () => import("@e965/xlsx");
 
 export interface Extracted {
   text: string;
@@ -151,6 +154,7 @@ async function pdfPageText(pdf: PdfDocumentProxy, pageNumber: number): Promise<s
 async function extractPdf(data: Buffer): Promise<Extracted | null> {
   let pdf: PdfDocumentProxy | null = null;
   try {
+    const { getDocumentProxy } = await loadPdf();
     pdf = (await getDocumentProxy(new Uint8Array(data))) as PdfDocumentProxy;
     const totalPages = pdf.numPages;
     const lastPage = Math.min(totalPages, PDF_MAX_PAGES);
@@ -189,6 +193,7 @@ export async function extractPdfPages(
   return oneAtATime(async () => {
     let pdf: PdfDocumentProxy | null = null;
     try {
+      const { getDocumentProxy } = await loadPdf();
       pdf = (await getDocumentProxy(new Uint8Array(data))) as PdfDocumentProxy;
       const out: ExtractedPage[] = [];
       const missingPages: number[] = [];
@@ -217,6 +222,7 @@ async function extractDocx(data: Buffer): Promise<Extracted | null> {
   if (await refuseOversized("DOCX", data, DOCX_XML_BUDGET)) return null;
   // mammoth exports `convertToMarkdown` beside `convertToHtml`, with the same signature, but
   // its type declarations name only the latter.
+  const mammoth = await loadMammoth();
   const { convertToMarkdown } = mammoth as typeof mammoth & {
     convertToMarkdown: typeof mammoth.convertToHtml;
   };
@@ -235,6 +241,7 @@ async function extractDocx(data: Buffer): Promise<Extracted | null> {
 async function extractXlsx(data: Buffer): Promise<Extracted | null> {
   if (data.length < 4 || data[0] !== 0x50 || data[1] !== 0x4b) return null;
   if (await refuseOversized("XLSX", data, XLSX_XML_BUDGET)) return null;
+  const XLSX = await loadXlsx();
   const workbook = XLSX.read(data, { type: "buffer", dense: true });
   const first = workbook.SheetNames[0];
   const sheet = first ? workbook.Sheets[first] : undefined;

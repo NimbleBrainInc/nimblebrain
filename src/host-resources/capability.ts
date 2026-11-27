@@ -66,14 +66,17 @@ export const HOST_RESOURCES_CAPABILITY_V1: HostResourcesCapability = {
 };
 
 /**
- * Payload added to ClientCapabilities.extensions in McpSource initialize.
+ * Payload added to ClientCapabilities.extensions in McpSource initialize, with
+ * the schemes the resolver serves now: none while no files plugin is bound.
  * Inlined here so both Client construction sites in mcp-source.ts share one
  * source of truth. `extensions` is the spec-blessed location for
  * vendor-namespaced capability declarations — not the older `experimental`
  * field, which is kept by the SDK for backward compatibility.
  */
-export function hostExtensions(): NonNullable<ClientCapabilities["extensions"]> {
+export function hostExtensions(
+  schemes: readonly string[] = HOST_RESOURCES_CAPABILITY_V1.schemes,
+): NonNullable<ClientCapabilities["extensions"]> {
   return {
-    [HOST_RESOURCES_CAPABILITY_KEY]: HOST_RESOURCES_CAPABILITY_V1,
+    [HOST_RESOURCES_CAPABILITY_KEY]: { ...HOST_RESOURCES_CAPABILITY_V1, schemes: [...schemes] },
   };
 }

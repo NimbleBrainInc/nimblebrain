@@ -141,7 +141,10 @@ function entry(url: string): CatalogListing {
  * host-resources handles are unused: nothing in these tests calls a tool.
  */
 function connectorMcpDeps(wsId: string): ConnectorMcpDeps {
-  return stub<ConnectorMcpDeps>({ workspaceId: wsId });
+  return stub<ConnectorMcpDeps>({
+    workspaceId: wsId,
+    hostResources: stub<ConnectorMcpDeps["hostResources"]>({ schemes: () => [] }),
+  });
 }
 
 function tool() {
