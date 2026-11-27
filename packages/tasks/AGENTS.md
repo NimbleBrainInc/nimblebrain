@@ -22,7 +22,9 @@ in `README.md`.
   host that loads a plugin's skills reads it (NimbleBrain binds it to `tasks__*`), and the server
   serves its body, without the frontmatter, as its `instructions`, so an MCP client that loads
   no skills learns the same order of calls. A change to how the tools are used is a change to
-  that file.
+  that file. Every JSON example in it is a call the contract accepts (each cron with its
+  `timezone`), which `test/unit/plugins/tasks-skill-examples.test.ts` checks against the
+  contract's `create` input.
 
 ## Calls
 

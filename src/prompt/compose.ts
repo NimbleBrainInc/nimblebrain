@@ -995,7 +995,9 @@ function formatNoWorkspaceContext(): string {
 /**
  * User identity (name / timezone / locale) — STABLE across a session, so it
  * lives in the cached system prefix. Returns "" when no identity fields are set
- * (the caller then emits no `## User` section).
+ * (the caller then emits no `## User` section). The runtime always passes the
+ * person's effective timezone (`Runtime.promptPrefsFor`), so a run's prompt
+ * always states one.
  */
 function formatUserIdentity(prefs?: UserPrefs): string {
   const lines: string[] = [];
@@ -1010,7 +1012,7 @@ function formatUserIdentity(prefs?: UserPrefs): string {
 /**
  * Current date — VOLATILE (changes every turn), so it rides the latest user
  * message rather than the cached system block. Always emitted so the model
- * knows "today"; formatted in the user's timezone when it's valid.
+ * knows "today"; formatted in the user's timezone when it's valid, and naming it.
  */
 function formatCurrentDate(prefs?: UserPrefs): string {
   const now = new Date();
@@ -1020,15 +1022,17 @@ function formatCurrentDate(prefs?: UserPrefs): string {
     month: "long",
     day: "numeric",
   };
+  let zone = "";
   if (prefs?.timezone) {
     try {
       // Validate the timezone before using it (may be untrusted input)
       Intl.DateTimeFormat("en-US", { timeZone: prefs.timezone });
       dateOpts.timeZone = prefs.timezone;
+      zone = ` (${prefs.timezone})`;
     } catch {
       // Invalid timezone — fall back to system default
     }
   }
   const formatted = now.toLocaleDateString("en-US", dateOpts);
-  return `## Current Date\n\n- Today's date: ${formatted}`;
+  return `## Current Date\n\n- Today's date: ${formatted}${zone}`;
 }

@@ -233,7 +233,7 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  *   - no Layer 3 skills: a skill bound to a tool reaches the model before
  *     that tool's first call, never at turn start (ADR-0053), and declared
  *     skills belong to task runs.
- *   - `prefs` = identity preferences.
+ *   - `prefs` = `runtime.promptPrefsFor(identity)`, the effective timezone included.
  *
  * Skipped vs. `runtime.chat()` (request-scoped, no signal in a debug
  * call):
@@ -307,13 +307,7 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
     apps,
     undefined, // focused app — request-scoped
     undefined, // app state — request-scoped
-    identity
-      ? {
-          displayName: identity.displayName ?? "",
-          timezone: identity.preferences?.timezone ?? "",
-          locale: identity.preferences?.locale ?? "en-US",
-        }
-      : undefined,
+    await runtime.promptPrefsFor(identity),
     proxied.length > 0,
     workspaceContext,
     [],
