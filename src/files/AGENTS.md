@@ -66,7 +66,8 @@ code implements. The built-in implementation is `packages/files/` (`packages/fil
 - **Every door serves through `resolve`** as `host` with the caller's own workspace and owner;
   absent and another owner's file answer alike.
   - The browser download, `GET /v1/workspaces/:wsId/files/:fileId` (`file-serve.ts`): the
-    host's own headers (allowlisted `Content-Type` else octet-stream, `nosniff`,
+    host's own headers (the record's `Content-Type`, parameters kept, when its bare type is
+    allowlisted and it is tokens throughout, else octet-stream; `nosniff`,
     `FILE_BYTES_CSP`, a sanitised RFC 6266 `Content-Disposition`), one `Range` passed through.
     `FILE_BYTES_CSP` is always sent: an operator can clear `NB_CSP`, and a stored HTML or SVG
     file must never run script on the shell's origin.
