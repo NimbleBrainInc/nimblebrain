@@ -1,23 +1,13 @@
 import { useEffect, useState } from "react";
 import { StatusIcon } from "../icons.tsx";
+import { stepTitle } from "../lib/needs-you.ts";
 import type { RunToolCall } from "../types.ts";
 import { Section } from "./Section.tsx";
 
 /** Steps shown before "Show all": enough to read the run's shape without a wall of rows. */
 const FIRST_STEPS = 8;
 
-/**
- * A tool call as a step a person reads: `hubspot__search_deals` is "Search
- * deals" in hubspot. The name keeps its source so two tools of the same name
- * stay apart.
- */
-export function stepTitle(name: string): { action: string; source?: string } {
-  const sep = name.indexOf("__");
-  const source = sep > 0 ? name.slice(0, sep) : undefined;
-  const raw = (sep > 0 ? name.slice(sep + 2) : name).replace(/[_-]+/g, " ").trim();
-  const action = raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : name;
-  return { action, ...(source ? { source } : {}) };
-}
+export { stepTitle };
 
 /** Milliseconds as a step's duration: "340 ms", "2.4 s", "1m 05s". */
 export function stepDuration(ms: number): string {

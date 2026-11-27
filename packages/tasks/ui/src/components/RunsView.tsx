@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { dayLabel, type Job, jobsOf } from "../lib/jobs.ts";
+import { outcomeOf } from "../lib/outcome.ts";
 import type { TaskBatch, TaskSummary } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatUsd, toolErrorText } from "../utils.ts";
@@ -11,38 +12,13 @@ const BATCHES_READ = 100;
 const ONEOFF_PAGE = 500;
 const ONEOFF_PAGES = 4;
 
-/**
- * A one-off's last run label in the board's words. A label this screen does
- * not know is shown verbatim (CONTRACT.md §4).
- */
-function statusWord(label: string | undefined): { word: string; tone: string } {
-  switch (label) {
-    case undefined:
-    case "Queued":
-    case "Running":
-      return { word: "Running", tone: "active" };
-    case "Succeeded":
-      return { word: "Done", tone: "success" };
-    case "Needs review":
-    case "Poor result":
-      return { word: "Needs you", tone: "warning" };
-    case "Cancelled":
-      return { word: "Stopped", tone: "muted" };
-    case "Skipped":
-      return { word: "Didn't run", tone: "muted" };
-    case "Failed":
-      return { word: "Didn't work", tone: "danger" };
-    default:
-      return { word: label, tone: "muted" };
-  }
-}
-
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
 /** A one-off row's outcome: its last run's label. */
 function OneoffStatus({ job }: { job: Extract<Job, { kind: "oneoff" }> }) {
-  const s = statusWord(job.lastLabel);
+  // A one-off with no label yet has not ended its first run.
+  const s = outcomeOf(job.lastLabel ?? "Running");
   return <span className={`job-status tone-${s.tone}`}>{s.word}</span>;
 }
 

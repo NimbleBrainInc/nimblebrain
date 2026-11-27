@@ -104,6 +104,7 @@ async function enableAndRetry(saved: boolean) {
           onSeeActivity: noop,
           onOpenBatch: noop,
           onOpenOneoff: noop,
+          onEditTask: noop,
         },
       }),
     ),

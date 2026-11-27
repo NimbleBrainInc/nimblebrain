@@ -223,6 +223,7 @@ function statsOf(task: TaskDef, ended: RunRecord[], since: number) {
       label: labelOf(r),
       ...(r.startedAt ? { startedAt: r.startedAt } : {}),
       ...(r.error ? { error: r.error.slice(0, STATS_ERROR_CHARS) } : {}),
+      ...(r.toolFailures ? { toolFailures: r.toolFailures } : {}),
     }));
   }
   return out;

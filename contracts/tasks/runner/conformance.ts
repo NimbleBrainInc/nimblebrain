@@ -987,6 +987,38 @@ async function unattendedCases(c: FullCtx): Promise<void> {
       await host.dueAll(CLOCK_START, CLOCK_START + DAY);
     },
   );
+  await h.run(
+    "a definition whose allowedTools names only refused tools is invalid_input",
+    async () => {
+      const refused = REFUSED_PUBLIC.map((tool) => `tasks__${tool}`);
+      for (const tool of ["create", "run"] as const) {
+        for (const entry of [...refused, "tasks__batch_*"]) {
+          const manifest = {
+            name: taskName(c.audit, `unrunnable ${entry}`),
+            allowedTools: [entry],
+          };
+          const args =
+            tool === "create" ? { manifest, body: "x" } : { definition: { manifest, body: "x" } };
+          expectPublicError(await person.call(tool, args), "invalid_input", `${tool} ${entry}`);
+        }
+      }
+      const taskId = await createTask(
+        person,
+        { name: taskName(c.audit, "runnable tools"), allowedTools: ["tasks__*", "other__create"] },
+        "x",
+      );
+      expectPublicError(
+        await person.call("update", { taskId, manifest: { allowedTools: ["tasks__cancel"] } }),
+        "invalid_input",
+        "update",
+      );
+      eq(
+        obj((await okCall(person, "status", { taskId })).task, "task").allowedTools,
+        ["tasks__*", "other__create"],
+        "the task's allowedTools after a refused update",
+      );
+    },
+  );
   await h.run("tools allowed unattended still answer an unattended call", async () => {
     const run = person.as({ unattended: true });
     for (const [tool, args] of [

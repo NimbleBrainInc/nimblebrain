@@ -216,6 +216,8 @@ export function TasksUI() {
     onDescribe: canChat
       ? (sentence) => sendMessage(describeMessage(sentence, viewerTimezone()))
       : undefined,
+    onEditTask: (t) => push({ kind: "editor", taskId: t.id }),
+    onAsk: canChat ? (message) => sendMessage(message) : undefined,
     onSeeActivity: () => push({ kind: "activity" }),
     onOpenBatch: (batch) => push({ kind: "batch", batchId: batch.id, batch }),
     onOpenOneoff: (taskId, name) => push({ kind: "activity", taskId, taskName: name }),
@@ -230,6 +232,7 @@ export function TasksUI() {
     onSetEnabled: (d, enabled) => setEnabled(d, enabled),
     onOpenRun: (run) => openRun(run.id, run.taskId, run),
     onSeeRuns: (d) => push({ kind: "activity", taskId: d.id, taskName: d.name }),
+    onAsk: canChat ? (message) => sendMessage(message) : undefined,
   };
 
   const dialogs = (
@@ -307,6 +310,8 @@ export function TasksUI() {
           onOpenRun={openRun}
           onReplaceTop={(s) => setStack((prev) => [...prev.slice(0, -1), ...(s ? [s] : [])])}
           onRerun={(task, input) => void runNow(task, input)}
+          onEdit={(taskId) => push({ kind: "editor", taskId })}
+          onAsk={canChat ? (message) => sendMessage(message) : undefined}
           onSaved={() => {
             setNotice(null);
             refresh();
@@ -341,6 +346,8 @@ function ScreenRoute({
   onOpenRun,
   onReplaceTop,
   onRerun,
+  onEdit,
+  onAsk,
   onSaved,
 }: {
   screen: Screen;
@@ -352,6 +359,8 @@ function ScreenRoute({
   onOpenRun: (runId: string, taskId?: string, run?: TaskRun) => void;
   onReplaceTop: (s: Screen | null) => void;
   onRerun: (task: TaskRef, input: unknown) => void;
+  onEdit: (taskId: string) => void;
+  onAsk?: (message: string) => void;
   onSaved: () => void;
 }) {
   const nameOf = (taskId: string) => tasks.find((t) => t.id === taskId)?.name;
@@ -370,6 +379,8 @@ function ScreenRoute({
           onOpenRun={openRun}
           onOpenBatch={(batchId) => onPush({ kind: "batch", batchId })}
           onRunLoaded={(run) => onRunLoaded(screen.runId, run)}
+          onEdit={onEdit}
+          onAsk={onAsk}
         />
       );
     case "batch":

@@ -113,7 +113,13 @@ The public tools' behaviour, where a schema cannot state it.
   per UTC calendar month, or in total. The implementation enforces it through the run's spend
   accounts (§7), and disables the task when it is spent.
 - **`allowedTools` and `skills` are opaque to the implementation.** It stores them and puts them
-  in the work spec; only the host matches a glob or resolves a skill.
+  in the work spec; only the host matches a glob or resolves a skill. One rule reads this
+  contract's own tools: `create`, `update` (the list it is given) and an inline `definition`
+  refuse with `invalid_input`, naming them, the `allowedTools` entries that begin `tasks__` and,
+  with `*` matching any characters, match at least one `tasks__<tool>` (§3) and only tools marked
+  `refused` (§10). No run can call such a tool, so the entry only hides that from the author. An
+  entry that also matches a tool runs may call (`tasks__*`), or names another server's tool, is
+  kept as given.
 - **A one-off** is a task with `kind: "oneoff"`, created by `run` or `run_batch` from an inline
   `definition`. With an `idempotencyKey`, its id is derived from the key.
 - **`run`** asks for a run and answers at once with `{ runId, taskId }`; `run_result` reads its
@@ -460,6 +466,8 @@ authority, recorded when the owner set the work up. The mechanism is the host-co
   call a run makes.
 - **The server refuses a `refused` tool on a call with `unattended: true`** with
   `unattended_refused`, and changes nothing.
+- **A definition never lists a `refused` tool alone** in `allowedTools` (§4), so the person
+  setting it up learns then, not from a run, that a run cannot author, start or stop work.
 
 ## 11. Notices
 
@@ -550,7 +558,8 @@ the runner checks at least:
 - the hint resource: `tasks://due/<workspaceId>` reads `{}` and accepts a subscription from
   `host` for its own workspace, and refuses (`-32602`, `forbidden`) another principal and another
   workspace's URI;
-- the unattended rule, and `grant_missing` on every grant-marked tool;
+- the unattended rule, `grant_missing` on every grant-marked tool, and `invalid_input` for an
+  `allowedTools` entry that names only `refused` tools;
 - that a grant never appears outside `begin_run`'s run answer;
 - the clock rule, driving `due`, `begin_run` and `offer_event` with a stated `now`, retention on
   `due` included;

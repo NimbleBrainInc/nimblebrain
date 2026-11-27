@@ -199,9 +199,17 @@ export interface RunRecord {
   costUsd?: number;
   unpricedCalls?: number;
   unrecoveredToolFailures?: string[];
+  /** Each tool in `unrecoveredToolFailures`, with why its last failed call failed. */
+  toolFailures?: ToolFailure[];
   assessment?: Assessment;
   /** What `end_run` answered, so a repeat answers the same. */
   notices?: Notice[];
+}
+
+/** A tool whose failed calls no later call made good, and the host's reason for its last failure. */
+export interface ToolFailure {
+  name: string;
+  errorReason?: string;
 }
 
 /** What a claim of a ref was answered, kept for a repeat of the same token. */
