@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, rmSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -211,14 +211,66 @@ describe("WorkspaceStore CRUD", () => {
     expect(result).toBeNull();
   });
 
-  test("delete removes the directory", async () => {
-    const ws = await store.create("ToDelete");
+  test("delete leaves a tombstone: the workspace is gone from get and list, its data stays", async () => {
+    const ws = await store.create("ToDelete", { members: [{ userId: "usr_a", role: "admin" }] });
     const dirPath = join(workDir, "workspaces", ws.id);
-    expect(existsSync(dirPath)).toBe(true);
 
-    const deleted = await store.delete(ws.id);
-    expect(deleted).toBe(true);
-    expect(existsSync(dirPath)).toBe(false);
+    expect(await store.delete(ws.id, { deletedBy: "usr_a" })).toBe(true);
+    expect(await store.get(ws.id)).toBeNull();
+    expect((await store.list()).map((w) => w.id)).not.toContain(ws.id);
+    expect(store.isDeleted(ws.id)).toBe(true);
+    expect(existsSync(join(dirPath, "workspace.json"))).toBe(true);
+    // A deleted workspace takes no writes through the store.
+    expect(await store.update(ws.id, { name: "X" })).toBeNull();
+    await expect(store.addMember(ws.id, "usr_b", "member")).rejects.toThrow("not found");
+
+    const deleted = await store.getDeleted(ws.id);
+    expect(deleted?.workspace?.name).toBe("ToDelete");
+    expect(deleted?.tombstone.deletedBy).toBe("usr_a");
+    expect((await store.listDeleted()).map((d) => d.id)).toEqual([ws.id]);
+    // Deleting it again is a no-op.
+    expect(await store.delete(ws.id)).toBe(false);
+  });
+
+  test("restore removes the tombstone and the workspace is as it was", async () => {
+    const ws = await store.create("Back", { members: [{ userId: "usr_a", role: "admin" }] });
+    await store.delete(ws.id);
+    expect((await store.restore(ws.id))?.id).toBe(ws.id);
+    expect(await store.get(ws.id)).toEqual(ws);
+    expect(await store.getDeleted(ws.id)).toBeNull();
+    expect(await store.restore(ws.id)).toBeNull();
+  });
+
+  test("markPurging records the first moment only", async () => {
+    const ws = await store.create("Going");
+    await store.delete(ws.id);
+    const first = await store.markPurging(ws.id, new Date("2026-01-01T00:00:00.000Z"));
+    const second = await store.markPurging(ws.id, new Date("2026-02-01T00:00:00.000Z"));
+    expect(first?.purgeAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(second?.purgeAt).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  test("remove takes a deleted workspace's directory and refuses a live one", async () => {
+    const gone = await store.create("Gone");
+    const live = await store.create("Live");
+    await store.delete(gone.id);
+
+    await store.remove(gone.id);
+    expect(existsSync(join(workDir, "workspaces", gone.id))).toBe(false);
+    expect(await store.listDeleted()).toEqual([]);
+    await expect(store.remove(live.id)).rejects.toThrow("is not deleted");
+    expect(await store.get(live.id)).not.toBeNull();
+  });
+
+  test("a tombstone whose record is gone is still a deleted workspace, never a live one", async () => {
+    const ws = await store.create("Half");
+    await store.delete(ws.id);
+    rmSync(join(workDir, "workspaces", ws.id, "workspace.json"));
+    expect(await store.getDeleted(ws.id)).toEqual(
+      expect.objectContaining({ id: ws.id, workspace: null }),
+    );
+    expect(await store.get(ws.id)).toBeNull();
+    expect(await store.restore(ws.id)).toBeNull();
   });
 
   test("delete returns false for non-existent workspace", async () => {
@@ -498,7 +550,7 @@ describe("onMembershipChanged", () => {
     expect(seen).toEqual(["usr_alice"]);
   });
 
-  test("fires on delete for every former member", async () => {
+  test("fires on delete and on restore for every member", async () => {
     const ws = await store.create("Team", {
       members: [
         { userId: "usr_alice", role: "admin" },
@@ -510,6 +562,9 @@ describe("onMembershipChanged", () => {
 
     const ok = await store.delete(ws.id);
     expect(ok).toBe(true);
+    expect(seen.sort()).toEqual(["usr_alice", "usr_bob"]);
+    seen.length = 0;
+    await store.restore(ws.id);
     expect(seen.sort()).toEqual(["usr_alice", "usr_bob"]);
   });
 

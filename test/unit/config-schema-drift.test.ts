@@ -7,6 +7,11 @@ import { PLUGIN_CONFIG_KEYS, PLUGIN_SERVER_CONFIG_KEYS } from "../../src/config/
 import { RUNS_CONFIG_BOUNDS, RUNS_CONFIG_KEYS, resolveRunsConfig } from "../../src/config/runs.ts";
 import { SECRETS_CONFIG_KEYS } from "../../src/config/secrets.ts";
 import {
+  resolveWorkspacesConfig,
+  WORKSPACES_CONFIG_BOUNDS,
+  WORKSPACES_CONFIG_KEYS,
+} from "../../src/config/workspaces.ts";
+import {
   COMPOSIO_PROVIDER_CONFIG_KEYS,
   CONNECTORS_CONFIG_KEYS,
   GATEWAY_CONFIG_KEYS,
@@ -46,6 +51,9 @@ const schema = JSON.parse(
   properties: {
     features: SchemaObject;
     runs: SchemaObject & {
+      properties: Record<string, { minimum: number; maximum: number; default?: number }>;
+    };
+    workspaces: SchemaObject & {
       properties: Record<string, { minimum: number; maximum: number; default?: number }>;
     };
     models: SchemaObject;
@@ -198,6 +206,21 @@ describe("config schema ↔ runs config", () => {
         ...RUNS_CONFIG_BOUNDS[key],
       });
       expect({ key, default: declared?.default }).toEqual({ key, default: resolved[key] });
+    }
+  });
+});
+
+describe("config schema ↔ workspaces config", () => {
+  expectLockstep("workspaces", schema.properties.workspaces, WORKSPACES_CONFIG_KEYS);
+
+  test("workspaces: each key's range and default match the resolver's", () => {
+    const resolved = resolveWorkspacesConfig();
+    for (const key of WORKSPACES_CONFIG_KEYS) {
+      const declared = schema.properties.workspaces.properties[key];
+      expect({ min: declared?.minimum, max: declared?.maximum }).toEqual(
+        WORKSPACES_CONFIG_BOUNDS[key],
+      );
+      expect(declared?.default).toBe(resolved[key]);
     }
   });
 });

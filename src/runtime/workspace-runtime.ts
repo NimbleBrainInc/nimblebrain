@@ -251,7 +251,7 @@ function unstartedUrlConnectorEntry(
  * Returns a Map<wsId, ToolRegistry> plus the inventory entries for lifecycle seeding.
  */
 export async function startWorkspaceConnectors(
-  workspaceStore: WorkspaceStore,
+  workspaceStore: Pick<WorkspaceStore, "list">,
   platformSources: ToolSource[],
   systemSource: ToolSource | null,
   // Required. Propagated to every McpSource so task-augmented tool calls

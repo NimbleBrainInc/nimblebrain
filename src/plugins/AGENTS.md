@@ -142,6 +142,8 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   only for the workspace in its context), `resources/subscribe` on a 2025-era one. The source's
   own listen stream carries no contract URI. A restarted server holds no subscription, so the
   watcher watches again when `BoundServer.connection()` changes.
+- **A purge calls `delete_workspace` on every binding whose contract marks it private**
+  (`BoundServer.privateTools`), never on a binding named in code (`src/workspace/AGENTS.md`).
 - **Private tools are hidden by the source** (`hiddenTools`, from the binding's
   `privateTools`): left out of `tools/list` and so of every agent listing and the door, and
   refused by `execute` and `startToolAsTask`. That is tidiness; the server's `forbidden` is

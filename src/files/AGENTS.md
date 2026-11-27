@@ -4,7 +4,7 @@ Scope: the workspace file store, paths, and the file locator (`src/files/`). Wor
 
 ## Files are workspace-owned
 
-A file lives at `workspaces/<wsId>/files/<ownerId>/<fileId>_<name>` (per-owner registry + bytes + sidecars in that partition), so the directory is the boundary: cross-workspace reads fail by construction and `workspace delete` archives files with the rest of the workspace. `FileEntry.ownerId`/`workspaceId` are denormalised — the path is authoritative.
+A file lives at `workspaces/<wsId>/files/<ownerId>/<fileId>_<name>` (per-owner registry + bytes + sidecars in that partition), so the directory is the boundary: cross-workspace reads fail by construction and a workspace keeps its files while deleted and loses them with its directory at the purge. `FileEntry.ownerId`/`workspaceId` are denormalised — the path is authoritative.
 
 - **Build a store ONLY via `runtime.getWorkspaceFileStore(wsId, ownerId)`**, which constructs through `workspaceFilesDir` from `src/files/paths.ts`, the single sanctioned site. `check:file-paths` rejects the identity-scoped `getIdentityContext(...).getDataPath("files")`.
 - **A `files://<id>` URI stays bare.** The workspace is NOT in the URI; it comes from the ambient request. `files__*` is an identity-door tool, so the workspace comes from `RequestContext.workspaceId` — the single workspace a request is bound to, set on every door:

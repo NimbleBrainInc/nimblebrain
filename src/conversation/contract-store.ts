@@ -194,12 +194,12 @@ export interface ContractConversations {
   /** Whether `id` is one of the scope's conversations. */
   has(scope: ContractScope, id: string): Promise<boolean>;
   /**
-   * Delete every owner's conversations in a workspace and release it; answers
-   * how many it removed. `ownerId` is any verified identity. Idempotent. Call
-   * it once the workspace is gone from the kernel, so no new `create` passes
-   * the workspace check; it waits for the ones already past it.
+   * Settle what this process still sends for a workspace: the creates already
+   * past the workspace check, and every queued write. A purge calls it before
+   * the contract's `delete_workspace`, once the workspace is deleted, so no
+   * new `create` passes the check.
    */
-  deleteWorkspace(scope: ContractScope): Promise<number>;
+  settle(workspaceId: string): Promise<void>;
   /** Settle every queued write. */
   flush(): Promise<void>;
 }
@@ -446,13 +446,11 @@ export function createContractConversations(
   return {
     forScope,
     has: async (scope, id) => (await load(scope, id)) !== null,
-    async deleteWorkspace(scope) {
+    async settle(workspaceId) {
       await Promise.all(
-        [...creating].filter((c) => c.workspaceId === scope.workspaceId).map((c) => c.done),
+        [...creating].filter((c) => c.workspaceId === workspaceId).map((c) => c.done),
       );
       await flush();
-      const out = await call("delete_workspace", {}, scope);
-      return Array.isArray(out.deleted) ? out.deleted.length : 0;
     },
     flush,
   };

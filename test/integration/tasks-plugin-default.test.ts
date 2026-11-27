@@ -477,14 +477,15 @@ describe("the door", () => {
 });
 
 describe("workspace delete", () => {
-  it("purges the workspace's tasks through the plugin", async () => {
+  it("a purge removes the workspace's tasks through the plugin", async () => {
     expect(existsSync(join(PLUGIN_DATA, "workspaces", WS))).toBe(true);
     const result = await runWithRequestContext({ identity: OWNER, workspaceId: WS }, () =>
       runtime.deleteWorkspace(WS),
     );
-    expect(result.deleteError).toBeUndefined();
-    expect(result.purgeError).toBeUndefined();
-    expect(result.tasksPurged).toBeGreaterThan(0);
+    expect(result.deleted).toBe(true);
+    expect(existsSync(join(PLUGIN_DATA, "workspaces", WS))).toBe(true);
+    const purge = await runtime.purgeWorkspace(WS);
+    expect(purge).toEqual({ purged: true, connectors: [] });
     expect(existsSync(join(PLUGIN_DATA, "workspaces", WS))).toBe(false);
   }, 30_000);
 });

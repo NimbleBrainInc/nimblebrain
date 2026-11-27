@@ -221,6 +221,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     connectors: fileConfig.connectors as RuntimeConfig["connectors"],
     files: fileConfig.files as RuntimeConfig["files"],
     runs: fileConfig.runs as RuntimeConfig["runs"],
+    workspaces: fileConfig.workspaces as RuntimeConfig["workspaces"],
     execution: fileConfig.execution as RuntimeConfig["execution"],
     plugins: fileConfig.plugins as RuntimeConfig["plugins"],
     usage: fileConfig.usage as RuntimeConfig["usage"],

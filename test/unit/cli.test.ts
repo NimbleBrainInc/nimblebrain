@@ -99,6 +99,7 @@ describe("loadConfig", () => {
       execution: { default: "native" },
       plugins: { tasks: false },
       runs: {},
+      workspaces: { deletedRetentionDays: 7 },
       files: {},
       brand: { name: "ACME" },
     };

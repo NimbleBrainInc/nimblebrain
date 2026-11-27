@@ -16,6 +16,7 @@ import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
 import { effectiveRunLimits, type ResolvedRunsConfig, resolveRunsConfig } from "../config/runs.ts";
+import { resolveWorkspacesConfig } from "../config/workspaces.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import {
   ConnectorCatalog,
@@ -151,7 +152,11 @@ import {
   type WireLifecycle,
 } from "../lifecycle/bindings.ts";
 import type { LifecycleNotifyDeps } from "../lifecycle/notify.ts";
-import { notifyReadyOnRunning, resetReadyNotifications } from "../lifecycle/notify.ts";
+import {
+  forgetReadyNotification,
+  notifyReadyOnRunning,
+  resetReadyNotifications,
+} from "../lifecycle/notify.ts";
 import type { LifecycleBinding } from "../lifecycle/types.ts";
 import {
   getModelByString,
@@ -271,6 +276,7 @@ import {
   type ConnectorPort,
   connectorPortForSource,
   stopAllToolSurfaceWatches,
+  stopWatchingToolSurface,
   watchToolSurface,
 } from "../tools/connector-surface.ts";
 import {
@@ -317,7 +323,11 @@ import type { TokenUsage } from "../usage/types.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import { assertWorkspaceRootExists, WorkspaceContext } from "../workspace/context.ts";
 import type { Workspace } from "../workspace/types.ts";
-import { WorkspaceStore } from "../workspace/workspace-store.ts";
+import {
+  WorkspaceNotFoundError,
+  WorkspaceStore,
+  type WorkspaceTombstone,
+} from "../workspace/workspace-store.ts";
 import { createRunAdmission, type RunAdmission } from "./admission.ts";
 import { chatResponseBody } from "./chat-response.ts";
 import {
@@ -665,41 +675,47 @@ class MultiEventSink implements EventSink {
   }
 }
 
-/**
- * What {@link Runtime.deleteWorkspace} did.
- *
- * `deleted` is the store's own idempotent answer — `false` when no such
- * workspace dir existed. `connectors` is one entry per connector the workspace
- * held, in teardown order, so a revoke that failed at a vendor is nameable
- * afterwards rather than lost with the record it belonged to.
- */
+/** What {@link Runtime.deleteWorkspace} did. */
 export interface WorkspaceDeleteResult {
+  /** `false` when no live workspace had the id (unknown, or already deleted). */
   deleted: boolean;
-  connectors: ConnectorTeardownOutcome[];
-  /**
-   * Why the archive-rename failed, when it did. Present only for a throw —
-   * `deleted: false` with no `deleteError` is the store's idempotent "no such
-   * workspace", which tore nothing down.
-   *
-   * It is reported rather than thrown for the same reason the per-connector
-   * outcomes are, only more urgently: the teardown has already run and is not
-   * reversible, so a caller that sees only the exception would tell an operator
-   * the delete was a no-op while the workspace sits on disk with every
-   * connector uninstalled and every grant revoked.
-   */
-  deleteError?: string;
-  /**
-   * Why purging the workspace's conversations or tasks failed, when one did.
-   * The workspace is already deleted (archived) when the purges run, so a
-   * failed purge leaves no live workspace; deleting the same id again runs the
-   * idempotent purges again.
-   */
-  purgeError?: string;
-  /** How many conversations the purge removed. */
-  conversationsPurged: number;
-  /** How many task definitions the purge removed (their runs and batches with them). */
-  tasksPurged?: number;
+  /** When the purge is due; restorable until then. Present when `deleted`. */
+  purgeAt?: string;
+  /** The purge, when the retention window is 0 and it ran at once. */
+  purge?: WorkspacePurgeResult;
 }
+
+/** What {@link Runtime.purgeWorkspace} did. */
+export interface WorkspacePurgeResult {
+  /** `true` once nothing of the workspace is left; `false` leaves its tombstone for the next pass. */
+  purged: boolean;
+  /** One entry per connector the workspace held, in teardown order. */
+  connectors: ConnectorTeardownOutcome[];
+  /** Why the purge stopped, when it did: a plugin's `delete_workspace` failed, or the kernel's own removal. */
+  error?: string;
+}
+
+/** A deleted workspace as an admin sees it. */
+export interface DeletedWorkspaceRow {
+  workspaceId: string;
+  /** `null` once a purge has removed the record. */
+  workspaceName: string | null;
+  memberCount: number;
+  deletedAt: string;
+  deletedBy: string | null;
+  /** When the purge is (or was) due. */
+  purgeAt: string;
+  /** Whether {@link Runtime.restoreWorkspace} would bring it back now. */
+  restorable: boolean;
+}
+
+/** What {@link Runtime.restoreWorkspace} did. */
+export type WorkspaceRestoreResult =
+  | { restored: true; workspace: Workspace }
+  | { restored: false; reason: "not_found" | "purging" };
+
+/** How often the purge reconcile runs after the one at boot. */
+const WORKSPACE_PURGE_INTERVAL_MS = 60 * 60_000;
 
 /**
  * What narrows who may call a connector's tools: the catalog's `adminTools`,
@@ -810,6 +826,11 @@ export class Runtime {
   private _runWorker: RunWorker | null = null;
   /** Signs the run grant a person's call to a grant-marked contract tool carries. */
   private _runGrants: RunGrants | null = null;
+  /** The last delete, restore or purge queued for each workspace (`oneAtATime`). */
+  private readonly _tombstoneOps = new Map<string, Promise<void>>();
+  /** The purge reconcile's pass in flight, and its timer. */
+  private _purgePass: Promise<void> | null = null;
+  private _purgeTimer: ReturnType<typeof setInterval> | null = null;
   /**
    * Every bound contract tool, by wire name (`<source>__<tool>`), that no call
    * made inside an unattended run reaches: what each contract document marks
@@ -1313,8 +1334,8 @@ export class Runtime {
     // the error rather than leaving a scheduled run parked forever.
     try {
       // Declared here rather than beside `manageUsersCtx` above: both carry the
-      // runtime, because `manage_workspaces delete` cascades connector teardown
-      // through `Runtime.deleteWorkspace` rather than calling the store.
+      // runtime, because `manage_workspaces` deletes, restores and purges
+      // through the runtime rather than calling the store.
       const manageWorkspacesCtx = { getIdentity, workspaceStore, userStore, runtime: rt };
 
       // Brokered teardown and boot-state derivation dispatch through the
@@ -1416,37 +1437,17 @@ export class Runtime {
       const workspaceSources = platformSources.filter((s) => !isIdentitySource(s.name));
 
       // Phase 3: Start workspace connectors with per-workspace registries
+      rt._workspaceSources = workspaceSources;
       const { registries: workspaceRegistries, entries: workspaceConnectorEntries } =
-        await startWorkspaceConnectors(workspaceStore, workspaceSources, systemTools, events, {
-          workDir: resolveWorkDir(config),
-          allowInsecureRemotes,
-          // Boot re-spawn picks up host-resources handlers per workspace so
-          // a platform restart doesn't silently drop the capability for
-          // already-installed connectors.
-          getConnectorMcpDeps: connectorMcpDepsFactory,
-          // A minted fleet connector starts with its catalog entry's credential
-          // settings, or not at all. A fresh catalog per read: the source keeps
-          // this reader for its restarts, which must see the operator's edits.
-          readCatalog: () => rt.getConnectorCatalog().catalogEntries(),
-          // A brokered connector's boot readiness is its provider's answer, not a
-          // token file — the same predicate `seedUrlConnectionState` consumes.
-          managedConnectors: rt.getManagedConnectorRegistry(),
-          // Late-bound: a boot-started connection that loses auth mid-session
-          // fires this on a post-boot tool call, by which point `rt.lifecycle`
-          // is constructed. Flip the Connection to reauth_required so the UI
-          // offers "Reconnect" instead of every call failing silently.
-          onAuthLost: (wsId: string, serverName: string) => {
-            rt.lifecycle?.recordConnectionStateChange(
-              serverName,
-              wsId,
-              "_workspace",
-              "reauth_required",
-            );
-          },
-        });
+        await startWorkspaceConnectors(
+          workspaceStore,
+          workspaceSources,
+          systemTools,
+          events,
+          rt.connectorStartOptions(),
+        );
       rt._workspaceRegistries = workspaceRegistries;
       rt._platformSources = platformSources;
-      rt._workspaceSources = workspaceSources;
       // Identity sources are in no workspace registry, so no registry relays
       // their servers' notifications. This does, each to the person it names.
       relayIdentitySourceNotifications(platformSources, events);
@@ -1503,6 +1504,9 @@ export class Runtime {
 
       // Unattended work starts once everything a run reaches is in place.
       await rt._runWorker?.start();
+      // Deleted workspaces whose window has passed are purged now and on an
+      // interval: their purge needs the bound plugins and the connector machinery.
+      rt.startPurgeReconcile();
 
       rt._bootReady.resolve();
       return rt;
@@ -1567,8 +1571,12 @@ export class Runtime {
         logLevel: this.config.logging?.level ?? "normal",
         // Identity and scope are the kernel's: the plugin creates storage for any
         // workspace the kernel stamps, so the kernel stamps only a live one.
-        assertWorkspace: ({ workspaceId }) =>
-          assertWorkspaceRootExists(join(workspacesDir, workspaceId)),
+        assertWorkspace: ({ workspaceId }) => {
+          assertWorkspaceRootExists(join(workspacesDir, workspaceId));
+          if (this._workspaceStore.isDeleted(workspaceId)) {
+            throw new WorkspaceNotFoundError(workspaceId);
+          }
+        },
       });
     }
     const tasks = this._boundServers.get(TASKS_CONTRACT);
@@ -4853,152 +4861,345 @@ export class Runtime {
   }
 
   /**
-   * Delete a workspace, tearing down every connector it holds first.
+   * Delete a workspace: it becomes a tombstone (`WorkspaceStore.delete`), and
+   * from that moment every door answers it as not found. Nothing it holds is
+   * removed and no plugin is called: the run worker stops serving it and stops
+   * its runs, and its connectors are stopped and dropped from this process as a
+   * boot that skips it would leave them, so a restore within the retention
+   * window brings everything back. The purge comes after the window
+   * ({@link purgeDeletedWorkspaces}); with a window of 0 it runs now and its
+   * result is returned.
    *
-   * **The cascade goes here, not in the store.** A workspace owns its
-   * connectors, so deleting the container has to run the same teardown as
-   * removing each thing it holds — otherwise the grants stay live at the
-   * vendor, the subprocesses keep running, and the hooks keep their key ids.
-   * `WorkspaceStore.delete` knows nothing about connectors and must not: it
-   * does the rename, and a store reaching for a lifecycle handle is the cycle
-   * this seam exists to avoid.
-   *
-   * **Order is not a preference.** Teardown runs BEFORE the rename.
-   * `on_removing` needs the connector still reachable, and the credential cleanup
-   * inside `lifecycle.uninstall` needs the credential directory at its live
-   * path; after the rename both address a tree that has moved.
-   *
-   * **Best-effort per connector**, like `notifyRemoving` already is. One
-   * connector that cannot be reached must not strand the workspace
-   * half-deleted, so outcomes are collected and returned rather than thrown —
-   * a failed revoke is visible instead of silent.
-   *
-   * No secret keys are passed to the teardown: every connector is going, so
-   * "does a sibling still name this key" has no answer worth acting on, and the
-   * keys in question are operator-set workspace secrets, which survive the
-   * rename into the archive. The connector's OWN credentials do not — the
-   * teardown clears its OAuth records and brokered credential dir a step
-   * earlier, deliberately, since revoking upstream is the point.
+   * The deleting identity is recorded on the tombstone, for an admin's view.
+   * Queued with the workspace's restores and purges, so a restore never lands
+   * while the delete is still stopping what the restore starts.
    */
-  async deleteWorkspace(wsId: string): Promise<WorkspaceDeleteResult> {
-    // First, before the teardown and long before the rename: the run worker
-    // stops serving the workspace and stops its runs in flight, so none runs
-    // against half-removed connectors. An item still on the queue is settled
-    // unrun when it is claimed, since the workspace is no longer served.
-    await this._runWorker?.drop(wsId);
-
-    const ws = await this.getWorkspaceStore().get(wsId);
-    const connectors: ConnectorTeardownOutcome[] = [];
-    // The rows are read once, ahead of the loop, and that matters: each
-    // teardown rewrites `workspace.json#connectors[]`, so re-reading per
-    // iteration would walk a shrinking list and skip entries. Deduplicated
-    // because two rows can name one server, and the second pass would
-    // tear down nothing and report a failure that never happened.
-    const seen = new Set<string>();
-    for (const ref of ws?.connectors ?? []) {
-      // The same predicate boot skips on (`buildWorkspaceProcessInventory` in
-      // `workspace-runtime.ts`): "does this row name a server at all".
-      const serverName = serverNameFromRef(ref);
-      if (!serverName) {
-        // A row with no serverName addresses no live connection — every
-        // teardown step keys on a server name, and `matchesServerName` reads
-        // such a row as matching nothing. Reported rather than skipped: a
-        // delete is the last moment anyone looks.
-        connectors.push({
-          serverName: "",
-          ok: false,
-          error: "Connector row names no serverName.",
-          secrets: { deleted: [], failed: [] },
-        });
-        continue;
+  deleteWorkspace(wsId: string): Promise<WorkspaceDeleteResult> {
+    const deletedBy = getRequestContext()?.identity?.id ?? null;
+    return this.oneAtATime(wsId, async () => {
+      if (!(await this._workspaceStore.delete(wsId, { deletedBy }))) return { deleted: false };
+      await this._runWorker?.drop(wsId);
+      await this.unloadWorkspaceConnectors(wsId);
+      const deleted = await this._workspaceStore.getDeleted(wsId);
+      const purgeAt = deleted ? this.purgeTimeOf(deleted.tombstone) : new Date();
+      if (purgeAt.getTime() > Date.now()) {
+        return { deleted: true, purgeAt: purgeAt.toISOString() };
       }
-      if (seen.has(serverName)) continue;
-      seen.add(serverName);
-      connectors.push(await uninstallWorkspaceConnector(this, wsId, serverName));
-    }
-    // The rename is guarded because the teardown above it is not reversible.
-    // `WorkspaceStore.delete` throws on a filesystem it cannot rename into
-    // (ENOSPC, EROFS, a collided archive destination), and letting that escape
-    // would hand the caller an exception carrying none of what was just torn
-    // down — reported as a failed delete, which before this cascade existed was
-    // a true no-op and now is not.
-    let deleted = false;
-    let deleteError: string | undefined;
-    try {
-      deleted = await this.getWorkspaceStore().delete(wsId);
-    } catch (err) {
-      deleteError = err instanceof Error ? err.message : String(err);
-    }
-    if (deleteError) return { deleted, connectors, deleteError, conversationsPurged: 0 };
-
-    // The purges run after the rename: with the workspace gone no new
-    // conversation can be created in it (`create` asserts the workspace root),
-    // and the purge waits for any create already past that check. They run
-    // whether or not the store still held the workspace, so deleting an id
-    // again retries a purge that failed; each `delete_workspace` is idempotent.
-    const conversations = await this.purgeWorkspaceConversations(wsId);
-    const tasks = await this.purgeWorkspaceTasks(wsId);
-    const purgeError = conversations.purgeError ?? tasks.purgeError;
-    return {
-      deleted,
-      connectors,
-      conversationsPurged: conversations.conversationsPurged,
-      tasksPurged: tasks.tasksPurged,
-      ...(purgeError ? { purgeError } : {}),
-    };
-  }
-
-  /**
-   * Purge a workspace's tasks, runs and batches through the bound tasks plugin
-   * (the contract's `delete_workspace`, walled to the workspace), which holds
-   * them apart from the workspace's directory. With nothing bound there are
-   * none. A failure is reported rather than thrown.
-   */
-  private async purgeWorkspaceTasks(
-    wsId: string,
-  ): Promise<{ tasksPurged: number; purgeError?: string }> {
-    if (!this._tasks) return { tasksPurged: 0 };
-    try {
-      const answer = await this._tasks.call(
-        "delete_workspace",
-        { version: this._tasks.hostVersion },
-        { workspaceId: wsId },
-      );
-      const removed = answer.removed as { tasks?: unknown } | undefined;
-      return { tasksPurged: typeof removed?.tasks === "number" ? removed.tasks : 0 };
-    } catch (err) {
-      return { tasksPurged: 0, purgeError: err instanceof Error ? err.message : String(err) };
-    }
-  }
-
-  /** {@link deleteWorkspaceConversations}, with a failure reported rather than thrown. */
-  private async purgeWorkspaceConversations(
-    wsId: string,
-  ): Promise<Pick<WorkspaceDeleteResult, "conversationsPurged" | "purgeError">> {
-    try {
-      return { conversationsPurged: await this.deleteWorkspaceConversations(wsId) };
-    } catch (err) {
+      // Already this workspace's turn in the queue, so the purge runs here.
       return {
-        conversationsPurged: 0,
-        purgeError: err instanceof Error ? err.message : String(err),
+        deleted: true,
+        purgeAt: purgeAt.toISOString(),
+        purge: await this.purgeOnce(wsId, {}),
       };
+    });
+  }
+
+  /** The retention window for a deleted workspace, in ms (`workspaces.deletedRetentionDays`). */
+  private deletedRetentionMs(): number {
+    return resolveWorkspacesConfig(this.config.workspaces).deletedRetentionDays * 86_400_000;
+  }
+
+  /** When a tombstone's purge is due: when it began or was asked for, else the end of its window. */
+  private purgeTimeOf(tombstone: WorkspaceTombstone): Date {
+    if (tombstone.purgeAt) return new Date(tombstone.purgeAt);
+    return new Date(new Date(tombstone.deletedAt).getTime() + this.deletedRetentionMs());
+  }
+
+  /** Every deleted workspace, with when its purge is due and whether it can still be restored. */
+  async listDeletedWorkspaces(now: Date = new Date()): Promise<DeletedWorkspaceRow[]> {
+    return (await this._workspaceStore.listDeleted()).map(({ id, workspace, tombstone }) => {
+      const purgeAt = this.purgeTimeOf(tombstone);
+      return {
+        workspaceId: id,
+        workspaceName: workspace?.name ?? null,
+        memberCount: workspace?.members.length ?? 0,
+        deletedAt: tombstone.deletedAt,
+        deletedBy: tombstone.deletedBy,
+        purgeAt: purgeAt.toISOString(),
+        restorable: workspace !== null && !tombstone.purgeAt && purgeAt > now,
+      };
+    });
+  }
+
+  /**
+   * Bring a deleted workspace back as it was, within its retention window. No
+   * plugin was told it was deleted, so its records there are intact; its
+   * connectors start again as at boot and the run worker serves it again. Once
+   * its purge is due or has begun it cannot come back (`purging`).
+   */
+  async restoreWorkspace(wsId: string, now: Date = new Date()): Promise<WorkspaceRestoreResult> {
+    return this.oneAtATime(wsId, async () => {
+      const deleted = await this._workspaceStore.getDeleted(wsId);
+      if (!deleted?.workspace) return { restored: false, reason: "not_found" } as const;
+      if (deleted.tombstone.purgeAt || this.purgeTimeOf(deleted.tombstone) <= now) {
+        return { restored: false, reason: "purging" } as const;
+      }
+      const workspace = await this._workspaceStore.restore(wsId);
+      if (!workspace) return { restored: false, reason: "not_found" } as const;
+      await this.loadWorkspaceConnectors(workspace);
+      this._runWorker?.serve(wsId);
+      return { restored: true, workspace } as const;
+    });
+  }
+
+  /**
+   * Run `fn` after every delete, restore and purge of `wsId` already queued,
+   * so none of them lands in the middle of another. `fn` never queues on the
+   * same workspace: it would wait on itself.
+   */
+  private oneAtATime<T>(wsId: string, fn: () => Promise<T>): Promise<T> {
+    const result = (this._tombstoneOps.get(wsId) ?? Promise.resolve()).then(fn);
+    const tail = result.then(
+      () => {},
+      () => {},
+    );
+    this._tombstoneOps.set(wsId, tail);
+    void tail.then(() => {
+      if (this._tombstoneOps.get(wsId) === tail) this._tombstoneOps.delete(wsId);
+    });
+    return result;
+  }
+
+  /**
+   * The purge reconcile: purge every deleted workspace whose window has passed,
+   * and every directory an earlier release archived as long ago. Runs at boot
+   * and every {@link WORKSPACE_PURGE_INTERVAL_MS}. Idempotent, and a purge that
+   * stopped halfway (a crash, a plugin's error) is finished by a later pass.
+   */
+  async purgeDeletedWorkspaces(now: Date = new Date()): Promise<Map<string, WorkspacePurgeResult>> {
+    const results = new Map<string, WorkspacePurgeResult>();
+    for (const { id, tombstone } of await this._workspaceStore.listDeleted()) {
+      if (this.purgeTimeOf(tombstone) > now) continue;
+      results.set(id, await this.purgeWorkspace(id, { at: now }));
+    }
+    const cutoff = new Date(now.getTime() - this.deletedRetentionMs());
+    for (const name of await this._workspaceStore.removeArchivedBefore(cutoff)) {
+      log.info("[workspace] removed an archived workspace directory", { archive: name });
+    }
+    return results;
+  }
+
+  /**
+   * Purge one deleted workspace now, whether or not its window has passed: the
+   * reconcile's step for one workspace, and an admin's "purge now".
+   *
+   * The tombstone first records that the purge began, so it can no longer be
+   * restored. Then each bound plugin whose contract has a private
+   * `delete_workspace` is called for it as `host`, walled to the workspace with
+   * no owner: it removes every owner's records; an error stops the purge here
+   * and leaves the tombstone for the next pass. Then the kernel's own data: the connectors are torn down
+   * (each told `on_removing`, its grants revoked, as an uninstall does), the
+   * workspace's secrets deleted from the credential store, and the directory
+   * removed, record last. Every step is idempotent, so a pass that stopped
+   * anywhere is finished by running it again.
+   */
+  purgeWorkspace(wsId: string, opts: { at?: Date } = {}): Promise<WorkspacePurgeResult> {
+    return this.oneAtATime(wsId, () => this.purgeOnce(wsId, opts));
+  }
+
+  private async purgeOnce(wsId: string, opts: { at?: Date }): Promise<WorkspacePurgeResult> {
+    const tombstone = await this._workspaceStore.markPurging(wsId, opts.at ?? new Date());
+    if (!tombstone) {
+      // Nothing deleted to purge: done already, or never deleted.
+      return (await this._workspaceStore.get(wsId))
+        ? { purged: false, connectors: [], error: "the workspace is not deleted" }
+        : { purged: true, connectors: [] };
+    }
+    try {
+      await this.purgeWorkspacePlugins(wsId);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      log.warn("[workspace] purge stopped at a plugin; the next pass retries it", {
+        workspaceId: wsId,
+        error,
+      });
+      return { purged: false, connectors: [], error };
+    }
+    const connectors = await this.purgeWorkspaceConnectors(wsId);
+    try {
+      const scope = { kind: "workspace", wsId } as const;
+      const credentials = this.getCredentialStore();
+      for (const { key } of await credentials.list(scope)) await credentials.delete(scope, key);
+      await this._workspaceStore.remove(wsId);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      log.warn("[workspace] purge could not remove the workspace's data; the next pass retries", {
+        workspaceId: wsId,
+        error,
+      });
+      return { purged: false, connectors, error };
+    }
+    log.info("[workspace] purged a deleted workspace", { workspaceId: wsId });
+    return { purged: true, connectors };
+  }
+
+  /**
+   * Call `delete_workspace` on every bound plugin whose contract makes it a
+   * private tool, as `host` walled to the workspace alone (no owner: the call
+   * is the host's and crosses every owner). The conversation writes this
+   * process still holds for the workspace settle first. Throws on the first
+   * error; each call is idempotent, so the next pass repeats them all.
+   */
+  private async purgeWorkspacePlugins(wsId: string): Promise<void> {
+    await this._conversations?.settle(wsId);
+    for (const server of this._boundServers.values()) {
+      if (!server.privateTools.has("delete_workspace")) continue;
+      try {
+        await server.call(
+          "delete_workspace",
+          { version: server.hostVersion },
+          { workspaceId: wsId },
+        );
+      } catch (err) {
+        throw new Error(
+          `${server.contract} delete_workspace: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   }
 
   /**
-   * Purge a workspace's conversations through the bound conversations plugin
-   * (the contract's `delete_workspace`), which holds them apart from the
-   * workspace's directory, so the archive rename does not carry them. With
-   * nothing bound there are none. The contract walls the call by an owner it
-   * ignores; the deleting identity is the verified one. Answers how many it
-   * removed.
+   * Tear down every connector a deleted workspace's record still names, through
+   * the one teardown an uninstall uses. Its connectors are started first, as a
+   * restore would, so each is reachable for `on_removing` and holds the ref its
+   * revoke needs; whatever is left in this process afterwards is dropped.
+   * Best-effort per connector: outcomes are collected, never thrown.
    */
-  private async deleteWorkspaceConversations(wsId: string): Promise<number> {
-    if (!this._conversations) return 0;
-    const ownerId = getRequestContext()?.identity?.id;
-    if (!ownerId)
-      throw new Error("deleting a workspace's conversations needs a signed-in identity");
-    return this._conversations.deleteWorkspace({ workspaceId: wsId, ownerId });
+  private async purgeWorkspaceConnectors(wsId: string): Promise<ConnectorTeardownOutcome[]> {
+    const workspace = (await this._workspaceStore.getDeleted(wsId))?.workspace;
+    const outcomes: ConnectorTeardownOutcome[] = [];
+    if (!workspace || workspace.connectors.length === 0) return outcomes;
+    await this.loadWorkspaceConnectors(workspace);
+    try {
+      // Deduplicated: two rows can name one server, and a second teardown would
+      // report a failure that never happened.
+      const seen = new Set<string>();
+      for (const ref of workspace.connectors) {
+        const serverName = serverNameFromRef(ref);
+        if (!serverName) {
+          outcomes.push({
+            serverName: "",
+            ok: false,
+            error: "Connector row names no serverName.",
+            secrets: { deleted: [], failed: [] },
+          });
+          continue;
+        }
+        if (seen.has(serverName)) continue;
+        seen.add(serverName);
+        outcomes.push(await uninstallWorkspaceConnector(this, wsId, serverName));
+      }
+    } finally {
+      await this.unloadWorkspaceConnectors(wsId);
+    }
+    for (const outcome of outcomes.filter((o) => !o.ok || o.revokeError)) {
+      log.warn("[workspace] a connector did not tear down cleanly in a purge", {
+        workspaceId: wsId,
+        serverName: outcome.serverName,
+        error: outcome.error ?? outcome.revokeError,
+      });
+    }
+    return outcomes;
+  }
+
+  /**
+   * Start a workspace's connectors and seed their lifecycle instances, exactly
+   * as boot does for every live workspace. A restore and a purge's teardown
+   * use it.
+   */
+  private async loadWorkspaceConnectors(workspace: Workspace): Promise<void> {
+    await this.unloadWorkspaceConnectors(workspace.id);
+    const { registries, entries } = await startWorkspaceConnectors(
+      { list: async () => [workspace] },
+      this._workspaceSources,
+      this._systemSource,
+      this.defaultEvents,
+      this.connectorStartOptions(),
+    );
+    for (const [wsId, registry] of registries) this._workspaceRegistries.set(wsId, registry);
+    await seedWorkspaceConnectorInstances(
+      this.lifecycle,
+      this.placementRegistry,
+      withCatalogUi(entries, await bootCatalogEntries(this), (wsId, serverName, entry) =>
+        this.warnCatalogMismatch(wsId, serverName, entry),
+      ),
+    );
+  }
+
+  /**
+   * Stop a workspace's connectors and forget them in this process: its registry,
+   * their lifecycle instances, placements and per-process records. Nothing
+   * stored changes, so this is the state a boot that skips the workspace
+   * leaves.
+   */
+  private async unloadWorkspaceConnectors(wsId: string): Promise<void> {
+    for (const instance of this.lifecycle.getInstances()) {
+      if (instance.wsId !== wsId) continue;
+      this.placementRegistry.unregister(instance.serverName, wsId);
+      this.lifecycle.removeInstance(instance.serverName, wsId);
+      stopWatchingToolSurface(wsId, instance.serverName);
+      forgetReadyNotification(wsId, instance.serverName);
+      forgetLifecycleBinding(wsId, instance.serverName);
+    }
+    const registry = this._workspaceRegistries.get(wsId);
+    this._workspaceRegistries.delete(wsId);
+    for (const name of registry?.sourceNames() ?? []) {
+      await registry?.removeSource(name).catch((err: unknown) => {
+        log.warn("[workspace] a connector did not stop", {
+          workspaceId: wsId,
+          serverName: name,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+  }
+
+  /** Run the purge reconcile now (boot) and on an interval, until shutdown. */
+  private startPurgeReconcile(): void {
+    const pass = () => {
+      if (this._purgePass) return;
+      this._purgePass = this.purgeDeletedWorkspaces()
+        .then(() => {})
+        .catch((err: unknown) => {
+          log.warn("[workspace] purge reconcile failed; the next pass retries", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        })
+        .finally(() => {
+          this._purgePass = null;
+        });
+    };
+    pass();
+    this._purgeTimer = setInterval(pass, WORKSPACE_PURGE_INTERVAL_MS);
+    this._purgeTimer.unref?.();
+  }
+
+  /** The options every start of installed workspace connectors uses, at boot and after. */
+  private connectorStartOptions(): Parameters<typeof startWorkspaceConnectors>[4] {
+    return {
+      workDir: this.getWorkDir(),
+      allowInsecureRemotes: this.getAllowInsecureRemotes(),
+      // A respawned connector keeps its host-resources handlers.
+      getConnectorMcpDeps: (wsId) => this.getConnectorMcpDeps(wsId),
+      // A minted fleet connector starts with its catalog entry's credential
+      // settings, or not at all. A fresh catalog per read: the source keeps
+      // this reader for its restarts, which must see the operator's edits.
+      readCatalog: () => this.getConnectorCatalog().catalogEntries(),
+      // A brokered connector's boot readiness is its provider's answer, not a
+      // token file — the same predicate `seedUrlConnectionState` consumes.
+      managedConnectors: this.getManagedConnectorRegistry(),
+      // Late-bound: a started connection that loses auth mid-session fires this
+      // on a later tool call, by which point the lifecycle is constructed. Flip
+      // the Connection to reauth_required so the UI offers "Reconnect".
+      onAuthLost: (wsId: string, serverName: string) => {
+        this.lifecycle?.recordConnectionStateChange(
+          serverName,
+          wsId,
+          "_workspace",
+          "reauth_required",
+        );
+      },
+    };
   }
 
   /**
@@ -6738,6 +6939,8 @@ export class Runtime {
   }
 
   async shutdown(): Promise<void> {
+    if (this._purgeTimer) clearInterval(this._purgeTimer);
+    this._purgeTimer = null;
     await this.telemetryManager.shutdown();
     // Detach the tool-set watches first: each holds a source, and through its
     // listener the reconcile deps that close over this runtime. The lifecycle

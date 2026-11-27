@@ -21,7 +21,7 @@ import {
 } from "../../components/ui/table";
 import { formatTokens, formatUsd } from "../../lib/format";
 import { Section, SettingsDashboardPage } from "./components";
-import type { Archive } from "./OrgArchivesTab";
+import type { DeletedWorkspace } from "./OrgDeletedWorkspacesTab";
 import {
   type DateRange,
   DIMENSION_OPTIONS,
@@ -46,8 +46,8 @@ import {
 // split (for the chat / task cards) in one scan.
 //
 // The report returns ids. The user and workspace rosters resolve them to
-// names here. A deleted workspace keeps its name in its archive; an id no list
-// knows (a deleted user, or a workspace whose archive was purged) is shown raw
+// names here. A deleted workspace keeps its name until it is purged; an id no list
+// knows (a deleted user, or a purged workspace) is shown raw
 // so the row stays auditable.
 
 interface UserRow {
@@ -65,7 +65,7 @@ interface WorkspaceRow {
 export interface UsageLabels {
   users: Map<string, UserRow>;
   workspaces: Map<string, WorkspaceRow>;
-  /** Deleted workspaces' names, by id, from their archives. */
+  /** Deleted workspaces' names, by id, until they are purged. */
   deletedWorkspaces: Map<string, string>;
 }
 
@@ -162,23 +162,23 @@ export function OrgUsageTab() {
     Promise.all([
       callToolWithoutWorkspace("nb", "manage_users", { action: "list" }).catch(() => null),
       callToolWithoutWorkspace("nb", "manage_workspaces", { action: "list" }).catch(() => null),
-      callToolWithoutWorkspace("nb", "manage_workspaces", { action: "list_archives" }).catch(
+      callToolWithoutWorkspace("nb", "manage_workspaces", { action: "list_deleted" }).catch(
         () => null,
       ),
-    ]).then(([usersRes, workspacesRes, archivesRes]) => {
+    ]).then(([usersRes, workspacesRes, deletedRes]) => {
       if (cancelled) return;
       const users = usersRes ? (parseToolResult<{ users: UserRow[] }>(usersRes).users ?? []) : [];
       const workspaces = workspacesRes
         ? (parseToolResult<{ workspaces: WorkspaceRow[] }>(workspacesRes).workspaces ?? [])
         : [];
-      const archives = archivesRes
-        ? (parseToolResult<{ archives: Archive[] }>(archivesRes).archives ?? [])
+      const deleted = deletedRes
+        ? (parseToolResult<{ deleted: DeletedWorkspace[] }>(deletedRes).deleted ?? [])
         : [];
       setLabels({
         users: new Map(users.map((u) => [u.id, u])),
         workspaces: new Map(workspaces.map((w) => [w.id, w])),
         deletedWorkspaces: new Map(
-          archives.flatMap((a) =>
+          deleted.flatMap((a) =>
             a.workspaceId && a.workspaceName ? [[a.workspaceId, a.workspaceName] as const] : [],
           ),
         ),

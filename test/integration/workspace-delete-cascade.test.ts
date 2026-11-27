@@ -1,26 +1,17 @@
 /**
- * Deleting a workspace runs the same teardown as removing each connector it
- * holds.
+ * Purging a deleted workspace runs the same teardown as removing each connector
+ * it holds; deleting it only stops them.
  *
- * Before this seam existed the ten steps of `handleUninstall` were inlined in
- * the tool and reachable from nowhere else, so a workspace delete archived the
- * subtree and left everything the connectors owned behind: the grants live at
- * the vendor, the sources registered, the hooks holding their key ids.
- *
- * Three things are pinned here, and each is the reason the cascade lives on the
- * runtime rather than in `WorkspaceStore`:
- *
- *   1. Every connector the workspace holds is torn down, through the one
+ *   1. Delete stops the workspace's connectors and forgets them in this process,
+ *      telling none of them anything, and restore starts them again.
+ *   2. The purge starts them as a restore would, so each is told `on_removing`
+ *      and holds the ref its revoke needs, then tears each down through the one
  *      teardown the `uninstall` action uses.
- *   2. `on_removing` is delivered while the subtree is still at its live path.
- *      After the rename the bundle and its credentials both address a tree that
- *      has moved, so the order is the contract, not a preference.
- *   3. A connector that throws mid-teardown is reported and the workspace is
- *      still deleted. One unreachable vendor must not strand a workspace
- *      half-deleted.
+ *   3. A connector that fails its teardown is reported and the purge still
+ *      completes. One unreachable vendor must not strand a deleted workspace.
  */
 
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,28 +23,17 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
-import type { McpSource } from "../../src/tools/mcp-source.ts";
-import { ARCHIVE_MARKER_FILENAME } from "../../src/workspace/workspace-store.ts";
+import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { marked, startLifecycleSource } from "../helpers/lifecycle-server.ts";
+import {
+  type FixtureCall,
+  marked,
+  serveModernLifecycleServer,
+} from "../helpers/lifecycle-server.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
-/**
- * Delete a workspace as a signed-in caller does: the purge of its conversations
- * (`delete_workspace` on the conversations plugin) is made in the deleting
- * identity's request context.
- */
-function deleteAsMember(rt: Runtime, wsId: string) {
-  return runWithRequestContext({ identity: DEV_IDENTITY, workspaceId: wsId }, () =>
-    rt.deleteWorkspace(wsId),
-  );
-}
-
-const ADMIN = { id: "usr_admin", email: "admin@example.test" };
 const WS_ID = "ws_003eba8844413cd9";
-
-/** `slugifyServerName` of each catalog id — what a ref's `serverName` records. */
 const ALPHA = "com-example-alpha";
 const BETA = "com-example-beta";
 const GAMMA = "com-example-gamma";
@@ -61,207 +41,131 @@ const GAMMA = "com-example-gamma";
 const BROKER = "example-broker";
 const REMOVING = "workspace_removing";
 
-/** One trace entry per lifecycle call, with the fact the order exists to protect. */
-interface Delivered {
-  connector: string;
-  /** Whether the workspace subtree was still at its live path when the call landed. */
-  subtreeStillLive: boolean;
-}
-
 let workDir: string;
-let catalogDir: string;
-let previousCatalogDir: string | undefined;
 let runtime: Runtime;
-let delivered: Delivered[];
-/** Sources whose `stop` throws right now — the teardown-failure injection. */
-let failingStops: Set<string>;
+let servers: Array<{ url: string; calls: FixtureCall[]; close: () => void }>;
 
-/**
- * Two catalog entries, read through the real projection
- * (`NB_CURATED_CATALOG_DIR`), so the connectors bind the way an installed
- * catalog connector does.
- */
-function writeCatalog(dir: string): void {
-  writeFileSync(
-    join(dir, "curated.yaml"),
-    `servers:
-${[
-  ["com.example/alpha", "Alpha", "https://alpha.example.test/mcp"],
-  ["com.example/beta", "Beta", "https://beta.example.test/mcp"],
-]
-  .map(
-    ([id, title, url]) => `  - name: ${id}
-    title: ${title}
-    description: Reference connector
-    version: "1.0.0"
-    remotes:
-      - type: streamable-http
-        url: ${url}
-    _meta:
-      ai.nimblebrain/connector:
-        auth: dcr
-`,
-  )
-  .join("")}`,
-  );
-}
-
-/**
- * A running connector that binds `removing` through `ai.nimblebrain/lifecycle`,
- * and records whether the workspace subtree was still live when the call
- * arrived.
- *
- * `stop` is the failure injection point — `ToolRegistry.removeSource` awaits
- * it, so a throwing `stop` is a teardown that fails at the step the tool's own
- * try/catch wraps.
- */
-async function fakeSource(name: string): Promise<McpSource> {
-  const { source } = await startLifecycleSource(name, { tools: [marked(REMOVING, "removing")] });
-  const stop = source.stop.bind(source);
-  // Driven by a live set rather than a one-shot latch: the delete stops a
-  // source TWICE (the upstream revoke tears the connection's source down, then
-  // `lifecycle.uninstall` removes it from the registry), and a latch spent on
-  // the first would leave the second — the step the guarded block actually
-  // wraps — succeeding. The test clears the set before shutdown.
-  source.stop = async () => {
-    if (failingStops.has(name)) throw new Error(`${name} would not stop`);
-    await stop();
+/** A connector reachable over HTTP that binds `removing`, installed with no credential to fetch. */
+function liveConnector(serverName: string): { ref: ConnectorRef; calls: FixtureCall[] } {
+  const served = serveModernLifecycleServer(serverName, {
+    tools: [marked(REMOVING, "removing")],
+  });
+  servers.push(served);
+  return {
+    ref: {
+      url: served.url,
+      serverName,
+      transport: { type: "streamable-http", auth: { type: "none" } },
+    },
+    calls: served.calls,
   };
-  const execute = source.execute.bind(source);
-  source.execute = (tool, ...rest) => {
-    if (tool === REMOVING) {
-      delivered.push({
-        connector: name,
-        subtreeStillLive: existsSync(join(workDir, "workspaces", WS_ID)),
-      });
-    }
-    return execute(tool, ...rest);
-  };
-  return source;
 }
 
-function refFor(serverName: string, url: string): ConnectorRef {
-  return { url, serverName };
-}
-
-/**
- * Seat both connectors the way an install leaves them: on the workspace record,
- * in the workspace registry, AND as a lifecycle instance.
- *
- * The instance is not decoration. `uninstallWorkspaceConnector` reads it to
- * decide whether to revoke upstream, and `lifecycle.uninstall` reads it to
- * reach `cleanupConnectorCredentials` → `cleanupBrokeredState`. Without one,
- * both steps are skipped and the teardown still reports `ok` — so a test that
- * omits it asserts the local bookkeeping and silently covers none of the
- * vendor-facing half.
- */
-async function seedConnectors(): Promise<void> {
-  const refs = [
-    refFor(ALPHA, "https://alpha.example.test/mcp"),
-    refFor(BETA, "https://beta.example.test/mcp"),
-  ];
-  await runtime.getWorkspaceStore().update(WS_ID, { connectors: refs });
-  const registry = await runtime.ensureWorkspaceRegistry(WS_ID);
-  for (const ref of refs) {
-    const name = ref.serverName as string;
-    registry.addSource(await fakeSource(name));
-    await runtime.getLifecycle().seedInstance(name, ref.url as string, ref, undefined, WS_ID);
-  }
-}
-
-beforeEach(async () => {
-  delivered = [];
-  failingStops = new Set();
-  workDir = mkdtempSync(join(tmpdir(), "nb-ws-delete-"));
-  catalogDir = mkdtempSync(join(tmpdir(), "nb-ws-delete-catalog-"));
-  mkdirSync(catalogDir, { recursive: true });
-  writeCatalog(catalogDir);
-  previousCatalogDir = process.env.NB_CURATED_CATALOG_DIR;
-  process.env.NB_CURATED_CATALOG_DIR = catalogDir;
-
+/** Install `refs` on the workspace record, then boot, so boot starts them as it does any install. */
+async function bootWith(refs: ConnectorRef[]): Promise<void> {
+  const store = new WorkspaceStore(workDir);
+  await seedWorkspace(store, WS_ID, {
+    name: "Helix",
+    members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
+  });
+  await store.update(WS_ID, { connectors: refs });
   runtime = await Runtime.start({
     identityProvider: devProvider,
     languageModel: createEchoModel(),
     logging: { disabled: true },
+    allowInsecureRemotes: true,
     workDir,
   });
-  await seedWorkspace(runtime.getWorkspaceStore(), WS_ID, { name: "Helix" });
-  await runtime.getWorkspaceStore().addMember(WS_ID, ADMIN.id, "admin");
+}
+
+function deleteAsMember() {
+  return runWithRequestContext({ identity: DEV_IDENTITY, workspaceId: WS_ID }, () =>
+    runtime.deleteWorkspace(WS_ID),
+  );
+}
+
+const removals = (calls: FixtureCall[]) => calls.filter((c) => c.tool === REMOVING).length;
+
+beforeEach(() => {
+  workDir = mkdtempSync(join(tmpdir(), "nb-ws-delete-"));
+  servers = [];
 });
 
 afterEach(async () => {
   await runtime.shutdown();
   stopAllToolSurfaceWatches();
-  if (previousCatalogDir === undefined) delete process.env.NB_CURATED_CATALOG_DIR;
-  else process.env.NB_CURATED_CATALOG_DIR = previousCatalogDir;
+  for (const s of servers) s.close();
   rmSync(workDir, { recursive: true, force: true });
-  rmSync(catalogDir, { recursive: true, force: true });
 });
 
-test("tears down every connector the workspace holds, before the subtree is renamed", async () => {
-  await seedConnectors();
+test("delete stops the connectors and tells them nothing; restore starts them again", async () => {
+  const alpha = liveConnector(ALPHA);
+  await bootWith([alpha.ref]);
+  expect(runtime.getRegistryForWorkspace(WS_ID).hasSource(ALPHA)).toBe(true);
 
-  const result = await deleteAsMember(runtime, WS_ID);
+  await deleteAsMember();
 
-  expect(result.deleted).toBe(true);
+  expect(runtime.getWorkspaceRegistries().has(WS_ID)).toBe(false);
+  expect(runtime.getLifecycle().getInstance(ALPHA, WS_ID)).toBeUndefined();
+  expect(removals(alpha.calls)).toBe(0);
+
+  expect((await runtime.restoreWorkspace(WS_ID)).restored).toBe(true);
+  expect(runtime.getRegistryForWorkspace(WS_ID).hasSource(ALPHA)).toBe(true);
+  expect(runtime.getLifecycle().getInstance(ALPHA, WS_ID)).toBeDefined();
+  expect(removals(alpha.calls)).toBe(0);
+}, 30_000);
+
+test("the purge tells each connector it is going, then tears each down", async () => {
+  const alpha = liveConnector(ALPHA);
+  const beta = liveConnector(BETA);
+  await bootWith([alpha.ref, beta.ref]);
+  await deleteAsMember();
+
+  const result = await runtime.purgeWorkspace(WS_ID);
+
+  expect(result.purged).toBe(true);
   expect(result.connectors.map((c) => c.serverName)).toEqual([ALPHA, BETA]);
   expect(result.connectors.every((c) => c.ok)).toBe(true);
-
-  // `ok` is the local teardown. `revoked` present is what says the upstream
-  // revoke was actually attempted — it is absent when the lifecycle held no
-  // instance, which is the shape a test can pass while covering none of the
-  // vendor-facing half.
-  expect(result.connectors.every((c) => c.revoked !== undefined)).toBe(true);
-
-  // Both bundles were told, and both were told while they could still reach
-  // their own credential directory. This is the assertion the ordering rule
-  // exists for: after the rename, `on_removing` and the credential cleanup
-  // inside `lifecycle.uninstall` both address a tree that has moved.
-  expect(delivered).toEqual([
-    { connector: ALPHA, subtreeStillLive: true },
-    { connector: BETA, subtreeStillLive: true },
-  ]);
-
-  // And the sources are gone from the registry, not merely orphaned by the
-  // record being archived.
-  const registry = await runtime.ensureWorkspaceRegistry(WS_ID);
-  expect(registry.hasSource(ALPHA)).toBe(false);
-  expect(registry.hasSource(BETA)).toBe(false);
-
+  // A revoke was attempted for each: the purge held each connector's instance.
+  expect(result.connectors.every((c) => c.revoked !== undefined || c.revokeError)).toBe(true);
+  expect(removals(alpha.calls)).toBe(1);
+  expect(removals(beta.calls)).toBe(1);
+  expect(runtime.getWorkspaceRegistries().has(WS_ID)).toBe(false);
+  expect(runtime.getLifecycle().getInstance(ALPHA, WS_ID)).toBeUndefined();
   expect(existsSync(join(workDir, "workspaces", WS_ID))).toBe(false);
-  expect(existsSync(join(workDir, "archived", WS_ID))).toBe(true);
-});
+}, 30_000);
 
-test("a connector that throws mid-teardown is reported, and the workspace still deletes", async () => {
-  await seedConnectors();
-  failingStops.add(ALPHA);
-
-  const result = await deleteAsMember(runtime, WS_ID);
-  // Cleared before `afterEach` shuts the runtime down — the throw leaves the
-  // source in the registry, so shutdown stops it once more.
-  failingStops.clear();
-
-  // Best-effort per connector: the failure is data, not an exception, so the
-  // caller can name the connector whose grant may still be live at a vendor.
-  const alpha = result.connectors.find((c) => c.serverName === ALPHA);
-  expect(alpha?.ok).toBe(false);
-  expect(alpha?.error).toContain("would not stop");
-
-  // The one that follows it still ran — a throw stops its own connector's
-  // teardown and nothing else.
-  expect(result.connectors.find((c) => c.serverName === BETA)?.ok).toBe(true);
-  expect(delivered.map((d) => d.connector)).toEqual([ALPHA, BETA]);
-
-  expect(result.deleted).toBe(true);
+test("a connector whose teardown throws is reported, and the purge still completes", async () => {
+  const alpha = liveConnector(ALPHA);
+  const beta = liveConnector(BETA);
+  await bootWith([alpha.ref, beta.ref]);
+  await deleteAsMember();
+  const lifecycle = runtime.getLifecycle();
+  const uninstall = lifecycle.uninstall.bind(lifecycle);
+  const spy = spyOn(lifecycle, "uninstall").mockImplementation(async (name, registry, wsId) => {
+    if (name === ALPHA) throw new Error(`${name} would not stop`);
+    return uninstall(name, registry, wsId);
+  });
+  try {
+    const result = await runtime.purgeWorkspace(WS_ID);
+    const failed = result.connectors.find((c) => c.serverName === ALPHA);
+    expect(failed?.ok).toBe(false);
+    expect(failed?.error).toContain("would not stop");
+    expect(result.connectors.find((c) => c.serverName === BETA)?.ok).toBe(true);
+    expect(result.purged).toBe(true);
+  } finally {
+    spy.mockRestore();
+  }
   expect(existsSync(join(workDir, "workspaces", WS_ID))).toBe(false);
-});
+}, 30_000);
 
-test("reaches the broker's revoke for a brokered connector, and clears its credential dir", async () => {
-  // The one join nothing else covers: the unit suite drives the seam directly,
-  // and the cascade resolves a row's name with a DIFFERENT predicate
-  // (`serverNameFromRef`) than the seam matches rows with (`matchesServerName`).
-  // If those two ever disagree, this is where a brokered grant is left live at
-  // the vendor with the record that named it archived.
+test("the purge reaches the broker's revoke for a brokered connector, and clears its credential dir", async () => {
+  const ref: ConnectorRef = {
+    url: "https://broker.example.test/mcp",
+    serverName: GAMMA,
+    brokered: { provider: BROKER, connectorId: "com.example/gamma" },
+  };
+  await bootWith([ref]);
   const cleanups: Array<{ connectorId: string; wsId: string }> = [];
   const provider: ManagedConnectorProvider = {
     id: BROKER,
@@ -276,17 +180,6 @@ test("reaches the broker's revoke for a brokered connector, and clears its crede
     },
   };
   runtime.getLifecycle().setManagedConnectorRegistry(managedConnectorRegistryOf([provider]));
-
-  const ref: ConnectorRef = {
-    url: "https://broker.example.test/mcp",
-    serverName: GAMMA,
-    brokered: { provider: BROKER, connectorId: "com.example/gamma" },
-  };
-  await runtime.getWorkspaceStore().update(WS_ID, { connectors: [ref] });
-  const registry = await runtime.ensureWorkspaceRegistry(WS_ID);
-  registry.addSource(await fakeSource(GAMMA));
-  await runtime.getLifecycle().seedInstance(GAMMA, ref.url as string, ref, undefined, WS_ID);
-
   // Provider-owned local state, at the directory rule the kernel owns.
   const dir = brokeredConnectorDir(
     workDir,
@@ -297,61 +190,14 @@ test("reaches the broker's revoke for a brokered connector, and clears its crede
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "lease.json"), "{}\n");
 
-  const result = await deleteAsMember(runtime, WS_ID);
+  await deleteAsMember();
+  // Deleted, nothing is revoked: a restore must find the connection intact.
+  expect(cleanups).toEqual([]);
+  expect(existsSync(dir)).toBe(true);
 
-  expect(result.deleted).toBe(true);
+  const result = await runtime.purgeWorkspace(WS_ID);
+
+  expect(result.purged).toBe(true);
   expect(cleanups).toEqual([{ connectorId: "com.example/gamma", wsId: WS_ID }]);
   expect(existsSync(dir)).toBe(false);
-});
-
-test("an archive that cannot be written reports the teardown it already ran", async () => {
-  await seedConnectors();
-  // `archived/` occupied by a regular file: the rename throws AFTER every
-  // connector is torn down. Before this cascade existed a failed delete was a
-  // true no-op, so an exception carrying none of this would tell an operator
-  // nothing happened while the workspace sits on disk with its grants revoked.
-  writeFileSync(join(workDir, "archived"), "not a directory\n");
-
-  const result = await deleteAsMember(runtime, WS_ID);
-
-  expect(result.deleted).toBe(false);
-  expect(result.deleteError).toBeDefined();
-  // The teardown is in the result, not lost with the throw.
-  expect(result.connectors.map((c) => c.serverName)).toEqual([ALPHA, BETA]);
-  expect(result.connectors.every((c) => c.ok)).toBe(true);
-  // And it really did run — the workspace survives, gutted.
-  expect(existsSync(join(workDir, "workspaces", WS_ID))).toBe(true);
-  expect((await runtime.getWorkspaceStore().get(WS_ID))?.connectors ?? []).toHaveLength(0);
-});
-
-test("a failure on the FAR side of the rename reports the teardown too", async () => {
-  await seedConnectors();
-  // The store throws on both sides of its rename, and the two leave the
-  // workspace in opposite places. The test above is the near side (the
-  // destination cannot be resolved, nothing moved); this is the far side — the
-  // subtree moves, then the archive marker cannot be written because a
-  // directory squats its path. The result must carry the teardown either way,
-  // which is why `handleDelete` names the teardown and not where the record
-  // landed.
-  mkdirSync(join(workDir, "workspaces", WS_ID, ARCHIVE_MARKER_FILENAME), { recursive: true });
-
-  const result = await deleteAsMember(runtime, WS_ID);
-
-  expect(result.deleted).toBe(false);
-  expect(result.deleteError).toBeDefined();
-  expect(result.connectors.map((c) => c.serverName)).toEqual([ALPHA, BETA]);
-  expect(result.connectors.every((c) => c.ok)).toBe(true);
-  // Unlike the near side, the subtree really did move — an operator told the
-  // record survived would go looking for a workspace that is already archived.
-  expect(existsSync(join(workDir, "workspaces", WS_ID))).toBe(false);
-  expect(existsSync(join(workDir, "archived", WS_ID))).toBe(true);
-  expect(await runtime.getWorkspaceStore().get(WS_ID)).toBeNull();
-});
-
-test("a workspace that does not exist reports not-deleted and tears down nothing", async () => {
-  const result = await deleteAsMember(runtime, "ws_000e0377c44c9171");
-
-  expect(result.deleted).toBe(false);
-  expect(result.connectors).toEqual([]);
-  expect(delivered).toEqual([]);
-});
+}, 30_000);

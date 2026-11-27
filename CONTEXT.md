@@ -58,8 +58,10 @@ URL is the only thing that names a workspace: bootstrap returns the caller's
 workspaces and no focus (ADR-0044). A kernel tool that acts on the caller or
 the org needs no workspace and is called without one (ADR-0043).
 
-A workspace exists because `create` made it and stops existing because `delete`
-archived it. **No write brings one into being**: a writer may create paths
+A workspace exists because `create` made it. `delete` makes it a tombstone that
+every door answers as not found and that an org admin can restore, as it was,
+until the retention window passes; then the kernel purges it, each plugin's
+records for it and its own. **No write brings one into being**: a writer may create paths
 inside a workspace root, and fails naming the workspace when the root is gone.
 So a workspace directory on disk is always one a create produced, which is what
 lets `list()` treat an unparseable `workspace.json` as corruption rather than as

@@ -354,9 +354,9 @@ A snapshot or backup has the encryption of the volume it was taken from. Backups
 
 A volume cannot be encrypted in place. To move an existing one: stop the workload, snapshot the volume, create an encrypted volume from the snapshot, create a PersistentVolume for it, re-create the claim bound to that PersistentVolume (a claim's `volumeName` cannot be changed), and then delete the snapshot, which is an unencrypted copy of the data. Set the PersistentVolume's `reclaimPolicy` to what the old one had. If a CSI driver manages the claim, give the new volume the tags the driver uses to recognize its own volumes, or it cannot delete the volume later.
 
-**Seal the credential store.** Sealing encrypts each stored secret under a key held in the environment, so secrets stay protected where the disk is not, and in every copy of the work directory: a `tar` backup, a copied volume, the archive of a workspace deleted after sealing was on. See [Sealing the files](/config/secrets/#sealing-the-files).
+**Seal the credential store.** Sealing encrypts each stored secret under a key held in the environment, so secrets stay protected where the disk is not, and in every copy of the work directory: a `tar` backup, a copied volume, a deleted workspace awaiting its purge. See [Sealing the files](/config/secrets/#sealing-the-files).
 
-The boot sweep that seals existing secrets does not walk `archived/`, so a workspace deleted before sealing was on keeps its secrets in plaintext. Rotate those credentials at the vendor, then remove the archive with `manage_workspaces purge_archive`.
+A deleted workspace keeps its secrets under `workspaces/<wsId>/` until it is purged, and the boot sweep seals them like any other. A directory a release before this one left under `archived/` is not sealed; the runtime removes it once the [retention window](/config/nimblebrain-json/#workspaces) has passed, and you can remove it sooner by hand.
 
 Neither layer protects against someone who can read the running process's environment or open a shell in its container. That is an access-control boundary, not an encryption one.
 

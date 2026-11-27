@@ -1,12 +1,13 @@
 /**
- * Deleting a workspace archives it first, then purges its conversations through
- * the conversations plugin (`delete_workspace`).
+ * A purge removes a deleted workspace's conversations through the conversations
+ * plugin (`delete_workspace`). With a retention window of 0 it runs inside the
+ * delete.
  *
- * - With the workspace gone no new conversation can be created in it, and the
- *   purge waits for a create already past the workspace check, so a create
- *   racing the delete leaves no conversation in the deleted workspace.
- * - A purge that fails leaves no live workspace: the workspace is already
- *   archived, and deleting the same id again runs the idempotent purge again.
+ * - Once the workspace is deleted no new conversation can be created in it, and
+ *   the purge waits for a create already past the workspace check, so a create
+ *   racing the delete leaves no conversation behind.
+ * - The purge is the host's call, walled to the workspace with no owner, so a
+ *   workspace deleted with no signed-in identity is purged all the same.
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -36,6 +37,7 @@ beforeEach(async () => {
     languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
+    workspaces: { deletedRetentionDays: 0 },
   });
   await seedWorkspace(runtime.getWorkspaceStore(), WS_ID, {
     members: [{ userId: OWNER, role: "admin" }],
@@ -65,22 +67,23 @@ function deleteAs(identity: typeof DEV_IDENTITY | undefined) {
   );
 }
 
-describe("workspace delete: archive, then purge", () => {
+describe("workspace delete with a window of 0: tombstone, then purge", () => {
   test("a create racing the delete leaves no conversation in the deleted workspace", async () => {
     await create();
-    // A create that reaches the store at the moment the workspace is archived:
+    // A create that reaches the store at the moment the workspace is deleted:
     // it passes the workspace check and is in flight while the delete goes on.
     const store = runtime.getWorkspaceStore();
-    const archive = store.delete.bind(store);
+    const remove = store.delete.bind(store);
     let racing: Promise<Conversation> | undefined;
-    const spy = spyOn(store, "delete").mockImplementation(async (wsId: string) => {
+    const spy = spyOn(store, "delete").mockImplementation(async (wsId, opts) => {
       racing = create();
-      return archive(wsId);
+      return remove(wsId, opts);
     });
     try {
       const result = await deleteAs(DEV_IDENTITY);
       expect(result.deleted).toBe(true);
-      expect(result.purgeError).toBeUndefined();
+      expect(result.purge?.error).toBeUndefined();
+      expect(result.purge?.purged).toBe(true);
     } finally {
       spy.mockRestore();
     }
@@ -93,23 +96,16 @@ describe("workspace delete: archive, then purge", () => {
     expect(storedConversations()).toEqual([]);
   });
 
-  test("a failed purge leaves the workspace deleted, and deleting it again purges", async () => {
+  test("a workspace deleted with no signed-in identity is purged at once", async () => {
     await create();
     await create();
     expect(storedConversations()).toHaveLength(2);
 
-    // With no signed-in identity the purge cannot be made, after the archive.
-    const failed = await deleteAs(undefined);
-    expect(failed.deleted).toBe(true);
-    expect(failed.deleteError).toBeUndefined();
-    expect(failed.purgeError).toContain("signed-in identity");
-    expect(await runtime.getWorkspaceStore().get(WS_ID)).toBeNull();
-    expect(storedConversations()).toHaveLength(2);
-
-    const retried = await deleteAs(DEV_IDENTITY);
-    expect(retried.deleted).toBe(false);
-    expect(retried.purgeError).toBeUndefined();
-    expect(retried.conversationsPurged).toBe(2);
+    // The purge is the host's call, walled to the workspace: it needs no owner.
+    const result = await deleteAs(undefined);
+    expect(result.deleted).toBe(true);
+    expect(result.purge).toEqual({ purged: true, connectors: [] });
     expect(storedConversations()).toEqual([]);
+    expect(await runtime.getWorkspaceStore().getDeleted(WS_ID)).toBeNull();
   });
 });

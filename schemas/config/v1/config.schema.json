@@ -630,6 +630,20 @@
       },
       "additionalProperties": false
     },
+    "workspaces": {
+      "description": "Deleted workspaces. Deleting a workspace makes it a tombstone that nobody can open; an org admin can restore it until the retention window passes, and then the runtime purges it: every plugin's records for it, its connectors' grants, its secrets and its files.",
+      "type": "object",
+      "properties": {
+        "deletedRetentionDays": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3650,
+          "description": "Days a deleted workspace can be restored before it is purged. 0 purges it at once. Default: 30.",
+          "default": 30
+        }
+      },
+      "additionalProperties": false
+    },
     "files": {
       "description": "File context configuration for workspace file uploads.",
       "type": "object",
