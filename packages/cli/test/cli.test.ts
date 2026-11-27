@@ -267,6 +267,24 @@ describe("doctor", () => {
     }
   });
 
+  test("a record from before 0.8.0, with no phase, is this install's and ready", async () => {
+    const legacy = JSON.stringify({
+      version: "0.78.0-beta.1",
+      port: 27246,
+      project: "nimblebrain-local-0a1b2c",
+      agent: "claude-code",
+    });
+    const deps = fakeDeps({
+      execMap: running,
+      portFree: async () => false,
+      readText: async (p) =>
+        p.endsWith("install.json") ? legacy : p.endsWith(".env") ? "" : undefined,
+    });
+    const { body } = await json(["doctor"], deps);
+    expect(body.ok).toBe(true);
+    expect(body.checks.at(-1)).toMatchObject({ check: "port", detail: "27246 (this install)" });
+  });
+
   test("a port held by something else is PORT_IN_USE, even with an install recorded", async () => {
     const deps = fakeDeps({
       portFree: async () => false,

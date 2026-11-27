@@ -656,13 +656,42 @@ describe("a first start that did not finish", () => {
   });
 
   test("a corrupt install.json is NOT_OURS for init and NOT_INSTALLED for the other commands", async () => {
-    for (const text of ["{not json", JSON.stringify({ project: "x", port: 1, version: "1" })]) {
+    for (const text of ["{not json", JSON.stringify({ port: 1, version: "1" })]) {
       const m = machine({ env, files: { [INSTALL]: text } });
       expect((await json(["--yes"], m)).body.error).toBe("NOT_OURS");
       expect(m.files.get(INSTALL)?.text).toBe(text);
       for (const cmd of ["status", "down", "logs", "uninstall", "up"])
         expect((await json([cmd, "--yes"], m)).body.error).toBe("NOT_INSTALLED");
     }
+  });
+});
+
+describe("an install record from before 0.8.0 (no phase)", () => {
+  const legacy = JSON.stringify({
+    version: "0.73.0",
+    port: 27246,
+    project: "nimblebrain-local-0a1b2c",
+    agent: "claude-code",
+  });
+  const files = {
+    [INSTALL]: legacy,
+    [ENV]: "ANTHROPIC_API_KEY=sk-test\n",
+    [`${HOME}/docker-compose.yml`]: REPO_COMPOSE,
+  };
+
+  test("init before 0.8.0 reports the install as installed, not NOT_OURS", async () => {
+    const m = machine({ env, files: { ...files } });
+    const { body } = await json(["--yes"], m);
+    expect(body.error).toBeUndefined();
+    expect(body).toMatchObject({ ok: true, already: true, phase: "ready", version: "0.73.0" });
+  });
+
+  test("update before 0.8.0 moves the install forward, not NOT_INSTALLED", async () => {
+    const m = machine({ env, files: { ...files } });
+    m.deps.env = {};
+    const { body } = await json(["update", "--runtime", "v0.74.0"], m);
+    expect(body).toMatchObject({ ok: true, version: "0.74.0", from: "v0.73.0" });
+    expect(m.files.get(ENV)?.text).toContain("NIMBLEBRAIN_TAG=v0.74.0");
   });
 });
 
