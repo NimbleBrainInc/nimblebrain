@@ -1520,7 +1520,7 @@ export class AgentEngine {
         let estimatedInputTokens = 0;
         // The attempt the run's cancel cut off, if one was: what it had
         // streamed, and whether it was sent re-windowed after an overflow.
-        let cutOff: { streamed: string; rewindowed: boolean } | undefined;
+        let cutOff: { streamed: string; text: string; rewindowed: boolean } | undefined;
         const callOnce = (msgs: LanguageModelV4Message[]) => {
           // Provider-scoped prompt-cache policy: places the rolling step-anchor
           // + tail breakpoints (Anthropic) so the growing prefix is read back,
@@ -1550,6 +1550,7 @@ export class AgentEngine {
               // it is never recorded as cut off.
               throwIfAborted(config.signal);
               let streamed = "";
+              let text = "";
               return callModel(
                 this.model,
                 {
@@ -1568,9 +1569,10 @@ export class AgentEngine {
                     ? { providerOptions: callProviderOptions }
                     : {}),
                 },
-                (text) => {
-                  streamed += text;
-                  this.events.emit({ type: "text.delta", data: { runId, text } });
+                (delta) => {
+                  streamed += delta;
+                  text += delta;
+                  this.events.emit({ type: "text.delta", data: { runId, text: delta } });
                 },
                 (text) => {
                   streamed += text;
@@ -1580,7 +1582,7 @@ export class AgentEngine {
                   this.events.emit({ type: "tool.preparing", data: { runId, id, name } }),
                 (id) => this.events.emit({ type: "tool.preparing.done", data: { runId, id } }),
               ).catch((err: unknown) => {
-                if (isCancellation(err, config.signal)) cutOff = { streamed, rewindowed };
+                if (isCancellation(err, config.signal)) cutOff = { streamed, text, rewindowed };
                 throw err;
               });
             },
@@ -1611,6 +1613,7 @@ export class AgentEngine {
               estimatedInputTokens,
               cachedPrefix: historyRewritten || cutOff.rewindowed ? undefined : lastCallUsage,
               streamed: cutOff.streamed,
+              text: cutOff.text,
               maxOutputTokens: callMaxOutputTokens + thinkingBeyondMaxOutput(callProviderOptions),
               llmMs: Math.round(performance.now() - llmStart),
             });
@@ -1956,10 +1959,12 @@ export class AgentEngine {
    * append-only; absent (the run's first call, or a prefix rewritten this
    * iteration), all of it is priced uncached, an upper bound.
    *
-   * The call is debited from the spend accounts and emitted as a usage-only
-   * `llm.done`: no content, finish `stop` (which replays as nothing), and
+   * The call is debited from the spend accounts and emitted as an `llm.done`
+   * whose content is the text the call streamed before the cut (the reply the
+   * person watched arrive, so a stopped reply keeps it), finish `stop`, and
    * `finishReasonRaw` `CUT_OFF_FINISH_RAW`, so readers can tell an estimate
-   * from a reported call. It carries the call's pre-flight estimate like any
+   * from a reported call. Reasoning and tool-call input are left out: a replay
+   * cannot send a partial thinking block or a call that never ran. It carries the call's pre-flight estimate like any
    * other, so the estimator-drift ratio's two sides both count it.
    */
   private recordCutOffCall(params: {
@@ -1969,6 +1974,7 @@ export class AgentEngine {
     estimatedInputTokens: number;
     cachedPrefix: TokenUsage | undefined;
     streamed: string;
+    text: string;
     maxOutputTokens: number;
     llmMs: number;
   }): void {
@@ -1979,6 +1985,7 @@ export class AgentEngine {
       estimatedInputTokens,
       cachedPrefix,
       streamed,
+      text,
       maxOutputTokens,
       llmMs,
     } = params;
@@ -1999,7 +2006,7 @@ export class AgentEngine {
       data: {
         runId,
         model: config.model,
-        content: [],
+        content: text ? [{ type: "text", text }] : [],
         usage,
         llmMs,
         estimatedInputTokens,
