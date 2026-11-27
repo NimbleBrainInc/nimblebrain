@@ -319,7 +319,7 @@ def test_every_error_code_has_a_log_level(caplog: pytest.LogCaptureFixture) -> N
 
     expected = {
         ErrorCode.BAD_INPUT: logging.WARNING,
-        ErrorCode.AUTH_REQUIRED: logging.WARNING,
+        ErrorCode.AUTH_REQUIRED: logging.ERROR,
         ErrorCode.FORBIDDEN: logging.WARNING,
         ErrorCode.NOT_FOUND: logging.WARNING,
         ErrorCode.CONFLICT: logging.WARNING,

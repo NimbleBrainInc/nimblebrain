@@ -99,7 +99,7 @@ FastMCP logs every exception a tool raises at error level, with a traceback. `ad
 
 - **With `[observability]` installed:** one increment of `service_errors_total{service, code, upstream_status}` and one `service_error` JSON log line carrying `code`, `retryable`, `upstream_status`, `http_status` and `detail`.
 - **Without it:** the result is the same, nothing is counted, and the `service_error` line goes to the standard library logger `nimblebrain_server_sdk.errors` with the same fields.
-- **Caller-side errors are logged at `WARNING`,** since the server worked: `bad_input`, `not_found`, `conflict`, `forbidden`, and `auth_required` when the caller sent no valid credentials. An `auth_required` that carries `upstream_status` (a 401 from a service the server called, built with `ServiceError.from_upstream`) is the server's own credential failing and is logged at `ERROR`, like every other code. Every error is still counted in `service_errors_total`.
+- **Caller-side errors are logged at `WARNING`,** since the server worked: `bad_input`, `not_found`, `conflict` and `forbidden`. A `forbidden` built from an upstream 403 with `ServiceError.from_upstream` is logged at `WARNING` as well, because it is most often one user's permission. Every other code is logged at `ERROR`, and that includes `auth_required` whatever its origin: it means a request did not come through the edge, or the server's own credential failed upstream. Every error is still counted in `service_errors_total`.
 
 A domain-specific error subclasses `ServiceError` and overrides `metric_code` to roll up to one of the codes above, so the metric's label set stays closed.
 

@@ -261,16 +261,12 @@ def _log_level(err: ServiceError) -> int:
 
     ``bad_input``, ``not_found``, ``conflict`` and ``forbidden`` are the caller's mistake or a
     routine answer, and the server worked as intended, so they stay out of an error-level alert.
-    So does ``auth_required`` when the caller sent no valid credentials. An ``auth_required``
-    that carries ``upstream_status`` came from a 401 on a call the server made, which is the
-    server's own credential failing, so it stays at ``ERROR``. Every error is still counted in
-    ``service_errors_total``.
+    That holds for a ``forbidden`` built from an upstream 403 too, which is most often one
+    user's permission. ``auth_required`` stays at ``ERROR`` whatever its origin: it is either a
+    request that did not come through the edge or the server's own credential failing upstream.
+    Every error is still counted in ``service_errors_total``.
     """
-    if err.code in _CALLER_SIDE:
-        return logging.WARNING
-    if err.code is ErrorCode.AUTH_REQUIRED and err.upstream_status is None:
-        return logging.WARNING
-    return logging.ERROR
+    return logging.WARNING if err.code in _CALLER_SIDE else logging.ERROR
 
 
 def _log_only(err: ServiceError) -> None:

@@ -4,7 +4,7 @@
 
 ### Changed
 
-- A surfaced `not_found`, `conflict` and `forbidden` error is logged at `WARNING` rather than `ERROR`, as `bad_input` already was, and so is `auth_required` unless it carries `upstream_status`. An upstream 401 and every other code stay at `ERROR`. `service_errors_total` is unchanged. See [Errors](https://docs.nimblebrain.ai/server-sdk/errors/).
+- A surfaced `not_found`, `conflict` and `forbidden` error is logged at `WARNING` rather than `ERROR`, as `bad_input` already was. `auth_required` and every other code stay at `ERROR`. `service_errors_total` is unchanged. See [Errors](https://docs.nimblebrain.ai/server-sdk/errors/).
 
 ## [0.9.0]
 
