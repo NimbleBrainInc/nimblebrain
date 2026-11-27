@@ -141,6 +141,24 @@ describe("the connector catalog from the plugin index", () => {
     expect(messages(build)[0]).toContain('plugin "gmail" already names it');
   });
 
+  test.each([
+    ["absent", {}],
+    ["malformed", { files: { "ai.nimblebrain/servers/gmail.json": "{ not json" } }],
+    ["misnamed", { serverDetails: { gmail: serverDetail("com.example/other") } }],
+  ] as const)("a first owner whose server file is %s still owns the name", async (_, owner) => {
+    const c = buildCatalog([
+      { name: "gmail-first", servers: { gmail: "com.google/gmail" }, ...owner },
+      { ...GMAIL, name: "gmail-later" },
+    ]);
+    expect(await ids(opts(c))).toEqual([]);
+    const build = await buildIndexCatalog(opts(c));
+    expect(build.read.diagnostics).toHaveLength(2);
+    expect(build.read.diagnostics[0]).toMatchObject({ name: "gmail-first" });
+    expect(messages(build)[0]).toContain('server "com.google/gmail" skipped');
+    expect(build.read.diagnostics[1]).toMatchObject({ name: "gmail-later", collision: true });
+    expect(messages(build)[1]).toContain('plugin "gmail-first" already names it');
+  });
+
   test("a server file goes through the catalog's schema and safety checks", async () => {
     const invalid: Record<string, unknown> = serverDetail("com.example/invalid");
     delete invalid.version;

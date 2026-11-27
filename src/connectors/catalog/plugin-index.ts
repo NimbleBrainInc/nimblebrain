@@ -169,7 +169,11 @@ async function build(opts: PinnedCatalogOptions): Promise<IndexCatalogBuild> {
 
   const diagnostics: CatalogDiagnostic[] = [];
   const groups: CandidateGroup[] = [];
-  /** Registry name → the plugin that named it first. */
+  /**
+   * Registry name → the plugin that named it first, reserved before its server
+   * file is read, so a later plugin never supplies a server whose first owner's
+   * file was skipped.
+   */
   const claimed = new Map<string, string>();
   index.plugins.forEach((entry, i) => {
     const tag = `${source}[${i}:${entry.name}]`;
@@ -199,12 +203,6 @@ async function build(opts: PinnedCatalogOptions): Promise<IndexCatalogBuild> {
     }
     const { servers } = nimblebrainExtension(opened.manifest);
     for (const [key, registryName] of Object.entries(servers)) {
-      const path = pluginServerDetailPath(key);
-      const read = readServerFile(opened.files.get(path), path, registryName);
-      if ("skip" in read) {
-        skip(`server "${registryName}" skipped — ${read.skip}`);
-        continue;
-      }
       const first = claimed.get(registryName);
       if (first !== undefined) {
         skip(
@@ -215,6 +213,12 @@ async function build(opts: PinnedCatalogOptions): Promise<IndexCatalogBuild> {
         continue;
       }
       claimed.set(registryName, entry.name);
+      const path = pluginServerDetailPath(key);
+      const read = readServerFile(opened.files.get(path), path, registryName);
+      if ("skip" in read) {
+        skip(`server "${registryName}" skipped — ${read.skip}`);
+        continue;
+      }
       groups.push({ source: `${entry.name}:${path}`, candidates: [read.detail] });
     }
   });
