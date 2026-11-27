@@ -10,7 +10,11 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
-import { buildCatalog, TEST_CATALOG_URL } from "../helpers/plugin-catalog.ts";
+import {
+  buildCatalog,
+  OFFLINE_PLUGIN_CATALOG_URL,
+  TEST_CATALOG_URL,
+} from "../helpers/plugin-catalog.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /**
@@ -28,7 +32,7 @@ import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-works
 const testDir = join(tmpdir(), `nimblebrain-connector-skill-lifecycle-${Date.now()}`);
 afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
-  delete process.env.NB_PLUGIN_CATALOG_URL;
+  process.env.NB_PLUGIN_CATALOG_URL = OFFLINE_PLUGIN_CATALOG_URL;
   delete process.env.NB_PLUGIN_CATALOG_SHA256;
 });
 

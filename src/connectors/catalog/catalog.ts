@@ -1,26 +1,32 @@
 /**
  * `ConnectorCatalog` is the one place connectors come from.
  *
- * It reads a single directory of `ServerDetail` files — the shape the
- * upstream MCP registry publishes — validates and safety-scrubs every
- * entry, projects the survivors into the two shapes callers need, and
- * serves the lookup tables the Configure page and the installed list
- * read. `NB_CURATED_CATALOG_DIR` points at that directory; unset, it is
- * the bundled directory, which in the release image holds NimbleBrain's
- * catalog of zero-setup connectors so a fresh install is not empty.
+ * It reads one catalog of `ServerDetail` records — the shape the upstream MCP
+ * registry publishes — validates and safety-scrubs every entry, projects the
+ * survivors into the two shapes callers need, and serves the lookup tables the
+ * Configure page and the installed list read.
  *
- * **Populating the directory is not the runtime's job.** A GitOps
- * ConfigMap, an operator, or a job that mirrors some upstream index all
- * do it the same way: write `ServerDetail` files. That keeps the seam a
- * serialization boundary anyone can reach rather than an in-process
- * interface only this codebase can implement, and it is why federating
- * a second index needs no runtime code — only a writer.
+ * **Where the catalog comes from** (`catalogLocation`), one source at a time:
+ *
+ * - **The pinned plugin catalog**, by default: the connector list of the catalog
+ *   at `NB_PLUGIN_CATALOG_URL` (catalog.nimblebrain.ai), verified against the
+ *   image's pin and cached in the work directory (`pinned.ts`). It is the same
+ *   catalog connector skills come from, so dev, a local install and a release
+ *   image show one list, and moving it forward is bumping the pin. An operator
+ *   with their own list publishes their own catalog and points the URL and pins
+ *   at it.
+ * - **A directory**, when `NB_CURATED_CATALOG_DIR` names one: it replaces the
+ *   pinned catalog wholesale, never merges with it. A mounted directory is
+ *   trusted by whoever mounts it, so it needs no pin and an edit takes effect on
+ *   the next read. It holds what the pinned list cannot: entries that need
+ *   instance setup (`auth: static`, brokered toolkits), a server in development,
+ *   a test's fixtures. Replacing rather than merging keeps one answer to where
+ *   an entry came from.
  *
  * Composition across files is the read's own concern: every
- * `*.yaml`/`*.yml`/`*.json` in the directory is read in sorted order,
+ * `*.yaml`/`*.yml`/`*.json` in a directory is read in sorted order,
  * validated independently so a diagnostic names its file, and deduped
- * first-wins. Splitting curation across files is a GitOps convenience
- * that still rolls up to one catalog.
+ * first-wins.
  *
  * Per-instance memoization: `servers()` is cached for the lifetime of
  * the instance so a single tool invocation does not re-read once per
@@ -29,9 +35,11 @@
  */
 
 import { join } from "node:path";
+import { resolvePluginCatalogConfig } from "../../config/plugin-catalog.ts";
 import { log } from "../../observability/log.ts";
 import { brokeredRef } from "../runtime/brokered.ts";
 import type { ConnectorRef } from "../runtime/types.ts";
+import { type CatalogFile, loadPinnedConnectors } from "./pinned.ts";
 import {
   projectServerDetailToCatalogListing,
   serverDetailToCatalogEntry,
@@ -77,41 +85,48 @@ export interface CatalogError {
 }
 
 /**
- * The catalog directory used when `NB_CURATED_CATALOG_DIR` is unset — a
- * directory of `ServerDetail` YAML files, every entry installable with nothing
- * to configure. In the release image it holds NimbleBrain's catalog of such
- * connectors, taken at image build (the Dockerfile's `ADD`); in a source
- * checkout it holds a small example for dev and tests.
- */
-export const BUNDLED_CATALOG_PATH = join(import.meta.dir, "curated");
-
-/**
- * Deployment override for the catalog directory — a mounted ConfigMap
- * (e.g. `/config/connectors`) replacing the bundled catalog with an
- * externally-managed one. This is the whole configuration
- * surface: where the files are. What writes them is outside the
- * runtime.
+ * The deployment's catalog directory, which replaces the pinned catalog when
+ * set: a mounted ConfigMap (e.g. `/config/connectors`) or any directory of
+ * `ServerDetail` files. What writes them is outside the runtime.
  */
 export const CATALOG_DIR_ENV = "NB_CURATED_CATALOG_DIR";
 
-/** The catalog directory: the deployment override when set, else the bundled catalog. */
-export function catalogPath(): string {
-  const override = process.env[CATALOG_DIR_ENV]?.trim();
-  return override && override.length > 0 ? override : BUNDLED_CATALOG_PATH;
+/**
+ * Where a `ConnectorCatalog` reads: a catalog file or directory, or a function
+ * that produces the file (the pinned catalog, fetched on first read).
+ */
+export type CatalogLocation = string | (() => Promise<CatalogFile>);
+
+/**
+ * The catalog for a runtime whose work directory is `workDir`: the directory
+ * `NB_CURATED_CATALOG_DIR` names, else the pinned plugin catalog's connector
+ * list, cached under `{workDir}/cache/plugin-catalog`. Throws on a malformed pin.
+ */
+export function catalogLocation(workDir: string): CatalogLocation {
+  const dir = process.env[CATALOG_DIR_ENV]?.trim();
+  if (dir) return dir;
+  const config = resolvePluginCatalogConfig();
+  return () =>
+    loadPinnedConnectors({
+      cacheDir: join(workDir, "cache", "plugin-catalog"),
+      catalogUrl: config.url,
+      sha256: config.connectorsSha256,
+    });
 }
 
 /**
  * Boot-time visibility check. An empty catalog is indistinguishable
  * from a working one until a user opens Browse and finds nothing, so
- * say it once at startup with the path that produced it.
+ * say it once at startup with the cause.
  */
 export async function warnIfCatalogEmpty(catalog: ConnectorCatalog): Promise<void> {
   const { servers, errors } = await catalog.servers();
   if (servers.length > 0) return;
   const why = errors.length > 0 ? ` (${errors.map((e) => e.message).join("; ")})` : "";
   log.warn(
-    `[catalog] "${catalogPath()}" resolved to 0 entries${why} — Browse will be empty until a ` +
-      `non-empty catalog is in place (check the mount or ${CATALOG_DIR_ENV}).`,
+    `[catalog] the connector catalog resolved to 0 entries${why} — Browse will be empty until ` +
+      `the plugin catalog is reachable (NB_PLUGIN_CATALOG_URL) or ${CATALOG_DIR_ENV} names a ` +
+      "non-empty directory.",
   );
 }
 
@@ -119,7 +134,7 @@ export class ConnectorCatalog {
   /** Memoized `servers()` result for this instance. */
   private cache: Promise<AggregatedServers> | null = null;
 
-  constructor(private catalogDir: string) {}
+  constructor(private location: CatalogLocation) {}
 
   /**
    * Read the catalog directory and return the raw `ServerDetail[]`
@@ -249,7 +264,12 @@ export class ConnectorCatalog {
   // ── internals ────────────────────────────────────────────────────
 
   private async read(): Promise<AggregatedServers> {
-    const { entries, diagnostics } = readCatalogEntries(this.catalogDir);
+    const file: CatalogFile =
+      typeof this.location === "string" ? { path: this.location } : await this.location();
+    if ("error" in file) {
+      return { servers: [], refused: [], errors: [{ file: file.source, message: file.error }] };
+    }
+    const { entries, diagnostics } = readCatalogEntries(file.path);
 
     // A diagnostic carrying an entry `index` is one bad record inside an
     // otherwise-fine file: logged, like every other per-entry drop, and

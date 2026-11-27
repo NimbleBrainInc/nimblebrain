@@ -2755,8 +2755,7 @@ function buildRemoteConnectorRef(
     serverName,
     // Pin the transport class the source advertised. Default would be
     // streamable-http (createRemoteTransport's fallback), which is wrong for
-    // vendors whose remote `type` is `sse` — PayPal / Cloudflare / Webflow / Wix
-    // in the bundled catalog today. A `provider`-auth entry also carries its
+    // vendors whose remote `type` is `sse`, such as PayPal or Cloudflare. A `provider`-auth entry also carries its
     // credential class here, from the (operator-authored) catalog entry — never
     // tenant input — which is what makes a self-installable platform connector
     // safe (`installedProviderAuth` says which part of it is stored). That provenance is

@@ -132,6 +132,7 @@
 
 ### Changed
 
+- **Browse lists the pinned plugin catalog.** With no `NB_CURATED_CATALOG_DIR`, the connector list comes from the catalog at `NB_PLUGIN_CATALOG_URL`, verified against `NB_PLUGIN_CATALOG_CONNECTORS_SHA256` and cached in the work directory, so dev, `npx nimblebrain` and the image show one list; a set directory still replaces it ([docs](https://docs.nimblebrain.ai/config/connectors-catalog/#where-the-catalog-lives)).
 - **Task telemetry:** `automation.run_completed` carries no `automation_id` or batch flag, `automation.created` is not sent, and `task.created` reports on every deployment. [Docs](https://docs.nimblebrain.ai/using/telemetry/).
 - **A catalog connector installs from the catalog's entry alone.** `manage_connectors install` resolves a `remote-oauth` entry by its exact id to the instance's catalog entry, on the personal and workspace paths alike; the caller's URL, auth, transport, scopes and authorization parameters are discarded, and an id the catalog does not list is refused with `NOT_IN_CATALOG` ([docs](https://docs.nimblebrain.ai/config/connectors-catalog/)).
 - **An unset model slot follows the configured provider.** With no `models.default` or `models.fast`, an install keyed for OpenAI, Google, xAI, Nebius, GreenPT or only `providers.local` gets that provider's default model instead of Anthropic's, and a configured local model server comes first. Anthropic's default, and the default with no provider or behind a gateway, moves from Claude Sonnet 4.6 to Claude Sonnet 5.5 ([docs](https://docs.nimblebrain.ai/config/nimblebrain-json/#models)).
@@ -470,6 +471,7 @@
 
 ### Removed
 
+- **The in-image connector catalog and the source checkout's example catalog** (`src/connectors/catalog/curated/`). The image no longer takes the catalog at build.
 - **`conversations__fork` and `ConversationStore.fork`.** No client called them. **Breaking for `/mcp` clients** that call `conversations__fork`; conversations an earlier fork wrote still load.
 - **`placements[].size`**, which the shell never read, from the host schema and `PlacementEntry`.
 - **`providers.anthropic.promptCaching`.** No code ever read it: prompt caching is always on for Anthropic. A config that still sets it boots with an `Unknown key … (ignored)` warning.

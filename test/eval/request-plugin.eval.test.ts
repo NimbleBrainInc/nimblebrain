@@ -26,7 +26,7 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import type { ChatResult } from "../../src/runtime/types.ts";
 import { getEvalRuntime, runEval, shutdownEvalRuntime } from "./helpers.ts";
 
-/** Linear's server name, as the shipped example catalog's `app.linear/mcp` slugs. */
+/** Linear's server name, as the catalog entry `app.linear/mcp` slugs. */
 const LINEAR = "app-linear-mcp";
 
 const PROMPTS = [
