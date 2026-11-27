@@ -465,6 +465,26 @@ describe("the transfer client against a live listener", () => {
 });
 
 describe("the door", () => {
+  it("takes a create whose 4 MiB body is past the old 1 MiB request bound", async () => {
+    const client = await mcpClient();
+    try {
+      const bytes = new Uint8Array(4 * 1_048_576).fill(7);
+      const made = await client.callTool({
+        name: "files__create",
+        arguments: {
+          manifest: { filename: "big.bin", mimeType: "application/octet-stream" },
+          body: Buffer.from(bytes).toString("base64"),
+        },
+      });
+      expect(made.isError).toBeFalsy();
+      const id = (made.structuredContent as { id: string }).id;
+      const served = await rest(`/v1/workspaces/${WS}/files/${id}`);
+      expect((await served.arrayBuffer()).byteLength).toBe(bytes.byteLength);
+    } finally {
+      await client.close();
+    }
+  }, 30_000);
+
   it("the contract's public-only runner passes at /mcp/<wsId>", async () => {
     const results = await runConformance({
       server: `${base}/mcp/${WS}`,

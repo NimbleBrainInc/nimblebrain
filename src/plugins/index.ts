@@ -208,7 +208,9 @@ function parseTransferOrigins(raw: readonly string[] | undefined, fail: Fail): s
       url.username === "" &&
       url.password === "";
     if ((url.protocol !== "http:" && url.protocol !== "https:") || !bare) {
-      fail("must be an http or https origin: a scheme, a host and an optional port, with no path", { field });
+      fail("must be an http or https origin: a scheme, a host and an optional port, with no path", {
+        field,
+      });
       return;
     }
     out.push(url.origin);
