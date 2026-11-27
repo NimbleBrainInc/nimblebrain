@@ -104,7 +104,8 @@ export type ConversationsGetInput = Static<typeof ConversationsGetInput>;
 export const ConversationsSearchInput = Type.Object(
   {
     query: Type.String({
-      description: "Search query. Case-insensitive substring match on message content.",
+      description:
+        "Search query. Case-insensitive substring match on the title and the text of messages a person sees; tool calls, tool output, reasoning and usage are not searched.",
     }),
     limit: Type.Optional(
       Type.Integer({
