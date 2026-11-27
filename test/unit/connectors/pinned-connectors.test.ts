@@ -146,6 +146,43 @@ describe("loadPinnedConnectors", () => {
     ).toEqual(["com.example/newer"]);
   });
 
+  test("a fallback list changed within the retry window is refused, not read", async () => {
+    const dir = join(cacheDir, "connectors");
+    mkdirSync(dir, { recursive: true });
+    const original = list("com.example/original");
+    const fallbackPath = join(dir, `${sha256(original)}.yaml`);
+    writeFileSync(fallbackPath, original);
+    const opts = {
+      cacheDir,
+      catalogUrl: CATALOG_URL,
+      sha256: sha256(list("com.example/pinned")),
+      fetchImpl: offline,
+    };
+
+    setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    expect(await servers(opts)).toEqual(["com.example/original"]);
+    writeFileSync(fallbackPath, list("com.example/changed"));
+    expect(await servers(opts)).toEqual([]);
+  });
+
+  test("a cache that cannot be written or listed is an empty catalog, and recovers once repaired", async () => {
+    const bytes = list("com.example/repaired");
+    const pin = sha256(bytes);
+    const catalog = serve({ [`${CATALOG_URL}/nimblebrain/connectors.yaml`]: bytes });
+    const opts = { cacheDir, catalogUrl: CATALOG_URL, sha256: pin, ...catalog };
+    // A file where the cache directory belongs: the write and the listing both fail (ENOTDIR).
+    const blocked = join(cacheDir, "connectors");
+    writeFileSync(blocked, "not a directory");
+
+    setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const file = await loadPinnedConnectors(opts);
+    expect("error" in file && file.error).toContain("could not be cached");
+
+    rmSync(blocked);
+    setSystemTime(new Date(Date.parse("2026-01-01T00:00:00Z") + RETRY_AFTER_MS + 1));
+    expect(await servers(opts)).toEqual(["com.example/repaired"]);
+  });
+
   test("no cache and no network is an empty catalog that says why, not a throw", async () => {
     const catalog = new ConnectorCatalog(() =>
       loadPinnedConnectors({

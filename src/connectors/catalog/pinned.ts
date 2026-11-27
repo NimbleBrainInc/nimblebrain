@@ -65,50 +65,59 @@ export function pinnedConnectorsUrls(catalogUrl: string, sha256: string): string
   ];
 }
 
-interface Attempt {
-  result: Promise<CatalogFile>;
-  /** Set once the attempt has failed: when it may be tried again. */
-  retryAt?: number;
+/** A failed fetch: why, and when a read may fetch again. */
+interface Failure {
+  reason: string;
+  retryAt: number;
 }
 
-/** In-flight and recently failed fetches, keyed by cache file and catalog, shared by every read. */
-const attempts = new Map<string, Attempt>();
+/** Recently failed fetches, keyed by cache file and catalog, shared by every read. */
+const failures = new Map<string, Failure>();
+/** Fetches in flight, so concurrent reads share one. */
+const inflight = new Map<string, Promise<string | null>>();
 
 /**
  * The verified connector list for `opts.sha256`, as a file to read: the cached
- * copy, else a fresh fetch, else the newest verified copy of another pin.
- * Never throws.
+ * copy, else a fresh fetch, else the newest verified copy of another pin. Every
+ * read verifies the file it returns; only the fetch is throttled. Never throws.
  */
 export async function loadPinnedConnectors(opts: PinnedConnectorsOptions): Promise<CatalogFile> {
   const dir = join(opts.cacheDir, "connectors");
   const path = join(dir, `${opts.sha256}.yaml`);
   if (verified(path, opts.sha256)) return { path };
+  const failure = await fetchThrottled(opts, path);
+  return failure === null ? { path } : fallback(dir, opts, failure);
+}
 
+/** Fetch the pinned list unless a fetch failed within `RETRY_AFTER_MS`. Null on success, else why not. */
+function fetchThrottled(opts: PinnedConnectorsOptions, path: string): Promise<string | null> {
   const key = `${path}\n${opts.catalogUrl}`;
-  const prior = attempts.get(key);
-  if (prior && (prior.retryAt === undefined || Date.now() < prior.retryAt)) return prior.result;
-
-  const attempt: Attempt = { result: Promise.resolve({ path }) };
-  attempt.result = fetchPinned(opts, path).then((failure) => {
-    if (failure === null) {
-      attempts.delete(key);
-      return { path };
-    }
-    attempt.retryAt = Date.now() + RETRY_AFTER_MS;
-    return fallback(dir, opts, failure);
-  });
-  attempts.set(key, attempt);
-  return attempt.result;
+  const prior = failures.get(key);
+  if (prior && Date.now() < prior.retryAt) return Promise.resolve(prior.reason);
+  let pending = inflight.get(key);
+  if (!pending) {
+    pending = fetchPinned(opts, path)
+      .catch((err: unknown) => `the connector list could not be cached: ${message(err)}`)
+      .then((reason) => {
+        inflight.delete(key);
+        if (reason === null) failures.delete(key);
+        else failures.set(key, { reason, retryAt: Date.now() + RETRY_AFTER_MS });
+        return reason;
+      });
+    inflight.set(key, pending);
+  }
+  return pending;
 }
 
 /** Forget remembered failures, so the next read fetches again. Tests use it. */
 export function resetPinnedConnectorAttempts(): void {
-  attempts.clear();
+  failures.clear();
+  inflight.clear();
 }
 
 /** Fetch the pinned list into `path`. Returns null on success, else why it failed. */
 async function fetchPinned(opts: PinnedConnectorsOptions, path: string): Promise<string | null> {
-  const failures: string[] = [];
+  const reasons: string[] = [];
   for (const url of pinnedConnectorsUrls(opts.catalogUrl, opts.sha256)) {
     let bytes: Uint8Array;
     try {
@@ -120,20 +129,20 @@ async function fetchPinned(opts: PinnedConnectorsOptions, path: string): Promise
     } catch (err) {
       // A 404 is a catalog that does not keep that copy; anything else is worth naming.
       if (!(err instanceof CatalogHttpError && err.status === 404)) {
-        failures.push(err instanceof Error ? err.message : String(err));
+        reasons.push(message(err));
       }
       continue;
     }
     const actual = sha256Hex(bytes);
     if (actual !== opts.sha256) {
-      failures.push(`${url} does not match the pin (got ${actual}, expected ${opts.sha256})`);
+      reasons.push(`${url} does not match the pin (got ${actual}, expected ${opts.sha256})`);
       continue;
     }
     writeAtomic(path, bytes);
     return null;
   }
-  return failures.length > 0
-    ? failures.join("; ")
+  return reasons.length > 0
+    ? reasons.join("; ")
     : `the catalog at ${opts.catalogUrl} serves no connector list`;
 }
 
@@ -154,8 +163,18 @@ function fallback(dir: string, opts: PinnedConnectorsOptions, failure: string): 
   return { source: opts.catalogUrl, error };
 }
 
+/** The newest verified list in `dir`, or null when there is none or the cache cannot be read. */
 function newestVerified(dir: string): { path: string; sha256: string } | null {
   if (!existsSync(dir)) return null;
+  try {
+    return newestIn(dir);
+  } catch (err) {
+    log.warn(`[catalog] the connector list cache at ${dir} cannot be read: ${message(err)}`);
+    return null;
+  }
+}
+
+function newestIn(dir: string): { path: string; sha256: string } | null {
   const candidates = readdirSync(dir)
     .map((name) => /^([0-9a-f]{64})\.yaml$/.exec(name))
     .filter((m): m is RegExpExecArray => m !== null)
@@ -171,6 +190,10 @@ function verified(path: string, sha256: string): boolean {
   } catch {
     return false;
   }
+}
+
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** Write through a temporary file, so a reader never sees a partial list. */
