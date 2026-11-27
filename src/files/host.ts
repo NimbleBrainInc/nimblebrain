@@ -83,15 +83,9 @@ function answer<T>(structured: Record<string, unknown>): T {
 }
 
 /** The files client over the server bound to {@link FILES_CONTRACT}. */
-export function createFilesHost(
-  server: BoundServer,
-  opts: { allowInsecure?: boolean } = {},
-): FilesHost {
+export function createFilesHost(server: BoundServer): FilesHost {
   const version = server.hostVersion;
-  const transfer = createTransferClient({
-    destinations: server.transferDestinations,
-    ...(opts.allowInsecure !== undefined ? { allowInsecure: opts.allowInsecure } : {}),
-  });
+  const transfer = createTransferClient({ destinations: server.transferDestinations });
   return {
     hostVersion: version,
     transfer,

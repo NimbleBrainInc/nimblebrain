@@ -6,10 +6,13 @@
  * Each transfer goes through the SSRF-guarded fetch with redirects refused,
  * and only to a destination the binding authorises: the origin of its own
  * server URL, an origin the operator listed for it (exact scheme, host and
- * port), or, for a binding the runtime starts over stdio, a literal loopback
- * address on any port. A name is resolved once; one that resolves to a
- * loopback, link-local, unspecified or multicast address is refused, and the
- * request connects to the address that was checked.
+ * port, at the scheme listed), or, for a binding the runtime starts over
+ * stdio, a literal loopback address on any port. A name is resolved once; one
+ * that resolves to a loopback, link-local, unspecified or multicast address is
+ * refused, and the request connects to the address that was checked. This is
+ * the transfer's whole destination policy: the guarded fetch checks it in
+ * place of the connector URL rule, whose limits (no private address, plain
+ * http only in-cluster) are a connector endpoint's, not a transfer's.
  *
  * A transfer URL is a bearer capability. It never appears in an error, a log
  * line or anything a caller can show: every failure here is a
@@ -73,8 +76,6 @@ const defaultLookup: AddressLookup = async (hostname) =>
 
 export interface TransferClientOptions {
   destinations: TransferDestinations;
-  /** The deployment's `allowInsecureRemotes`: plain http to a destination other than stdio loopback. */
-  allowInsecure?: boolean;
   lookup?: AddressLookup;
   /** The fetch the guarded fetch wraps. Default: the global one. */
   fetch?: (url: string | URL, init?: RequestInit) => Promise<Response>;
@@ -314,10 +315,7 @@ export function createTransferClient(opts: TransferClientOptions): TransferClien
     const guarded = createSsrfGuardedFetch(
       (u, i) => base(u, { ...i, decompress: false } as RequestInit),
       {
-        // A stdio binding's listener is the runtime's own child on loopback.
-        allowInsecure: destination.kind === "loopback" || opts.allowInsecure === true,
-        // An origin the binding authorises is the operator's, as a fleet source is.
-        fleetInternal: destination.kind === "origin",
+        authorize: (u) => void authorise(u, opts.destinations),
         redirects: "refuse",
         dial: async (u, i) => pinned(u, i, address),
       },

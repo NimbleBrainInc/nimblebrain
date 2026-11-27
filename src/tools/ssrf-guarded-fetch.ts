@@ -11,9 +11,29 @@ import { validateConnectorUrl } from "../connectors/runtime/url-validator.ts";
 const MAX_REDIRECT_HOPS = 5;
 
 /** How {@link createSsrfGuardedFetch} validates, dials and follows. */
-export interface SsrfGuardOptions {
+export type SsrfGuardOptions = SsrfGuardTransport & (ConnectorUrlPolicy | DestinationPolicy);
+
+/** Each hop checked by `validateConnectorUrl`: the policy for a connector's endpoint. */
+interface ConnectorUrlPolicy {
   allowInsecure: boolean;
   fleetInternal: boolean;
+  authorize?: never;
+}
+
+/**
+ * Each hop checked by the caller's own destination policy instead of
+ * `validateConnectorUrl`: it throws to refuse the URL. A caller whose
+ * destinations are not connector endpoints (a files transfer) owns the whole
+ * rule, so the connector rule is not applied on top of it.
+ */
+interface DestinationPolicy {
+  authorize: (url: URL) => void;
+  allowInsecure?: never;
+  fleetInternal?: never;
+}
+
+/** How a request is dialed and its redirects handled, whichever policy checks it. */
+interface SsrfGuardTransport {
   /**
    * `"same-origin"` (the default) follows a same-origin redirect and refuses a
    * cross-origin one; `"refuse"` answers every 3xx with an error, and sends the
@@ -77,10 +97,7 @@ export function createSsrfGuardedFetch(
       // configured endpoint's opts — including `fleetInternal` for an
       // operator-vetted in-cluster http source — apply unchanged on every hop.
       // This validation is a backstop; the same-origin rule is the primary control.
-      validateConnectorUrl(currentUrl, {
-        allowInsecure: opts.allowInsecure,
-        fleetInternal: opts.fleetInternal,
-      });
+      checkHop(opts, currentUrl);
 
       // On a local install a loopback URL is dialed at the host alias, with
       // its own `Host` kept (`loopbackDial`). Applied after validation and
@@ -99,6 +116,18 @@ export function createSsrfGuardedFetch(
 
     throw new Error(`SSRF guard: remote endpoint exceeded ${MAX_REDIRECT_HOPS} redirect hops`);
   };
+}
+
+/** Refuse `url` unless the caller's destination policy, else the connector URL rule, admits it. */
+function checkHop(opts: SsrfGuardOptions, url: URL): void {
+  if (opts.authorize) {
+    opts.authorize(url);
+    return;
+  }
+  validateConnectorUrl(url, {
+    allowInsecure: opts.allowInsecure,
+    fleetInternal: opts.fleetInternal,
+  });
 }
 
 /** Where to send a request for the validated `url`: the caller's dial, else the local-install loopback dial. */

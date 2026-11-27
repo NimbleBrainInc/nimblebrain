@@ -126,6 +126,38 @@ describe("destinations", () => {
     expect(net.sent).toEqual([]);
   });
 
+  test("a stdio binding reaches any literal loopback address, not only 127.0.0.1", async () => {
+    const net = network(() => ok("hi"));
+    const client = createTransferClient({ destinations: STDIO, fetch: net.fetch });
+    await client.download("http://127.0.0.2:8000/t/1", { size: 2 });
+    await client.download("http://[::1]:8000/t/2", { size: 2 });
+    expect(net.sent.map((s) => s.url)).toEqual([
+      "http://127.0.0.2:8000/t/1",
+      "http://[::1]:8000/t/2",
+    ]);
+  });
+
+  test("a listed origin is reached as listed: a private address, plain http", async () => {
+    const net = network(() => ok("hi"));
+    const listed: TransferDestinations = {
+      serverOrigin: null,
+      listed: ["https://10.1.2.3", "http://storage.example:8000"],
+      loopback: true,
+    };
+    const client = createTransferClient({
+      destinations: listed,
+      fetch: net.fetch,
+      lookup: async () => [{ address: "192.168.4.5", family: 4 }],
+    });
+    await client.download("https://10.1.2.3/k?sig=1", { size: 2 });
+    await client.download("http://storage.example:8000/k?sig=2", { size: 2 });
+    expect(net.sent.map((s) => s.url)).toEqual([
+      "https://10.1.2.3/k?sig=1",
+      "http://192.168.4.5:8000/k?sig=2",
+    ]);
+    expect(net.sent[1]?.headers.get("host")).toBe("storage.example:8000");
+  });
+
   test("a remote binding pointing at loopback is refused, literal or by a name that resolves there", async () => {
     const net = network(() => ok("x"));
     const loopbackOrigin: TransferDestinations = {

@@ -47,7 +47,9 @@ code implements. The built-in implementation is `packages/files/` (`packages/fil
   destination the binding authorises (`BoundServer.transferDestinations`): its own server's
   origin, the plugin's `transferOrigins` (`nimblebrain.json`), and literal loopback for a stdio
   binding. A name is resolved once; one that resolves to a loopback, link-local, unspecified
-  or multicast address is refused, and the request connects to the address checked.
+  or multicast address is refused, and the request connects to the address checked. That is
+  the transfer's whole policy: it is the guarded fetch's `authorize`, in place of
+  `validateConnectorUrl`, so a listed origin is reached at its scheme even on a private address.
 - **Check before a byte is used**: a GET succeeds only on 200, or 206 when the host sent a
   `Range` (with the `Content-Range` it asked for); no `Content-Encoding` but `identity`; a
   `Content-Length` equal to the record's (or the range's). Bodies are counted while they stream

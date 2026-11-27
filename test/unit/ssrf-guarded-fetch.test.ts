@@ -145,6 +145,31 @@ describe("createSsrfGuardedFetch", () => {
     await expect(guarded("https://h.example.com/0")).rejects.toThrow(/redirect hops/);
   });
 
+  test("the connector rule still refuses a private address and plain http off-cluster", async () => {
+    const { fetch, calls } = stubFetch({});
+    const guarded = createSsrfGuardedFetch(fetch, { allowInsecure: true, fleetInternal: true });
+    for (const url of ["https://10.1.2.3/mcp", "http://storage.example:8000/mcp"]) {
+      await expect(guarded(url)).rejects.toThrow();
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a caller's destination policy replaces the connector rule", async () => {
+    const { fetch, calls } = stubFetch({
+      "https://10.1.2.3/k": { status: 200 },
+      "https://10.9.9.9/k": { status: 200 },
+    });
+    const guarded = createSsrfGuardedFetch(fetch, {
+      authorize: (url) => {
+        if (url.origin !== "https://10.1.2.3") throw new Error("not authorised");
+      },
+      redirects: "refuse",
+    });
+    expect((await guarded("https://10.1.2.3/k")).status).toBe(200);
+    await expect(guarded("https://10.9.9.9/k")).rejects.toThrow("not authorised");
+    expect(calls.map((c) => c.url)).toEqual(["https://10.1.2.3/k"]);
+  });
+
   test("falls back to global fetch shape when no base fetch is given", () => {
     // Smoke: undefined baseFetch must still yield a callable FetchLike.
     const guarded = createSsrfGuardedFetch(undefined, {

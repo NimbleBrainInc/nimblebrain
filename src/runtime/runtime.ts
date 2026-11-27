@@ -1598,9 +1598,7 @@ export class Runtime {
     }
     const files = this._boundServers.get(FILES_CONTRACT);
     if (files) {
-      this._files = createFilesHost(files, {
-        allowInsecure: this.config.allowInsecureRemotes === true,
-      });
+      this._files = createFilesHost(files);
     }
     const tasks = this._boundServers.get(TASKS_CONTRACT);
     if (tasks && this._runGrants) {
