@@ -305,7 +305,7 @@
           "type": "string"
         },
         "kinds": {
-          "description": "Keep only files of these kinds, judged from the MIME type.",
+          "description": "Keep only files of these kinds, judged from the MIME type (CONTRACT.md §5, Types).",
           "type": "array",
           "items": {
             "type": "string",
@@ -1021,7 +1021,7 @@
               "type": "string"
             },
             "mimeType": {
-              "description": "MIME type (e.g. 'image/png'), one of: text/plain, text/csv, text/markdown, text/html, text/xml, text/yaml, application/json, application/xml, application/yaml, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/pdf, image/png, image/jpeg, image/gif, image/webp, image/svg+xml, application/zip, application/gzip, font/ttf, font/otf, font/woff, font/woff2, application/octet-stream. A generic or empty type for a known text extension is read as that extension's text type.",
+              "description": "MIME type (e.g. 'image/png'), one of: text/plain, text/csv, text/markdown, text/html, text/xml, text/yaml, application/json, application/xml, application/yaml, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/pdf, image/png, image/jpeg, image/gif, image/webp, image/svg+xml, application/zip, application/gzip, font/ttf, font/otf, font/woff, font/woff2, application/octet-stream. A generic or empty type for a known text extension is read as that extension's text type (CONTRACT.md §5, Types).",
               "type": "string"
             },
             "tags": {

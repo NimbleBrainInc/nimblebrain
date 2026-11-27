@@ -4,8 +4,11 @@ import { resolve } from "node:path";
 import { type TSchema, Type } from "@sinclair/typebox";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { ALLOWED_MIME_TYPES, FILE_KINDS } from "../../../contracts/files/source/public.ts";
 import type { ContractSource } from "../../../contracts/scripts/contract-source.ts";
 import { emit } from "../../../contracts/scripts/emit-contracts.ts";
+import { EXTENSION_MIME, resolveMimeType } from "../../../src/files/mime.ts";
+import { fileKind } from "../../../src/platform/files/query.ts";
 
 const ROOT = resolve(import.meta.dir, "../../..");
 
@@ -672,6 +675,45 @@ describe("the files contract document", () => {
       "upload_incomplete",
       "upload_not_found",
     ]);
+  });
+});
+
+describe("the files contract's type tables", () => {
+  const spec = readFileSync(resolve(ROOT, "contracts/files/CONTRACT.md"), "utf-8");
+  const types = spec.slice(spec.indexOf("**Types.**"), spec.indexOf("**Outputs.**"));
+  /** Each `| `key` | `a`, `b` |` row of the section, as [key, values]. */
+  const rows = (keys: readonly string[]) =>
+    [...types.matchAll(/^\s*\| `([^`]+)` \| (.+) \|$/gm)]
+      .filter((m) => keys.includes(m[1] ?? ""))
+      .map((m) => [m[1] ?? "", [...(m[2] ?? "").matchAll(/`([^`]+)`/g)].map((v) => v[1])] as const);
+
+  test("the extension table is the runtime's extension map", () => {
+    const table: Record<string, string> = {};
+    for (const [type, exts] of rows([...new Set(Object.values(EXTENSION_MIME))])) {
+      for (const ext of exts) if (ext) table[ext] = type;
+    }
+    expect(table).toEqual(EXTENSION_MIME);
+  });
+
+  test("the recorded type follows the stated rules", () => {
+    expect(resolveMimeType("a.TYP", "")).toBe("text/plain");
+    expect(resolveMimeType(".env", "application/octet-stream; charset=x")).toBe("text/plain");
+    expect(resolveMimeType("Makefile", undefined)).toBe("application/octet-stream");
+    expect(resolveMimeType("a.", "")).toBe("application/octet-stream");
+    expect(resolveMimeType("a.bin", "")).toBe("application/octet-stream");
+    expect(resolveMimeType("a.md", " Text/CSV; charset=utf-8 ")).toBe("Text/CSV; charset=utf-8");
+  });
+
+  test("the kind table classifies every allowlisted type as the runtime does", () => {
+    const table = new Map<string, string>();
+    for (const [kind, mimes] of rows(FILE_KINDS)) {
+      for (const mime of mimes) if (mime) table.set(mime, kind);
+    }
+    expect([...table.keys()].sort()).toEqual([...ALLOWED_MIME_TYPES].sort());
+    for (const [mime, kind] of table) {
+      expect<string>(fileKind(mime)).toBe(kind);
+      expect<string>(fileKind(`${mime.toUpperCase()}; charset=utf-8`)).toBe(kind);
+    }
   });
 });
 

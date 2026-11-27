@@ -145,13 +145,45 @@ The public tools' behaviour, where a schema cannot state it.
   refuses base64 that is not the standard padded alphabet (`invalid_input`), and makes the file
   with `source: "agent"`, creating the folders `manifest.folder` names that do not exist. A
   generic `application/octet-stream` or empty `mimeType` for a known text or source extension
-  is recorded as that extension's text type; a specific type is kept as given. The type
-  recorded MUST be on the allowlist (§7), or the call fails `type_not_allowed`.
+  is recorded as that extension's text type; a specific type is kept as given (**Types**,
+  below). The type recorded MUST be on the allowlist (§7), or the call fails
+  `type_not_allowed`.
 - **`tag`** answers the tags after the change; **`move`** moves every id or none; **`delete`**
   removes the file, after which it is absent everywhere and its bytes are the
   implementation's to remove (§7); **`delete_folder`** refuses a folder that holds files or
   folders (`conflict`).
 - **`read`** is §8.
+
+**Types.** A type is compared with its parameters (`;charset=…`) stripped, surrounding space
+trimmed and case-folded; call that its bare type.
+
+- **The recorded type.** When the bare `mimeType` is neither empty nor
+  `application/octet-stream`, it is recorded as given, trimmed, with its case and parameters.
+  Otherwise the filename's extension is the text after its last `.`, case-folded, and none
+  when the name has no `.` or ends in one (`.env` has `env`; `Makefile` has none). A known
+  extension records its type from the table below; any other, or none, records
+  `application/octet-stream`.
+
+  | Recorded type | Extensions |
+  |---|---|
+  | `text/markdown` | `md`, `markdown` |
+  | `text/csv` | `csv` |
+  | `text/html` | `html`, `htm` |
+  | `application/json` | `json` |
+  | `application/yaml` | `yaml`, `yml` |
+  | `application/xml` | `xml` |
+  | `text/plain` | `txt`, `text`, `log`, `jsonl`, `ndjson`, `typ`, `py`, `rb`, `go`, `rs`, `java`, `c`, `h`, `cpp`, `cc`, `hpp`, `cs`, `php`, `swift`, `kt`, `scala`, `sh`, `bash`, `zsh`, `sql`, `js`, `mjs`, `cjs`, `ts`, `tsx`, `jsx`, `css`, `scss`, `sass`, `less`, `toml`, `ini`, `cfg`, `conf`, `env`, `properties`, `tex`, `rst`, `adoc`, `org` |
+
+- **A file's kind**, which `list`'s `kinds` filters and `facets.kinds` counts, follows from its
+  bare type. For each type on the allowlist (§7):
+
+  | Kind | Types |
+  |---|---|
+  | `image` | `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/svg+xml` |
+  | `font` | `font/ttf`, `font/otf`, `font/woff`, `font/woff2` |
+  | `data` | `text/csv`, `application/json`, `application/yaml`, `application/xml`, `text/xml`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` |
+  | `document` | `application/pdf`, `text/plain`, `text/markdown`, `text/html`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document` |
+  | `other` | `text/yaml`, `application/zip`, `application/gzip`, `application/octet-stream` |
 
 **Outputs.** A success carries its payload in `structuredContent`, valid against the tool's
 output schema, and a readable rendering in `content`. `read` also carries a `resource_link`

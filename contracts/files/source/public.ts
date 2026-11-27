@@ -181,7 +181,8 @@ const ListInput = Type.Object({
   ),
   kinds: Type.Optional(
     Type.Array(StringEnum(FILE_KINDS), {
-      description: "Keep only files of these kinds, judged from the MIME type.",
+      description:
+        "Keep only files of these kinds, judged from the MIME type (CONTRACT.md §5, Types).",
     }),
   ),
   sources: Type.Optional(
@@ -339,7 +340,7 @@ const CreateInput = Type.Object(
           }),
         ),
         mimeType: Type.String({
-          description: `MIME type (e.g. 'image/png'), one of: ${ALLOWED_MIME_TYPES.join(", ")}. A generic or empty type for a known text extension is read as that extension's text type.`,
+          description: `MIME type (e.g. 'image/png'), one of: ${ALLOWED_MIME_TYPES.join(", ")}. A generic or empty type for a known text extension is read as that extension's text type (CONTRACT.md §5, Types).`,
         }),
         tags: Type.Optional(
           Type.Array(Type.String(), { description: "Optional tags for categorization." }),
