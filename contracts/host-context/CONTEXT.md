@@ -25,6 +25,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 | `workspaceId` | no | the workspace the call is walled to |
 | `ownerId` | no | the verified identity whose records the call reads and writes |
 | `conversationId` | no | the conversation the call is made inside, during a chat turn |
+| `runId` | no | the unattended run the call is made inside, during a run (§5) |
 | `grant` | no | the run grant for the call's workspace and owner, on a `person` call to a tool its contract marks `grant: true` (§6) |
 | `unattended` | no | `true` when the call is made inside an unattended run, with no person present (§7) |
 
@@ -42,7 +43,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
   `person`, whatever they name.
 - **Each dimension is the host's verified fact**: the workspace from the route the request came
   through, the owner from the signed-in identity, the conversation from the turn that made the
-  call. A dimension the host cannot verify is left out, never guessed or defaulted.
+  call, the run from the run that made the call. A dimension the host cannot verify is left out, never guessed or defaulted.
 
 ## 3. A server believes it only from the host
 
@@ -74,7 +75,7 @@ and admits nothing else to the server.
   server serving several tenants learns the tenant only from its transport, and walls every
   call by that tenant in addition to the contract's own scope.
 
-## 5. Why `conversationId` is here
+## 5. Why `conversationId` and `runId` are here
 
 The conversation a call is made inside is a fact of the request, like its workspace: the host
 knows it from the turn that made the call, and no caller can supply it. It is not a fact of
@@ -82,6 +83,12 @@ any one contract. The conversations contract reads it to resolve an omitted `id`
 contract MAY read it (to attribute a write to the turn that made it, or to tell that a turn is
 live) and otherwise ignores it. It is optional because most calls are not made inside a chat,
 and it grants nothing: a server walls by workspace and owner whether or not it is present.
+
+`runId` is the same fact for an unattended run: the run a call is made inside, known to the
+host from the run that made it, never supplied by a caller. The files contract reads it to
+attribute a file to the run that wrote it; any other contract MAY read it and otherwise ignores
+it. It grants nothing, and is independent of `unattended` (§7): the flag walls, the id
+attributes.
 
 ## 6. Run grants
 

@@ -26,6 +26,11 @@
       "type": "string",
       "minLength": 1
     },
+    "runId": {
+      "description": "The unattended run the call is made inside, when it is made by a run. Absent outside a run.",
+      "type": "string",
+      "minLength": 1
+    },
     "grant": {
       "description": "The run grant for this call's workspace and owner, stamped on a person call to a tool its contract marks grant: true. Opaque to the server: it stores the value with a definition that will run unattended and returns it verbatim; only the host reads it. Absent on every other call.",
       "type": "string",

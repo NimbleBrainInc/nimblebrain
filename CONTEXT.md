@@ -307,7 +307,10 @@ plugin declares the contracts it `implements` and `requires`; the kernel names
 contracts, never plugins. Chat is on exactly when an enabled plugin implements the
 conversations contract; the default configuration binds the built-in one. The tasks contract
 (`ai.nimblebrain.tasks`) is published and not yet implemented by any plugin; scheduled work is
-kernel code until one is.
+kernel code until one is. The files contract (`ai.nimblebrain.files`) is published and not yet
+implemented by any plugin: its implementation owns every agent-facing file tool, the records,
+visibility and text extraction, and the kernel owns upload intake and serving large bodies,
+which it reads from the blob store after the contract's `resolve` finds them.
 
 ### Run grant *(ADR-0076, tasks contract)*
 The host's signed record that an owner, in a workspace, set up work under a contract that will
@@ -317,10 +320,14 @@ it with each run, and the host verifies it (signature, key, workspace) and the o
 membership before admitting the run, which acts as the grant's owner. Distinct from a personal connector's grant and from the model gateway's
 per-run grant (ADR-0063).
 
-### Provider *(proposed, ADR-0076; not yet built)*
+### Provider *(ADR-0076)*
 Infrastructure the kernel uses and no agent calls: the work queue, pub/sub, leases,
 blobs. Configured behind a kernel interface, local by default and replaceable for
-scale. Distinct from a plugin, which is a capability agents and people use.
+scale. Distinct from a plugin, which is a capability agents and people use. The work queue
+is built (`src/providers/queue/`). The blob store's interface is written
+(`src/providers/blobs/types.ts`) and not yet implemented: write-once bodies under a scope and
+a key, which the operator configures for both the kernel and the files plugin, and which only
+the kernel deletes.
 
 ## Decisions
 

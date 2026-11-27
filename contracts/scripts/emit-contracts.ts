@@ -34,11 +34,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { SOURCE as CONVERSATIONS } from "../conversations/source/index.ts";
+import { SOURCE as FILES } from "../files/source/index.ts";
 import { SOURCE as TASKS } from "../tasks/source/index.ts";
 import type { ContractSource, ContractToolEntry, Visibility } from "./contract-source.ts";
 
 /** Every contract this repository publishes. */
-export const SOURCES: readonly ContractSource[] = [CONVERSATIONS, TASKS];
+export const SOURCES: readonly ContractSource[] = [CONVERSATIONS, TASKS, FILES];
 
 const REPO = resolve(import.meta.dir, "../..");
 const PUBLISHED_ORIGIN = "https://schemas.nimblebrain.ai/";

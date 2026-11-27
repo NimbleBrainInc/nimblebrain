@@ -32,6 +32,7 @@ const read = (path: string) => JSON.parse(readFileSync(resolve(ROOT, path), "utf
 const DOCUMENTS = {
   conversations: read("schemas/contracts/conversations/v1/contract.json"),
   tasks: read("schemas/contracts/tasks/v1/contract.json"),
+  files: read("schemas/contracts/files/v1/contract.json"),
 };
 
 const SHARED_DEFS = ["notice", "occurrence", "run_outcome", "work_spec"];
@@ -361,6 +362,197 @@ describe("the tasks contract document", () => {
   });
 });
 
+describe("the files contract document", () => {
+  const doc = DOCUMENTS.files;
+  const ajv = compiler();
+  ajv.compile(doc);
+  const schema = (key: string) => {
+    const validate = ajv.getSchema(`${doc.$id}#/$defs/${key}`);
+    if (!validate) throw new Error(`no $defs entry ${key}`);
+    return validate;
+  };
+  const names = (keep: (t: ToolEntry) => boolean) =>
+    Object.entries(doc.tools)
+      .filter(([, t]) => keep(t))
+      .map(([name]) => name)
+      .sort();
+  const file = {
+    id: "fl_0123456789abcdef01234567",
+    filename: "report.pdf",
+    mimeType: "application/pdf",
+    size: 1024,
+    tags: [],
+    source: "chat",
+    conversationId: null,
+    createdAt: "2026-01-01T09:00:00.000Z",
+    description: null,
+  };
+  const uri = `files://${file.id}`;
+
+  test("names the contract and states its own URL", () => {
+    expect(doc.contract).toBe("ai.nimblebrain.files");
+    expect(doc.$id).toBe("https://schemas.nimblebrain.ai/contracts/files/v1/contract.json");
+    expect(doc.version).toBe("1.0");
+    expect(doc.cardinality).toBe("singleton");
+  });
+
+  test("keeps today's public tool names, with read_pdf_pages folded into read", () => {
+    expect(names((t) => t.visibility === "public")).toEqual([
+      "create",
+      "create_folder",
+      "delete",
+      "delete_folder",
+      "info",
+      "list",
+      "move",
+      "read",
+      "search",
+      "tag",
+      "update_folder",
+    ]);
+    expect(doc.tools.read_pdf_pages).toBeUndefined();
+  });
+
+  test("lets an unattended run reach every public tool, as today, and no private one", () => {
+    expect(names((t) => t.visibility === "public" && t.unattended !== "allowed")).toEqual([]);
+    expect(names((t) => t.visibility === "private")).toEqual([
+      "delete_workspace",
+      "record",
+      "released",
+      "resolve",
+    ]);
+    expect(names((t) => t.grant === true)).toEqual([]);
+  });
+
+  test("every private input carries the host's version and is closed", () => {
+    for (const tool of names((t) => t.visibility === "private")) {
+      const input = doc.$defs[`${tool}_input`];
+      expect((input?.required as string[]) ?? []).toContain("version");
+      expect(input?.additionalProperties).toBe(false);
+    }
+    const ws = schema("delete_workspace_input");
+    expect(ws({ version: "1.0" })).toBe(true);
+    expect(ws({ version: "2.0" })).toBe(false);
+    expect(ws({ version: "1.0", ownerId: "u" })).toBe(false);
+  });
+
+  test("record takes a blob key and a door, and answers the URI and the record", () => {
+    const input = schema("record_input");
+    const call = {
+      version: "1.0",
+      blob: "b_0123456789abcdef",
+      filename: "report.pdf",
+      mimeType: "application/pdf",
+      size: 1024,
+      source: "chat",
+      conversationId: "conv_0123456789abcdef",
+    };
+    expect(input(call)).toBe(true);
+    expect(input({ ...call, source: "agent" })).toBe(false);
+    expect(input({ ...call, blob: "../etc/passwd" })).toBe(false);
+    expect(input({ ...call, blob: "Upper" })).toBe(false);
+    expect(input({ ...call, runId: "run_1" })).toBe(true);
+    expect(input({ ...call, ownerId: "u" })).toBe(false);
+    const output = schema("record_output");
+    expect(output({ uri, file })).toBe(true);
+    expect(output({ uri: "files://ws_1/x", file })).toBe(false);
+    expect(output({ uri, file, blob: "b" })).toBe(false);
+  });
+
+  test("resolve answers each URI found, with its blob key, or absent", () => {
+    const input = schema("resolve_input");
+    expect(input({ version: "1.0", uris: [uri] })).toBe(true);
+    expect(input({ version: "1.0", uris: [] })).toBe(false);
+    expect(input({ version: "1.0", uris: Array(101).fill(uri) })).toBe(false);
+    expect(input({ version: "1.0", uris: ["https://example.com/x"] })).toBe(false);
+    const output = schema("resolve_output");
+    const found = { uri, found: true, file, blob: "b_1" };
+    expect(output({ files: [found, { uri, found: false }] })).toBe(true);
+    const { blob: _blob, ...noBlob } = found;
+    expect(output({ files: [noBlob] })).toBe(false);
+    expect(output({ files: [{ uri, found: false, blob: "b_1" }] })).toBe(false);
+  });
+
+  test("released pages keys by a cursor that is null exactly on an empty page", () => {
+    const output = schema("released_output");
+    expect(output({ blobs: ["b_1"], nextCursor: "c" })).toBe(true);
+    expect(output({ blobs: [], nextCursor: null })).toBe(true);
+    expect(output({ blobs: ["b_1"] })).toBe(false);
+    expect(schema("released_input")({ version: "1.0", cursor: "c", limit: 1000 })).toBe(true);
+    expect(schema("released_input")({ version: "1.0", limit: 1001 })).toBe(false);
+  });
+
+  test("read takes an optional page list, at most 10, and answers pages beside the record", () => {
+    const input = schema("read_input");
+    expect(input({ id: file.id })).toBe(true);
+    expect(input({ id: file.id, pages: [1, 2] })).toBe(true);
+    expect(input({ id: file.id, pages: [] })).toBe(false);
+    expect(input({ id: file.id, pages: [0] })).toBe(false);
+    expect(input({ id: file.id, pages: Array.from({ length: 11 }, (_, i) => i + 1) })).toBe(false);
+    const output = schema("read_output");
+    const base = { id: file.id, filename: "r.pdf", mimeType: "application/pdf", size: 1 };
+    expect(output({ ...base, extractedText: "hello", truncated: false })).toBe(true);
+    const paged = {
+      ...base,
+      extractedText: null,
+      truncated: false,
+      totalPages: 3,
+      requestedPages: [2, 4],
+      missingPages: [4],
+      pages: [{ page: 2, text: "two", truncated: false, empty: false }],
+    };
+    expect(output(paged)).toBe(true);
+  });
+
+  test("create keeps today's input shape", () => {
+    const create = schema("create_input");
+    const manifest = { filename: "notes.md", mimeType: "text/markdown", folder: "Reports/Q3" };
+    expect(create({ manifest, body: "# Notes", encoding: "text" })).toBe(true);
+    expect(create({ manifest, body: "aGk=" })).toBe(true);
+    expect(create({ manifest, body: "x", encoding: "hex" })).toBe(false);
+    expect(create({ manifest: { filename: "a" }, body: "x" })).toBe(false);
+  });
+
+  test("a folder id is the implementation's, by grammar", () => {
+    const move = schema("move_input");
+    expect(move({ ids: [file.id], folderId: "root" })).toBe(true);
+    expect(move({ ids: [file.id], folderId: "fd_0123456789abcdef01234567" })).toBe(true);
+    expect(move({ ids: [file.id], folderId: "folder-1" })).toBe(true);
+    expect(move({ ids: [file.id], folderId: "../up" })).toBe(false);
+  });
+
+  test("a public output types a record's source as an open string", () => {
+    expect(schema("info_output")({ ...file, source: "import" })).toBe(true);
+    expect(schema("info_output")({ ...file, source: 1 })).toBe(false);
+  });
+
+  test("no public output names a blob key", () => {
+    for (const tool of names((t) => t.visibility === "public")) {
+      expect(JSON.stringify(doc.$defs[`${tool}_output`])).not.toContain('"blob"');
+    }
+  });
+
+  test("its public errors are the closed list the spec names", () => {
+    expect(doc.errors.public.map((e) => e.code).sort()).toEqual([
+      "conflict",
+      "extraction_failed",
+      "file_not_found",
+      "folder_not_found",
+      "invalid_input",
+      "not_paged",
+      "scope_missing",
+      "too_large",
+      "unknown_tool",
+    ]);
+    expect(doc.errors.private.map((e) => e.code).sort()).toEqual([
+      "forbidden",
+      "internal_error",
+      "invalid_input",
+      "scope_missing",
+    ]);
+  });
+});
+
 describe("the host context schema", () => {
   const validate = compiler().compile(
     JSON.parse(
@@ -375,6 +567,11 @@ describe("the host context schema", () => {
     expect(validate({ principal: "person", unattended: true })).toBe(true);
     expect(validate({ principal: "person", grant: "" })).toBe(false);
     expect(validate({ principal: "person", unattended: "yes" })).toBe(false);
+  });
+
+  test("accepts an optional runId", () => {
+    expect(validate({ principal: "person", unattended: true, runId: "run_1" })).toBe(true);
+    expect(validate({ principal: "person", runId: "" })).toBe(false);
   });
 });
 
