@@ -10,7 +10,7 @@
  * (`schemas/contracts/<short-name>/v<major>/contract.json`). Each is authored in
  * `contracts/<short-name>/source/`, whose `index.ts` exports a `ContractSource`:
  * the identity, version, cardinality, each tool's visibility, unattended
- * marking and grant, the errors, the tools' TypeBox schemas by visibility, and
+ * marking, grant and annotations, the errors, the tools' TypeBox schemas by visibility, and
  * the named schemas tools share.
  *
  * Each tool's input and output schema sits in `$defs` under `<tool>_input` and
@@ -23,9 +23,10 @@
  *
  * The emitter refuses a source whose schemas and declared tools disagree, a
  * private tool that is not `unattended: "refused"`, a `grant` on a private
- * tool or on one an unattended run may call, a `$ref` in a public tool's
- * schema (public schemas are whole, for every MCP client), a `$ref` that names
- * no shared schema, and a nested `$defs` in any tool's schema.
+ * tool or on one an unattended run may call, annotations on a private tool,
+ * a `$ref` in a public tool's schema (public schemas are whole, for every MCP
+ * client), a `$ref` that names no shared schema, and a nested `$defs` in any
+ * tool's schema.
  *
  * `--check` writes nothing. It exits 1 when a committed document is missing or
  * differs from what would be emitted, and prints the first differing line.
@@ -81,7 +82,7 @@ function sharedName(ref: string, shared: Record<string, unknown>): string | unde
 /** Throw when one tool's entry breaks a rule of the document. */
 function checkTool(source: ContractSource, tool: string, entry: ContractToolEntry): void {
   const { meta, schemas } = source;
-  const { visibility, unattended, grant } = entry;
+  const { visibility, unattended, grant, annotations } = entry;
   const pair = schemas[visibility][tool];
   if (!pair) {
     throw new Error(
@@ -95,6 +96,9 @@ function checkTool(source: ContractSource, tool: string, entry: ContractToolEntr
     throw new Error(
       `${meta.contract}: "${tool}" carries a grant, which only a public tool refused to unattended runs may`,
     );
+  }
+  if (annotations && visibility !== "public") {
+    throw new Error(`${meta.contract}: private tool "${tool}" carries annotations`);
   }
   for (const kind of ["input", "output"] as const) {
     checkToolSchema(source, `${tool}'s ${kind}`, visibility, pair[kind]);
@@ -149,11 +153,12 @@ export function emit(source: ContractSource): string {
   const { meta, schemas, shared = {} } = source;
   const tools: Record<string, unknown> = {};
   const defs: Record<string, unknown> = {};
-  for (const [tool, { visibility, unattended, grant }] of Object.entries(meta.tools)) {
+  for (const [tool, { visibility, unattended, grant, annotations }] of Object.entries(meta.tools)) {
     const pair = schemas[visibility][tool];
     if (!pair) throw new Error(`${meta.contract}: no schemas for "${tool}"`);
     const entry: Record<string, unknown> = { visibility, unattended };
     if (grant) entry.grant = true;
+    if (annotations) entry.annotations = annotations;
     for (const kind of ["input", "output"] as const) {
       const key = defKey(tool, kind);
       entry[kind] = { $ref: `#/$defs/${key}` };

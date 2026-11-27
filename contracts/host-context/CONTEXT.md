@@ -43,7 +43,8 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
   `person`, whatever they name.
 - **Each dimension is the host's verified fact**: the workspace from the route the request came
   through, the owner from the signed-in identity, the conversation from the turn that made the
-  call, the run from the run that made the call. A dimension the host cannot verify is left out, never guessed or defaulted.
+  call, the run from the run that made the call or that the host's own call is made for. A
+  dimension the host cannot verify is left out, never guessed or defaulted.
 
 ## 3. A server believes it only from the host
 
@@ -84,8 +85,8 @@ contract MAY read it (to attribute a write to the turn that made it, or to tell 
 live) and otherwise ignores it. It is optional because most calls are not made inside a chat,
 and it grants nothing: a server walls by workspace and owner whether or not it is present.
 
-`runId` is the same fact for an unattended run: the run a call is made inside, known to the
-host from the run that made it, never supplied by a caller. The files contract reads it to
+`runId` is the same fact for an unattended run: the run a call is made inside, or that a
+`host` call is made for, known to the host from the run, never supplied by a caller. The files contract reads it to
 attribute a file to the run that wrote it; any other contract MAY read it and otherwise ignores
 it. It grants nothing, and is independent of `unattended` (§7): the flag walls, the id
 attributes.
@@ -123,8 +124,11 @@ person present and often reads untrusted content, so a tool that would let such 
 outlive the run (authoring or starting more runs) is `refused`. A private tool is always
 `refused`; no run reaches one.
 
-- **The host stamps `unattended: true` on every call a run makes**, and refuses a `refused`
-  tool itself before calling the server: it never offers one to the run.
+- **The host stamps `unattended: true` on every `person` call a run makes**, and refuses a
+  `refused` tool itself before calling the server: it never offers one to the run.
+- **A `host` call never carries `unattended`**, even one the host makes for a run (to take in
+  or serve a run's file, to record what it wrote). It MAY carry the run's `runId` (§5), which
+  attributes and grants nothing, so a private tool answers it as any `host` call.
 - **A server refuses a `refused` tool on a call that carries `unattended: true`**, with the
   error its contract names, and changes nothing. The host's refusal keeps the tool out of
   view; the server's is the boundary, as for private tools.

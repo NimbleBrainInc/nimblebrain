@@ -27,7 +27,7 @@
       "minLength": 1
     },
     "runId": {
-      "description": "The unattended run the call is made inside, when it is made by a run. Absent outside a run.",
+      "description": "The unattended run the call is made inside, or that a host call is made for. Absent outside a run.",
       "type": "string",
       "minLength": 1
     },
@@ -38,7 +38,7 @@
       "maxLength": 4096
     },
     "unattended": {
-      "description": "True when the call is made inside an unattended run (a task run), with no person present. A server refuses a tool its contract marks unattended: refused. Absent or false otherwise.",
+      "description": "True when a person call is made inside an unattended run (a task run), with no person present. A server refuses a tool its contract marks unattended: refused. Never on a host call; absent or false otherwise.",
       "type": "boolean"
     }
   }

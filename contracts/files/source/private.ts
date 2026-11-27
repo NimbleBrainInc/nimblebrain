@@ -7,10 +7,12 @@
  * `--check` fails when the committed document differs. Nothing at runtime
  * imports this file.
  *
- * The byte flow (CONTRACT.md §7): the host puts an upload's body in the blob
- * store and calls `record`; to serve bytes it calls `resolve` and gets the
- * blob by the key it answers; it deletes the bodies `released` lists and
- * acknowledges them; at a workspace's purge it calls `delete_workspace`.
+ * The byte flow (CONTRACT.md §7): bytes move by short-lived URLs the
+ * implementation issues, never over MCP. To take an upload in, the host calls
+ * `begin_upload`, streams the body to the upload URL it answers, and calls
+ * `complete_upload`. To serve a file, it calls `resolve` and streams the body
+ * from the download URL it answers. Where the URLs point, and how the bytes
+ * are stored, is the implementation's.
  *
  * Every private input is closed (`additionalProperties: false` at every level)
  * and carries the host's `version`. Outputs embed the public file record, which
@@ -31,13 +33,6 @@ const Version = Type.String({
     "does not define (CONTRACT.md §14).",
 });
 
-/** A blob key, in the blob store's grammar (CONTRACT.md §7). */
-const BlobKey = Type.String({
-  pattern: "^[a-z0-9][a-z0-9_-]{0,127}$",
-  description:
-    "A blob key under the workspace's scope in the blob store. Opaque: it names a body, never a path or an object.",
-});
-
 /** A `files://<id>` URI. */
 export const FileUri = Type.String({
   pattern: `^files://${ID_PATTERN.slice(1, -1)}$`,
@@ -47,43 +42,96 @@ export const FileUri = Type.String({
 /** The most URIs one `resolve` answers. */
 export const MAX_RESOLVE_URIS = 100;
 
-/** The most keys one `released` page holds. */
-export const MAX_RELEASED_PAGE = 1000;
+/** The latest a download URL may expire, in seconds after it is issued (CONTRACT.md §7). */
+export const MAX_DOWNLOAD_TTL_SECONDS = 300;
+
+/** The latest an upload URL may expire, in seconds after it is issued (CONTRACT.md §7). */
+export const MAX_UPLOAD_TTL_SECONDS = 900;
+
+/** The longest transfer URL either tool answers. */
+const MAX_URL_LENGTH = 4096;
+
+/** The most headers an upload names for the host to send. */
+const MAX_UPLOAD_HEADERS = 16;
 
 /** The sources the host's doors record. `agent` is `create`'s alone. */
 const HOST_SOURCES = ["chat", "app", "manual"] as const;
 
 const Opaque = (description: string) => Type.String({ minLength: 1, maxLength: 512, description });
 
+/** A transfer URL: a bearer capability for one operation on one file (CONTRACT.md §7). */
+const TransferUrl = (description: string) =>
+  Type.String({
+    minLength: 1,
+    maxLength: MAX_URL_LENGTH,
+    pattern: "^https?://",
+    description:
+      `${description} An absolute http(s) URL and a bearer capability: it MUST NOT appear in ` +
+      "a public output, an error, a log or the screen (CONTRACT.md §7).",
+  });
+
+const ExpiresAt = (bound: number) =>
+  Type.String({
+    format: "date-time",
+    description: `When the URL stops accepting a request (RFC 3339): at most ${bound} seconds after it was issued. A request begun before it runs to its end.`,
+  });
+
 /** Every private tool: name → input and output schema. */
 export const PRIVATE_SCHEMAS = {
-  record: {
+  begin_upload: {
     input: Type.Object(
       {
         version: Version,
-        blob: BlobKey,
         filename: Type.String({ minLength: 1, maxLength: 1024 }),
-        mimeType: Type.String({ minLength: 1, maxLength: 255 }),
+        mimeType: Type.String({
+          minLength: 1,
+          maxLength: 255,
+          description: "The body's type, on the allowlist (CONTRACT.md §7).",
+        }),
         size: Type.Integer({
           minimum: 0,
-          description: "The stored body's size, as put answered it.",
+          description: "The body's exact length in bytes. The host sends exactly this many.",
         }),
-        source: StringEnum(HOST_SOURCES, { description: "The door the body came through." }),
+        source: StringEnum(HOST_SOURCES, { description: "The door the body comes through." }),
         conversationId: Type.Optional(
-          Opaque("The conversation the file was attached in, minted before intake."),
+          Opaque(
+            "The conversation the file is attached in, minted before intake and verified by the host as the caller's.",
+          ),
         ),
-        runId: Type.Optional(
-          Opaque("The unattended run the body was stored for, when a run's door stored it."),
-        ),
+        runId: Type.Optional(Opaque("The unattended run the body is taken in for.")),
         folder: Type.Optional(
           Type.String({
             description:
-              "Folder path, '/'-separated; missing levels are created, as create's manifest.folder.",
+              "Folder path, '/'-separated; missing levels are created at completion, as create's manifest.folder.",
           }),
         ),
         tags: Type.Optional(Type.Array(Type.String(), { maxItems: 100 })),
         description: Type.Optional(Type.String({ maxLength: 4096 })),
       },
+      CLOSED,
+    ),
+    output: Type.Object(
+      {
+        uploadId: Opaque("Names this upload to complete_upload."),
+        url: TransferUrl("Where the host PUTs the body, once."),
+        method: Type.Literal("PUT"),
+        headers: Type.Record(Type.String({ minLength: 1, maxLength: 128 }), Type.String(), {
+          maxProperties: MAX_UPLOAD_HEADERS,
+          description:
+            "Headers the host sends with the PUT, verbatim, beside Content-Length. Part of the capability.",
+        }),
+        maxBytes: Type.Integer({
+          minimum: 0,
+          description: "The most bytes the URL accepts; at least size.",
+        }),
+        expiresAt: ExpiresAt(MAX_UPLOAD_TTL_SECONDS),
+      },
+      CLOSED,
+    ),
+  },
+  complete_upload: {
+    input: Type.Object(
+      { version: Version, uploadId: Opaque("The uploadId begin_upload answered.") },
       CLOSED,
     ),
     output: Type.Object({ uri: FileUri, file: FileRecord }, CLOSED),
@@ -101,7 +149,18 @@ export const PRIVATE_SCHEMAS = {
         files: Type.Array(
           Type.Union([
             Type.Object(
-              { uri: FileUri, found: Type.Literal(true), file: FileRecord, blob: BlobKey },
+              {
+                uri: FileUri,
+                found: Type.Literal(true),
+                file: FileRecord,
+                download: Type.Object(
+                  {
+                    url: TransferUrl("Where the host GETs this file's body."),
+                    expiresAt: ExpiresAt(MAX_DOWNLOAD_TTL_SECONDS),
+                  },
+                  CLOSED,
+                ),
+              },
               CLOSED,
             ),
             Type.Object({ uri: FileUri, found: Type.Literal(false) }, CLOSED),
@@ -111,32 +170,6 @@ export const PRIVATE_SCHEMAS = {
             description: "One entry per requested URI, in the order asked.",
           },
         ),
-      },
-      CLOSED,
-    ),
-  },
-  released: {
-    input: Type.Object(
-      {
-        version: Version,
-        cursor: Type.Optional(
-          Opaque(
-            "The previous page's nextCursor. Passing it acknowledges every key on that page and the pages before it.",
-          ),
-        ),
-        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_RELEASED_PAGE })),
-      },
-      CLOSED,
-    ),
-    output: Type.Object(
-      {
-        blobs: Type.Array(BlobKey, {
-          maxItems: MAX_RELEASED_PAGE,
-          description: "Blob keys in the workspace that no record references and never will.",
-        }),
-        nextCursor: Type.Union([Opaque("Pass back to acknowledge this page."), Type.Null()], {
-          description: "null exactly when `blobs` is empty.",
-        }),
       },
       CLOSED,
     ),

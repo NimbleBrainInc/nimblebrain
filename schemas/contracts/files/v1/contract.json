@@ -10,6 +10,9 @@
     "list": {
       "visibility": "public",
       "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": true
+      },
       "input": {
         "$ref": "#/$defs/list_input"
       },
@@ -20,6 +23,9 @@
     "search": {
       "visibility": "public",
       "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": true
+      },
       "input": {
         "$ref": "#/$defs/search_input"
       },
@@ -30,6 +36,9 @@
     "info": {
       "visibility": "public",
       "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": true
+      },
       "input": {
         "$ref": "#/$defs/info_input"
       },
@@ -40,6 +49,9 @@
     "read": {
       "visibility": "public",
       "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": true
+      },
       "input": {
         "$ref": "#/$defs/read_input"
       },
@@ -50,6 +62,11 @@
     "create": {
       "visibility": "public",
       "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
       "input": {
         "$ref": "#/$defs/create_input"
       },
@@ -60,6 +77,10 @@
     "tag": {
       "visibility": "public",
       "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
       "input": {
         "$ref": "#/$defs/tag_input"
       },
@@ -70,6 +91,10 @@
     "move": {
       "visibility": "public",
       "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
       "input": {
         "$ref": "#/$defs/move_input"
       },
@@ -80,6 +105,10 @@
     "delete": {
       "visibility": "public",
       "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
       "input": {
         "$ref": "#/$defs/delete_input"
       },
@@ -90,6 +119,10 @@
     "create_folder": {
       "visibility": "public",
       "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
       "input": {
         "$ref": "#/$defs/create_folder_input"
       },
@@ -100,6 +133,10 @@
     "update_folder": {
       "visibility": "public",
       "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
       "input": {
         "$ref": "#/$defs/update_folder_input"
       },
@@ -110,6 +147,10 @@
     "delete_folder": {
       "visibility": "public",
       "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
       "input": {
         "$ref": "#/$defs/delete_folder_input"
       },
@@ -117,14 +158,24 @@
         "$ref": "#/$defs/delete_folder_output"
       }
     },
-    "record": {
+    "begin_upload": {
       "visibility": "private",
       "unattended": "refused",
       "input": {
-        "$ref": "#/$defs/record_input"
+        "$ref": "#/$defs/begin_upload_input"
       },
       "output": {
-        "$ref": "#/$defs/record_output"
+        "$ref": "#/$defs/begin_upload_output"
+      }
+    },
+    "complete_upload": {
+      "visibility": "private",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/complete_upload_input"
+      },
+      "output": {
+        "$ref": "#/$defs/complete_upload_output"
       }
     },
     "resolve": {
@@ -135,16 +186,6 @@
       },
       "output": {
         "$ref": "#/$defs/resolve_output"
-      }
-    },
-    "released": {
-      "visibility": "private",
-      "unattended": "refused",
-      "input": {
-        "$ref": "#/$defs/released_input"
-      },
-      "output": {
-        "$ref": "#/$defs/released_output"
       }
     },
     "delete_workspace": {
@@ -191,6 +232,11 @@
         "meaning": "create's body, decoded, is over the contract's limit (CONTRACT.md §7). Nothing was written."
       },
       {
+        "code": "type_not_allowed",
+        "prefix": "Type not allowed: ",
+        "meaning": "create named a MIME type outside the allowlist (CONTRACT.md §7). Nothing was written."
+      },
+      {
         "code": "scope_missing",
         "prefix": "[files] no ",
         "meaning": "tools/call reached a public tool with no workspace or no authenticated identity in its scope."
@@ -217,7 +263,23 @@
       },
       {
         "code": "scope_missing",
-        "meaning": "The call reached the server with no workspace in its scope, or record or resolve with no owner. Nothing was read or written."
+        "meaning": "The call reached the server with no workspace in its scope, or begin_upload, complete_upload or resolve with no owner. Nothing was read or written."
+      },
+      {
+        "code": "too_large",
+        "meaning": "begin_upload declared a size over the implementation's per-file limit. Nothing was written."
+      },
+      {
+        "code": "type_not_allowed",
+        "meaning": "begin_upload named a MIME type outside the allowlist. Nothing was written."
+      },
+      {
+        "code": "upload_not_found",
+        "meaning": "complete_upload named no open upload in the caller's scope: unknown, expired, or another owner's or workspace's. Nothing was written."
+      },
+      {
+        "code": "upload_incomplete",
+        "meaning": "complete_upload found no body at the upload URL, or one whose length is not the declared size. No record was made; the upload stays open until it expires."
       },
       {
         "code": "internal_error",
@@ -321,10 +383,10 @@
           "description": "Max files to return. Default: 20.",
           "type": "integer"
         },
-        "offset": {
-          "minimum": 0,
-          "description": "Number of files to skip. Default: 0.",
-          "type": "integer"
+        "cursor": {
+          "minLength": 1,
+          "description": "Opaque cursor from a previous response's `nextCursor`, passed back with the same filters and sort, unchanged. Omit for the first page.",
+          "type": "string"
         }
       }
     },
@@ -335,7 +397,8 @@
         "total",
         "folders",
         "breadcrumb",
-        "facets"
+        "facets",
+        "nextCursor"
       ],
       "properties": {
         "files": {
@@ -557,6 +620,17 @@
               }
             }
           }
+        },
+        "nextCursor": {
+          "description": "Pass as `cursor` for the next page; null on the last.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -582,8 +656,10 @@
           "type": "string"
         },
         "limit": {
+          "minimum": 1,
+          "maximum": 200,
           "description": "Max results. Default: 20.",
-          "type": "number"
+          "type": "integer"
         }
       }
     },
@@ -824,6 +900,12 @@
             "description": "1-based page number.",
             "type": "integer"
           }
+        },
+        "maxBytes": {
+          "minimum": 1,
+          "maximum": 1048576,
+          "description": "The most UTF-8 bytes of text to answer, across `extractedText` or `pages`. Default and most: 1048576.",
+          "type": "integer"
         }
       }
     },
@@ -862,7 +944,7 @@
           ]
         },
         "truncated": {
-          "description": "Whether `extractedText` stops at the text bound.",
+          "description": "Whether `extractedText` stops at the text bound or at `maxBytes`.",
           "type": "boolean"
         },
         "totalPages": {
@@ -935,7 +1017,7 @@
               "type": "string"
             },
             "mimeType": {
-              "description": "MIME type (e.g. 'image/png').",
+              "description": "MIME type (e.g. 'image/png'), one of: text/plain, text/csv, text/markdown, text/html, text/xml, text/yaml, application/json, application/xml, application/yaml, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/pdf, image/png, image/jpeg, image/gif, image/webp, image/svg+xml, application/zip, application/gzip, font/ttf, font/otf, font/woff, font/woff2, application/octet-stream. A generic or empty type for a known text extension is read as that extension's text type.",
               "type": "string"
             },
             "tags": {
@@ -1267,12 +1349,11 @@
         }
       }
     },
-    "record_input": {
+    "begin_upload_input": {
       "additionalProperties": false,
       "type": "object",
       "required": [
         "version",
-        "blob",
         "filename",
         "mimeType",
         "size",
@@ -1284,11 +1365,6 @@
           "description": "The version of this contract the host consumes. The answer holds nothing that version does not define (CONTRACT.md §14).",
           "type": "string"
         },
-        "blob": {
-          "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$",
-          "description": "A blob key under the workspace's scope in the blob store. Opaque: it names a body, never a path or an object.",
-          "type": "string"
-        },
         "filename": {
           "minLength": 1,
           "maxLength": 1024,
@@ -1297,11 +1373,12 @@
         "mimeType": {
           "minLength": 1,
           "maxLength": 255,
+          "description": "The body's type, on the allowlist (CONTRACT.md §7).",
           "type": "string"
         },
         "size": {
           "minimum": 0,
-          "description": "The stored body's size, as put answered it.",
+          "description": "The body's exact length in bytes. The host sends exactly this many.",
           "type": "integer"
         },
         "source": {
@@ -1311,22 +1388,22 @@
             "app",
             "manual"
           ],
-          "description": "The door the body came through."
+          "description": "The door the body comes through."
         },
         "conversationId": {
           "minLength": 1,
           "maxLength": 512,
-          "description": "The conversation the file was attached in, minted before intake.",
+          "description": "The conversation the file is attached in, minted before intake and verified by the host as the caller's.",
           "type": "string"
         },
         "runId": {
           "minLength": 1,
           "maxLength": 512,
-          "description": "The unattended run the body was stored for, when a run's door stored it.",
+          "description": "The unattended run the body is taken in for.",
           "type": "string"
         },
         "folder": {
-          "description": "Folder path, '/'-separated; missing levels are created, as create's manifest.folder.",
+          "description": "Folder path, '/'-separated; missing levels are created at completion, as create's manifest.folder.",
           "type": "string"
         },
         "tags": {
@@ -1342,7 +1419,79 @@
         }
       }
     },
-    "record_output": {
+    "begin_upload_output": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "uploadId",
+        "url",
+        "method",
+        "headers",
+        "maxBytes",
+        "expiresAt"
+      ],
+      "properties": {
+        "uploadId": {
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "Names this upload to complete_upload.",
+          "type": "string"
+        },
+        "url": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^https?://",
+          "description": "Where the host PUTs the body, once. An absolute http(s) URL and a bearer capability: it MUST NOT appear in a public output, an error, a log or the screen (CONTRACT.md §7).",
+          "type": "string"
+        },
+        "method": {
+          "const": "PUT",
+          "type": "string"
+        },
+        "headers": {
+          "maxProperties": 16,
+          "description": "Headers the host sends with the PUT, verbatim, beside Content-Length. Part of the capability.",
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "type": "string"
+            }
+          }
+        },
+        "maxBytes": {
+          "minimum": 0,
+          "description": "The most bytes the URL accepts; at least size.",
+          "type": "integer"
+        },
+        "expiresAt": {
+          "format": "date-time",
+          "description": "When the URL stops accepting a request (RFC 3339): at most 900 seconds after it was issued. A request begun before it runs to its end.",
+          "type": "string"
+        }
+      }
+    },
+    "complete_upload_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "version",
+        "uploadId"
+      ],
+      "properties": {
+        "version": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "description": "The version of this contract the host consumes. The answer holds nothing that version does not define (CONTRACT.md §14).",
+          "type": "string"
+        },
+        "uploadId": {
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "The uploadId begin_upload answered.",
+          "type": "string"
+        }
+      }
+    },
+    "complete_upload_output": {
       "additionalProperties": false,
       "type": "object",
       "required": [
@@ -1497,7 +1646,7 @@
                   "uri",
                   "found",
                   "file",
-                  "blob"
+                  "download"
                 ],
                 "properties": {
                   "uri": {
@@ -1604,10 +1753,27 @@
                       }
                     }
                   },
-                  "blob": {
-                    "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$",
-                    "description": "A blob key under the workspace's scope in the blob store. Opaque: it names a body, never a path or an object.",
-                    "type": "string"
+                  "download": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "url",
+                      "expiresAt"
+                    ],
+                    "properties": {
+                      "url": {
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "^https?://",
+                        "description": "Where the host GETs this file's body. An absolute http(s) URL and a bearer capability: it MUST NOT appear in a public output, an error, a log or the screen (CONTRACT.md §7).",
+                        "type": "string"
+                      },
+                      "expiresAt": {
+                        "format": "date-time",
+                        "description": "When the URL stops accepting a request (RFC 3339): at most 300 seconds after it was issued. A request begun before it runs to its end.",
+                        "type": "string"
+                      }
+                    }
                   }
                 }
               },
@@ -1632,65 +1798,6 @@
               }
             ]
           }
-        }
-      }
-    },
-    "released_input": {
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "version"
-      ],
-      "properties": {
-        "version": {
-          "pattern": "^1\\.(0|[1-9][0-9]*)$",
-          "description": "The version of this contract the host consumes. The answer holds nothing that version does not define (CONTRACT.md §14).",
-          "type": "string"
-        },
-        "cursor": {
-          "minLength": 1,
-          "maxLength": 512,
-          "description": "The previous page's nextCursor. Passing it acknowledges every key on that page and the pages before it.",
-          "type": "string"
-        },
-        "limit": {
-          "minimum": 1,
-          "maximum": 1000,
-          "type": "integer"
-        }
-      }
-    },
-    "released_output": {
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "blobs",
-        "nextCursor"
-      ],
-      "properties": {
-        "blobs": {
-          "maxItems": 1000,
-          "description": "Blob keys in the workspace that no record references and never will.",
-          "type": "array",
-          "items": {
-            "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$",
-            "description": "A blob key under the workspace's scope in the blob store. Opaque: it names a body, never a path or an object.",
-            "type": "string"
-          }
-        },
-        "nextCursor": {
-          "description": "null exactly when `blobs` is empty.",
-          "anyOf": [
-            {
-              "minLength": 1,
-              "maxLength": 512,
-              "description": "Pass back to acknowledge this page.",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
         }
       }
     },

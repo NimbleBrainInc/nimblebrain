@@ -49,7 +49,7 @@ const Nullable = <T extends TSchema>(t: T, options: { description?: string } = {
 /** The coarse kinds `list` filters and counts by, from a file's MIME type. */
 export const FILE_KINDS = ["image", "document", "data", "font", "other"] as const;
 
-/** Where a file came from. `agent` is `create`'s; the others are the host's doors (`record`). */
+/** Where a file came from. `agent` is `create`'s; the others are the host's doors (`begin_upload`). */
 export const FILE_SOURCES = ["chat", "agent", "app", "manual"] as const;
 
 /** The grammar of a file id and a folder id: the implementation mints both (CONTRACT.md §4). */
@@ -57,6 +57,38 @@ export const ID_PATTERN = "^[a-z0-9][a-z0-9_-]{0,63}$";
 
 /** The largest body `create` stores, decoded, in bytes (4 MiB; CONTRACT.md §7). */
 export const MAX_CREATE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The types a file may have, in 1.0: every door's intake and `create` accept
+ * these and refuse any other (`type_not_allowed`). A type is compared with its
+ * parameters (`;charset=…`) stripped and case-folded (CONTRACT.md §7).
+ */
+export const ALLOWED_MIME_TYPES = [
+  "text/plain",
+  "text/csv",
+  "text/markdown",
+  "text/html",
+  "text/xml",
+  "text/yaml",
+  "application/json",
+  "application/xml",
+  "application/yaml",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/svg+xml",
+  "application/zip",
+  "application/gzip",
+  "font/ttf",
+  "font/otf",
+  "font/woff",
+  "font/woff2",
+  "application/octet-stream",
+] as const;
 
 /** The most pages one `read` extracts (CONTRACT.md §8). */
 export const MAX_READ_PAGES = 10;
@@ -80,7 +112,7 @@ const FolderNameField = Type.String({
 
 // ── Records ──────────────────────────────────────────────────────────────
 
-/** A file's record, as `list`, `search`, `info` and the private `record` and `resolve` answer it. */
+/** A file's record, as `list`, `search`, `info` and the private `complete_upload` and `resolve` answer it. */
 export const FileRecord = Type.Object({
   id: Type.String({ description: "The file's id: its URI is files://<id>." }),
   filename: Type.String(),
@@ -198,8 +230,12 @@ const ListInput = Type.Object({
   limit: Type.Optional(
     Type.Integer({ minimum: 1, maximum: 200, description: "Max files to return. Default: 20." }),
   ),
-  offset: Type.Optional(
-    Type.Integer({ minimum: 0, description: "Number of files to skip. Default: 0." }),
+  cursor: Type.Optional(
+    Type.String({
+      minLength: 1,
+      description:
+        "Opaque cursor from a previous response's `nextCursor`, passed back with the same filters and sort, unchanged. Omit for the first page.",
+    }),
   ),
 });
 
@@ -212,6 +248,9 @@ const ListOutput = Type.Object({
     kinds: CountsBy(FILE_KINDS),
     sources: CountsBy(FILE_SOURCES),
   }),
+  nextCursor: Nullable(Type.String(), {
+    description: "Pass as `cursor` for the next page; null on the last.",
+  }),
 });
 
 const SearchInput = Type.Object(
@@ -219,7 +258,9 @@ const SearchInput = Type.Object(
     query: Type.String({ description: "Search query." }),
     tags: Type.Optional(Type.Array(Type.String(), { description: "Filter by tags." })),
     mimeType: Type.Optional(Type.String({ description: "Filter by MIME type prefix." })),
-    limit: Type.Optional(Type.Number({ description: "Max results. Default: 20." })),
+    limit: Type.Optional(
+      Type.Integer({ minimum: 1, maximum: 200, description: "Max results. Default: 20." }),
+    ),
   },
   { required: ["query"] },
 );
@@ -241,6 +282,13 @@ const ReadInput = Type.Object(
           "Use it for a long PDF, or for pages past the truncated text. Omit to read the whole text.",
       }),
     ),
+    maxBytes: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: MAX_READ_TEXT_BYTES,
+        description: `The most UTF-8 bytes of text to answer, across \`extractedText\` or \`pages\`. Default and most: ${MAX_READ_TEXT_BYTES}.`,
+      }),
+    ),
   },
   { required: ["id"] },
 );
@@ -254,7 +302,9 @@ const ReadOutput = Type.Object({
     description:
       "The file's text, when its type is extractable and extraction succeeded; null otherwise, and with `pages`.",
   }),
-  truncated: Type.Boolean({ description: "Whether `extractedText` stops at the text bound." }),
+  truncated: Type.Boolean({
+    description: "Whether `extractedText` stops at the text bound or at `maxBytes`.",
+  }),
   totalPages: Type.Optional(Type.Integer({ description: "With `pages`: the document's pages." })),
   requestedPages: Type.Optional(
     Type.Array(Type.Integer(), {
@@ -288,7 +338,9 @@ const CreateInput = Type.Object(
               "Folder path to put the file in, '/'-separated (e.g. 'Reports/Q3'). Folders that do not exist are created. Omit for the top level.",
           }),
         ),
-        mimeType: Type.String({ description: "MIME type (e.g. 'image/png')." }),
+        mimeType: Type.String({
+          description: `MIME type (e.g. 'image/png'), one of: ${ALLOWED_MIME_TYPES.join(", ")}. A generic or empty type for a known text extension is read as that extension's text type.`,
+        }),
         tags: Type.Optional(
           Type.Array(Type.String(), { description: "Optional tags for categorization." }),
         ),

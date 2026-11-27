@@ -6,7 +6,11 @@
  * file.
  */
 
-import type { ContractMeta } from "../../scripts/contract-source.ts";
+import type { ContractMeta, ToolAnnotations } from "../../scripts/contract-source.ts";
+
+const READ_ONLY: ToolAnnotations = { readOnlyHint: true };
+const ADDITIVE: ToolAnnotations = { readOnlyHint: false, destructiveHint: false };
+const DESTRUCTIVE: ToolAnnotations = { readOnlyHint: false, destructiveHint: true };
 
 export const CONTRACT = {
   $id: "https://schemas.nimblebrain.ai/contracts/files/v1/contract.json",
@@ -24,20 +28,24 @@ export const CONTRACT = {
   version: "1.0",
   cardinality: "singleton",
   tools: {
-    list: { visibility: "public", unattended: "allowed" },
-    search: { visibility: "public", unattended: "allowed" },
-    info: { visibility: "public", unattended: "allowed" },
-    read: { visibility: "public", unattended: "allowed" },
-    create: { visibility: "public", unattended: "allowed" },
-    tag: { visibility: "public", unattended: "allowed" },
-    move: { visibility: "public", unattended: "allowed" },
-    delete: { visibility: "public", unattended: "allowed" },
-    create_folder: { visibility: "public", unattended: "allowed" },
-    update_folder: { visibility: "public", unattended: "allowed" },
-    delete_folder: { visibility: "public", unattended: "allowed" },
-    record: { visibility: "private", unattended: "refused" },
+    list: { visibility: "public", unattended: "allowed", annotations: READ_ONLY },
+    search: { visibility: "public", unattended: "allowed", annotations: READ_ONLY },
+    info: { visibility: "public", unattended: "allowed", annotations: READ_ONLY },
+    read: { visibility: "public", unattended: "allowed", annotations: READ_ONLY },
+    create: {
+      visibility: "public",
+      unattended: "allowed",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    tag: { visibility: "public", unattended: "allowed", annotations: ADDITIVE },
+    move: { visibility: "public", unattended: "allowed", annotations: DESTRUCTIVE },
+    delete: { visibility: "public", unattended: "allowed", annotations: DESTRUCTIVE },
+    create_folder: { visibility: "public", unattended: "allowed", annotations: ADDITIVE },
+    update_folder: { visibility: "public", unattended: "allowed", annotations: ADDITIVE },
+    delete_folder: { visibility: "public", unattended: "allowed", annotations: DESTRUCTIVE },
+    begin_upload: { visibility: "private", unattended: "refused" },
+    complete_upload: { visibility: "private", unattended: "refused" },
     resolve: { visibility: "private", unattended: "refused" },
-    released: { visibility: "private", unattended: "refused" },
     delete_workspace: { visibility: "private", unattended: "refused" },
   },
   errors: {
@@ -77,6 +85,12 @@ export const CONTRACT = {
           "create's body, decoded, is over the contract's limit (CONTRACT.md §7). Nothing was written.",
       },
       {
+        code: "type_not_allowed",
+        prefix: "Type not allowed: ",
+        meaning:
+          "create named a MIME type outside the allowlist (CONTRACT.md §7). Nothing was written.",
+      },
+      {
         code: "scope_missing",
         prefix: "[files] no ",
         meaning:
@@ -107,7 +121,26 @@ export const CONTRACT = {
       {
         code: "scope_missing",
         meaning:
-          "The call reached the server with no workspace in its scope, or record or resolve with no owner. Nothing was read or written.",
+          "The call reached the server with no workspace in its scope, or begin_upload, complete_upload or resolve with no owner. Nothing was read or written.",
+      },
+      {
+        code: "too_large",
+        meaning:
+          "begin_upload declared a size over the implementation's per-file limit. Nothing was written.",
+      },
+      {
+        code: "type_not_allowed",
+        meaning: "begin_upload named a MIME type outside the allowlist. Nothing was written.",
+      },
+      {
+        code: "upload_not_found",
+        meaning:
+          "complete_upload named no open upload in the caller's scope: unknown, expired, or another owner's or workspace's. Nothing was written.",
+      },
+      {
+        code: "upload_incomplete",
+        meaning:
+          "complete_upload found no body at the upload URL, or one whose length is not the declared size. No record was made; the upload stays open until it expires.",
       },
       {
         code: "internal_error",

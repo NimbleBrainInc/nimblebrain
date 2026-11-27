@@ -13,6 +13,7 @@ interface ToolEntry {
   visibility: string;
   unattended: string;
   grant?: boolean;
+  annotations?: Record<string, boolean>;
   input: { $ref: string };
   output: { $ref: string };
 }
@@ -416,12 +417,29 @@ describe("the files contract document", () => {
   test("lets an unattended run reach every public tool, as today, and no private one", () => {
     expect(names((t) => t.visibility === "public" && t.unattended !== "allowed")).toEqual([]);
     expect(names((t) => t.visibility === "private")).toEqual([
+      "begin_upload",
+      "complete_upload",
       "delete_workspace",
-      "record",
-      "released",
       "resolve",
     ]);
     expect(names((t) => t.grant === true)).toEqual([]);
+  });
+
+  test("annotates every public tool, and no private one", () => {
+    const hint = (h: string, v: boolean) => names((t) => t.annotations?.[h] === v);
+    expect(hint("readOnlyHint", true)).toEqual(["info", "list", "read", "search"]);
+    expect(hint("destructiveHint", true)).toEqual(["delete", "delete_folder", "move"]);
+    expect(hint("destructiveHint", false)).toEqual([
+      "create",
+      "create_folder",
+      "tag",
+      "update_folder",
+    ]);
+    expect(hint("idempotentHint", false)).toEqual(["create"]);
+    for (const [tool, entry] of Object.entries(doc.tools)) {
+      if (entry.visibility === "public") expect(entry.annotations, tool).toBeObject();
+      else expect(entry.annotations, tool).toBeUndefined();
+    }
   });
 
   test("every private input carries the host's version and is closed", () => {
@@ -436,11 +454,12 @@ describe("the files contract document", () => {
     expect(ws({ version: "1.0", ownerId: "u" })).toBe(false);
   });
 
-  test("record takes a blob key and a door, and answers the URI and the record", () => {
-    const input = schema("record_input");
+  const at = "2026-01-01T09:05:00.000Z";
+
+  test("begin_upload takes a declared body and a door, and answers an upload URL", () => {
+    const input = schema("begin_upload_input");
     const call = {
       version: "1.0",
-      blob: "b_0123456789abcdef",
       filename: "report.pdf",
       mimeType: "application/pdf",
       size: 1024,
@@ -448,38 +467,119 @@ describe("the files contract document", () => {
       conversationId: "conv_0123456789abcdef",
     };
     expect(input(call)).toBe(true);
+    expect(input({ ...call, runId: "run_1", folder: "Reports", tags: ["q3"] })).toBe(true);
     expect(input({ ...call, source: "agent" })).toBe(false);
-    expect(input({ ...call, blob: "../etc/passwd" })).toBe(false);
-    expect(input({ ...call, blob: "Upper" })).toBe(false);
-    expect(input({ ...call, runId: "run_1" })).toBe(true);
+    expect(input({ ...call, size: -1 })).toBe(false);
     expect(input({ ...call, ownerId: "u" })).toBe(false);
-    const output = schema("record_output");
-    expect(output({ uri, file })).toBe(true);
-    expect(output({ uri: "files://ws_1/x", file })).toBe(false);
-    expect(output({ uri, file, blob: "b" })).toBe(false);
+    const { size: _size, ...noSize } = call;
+    expect(input(noSize)).toBe(false);
+    const output = schema("begin_upload_output");
+    const answer = {
+      uploadId: "up_1",
+      url: "http://127.0.0.1:41234/u/opaque-token",
+      method: "PUT",
+      headers: { "content-type": "application/pdf" },
+      maxBytes: 1024,
+      expiresAt: at,
+    };
+    expect(output(answer)).toBe(true);
+    expect(output({ ...answer, url: "https://store.example/obj?sig=x" })).toBe(true);
+    expect(output({ ...answer, url: "file:///tmp/x" })).toBe(false);
+    expect(output({ ...answer, method: "POST" })).toBe(false);
+    expect(output({ ...answer, expiresAt: "soon" })).toBe(false);
+    expect(output({ ...answer, path: "/var/files/x" })).toBe(false);
   });
 
-  test("resolve answers each URI found, with its blob key, or absent", () => {
+  test("complete_upload takes the upload id and answers the URI and the record", () => {
+    const input = schema("complete_upload_input");
+    expect(input({ version: "1.0", uploadId: "up_1" })).toBe(true);
+    expect(input({ version: "1.0" })).toBe(false);
+    expect(input({ version: "1.0", uploadId: "up_1", size: 1 })).toBe(false);
+    const output = schema("complete_upload_output");
+    expect(output({ uri, file })).toBe(true);
+    expect(output({ uri: "files://ws_1/x", file })).toBe(false);
+    expect(output({ uri, file, url: "https://store.example/x" })).toBe(false);
+  });
+
+  test("resolve answers each URI found, with a download URL, or absent", () => {
     const input = schema("resolve_input");
     expect(input({ version: "1.0", uris: [uri] })).toBe(true);
     expect(input({ version: "1.0", uris: [] })).toBe(false);
     expect(input({ version: "1.0", uris: Array(101).fill(uri) })).toBe(false);
     expect(input({ version: "1.0", uris: ["https://example.com/x"] })).toBe(false);
     const output = schema("resolve_output");
-    const found = { uri, found: true, file, blob: "b_1" };
+    const download = { url: "https://store.example/obj?sig=x", expiresAt: at };
+    const found = { uri, found: true, file, download };
     expect(output({ files: [found, { uri, found: false }] })).toBe(true);
-    const { blob: _blob, ...noBlob } = found;
-    expect(output({ files: [noBlob] })).toBe(false);
-    expect(output({ files: [{ uri, found: false, blob: "b_1" }] })).toBe(false);
+    const { download: _download, ...noDownload } = found;
+    expect(output({ files: [noDownload] })).toBe(false);
+    expect(output({ files: [{ ...found, download: { ...download, url: "ftp://x" } }] })).toBe(
+      false,
+    );
+    expect(output({ files: [{ ...found, download: { ...download, method: "GET" } }] })).toBe(false);
+    expect(output({ files: [{ uri, found: false, download }] })).toBe(false);
   });
 
-  test("released pages keys by a cursor that is null exactly on an empty page", () => {
-    const output = schema("released_output");
-    expect(output({ blobs: ["b_1"], nextCursor: "c" })).toBe(true);
-    expect(output({ blobs: [], nextCursor: null })).toBe(true);
-    expect(output({ blobs: ["b_1"] })).toBe(false);
-    expect(schema("released_input")({ version: "1.0", cursor: "c", limit: 1000 })).toBe(true);
-    expect(schema("released_input")({ version: "1.0", limit: 1001 })).toBe(false);
+  test("transfer URLs appear only in private outputs", () => {
+    const urlProperty = (value: unknown): boolean => {
+      if (Array.isArray(value)) return value.some(urlProperty);
+      if (value === null || typeof value !== "object") return false;
+      const node = value as Record<string, unknown>;
+      const props = node.properties as Record<string, unknown> | undefined;
+      if (props && Object.hasOwn(props, "url")) return true;
+      return Object.values(node).some(urlProperty);
+    };
+    const carriers = Object.keys(doc.tools)
+      .flatMap((tool) => [`${tool}_input`, `${tool}_output`])
+      .filter((key) => urlProperty(doc.$defs[key]))
+      .sort();
+    expect(carriers).toEqual(["begin_upload_output", "resolve_output"]);
+  });
+
+  test("names no blob key and no storage location anywhere", () => {
+    const text = JSON.stringify(doc).toLowerCase();
+    expect(text).not.toContain("blob");
+    for (const word of ['"bucket"', '"objectkey"', '"released"', '"record"']) {
+      expect(text).not.toContain(word);
+    }
+  });
+
+  test("list pages by an opaque cursor, with total and facets", () => {
+    const input = doc.$defs.list_input?.properties as Record<string, unknown>;
+    expect(input.cursor).toBeDefined();
+    expect(input.offset).toBeUndefined();
+    expect(schema("list_input")({ cursor: "opaque", limit: 50 })).toBe(true);
+    expect(schema("list_input")({ cursor: "" })).toBe(false);
+    expect(doc.$defs.list_output?.required).toEqual(
+      expect.arrayContaining(["files", "total", "facets", "nextCursor"]),
+    );
+    const zero = { image: 0, document: 0, data: 0, font: 0, other: 0 };
+    const page = {
+      files: [],
+      total: 0,
+      folders: [],
+      breadcrumb: [],
+      facets: { kinds: zero, sources: { chat: 0, agent: 0, app: 0, manual: 0 } },
+    };
+    expect(schema("list_output")({ ...page, nextCursor: null })).toBe(true);
+    expect(schema("list_output")({ ...page, nextCursor: "c" })).toBe(true);
+    expect(schema("list_output")(page)).toBe(false);
+  });
+
+  test("search takes an integer limit from 1 to 200", () => {
+    const search = schema("search_input");
+    expect(search({ query: "q", limit: 200 })).toBe(true);
+    expect(search({ query: "q", limit: 0 })).toBe(false);
+    expect(search({ query: "q", limit: 201 })).toBe(false);
+    expect(search({ query: "q", limit: 2.5 })).toBe(false);
+  });
+
+  test("read takes an optional maxBytes up to 1 MiB", () => {
+    const input = schema("read_input");
+    expect(input({ id: file.id, maxBytes: 4096 })).toBe(true);
+    expect(input({ id: file.id, maxBytes: 1024 * 1024 })).toBe(true);
+    expect(input({ id: file.id, maxBytes: 1024 * 1024 + 1 })).toBe(false);
+    expect(input({ id: file.id, maxBytes: 0 })).toBe(false);
   });
 
   test("read takes an optional page list, at most 10, and answers pages beside the record", () => {
@@ -504,13 +604,17 @@ describe("the files contract document", () => {
     expect(output(paged)).toBe(true);
   });
 
-  test("create keeps today's input shape", () => {
+  test("create keeps today's input shape, and lists the allowlist in its type", () => {
     const create = schema("create_input");
     const manifest = { filename: "notes.md", mimeType: "text/markdown", folder: "Reports/Q3" };
     expect(create({ manifest, body: "# Notes", encoding: "text" })).toBe(true);
     expect(create({ manifest, body: "aGk=" })).toBe(true);
     expect(create({ manifest, body: "x", encoding: "hex" })).toBe(false);
     expect(create({ manifest: { filename: "a" }, body: "x" })).toBe(false);
+    const allowlist = JSON.stringify(doc.$defs.create_input);
+    for (const type of ["text/markdown", "application/pdf", "image/svg+xml", "font/woff2"]) {
+      expect(allowlist).toContain(type);
+    }
   });
 
   test("a folder id is the implementation's, by grammar", () => {
@@ -526,12 +630,6 @@ describe("the files contract document", () => {
     expect(schema("info_output")({ ...file, source: 1 })).toBe(false);
   });
 
-  test("no public output names a blob key", () => {
-    for (const tool of names((t) => t.visibility === "public")) {
-      expect(JSON.stringify(doc.$defs[`${tool}_output`])).not.toContain('"blob"');
-    }
-  });
-
   test("its public errors are the closed list the spec names", () => {
     expect(doc.errors.public.map((e) => e.code).sort()).toEqual([
       "conflict",
@@ -542,6 +640,7 @@ describe("the files contract document", () => {
       "not_paged",
       "scope_missing",
       "too_large",
+      "type_not_allowed",
       "unknown_tool",
     ]);
     expect(doc.errors.private.map((e) => e.code).sort()).toEqual([
@@ -549,6 +648,10 @@ describe("the files contract document", () => {
       "internal_error",
       "invalid_input",
       "scope_missing",
+      "too_large",
+      "type_not_allowed",
+      "upload_incomplete",
+      "upload_not_found",
     ]);
   });
 });
@@ -569,8 +672,11 @@ describe("the host context schema", () => {
     expect(validate({ principal: "person", unattended: "yes" })).toBe(false);
   });
 
-  test("accepts an optional runId", () => {
+  test("accepts an optional runId, on a run's calls and on the host's own", () => {
     expect(validate({ principal: "person", unattended: true, runId: "run_1" })).toBe(true);
+    expect(validate({ principal: "host", workspaceId: "ws_1", ownerId: "u", runId: "run_1" })).toBe(
+      true,
+    );
     expect(validate({ principal: "person", runId: "" })).toBe(false);
   });
 });
@@ -625,6 +731,20 @@ describe("the emitter", () => {
       { public: { read: tool() }, private: {} },
     );
     expect(() => emit(onAllowed)).toThrow(/carries a grant/);
+  });
+
+  test("refuses annotations on a private tool", () => {
+    const bad = source(
+      {
+        poll: {
+          visibility: "private",
+          unattended: "refused",
+          annotations: { readOnlyHint: true },
+        },
+      },
+      { public: {}, private: { poll: tool() } },
+    );
+    expect(() => emit(bad)).toThrow(/carries annotations/);
   });
 
   test("refuses a $ref in a public tool's schema", () => {
