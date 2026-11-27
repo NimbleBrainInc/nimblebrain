@@ -302,13 +302,6 @@ function snippetsOf(texts: string[], query: string): Array<{ snippet: string }> 
   return matches;
 }
 
-/**
- * Whether a query can match a file only if its stored text contains it as written: true
- * when JSON writes the query unescaped. A file that lacks such a query is skipped without
- * projecting it.
- */
-const storedAsWritten = (query: string) => JSON.stringify(query).slice(1, -1) === query;
-
 export async function searchTool(
   store: ConversationStore,
   scope: Scope,
@@ -322,14 +315,12 @@ export async function searchTool(
     );
   }
   const limit = input.limit ?? 10;
-  const q = query.toLowerCase();
-  const prefilter = storedAsWritten(q);
   const results: Array<{ id: string; title: string | null; matches: Array<{ snippet: string }> }> =
     [];
   for (const row of await rowsInScope(store, scope, {})) {
     if (results.length >= limit) break;
     const loaded = await store.load(scope, row.id).catch(() => null);
-    if (!loaded || (prefilter && !loaded.text.toLowerCase().includes(q))) continue;
+    if (!loaded) continue;
     const lines = loaded.text.split("\n").filter(Boolean);
     const matches = snippetsOf(
       visibleTexts(projectConversation(loaded.header, lines.slice(1), false)),

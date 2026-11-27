@@ -110,4 +110,27 @@ describe("search", () => {
     const out = await search('"quiet"');
     expect(out.results[0]?.matches).toEqual([{ snippet: 'Plan a "quiet" trip to Kyoto' }]);
   });
+
+  test("a phrase spanning a reply's adjacent text parts matches the joined text", async () => {
+    const id = await conversation([
+      { ts, type: "user.message", content: [{ type: "text", text: "greet me" }] },
+      { ts, type: "run.start", runId: "r2", model: "anthropic:m" },
+      {
+        ts,
+        type: "llm.response",
+        runId: "r2",
+        model: "anthropic:m",
+        content: [
+          { type: "text", text: "hello " },
+          { type: "text", text: "world" },
+        ],
+        usage: { inputTokens: 1, outputTokens: 1 },
+        llmMs: 1,
+      },
+      { ts, type: "run.done", runId: "r2", stopReason: "complete" },
+    ]);
+    const out = await search("hello world");
+    expect(out.results.map((r) => r.id)).toEqual([id]);
+    expect(out.results[0]?.matches).toEqual([{ snippet: "hello world" }]);
+  });
 });
