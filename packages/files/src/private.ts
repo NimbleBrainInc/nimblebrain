@@ -114,9 +114,9 @@ export function completeUpload(env: PrivateEnv, caller: Caller, args: { uploadId
   const answer = env.store.mutate(caller.workspaceId, (tx) => {
     const upload = openUpload(tx.state, caller, args.uploadId, now);
     if (upload.completed) {
-      const done = tx.state.files[upload.completed.fileId];
-      if (!done) throw uploadNotFound(args.uploadId);
-      return { uri: `files://${done.id}`, file: fileRecord(done, caller.workspaceId) };
+      const { fileId, file } = upload.completed;
+      if (!Object.hasOwn(tx.state.files, fileId)) throw uploadNotFound(args.uploadId);
+      return { uri: `files://${fileId}`, file };
     }
     const size = measured(env, caller.workspaceId, upload);
     const createdAt = iso(now);
@@ -135,11 +135,12 @@ export function completeUpload(env: PrivateEnv, caller: Caller, args: { uploadId
       description: upload.description,
       folderId: ensureFolderPath(tx.state, caller.ownerId, segments, createdAt),
     };
+    const file = fileRecord(row, caller.workspaceId);
     tx.state.files[row.id] = row;
-    tx.state.uploads[upload.id] = { ...upload, completed: { fileId: row.id } };
+    tx.state.uploads[upload.id] = { ...upload, completed: { fileId: row.id, file } };
     tx.adoptUploadBody(upload.id, row.id);
     tx.dropUploadBody(upload.id);
-    return { uri: `files://${row.id}`, file: fileRecord(row, caller.workspaceId) };
+    return { uri: `files://${row.id}`, file };
   });
   env.transfers.revokeUpload(caller.workspaceId, args.uploadId);
   return answer;

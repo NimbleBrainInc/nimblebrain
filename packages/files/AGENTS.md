@@ -51,12 +51,14 @@ How to run it standalone is in `README.md`.
   records, and uploads open or within their completion window), `bodies/<fileId>` (a file's
   body, written once), `uploads/<uploadId>` (the body last PUT to an open upload).
 - **`state.json` is the only commit point.** A call changes the workspace in memory; the
-  bodies it adds are made durable under `bodies/` first, then `state.json` is replaced
-  atomically (fsynced, renamed), and only then are the bodies it removes unlinked. Loading
-  removes what no committed record names (a body written before a commit that never landed,
-  one left by a delete whose unlink never ran, a completed upload's body, temporary files),
-  so storage always holds what the state says. A call that throws evicts the workspace from
-  memory.
+  bodies it adds are made durable under `bodies/` first (each fsynced, then the directory),
+  then `state.json` is replaced atomically (fsynced, renamed, the workspace directory
+  fsynced), and only then are the bodies it removes unlinked. A new directory is fsynced into
+  its parent. A workspace's first load in a process removes what no committed record names
+  (a body written before a commit that never landed, one left by a delete whose unlink never
+  ran, a completed upload's body, temporary files), so storage holds what the state says. A
+  call that throws evicts the workspace from memory; the reload rereads the state and removes
+  nothing, since a PUT may be streaming to a temporary file.
 - **No body is visible partly written.** `create` writes beside the final name, fsyncs and
   renames. A PUT streams to a temporary file, fsyncs it and renames it over the upload's
   body, so a repeated PUT replaces the earlier one whole. `complete_upload` hard-links the
@@ -82,8 +84,9 @@ How to run it standalone is in `README.md`.
   stores nothing.
 - **Completion**: `complete_upload` measures the stored body; absent or another length is
   `upload_incomplete` and the upload stays open. It succeeds up to 300 s past `expiresAt`
-  (`COMPLETION_GRACE_MS`), and a repeat answers the first `{ uri, file }` while that file
-  exists, in that same window. Past the window an upload is retired with its bytes: on the next
+  (`COMPLETION_GRACE_MS`), and a repeat answers the first `{ uri, file }` (kept with the
+  upload's record, so tags or a move since do not change it) while that file exists, in that
+  same window. Past the window an upload is retired with its bytes: on the next
   call into its workspace, and every minute for a loaded workspace.
 - **A download GET re-checks the record**: a file deleted since its URL was issued is 404.
 - **The per-file limit** for `begin_upload` is `--max-file-bytes` (default 25 MiB).

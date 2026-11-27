@@ -998,7 +998,8 @@ async function createCases(c: FullCtx): Promise<void> {
       const fa = await okCall(person, "info", { id: a.id });
       const fb = await okCall(person, "info", { id: b.id });
       assert(fa.folderId && fa.folderId === fb.folderId, "the two files are in different folders");
-      const listed = list((await okCall(person, "list", { query: top })).files, "files");
+      const listed = list((await okCall(person, "list", { folderId: fa.folderId })).files, "files");
+      eq(listed.map((f) => f.id).sort(), [a.id, b.id].sort(), "the folder's files");
       assert(
         listed.every((f) => f.folderPath === `${top}/Q3`),
         "folderPath",
@@ -1605,6 +1606,27 @@ async function uploadCases(c: FullCtx): Promise<void> {
       });
       eq(again, first, "the repeat");
       eq(Number((await okCall(person, "list", {})).total), total, "total");
+    },
+  );
+  await h.run(
+    "a complete_upload repeat answers the first even after its file is tagged and moved",
+    async () => {
+      const body = Buffer.from("replayed");
+      const up = await upload(c, body);
+      await putOk(up.url, body);
+      const first = await okCall(host, "complete_upload", {
+        version: VERSION,
+        uploadId: up.uploadId,
+      });
+      const id = str(obj(first.file, "file").id, "id");
+      const folder = await okCall(person, "create_folder", { manifest: { name: unique("Moved") } });
+      await okCall(person, "tag", { id, add: ["later"] });
+      await okCall(person, "move", { ids: [id], folderId: str(folder.id, "id") });
+      const again = await okCall(host, "complete_upload", {
+        version: VERSION,
+        uploadId: up.uploadId,
+      });
+      eq(again, first, "the repeat");
     },
   );
   await h.run("an upload URL stops accepting once its upload is completed", async () => {

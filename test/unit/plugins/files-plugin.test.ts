@@ -8,6 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -143,6 +144,108 @@ describe("the store's commit point", () => {
   });
 });
 
+/**
+ * Record, in order, the directory-entry operations and fsyncs `fn` makes: each `fsync` names
+ * the path its descriptor was opened on.
+ */
+async function fsOps(fn: () => Promise<unknown>): Promise<string[]> {
+  const ops: string[] = [];
+  const paths = new Map<number, string>();
+  const rel = (p: fs.PathLike) => String(p).slice(wsDir().length + 1) || ".";
+  const real = {
+    openSync: fs.openSync,
+    fsyncSync: fs.fsyncSync,
+    renameSync: fs.renameSync,
+    linkSync: fs.linkSync,
+    rmSync: fs.rmSync,
+  };
+  const spies = [
+    spyOn(fs, "openSync").mockImplementation(((p: fs.PathLike, ...rest: [fs.OpenMode?]) => {
+      const fd = real.openSync(p, ...rest);
+      paths.set(fd, rel(p));
+      return fd;
+    }) as typeof fs.openSync),
+    spyOn(fs, "fsyncSync").mockImplementation((fd: number) => {
+      ops.push(`fsync ${paths.get(fd)}`);
+      real.fsyncSync(fd);
+    }),
+    spyOn(fs, "renameSync").mockImplementation((from: fs.PathLike, to: fs.PathLike) => {
+      ops.push(`rename ${rel(to)}`);
+      real.renameSync(from, to);
+    }),
+    spyOn(fs, "linkSync").mockImplementation((from: fs.PathLike, to: fs.PathLike) => {
+      ops.push(`link ${rel(to)}`);
+      real.linkSync(from, to);
+    }),
+    spyOn(fs, "rmSync").mockImplementation((p: fs.PathLike, o?: fs.RmOptions) => {
+      ops.push(`rm ${rel(p)}`);
+      real.rmSync(p, o);
+    }),
+  ];
+  try {
+    await fn();
+  } finally {
+    for (const spy of spies) spy.mockRestore();
+  }
+  return ops;
+}
+
+describe("the store's durable order", () => {
+  test("completion makes the body's name durable, then the state, then unlinks", async () => {
+    const begun = await uploaded("durable");
+    let fileId = "";
+    const ops = await fsOps(async () => {
+      fileId = (await ok("complete_upload", { version: "1.0", uploadId: begun.uploadId })).file.id;
+    });
+    const at = (op: string) => {
+      const i = ops.indexOf(op);
+      expect(i, op).toBeGreaterThanOrEqual(0);
+      return i;
+    };
+    const link = at(`link bodies/${fileId}`);
+    const bodies = at("fsync bodies");
+    const state = at("rename state.json");
+    const dirSync = ops.indexOf("fsync .", state);
+    const unlink = at(`rm uploads/${begun.uploadId}`);
+    expect(link).toBeLessThan(bodies);
+    expect(bodies).toBeLessThan(state);
+    expect(dirSync).toBeGreaterThan(state);
+    expect(dirSync).toBeLessThan(unlink);
+  });
+
+  test("a delete makes the state durable before it unlinks the body", async () => {
+    const made = await ok("create", {
+      manifest: { filename: "a.txt", mimeType: "text/plain" },
+      body: "gone",
+      encoding: "text",
+    });
+    const ops = await fsOps(() => ok("delete", { id: made.id }, person));
+    const state = ops.indexOf("rename state.json");
+    const dirSync = ops.indexOf("fsync .", state);
+    expect(state).toBeGreaterThanOrEqual(0);
+    expect(dirSync).toBeGreaterThan(state);
+    expect(dirSync).toBeLessThan(ops.indexOf(`rm bodies/${made.id}`));
+  });
+
+  test("a create makes its body's name durable before the state names it", async () => {
+    let id = "";
+    const ops = await fsOps(async () => {
+      id = (
+        await ok("create", {
+          manifest: { filename: "a.txt", mimeType: "text/plain" },
+          body: "new",
+          encoding: "text",
+        })
+      ).id;
+    });
+    const body = ops.indexOf(`rename bodies/${id}`);
+    const bodies = ops.indexOf("fsync bodies", body);
+    expect(body).toBeGreaterThanOrEqual(0);
+    expect(bodies).toBeGreaterThan(body);
+    expect(bodies).toBeLessThan(ops.indexOf("rename state.json"));
+  });
+});
+
 describe("upload windows, on the plugin's clock", () => {
   test("a body PUT in time completes up to 300 s past expiresAt, and not after", async () => {
     const a = await uploaded("within");
@@ -190,6 +293,49 @@ describe("upload windows, on the plugin's clock", () => {
     expect(code(await call("complete_upload", { version: "1.0", uploadId: begun.uploadId }))).toBe(
       "upload_not_found",
     );
+  });
+
+  test("a repeat answers the first after its file is tagged and moved, and after a restart", async () => {
+    const begun = await uploaded("replay");
+    const first = await ok("complete_upload", { version: "1.0", uploadId: begun.uploadId });
+    const folder = await ok("create_folder", { manifest: { name: "Elsewhere" } }, person);
+    await ok("tag", { id: first.file.id, add: ["later"] }, person);
+    await ok("move", { ids: [first.file.id], folderId: folder.id }, person);
+    expect(await ok("complete_upload", { version: "1.0", uploadId: begun.uploadId })).toEqual(
+      first,
+    );
+    fresh();
+    expect(await ok("complete_upload", { version: "1.0", uploadId: begun.uploadId })).toEqual(
+      first,
+    );
+  });
+
+  test("a call that throws while a PUT streams leaves the PUT's body in place", async () => {
+    const begun = await ok("begin_upload", {
+      version: "1.0",
+      filename: "slow.txt",
+      mimeType: "text/plain",
+      size: 4,
+      source: "app",
+    });
+    let push!: (chunk: Uint8Array | null) => void;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("sl"));
+        push = (chunk) => (chunk ? controller.enqueue(chunk) : controller.close());
+      },
+    });
+    const put = transfers.handle(new Request(begun.url, { method: "PUT", body }));
+    await Bun.sleep(10);
+    expect(readdirSync(join(wsDir(), "uploads")).some((f) => f.endsWith(".tmp"))).toBe(true);
+    // A rejected call evicts the workspace; the next call reloads it.
+    expect(code(await call("delete", { id: "fl_absent" }, person))).toBe("file_not_found");
+    await ok("list", {}, person);
+    push(new TextEncoder().encode("ow"));
+    push(null);
+    expect((await put).status).toBe(204);
+    const done = await ok("complete_upload", { version: "1.0", uploadId: begun.uploadId });
+    expect(done.file.size).toBe(4);
   });
 
   test("a PUT longer than the declared size is refused and stores nothing", async () => {

@@ -7,12 +7,15 @@
  *   <data>/workspaces/<workspaceId>/uploads/<uploadId> the body last PUT to an open upload
  *
  * - **`state.json` is the only commit point.** A call changes the workspace in memory; then
- *   the bodies it adds are made durable under `bodies/`, `state.json` is replaced atomically
- *   (written beside it, fsynced, renamed), and only then are the bodies it removes unlinked.
- *   A crash before the rename leaves the call undone, and the bodies it wrote are orphans;
- *   a crash after it leaves bodies no record names. Loading removes both kinds of leftover,
- *   so storage always holds exactly what the state says. A call that throws evicts the
- *   workspace from memory, so its partial changes are never seen.
+ *   the bodies it adds are made durable under `bodies/` (each fsynced, then the directory
+ *   that names them), `state.json` is replaced atomically (written beside it, fsynced,
+ *   renamed, the workspace directory fsynced), and only then are the bodies it removes
+ *   unlinked. A crash before the replace is durable leaves the call undone, and the bodies it
+ *   wrote are orphans; a crash after it leaves bodies no record names. The first load of a
+ *   workspace in a process removes both kinds of leftover, so storage holds what the state
+ *   says. A call that throws evicts the workspace from memory, so its partial changes are
+ *   never seen; the reload that follows reads the state again and removes nothing, since a
+ *   PUT may be streaming to a temporary file.
  * - **No body is ever visible partly written.** `create` writes to a temporary file, fsyncs
  *   it and renames it into `bodies/`. A PUT streams to a temporary file and renames it over
  *   the upload's body when the stream ends, so `complete_upload` measures a whole body or
@@ -40,7 +43,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 /** Whether `value` can be one path segment: not empty, not `.` or `..`, no separator or NUL. */
 export function isPathSegment(value: string): boolean {
@@ -77,7 +80,10 @@ export interface FolderRow {
   createdAt: string;
 }
 
-/** An upload `begin_upload` opened; `completed` once `complete_upload` made its file. */
+/**
+ * An upload `begin_upload` opened; `completed` once `complete_upload` made its file, holding
+ * the file record that call answered, which a repeat answers again (CONTRACT.md §12).
+ */
 export interface UploadRow {
   id: string;
   ownerId: string;
@@ -92,7 +98,7 @@ export interface UploadRow {
   runId: string | null;
   /** When its URL stops accepting a PUT, epoch ms. */
   expiresAt: number;
-  completed?: { fileId: string };
+  completed?: { fileId: string; file: Record<string, unknown> };
 }
 
 export interface WorkspaceState {
@@ -124,6 +130,8 @@ export interface Tx {
 export class Store {
   readonly #root: string;
   readonly #cache = new Map<string, WorkspaceState>();
+  /** The workspaces whose leftovers this process has removed: once each, before any PUT. */
+  readonly #recovered = new Set<string>();
 
   constructor(dataDir: string) {
     this.#root = join(dataDir, "workspaces");
@@ -176,12 +184,15 @@ export class Store {
     uploadId: string,
   ): { tmp: string; commit(): void; abandon(): void } {
     const uploads = join(this.#dir(workspaceId), "uploads");
-    mkdirSync(uploads, { recursive: true });
+    makeDir(uploads);
     const final = join(uploads, segment(uploadId));
     const tmp = join(uploads, `${segment(uploadId)}.${randomBytes(8).toString("hex")}.tmp`);
     return {
       tmp,
-      commit: () => renameSync(tmp, final),
+      commit: () => {
+        renameSync(tmp, final);
+        syncDir(uploads);
+      },
       abandon: () => rmSync(tmp, { force: true }),
     };
   }
@@ -205,7 +216,10 @@ export class Store {
     const state = existsSync(statePath)
       ? (JSON.parse(readFileSync(statePath, "utf-8")) as WorkspaceState)
       : emptyState();
-    removeLeftovers(dir, state);
+    if (!this.#recovered.has(workspaceId)) {
+      removeLeftovers(dir, state);
+      this.#recovered.add(workspaceId);
+    }
     this.#cache.set(workspaceId, state);
     return state;
   }
@@ -239,16 +253,20 @@ class Effects {
   }
 
   commit(): void {
-    mkdirSync(this.#dir, { recursive: true });
+    makeDir(this.#dir);
     const bodies = join(this.#dir, "bodies");
-    if (this.#puts.size > 0 || this.#adopts.size > 0) mkdirSync(bodies, { recursive: true });
-    for (const [fileId, data] of this.#puts) atomicWrite(join(bodies, fileId), data);
-    for (const [fileId, uploadId] of this.#adopts) {
-      const target = join(bodies, fileId);
-      rmSync(target, { force: true });
-      linkSync(join(this.#dir, "uploads", uploadId), target);
+    if (this.#puts.size > 0 || this.#adopts.size > 0) {
+      makeDir(bodies);
+      for (const [fileId, data] of this.#puts) atomicWrite(join(bodies, fileId), data);
+      for (const [fileId, uploadId] of this.#adopts) {
+        const target = join(bodies, fileId);
+        rmSync(target, { force: true });
+        linkSync(join(this.#dir, "uploads", uploadId), target);
+      }
+      syncDir(bodies);
     }
     atomicWrite(join(this.#dir, "state.json"), JSON.stringify(this.#state));
+    syncDir(this.#dir);
     for (const fileId of this.#dropBodies) rmSync(join(bodies, fileId), { force: true });
     for (const uploadId of this.#dropUploads) removeUploadFiles(this.#dir, uploadId);
   }
@@ -265,7 +283,31 @@ function removeUploadFiles(dir: string, uploadId: string): void {
   }
 }
 
-/** Write a file whole or not at all: beside it, fsynced, then renamed over it. */
+/** Make `path` and its missing parents, each new entry durable in the directory above it. */
+function makeDir(path: string): void {
+  const first = mkdirSync(path, { recursive: true });
+  if (first === undefined) return;
+  const top = resolve(first);
+  for (let made = resolve(path); made !== dirname(made); made = dirname(made)) {
+    syncDir(dirname(made));
+    if (made === top) return;
+  }
+}
+
+/** Make the entries of a directory durable: a rename, link or new name in it survives a crash. */
+function syncDir(path: string): void {
+  const fd = openSync(path, "r");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Write a file whole or not at all: beside it, fsynced, then renamed over it. The caller
+ * fsyncs the directory once its renames are done.
+ */
 function atomicWrite(path: string, data: string | Buffer): void {
   const tmp = `${path}.tmp-${process.pid}`;
   const fd = openSync(tmp, "w");
@@ -281,8 +323,9 @@ function atomicWrite(path: string, data: string | Buffer): void {
 /**
  * Remove what no committed record names: bodies of files the state does not hold (a crash
  * between writing a body and the commit, or between a commit and an unlink), an upload's
- * body once it is completed or gone, and every temporary file (no PUT is in flight before
- * the workspace is loaded, since a PUT needs a token only a loaded workspace issues).
+ * body once it is completed or gone, and every temporary file. It runs on a workspace's first
+ * load in a process only: no PUT is in flight before then, since a PUT needs a token only a
+ * loaded workspace issues.
  */
 function removeLeftovers(dir: string, state: WorkspaceState): void {
   removeUnless(join(dir, "bodies"), (file) => Object.hasOwn(state.files, file));
