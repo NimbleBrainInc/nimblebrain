@@ -1,0 +1,299 @@
+/**
+ * The files plugin (`packages/files/`) on what the black-box runner cannot drive: the store's
+ * commit point and crash recovery, the upload windows on a clock the test sets (completion
+ * within and past the grace, an abandoned upload's bytes removed, a repeat answer once its
+ * file is gone), the transfer handler's grammar, extraction of DOCX and XLSX with its
+ * budgets, and internal failures carrying no detail. Calls go through the server's own
+ * dispatch (`callTool`) and the transfer handler, in process.
+ */
+
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { cutText, extractText } from "../../../packages/files/src/extract.ts";
+import { fileKind, recordedType } from "../../../packages/files/src/mime.ts";
+import { COMPLETION_GRACE_MS } from "../../../packages/files/src/private.ts";
+import { callTool, envOf } from "../../../packages/files/src/server.ts";
+import { Store } from "../../../packages/files/src/store.ts";
+import { parseRange, Transfers } from "../../../packages/files/src/transfer.ts";
+import {
+  buildZip,
+  DOCX_MIME,
+  docxWithParagraphs,
+  XLSX_MIME,
+  xlsxWithRows,
+} from "../../helpers/document-fixtures.ts";
+
+const WS = "ws_f1f1f1f1f1f1f1f1";
+const OWNER = "usr_files";
+const ORIGIN = "http://127.0.0.1:9";
+const T0 = Date.parse("2031-03-01T00:00:00.000Z");
+
+let dir: string;
+let clock: number;
+let store: Store;
+let transfers: Transfers;
+
+// biome-ignore lint/suspicious/noExplicitAny: answers are read field by field in assertions
+type Answer = Record<string, any>;
+type Result = {
+  isError?: boolean;
+  structuredContent?: Record<string, unknown>;
+  content: Array<{ type: string; text?: string }>;
+};
+
+const env = () =>
+  envOf({ store, transfers, now: () => clock, uploadTtlMs: 60_000, downloadTtlMs: 30_000 });
+const host = { principal: "host" as const, workspaceId: WS, ownerId: OWNER };
+const person = { ...host, principal: "person" as const };
+
+async function call(tool: string, args: Record<string, unknown>, ctx: object = host) {
+  return (await callTool(env(), tool, args, ctx)) as Result;
+}
+async function ok(tool: string, args: Record<string, unknown>, ctx: object = host) {
+  const r = await call(tool, args, ctx);
+  if (r.isError) throw new Error(`${tool}: ${r.content[0]?.text}`);
+  return r.structuredContent as Answer;
+}
+const code = (r: Result) => JSON.parse(r.content[0]?.text ?? "{}").code as string;
+
+function fresh(): void {
+  store = new Store(dir);
+  transfers = new Transfers({ store, now: () => clock, origin: () => ORIGIN });
+}
+
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), "files-plugin-"));
+  clock = T0;
+  fresh();
+});
+
+afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+const wsDir = () => join(dir, "workspaces", WS);
+
+/** Open an upload, PUT `body` through the transfer handler, and answer its id. */
+async function uploaded(body: string, meta: Record<string, unknown> = {}) {
+  const begun = await ok("begin_upload", {
+    version: "1.0",
+    filename: "u.txt",
+    mimeType: "text/plain",
+    size: Buffer.byteLength(body),
+    source: "app",
+    ...meta,
+  });
+  const res = await transfers.handle(new Request(begun.url, { method: "PUT", body }));
+  expect(res.status).toBe(204);
+  return begun as { uploadId: string; url: string; expiresAt: string };
+}
+
+describe("the store's commit point", () => {
+  test("a body written without its commit is removed when the workspace loads", async () => {
+    const made = await ok("create", {
+      manifest: { filename: "a.txt", mimeType: "text/plain" },
+      body: "kept",
+      encoding: "text",
+    });
+    const bodies = join(wsDir(), "bodies");
+    writeFileSync(join(bodies, "fl_orphan"), "no record names me");
+    writeFileSync(join(bodies, `${made.id}.tmp-1`), "torn");
+    writeFileSync(join(wsDir(), "state.json.tmp-1"), "{");
+    fresh();
+    expect((await ok("list", {}, person)).total).toBe(1);
+    expect(readdirSync(bodies)).toEqual([made.id]);
+    expect(existsSync(join(wsDir(), "state.json.tmp-1"))).toBe(false);
+  });
+
+  test("a delete that crashed after its commit leaves no body behind on load", async () => {
+    const made = await ok("create", {
+      manifest: { filename: "a.txt", mimeType: "text/plain" },
+      body: "gone",
+      encoding: "text",
+    });
+    const kept = join(dir, "kept-body");
+    writeFileSync(kept, "gone");
+    await ok("delete", { id: made.id }, person);
+    // As if the unlink after the commit never ran.
+    writeFileSync(join(wsDir(), "bodies", made.id), "gone");
+    fresh();
+    await ok("list", {}, person);
+    expect(existsSync(join(wsDir(), "bodies", made.id))).toBe(false);
+  });
+
+  test("a call that throws commits nothing and is not seen", async () => {
+    await ok("create_folder", { manifest: { name: "A" } }, person);
+    const r = await call("create_folder", { manifest: { name: "a" } }, person);
+    expect(code(r)).toBe("conflict");
+    fresh();
+    expect((await ok("list", { folderId: "root" }, person)).folders).toHaveLength(1);
+  });
+
+  test("an upload's stored body survives a restart; a completed one's is removed", async () => {
+    const open = await uploaded("still open");
+    const done = await uploaded("completed");
+    await ok("complete_upload", { version: "1.0", uploadId: done.uploadId });
+    // As if the unlink after the completion's commit never ran.
+    writeFileSync(join(wsDir(), "uploads", done.uploadId), "completed");
+    writeFileSync(join(wsDir(), "uploads", `${open.uploadId}.abc.tmp`), "a PUT cut short");
+    fresh();
+    await ok("list", {}, person);
+    expect(readdirSync(join(wsDir(), "uploads"))).toEqual([open.uploadId]);
+    await ok("complete_upload", { version: "1.0", uploadId: open.uploadId });
+  });
+});
+
+describe("upload windows, on the plugin's clock", () => {
+  test("a body PUT in time completes up to 300 s past expiresAt, and not after", async () => {
+    const a = await uploaded("within");
+    const b = await uploaded("past");
+    const expiresAt = Date.parse(a.expiresAt);
+    clock = expiresAt + COMPLETION_GRACE_MS;
+    await ok("complete_upload", { version: "1.0", uploadId: a.uploadId });
+    clock = Date.parse(b.expiresAt) + COMPLETION_GRACE_MS + 1;
+    expect(code(await call("complete_upload", { version: "1.0", uploadId: b.uploadId }))).toBe(
+      "upload_not_found",
+    );
+  });
+
+  test("a PUT after expiresAt is refused and stores nothing", async () => {
+    const begun = await ok("begin_upload", {
+      version: "1.0",
+      filename: "late.txt",
+      mimeType: "text/plain",
+      size: 4,
+      source: "app",
+    });
+    clock = Date.parse(begun.expiresAt);
+    const res = await transfers.handle(new Request(begun.url, { method: "PUT", body: "late" }));
+    expect(res.status).toBe(404);
+    expect(code(await call("complete_upload", { version: "1.0", uploadId: begun.uploadId }))).toBe(
+      "upload_incomplete",
+    );
+  });
+
+  test("an abandoned upload is retired past its window, with its bytes", async () => {
+    const begun = await uploaded("abandoned");
+    expect(readdirSync(join(wsDir(), "uploads"))).toEqual([begun.uploadId]);
+    clock = Date.parse(begun.expiresAt) + COMPLETION_GRACE_MS + 1;
+    await ok("list", {}, person);
+    expect(readdirSync(join(wsDir(), "uploads"))).toEqual([]);
+  });
+
+  test("a completed upload's repeat answers the first until its file is deleted", async () => {
+    const begun = await uploaded("repeat");
+    const first = await ok("complete_upload", { version: "1.0", uploadId: begun.uploadId });
+    expect(await ok("complete_upload", { version: "1.0", uploadId: begun.uploadId })).toEqual(
+      first,
+    );
+    await ok("delete", { id: first.file.id }, person);
+    expect(code(await call("complete_upload", { version: "1.0", uploadId: begun.uploadId }))).toBe(
+      "upload_not_found",
+    );
+  });
+
+  test("a PUT longer than the declared size is refused and stores nothing", async () => {
+    const begun = await ok("begin_upload", {
+      version: "1.0",
+      filename: "x.txt",
+      mimeType: "text/plain",
+      size: 3,
+      source: "app",
+    });
+    const res = await transfers.handle(new Request(begun.url, { method: "PUT", body: "four" }));
+    expect(res.status).toBe(413);
+    expect(readdirSync(join(wsDir(), "uploads"))).toEqual([]);
+  });
+
+  test("a download URL stops at its expiry, and after its file is deleted", async () => {
+    const made = await ok(
+      "create",
+      { manifest: { filename: "d.txt", mimeType: "text/plain" }, body: "body", encoding: "text" },
+      person,
+    );
+    const resolved = await ok("resolve", { version: "1.0", uris: [`files://${made.id}`] });
+    const url = resolved.files[0].download.url as string;
+    expect((await transfers.handle(new Request(url))).status).toBe(200);
+    clock = Date.parse(resolved.files[0].download.expiresAt);
+    expect((await transfers.handle(new Request(url))).status).toBe(404);
+    clock = T0;
+    const again = await ok("resolve", { version: "1.0", uris: [`files://${made.id}`] });
+    await ok("delete", { id: made.id }, person);
+    expect((await transfers.handle(new Request(again.files[0].download.url))).status).toBe(404);
+  });
+});
+
+describe("the transfer handler", () => {
+  test("parses one bytes range, refuses what it cannot satisfy", () => {
+    expect(parseRange("bytes=0-0", 10)).toEqual({ start: 0, end: 0 });
+    expect(parseRange("bytes=5-", 10)).toEqual({ start: 5, end: 9 });
+    expect(parseRange("bytes=-4", 10)).toEqual({ start: 6, end: 9 });
+    expect(parseRange("bytes=8-100", 10)).toEqual({ start: 8, end: 9 });
+    expect(parseRange("bytes=10-", 10)).toBe("unsatisfiable");
+    expect(parseRange("bytes=0-1,4-5", 10)).toBeNull();
+    expect(parseRange("items=0-1", 10)).toBeNull();
+  });
+
+  test("answers a query string, a wrong secret and an unknown id alike: 404", async () => {
+    const made = await ok(
+      "create",
+      { manifest: { filename: "q.txt", mimeType: "text/plain" }, body: "q", encoding: "text" },
+      person,
+    );
+    const resolved = await ok("resolve", { version: "1.0", uris: [`files://${made.id}`] });
+    const url = resolved.files[0].download.url as string;
+    const [base, secret] = url.split(".") as [string, string];
+    for (const bad of [`${url}?x=1`, `${base}.${secret.slice(0, -1)}`, `${ORIGIN}/t/abc.def`]) {
+      const res = await transfers.handle(new Request(bad));
+      expect(res.status).toBe(404);
+      expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    }
+  });
+});
+
+describe("extraction", () => {
+  test("a DOCX reads as Markdown and an XLSX's first sheet as CSV", async () => {
+    const docx = await extractText(docxWithParagraphs(3), DOCX_MIME);
+    expect(docx?.text.length).toBeGreaterThan(0);
+    const xlsx = await extractText(xlsxWithRows(3), XLSX_MIME);
+    expect(xlsx?.text.split("\n")).toHaveLength(3);
+  });
+
+  test("an OOXML body past its budget is refused before parsing", async () => {
+    const bomb = buildZip({ "word/document.xml": "<w:p/>".repeat(2_000_000) });
+    expect(await extractText(bomb, DOCX_MIME)).toBeNull();
+  });
+
+  test("text is cut at a character boundary", () => {
+    expect(cutText("aé✓", 2)).toEqual({ text: "a", truncated: true });
+    expect(cutText("aé✓", 6)).toEqual({ text: "aé✓", truncated: false });
+  });
+
+  test("types follow the contract's tables", () => {
+    expect(recordedType("a.typ", "application/octet-stream")).toBe("text/plain");
+    expect(recordedType("Makefile", "")).toBe("application/octet-stream");
+    expect(fileKind("IMAGE/PNG; x=1")).toBe("image");
+    expect(fileKind("application/x-unknown")).toBe("other");
+  });
+});
+
+describe("failures", () => {
+  test("an internal failure answers internal_error with no detail of the medium", async () => {
+    const begun = await uploaded("x");
+    // A file where the bodies directory belongs: the commit cannot place the body.
+    rmSync(join(wsDir(), "bodies"), { recursive: true, force: true });
+    writeFileSync(join(wsDir(), "bodies"), "in the way");
+    const quiet = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const r = await call("complete_upload", { version: "1.0", uploadId: begun.uploadId });
+      expect(code(r)).toBe("internal_error");
+      expect(r.content[0]?.text).not.toContain(dir);
+      expect(r.content[0]?.text).not.toContain("bodies");
+    } finally {
+      quiet.mockRestore();
+    }
+    // Nothing was committed: the upload is still open.
+    rmSync(join(wsDir(), "bodies"), { force: true });
+    await ok("complete_upload", { version: "1.0", uploadId: begun.uploadId });
+  });
+});

@@ -1,0 +1,25 @@
+{
+  "name": "@nimblebrain/files",
+  "version": "0.1.0",
+  "description": "The files plugin (Agent Plugins 1.0): one MCP server implementing ai.nimblebrain.files on the local filesystem.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "nb-files": "bin/nb-files"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "dependencies": {
+    "@e965/xlsx": "0.20.3",
+    "@modelcontextprotocol/server": "^2.3.0",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
+    "mammoth": "^1.12.0",
+    "unpdf": "^1.6.0"
+  },
+  "scripts": {
+    "start": "bun --no-env-file src/main.ts"
+  }
+}
