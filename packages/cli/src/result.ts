@@ -122,6 +122,10 @@ export const FIX_VARIANTS = {
     codex:
       "Run `codex logout`, then `codex login` and choose Sign in with ChatGPT, then run this again.",
   },
+  PORT_IN_USE: {
+    worker:
+      "Stop whatever holds the agent worker's port, then run `npx nimblebrain up`; or give the worker a free port with `npx nimblebrain use claude --port <port>` (`use codex` on Codex).",
+  },
   LOCAL_MODEL_UNREACHABLE: {
     brew_install:
       "Install Ollama with `brew install ollama`, then run this again; it offers to start Ollama for you.",
