@@ -37,7 +37,7 @@ They are listed on the **Scheduled** page. Say "run" for one execution.
    Set `allowedTools` to one `<connector>__*` glob per connector it uses.
 3. If the person has not said what it does or when, ask. Otherwise name it
    yourself and call `tasks__create` once, shaped like:
-   `{"manifest": {"name": "Weekday file summary", "schedule": {"cron": "0 8 * * 1-5"}, "allowedTools": ["files__*"]}, "body": "Summarize my files in one line."}`
+   `{"manifest": {"name": "Weekday file summary", "schedule": {"cron": "0 8 * * 1-5", "timezone": "America/New_York"}, "allowedTools": ["files__*"]}, "body": "Summarize my files in one line."}`
 4. Say in a sentence what it does and when it runs next, and offer a test run.
 
 ## Change, run, or check one
@@ -56,8 +56,11 @@ They are listed on the **Scheduled** page. Say "run" for one execution.
 
 Give exactly one of:
 
-- `cron` with `timezone` when known: `{"cron": "0 8 * * 1-5"}` is weekdays at 8.
-  "every morning at 8" `0 8 * * *`; "Mondays" `0 9 * * 1`; "every hour" `0 * * * *`.
+- `cron` with `timezone`, always: `{"cron": "0 8 * * 1-5", "timezone": "Europe/Berlin"}`
+  is weekdays at 8 in Berlin. "every morning at 8" `0 8 * * *`; "Mondays" `0 9 * * 1`;
+  "every hour" `0 * * * *`. A cron without `timezone` is refused. Pass the
+  person's timezone from your context (the `Timezone` your instructions state
+  for them) unless they name another; if you do not know it, ask.
 - `intervalMs` (at least 60000): `{"intervalMs": 1800000}` is every 30 minutes.
 - `at`, an ISO time with an offset, for one run at a set time. Never a cron with
   a fixed date: it recurs yearly.

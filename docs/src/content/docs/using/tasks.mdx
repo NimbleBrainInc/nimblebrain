@@ -27,7 +27,7 @@ This has one practical consequence: if a task needs to reach a connector (for ex
 A run cannot create, change, delete, run, cancel, or batch tasks: those tools are refused inside a run, whatever its tool list says, so a run that reads untrusted content cannot rewrite or multiply work that outlives it. The reads (`tasks__list`, `tasks__status`, `tasks__runs`, `tasks__run_result`, and the rest) work.
 
 <Aside type="note">
-A cron schedule always names its IANA `timezone`; one without is refused. The form on the Scheduled page fills in your browser's timezone, keeps a schedule's own timezone when you edit it, and says which one its times are in. A token budget's day or month is a UTC calendar day or month.
+A cron schedule always names its IANA `timezone`; one without is refused. The agent passes your timezone from your profile (or the instance default, [`NB_TIMEZONE`](/config/environment/)), and asks when it does not know it. The form on the Scheduled page fills in your browser's timezone, keeps a schedule's own timezone when you edit it, and says which one its times are in. A token budget's day or month is a UTC calendar day or month.
 </Aside>
 
 ## Schedules

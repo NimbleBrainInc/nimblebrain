@@ -140,6 +140,7 @@ import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { createIdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
 import { skillsOffIn } from "../identity/skills-off-store.ts";
+import { effectiveTimezone, resolveOperatorTimezone } from "../identity/timezone.ts";
 import { UserStore } from "../identity/user.ts";
 import {
   forgetLifecycleBinding,
@@ -218,6 +219,7 @@ import type {
   FocusedAppInfo,
   Layer3SkillEntry,
   PromptAppInfo,
+  UserPrefs,
 } from "../prompt/compose.ts";
 import { composeSystemSegments } from "../prompt/compose.ts";
 import { renderUnattendedPrompt } from "../prompt/unattended-work.ts";
@@ -268,6 +270,7 @@ import {
 import { approxTokens } from "../skills/tokens.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../skills/truncate.ts";
 import type { Skill, SkillBodyLoad } from "../skills/types.ts";
+import { captureAutomationCreated } from "../telemetry/automation.ts";
 import { telemetryCatalogId } from "../telemetry/catalog-id.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
@@ -758,6 +761,8 @@ export class Runtime {
    */
   private _hostLoopback: string | null = null;
   private _userStore: UserStore;
+  /** The operator's default timezone for people's profiles (`NB_TIMEZONE`, else UTC), read once. */
+  private readonly _operatorTimezone = resolveOperatorTimezone(process.env.NB_TIMEZONE);
   private _workspaceStore: WorkspaceStore;
   private _permissionStore: PermissionStore | null = null;
   private _credentialStore: CredentialStore | null = null;
@@ -1539,6 +1544,17 @@ export class Runtime {
             );
           },
         ],
+        // A person's successful `create` on the tasks contract is an automation
+        // made: `automation.created`, seen here as it passes. Only a person's
+        // call reaches an overlay (the kernel's own calls do not), and a run
+        // is refused `create`.
+        [
+          TASKS_CONTRACT,
+          (tool: string, result: ToolResult) => {
+            if (tool === "create" && !result.isError) this.reportAutomationCreated(result);
+            return result;
+          },
+        ],
         // The files a run wrote are the host's own record of its successful
         // `create` calls (CONTRACT.md §10.5): seen here, as they pass.
         [
@@ -1606,6 +1622,28 @@ export class Runtime {
       this._runWorker = this.createTasksRunWorker(tasks, this._runGrants);
     }
     return [...this._boundServers.values()].map((server) => server.source);
+  }
+
+  /**
+   * `automation.created` for a person's successful tasks `create`, in the
+   * call's request scope. Best-effort: telemetry never fails the call.
+   */
+  private reportAutomationCreated(result: ToolResult): void {
+    const ctx = getRequestContext();
+    const workspaceId = ctx?.workspaceId;
+    const ownerId = ctx?.identity?.id;
+    if (!workspaceId || !ownerId) return;
+    try {
+      captureAutomationCreated(this.getTelemetryManager(), result.structuredContent, {
+        workspaceId,
+        ownerId,
+        shellCall: ctx?.shellCall === true,
+      });
+    } catch (err) {
+      log.warn("[telemetry] automation.created not sent", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**
@@ -2933,8 +2971,8 @@ export class Runtime {
     // proxied, whatever the surfacing held back for a native run.
     const hasProxiedTools = ctx.promotesTools && proxied.length > 0;
 
-    // Per-user preferences from the authenticated identity.
-    const prefs = buildPromptPrefs(identity);
+    // Per-user preferences, with the person's effective timezone.
+    const prefs = await this.promptPrefsFor(identity);
     const workspaceContext = buildWorkspaceContext(briefingWsId, activeWorkspace);
 
     // Server-published skills route by the strategy they DECLARE: `dynamic`
@@ -5824,6 +5862,25 @@ export class Runtime {
     return this._identityProvider;
   }
 
+  /**
+   * The person's prompt preferences: their name and locale, and their
+   * effective timezone (`effectiveTimezone`: the profile's, else the
+   * operator's `NB_TIMEZONE`, else UTC), so every prompt states one. A run
+   * acts as `{ id: owner }` with no preferences, so its owner's stored profile
+   * supplies them; only preferences are read from it, never a role.
+   */
+  async promptPrefsFor(identity: UserIdentity | null | undefined): Promise<UserPrefs> {
+    let preferences = identity?.preferences;
+    if (identity && preferences === undefined) {
+      preferences = (await this._userStore.get(identity.id))?.preferences;
+    }
+    return {
+      displayName: identity?.displayName ?? "",
+      timezone: effectiveTimezone(preferences, this._operatorTimezone),
+      locale: preferences?.locale ?? "en-US",
+    };
+  }
+
   /** Invalidate cached identity for a user. Call after modifying user data (preferences, role). */
   invalidateUserCache(userId: string): void {
     this._identityProvider.invalidateUser?.(userId);
@@ -7680,19 +7737,6 @@ function buildUserMessageContent(request: ChatRequest): Array<UserTextPart | Use
  */
 function skillCacheKey(wsId: string, serverName: string): string {
   return `${wsId}:${serverName}`;
-}
-
-/** Per-user prompt preferences resolved from the authenticated identity. */
-function buildPromptPrefs(identity: UserIdentity): {
-  displayName: string;
-  timezone: string;
-  locale: string;
-} {
-  return {
-    displayName: identity.displayName ?? "",
-    timezone: identity.preferences?.timezone ?? "",
-    locale: identity.preferences?.locale ?? "en-US",
-  };
 }
 
 /**

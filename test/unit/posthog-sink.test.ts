@@ -398,6 +398,13 @@ describe("PostHogEventSink on an identified deployment", () => {
       toolDonePayload({ runId: "r1", name, ms: 3, ok, workspaceId: "ws_1" }),
     );
 
+  it("sends no anonymous task.created: automation.created reports every create there", () => {
+    const { mock, sink } = identifiedSetup();
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
+    sink.emit(toolDoneIn("tasks__create"));
+    expect(mock.events.some((e) => e.event === "task.created")).toBe(false);
+  });
+
   it("names each tool call by its kernel, app or catalog name, and never a custom connector's", async () => {
     const { mock, sink } = identifiedSetup();
     sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));

@@ -306,6 +306,7 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 | `ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (for cookie-based auth) |
 | `NB_CHAT_RATE_LIMIT` | Chat requests per minute per user (default: 20) |
 | `NB_TOOL_RATE_LIMIT` | Tool calls per minute per user (default: 60) |
+| `NB_TIMEZONE` | Default IANA timezone for people whose profile names none (default: `UTC`); a profile's own timezone wins |
 | `NB_CONNECTOR_START_CONCURRENCY` | Max connectors started in parallel at boot (default: 4, set to 1 for sequential) |
 | `NB_HOST_URL` | Public host URL for OAuth redirects |
 | `NB_HSTS` | `Strict-Transport-Security` value (default: `max-age=31536000; includeSubDomains`). Set to `""` to disable — e.g., when a reverse proxy already emits this header |

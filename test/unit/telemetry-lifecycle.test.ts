@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ConnectionState } from "../../src/connectors/runtime/connection.ts";
 import { UserStore } from "../../src/identity/user.ts";
+import { automationTelemetryId, captureAutomationCreated } from "../../src/telemetry/automation.ts";
 import type { TelemetryClient } from "../../src/telemetry/manager.ts";
 import { TelemetryManager } from "../../src/telemetry/manager.ts";
 import { PostHogEventSink } from "../../src/telemetry/posthog-sink.ts";
@@ -256,5 +257,50 @@ describe("store listeners", () => {
 
     expect((await users.getByEmail("a@example.com"))?.id).toBe(user.id);
     expect((await workspaces.get(ws.id))?.members.map((m) => m.userId)).toEqual([user.id, "usr_2"]);
+  });
+});
+
+describe("automation.created", () => {
+  const by = { workspaceId: "ws_1", ownerId: "usr_1", shellCall: false };
+
+  it("reports the trigger, who made it and the hashed id, about the owner", () => {
+    const { events, manager } = setup(true);
+    for (const schedule of [
+      { cron: "0 8 * * *", timezone: "UTC" },
+      { intervalMs: 60_000 },
+      { at: "2031-01-01T00:00:00Z" },
+      { match: {} },
+      undefined,
+    ]) {
+      captureAutomationCreated(
+        manager,
+        { task: { id: "acme-digest", name: "Acme digest", prompt: "p", schedule } },
+        by,
+      );
+    }
+    expect(events.map((e) => e.properties.trigger)).toEqual([
+      "cron",
+      "interval",
+      "once",
+      "event",
+      "manual",
+    ]);
+    expect(events[0]?.distinctId).toBe("usr_1");
+    expect(events[0]?.groups).toEqual({ tenant: "tenant-a", workspace: "ws_1" });
+    expect(events[0]?.properties).toMatchObject({
+      created_by: "agent",
+      kind: "saved",
+      automation_id: automationTelemetryId("ws_1", "usr_1", "acme-digest"),
+    });
+    expect(JSON.stringify(events)).not.toContain("acme");
+  });
+
+  it("sends nothing for an answer with no task, or when the deployment does not identify", () => {
+    const named = setup(true);
+    captureAutomationCreated(named.manager, { error: "task_exists" }, by);
+    expect(named.events).toHaveLength(0);
+    const anonymous = setup(false);
+    captureAutomationCreated(anonymous.manager, { task: { id: "t" } }, by);
+    expect(anonymous.events).toHaveLength(0);
   });
 });
