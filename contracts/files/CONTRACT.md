@@ -226,10 +226,7 @@ a `files://` URI itself, which is always the host's.
   gives. `folder` is a folder path (§4), checked here: a path that breaks §4's rule fails
   `invalid_input`. It fails `type_not_allowed` when the type recorded is off the allowlist and
   `too_large` for a `size` past the implementation's per-file limit. It makes no file: a file
-  exists only once `complete_upload` answers. A host that starts the implementation passes its
-  own per-file limit, a decimal count of bytes, as `NB_FILES_MAX_FILE_BYTES` in the server's
-  environment, and the implementation takes that as its limit, so the host's intake (§10.2)
-  and `begin_upload` refuse at one size.
+  exists only once `complete_upload` answers.
 - **`complete_upload({ version, uploadId })`** makes the file from the body last stored at the
   upload's URL and answers `{ uri, file }`, where `uri` is `files://<file.id>`. The
   implementation measures the stored body itself: absent, or of a length other than the

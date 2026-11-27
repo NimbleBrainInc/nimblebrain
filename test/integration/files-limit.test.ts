@@ -1,7 +1,7 @@
 /**
  * The operator's per-file limit (`files.maxFileSize`) is the files plugin's
  * too: the binding passes it to the server it starts
- * (`NB_FILES_MAX_FILE_BYTES`, `contracts/files/CONTRACT.md` §6), so a limit
+ * in its environment (`NB_FILES_MAX_FILE_BYTES`, `filesServerEnv`), so a limit
  * raised past the plugin's own 25 MiB default takes a file that large, and
  * `begin_upload` refuses at the host's size, not at another.
  */

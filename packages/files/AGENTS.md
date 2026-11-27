@@ -95,8 +95,10 @@ How to run it standalone is in `README.md`.
   same window. Past the window an upload is retired with its bytes: on the next
   call into its workspace, and every minute for a loaded workspace.
 - **A download GET re-checks the record**: a file deleted since its URL was issued is 404.
-- **The per-file limit** for `begin_upload` is `--max-file-bytes`, else `NB_FILES_MAX_FILE_BYTES`
-  (which a host that starts the server sets to its own limit, CONTRACT.md §6), else 25 MiB.
+- **The per-file limit** for `begin_upload` is `--max-file-bytes`, else `NB_FILES_MAX_FILE_BYTES`,
+  else 25 MiB. The variable is a launch convention, not part of the contract: the runtime's
+  files binding sets it to the operator's `files.maxFileSize` when it starts the server, so the
+  host's intake and `begin_upload` refuse at one size.
 
 ## Extraction (`src/extract.ts`)
 
