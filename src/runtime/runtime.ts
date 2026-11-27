@@ -101,6 +101,7 @@ import { type AgentRuntimes, createAgentRuntimes } from "../execution/registry.t
 import type { AgentRuntime } from "../execution/types.ts";
 import { FILES_CONTRACT, filesServerEnv } from "../files/contract.ts";
 import { createFilesHost, type FilesHost, type OwnerScope } from "../files/host.ts";
+import { sweepIntakeSpool } from "../files/multipart.ts";
 import { type RehydrateFiles, rehydrateUserResources } from "../files/rehydrate.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig, READ_TEXT_BOUND } from "../files/types.ts";
 import { fileIdToUri } from "../files/uri.ts";
@@ -1404,6 +1405,9 @@ export class Runtime {
       // The work queue opens before the sources that enqueue to it. Its lock
       // makes a second process on this work directory fail here, at boot.
       rt.getWorkQueue();
+      // With the lock held, no other process is mid-request here: what the
+      // intake's spool holds was left by one that stopped.
+      sweepIntakeSpool(rt.getWorkDir());
       // Each binding's server starts before anything reads conversations, and a
       // server that does not start refuses the boot. A bound server is a
       // platform source like the in-process apps: its tools, resources and

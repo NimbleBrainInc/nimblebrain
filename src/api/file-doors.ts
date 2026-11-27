@@ -13,7 +13,6 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { join } from "node:path";
 import { CONVERSATION_ID_RE } from "../conversation/types.ts";
 import type { FilesHost, OwnerScope } from "../files/host.ts";
 import {
@@ -28,6 +27,7 @@ import {
 } from "../files/intake.ts";
 import { isTextMime } from "../files/mime.ts";
 import {
+  intakeSpoolDir,
   MultipartError,
   multipartBoundary,
   type ParsedMultipart,
@@ -49,11 +49,6 @@ export function filesDisabledResponse(): Response {
   return apiError(404, "files_disabled", "Files are disabled on this instance");
 }
 
-/** Where a request's file parts are spooled while the intake measures and streams them. */
-function spoolDir(runtime: Runtime): string {
-  return join(runtime.getWorkDir(), "tmp", "intake");
-}
-
 /** Room for a multipart body's own framing and text fields beside its files. */
 const MULTIPART_OVERHEAD_BYTES = 1_048_576;
 
@@ -68,7 +63,7 @@ export async function readMultipart(
   const config = runtime.getFilesConfig();
   try {
     return await parseMultipart(request.body, boundary, {
-      spoolDir: spoolDir(runtime),
+      spoolDir: intakeSpoolDir(runtime.getWorkDir()),
       maxFiles: opts.maxFiles,
       maxFileSize: config.maxFileSize,
       maxTotalSize: config.maxTotalSize + MULTIPART_OVERHEAD_BYTES,

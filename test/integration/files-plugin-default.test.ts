@@ -24,7 +24,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
@@ -153,8 +153,12 @@ function spooled(): string[] {
   return existsSync(dir) ? readdirSync(dir) : [];
 }
 
+/** A spool file a process that stopped mid-upload left behind. */
+const LEFT_SPOOL = join(testDir, "tmp", "intake", "0123456789abcdef0123456789abcdef.part");
+
 beforeAll(async () => {
-  mkdirSync(testDir, { recursive: true });
+  mkdirSync(join(testDir, "tmp", "intake"), { recursive: true });
+  writeFileSync(LEFT_SPOOL, "half an upload");
   runtime = await Runtime.start({
     identityProvider: devProvider,
     languageModel: model,
@@ -172,6 +176,13 @@ afterAll(async () => {
   await runtime?.shutdown();
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
 }, 30_000);
+
+describe("the intake's spool", () => {
+  it("is swept at boot of what a process that stopped mid-request left", () => {
+    expect(existsSync(LEFT_SPOOL)).toBe(false);
+    expect(spooled()).toEqual([]);
+  });
+});
 
 describe("the default binding", () => {
   it("binds the files plugin and serves its public tools only", async () => {

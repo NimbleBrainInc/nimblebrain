@@ -40,7 +40,9 @@ code implements. The built-in implementation is `packages/files/` (`packages/fil
 - **Never hold a body in memory.** A multipart request is read as it arrives
   (`multipart.ts`): each file part is spooled to `<workDir>/tmp/intake/` and measured, since
   `begin_upload` needs the exact size and every check precedes every upload. The spool is
-  removed when the request ends, whatever the outcome.
+  removed when the request ends, whatever the outcome, and swept whole at boot
+  (`sweepIntakeSpool`, after the work directory's lock is held) of what a process that stopped
+  mid-request left.
 - **Announce the kernel's writes** (`runtime.announceFilesChange`), as the plugin's own tools
   are announced, so the owner's Files screen refreshes.
 
