@@ -114,7 +114,7 @@
 		header X-Frame-Options "DENY"
 		# Images load from this origin (stored files, bundled artwork), `data:` and
 		# `blob:` (inlined assets, attachment previews), and the static host the
-		# bundled catalog's connector icons and NimbleBrain's brand artwork live on.
+		# plugin catalog's connector icons and NimbleBrain's brand artwork live on.
 		# NB_IMG_SRC adds sources: the hosts of an operator's own brand logos,
 		# favicon or catalog icons. An icon on a host not listed falls back to the
 		# connector's letter avatar. Rendered markdown loads images from this origin

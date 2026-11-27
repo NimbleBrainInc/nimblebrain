@@ -31,7 +31,7 @@
  * network. This one is safe to run on every PR that touches a catalog.
  *
  *   bun run scripts/check-catalog-schema.ts <catalog-file-or-dir>
- *   bun run check:catalog-schema          # the in-repo example catalog
+ *   bun run check:catalog-schema          # the plugins demo catalog
  */
 
 import { validateCatalog } from "../src/connectors/catalog/read.ts";

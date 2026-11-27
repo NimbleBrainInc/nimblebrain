@@ -8,6 +8,11 @@
 # this file and `instrument/` are the sanctioned out-of-kernel seam.
 preload = ["./instrument/sentry.ts"]
 
+# `bun test` keeps the Sentry preload and adds one that keeps the plugin catalog
+# offline (test/preload.ts). The image ships no test/, and never runs `bun test`.
+[test]
+preload = ["./instrument/sentry.ts", "./test/preload.ts"]
+
 # Hold a newly published version for 14 days before it can be resolved.
 # Matches the cooldown Renovate applies to its own PRs, so a dependency
 # reaches this repo on the same terms whether a bot or a person adds it.

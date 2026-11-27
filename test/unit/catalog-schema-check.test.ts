@@ -316,11 +316,11 @@ describe("validateCatalog", () => {
     expect(diagnostics[0]?.message).toContain("icon src must be http(s)");
   });
 
-  test("the shipped example catalog and the test fixtures both pass the gate", () => {
-    // `check:catalog-schema` runs the gate over src/connectors/catalog/curated in
+  test("the plugins demo catalog and the test fixtures both pass the gate", () => {
+    // `check:catalog-schema` runs the gate over the plugins demo catalog in
     // `verify:static`; this keeps the fixture catalog honest too, so a
     // fixture edit cannot quietly start relying on a dropped entry.
-    expect(validateCatalog("src/connectors/catalog/curated")).toEqual([]);
+    expect(validateCatalog(".environments/plugins-demo/catalog")).toEqual([]);
     expect(validateCatalog(CONNECTOR_FIXTURE_DIR)).toEqual([]);
   });
 });

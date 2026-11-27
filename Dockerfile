@@ -74,11 +74,6 @@ COPY --chown=1000:1000 packages/files/ packages/files/
 # against schemas/config/v1/config.schema.json, and the plugin extension schema
 # and the contract documents the plugin loader reads.
 COPY --chown=1000:1000 schemas/ schemas/
-# The connector catalog a fresh install starts with: NimbleBrain's catalog of
-# connectors that install with nothing to configure, taken at build. It replaces the
-# repo's example catalog, which .dockerignore keeps out of the image. A deployment
-# that sets NB_CURATED_CATALOG_DIR replaces it in turn.
-ADD --chown=1000:1000 https://catalog.nimblebrain.ai/nimblebrain/connectors.yaml src/connectors/catalog/curated/connectors.yaml
 # The palette and contrast modules the brand loader imports (`src/brand/`).
 COPY --chown=1000:1000 web/src/theme/ web/src/theme/
 COPY --chown=1000:1000 scripts/ scripts/

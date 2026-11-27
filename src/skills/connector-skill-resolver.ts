@@ -36,11 +36,11 @@
  * servers a workspace has.
  */
 
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ConversationStarter } from "../plugins/extension.ts";
 import { nimblebrainExtension, PLUGIN_MANIFEST_FILE, readPluginJson } from "../plugins/manifest.ts";
+import { assertDigest, fetchBounded, sha256Hex } from "../util/pinned-fetch.ts";
 import { readZip, ZIP_MAX_TOTAL_BYTES } from "../util/zip.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 
@@ -280,49 +280,12 @@ function parseIndex(raw: unknown): CatalogIndex {
   return { name, plugins: entries };
 }
 
-async function fetchBytes(url: string, opts: ResolveServerSkillsOptions): Promise<Uint8Array> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
-  const res = await fetchImpl(url, { signal: AbortSignal.timeout(opts.timeoutMs ?? 15_000) });
-  if (!res.ok) throw new Error(`plugin catalog fetch failed: HTTP ${res.status} (${url})`);
-  const tooLarge = () =>
-    new Error(`plugin catalog fetch exceeds ${MAX_FETCH_BYTES} bytes (${url})`);
-  const declared = Number(res.headers.get("content-length"));
-  if (declared > MAX_FETCH_BYTES) {
-    await res.body?.cancel();
-    throw tooLarge();
-  }
-  if (!res.body) return new Uint8Array(0);
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_FETCH_BYTES) {
-      await reader.cancel();
-      throw tooLarge();
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out;
-}
-
-function assertDigest(what: string, bytes: Uint8Array, expected: string): void {
-  const actual = sha256Hex(bytes);
-  if (actual !== expected) {
-    throw new Error(`${what} integrity mismatch: got ${actual}, expected ${expected}`);
-  }
-}
-
-function sha256Hex(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
+function fetchBytes(url: string, opts: ResolveServerSkillsOptions): Promise<Uint8Array> {
+  return fetchBounded(url, {
+    fetchImpl: opts.fetchImpl,
+    timeoutMs: opts.timeoutMs ?? 15_000,
+    maxBytes: MAX_FETCH_BYTES,
+  });
 }
 
 function writeCache(path: string, bytes: Uint8Array): void {

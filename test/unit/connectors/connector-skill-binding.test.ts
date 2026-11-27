@@ -9,7 +9,11 @@ import { CONNECTOR_SKILLS_SUBDIR } from "../../../src/skills/connector-skill-sto
 import type { ToolRegistry } from "../../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { fakeFetch } from "../../helpers/fake-fetch.ts";
-import { buildCatalog, type FixtureCatalog } from "../../helpers/plugin-catalog.ts";
+import {
+  buildCatalog,
+  type FixtureCatalog,
+  OFFLINE_PLUGIN_CATALOG_URL,
+} from "../../helpers/plugin-catalog.ts";
 import { stub } from "../../helpers/stub.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
@@ -68,7 +72,7 @@ function manager(catalog: FixtureCatalog): ConnectorLifecycleManager {
 }
 
 afterEach(() => {
-  delete process.env.NB_PLUGIN_CATALOG_URL;
+  process.env.NB_PLUGIN_CATALOG_URL = OFFLINE_PLUGIN_CATALOG_URL;
   delete process.env.NB_PLUGIN_CATALOG_SHA256;
 });
 

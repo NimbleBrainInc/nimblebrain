@@ -79,7 +79,10 @@ The platform builds every outward-facing URL (OAuth callbacks, post-login landin
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `NB_CURATED_CATALOG_DIR` | No | in-image catalog | The connector catalog — a directory of `ServerDetail` YAML/JSON files (the intended use, hence the name), or a single such file. Every `*.yaml`/`*.yml`/`*.json` in it is read in sorted filename order and re-read on each lookup, so editing a mounted ConfigMap takes effect without a restart. Replaces `src/connectors/catalog/curated/` wholesale. This is where `auth: static` and brokered (`composio`, `smithery`) entries belong; the in-image catalog is NimbleBrain's catalog of DCR connectors, taken when the image was built. See [Connectors Catalog](/config/connectors-catalog/). |
+| `NB_PLUGIN_CATALOG_URL` | No | `https://catalog.nimblebrain.ai` | The plugin catalog the connector list (Browse) and connector skills come from. See [Connectors Catalog](/config/connectors-catalog/#where-the-catalog-lives). |
+| `NB_PLUGIN_CATALOG_CONNECTORS_SHA256` | No | compiled into the release | The pin of the connector list: `sha256sum` of the catalog's `nimblebrain/connectors.yaml`. A list that does not match is refused. Bump it with `NB_PLUGIN_CATALOG_SHA256`, from the same catalog build. |
+| `NB_PLUGIN_CATALOG_SHA256` | No | compiled into the release | The pin of the catalog's NimbleBrain index, which connector skills come from. See [Skills](/using/skills/#connector-skill-overlays). |
+| `NB_CURATED_CATALOG_DIR` | No | unset | A directory of `ServerDetail` YAML/JSON files (or a single such file) that replaces the plugin catalog's connector list wholesale. Every `*.yaml`/`*.yml`/`*.json` in it is read in sorted filename order and re-read on each lookup, so editing a mounted ConfigMap takes effect without a restart. This is where `auth: static` and brokered (`composio`, `smithery`) entries belong. See [Connectors Catalog](/config/connectors-catalog/). |
 
 ### Secrets
 

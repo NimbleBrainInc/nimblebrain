@@ -20,7 +20,12 @@ import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
-import { boundSkill, buildCatalog, TEST_CATALOG_URL } from "../helpers/plugin-catalog.ts";
+import {
+  boundSkill,
+  buildCatalog,
+  OFFLINE_PLUGIN_CATALOG_URL,
+  TEST_CATALOG_URL,
+} from "../helpers/plugin-catalog.ts";
 import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
@@ -298,7 +303,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
       });
       expect(result.isError).toBe(false);
     } finally {
-      delete process.env.NB_PLUGIN_CATALOG_URL;
+      process.env.NB_PLUGIN_CATALOG_URL = OFFLINE_PLUGIN_CATALOG_URL;
       delete process.env.NB_PLUGIN_CATALOG_SHA256;
     }
 

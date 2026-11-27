@@ -5,7 +5,7 @@ description: How to curate the connectors that appear on the Browse plugins page
 
 import { Aside, Code, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The **Plugins → Browse plugins** list is the **catalog**: one directory of [`ServerDetail`](https://github.com/modelcontextprotocol/registry) files — the shape the upstream MCP registry publishes — read, validated, and projected into the rows a workspace can install from.
+The **Plugins → Browse plugins** list is the **catalog**: one list of [`ServerDetail`](https://github.com/modelcontextprotocol/registry) files — the shape the upstream MCP registry publishes — read, validated, and projected into the rows a workspace can install from.
 
 Only an entry advertising a `remotes[]` endpoint is installable: the runtime connects to remote MCP servers and does not acquire, verify, or execute downloadable `packages[]`. An entry offering only packages is dropped from Browse with a logged reason.
 
@@ -13,11 +13,27 @@ An install names a catalog entry by its `id`. The runtime resolves that id, matc
 
 ## Where the catalog lives
 
-[`NB_CURATED_CATALOG_DIR`](/config/environment/) names a directory. Every `*.yaml`, `*.yml`, and `*.json` in it is read in sorted filename order and aggregated into one catalog; unset, the runtime falls back to the minimal DCR-only example baked into the image so a fresh install is not empty.
+The catalog has one source at a time.
+
+**By default, the NimbleBrain plugin catalog.** The runtime reads the connector list of the catalog at [`NB_PLUGIN_CATALOG_URL`](/config/environment/#connectors-catalog) ([catalog.nimblebrain.ai](https://catalog.nimblebrain.ai)), the same catalog its [connector skills](/using/skills/#connector-skill-overlays) come from. A source checkout, `npx nimblebrain`, and a release image all show the same list.
+
+- **Pinned.** The list is used only when its sha256 is `NB_PLUGIN_CATALOG_CONNECTORS_SHA256`, which each release compiles in. It is asked for at `nimblebrain/connectors/<sha256>.yaml`, a copy a catalog keeps for good, and then at `nimblebrain/connectors.yaml`, the catalog's current build. A list that does not match is refused and logged with both digests.
+- **Cached.** A verified list is kept in the work directory (`cache/plugin-catalog/connectors/<sha256>.yaml`), so a restart needs no network.
+- **Never fatal.** When the pinned list cannot be fetched or does not match, the runtime reads the newest verified list in its cache and logs a warning naming it. With nothing cached, Browse is empty and the startup log says why. A failed fetch is retried on a later read, at most once a minute, so a runtime that started offline fills Browse once the network is back.
+- **Moving forward is bumping the pins.** The list and the index connector skills come from are pinned together; take both from the same catalog build:
+
+  ```bash
+  curl -s https://catalog.nimblebrain.ai/nimblebrain/marketplace.json | sha256sum   # NB_PLUGIN_CATALOG_SHA256
+  curl -s https://catalog.nimblebrain.ai/nimblebrain/connectors.yaml | sha256sum    # NB_PLUGIN_CATALOG_CONNECTORS_SHA256
+  ```
+
+The NimbleBrain catalog's list holds the connectors that install with nothing to configure (`auth: dcr`). To offer your own list, publish a catalog in the same shape and point `NB_PLUGIN_CATALOG_URL` and both pins at it.
+
+**When `NB_CURATED_CATALOG_DIR` is set, a directory.** It replaces the plugin catalog wholesale; the two are never merged, so every entry has one place it came from. A mounted directory is trusted by whoever mounts it, so it takes no pin and an edit applies on the next read. Use it for entries a public catalog cannot carry: `auth: static` entries that need your OAuth app, brokered toolkits (`composio`, `smithery`), a server you are developing. Every `*.yaml`, `*.yml`, and `*.json` in it is read in sorted filename order and aggregated into one catalog.
 
 Splitting curation across files is the intended shape, not a workaround — `curated.yaml`, `composio.yaml`, and one per gateway keep unrelated curation in separate reviewable files that still roll up to a single list. Each file is validated on its own, so a diagnostic names the file it came from, and a file that cannot be read or parsed is reported without emptying the rest of the catalog. Two files carrying the same server id resolve first-file-wins.
 
-The directory is re-read on every lookup, so editing a mounted ConfigMap takes effect without restarting the pod.
+A directory is re-read on every lookup, so editing a mounted ConfigMap takes effect without restarting the pod.
 
 <Aside type="note">
   **Filling the directory is not the runtime's job.** A GitOps ConfigMap, an operator with a text editor, or a job that mirrors some upstream index all do the same thing: write `ServerDetail` files. That is the whole extension point — pointing the platform at a second source of connectors means writing files into this directory, not configuring the runtime.
@@ -25,7 +41,7 @@ The directory is re-read on every lookup, so editing a mounted ConfigMap takes e
 
 ## Adding a new OAuth connector
 
-Add the entry to your deployment's catalog directory — the one [`NB_CURATED_CATALOG_DIR`](/config/environment/#connectors-catalog) points at. (`src/connectors/catalog/curated/example.yaml` is the source checkout's example: DCR-only, for local dev and tests, and not shipped in the image.) Either way the file is a list of upstream `ServerDetail` records; platform-specific fields live under the reverse-DNS extension key `_meta["ai.nimblebrain/connector"]`.
+Add the entry to your deployment's catalog: the directory [`NB_CURATED_CATALOG_DIR`](/config/environment/#connectors-catalog) points at, or the catalog you publish at `NB_PLUGIN_CATALOG_URL`. Either way the file is a list of upstream `ServerDetail` records; platform-specific fields live under the reverse-DNS extension key `_meta["ai.nimblebrain/connector"]`.
 
 ### 1. Pick the auth flow
 
@@ -37,7 +53,7 @@ The kinds and what each asks of a *user* are documented once, in [Connectors →
 - **`provider`** names a credential provider that supplies the transport credential server-side, with no user or OAuth client. Two things use it: the platform's own connectors, whose credential the runtime mints against the fleet authorizer, and a **gateway** you hold one account key for — see [gateway endpoints](#auth-provider-for-a-gateway-endpoint) below.
 
 <Aside type="caution">
-  The in-image catalog ships **DCR entries only**: NimbleBrain's catalog of connectors that install with nothing to configure, taken when the image was built, so a fresh install has a full Browse with no setup. Everything else, including `auth: static` and brokered entries, belongs in the directory `NB_CURATED_CATALOG_DIR` points at.
+  NimbleBrain's plugin catalog lists **DCR entries only**: connectors that install with nothing to configure, so a fresh install has a full Browse with no setup. Everything else, including `auth: static` and brokered entries, belongs in the directory `NB_CURATED_CATALOG_DIR` points at.
 </Aside>
 
 <Aside type="caution" title="A brokered entry must be in your catalog">
@@ -435,7 +451,7 @@ Every `ServerDetail` is validated when its file is read and again when the catal
 
 An entry's grants — its host UI, `hooks` delivery and its outbox — apply only to an installed connector at the entry's `remotes[0].url` (a brokered connector: the provider and entry its broker recorded); a connector that only shares the entry's server name gets none of them. Its restriction, `adminTools`, applies to every connector under its server name. Changing an entry's URL therefore takes its grants from every existing install until it is reinstalled.
 
-When the top-level shape is bad (not a list or `{servers: [...]}`, malformed YAML), the whole override is rejected and the bundled catalog is used. The startup logs name the file path and the parse error.
+When a file's top-level shape is bad (not a list or `{servers: [...]}`, malformed YAML), that file contributes nothing and the rest still load. The startup logs name the file path and the parse error.
 
 ### Checking a catalog before you ship it
 
@@ -453,7 +469,7 @@ It reports every entry that would be dropped — by the source's schema and dedu
   connectors/platform.yaml[4:io.example/mcp] dropped — invalid ServerDetail: /description must NOT have more than 100 characters
 ```
 
-Offline and deterministic, unlike the DCR probe below, so it is cheap enough to gate every catalog change. `bun run check:catalog-schema` runs it over the catalog bundled with the image as part of `bun run verify`; a deployment whose catalog lives in `NB_CURATED_CATALOG_DIR` should run it against that directory in the repo that owns it.
+Offline and deterministic, unlike the DCR probe below, so it is cheap enough to gate every catalog change. `bun run check:catalog-schema` runs it over the plugins demo catalog as part of `bun run verify`; the repo that owns a catalog (a published one, or the directory `NB_CURATED_CATALOG_DIR` points at) should run it against that catalog.
 
 ## Catalog rot detection
 
@@ -531,6 +547,6 @@ Operators upgrading from a release before the `ServerDetail` alignment landed sh
 
 ## Related
 
-- [Environment Variables](/config/environment/) — `NB_PUBLIC_ORIGIN`, `NB_CURATED_CATALOG_DIR`.
+- [Environment Variables](/config/environment/) — `NB_PUBLIC_ORIGIN`, `NB_PLUGIN_CATALOG_URL` and its pins, `NB_CURATED_CATALOG_DIR`.
 - [Workspace JSON](/config/workspace-json/) — `oauthClients`, `connectorsAllowList`.
 - [Credentials](/config/credentials/) — where a connector's credentials live and who can read them.

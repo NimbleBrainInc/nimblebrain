@@ -11,6 +11,12 @@ import { fakeFetch } from "./fake-fetch.ts";
 
 export const TEST_CATALOG_URL = "https://catalog.test";
 
+/**
+ * The plugin catalog every test process starts pointed at (`test/preload.ts`): a
+ * local port that refuses, so no test reaches the real catalog by default.
+ */
+export const OFFLINE_PLUGIN_CATALOG_URL = "http://127.0.0.1:9";
+
 /** The `$schema` every Agent Plugins 1.0.0 `plugin.json` carries, as the catalog build writes it. */
 export const AGENT_PLUGINS_MANIFEST_SCHEMA =
   "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";

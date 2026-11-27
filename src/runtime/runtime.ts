@@ -20,7 +20,7 @@ import { resolveWorkspacesConfig } from "../config/workspaces.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import {
   ConnectorCatalog,
-  catalogPath,
+  catalogLocation,
   warnIfCatalogEmpty,
 } from "../connectors/catalog/catalog.ts";
 import { getNimbleBrainHostMeta } from "../connectors/catalog/host-meta.ts";
@@ -1061,11 +1061,15 @@ export class Runtime {
     // before any connector starts: every connect resolves its client through this
     // bind, and it is what keeps the operator's secret on the catalog's server.
     // Throws on a declared client with no client id or secret.
-    await bindInstanceOAuthClients(() => new ConnectorCatalog(catalogPath()).catalogByIdMap());
+    await bindInstanceOAuthClients(() =>
+      new ConnectorCatalog(catalogLocation(workDir)).catalogByIdMap(),
+    );
     // Each remote connection reads its entry's in-band auth errors from the
     // catalog when its source is built: a fresh read, so an edit reaches the
     // next connection without a copy on the ref going stale.
-    setInBandAuthErrorsCatalog(() => new ConnectorCatalog(catalogPath()).catalogEntries());
+    setInBandAuthErrorsCatalog(() =>
+      new ConnectorCatalog(catalogLocation(workDir)).catalogEntries(),
+    );
 
     // Derive the override-file path when the caller supplied a configPath
     // but not an explicit override path. The CLI's loadConfig already
@@ -1491,8 +1495,9 @@ export class Runtime {
       });
 
       // Boot-time visibility: the connector catalog is what Browse lists.
-      // Warn loudly if its resolved catalog path yields zero entries (missing/empty mount, mis-set
-      // NB_CURATED_CATALOG_DIR) so an empty Browse is diagnosable rather
+      // Reading it here also fetches the pinned catalog's list on a first boot.
+      // Warn loudly if it yields zero entries (catalog unreachable, empty mount,
+      // mis-set NB_CURATED_CATALOG_DIR) so an empty Browse is diagnosable rather
       // than silent.
       await warnIfCatalogEmpty(rt.getConnectorCatalog());
 
@@ -5799,7 +5804,7 @@ export class Runtime {
    * long as the request that opened it.
    */
   getConnectorCatalog(): ConnectorCatalog {
-    return new ConnectorCatalog(catalogPath());
+    return new ConnectorCatalog(catalogLocation(this.getWorkDir()));
   }
 
   /**
