@@ -240,7 +240,7 @@ async function dispatchWorkspaceAction(
     case "restore":
       return handleRestore(ctx, input);
     case "purge":
-      return handlePurge(ctx, identity, input);
+      return handlePurge(ctx, input);
     default:
       return { content: textContent(`Unknown action: ${action}`), isError: true };
   }
@@ -623,12 +623,10 @@ async function handleRestore(
 
 /**
  * Purge a deleted workspace now rather than at the end of its window. There is
- * no undo, so the web tab confirms first. The plugins are called under the
- * purging admin.
+ * no undo, so the web tab confirms first.
  */
 async function handlePurge(
   ctx: ManageWorkspacesContext,
-  identity: UserIdentity,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
   const workspaceId = input.workspaceId ? String(input.workspaceId) : undefined;
@@ -639,7 +637,7 @@ async function handlePurge(
     if (!(await ctx.workspaceStore.getDeleted(workspaceId))) {
       return { content: textContent(`No deleted workspace ${workspaceId}.`), isError: true };
     }
-    const purge = await ctx.runtime.purgeWorkspace(workspaceId, { ownerId: identity.id });
+    const purge = await ctx.runtime.purgeWorkspace(workspaceId);
     if (purge.purged) log.info("[manage_workspaces] workspace purged", { workspaceId });
     return {
       content: textContent(`Workspace ${workspaceId}: ${describePurge(purge)}`),

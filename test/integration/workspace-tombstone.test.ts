@@ -243,7 +243,7 @@ describe("a deleted workspace", () => {
       expect(results.get(WS)).toEqual({ purged: true, connectors: [] });
       expect(calls.mock.calls.map(([tool, , scope]) => [tool, scope])).toContainEqual([
         "delete_workspace",
-        { workspaceId: WS, ownerId: OWNER.id },
+        { workspaceId: WS },
       ]);
     } finally {
       calls.mockRestore();
@@ -289,6 +289,23 @@ describe("a deleted workspace", () => {
     expect(existsSync(tasksData())).toBe(false);
     expect(existsSync(join(workDir, "workspaces", WS))).toBe(false);
   });
+});
+
+test("a workspace deleted with no signed-in identity is purged by the automatic pass", async () => {
+  runtime = await Runtime.start(config());
+  await seedData();
+  const result = await runWithRequestContext({ identity: null, workspaceId: WS }, () =>
+    runtime.deleteWorkspace(WS),
+  );
+  expect(result.deleted).toBe(true);
+  expect((await runtime.getWorkspaceStore().getDeleted(WS))?.tombstone.deletedBy).toBeNull();
+
+  const results = await runtime.purgeDeletedWorkspaces(new Date(Date.now() + 31 * DAY_MS));
+
+  expect(results.get(WS)).toEqual({ purged: true, connectors: [] });
+  expect(existsSync(ownerConversationsDir(workDir, WS, OWNER.id))).toBe(false);
+  expect(existsSync(tasksData())).toBe(false);
+  expect(existsSync(join(workDir, "workspaces", WS))).toBe(false);
 });
 
 test("a purge that stopped halfway is finished by the pass at the next boot", async () => {

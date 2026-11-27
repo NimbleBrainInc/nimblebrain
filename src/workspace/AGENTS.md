@@ -33,7 +33,8 @@ No contract has an archive or restore; plugins only ever see `delete_workspace`,
   window has passed: a purge that began is only ever finished.
 - **The purge** (`Runtime.purgeWorkspace`), per workspace and one at a time with restores:
   set `purgeAt`; call `delete_workspace` as `host` on every bound server whose contract makes
-  it private, under `deletedBy` (an admin's purge-now passes the admin); tear down the
+  it private, walled to the workspace with no owner (it crosses every owner, and is the host's
+  call whoever deleted or purges); tear down the
   connectors; delete the workspace's secrets through `CredentialStore`; `WorkspaceStore.remove`
   (record first, then the directory). A plugin's error stops it there and leaves the
   tombstone. Every step is idempotent, so the next pass finishes whatever stopped.

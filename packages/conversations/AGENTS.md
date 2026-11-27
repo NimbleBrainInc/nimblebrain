@@ -69,7 +69,7 @@ conversations. How to run it standalone is in `README.md`.
   the host context is a fact the host verified, so a workspace it stamps exists: `create` makes
   `conversations/<ownerId>/` (and the workspace directory above it) on first use, and a
   workspace with no storage reads as one with no conversations.
-- **`delete_workspace` purges.** It removes every owner's conversations and the workspace's
+- **`delete_workspace` purges, walled to the workspace alone** (no owner needed; `scopeOf` in `server.ts`). It removes every owner's conversations and the workspace's
   `conversations/` directory, then the workspace directory if nothing else is in it (a data
   directory shared with other content keeps it). A `create` after a
   purge simply makes the storage again. That is correct: the host is the authority on which

@@ -118,7 +118,7 @@ export const TOMBSTONE_FILENAME = "deleted.json";
  */
 export interface WorkspaceTombstone {
   deletedAt: string;
-  /** The signed-in identity that deleted it; the purge calls plugins under it. */
+  /** The signed-in identity that deleted it, when there was one: shown to admins. */
   deletedBy: string | null;
   /**
    * When the purge began, or when an admin asked for it now. Set once and

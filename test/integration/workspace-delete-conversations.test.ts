@@ -6,8 +6,8 @@
  * - Once the workspace is deleted no new conversation can be created in it, and
  *   the purge waits for a create already past the workspace check, so a create
  *   racing the delete leaves no conversation behind.
- * - A purge the plugin refuses leaves the workspace deleted and its tombstone in
- *   place, and the next purge removes the conversations.
+ * - The purge is the host's call, walled to the workspace with no owner, so a
+ *   workspace deleted with no signed-in identity is purged all the same.
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -96,23 +96,15 @@ describe("workspace delete with a window of 0: tombstone, then purge", () => {
     expect(storedConversations()).toEqual([]);
   });
 
-  test("a purge the plugin refuses leaves the workspace deleted, and the next one purges", async () => {
+  test("a workspace deleted with no signed-in identity is purged at once", async () => {
     await create();
     await create();
     expect(storedConversations()).toHaveLength(2);
 
-    // Deleted with no signed-in identity, the purge names no owner, which the
-    // plugin refuses (`scope_missing`).
-    const failed = await deleteAs(undefined);
-    expect(failed.deleted).toBe(true);
-    expect(failed.purge?.purged).toBe(false);
-    expect(failed.purge?.error).toContain("no owner");
-    expect(await runtime.getWorkspaceStore().get(WS_ID)).toBeNull();
-    expect(await runtime.getWorkspaceStore().getDeleted(WS_ID)).not.toBeNull();
-    expect(storedConversations()).toHaveLength(2);
-
-    const retried = await runtime.purgeWorkspace(WS_ID, { ownerId: OWNER });
-    expect(retried.purged).toBe(true);
+    // The purge is the host's call, walled to the workspace: it needs no owner.
+    const result = await deleteAs(undefined);
+    expect(result.deleted).toBe(true);
+    expect(result.purge).toEqual({ purged: true, connectors: [] });
     expect(storedConversations()).toEqual([]);
     expect(await runtime.getWorkspaceStore().getDeleted(WS_ID)).toBeNull();
   });

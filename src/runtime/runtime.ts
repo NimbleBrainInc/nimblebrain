@@ -4870,8 +4870,7 @@ export class Runtime {
    * ({@link purgeDeletedWorkspaces}); with a window of 0 it runs now and its
    * result is returned.
    *
-   * The deleting identity is recorded on the tombstone: the purge calls each
-   * plugin under it.
+   * The deleting identity is recorded on the tombstone, for an admin's view.
    */
   async deleteWorkspace(wsId: string): Promise<WorkspaceDeleteResult> {
     const deletedBy = getRequestContext()?.identity?.id ?? null;
@@ -4978,25 +4977,19 @@ export class Runtime {
    *
    * The tombstone first records that the purge began, so it can no longer be
    * restored. Then each bound plugin whose contract has a private
-   * `delete_workspace` is called for it as `host`, under the deleting identity
-   * (or `ownerId`); an error stops the purge here and leaves the tombstone for
-   * the next pass. Then the kernel's own data: the connectors are torn down
+   * `delete_workspace` is called for it as `host`, walled to the workspace with
+   * no owner: it removes every owner's records; an error stops the purge here
+   * and leaves the tombstone for the next pass. Then the kernel's own data: the connectors are torn down
    * (each told `on_removing`, its grants revoked, as an uninstall does), the
    * workspace's secrets deleted from the credential store, and the directory
    * removed, record last. Every step is idempotent, so a pass that stopped
    * anywhere is finished by running it again.
    */
-  purgeWorkspace(
-    wsId: string,
-    opts: { at?: Date; ownerId?: string } = {},
-  ): Promise<WorkspacePurgeResult> {
+  purgeWorkspace(wsId: string, opts: { at?: Date } = {}): Promise<WorkspacePurgeResult> {
     return this.oneAtATime(wsId, () => this.purgeOnce(wsId, opts));
   }
 
-  private async purgeOnce(
-    wsId: string,
-    opts: { at?: Date; ownerId?: string },
-  ): Promise<WorkspacePurgeResult> {
+  private async purgeOnce(wsId: string, opts: { at?: Date }): Promise<WorkspacePurgeResult> {
     const tombstone = await this._workspaceStore.markPurging(wsId, opts.at ?? new Date());
     if (!tombstone) {
       // Nothing deleted to purge: done already, or never deleted.
@@ -5004,9 +4997,8 @@ export class Runtime {
         ? { purged: false, connectors: [], error: "the workspace is not deleted" }
         : { purged: true, connectors: [] };
     }
-    const ownerId = opts.ownerId ?? tombstone.deletedBy ?? undefined;
     try {
-      await this.purgeWorkspacePlugins(wsId, ownerId);
+      await this.purgeWorkspacePlugins(wsId);
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       log.warn("[workspace] purge stopped at a plugin; the next pass retries it", {
@@ -5035,11 +5027,12 @@ export class Runtime {
 
   /**
    * Call `delete_workspace` on every bound plugin whose contract makes it a
-   * private tool, as `host` in the workspace. The conversation writes this
+   * private tool, as `host` walled to the workspace alone (no owner: the call
+   * is the host's and crosses every owner). The conversation writes this
    * process still holds for the workspace settle first. Throws on the first
    * error; each call is idempotent, so the next pass repeats them all.
    */
-  private async purgeWorkspacePlugins(wsId: string, ownerId: string | undefined): Promise<void> {
+  private async purgeWorkspacePlugins(wsId: string): Promise<void> {
     await this._conversations?.settle(wsId);
     for (const server of this._boundServers.values()) {
       if (!server.privateTools.has("delete_workspace")) continue;
@@ -5047,7 +5040,7 @@ export class Runtime {
         await server.call(
           "delete_workspace",
           { version: server.hostVersion },
-          { workspaceId: wsId, ...(ownerId ? { ownerId } : {}) },
+          { workspaceId: wsId },
         );
       } catch (err) {
         throw new Error(

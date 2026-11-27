@@ -99,7 +99,7 @@ describe("conversations plugin: the whole contract", () => {
     });
     expect(failures(results)).toEqual([]);
     expect(results.filter((r) => r.status === "skip")).toEqual([]);
-    expect(results.filter((r) => r.status === "pass")).toHaveLength(38);
+    expect(results.filter((r) => r.status === "pass")).toHaveLength(39);
     const names = results.map((r) => r.name);
     for (const name of [
       "every private tool answers a person with forbidden and changes nothing",
@@ -107,6 +107,7 @@ describe("conversations plugin: the whole contract", () => {
       "forbidden comes before the input and the scope",
       "delete_workspace answers a person with forbidden and deletes nothing",
       "delete_workspace removes every owner's conversations",
+      "delete_workspace needs a workspace and no owner",
       "tools/list as host matches the contract schemas",
     ]) {
       expect(names).toContain(name);

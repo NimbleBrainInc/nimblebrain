@@ -675,6 +675,24 @@ async function fullDeleteWorkspace(c: FullCtx): Promise<void> {
       await b.close();
     }
   });
+  await c.h.run("delete_workspace needs a workspace and no owner", async () => {
+    const owner = opts.owner as string;
+    const a = await connect(opts, { workspace: scratch, owner, principal: "host" });
+    const workspaceOnly = await connect(opts, { workspace: scratch, principal: "host" });
+    try {
+      const id = await createdId(a);
+      const out = await okCall(workspaceOnly, "delete_workspace", {});
+      eq(
+        (out.deleted as Array<{ id: string }>).map((d) => d.id),
+        [id],
+        "deleted",
+      );
+      eq((await okCall(a, "list", { limit: 200 })).conversations, [], "listed");
+    } finally {
+      await a.close();
+      await workspaceOnly.close();
+    }
+  });
 }
 
 /** Runs the cases only the whole contract can state; returns the conversation it seeded. */
