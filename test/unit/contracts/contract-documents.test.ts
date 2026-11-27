@@ -7,6 +7,12 @@ import addFormats from "ajv-formats";
 import { ALLOWED_MIME_TYPES, FILE_KINDS } from "../../../contracts/files/source/public.ts";
 import type { ContractSource } from "../../../contracts/scripts/contract-source.ts";
 import { emit } from "../../../contracts/scripts/emit-contracts.ts";
+import {
+  ALLOWED_TYPES as PLUGIN_ALLOWED_TYPES,
+  EXTENSION_MIME as PLUGIN_EXTENSION_MIME,
+  fileKind as pluginFileKind,
+  recordedType as pluginRecordedType,
+} from "../../../packages/files/src/mime.ts";
 import { EXTENSION_MIME, resolveMimeType } from "../../../src/files/mime.ts";
 import { fileKind } from "../../../src/platform/files/query.ts";
 
@@ -687,33 +693,60 @@ describe("the files contract's type tables", () => {
       .filter((m) => keys.includes(m[1] ?? ""))
       .map((m) => [m[1] ?? "", [...(m[2] ?? "").matchAll(/`([^`]+)`/g)].map((v) => v[1])] as const);
 
-  test("the extension table is the runtime's extension map", () => {
+  const extensionTable = () => {
     const table: Record<string, string> = {};
     for (const [type, exts] of rows([...new Set(Object.values(EXTENSION_MIME))])) {
       for (const ext of exts) if (ext) table[ext] = type;
     }
-    expect(table).toEqual(EXTENSION_MIME);
-  });
-
-  test("the recorded type follows the stated rules", () => {
-    expect(resolveMimeType("a.TYP", "")).toBe("text/plain");
-    expect(resolveMimeType(".env", "application/octet-stream; charset=x")).toBe("text/plain");
-    expect(resolveMimeType("Makefile", undefined)).toBe("application/octet-stream");
-    expect(resolveMimeType("a.", "")).toBe("application/octet-stream");
-    expect(resolveMimeType("a.bin", "")).toBe("application/octet-stream");
-    expect(resolveMimeType("a.md", " Text/CSV; charset=utf-8 ")).toBe("Text/CSV; charset=utf-8");
-  });
-
-  test("the kind table classifies every allowlisted type as the runtime does", () => {
+    return table;
+  };
+  const kindTable = () => {
     const table = new Map<string, string>();
     for (const [kind, mimes] of rows(FILE_KINDS)) {
       for (const mime of mimes) if (mime) table.set(mime, kind);
     }
-    expect([...table.keys()].sort()).toEqual([...ALLOWED_MIME_TYPES].sort());
-    for (const [mime, kind] of table) {
-      expect<string>(fileKind(mime)).toBe(kind);
-      expect<string>(fileKind(`${mime.toUpperCase()}; charset=utf-8`)).toBe(kind);
-    }
+    return table;
+  };
+
+  // Each implementation of the type rules is held to the same tables: the files plugin's,
+  // and the runtime's own copy for as long as the runtime keeps one.
+  const implementations = [
+    { name: "the runtime", extensions: EXTENSION_MIME, recorded: resolveMimeType, kind: fileKind },
+    {
+      name: "the files plugin",
+      extensions: PLUGIN_EXTENSION_MIME,
+      recorded: pluginRecordedType,
+      kind: pluginFileKind,
+    },
+  ];
+
+  for (const impl of implementations) {
+    test(`the extension table is ${impl.name}'s extension map`, () => {
+      expect(extensionTable()).toEqual(impl.extensions);
+    });
+
+    test(`the recorded type follows the stated rules in ${impl.name}`, () => {
+      const recorded = (name: string, type: string | undefined) => impl.recorded(name, type);
+      expect(recorded("a.TYP", "")).toBe("text/plain");
+      expect(recorded(".env", "application/octet-stream; charset=x")).toBe("text/plain");
+      expect(recorded("Makefile", undefined)).toBe("application/octet-stream");
+      expect(recorded("a.", "")).toBe("application/octet-stream");
+      expect(recorded("a.bin", "")).toBe("application/octet-stream");
+      expect(recorded("a.md", " Text/CSV; charset=utf-8 ")).toBe("Text/CSV; charset=utf-8");
+    });
+
+    test(`the kind table classifies every allowlisted type as ${impl.name} does`, () => {
+      const table = kindTable();
+      expect([...table.keys()].sort()).toEqual([...ALLOWED_MIME_TYPES].sort());
+      for (const [mime, kind] of table) {
+        expect<string>(impl.kind(mime)).toBe(kind);
+        expect<string>(impl.kind(`${mime.toUpperCase()}; charset=utf-8`)).toBe(kind);
+      }
+    });
+  }
+
+  test("the files plugin's allowlist is the document's", () => {
+    expect([...PLUGIN_ALLOWED_TYPES].sort()).toEqual([...ALLOWED_MIME_TYPES].sort());
   });
 });
 
