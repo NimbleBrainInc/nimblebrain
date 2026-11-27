@@ -110,7 +110,9 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   hard-coded in the kernel.
 - **Facts only the host knows are laid over a bound server's results** (`ResultOverlays`, by
   contract, passed to `startBoundServers`): the runtime overlays `active` on every relayed
-  conversations `list`. The overlay renders the text content again from the overlaid result.
+  conversations `list`. An overlay also sees each person's call as it passes, which is where
+  the runtime records a files `create` made in a run and reports a tasks `create`
+  (`automation.created`); the kernel's own `host` calls never reach one. The overlay renders the text content again from the overlaid result.
 - **The kernel announces its own writes.** A write through the contract store fires the
   source's `notifications/resources/list_changed` to its subscribers for the owner, as an
   in-process app's server would, so the owner's views refresh.

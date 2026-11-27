@@ -287,6 +287,66 @@ describe("cancel", () => {
   }, 40_000);
 });
 
+describe("automation.created", () => {
+  /** Every `captureAbout` the runtime's telemetry makes while `fn` runs. */
+  async function captured(fn: () => Promise<unknown>) {
+    const manager = runtime.getTelemetryManager();
+    const original = manager.captureAbout.bind(manager);
+    const events: Array<{ event: string; properties: Record<string, unknown>; about: unknown }> =
+      [];
+    manager.captureAbout = (event, properties, about) => {
+      events.push({ event, properties, about });
+    };
+    try {
+      await fn();
+    } finally {
+      manager.captureAbout = original;
+    }
+    return events.filter((e) => e.event === "automation.created");
+  }
+
+  it("is sent for a person's create through the bound contract, with no task content", async () => {
+    const events = await captured(() =>
+      create("Telemetry cron", "summarize the acme board", {
+        schedule: { cron: "0 8 * * 1-5", timezone: "Pacific/Honolulu" },
+      }),
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]?.about).toEqual({ userId: OWNER.id, workspaceId: WS });
+    expect(events[0]?.properties).toEqual({
+      trigger: "cron",
+      created_by: "agent",
+      kind: "saved",
+      automation_id: expect.stringMatching(/^[0-9a-f]{16}$/),
+    });
+    const sent = JSON.stringify(events);
+    expect(sent).not.toContain("acme");
+    expect(sent).not.toContain("telemetry-cron");
+  });
+
+  it("names the person when their own screen made it", async () => {
+    const events = await captured(() =>
+      callTasks(
+        runtime,
+        OWNER,
+        WS,
+        "create",
+        { manifest: { name: "Telemetry screen" }, body: "b" },
+        { shellCall: true },
+      ),
+    );
+    expect(events.map((e) => e.properties.created_by)).toEqual(["user"]);
+    expect(events[0]?.properties.trigger).toBe("manual");
+  });
+
+  it("is not sent for a create the plugin refuses", async () => {
+    const events = await captured(() =>
+      tasks("create", { manifest: { name: "Telemetry cron" }, body: "again" }),
+    );
+    expect(events).toHaveLength(0);
+  });
+});
+
 describe("an event-triggered run", () => {
   it("a route naming the task offers the item, and the event run carries it as a note", async () => {
     await create("On event", "handle the event", {

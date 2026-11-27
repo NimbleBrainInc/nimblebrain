@@ -270,6 +270,7 @@ import {
 import { approxTokens } from "../skills/tokens.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../skills/truncate.ts";
 import type { Skill, SkillBodyLoad } from "../skills/types.ts";
+import { captureAutomationCreated } from "../telemetry/automation.ts";
 import { telemetryCatalogId } from "../telemetry/catalog-id.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
@@ -1543,6 +1544,17 @@ export class Runtime {
             );
           },
         ],
+        // A person's successful `create` on the tasks contract is an automation
+        // made: `automation.created`, seen here as it passes. Only a person's
+        // call reaches an overlay (the kernel's own calls do not), and a run
+        // is refused `create`.
+        [
+          TASKS_CONTRACT,
+          (tool: string, result: ToolResult) => {
+            if (tool === "create" && !result.isError) this.reportAutomationCreated(result);
+            return result;
+          },
+        ],
         // The files a run wrote are the host's own record of its successful
         // `create` calls (CONTRACT.md §10.5): seen here, as they pass.
         [
@@ -1610,6 +1622,28 @@ export class Runtime {
       this._runWorker = this.createTasksRunWorker(tasks, this._runGrants);
     }
     return [...this._boundServers.values()].map((server) => server.source);
+  }
+
+  /**
+   * `automation.created` for a person's successful tasks `create`, in the
+   * call's request scope. Best-effort: telemetry never fails the call.
+   */
+  private reportAutomationCreated(result: ToolResult): void {
+    const ctx = getRequestContext();
+    const workspaceId = ctx?.workspaceId;
+    const ownerId = ctx?.identity?.id;
+    if (!workspaceId || !ownerId) return;
+    try {
+      captureAutomationCreated(this.getTelemetryManager(), result.structuredContent, {
+        workspaceId,
+        ownerId,
+        shellCall: ctx?.shellCall === true,
+      });
+    } catch (err) {
+      log.warn("[telemetry] automation.created not sent", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**

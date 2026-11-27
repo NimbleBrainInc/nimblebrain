@@ -135,9 +135,12 @@ It also sends events for moments in a person's use of the product. None carries 
 | `member.added` | The person added, the workspace, and their role |
 | `connector.auth_started` / `connector.auth_completed` / `connector.auth_failed` | The connector's catalog id or `custom`, `workspace` or `personal`, and for a failure the state it ended in |
 | `connector.auth_lost` | A connected connector that now needs signing in again |
+| `automation.created` | Its trigger (`cron`, `interval`, `event`, `once` or `manual`), who made it (`user` from their own screen, else `agent`), `saved` or `oneoff`, and `automation_id` |
 | `automation.run_completed` | Its status, trigger (`schedule`, `manual` or `event`), duration, `run_id`, and `cost_usd` (the run's recorded cost, priced as on `agent.chat_completed`; left out when any call could not be priced, and for a run that never reached a model). The run's steps are on its `agent.chat_*` and `tool.called` events, which carry the same `run_id`; a run that never started has only this event |
 
-`run_id` is the run's own random id. A scheduled task's name and id are never sent.
+`run_id` is the run's own random id. A scheduled task's id is derived from its name, so `automation_id` is a hash of where it lives and that id instead: it names nothing. A scheduled task's name and id are never sent.
+
+On an identified deployment `automation.created` reports every scheduled task made, so the anonymous `task.created` (only those the agent made) is not sent there.
 
 An identified web client sends `$pageview` when the route it shows changes, and nothing when only a value in it changes (another workspace, another conversation). The event names the route template, never the path: `/w/:slug/settings/members`, not the workspace's address. Its `$current_url` is the origin plus that template, and its `$pathname` the template. On an app's page it also carries `app`, the app's server name from the catalog. In every identified web event, a URL naming another page (the referrer, the first page of a session or of a person) keeps only its origin, and a path naming another page is dropped.
 
