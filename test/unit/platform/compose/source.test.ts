@@ -129,6 +129,7 @@ function makeRuntime(live: LiveWorkspace = EMPTY_WORKSPACE): Runtime {
     buildAppsList: async () => live.apps,
     getRegistryForWorkspace: () => stub<ToolRegistry>({ availableTools: async () => live.tools }),
     connectorAdmission: async () => ADMIT_ALL,
+    promptPrefsFor: async () => ({ displayName: "", timezone: "UTC", locale: "en-US" }),
   });
 }
 
