@@ -14,7 +14,6 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleBootstrap } from "../../src/api/handlers.ts";
-import { resolveFeatures } from "../../src/config/features.ts";
 import { parseNotificationEnvelope } from "../../src/notifications/envelope.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
@@ -167,17 +166,12 @@ describe("bootstrap — attachment limits", () => {
     preferences: {},
   };
 
-  test("carries the files config when file context is on", async () => {
-    const res = await handleBootstrap(runtime, identity, resolveFeatures({ fileContext: true }));
+  // With files off the limits are absent: `files-off.test.ts`.
+  test("carries the files config while the files plugin is bound", async () => {
+    const res = await handleBootstrap(runtime, identity);
     const body = await readJson<BootstrapResponse>(res);
     const { maxFileSize, maxTotalSize, maxFilesPerMessage } = runtime.getFilesConfig();
     expect(body.config.files).toEqual({ maxFileSize, maxTotalSize, maxFilesPerMessage });
-  });
-
-  test("omits it when file context is off", async () => {
-    const res = await handleBootstrap(runtime, identity, resolveFeatures({ fileContext: false }));
-    const body = await readJson<BootstrapResponse>(res);
-    expect(body.config.files).toBeUndefined();
   });
 });
 

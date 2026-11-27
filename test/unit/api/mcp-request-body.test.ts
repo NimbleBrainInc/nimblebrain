@@ -4,13 +4,13 @@ import {
   CLIENT_INFO_META_KEY,
   PROTOCOL_VERSION_META_KEY,
 } from "@modelcontextprotocol/server";
-import { McpServerHost } from "../../../src/api/mcp-server.ts";
+import { MAX_MCP_REQUEST_BODY_BYTES, McpServerHost } from "../../../src/api/mcp-server.ts";
 import type { ApiErrorBody, JsonRpcErrorBody } from "../../../src/api/schemas/responses.ts";
 import { resolveFeatures } from "../../../src/config/features.ts";
 import { readJson } from "../../helpers/http.ts";
 import { MCP_PROTOCOL_VERSION } from "../../helpers/mcp-client.ts";
 
-const LIMIT = 1_048_576;
+const LIMIT = MAX_MCP_REQUEST_BODY_BYTES;
 const CHUNK = 4096;
 
 function body(method: string, modern = true): string {

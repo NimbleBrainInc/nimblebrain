@@ -65,7 +65,6 @@ describe("WorkspaceContext.getRoot / getDataPath", () => {
     );
     expect(ctx.getDataPath("data")).toBe("/tmp/nb/workspaces/ws_00164434d8dd7ffb/data");
     expect(ctx.getDataPath("skills")).toBe("/tmp/nb/workspaces/ws_00164434d8dd7ffb/skills");
-    expect(ctx.getDataPath("files")).toBe("/tmp/nb/workspaces/ws_00164434d8dd7ffb/files");
     expect(ctx.getDataPath("credentials")).toBe(
       "/tmp/nb/workspaces/ws_00164434d8dd7ffb/credentials",
     );
@@ -148,7 +147,7 @@ describe("workspace isolation invariants", () => {
   test("every scope path under context A is disjoint from context B", () => {
     const a = new WorkspaceContext({ wsId: WS_A, workDir });
     const b = new WorkspaceContext({ wsId: WS_B, workDir });
-    const scopes = ["root", "data", "credentials", "conversations", "skills", "files"] as const;
+    const scopes = ["root", "data", "credentials", "conversations", "skills"] as const;
     for (const scope of scopes) {
       const pa = a.getDataPath(scope);
       const pb = b.getDataPath(scope);

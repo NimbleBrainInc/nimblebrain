@@ -127,6 +127,7 @@ function startHarness(opts: { gate?: () => Promise<void>; onCall?: () => void } 
       workspaceId: WS,
       connectorId: "files-reader",
       hostResources: {
+        schemes: () => ["files"],
         read: async () => ({ contents: [] }),
         list: async (_params, ctx: HostResourceContext) => {
           resolved.push(ctx.ownerId);

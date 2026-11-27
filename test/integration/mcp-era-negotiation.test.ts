@@ -119,6 +119,7 @@ async function connect(url: string, opts: { connector?: boolean } = {}): Promise
           workspaceId: "ws_0032146faed2deb5",
           connectorId: "era",
           hostResources: {
+            schemes: () => ["files"],
             read: async () => ({ contents: [] }),
             list: async () => ({ resources: [] }),
           },

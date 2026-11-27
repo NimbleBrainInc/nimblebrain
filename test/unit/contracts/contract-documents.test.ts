@@ -13,8 +13,7 @@ import {
   fileKind as pluginFileKind,
   recordedType as pluginRecordedType,
 } from "../../../packages/files/src/mime.ts";
-import { EXTENSION_MIME, resolveMimeType } from "../../../src/files/mime.ts";
-import { fileKind } from "../../../src/platform/files/query.ts";
+import { FILE_TYPE_ALLOWLIST } from "../../../src/files/mime.ts";
 
 const ROOT = resolve(import.meta.dir, "../../..");
 
@@ -695,7 +694,7 @@ describe("the files contract's type tables", () => {
 
   const extensionTable = () => {
     const table: Record<string, string> = {};
-    for (const [type, exts] of rows([...new Set(Object.values(EXTENSION_MIME))])) {
+    for (const [type, exts] of rows([...new Set(Object.values(PLUGIN_EXTENSION_MIME))])) {
       for (const ext of exts) if (ext) table[ext] = type;
     }
     return table;
@@ -708,10 +707,8 @@ describe("the files contract's type tables", () => {
     return table;
   };
 
-  // Each implementation of the type rules is held to the same tables: the files plugin's,
-  // and the runtime's own copy for as long as the runtime keeps one.
+  // The type rules are the implementation's: the files plugin is held to the tables.
   const implementations = [
-    { name: "the runtime", extensions: EXTENSION_MIME, recorded: resolveMimeType, kind: fileKind },
     {
       name: "the files plugin",
       extensions: PLUGIN_EXTENSION_MIME,
@@ -747,6 +744,11 @@ describe("the files contract's type tables", () => {
 
   test("the files plugin's allowlist is the document's", () => {
     expect([...PLUGIN_ALLOWED_TYPES].sort()).toEqual([...ALLOWED_MIME_TYPES].sort());
+  });
+
+  // The host checks the allowlist itself before it opens any upload (§7, §10.2).
+  test("the allowlist the host's intake checks is the document's", () => {
+    expect([...FILE_TYPE_ALLOWLIST].sort()).toEqual([...ALLOWED_MIME_TYPES].sort());
   });
 });
 

@@ -116,6 +116,7 @@ describe("McpSource resource arguments", () => {
         workspaceId: WS,
         connectorId: "outbound",
         hostResources: {
+          schemes: () => ["files"],
           read: async () => ({ contents: [] }),
           list: async () => ({ resources: [] }),
         },

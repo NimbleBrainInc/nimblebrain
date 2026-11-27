@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MAX_MCP_REQUEST_BODY_BYTES } from "../../src/api/mcp-server.ts";
 import type { ApiErrorBody } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -82,9 +83,9 @@ afterAll(async () => {
 });
 
 describe("per-route body limits", () => {
-  it("rejects a chunked MCP body over 1 MB and serves the next request", async () => {
+  it("rejects a chunked MCP body over its limit and serves the next request", async () => {
     const oversized = buildMcpRequest("1", "tasks/get", { taskId: "missing" });
-    const bytes = new TextEncoder().encode(oversized.body.padEnd(2 * 1_048_576));
+    const bytes = new TextEncoder().encode(oversized.body.padEnd(2 * MAX_MCP_REQUEST_BODY_BYTES));
     let offset = 0;
     const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
       method: "POST",

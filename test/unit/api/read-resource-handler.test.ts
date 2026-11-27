@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { handleReadResource } from "../../../src/api/handlers.ts";
 import { artifactResolutionsTotal } from "../../../src/api/metrics.ts";
 import type { ApiErrorBody, ReadResourceResponse } from "../../../src/api/schemas/responses.ts";
+import { DEFAULT_FILE_CONFIG } from "../../../src/files/types.ts";
 import {
   ArtifactNotFoundError,
   type ArtifactResolver,
@@ -14,6 +15,7 @@ import type { ToolRegistry } from "../../../src/tools/registry.ts";
 import type { ResourceData, ToolSource } from "../../../src/tools/types.ts";
 import { bytesToBase64 } from "../../../src/util/base64.ts";
 import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { createFakeFilesHost } from "../../helpers/fake-files-host.ts";
 import { readJson } from "../../helpers/http.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
 import { stub } from "../../helpers/stub.ts";
@@ -200,33 +202,42 @@ describe("handleReadResource", () => {
     ]);
   });
 
-  it("routes an identity source to readIdentityAppResource, resolving files in the focused workspace", async () => {
-    const calls: Array<{ server: string; uri: string }> = [];
-    const runtime = makeStubRuntime({
-      identitySources: ["files"],
-      resource: { text: "hello world\n", mimeType: "text/plain" },
-      captureIdentityCall: (c) => calls.push(c),
+  it("answers files:// itself, as the caller in the path's workspace, whichever server it names", async () => {
+    const files = createFakeFilesHost();
+    const mine = files.seed(
+      { workspaceId: "ws_00079598e311c160", ownerId: "usr_me" },
+      { filename: "a.txt", mimeType: "text/plain", body: "hello world\n" },
+    );
+    const runtime = stub<Runtime>({
+      getFiles: () => files,
+      getFilesConfig: () => ({ ...DEFAULT_FILE_CONFIG }),
+      resolveRequestUserId: () => "usr_me",
     });
-    // Files are workspace-owned: the source is still reached through the identity
-    // door (no workspace registry), but the read resolves in the focused workspace,
-    // threaded via workspaceId.
-    const res = await handleReadResource(req({ server: "files", uri: "files://fl_abc" }), runtime, {
-      workspaceId: "ws_00079598e311c160",
-    });
-    expect(res.status).toBe(200);
-    const body = await readJson<ReadResourceResponse>(res);
-    expect(body.contents[0].text).toBe("hello world\n");
-    expect(calls).toEqual([{ server: "files", uri: "files://fl_abc" }]);
+    for (const server of ["files", "anything"]) {
+      const res = await handleReadResource(req({ server, uri: `files://${mine.id}` }), runtime, {
+        workspaceId: "ws_00079598e311c160",
+      });
+      expect(res.status).toBe(200);
+      const body = await readJson<ReadResourceResponse>(res);
+      expect(body.contents[0].text).toBe("hello world\n");
+    }
+    // Another workspace is not found, as an absent file is.
+    const elsewhere = await handleReadResource(
+      req({ server: "files", uri: `files://${mine.id}` }),
+      runtime,
+      { workspaceId: "ws_001c32f121060ff3" },
+    );
+    expect(elsewhere.status).toBe(404);
+    expect((await readJson<ApiErrorBody>(elsewhere)).error).toBe("resource_not_found");
   });
 
-  it("returns 404 when an identity resource is missing", async () => {
-    const runtime = makeStubRuntime({ identitySources: ["files"], resource: null });
+  it("answers files_disabled for a files:// read while no files plugin is bound", async () => {
+    const runtime = stub<Runtime>({ getFiles: () => null, resolveRequestUserId: () => "usr_me" });
     const res = await handleReadResource(req({ server: "files", uri: "files://fl_x" }), runtime, {
       workspaceId: "ws_00079598e311c160",
     });
     expect(res.status).toBe(404);
-    const body = await readJson<ApiErrorBody>(res);
-    expect(body.error).toBe("resource_not_found");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("files_disabled");
   });
 
   it("returns 400 for invalid JSON body", async () => {

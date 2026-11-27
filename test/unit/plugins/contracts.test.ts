@@ -19,6 +19,7 @@ const SINGLETON: ContractDefinition = {
   privateTools: ["append"],
   unattendedRefused: ["append"],
   grantTools: [],
+  writeTools: [],
 };
 const ADDITIVE: ContractDefinition = {
   id: "ai.example.tools",
@@ -27,6 +28,7 @@ const ADDITIVE: ContractDefinition = {
   privateTools: [],
   unattendedRefused: [],
   grantTools: [],
+  writeTools: [],
 };
 const REGISTRY: ContractRegistry = new Map([
   [SINGLETON.id, SINGLETON],
@@ -209,6 +211,7 @@ describe("checkContracts", () => {
         privateTools: ["append"],
         unattendedRefused: ["append"],
         grantTools: [],
+        writeTools: [],
       },
       ...["a", "b"].map((plugin) => ({
         contract: ADDITIVE.id,
@@ -219,6 +222,7 @@ describe("checkContracts", () => {
         privateTools: [],
         unattendedRefused: [],
         grantTools: [],
+        writeTools: [],
       })),
     ]);
   });

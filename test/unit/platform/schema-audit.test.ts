@@ -15,7 +15,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
-import { createFilesSource } from "../../../src/platform/files/source.ts";
 import { createUsageSource } from "../../../src/platform/usage/source.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
@@ -61,15 +60,6 @@ async function auditSource(source: McpSource): Promise<void> {
 }
 
 describe("Connector audit — every inline connector has compilable schemas", () => {
-  test("files", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "nb-audit-files-"));
-    try {
-      await auditSource(createFilesSource(makeRuntime(dir), new NoopEventSink()));
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   test("usage", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nb-audit-usage-"));
     try {

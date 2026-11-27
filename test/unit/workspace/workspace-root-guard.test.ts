@@ -16,9 +16,10 @@
  * directory the retention window keeps (refused until its purge begins), and
  * then drives the same write inside a live
  * root, because "create your own subdirectory on first write" is still how
- * files and notifications are meant to behave. Conversations and tasks are
- * their plugins' storage; the kernel stamps only a live workspace on their
- * calls instead (`src/conversation/contract-store.ts`, the run worker).
+ * notifications are meant to behave. Conversations, tasks and files are their
+ * plugins' storage; the kernel stamps only a live workspace on their calls
+ * instead (`src/conversation/contract-store.ts`, the run worker, the files
+ * binding's call guard).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -27,8 +28,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { saveComposioConnection } from "../../../src/connectors/providers/composio/connection.ts";
-import { workspaceFilesDir } from "../../../src/files/paths.ts";
-import { createFileStore } from "../../../src/files/store.ts";
 import { parseNotificationEnvelope } from "../../../src/notifications/envelope.ts";
 import { NotificationStore } from "../../../src/notifications/store.ts";
 import type { NotificationEnvelope } from "../../../src/notifications/types.ts";
@@ -85,10 +84,6 @@ Confirm the recipient before calling gmail__send.
  * back into a workspace that had just been purged.
  */
 const WRITERS: Array<{ name: string; write: () => void | Promise<void> }> = [
-  {
-    name: "files — the owner partition",
-    write: () => createFileStore(workspaceFilesDir(workDir, WS, OWNER)).ensureFilesDir(),
-  },
   {
     name: "notifications — the inbox",
     write: () => {
@@ -211,7 +206,9 @@ describe("a write into a deleted workspace", () => {
   test("a tombstone that will not parse refuses", () => {
     const root = seedWorkspaceRoot(workDir, WS);
     writeFileSync(join(root, "deleted.json"), "{");
-    expect(() => ensureWorkspaceDir(join(root, "files"))).toThrow(WorkspaceRootMissingError);
+    expect(() => ensureWorkspaceDir(join(root, "notifications"))).toThrow(
+      WorkspaceRootMissingError,
+    );
   });
 });
 
@@ -229,10 +226,10 @@ describe("the same write inside a live workspace", () => {
     // `scaffoldWorkspace` deliberately does not pre-create these: an empty dir
     // in every workspace that never uses the feature is worse than one made on
     // demand. That stays true — the guard is about the ROOT, not the subtree.
-    const files = workspaceFilesDir(workDir, WS, OWNER);
-    expect(existsSync(files)).toBe(false);
-    ensureWorkspaceDir(files);
-    expect(existsSync(files)).toBe(true);
+    const inbox = join(workDir, "workspaces", WS, "notifications", OWNER);
+    expect(existsSync(inbox)).toBe(false);
+    ensureWorkspaceDir(inbox);
+    expect(existsSync(inbox)).toBe(true);
   });
 });
 

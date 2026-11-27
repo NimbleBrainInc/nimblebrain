@@ -4,8 +4,9 @@
  * `resources/read` resolves them: the workspace in the URL, and the caller's
  * own records in it.
  *
- * - Files: the caller's file in workspace A is listed; another owner's file in
- *   A and the caller's own file in workspace B are not.
+ * - Files: the caller's file in workspace A is listed (from the files plugin's
+ *   `list`); another owner's file in A and the caller's own file in workspace B
+ *   are not.
  * - Conversations: the plugin lists only its screen; the screen is listed, and
  *   no conversation (the caller's in A, another owner's in A, the caller's in
  *   B) appears.
@@ -22,6 +23,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { workDirConversationStore } from "../helpers/conversation-store.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { seedPluginFile } from "../helpers/files-plugin.ts";
 import { newMcpClient } from "../helpers/mcp-client.ts";
 
 const testDir = join(tmpdir(), `nb-door-identity-resources-${Date.now()}`);
@@ -42,24 +44,9 @@ const conversations: Record<"mine" | "otherOwner" | "otherWorkspace", string> = 
   otherWorkspace: "",
 };
 
-/** Save a file into `ownerId`'s partition of `wsId`, as an upload does; returns its id. */
+/** Store a file as `ownerId`'s in `wsId`, as an upload does; returns its id. */
 async function seedFile(wsId: string, ownerId: string, filename: string): Promise<string> {
-  const store = runtime.getWorkspaceFileStore(wsId, ownerId);
-  const saved = await store.saveFile(Buffer.from(filename), filename, "text/plain");
-  await store.appendRegistry({
-    id: saved.id,
-    filename,
-    mimeType: "text/plain",
-    size: saved.size,
-    tags: [],
-    source: "manual",
-    conversationId: null,
-    createdAt: new Date().toISOString(),
-    description: null,
-    workspaceId: wsId,
-    ownerId,
-  });
-  return saved.id;
+  return (await seedPluginFile(runtime, wsId, ownerId, { filename, body: filename })).id;
 }
 
 async function seedConversation(wsId: string, ownerId: string): Promise<string> {
