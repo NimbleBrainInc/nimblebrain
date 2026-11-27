@@ -89,6 +89,8 @@ export function due(
   const now = Date.parse(args.now);
   const until = Date.parse(args.until);
   if (args.cursor === undefined) prune(tx, now, retentionMs);
+  const seen = tx.ws.state.hostNow;
+  if (seen === undefined || Date.parse(seen) < now) tx.ws.state.hostNow = iso(now);
   for (const task of allTasks(tx.ws.state)) anchor(tx, task, now);
   const all = [...scheduledOccurrences(tx, until), ...requestedOccurrences(tx, until)].sort(
     (a, b) => sortKey(a).localeCompare(sortKey(b)),

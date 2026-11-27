@@ -1381,14 +1381,16 @@ async function onceCases(c: FullCtx): Promise<void> {
   await h.run(
     "a once first seen by due far past its time was missed: recorded skipped, never listed",
     async () => {
+      // Saved ahead of the host's latest now (the last case's), then first seen far past it.
+      const when = t + 2 * HOUR + LATE;
       const taskId = await createTask(
         person,
-        { name: taskName(audit, "missed-once"), schedule: { at: at(t + 2 * HOUR) } },
+        { name: taskName(audit, "missed-once"), schedule: { at: at(when) } },
         "m",
       );
-      const now = t + 2 * HOUR + LATE;
+      const now = when + LATE;
       const listed = (await host.dueAll(now, now + DAY)).occurrences;
-      assert(!listed.some((o) => o.notBefore === at(t + 2 * HOUR)), "the missed once is listed");
+      assert(!listed.some((o) => o.notBefore === at(when)), "the missed once is listed");
       const status = await okCall(person, "status", { taskId });
       eq(obj(obj(status.task, "task").onceDone, "onceDone").outcome, "missed", "onceDone");
       const runs = list(status.recentRuns, "recentRuns");
@@ -1397,6 +1399,27 @@ async function onceCases(c: FullCtx): Promise<void> {
         ["skipped"],
         "the missed occurrence's record",
       );
+    },
+  );
+  await h.run(
+    "a once at or before the latest now due gave is invalid_input at create and update",
+    async () => {
+      const latest = t + 2 * HOUR + 2 * LATE;
+      const past = await person.call("create", {
+        manifest: { name: taskName(audit, "past-once"), schedule: { at: at(latest) } },
+        body: "p",
+      });
+      expectPublicError(past, "invalid_input", "create");
+      const taskId = await createTask(
+        person,
+        { name: taskName(audit, "moved-once"), schedule: { at: at(latest + DAY) } },
+        "p",
+      );
+      const moved = await person.call("update", {
+        taskId,
+        manifest: { schedule: { at: at(latest - HOUR) } },
+      });
+      expectPublicError(moved, "invalid_input", "update");
     },
   );
 }

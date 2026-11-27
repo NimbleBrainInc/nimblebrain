@@ -328,6 +328,10 @@ late, spent, expired, or allowed.
 
 - **A schedule saved or changed is anchored on the `now` of the next `due`** for its workspace:
   that call computes its first occurrence.
+- **A once already past is refused at write.** `create` and `update` fail `invalid_input` for
+  an `at` at or before the latest `now` a `due` gave for the workspace: the host's clock has
+  passed it, so it could only be missed. A later `at` is judged on the next `due` as any once
+  is. A workspace no `due` has reached yet refuses none.
 - **Retention is judged on `due`'s `now`** (§5.1).
 - **Budget periods are UTC calendar days and months**, judged on the host's `now`.
 - **Lateness, backoff and the fire ceiling** are judged on the `now` of the call that decides

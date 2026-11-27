@@ -358,11 +358,35 @@ describe("schedules", () => {
     const ran = (await ok("status", { taskId: "once" })).task;
     expect([ran.enabled, ran.onceDone.outcome]).toEqual([false, "ran"]);
 
-    await ok("create", { manifest: { name: "Late", schedule: { at: iso(T0) } }, body: "p" });
-    expect((await due(T0 + 2 * HOUR)).occurrences.map((o: { ref: string }) => o.ref)).toEqual([]);
+    // Ahead of the host's latest now when saved; the host is down until long past it.
+    await ok("create", {
+      manifest: { name: "Late", schedule: { at: iso(T0 + 2 * HOUR) } },
+      body: "p",
+    });
+    expect((await due(T0 + 4 * HOUR)).occurrences.map((o: { ref: string }) => o.ref)).toEqual([]);
     const late = await ok("status", { taskId: "late" });
     expect(late.task.onceDone.outcome).toBe("missed");
     expect(late.recentRuns[0].execution).toBe("skipped");
+  });
+
+  test("a once at or before the host's latest now is refused at create and update", async () => {
+    await due(T0 + HOUR);
+    const past = await call("create", {
+      manifest: { name: "Gone", schedule: { at: iso(T0) } },
+      body: "p",
+    });
+    expect(JSON.parse(past.content[0]?.text ?? "{}").code).toBe("invalid_input");
+    await ok("create", {
+      manifest: { name: "Soon", schedule: { at: iso(T0 + 2 * HOUR) } },
+      body: "p",
+    });
+    const moved = await call("update", {
+      taskId: "soon",
+      manifest: { schedule: { at: iso(T0 + HOUR) } },
+    });
+    expect(JSON.parse(moved.content[0]?.text ?? "{}").code).toBe("invalid_input");
+    // A task saved before keeps changing in other ways.
+    await ok("update", { taskId: "soon", manifest: { description: "d" } });
   });
 
   test("schedule checks need no clock", () => {
