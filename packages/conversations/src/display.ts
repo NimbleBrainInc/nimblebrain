@@ -225,6 +225,19 @@ export function extractText(content: unknown): string {
     .join("");
 }
 
+/**
+ * The text a person wrote in a user message: its text parts, less those the host marked
+ * `attached` (an attachment's extracted text or a note naming it, which the model reads and
+ * the message shows as its `files`).
+ */
+export function personText(content: unknown): string {
+  return partsOf(content)
+    .map((p) =>
+      p.type === "text" && p.attached !== true && typeof p.text === "string" ? p.text : "",
+    )
+    .join("");
+}
+
 // ── Metrics derived from events ────────────────────────────────────────────
 
 export interface DerivedMetrics {
@@ -258,7 +271,7 @@ export function accumulateEventMetrics(evt: ReadEvent, acc: DerivedMetrics): voi
 // ── Reconstruction ─────────────────────────────────────────────────────────
 
 function buildUserMessage(evt: UserMessageEvent): DisplayMessage {
-  const text = extractText(evt.content);
+  const text = personText(evt.content);
   return {
     role: "user",
     content: text,

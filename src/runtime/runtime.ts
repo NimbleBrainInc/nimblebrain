@@ -7696,8 +7696,8 @@ function unpricedOf(partial: { unpricedCalls: () => number }): { unpricedCalls?:
 }
 
 /**
- * Build a user message's content blocks: the text message plus any
- * `resource_link` attachment parts. Falls back to a synthetic `[Uploaded: …]`
+ * Build a user message's content blocks: the text message, then each
+ * attachment's part (a `resource_link`, or its text marked `attached`). Falls back to a synthetic `[Uploaded: …]`
  * text part when there's no text and no text content parts (a file-only upload)
  * so the content is never empty.
  */
@@ -7713,7 +7713,7 @@ function buildUserMessageContent(request: ChatRequest): Array<UserTextPart | Use
   if (request.contentParts?.length) {
     for (const part of request.contentParts) {
       if (part.type === "text") {
-        userContent.push({ type: "text", text: part.text });
+        userContent.push({ type: "text", text: part.text, attached: true });
       } else if (part.type === "resource_link") {
         userContent.push({
           type: "resource_link",

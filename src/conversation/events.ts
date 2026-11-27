@@ -276,7 +276,7 @@ export function conversationEventOf(event: EngineEvent, debug: boolean): Convers
 
 /**
  * The events a stored message persists as: a user message is one
- * `user.message`; an assistant message with metadata is a synthetic run
+ * `user.message`, carrying its attachments' references (`files`); an assistant message with metadata is a synthetic run
  * (`run.start`, `llm.response`, `run.done`); anything else is none.
  */
 export function messageEvents(message: StoredMessage): ConversationEvent[] {
@@ -287,6 +287,7 @@ export function messageEvents(message: StoredMessage): ConversationEvent[] {
         type: "user.message",
         content: message.content as ConversationEvent extends { content: infer C } ? C : never,
         ...(message.userId ? { userId: message.userId } : {}),
+        ...(message.metadata?.files?.length ? { files: message.metadata.files } : {}),
         ...(message.metadata?.pluginRequestAnswer
           ? { pluginRequestAnswer: message.metadata.pluginRequestAnswer }
           : {}),

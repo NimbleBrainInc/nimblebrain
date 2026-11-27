@@ -15,8 +15,8 @@ import {
   type ConversationMeta,
   type DerivedMetrics,
   emptyMetrics,
-  extractText,
   metaOf,
+  personText,
   type ReadEvent,
 } from "./display.ts";
 
@@ -110,7 +110,7 @@ function foldEvent(scan: Scan, parsed: Record<string, unknown>): void {
   if (parsed.type === "user.message") {
     scan.userMessages++;
     if (!scan.preview && Array.isArray(parsed.content)) {
-      scan.preview = extractText(parsed.content);
+      scan.preview = personText(parsed.content);
     }
   } else if (parsed.type === "run.start" && runId) {
     scan.runStarts.push(runId);
