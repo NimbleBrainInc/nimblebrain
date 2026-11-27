@@ -104,6 +104,8 @@ const MIB = 1024 * 1024;
 /** Bounds of the contract (CONTRACT.md §6, §7, §12). */
 const MAX_CREATE_BYTES = 4 * MIB;
 const MAX_READ_TEXT_BYTES = MIB;
+/** The MCP request body a server reached over HTTP accepts at least (CONTRACT.md §7). */
+const MIN_REQUEST_BYTES = 8 * MIB;
 const DOWNLOAD_TTL_S = 300;
 const UPLOAD_TTL_S = 900;
 const GRACE_S = 300;
@@ -579,8 +581,16 @@ async function get(url: string, headers: Record<string, string> = {}): Promise<R
   return fetch(url, { method: "GET", headers, redirect: "manual" });
 }
 
-async function put(url: string, body: Uint8Array, headers: Record<string, string> = {}) {
-  return fetch(url, { method: "PUT", body, headers, redirect: "manual" });
+/** An upload's transfer: its URL and the headers its PUT must carry (CONTRACT.md §7). */
+interface Grant {
+  url: string;
+  headers: Obj;
+}
+
+/** PUT a body to an upload's URL with every header `begin_upload` returned for it. */
+async function put(up: Grant, body: Uint8Array): Promise<Response> {
+  const headers = up.headers as Record<string, string>;
+  return fetch(up.url, { method: "PUT", body, headers, redirect: "manual" });
 }
 
 /** The body a GET answers, checked for status 200, its length and its encoding. */
@@ -662,8 +672,8 @@ async function upload(
   };
 }
 
-async function putOk(url: string, body: Buffer, headers: Obj = {}): Promise<void> {
-  const res = await put(url, body, headers as Record<string, string>);
+async function putOk(up: Grant, body: Buffer): Promise<void> {
+  const res = await put(up, body);
   assert(res.status >= 200 && res.status < 300, `PUT answered ${res.status}`);
 }
 
@@ -911,6 +921,28 @@ async function createCases(c: FullCtx): Promise<void> {
       "create",
     );
   });
+  await h.run(
+    "create stores a body of exactly 4 MiB, and a request of nearly 8 MiB reaches the tool",
+    async () => {
+      const exact = Buffer.alloc(MAX_CREATE_BYTES, 0x62);
+      const made = await createFile(
+        person,
+        { filename: "four.bin", mimeType: "application/octet-stream" },
+        exact,
+      );
+      eq(made.size, MAX_CREATE_BYTES, "size");
+      // A request body just under 8 MiB (CONTRACT.md §7): the tool answers it, not the transport.
+      const body = "YWJj".repeat((MIN_REQUEST_BYTES - 64 * 1024) / 4);
+      expectPublicError(
+        await person.call("create", {
+          manifest: { filename: "eight.txt", mimeType: "text/plain" },
+          body,
+        }),
+        "too_large",
+        "create",
+      );
+    },
+  );
   await h.run("create of a type off the allowlist is type_not_allowed", async () => {
     for (const mimeType of ["application/x-msdownload", "video/mp4", "text/javascript-ish"]) {
       expectPublicError(
@@ -1013,6 +1045,39 @@ async function createCases(c: FullCtx): Promise<void> {
         "invalid_input",
         "empty segment",
       );
+    },
+  );
+  await h.run(
+    "a folder path with a leading or trailing '/' or an empty segment is invalid_input",
+    async () => {
+      const top = unique("Paths");
+      const before = Number((await okCall(person, "list", {})).total);
+      for (const folder of [`/${top}`, `${top}/`, `${top}//x`, `${top}/ /x`, "/"]) {
+        expectPublicError(
+          await person.call("create", {
+            manifest: { filename: "p.txt", mimeType: "text/plain", folder },
+            body: "p",
+            encoding: "text",
+          }),
+          "invalid_input",
+          `create ${folder}`,
+        );
+        expectCode(
+          await c.host.call("begin_upload", {
+            version: VERSION,
+            filename: "p.txt",
+            mimeType: "text/plain",
+            size: 1,
+            source: "app",
+            folder,
+          }),
+          "invalid_input",
+          `begin_upload ${folder}`,
+        );
+      }
+      eq(Number((await okCall(person, "list", {})).total), before, "total");
+      const folders = list((await okCall(person, "list", { query: top })).folders, "folders");
+      eq(folders.length, 0, "a refused path made a folder");
     },
   );
   await h.run("create is not idempotent: each call makes a new file", async () => {
@@ -1332,7 +1397,7 @@ async function readCases(c: FullCtx): Promise<void> {
       );
       const out = await okCall(person, "read", { id: made.id, pages: [3, 1, 3, 9, 2] });
       eq([out.totalPages, out.requestedPages, out.missingPages], [3, [1, 2, 3, 9], [9]], "pages");
-      eq(out.extractedText, null, "extractedText");
+      eq([out.extractedText, out.truncated], [null, false], "extractedText and truncated");
       const pages = list(out.pages, "pages");
       eq(
         pages.map((p) => p.page),
@@ -1344,6 +1409,8 @@ async function readCases(c: FullCtx): Promise<void> {
       const whole = await okCall(person, "read", { id: made.id });
       assert(String(whole.extractedText).includes("Gamma"), "whole text");
       const bounded = await okCall(person, "read", { id: made.id, pages: [1, 3], maxBytes: 6 });
+      eq(bounded.truncated, false, "the top-level truncated with pages");
+      eq(list(bounded.pages, "pages")[0]?.truncated, true, "page 1 truncated");
       const total = list(bounded.pages, "pages").reduce(
         (n, p) => n + Buffer.byteLength(String(p.text)),
         0,
@@ -1533,7 +1600,7 @@ async function uploadCases(c: FullCtx): Promise<void> {
         { conversation, run },
       );
       eq(Number((await okCall(person, "list", {})).total), before, "begin_upload made a file");
-      await putOk(up.url, body, up.headers);
+      await putOk(up, body);
       const done = await okCall(host, "complete_upload", {
         version: VERSION,
         uploadId: up.uploadId,
@@ -1569,13 +1636,13 @@ async function uploadCases(c: FullCtx): Promise<void> {
         "upload_incomplete",
         "no body",
       );
-      await putOk(up.url, body.subarray(0, 5));
+      await putOk(up, body.subarray(0, 5));
       expectCode(
         await host.call("complete_upload", { version: VERSION, uploadId: up.uploadId }),
         "upload_incomplete",
         "short",
       );
-      await putOk(up.url, body);
+      await putOk(up, body);
       await okCall(host, "complete_upload", { version: VERSION, uploadId: up.uploadId });
     },
   );
@@ -1583,8 +1650,8 @@ async function uploadCases(c: FullCtx): Promise<void> {
     const first = Buffer.from("first-body");
     const second = Buffer.from("other-body");
     const up = await upload(c, first);
-    await putOk(up.url, first);
-    await putOk(up.url, second);
+    await putOk(up, first);
+    await putOk(up, second);
     const done = await okCall(host, "complete_upload", { version: VERSION, uploadId: up.uploadId });
     const got = await download(await downloadUrl(c, String(obj(done.file, "file").id)));
     eq(got.toString(), "other-body", "body");
@@ -1594,7 +1661,7 @@ async function uploadCases(c: FullCtx): Promise<void> {
     async () => {
       const body = Buffer.from("idempotent");
       const up = await upload(c, body);
-      await putOk(up.url, body);
+      await putOk(up, body);
       const first = await okCall(host, "complete_upload", {
         version: VERSION,
         uploadId: up.uploadId,
@@ -1613,7 +1680,7 @@ async function uploadCases(c: FullCtx): Promise<void> {
     async () => {
       const body = Buffer.from("replayed");
       const up = await upload(c, body);
-      await putOk(up.url, body);
+      await putOk(up, body);
       const first = await okCall(host, "complete_upload", {
         version: VERSION,
         uploadId: up.uploadId,
@@ -1629,12 +1696,65 @@ async function uploadCases(c: FullCtx): Promise<void> {
       eq(again, first, "the repeat");
     },
   );
+  await h.run(
+    "a complete_upload repeat after its file is deleted is upload_not_found",
+    async () => {
+      const body = Buffer.from("deleted since");
+      const up = await upload(c, body);
+      await putOk(up, body);
+      const first = await okCall(host, "complete_upload", {
+        version: VERSION,
+        uploadId: up.uploadId,
+      });
+      await okCall(person, "delete", { id: str(obj(first.file, "file").id, "id") });
+      expectCode(
+        await host.call("complete_upload", { version: VERSION, uploadId: up.uploadId }),
+        "upload_not_found",
+        "after delete",
+      );
+    },
+  );
+  await h.run(
+    "begin_upload records a known extension's type for a generic one, a specific one as given",
+    async () => {
+      const cases: Array<[string, string, string]> = [
+        ["notes.md", "application/octet-stream", "text/markdown"],
+        ["main.PY", "application/octet-stream; charset=x", "text/plain"],
+        ["blob", "application/octet-stream", "application/octet-stream"],
+        ["a.md", "text/csv", "text/csv"],
+      ];
+      for (const [filename, mimeType, want] of cases) {
+        const body = Buffer.from("x");
+        const up = await upload(c, body, { filename, mimeType });
+        await putOk(up, body);
+        const done = await okCall(host, "complete_upload", {
+          version: VERSION,
+          uploadId: up.uploadId,
+        });
+        eq(obj(done.file, "file").mimeType, want, filename);
+      }
+    },
+  );
+  await h.run("a PUT past the declared size is refused and stores nothing", async () => {
+    const body = Buffer.from("declared");
+    const up = await upload(c, body);
+    await putOk(up, body);
+    const res = await put(up, Buffer.concat([body, Buffer.from("-and-more")]));
+    const own =
+      isLoopbackUrl(up.url) ||
+      (c.opts.server !== undefined && new URL(up.url).origin === new URL(c.opts.server).origin);
+    if (own) eq(res.status, 413, "status");
+    else assert(res.status >= 400 && res.status < 500, `an overlong PUT answered ${res.status}`);
+    const done = await okCall(host, "complete_upload", { version: VERSION, uploadId: up.uploadId });
+    const got = await download(await downloadUrl(c, String(obj(done.file, "file").id)));
+    eq(got.toString(), "declared", "the earlier body");
+  });
   await h.run("an upload URL stops accepting once its upload is completed", async () => {
     const body = Buffer.from("closed");
     const up = await upload(c, body);
-    await putOk(up.url, body);
+    await putOk(up, body);
     await okCall(host, "complete_upload", { version: VERSION, uploadId: up.uploadId });
-    const res = await put(up.url, body);
+    const res = await put(up, body);
     assert(res.status < 200 || res.status >= 300, `a PUT after completion answered ${res.status}`);
   });
   await h.run(
@@ -1642,7 +1762,7 @@ async function uploadCases(c: FullCtx): Promise<void> {
     async () => {
       const body = Buffer.from("walled");
       const up = await upload(c, body);
-      await putOk(up.url, body);
+      await putOk(up, body);
       const args = { version: VERSION, uploadId: up.uploadId };
       expectCode(
         await host.call("complete_upload", args, { owner: c.owner2 }),
@@ -1697,7 +1817,7 @@ async function transferCases(c: FullCtx): Promise<void> {
       const body = Buffer.from("shape");
       const up = await upload(c, body);
       checkTransferUrl(up.url, up.expiresAt, UPLOAD_TTL_S, up.issuedAt);
-      await putOk(up.url, body);
+      await putOk(up, body);
       const done = await okCall(c.host, "complete_upload", {
         version: VERSION,
         uploadId: up.uploadId,
@@ -1726,7 +1846,7 @@ async function transferCases(c: FullCtx): Promise<void> {
       );
       const dl = await downloadUrl(c, made.id);
       for (const res of [
-        await put(dl, body),
+        await fetch(dl, { method: "PUT", body, redirect: "manual" }),
         await fetch(dl, { method: "POST", redirect: "manual" }),
       ]) {
         assert(res.status < 200 || res.status >= 300, `download URL answered ${res.status}`);
@@ -1763,6 +1883,23 @@ async function transferCases(c: FullCtx): Promise<void> {
       }
     },
   );
+  await h.run("several ranges are answered 200 whole, an unsatisfiable range 416", async () => {
+    const body = Buffer.from("0123456789abcdef");
+    const made = await createFile(
+      person,
+      { filename: "rr.bin", mimeType: "application/octet-stream" },
+      body,
+    );
+    const dl = await downloadUrl(c, made.id);
+    const multi = await get(dl, { range: "bytes=0-1,4-5" });
+    eq(multi.status, 200, "several ranges");
+    assert(Buffer.from(await multi.arrayBuffer()).equals(body), "several ranges: the whole body");
+    for (const range of ["bytes=16-", "bytes=99-100", "bytes=-0"]) {
+      const res = await get(dl, { range });
+      eq(res.status, 416, range);
+      await res.arrayBuffer();
+    }
+  });
   await h.run(
     "a loopback listener answers an unknown token 404 and sends no CORS headers",
     async () => {
@@ -1805,7 +1942,7 @@ async function expiryCases(c: FullCtx): Promise<void> {
     await h.run(graceCase, async () => {
       const body = Buffer.from("in time");
       const up = await upload(c, body);
-      await putOk(up.url, body);
+      await putOk(up, body);
       await sleep(Math.max(0, Date.parse(up.expiresAt) - Date.now()) + 1_000);
       await okCall(host, "complete_upload", { version: VERSION, uploadId: up.uploadId });
     });
@@ -1813,7 +1950,7 @@ async function expiryCases(c: FullCtx): Promise<void> {
       const body = Buffer.from("too late");
       const up = await upload(c, body);
       await sleep(Math.max(0, Date.parse(up.expiresAt) - Date.now()) + 1_000);
-      const res = await put(up.url, body);
+      const res = await put(up, body);
       assert(res.status < 200 || res.status >= 300, `a late PUT answered ${res.status}`);
       expectCode(
         await host.call("complete_upload", { version: VERSION, uploadId: up.uploadId }),
@@ -1832,7 +1969,7 @@ async function expiryCases(c: FullCtx): Promise<void> {
     await h.run(pastGrace, async () => {
       const body = Buffer.from("never completed");
       const up = await upload(c, body);
-      await putOk(up.url, body);
+      await putOk(up, body);
       await sleep(Math.max(0, Date.parse(up.expiresAt) - Date.now()) + GRACE_S * 1000 + 2_000);
       expectCode(
         await host.call("complete_upload", { version: VERSION, uploadId: up.uploadId }),
@@ -1946,7 +2083,7 @@ async function deleteWorkspaceCases(c: FullCtx): Promise<void> {
       await createFile(b, { filename: "b.txt", mimeType: "text/plain" }, "b");
       const body = Buffer.from("open upload");
       const up = await upload(c, body, {}, { workspace: ws });
-      await putOk(up.url, body);
+      await putOk(up, body);
       const out = await okCall(
         host,
         "delete_workspace",

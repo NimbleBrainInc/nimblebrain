@@ -75,7 +75,7 @@ How to run it standalone is in `README.md`.
 - **The listener**: over stdio, its own `Bun.serve` bound to `127.0.0.1` on a port the OS
   picks, started before the server answers; over HTTP, the server's own origin under `/t/`
   (`--transfer-origin` names another). It answers a GET of a live download grant (200, or
-  206 with `Content-Range` for one `bytes=` range; 416 for an unsatisfiable one) and a PUT of
+  206 with `Content-Range` for one `bytes=` range; 416 for an unsatisfiable one; 200 whole for several ranges or one it cannot parse) and a PUT of
   a live upload grant (204), and 404 with an empty body to everything else. It sends no CORS
   headers and logs nothing, so a token never reaches a log.
 - **Lifetimes**: a download URL lives `--download-ttl` (default and most 300 s), an upload URL
