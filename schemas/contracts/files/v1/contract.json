@@ -948,7 +948,7 @@
           ]
         },
         "truncated": {
-          "description": "Whether `extractedText` stops at the text bound or at `maxBytes`.",
+          "description": "Whether `extractedText` stops at the text bound or at `maxBytes`. False when `extractedText` is null, and with `pages`, where each page says its own.",
           "type": "boolean"
         },
         "totalPages": {
@@ -1017,7 +1017,7 @@
               "type": "string"
             },
             "folder": {
-              "description": "Folder path to put the file in, '/'-separated (e.g. 'Reports/Q3'). Folders that do not exist are created. Omit for the top level.",
+              "description": "Folder path to put the file in, '/'-separated (e.g. 'Reports/Q3'). Folders that do not exist are created. Omit, or \"\", for the top level. A leading or trailing '/' or an empty segment is invalid_input.",
               "type": "string"
             },
             "mimeType": {
@@ -1378,7 +1378,7 @@
         "mimeType": {
           "minLength": 1,
           "maxLength": 255,
-          "description": "The body's type, on the allowlist (CONTRACT.md §7).",
+          "description": "The body's type. application/octet-stream for a known text extension is recorded as that extension's type (CONTRACT.md §5, Types); the type recorded is on the allowlist (§7).",
           "type": "string"
         },
         "size": {
@@ -1396,7 +1396,7 @@
           "description": "The door the body comes through."
         },
         "folder": {
-          "description": "Folder path, '/'-separated; missing levels are created at completion, as create's manifest.folder.",
+          "description": "Folder path, '/'-separated; missing levels are created at completion, as create's manifest.folder. A leading or trailing '/' or an empty segment is invalid_input.",
           "type": "string"
         },
         "tags": {
@@ -1820,6 +1820,7 @@
       "properties": {
         "removed": {
           "additionalProperties": false,
+          "description": "The files and folders removed, across every owner. Open uploads are removed and not counted.",
           "type": "object",
           "required": [
             "files",

@@ -7,6 +7,8 @@
  *   expiry cases run. Every case passes but the one that waits 300 s past an upload's
  *   expiry, which the runner skips unless asked to wait.
  * - the whole contract over Streamable HTTP, transfers on the server's own origin.
+ * - the whole contract through a wrap whose upload grants require a returned header, as a
+ *   presigned object store's signed headers do: a PUT without it is refused 403.
  * - the public-only mode, the check for a host's agent-facing door. The plugin is the
  *   implementation, not such a door, so it lists its private tools: that case is the one
  *   expected failure.
@@ -33,7 +35,7 @@ const HOST_META_KEY = "ai.nimblebrain/host";
 const SCREEN_URI = "ui://files/browser";
 
 /** Every case of the full run that can pass without waiting 300 s. */
-const FULL_PASSES = 71;
+const FULL_PASSES = 77;
 const WAITS_FOR_GRACE = "complete_upload past the 300 s window is upload_not_found";
 const PUBLIC_ONLY_EXPECTED_FAILURE = "no private tool is listed";
 const SHORT_TTLS = ["--upload-ttl", "3", "--download-ttl", "3"];
@@ -57,6 +59,78 @@ async function readListening(p: Subprocess<"ignore", "pipe", "pipe">): Promise<s
     }
   }
   throw new Error(`the server never said it was listening: ${text}`);
+}
+
+/** The header the wrap adds to every upload grant and requires on the PUT. */
+const GRANT_HEADER = "x-upload-grant";
+const GRANT_VALUE = "signed-0123456789";
+
+/**
+ * Serve the plugin behind a wrap that adds a required header to each `begin_upload` grant and
+ * moves its URL onto the wrap, which refuses a PUT without the header and forwards the rest.
+ */
+function requireGrantHeader(upstream: string): { url: string; stop: () => void } {
+  const base = new URL(upstream);
+  let origin = "";
+  const rewrite = (msg: unknown): unknown => {
+    const result = (msg as { result?: { structuredContent?: Record<string, unknown> } }).result;
+    const out = result?.structuredContent;
+    if (!out || typeof out.uploadId !== "string" || typeof out.url !== "string") return msg;
+    const url = `${origin}/up/${Buffer.from(out.url).toString("base64url")}`;
+    const grant = {
+      ...out,
+      url,
+      headers: { ...(out.headers as object), [GRANT_HEADER]: GRANT_VALUE },
+    };
+    const content = [{ type: "text", text: JSON.stringify(grant) }];
+    return { ...(msg as object), result: { ...result, structuredContent: grant, content } };
+  };
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      const u = new URL(req.url);
+      if (u.pathname.startsWith("/up/")) {
+        const target = Buffer.from(u.pathname.slice(4), "base64url").toString();
+        if (req.method === "PUT" && req.headers.get(GRANT_HEADER) !== GRANT_VALUE) {
+          return new Response("missing the granted header", { status: 403 });
+        }
+        const headers = new Headers(req.headers);
+        headers.delete(GRANT_HEADER);
+        headers.delete("host");
+        const body = req.method === "PUT" ? await req.arrayBuffer() : undefined;
+        return fetch(target, { method: req.method, headers, body, redirect: "manual" });
+      }
+      const headers = new Headers(req.headers);
+      headers.delete("host");
+      const res = await fetch(new URL(u.pathname + u.search, base), {
+        method: req.method,
+        headers,
+        body: req.method === "POST" ? await req.text() : undefined,
+      });
+      if (req.method !== "POST") return res;
+      const type = res.headers.get("content-type") ?? "";
+      const text = await res.text();
+      const body = type.includes("text/event-stream")
+        ? text
+            .split("\n")
+            .map((l) =>
+              l.startsWith("data: ")
+                ? `data: ${JSON.stringify(rewrite(JSON.parse(l.slice(6))))}`
+                : l,
+            )
+            .join("\n")
+        : text && type.includes("json")
+          ? JSON.stringify(rewrite(JSON.parse(text)))
+          : text;
+      const out = new Headers(res.headers);
+      out.delete("content-length");
+      out.delete("content-encoding");
+      return new Response(body, { status: res.status, headers: out });
+    },
+  });
+  origin = `http://127.0.0.1:${server.port}`;
+  return { url: `${origin}${base.pathname}`, stop: () => server.stop(true) };
 }
 
 const failures = (results: CaseResult[]) =>
@@ -130,6 +204,25 @@ describe("files plugin: the whole contract", () => {
         owner: OWNER,
       }),
     );
+  }, 180_000);
+});
+
+describe("files plugin: an upload grant that requires a returned header", () => {
+  it("passes the whole contract with every upload PUT carrying the grant's headers", async () => {
+    const wrap = requireGrantHeader(url);
+    try {
+      expectFull(
+        await runConformance({
+          server: wrap.url,
+          headers: AUTH,
+          carriage: "meta",
+          workspace: "ws_e5e5e5e5e5e5e5e5",
+          owner: OWNER,
+        }),
+      );
+    } finally {
+      wrap.stop();
+    }
   }, 180_000);
 });
 
