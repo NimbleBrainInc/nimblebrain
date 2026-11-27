@@ -193,13 +193,6 @@ export const DeliveryRecord = Type.Object({
   updatedAt: Type.String(),
   /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
   nextAttemptAt: Type.Optional(Type.String()),
-  /**
-   * The task run this notification's batch started. Agent targets only,
-   * and present only once a run actually started — which is exactly the
-   * question an operator asks of a route that wakes a task, and the
-   * answer `tasks__run_result` is addressed with.
-   */
-  runId: Type.Optional(Type.String()),
 });
 export type DeliveryRecord = Static<typeof DeliveryRecord>;
 

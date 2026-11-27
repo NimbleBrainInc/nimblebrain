@@ -20,6 +20,7 @@ import type {
 import { collectPollTargets } from "../../notifications/targets.ts";
 import { notificationId, parseNotificationId } from "../../notifications/types.ts";
 import { toNotificationView } from "../../notifications/view.ts";
+import { log } from "../../observability/log.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import {
@@ -48,7 +49,6 @@ import {
   NotificationsSettingsInput,
   NotificationsSettingsOutput,
 } from "../schemas/notifications.ts";
-import { isEventSchedule } from "../tasks/types.ts";
 
 /**
  * The "notifications" platform source — the inbox, as an in-process MCP server.
@@ -64,7 +64,7 @@ import { isEventSchedule } from "../tasks/types.ts";
  * This source owns a store.
  *
  * The poller that fills the inbox lives here too, started in this factory and
- * stopped in a `source.stop()` wrapper the way the tasks scheduler is.
+ * stopped in a `source.stop()` wrapper.
  * It reads every connector that declares an outbox and writes what it finds
  * through {@link NotificationStore.append} — the same door a test fixture
  * writes through, which is why the store's dedupe and its `notification.created`
@@ -257,18 +257,23 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
   }
 
   /**
-   * The tasks the caller owns in the bound workspace, keyed by id.
+   * The tasks the caller owns in the bound workspace, by name.
    *
-   * Absent rather than fatal when the tasks source is not registered
-   * (minimal runtimes, tests): the settings page then offers no agent target,
-   * which is the truthful answer, instead of failing the whole read.
+   * Empty rather than fatal when no tasks plugin is bound or it cannot be
+   * read: the settings page then offers no agent target, which is the truthful
+   * answer, instead of failing the whole read.
    */
-  function ownTasks(): Array<{ id: string; name: string; eventScheduled: boolean }> {
+  async function ownTasks(
+    wsId: string,
+  ): Promise<Array<{ id: string; name: string; eventScheduled: boolean }>> {
     try {
-      return [...runtime.getTasksContext().definitions().values()]
-        .map((a) => ({ id: a.id, name: a.name, eventScheduled: isEventSchedule(a.schedule) }))
-        .sort((a, b) => a.name.localeCompare(b.name));
-    } catch {
+      const tasks = await runtime.listOwnTasks(wsId, currentIdentityId());
+      return tasks.sort((a, b) => a.name.localeCompare(b.name));
+    } catch (err) {
+      log.warn("[notifications] could not list the caller's tasks", {
+        workspaceId: wsId,
+        error: err instanceof Error ? err.message : String(err),
+      });
       return [];
     }
   }
@@ -307,7 +312,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
       sources,
       routes: config.routes ?? [],
       deliverableTools,
-      tasks: ownTasks(),
+      tasks: await ownTasks(wsId),
       placeholders: [...NOTIFICATION_PLACEHOLDERS],
       routesExecuted: ROUTES_EXECUTE,
     };
@@ -329,11 +334,10 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
     workspaceStore: runtime.getWorkspaceStore(),
     storeFor: (wsId) => runtime.getNotificationStore(wsId),
     dispatch: (opts) => runtime.dispatchUnattended(opts),
-    // The only path from a delivery to an agent run. Reached through the
-    // runtime rather than imported so neither platform source depends on the
-    // other's construction order, and so a runtime built without tasks
-    // answers the route rather than failing it.
-    wakeTask: (req) => runtime.wakeTaskOnNotification(req),
+    // The only path from a delivery to an agent run: the tasks contract's
+    // `offer_event`, reached through the runtime, which answers the route
+    // `tasks_unavailable` when no tasks plugin is bound.
+    offerToTask: (offer) => runtime.offerTaskEvent(offer),
     workspaceIds: async () => (await runtime.getWorkspaceStore().list()).map((ws) => ws.id),
     eventSink,
   });
@@ -455,7 +459,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
         const registry = await runtime.ensureWorkspaceRegistry(auth.wsId);
         const validated = validateRoutes(routes, {
           toolNames: new Set((await registry.availableTools()).map((t) => t.name)),
-          taskIds: new Set(ownTasks().map((a) => a.id)),
+          taskIds: new Set((await ownTasks(auth.wsId)).map((a) => a.id)),
           createdBy: currentIdentityId(),
         });
         if (!validated.ok) return refuse(validated.error);
@@ -497,9 +501,8 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
 
   const source = defineInProcessApp({ name: "notifications", version: "1.0.0", tools }, eventSink);
 
-  // The poller is owned by this factory, not by the MCP server — the same
-  // arrangement the tasks scheduler has, and for the same reason: a timer
-  // that outlives `Runtime.shutdown()` keeps a test process alive and keeps
+  // The poller is owned by this factory, not by the MCP server: a timer that
+  // outlives `Runtime.shutdown()` keeps a test process alive and keeps
   // reading a tenant's connectors after the runtime holding them is gone.
   //
   // try/finally so the in-process transport always closes, even if `stop()`

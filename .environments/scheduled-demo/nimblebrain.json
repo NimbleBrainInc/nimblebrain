@@ -1,5 +1,0 @@
-{
-  "$schema": "https://schemas.nimblebrain.ai/config/v1/config.schema.json",
-  "version": "1",
-  "workDir": ".environments/scheduled-demo"
-}

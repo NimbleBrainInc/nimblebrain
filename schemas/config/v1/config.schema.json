@@ -541,7 +541,7 @@
       "additionalProperties": false
     },
     "plugins": {
-      "description": "The Agent Plugins this instance runs as part of the runtime, by plugin name: where each comes from, whether it is a system plugin, and where its servers already run. The runtime runs its default plugins (the built-in conversations plugin, as a system plugin, which turns chat on) with these entries over them: an entry of a default's name replaces it, and false turns it off. Each plugin's plugin.json is validated against the Agent Plugins 1.0.0 schema and its ai.nimblebrain extension, and the contracts the plugins implement and require are checked, at boot; a plugin that fails refuses the boot with the plugin and field named. The runtime starts the server of each plugin that implements a contract it consumes. Experimental.",
+      "description": "The Agent Plugins this instance runs as part of the runtime, by plugin name: where each comes from, whether it is a system plugin, and where its servers already run. The runtime runs its default plugins (the built-in conversations plugin, which turns chat on, and the built-in tasks plugin, which turns scheduled work on, each as a system plugin) with these entries over them: an entry of a default's name replaces it, and false turns it off. Each plugin's plugin.json is validated against the Agent Plugins 1.0.0 schema and its ai.nimblebrain extension, and the contracts the plugins implement and require are checked, at boot; a plugin that fails refuses the boot with the plugin and field named. The runtime starts the server of each plugin that implements a contract it consumes. Experimental.",
       "type": "object",
       "propertyNames": {
         "pattern": "^(?!.*(?:--|\\.\\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$",
@@ -589,22 +589,22 @@
         ]
       }
     },
-    "tasks": {
-      "description": "Guardrails for unattended (task) runs: how many runs the process holds in flight and waiting, across every workspace, the most any one run may spend, and how long an ended run's data is kept. The per-run ceilings bound each task's own caps, and the runtime defaults for caps it leaves unset, at execution time.",
+    "runs": {
+      "description": "Guardrails for unattended runs (a task's runs, and any other run started without a person in the loop): how many the process holds in flight and waiting, across every workspace, and the most any one run may spend. The per-run ceilings bound the caps a run's work names, and the runtime defaults for caps it leaves unset, when the run starts.",
       "type": "object",
       "properties": {
         "maxConcurrentRuns": {
           "type": "integer",
           "minimum": 1,
           "maximum": 100,
-          "description": "Unattended runs in flight at once, across every workspace: scheduled, Run now, and event task runs, and any other run started without a person in the loop. Chat turns do not take a slot. Default: 2.",
+          "description": "Unattended runs in flight at once, across every workspace. Chat turns do not take a slot. A run waits on the work queue until a slot is free. Default: 2.",
           "default": 2
         },
         "maxQueuedRuns": {
           "type": "integer",
           "minimum": 0,
           "maximum": 1000,
-          "description": "Runs held waiting for a slot once maxConcurrentRuns are in flight (Run now and event runs; a scheduled run defers instead). A freed slot goes to the waiting run whose workspace holds the fewest slots, oldest first among equals. Beyond it a run is refused and recorded as skipped. 0 refuses at the limit. The queue is in memory: runs still queued when the runtime stops are recorded as skipped. Default: 50.",
+          "description": "Runs held waiting in memory for a slot once maxConcurrentRuns are in flight, for a caller that waits at the door itself. A freed slot goes to the waiting run whose workspace holds the fewest slots, oldest first among equals. 0 refuses at the limit. Task runs wait on the work queue instead and are not counted here. Default: 50.",
           "default": 50
         },
         "maxRunIterations": {
@@ -626,13 +626,6 @@
           "maximum": 600000,
           "description": "Ceiling on one run's wall-clock time, in milliseconds. A task's own maxRunDurationMs above it is lowered to it. Default: 600000 (10 min).",
           "default": 600000
-        },
-        "runRetentionDays": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 36500,
-          "description": "Days an ended run's data is kept. A sweep that runs shortly after start and then daily deletes, once older than this: each task's archived runs a whole month at a time (the newest 1,000 runs of a task are never deleted), a requested run's handle with its idempotency key, and a one-off task with its runs. Nothing belonging to a run in flight or to a batch that is running or paused is deleted. The maximum keeps everything for a century. Default: 90.",
-          "default": 180
         }
       },
       "additionalProperties": false

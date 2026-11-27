@@ -52,12 +52,6 @@ import type {
   NotificationDeliverTarget,
   NotificationLevel,
 } from "../platform/schemas/notifications.ts";
-import type {
-  EventWakeAck,
-  EventWakeRequest,
-  EventWakeSettlement,
-} from "../platform/tasks/event-trigger.ts";
-import { backoffDelay } from "../platform/tasks/scheduler.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { notificationInboxUrl } from "../workspace/workspace-url.ts";
 import { type NotificationRoute, readNotificationsConfig, setRouteDisabled } from "./config.ts";
@@ -98,6 +92,41 @@ interface ResolvedTarget {
   input?: Record<string, unknown>;
 }
 
+/** One routed notification offered to the task a route names. */
+export interface TaskEventOffer {
+  wsId: string;
+  /** The task the route names. */
+  taskId: string;
+  /**
+   * The route's author, which is also the task's owner: the settings surface
+   * only offers a route the caller's own tasks, and the offer is walled to
+   * that owner, so a task belonging to somebody else is simply not found.
+   */
+  ownerId: string;
+  item: Notification;
+}
+
+/**
+ * The task's answer. Accepted means the task recorded the event durably: the
+ * delivery is done, and the run it joins is the task's own record. A refusal
+ * carries the outcome the task chose.
+ */
+export type TaskEventAnswer =
+  | { accepted: true }
+  | {
+      accepted: false;
+      outcome: Extract<DeliveryOutcome, "skipped" | "denied" | "failed">;
+      classification: string;
+      reason: string;
+    };
+
+/** Where one item's offer to a task ended up. */
+interface TaskEventSettlement {
+  outcome: Extract<DeliveryOutcome, "delivered" | "skipped" | "denied" | "failed">;
+  classification?: string;
+  reason?: string;
+}
+
 /** One outstanding attempt, indexed in memory and authoritative on disk. */
 interface PendingAttempt {
   wsId: string;
@@ -124,12 +153,10 @@ export interface RouteDispatcherDeps {
   /**
    * The tasks end of a `kind: "agent"` target — the only path from a
    * delivery to an agent run, and injected for the reason `dispatch` is: this
-   * module must not be able to reach a scheduler on its own.
-   *
-   * Absent in a runtime built without tasks, in which case a route naming
-   * one gets a ledger row saying so rather than silence.
+   * module reaches the task only through the runtime. A runtime with no tasks
+   * plugin answers `tasks_unavailable`.
    */
-  wakeTask?: (req: EventWakeRequest) => EventWakeAck;
+  offerToTask: (offer: TaskEventOffer) => Promise<TaskEventAnswer>;
   /**
    * Every workspace with an inbox, for the one-time resume scan.
    *
@@ -418,10 +445,10 @@ export class RouteDispatcher {
     const seeded = seedRows(matched, new Date(this.#now()).toISOString());
     if (!this.#writeLedger(wsId, ref, seeded)) return;
 
-    // Agent targets first and without awaiting anything: handing an item to the
-    // tasks source is a synchronous offer into a debounce window, and it
-    // must not queue behind a tool target's minute-long timeout — the whole
-    // point of the window is that a burst arriving together lands in one batch.
+    // Agent targets first and without awaiting them: an offer joins the task's
+    // debounce window, and it must not queue behind a tool target's
+    // minute-long timeout — the whole point of the window is that a burst
+    // arriving together lands in one run.
     for (const { route, target } of matched) {
       if (target.kind !== "agent") continue;
       this.#wake(wsId, item, ref, route, target);
@@ -437,13 +464,9 @@ export class RouteDispatcher {
   // -- an agent target ---------------------------------------------------
 
   /**
-   * Offer one item to the task a route names.
-   *
-   * The seeded row already says `deferred`, so an accepted offer writes
-   * nothing: the item is in a batch and the row is honest about it until the
-   * batch settles. A refusal is terminal and is written straight away, with the
-   * outcome the tasks side chose rather than one derived from its reason
-   * — the same split the tool path has with the unattended dispatch.
+   * Offer one item to the task a route names, and write where it ended up once
+   * the task answers: `delivered` when it took the item, else the outcome it
+   * chose. The seeded row says `deferred` until then.
    */
   #wake(
     wsId: string,
@@ -452,70 +475,51 @@ export class RouteDispatcher {
     route: NotificationRoute,
     target: ResolvedTarget,
   ): void {
-    const wake = this.#deps.wakeTask;
-    let ack: EventWakeAck;
-    try {
-      ack = wake
-        ? wake({
-            wsId,
-            taskId: target.name,
-            // The route's author owns the task: the settings surface only
-            // offers a route the caller's own, and a task is stored under
-            // its owner. So this is the lookup's scope, not just its principal —
-            // a task belonging to somebody else is not found at all.
-            ownerId: route.createdBy,
-            item,
-            settle: (result) => this.#settleWake(wsId, ref, route, target, result),
-          })
-        : {
-            accepted: false,
-            outcome: "denied",
-            classification: "tasks_unavailable",
-            reason: "this runtime has no tasks source, so nothing can be woken",
-          };
-    } catch (err) {
-      ack = {
-        accepted: false,
-        outcome: "failed",
-        classification: "wake_error",
-        reason: errorText(err),
-      };
-    }
-    // Nothing is counted here. The item is in a batch, which is not an outcome
-    // the delivery counter reports — it counts targets that REACHED one, and a
-    // batch that later settles would otherwise move it twice.
-    if (ack.accepted) return;
-    this.#settleWake(wsId, ref, route, target, ack);
+    void this.#deps
+      .offerToTask({
+        wsId,
+        taskId: target.name,
+        // The route's author owns the task: the settings surface only offers a
+        // route the caller's own tasks, and a task is walled to its owner. So
+        // this is the offer's scope, not just its principal.
+        ownerId: route.createdBy,
+        item,
+      })
+      .then(
+        (answer): TaskEventSettlement => (answer.accepted ? { outcome: "delivered" } : answer),
+        (err): TaskEventSettlement => ({
+          outcome: "failed",
+          classification: "offer_error",
+          reason: errorText(err),
+        }),
+      )
+      .then((settled) => this.#settleWake(wsId, ref, route, target, settled));
   }
 
   /**
-   * Write where one item's wake ended up.
-   *
-   * Called once per item: straight away when the offer was refused, or a
-   * debounce window and a run later when the batch it joined settled. Reads the
-   * item back off the store because a settlement arrives long after `#evaluate`
-   * returned, and the emitted event names the item.
+   * Write where one item's offer ended up: once per item, when the task
+   * answered. Reads the item back off the store because the answer arrives
+   * after `#evaluate` returned, and the emitted event names the item.
    */
   #settleWake(
     wsId: string,
     ref: NotificationRef,
     route: NotificationRoute,
     target: ResolvedTarget,
-    result: EventWakeSettlement,
+    result: TaskEventSettlement,
   ): void {
     const row: DeliveryRecord = {
       routeId: route.id,
       target: target.name,
       index: target.index,
       kind: "agent",
-      // The run either started or it did not; there is no second attempt at a
-      // batch, so this counts the one offer that was made.
+      // The task took the item or it did not; there is no second offer, so
+      // this counts the one that was made.
       attempts: 1,
       outcome: result.outcome,
       updatedAt: new Date(this.#now()).toISOString(),
       ...(result.classification ? { classification: result.classification } : {}),
       ...(result.reason ? { lastError: truncateError(result.reason) } : {}),
-      ...(result.runId ? { runId: result.runId } : {}),
     };
     this.#writeLedger(wsId, ref, [row]);
     notificationsDeliveredTotal.inc({ kind: "agent", outcome: result.outcome });
@@ -949,16 +953,13 @@ function ledgerOutcome(result: UnattendedDispatchResult, attempts: number): Deli
 }
 
 /**
- * How long to wait before attempt `attempts + 1`.
- *
- * The ladder is this slice's; the indexing is the scheduler's, reused rather
- * than rewritten. The delays are not: a task backs off toward an hour
- * because a failing schedule should be asked less and less often, while a
- * notification that has not been delivered in five minutes is one nobody is
- * still waiting for.
+ * How long to wait before attempt `attempts + 1`: the ladder's step for it, the
+ * last step once past its end. A notification that has not been delivered in
+ * five minutes is one nobody is still waiting for.
  */
 function retryDelayMs(attempts: number): number {
-  return backoffDelay(attempts, ROUTE_RETRY_DELAYS_MS);
+  if (attempts <= 0) return 0;
+  return ROUTE_RETRY_DELAYS_MS[Math.min(attempts - 1, ROUTE_RETRY_DELAYS_MS.length - 1)] ?? 0;
 }
 
 /** Ledger rows cross to the browser; a tool's error text does not set the size. */

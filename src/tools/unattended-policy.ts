@@ -25,9 +25,10 @@
  * door applies (`assertToolAllowed`, the personal-connector grant, the
  * workspace wall).
  *
- * The first two arms are the SAME predicates `executeTask` subtracts with, not
- * a copy of their policy: a tool added to either namespace is barred here on
- * the day it is added, because both are allowlists that fail closed.
+ * Two arms are the SAME predicates a run's tool list subtracts with, not a copy
+ * of their policy: what a bound contract's document marks `unattended:
+ * "refused"` (passed in, since only the runtime holds the bindings), and the
+ * skills namespace's allowlist, which fails closed.
  *
  * This is a name policy and nothing more, and it is only half the boundary. The
  * other half is ambient: a source refuses its own barred tools whenever
@@ -37,7 +38,6 @@
  */
 
 import { isTaskForbiddenSkillTool } from "../platform/skills/source.ts";
-import { isTaskForbiddenIdentityTool } from "./identity-sources.ts";
 
 /**
  * Wire names barred outright, beyond the two namespace predicates.
@@ -54,12 +54,16 @@ const UNATTENDED_FORBIDDEN_TOOLS: ReadonlySet<string> = new Set(["nb__manage_con
 /**
  * Whether a bare `<source>__<tool>` wire name is barred from an unattended
  * dispatch. See the module doc for the rule; `false` for every name outside
- * the three surfaces, which is most of them.
+ * the three surfaces, which is most of them. `refusedByContract` answers for
+ * the tools bound contracts mark `unattended: "refused"`.
  */
-export function isUnattendedForbiddenTool(wireName: string): boolean {
+export function isUnattendedForbiddenTool(
+  wireName: string,
+  refusedByContract: (wireName: string) => boolean,
+): boolean {
   return (
     UNATTENDED_FORBIDDEN_TOOLS.has(wireName) ||
-    isTaskForbiddenIdentityTool(wireName) ||
+    refusedByContract(wireName) ||
     isTaskForbiddenSkillTool(wireName)
   );
 }

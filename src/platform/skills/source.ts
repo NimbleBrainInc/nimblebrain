@@ -258,8 +258,7 @@ const SKILLS_DEACTIVATE_DESCRIPTION =
  * Skills tools that stay reachable inside an unattended run: the read-only
  * half. Everything else in the namespace — the authoring tools, and any tool
  * added to it later — is barred, so the boundary fails CLOSED as the surface
- * grows (an allowlist, not a denylist), matching
- * {@link TASK_RUN_SAFE_TOOLS}.
+ * grows (an allowlist, not a denylist).
  *
  * A skill is durable, cross-conversation guidance the runtime composes into a
  * prompt on its own: `loading_strategy: always` reaches every later turn, and
@@ -285,8 +284,8 @@ const SKILLS_TASK_SAFE_TOOLS: ReadonlySet<string> = new Set([
 /**
  * Whether a `skills__*` wire name is barred from an unattended run.
  *
- * Two layers read this one predicate, the same split
- * {@link isTaskForbiddenIdentityTool} uses. Surfacing subtraction in
+ * Two layers read this one predicate, the same split the contract markings
+ * (`unattended: "refused"`) get. Surfacing subtraction in
  * `executeTask` keeps the model from being shown a tool it cannot call.
  * {@link createSkillsSource} refuses them at dispatch, so the wall holds
  * regardless of what was surfaced. Surfacing is the courtesy; the source is the
@@ -542,7 +541,7 @@ export function createSkillsSource(
   // `unattended` rides the ambient request context (set by `executeTask`,
   // preserved across the per-call restamp), so the wall does not depend on
   // which router dispatched the call, or on the tool ever having been surfaced
-  // to the model. Same placement and reasoning as `createTasksSource`.
+  // to the model.
   const walled: InProcessTool[] = enabled.map((tool) =>
     SKILLS_TASK_SAFE_TOOLS.has(tool.name)
       ? tool

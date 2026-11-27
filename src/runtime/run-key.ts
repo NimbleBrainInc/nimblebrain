@@ -289,7 +289,7 @@ function signJwt(entry: RunKeyEntry, claims: object): string {
  * - `issuer` names the installation: the runtime's public origin, the one
  *   stable name an installation already has for itself, which a gateway pins.
  * - `maxRunMs` is the longest run the installation allows: the operator's
- *   wall-clock ceiling on a run (`tasks.maxRunDurationMs`, resolved). A model
+ *   wall-clock ceiling on a run (`runs.maxRunDurationMs`, resolved). A model
  *   credential outlives it by the leeway and no more.
  */
 export function createRunKey(opts: { ring: RunKeyRing; issuer: string; maxRunMs: number }): RunKey {

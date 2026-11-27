@@ -149,6 +149,8 @@ export interface UnattendedDispatchRuntime extends OrchestratorRuntime {
    * the scheduled-run gate, so all three answer one question one way.
    */
   isPrincipalWorkspaceMember(wsId: string, principalId: string): Promise<boolean>;
+  /** Whether a bound contract's document marks this tool `unattended: "refused"`. */
+  isUnattendedRefused(wireName: string): boolean;
   /** Where the `audit.unattended_dispatch` line goes. */
   getEventSink(): EventSink;
 }
@@ -217,7 +219,7 @@ export async function dispatchUnattended(
   // Gate 2 — the name. Checked before routing so the answer is the policy's,
   // not a source-specific error raised three layers down once the tool has
   // already been resolved.
-  if (isUnattendedForbiddenTool(opts.tool)) {
+  if (isUnattendedForbiddenTool(opts.tool, (name) => runtime.isUnattendedRefused(name))) {
     return audit({
       outcome: "denied",
       classification: "tool_not_allowed",
@@ -263,7 +265,7 @@ export async function dispatchUnattended(
         // it, which is the right authority for a call nobody is watching.
         identity: { id: opts.principalId } as UserIdentity,
         workspaceId: opts.workspaceId,
-        // Bars the task-authoring surface at the sources themselves, so
+        // Refused-unattended tools are barred at the sources themselves, so
         // the wall holds below anything this door checks by name.
         unattended: true,
       },

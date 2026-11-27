@@ -27,7 +27,7 @@ export function runDeadline(opts: {
   ownLimitMs: number | undefined;
   /** Whether the run carries a per-run model credential. */
   credentialed: boolean;
-  /** The installation's longest run (`tasks.maxRunDurationMs`, resolved). */
+  /** The installation's longest run (`runs.maxRunDurationMs`, resolved). */
   ceilingMs: number;
   /** The agent runtime's id, named in the error. */
   runtimeId: string;

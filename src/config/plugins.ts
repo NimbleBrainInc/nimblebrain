@@ -61,12 +61,14 @@ export const PLUGIN_SERVER_CONFIG_KEYS = Object.keys({
 } satisfies Record<keyof PluginServerConfig, true>);
 
 /**
- * The plugins an instance runs when its configuration names none: the built-in
- * conversations plugin, as a system plugin, which is what turns chat on
- * (ADR-0076, "Defaults ship in the box").
+ * The plugins an instance runs when its configuration names none, each a
+ * system plugin (ADR-0076, "Defaults ship in the box"): the built-in
+ * conversations plugin, which turns chat on, and the built-in tasks plugin,
+ * which turns scheduled and unattended work on.
  */
 export const DEFAULT_PLUGINS: Readonly<Record<string, PluginConfig>> = {
   conversations: { source: BUILTIN_PLUGIN_SOURCE, system: true },
+  tasks: { source: BUILTIN_PLUGIN_SOURCE, system: true },
 };
 
 /**

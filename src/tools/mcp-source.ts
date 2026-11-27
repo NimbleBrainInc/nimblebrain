@@ -83,6 +83,7 @@ import { createRemoteTransport } from "./remote-transport.ts";
 import { RemoteResponseTooLargeError } from "./response-budget.ts";
 import { scrubArgsForDispatch } from "./scrub-args.ts";
 import {
+  announceResourceListChangedFor,
   RELAYED_SERVER_NOTIFICATIONS,
   relayableParams,
   type ServerNotification,
@@ -314,6 +315,21 @@ export type McpTransportMode =
        * client this source holds. Bare names.
        */
       hiddenTools: ReadonlySet<string>;
+      /**
+       * Tools the contract marks `unattended: "refused"`, by bare name. A call
+       * made inside an unattended run (`RequestContext.unattended`) is refused
+       * here, before the server sees it; the server's own refusal is the
+       * boundary, this keeps the call from reaching it.
+       */
+      refusedUnattended?: ReadonlySet<string>;
+      /**
+       * Tools whose successful call changes what the caller's views show (the
+       * contract's tools that author, start or stop work). Each is announced to
+       * the calling owner as `notifications/resources/list_changed`, as the
+       * kernel announces its own writes, since the server's own notification
+       * names no user. Bare names.
+       */
+      announceAfter?: ReadonlySet<string>;
       /**
        * Facts only the host knows, laid over a call's result before it reaches
        * its caller (an agent, the door, an app). The contract the server
@@ -2283,11 +2299,22 @@ export class McpSource implements ToolSource {
     return this.mode.type === "plugin" ? this.mode.hiddenTools : NO_HIDDEN_TOOLS;
   }
 
-  /** The answer to a call naming a hidden tool: the same as a tool the server does not have. */
+  /**
+   * The answer to a call naming a hidden tool (the same as a tool the server
+   * does not have), or a tool the contract refuses to an unattended run when
+   * the call is made inside one.
+   */
   private hiddenToolRefusal(toolName: string): string | null {
-    return this.hiddenTools().has(toolName)
-      ? `Tool "${toolName}" is not available on ${this.name}`
-      : null;
+    if (this.hiddenTools().has(toolName))
+      return `Tool "${toolName}" is not available on ${this.name}`;
+    if (
+      this.mode.type === "plugin" &&
+      this.mode.refusedUnattended?.has(toolName) &&
+      getRequestContext()?.unattended
+    ) {
+      return `unattended_refused: ${this.name}__${toolName} is not available inside an unattended run`;
+    }
+    return null;
   }
 
   /**
@@ -2360,7 +2387,12 @@ export class McpSource implements ToolSource {
     options?: ToolExecuteOptions,
   ): Promise<ToolResult> {
     const result = await this.dispatch(toolName, input, signal, options);
-    const overlay = this.mode.type === "plugin" ? this.mode.resultOverlay : undefined;
+    if (this.mode.type !== "plugin") return result;
+    const owner = getRequestContext()?.identity?.id;
+    if (!result.isError && owner && this.mode.announceAfter?.has(toolName)) {
+      announceResourceListChangedFor(owner, this);
+    }
+    const overlay = this.mode.resultOverlay;
     return overlay ? overlay(toolName, result) : result;
   }
 
@@ -2372,7 +2404,15 @@ export class McpSource implements ToolSource {
     options?: ToolExecuteOptions,
   ): Promise<ToolResult> {
     const hidden = this.hiddenToolRefusal(toolName);
-    if (hidden) return { content: textContent(hidden), isError: true };
+    if (hidden) {
+      return {
+        content: textContent(hidden),
+        isError: true,
+        ...(hidden.startsWith("unattended_refused")
+          ? { structuredContent: { error: "unattended_refused", reason: "unattended_refused" } }
+          : {}),
+      };
+    }
     // A live client dispatches — even with `dead` set: a stale crash flag over a
     // working transport, or a torn one, both route their throw through recover()
     // (classify → restart only on a connection-down class, never a timeout/auth-loss

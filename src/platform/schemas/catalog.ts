@@ -4,7 +4,6 @@ import * as Files from "./files.ts";
 import * as ManageTools from "./manage-tools.ts";
 import * as Notifications from "./notifications.ts";
 import * as Skills from "./skills.ts";
-import * as Tasks from "./tasks.ts";
 import * as Usage from "./usage.ts";
 
 // Registry mapping (source, tool) → input schema. The web client and any
@@ -33,17 +32,6 @@ export const PlatformToolCatalog = {
   compose: {
     effective_context: { input: Compose.ComposeEffectiveContextInput },
     assembled_context: { input: Compose.ComposeAssembledContextInput },
-  },
-  tasks: {
-    create: { input: Tasks.TasksCreateInput },
-    update: { input: Tasks.TasksUpdateInput },
-    delete: { input: Tasks.TasksDeleteInput },
-    list: { input: Tasks.TasksListInput },
-    status: { input: Tasks.TasksStatusInput },
-    runs: { input: Tasks.TasksRunsInput },
-    run: { input: Tasks.TasksRunInput },
-    cancel: { input: Tasks.TasksCancelInput },
-    assess: { input: Tasks.TasksAssessInput },
   },
   notifications: {
     list: { input: Notifications.NotificationsListInput },

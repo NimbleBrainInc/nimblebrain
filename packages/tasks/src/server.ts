@@ -19,6 +19,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { ProtocolError, ProtocolErrorCode, Server } from "@modelcontextprotocol/server";
 import {
   type CallContext,
@@ -294,9 +295,13 @@ function resourceContents(uri: string, screenPath: string | undefined) {
 
 /** A tasks server over `store`. `subscribed` collects the hint URIs a 2025-era client subscribed to. */
 export function buildServer(opts: ServerOptions, subscribed: Set<string> = new Set()): Server {
+  const instructions = authoringGuide();
   const server = new Server(
     { name: SERVER_NAME, version: "1.0.0" },
-    { capabilities: { tools: {}, resources: { subscribe: true } } },
+    {
+      capabilities: { tools: {}, resources: { subscribe: true } },
+      ...(instructions ? { instructions } : {}),
+    },
   );
   declareHostMeta(server, HOST_META);
 
@@ -307,6 +312,9 @@ export function buildServer(opts: ServerOptions, subscribed: Set<string> = new S
       inputSchema: contractSchema(CONTRACT, name, "input") as { type: "object" },
       outputSchema: contractSchema(CONTRACT, name, "output") as { type: "object" },
       ...(isReadOnly(name) ? { annotations: { readOnlyHint: true } } : {}),
+      // MCP Apps: a host that renders views shows the saved task as a card under
+      // the call, fed its result. The model still reads the text result.
+      ...(name === "create" ? { _meta: { ui: { resourceUri: CARD_URI } } } : {}),
     })),
   }));
 
@@ -341,4 +349,20 @@ export function buildServer(opts: ServerOptions, subscribed: Set<string> = new S
   });
 
   return server;
+}
+
+/**
+ * The plugin's authoring guide (`skills/task-authoring/SKILL.md`, its body
+ * without the frontmatter), served as the server's instructions so an MCP
+ * client that loads no skills still learns which tools a job takes and in what
+ * order. A host that loads the plugin's skills reads the same file. Empty when
+ * the file is missing.
+ */
+function authoringGuide(): string {
+  try {
+    const text = readFileSync(join(import.meta.dir, "../skills/task-authoring/SKILL.md"), "utf-8");
+    return text.replace(/^---\n[\s\S]*?\n---\n/, "").trim();
+  } catch {
+    return "";
+  }
 }

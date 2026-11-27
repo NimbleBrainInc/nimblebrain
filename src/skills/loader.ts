@@ -21,10 +21,26 @@ export function loadCoreSkills(): Skill[] {
   return loadSkillDir(CORE_DIR, "core").map(markVendored);
 }
 
-/** One core skill's body by its file name (`task-authoring`), or `""` when it is absent. */
-export function coreSkillBody(name: string): string {
-  const path = join(CORE_DIR, `${name}.md`);
-  return existsSync(path) ? (parseSkillFile(path)?.body.trim() ?? "") : "";
+/**
+ * The skills system plugins ship, in the Agent Plugins layout:
+ * `<root>/skills/<name>/SKILL.md` for each plugin root. They are part of the
+ * platform the operator chose, so they join the core pool, marked vendored, and
+ * are present exactly while their plugin is enabled.
+ */
+export function loadSystemPluginSkills(roots: readonly string[]): Skill[] {
+  const skills: Skill[] = [];
+  for (const root of roots) {
+    const dir = join(root, "skills");
+    if (!existsSync(dir)) continue;
+    for (const entry of readSkillDirEntries(dir, "plugin")) {
+      if (!entry.isDirectory()) continue;
+      const path = join(dir, entry.name, "SKILL.md");
+      if (!existsSync(path)) continue;
+      const skill = parseSkillFileGuarded(path);
+      if (skill) skills.push(markVendored(skill));
+    }
+  }
+  return skills;
 }
 
 /**
