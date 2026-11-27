@@ -99,25 +99,19 @@ export interface UsageLedgerEntry {
   /** The one workspace the call was bound to. */
   workspaceId: string;
   /**
-   * The chat thread this call belongs to. Absent for a task run (which has no
-   * conversation) and for a background job.
+   * The chat thread this call belongs to. Absent for an unattended run (which
+   * has no conversation) and for a background job.
    */
   conversationId?: string;
   /**
    * The run this call belongs to — one `run.start`→`run.done` span, which is
    * one assistant turn — and the run the model gateway charges it to
-   * (`RequestContext.credentialSubject`). Present for chat and task alike,
-   * including the calls a run forks (title, compaction); absent for a call
-   * outside any run.
+   * (`RequestContext.credentialSubject`). Present for chat and unattended runs
+   * alike, including the calls a run forks (title, compaction); absent for a
+   * call outside any run. With no `conversationId`, it is an unattended run's
+   * id: what the run worker meters an interrupted run by.
    */
   runId?: string;
-  /**
-   * The task run this call belongs to (`executeTask`'s correlation id).
-   * Absent in chat. Distinct from {@link runId}: this is the id the tasks
-   * connector persists the run result under, so it is the join key from spend back
-   * to a stored run.
-   */
-  taskRunId?: string;
   /**
    * The agent runtime that reported this usage, when it was not the native
    * engine. Such a line is the agent's own count of its model calls, not one

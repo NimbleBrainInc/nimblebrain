@@ -54,7 +54,7 @@ Until someone answers, these events wait in `telemetry-report.jsonl` in the inst
 | `agent.chat_started` | Number of tools available |
 | `agent.chat_completed` | Iterations, tool calls, calls to connector tools, stop reason, model and tool latency, total time, token counts. Model latency is left out for a run on an external agent, which reports no timing for its model calls. |
 | `agent.error` | The error's type name only (e.g. `AnthropicError`) |
-| `task.created` | Nothing beyond the event |
+| `task.created` | Nothing beyond the event. Sent when the agent's call to `tasks__create` succeeds |
 | `connector.installed` | Whether the connector has a UI |
 | `connector.uninstalled` | Nothing beyond the event |
 | `web.chat_sent` | Whether the conversation was resumed, whether an app was in focus |
@@ -135,12 +135,9 @@ It also sends events for moments in a person's use of the product. None carries 
 | `member.added` | The person added, the workspace, and their role |
 | `connector.auth_started` / `connector.auth_completed` / `connector.auth_failed` | The connector's catalog id or `custom`, `workspace` or `personal`, and for a failure the state it ended in |
 | `connector.auth_lost` | A connected connector that now needs signing in again |
-| `automation.created` | Its trigger (`cron`, `interval`, `event`, `once` or `manual`), who made it (`user` or `agent`), `saved` or `oneoff`, and `automation_id` |
-| `automation.run_completed` | Its status, trigger (`schedule`, `manual` or `event`), duration, whether it ran in a batch, `run_id`, `automation_id`, and `cost_usd` (the run's recorded cost, priced as on `agent.chat_completed`; left out when any call could not be priced, and for a run that never reached a model). The run's steps are on its `agent.chat_*` and `tool.called` events, which carry the same `run_id`; a run that never started has only this event |
+| `automation.run_completed` | Its status, trigger (`schedule`, `manual` or `event`), duration, `run_id`, and `cost_usd` (the run's recorded cost, priced as on `agent.chat_completed`; left out when any call could not be priced, and for a run that never reached a model). The run's steps are on its `agent.chat_*` and `tool.called` events, which carry the same `run_id`; a run that never started has only this event |
 
-`run_id` is the run's own random id. An automation's own id is its name, so `automation_id` is a hash of where it lives and that id instead: it groups an automation's runs and names nothing. The automation's name is never sent.
-
-On an identified deployment `automation.created` reports every automation, so the anonymous `task.created` (only automations the agent made) is not sent there.
+`run_id` is the run's own random id. A scheduled task's name and id are never sent.
 
 An identified web client sends `$pageview` when the route it shows changes, and nothing when only a value in it changes (another workspace, another conversation). The event names the route template, never the path: `/w/:slug/settings/members`, not the workspace's address. Its `$current_url` is the origin plus that template, and its `$pathname` the template. On an app's page it also carries `app`, the app's server name from the catalog. In every identified web event, a URL naming another page (the referrer, the first page of a session or of a person) keeps only its origin, and a path naming another page is dropped.
 

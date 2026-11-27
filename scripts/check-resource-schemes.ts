@@ -53,7 +53,13 @@ const SRC_ROOT = join(ROOT, "src");
  * host would answer the URI, it is reserved instead, and putting it here to
  * quiet the lint reopens the collision the refusal exists to close.
  */
-const NOT_HOST_RESOLVED = new Set(["http", "https"]);
+const NOT_HOST_RESOLVED = new Set([
+  "http",
+  "https",
+  // The tasks contract's change hint (`tasks://due/<workspaceId>`): the runtime
+  // watches it on its bound tasks server and answers nothing at it itself.
+  "tasks",
+]);
 
 /** `<scheme>://`, anchored so a `//` inside a path can't be read as the start of one. */
 const SCHEME_IN_URI_RE = /\b([a-zA-Z][a-zA-Z0-9+.-]*):\/\//g;

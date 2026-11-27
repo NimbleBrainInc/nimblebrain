@@ -7,8 +7,6 @@ import {
   type ToolSchema,
 } from "../../../src/engine/types.ts";
 import { openToolProjection } from "../../../src/execution/tool-projection.ts";
-import { createDirectExecutor } from "../../../src/platform/tasks/executor.ts";
-import type { Task } from "../../../src/platform/tasks/types.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import { ToolRegistry } from "../../../src/tools/registry.ts";
 import { createSystemTools } from "../../../src/tools/system-tools.ts";
@@ -232,7 +230,7 @@ describe("tool projection", () => {
     }
   });
 
-  test("records why a call failed and that it was held, so a task run judged from them reads as the engine's", async () => {
+  test("records why a call failed and that it was held, as the engine records them", async () => {
     // A fetch tool bound to guidance, used for several pages, as an external
     // agent's research run uses it: held, re-issued, then one argument value
     // rejected and corrected on the next call.
@@ -306,38 +304,6 @@ describe("tool projection", () => {
         [true, undefined, undefined],
         [false, "upstream_unavailable", undefined],
       ]);
-
-      // The tasks executor reads these records as it reads the engine's: the
-      // hold and the corrected argument are not failures; the upstream one is.
-      const task: Task = {
-        id: "research",
-        name: "Research",
-        prompt: "Research",
-        schedule: { type: "cron", expression: "0 9 * * *" },
-        enabled: true,
-        source: "user",
-        createdAt: "2025-06-01T00:00:00.000Z",
-        updatedAt: "2025-06-01T00:00:00.000Z",
-        runCount: 0,
-        consecutiveErrors: 0,
-        cumulativeInputTokens: 0,
-        cumulativeOutputTokens: 0,
-      };
-      const executor = createDirectExecutor(
-        async () => ({
-          output: "Done.",
-          runId: "run_test000000",
-          toolCalls: calls,
-          stopReason: "complete",
-          usage: { inputTokens: 10, outputTokens: 5, iterations: 1 },
-        }),
-        () => ({}),
-      );
-      const { run } = await executor(task);
-      expect(run.status).toBe("degraded");
-      expect(run.error).toMatch(/fetch ×1/);
-      expect(run.unrecoveredToolFailures).toEqual(["fetch"]);
-      expect(run.toolCalls).toBe(4);
     } finally {
       await client.close();
       await projection.close();

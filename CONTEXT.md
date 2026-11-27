@@ -139,9 +139,9 @@ fields it defined and never the server's opaque `data`.
 ### Source
 Any tool/resource provider behind the MCP boundary. Every source is one
 `McpSource` over one transport union (ADR-0022): a remote server over HTTPS, or
-one of the kernel's own capabilities — files, tasks, skills — served by a real
+one of the kernel's own capabilities — files, skills — served by a real
 MCP server on an in-memory linked-pair transport, or a system plugin's server
-the runtime starts over stdio (conversations). The
+the runtime starts over stdio (conversations, tasks). The
 platform's own capabilities are MCP servers to themselves, so nothing above the
 source can tell them apart.
 
@@ -157,7 +157,7 @@ the process, which is what host-owned `_meta` markers are conditioned on
 
 ### Platform app
 One of the kernel's own capabilities, expressed as a source:
-files, tasks, usage, skills, instructions, hooks, notifications, compose. Each is an in-process MCP server the runtime hosts
+files, usage, skills, instructions, hooks, notifications, compose. Each is an in-process MCP server the runtime hosts
 rather than connects to — there is no URL, no credential, and no connection
 to supervise, so none of what the *Connection* entry below describes applies
 to one.
@@ -281,7 +281,7 @@ other, and implements each contract with one MCP server named in its `mcp.json`:
 server's **public tools** and screen serve people and agents, and its **private tools**
 serve the kernel. The server refuses a private tool to any principal but `host` (the
 runtime itself), and the runtime never offers private tools to agents. The built-in
-conversations plugin is one, run by default; tasks and files are kernel code.
+conversations and tasks plugins are system plugins, run by default; files are kernel code.
 
 ### Catalog policy *(proposed, ADR-0076; not yet built)*
 How far a catalog's plugins reach, set by the operator when attaching the catalog:
@@ -305,9 +305,10 @@ MCP. The scope and principal are the **host context**, one spec shared by every 
 from an authenticated host transport. A
 plugin declares the contracts it `implements` and `requires`; the kernel names
 contracts, never plugins. Chat is on exactly when an enabled plugin implements the
-conversations contract; the default configuration binds the built-in one. The tasks contract
-(`ai.nimblebrain.tasks`) is published and not yet implemented by any plugin; scheduled work is
-kernel code until one is.
+conversations contract; the default configuration binds the built-in one. Scheduled and
+unattended work is on exactly when an enabled plugin implements the tasks contract
+(`ai.nimblebrain.tasks`); the default configuration binds the built-in one, and the kernel's run
+worker runs what it says is due.
 
 ### Run grant *(ADR-0076, tasks contract)*
 The host's signed record that an owner, in a workspace, set up work under a contract that will

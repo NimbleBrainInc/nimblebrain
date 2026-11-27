@@ -2,9 +2,10 @@
 
 Scope: `packages/tasks/`. An implementation of the tasks contract
 (`contracts/tasks/CONTRACT.md`, `ai.nimblebrain.tasks` 1.0): an Agent Plugin with one MCP
-server, on the local filesystem, and its screen. The runtime does not bind it yet; today's
-tasks app (`src/platform/tasks/`) still serves Scheduled. How to run it standalone is in
-`README.md`.
+server, on the local filesystem, its screen and its skill. The runtime binds it by default as
+a system plugin (`src/config/plugins.ts`), starts its server over stdio, and runs its due work
+through its run worker (`src/runtime/AGENTS.md`, "The run worker"). How to run it standalone is
+in `README.md`.
 
 ## Boundaries
 
@@ -17,6 +18,11 @@ tasks app (`src/platform/tasks/`) still serves Scheduled. How to run it standalo
   schemas before they leave (`server.ts`). Changing a tool's shape is a contract change.
 - **`plugin.json` and `mcp.json` follow Agent Plugins 1.0.0**; NimbleBrain's declaration is only
   `extensions["ai.nimblebrain"].implements`. Trust, presence and location are the operator's.
+- **The authoring guide is `skills/task-authoring/SKILL.md`**, in the format's skills layout. A
+  host that loads a plugin's skills reads it (NimbleBrain binds it to `tasks__*`), and the server
+  serves its body, without the frontmatter, as its `instructions`, so an MCP client that loads
+  no skills learns the same order of calls. A change to how the tools are used is a change to
+  that file.
 
 ## Calls
 
@@ -122,57 +128,32 @@ produce it: whether the host was down at its time is knowable only there.
 `ui://tasks/panel` and `ui://tasks/card` (`text/html;profile=mcp-app`) serve the built
 `ui/dist/index.html` (`--screen` names another), the card marked with
 `<meta name="nb-tasks-view" content="card">`; a placeholder page when it is not built. `ui/`
-is its own package, installed, built, tested and typechecked with the platform app UIs. The
-handshake carries `_meta["ai.nimblebrain/host"]` with the sidebar placement (`HOST_META`),
-through the server SDK's `declareHostMeta`. The Dockerfile does not build it yet: the binding
-PR adds it with the plugin.
+is its own package, installed, built, tested and typechecked with the platform app UIs, and
+built in the image (the Dockerfile). The handshake carries `_meta["ai.nimblebrain/host"]` with
+the sidebar placement (`HOST_META`), through the server SDK's `declareHostMeta`.
 
-## Parity with today's tasks (`src/platform/tasks/`)
-
-Where each feature lives now:
-
-| Today | Here |
-|---|---|
-| Definitions, ids from names, `null` clears, one-offs by idempotency key | `src/public.ts` (`create`, `update`, `run`, `run_batch`) |
-| Schedules (cron, interval, once, event), `scheduleHuman` | `src/schedule.ts` |
-| Timer and work-queue enqueue | the host, from `due` |
-| Claim decisions, interrupted scheduled runs, fencing | `begin_run` and fences (`src/flow.ts`) |
-| Executor, admission, slots, containment, limits clamping, spend enforcement | the host's door; the plugin sends a work spec |
-| Run records, execution and label, results | `end_run`, `src/runs.ts`, `state.json`/`runs-<n>.jsonl`/blobs |
-| Failure streak, backoff, auto-disable, run-failed notice | `applyStreak`, `nextAfterRun` (`src/flow.ts`, `src/schedule.ts`) |
-| Token budgets as spend accounts | `budgetAccounts`, `addUsage` |
-| Output-schema check | `recordOutcome` (`src/runs.ts`) |
-| Batches (driver, budget account, sharing, exceeds_share, stop rule, pause/resume/cancel/rerun) | `src/batches.ts` |
-| Event triggers (match, debounce, fire ceiling) | `offer_event` (`src/flow.ts`) |
-| Retention sweep | `due`'s first page (`prune`) |
-| Inbox items | notices answered by `end_run`, `begin_run` skips, `offer_event` |
-| `upcoming`, `stats`, `runs`, `status`, `list` | `src/public.ts`, `src/reads.ts`, `src/views.ts` |
-| The Scheduled panel and the create card | `ui/` |
-
-Behaviour that differs from today:
+## Behaviour worth knowing
 
 - **Judging is not here** (CONTRACT.md §15): no criteria, judge, `assess`, `judges`, person's
-  verdict or `onPoorResult`. A deliverable that fails its output schema raises a notice.
-- **`run` answers at once** with `{ runId, taskId }`; the run is followed with `run_result`. No
-  queue position, no synchronous wait.
+  verdict or `onPoorResult`. A deliverable that fails its output schema reads `Poor result` and
+  raises a notice.
+- **`run` answers at once** with `{ runId, taskId }`; the run is queued and followed with
+  `run_result`. No queue position, no synchronous wait, no MCP Tasks handle.
 - **Instants are the host's.** A schedule is placed on the next `due`, not at write time; a
   past `at` is accepted at write and judged on the `due` that would produce it: within its
-  grace it is listed and runs, past it it is missed. As today, a once produced in time runs
-  however long the queue holds it; only one first seen past its grace (the host was down) is
-  missed.
-- **Budget windows are UTC calendar days and months**, not the instance timezone's. A spent
-  window refuses every claim (recorded skipped), whatever triggered it.
+  grace it is listed and runs, past it it is missed. A once produced in time runs however long
+  the queue holds it; only one first seen past its grace (the host was down) is missed.
+- **Budget windows are UTC calendar days and months.** A spent window refuses every claim
+  (recorded skipped), whatever triggered it.
 - **`grant_invalid` and `membership_revoked` disable the definition at once** with a notice; a
-  grant-marked call re-stamps it and `enabled: true` turns it back on. Today a revoked
-  membership skips the run and self-heals.
+  grant-marked call re-stamps it and `enabled: true` turns it back on.
 - **Every auto-disable raises a notice** (failure streak, budget, grant, fire ceiling).
 - **The fire ceiling is judged when an event arrives**, on its `now`, and refuses that event
-  (`denied`, `event_fire_ceiling`); today it was judged when the debounce closed.
+  (`denied`, `event_fire_ceiling`).
 - **Event runs carry their events as `notes`** (data); the host frames them.
-- **Writes no longer validate what only the host knows**: a model reference, `allowedTools`
-  globs (including today's refusal of the tasks tools themselves; the host's unattended rule
-  covers it), and skill names. The authoring guide (`task-authoring` skill) stays the
-  kernel's; the plugin serves no `instructions`.
+- **Writes do not validate what only the host knows**: a model reference, `allowedTools` globs,
+  and skill names. The host's unattended rule keeps a run from the tools that author or start
+  work.
 - **Unrecovered tool failures are judged per tool name**, since the outcome carries no call
   input: a failed call is recovered by any later success of the same tool (a `bad_input` call
   by the next call that is not itself `bad_input`).
@@ -180,12 +161,15 @@ Behaviour that differs from today:
   never its last run, next occurrence or failure streak. A batch's default concurrency is 2.
 - **`delete` of an absent task answers `deleted: false`**; `cancel` of an unknown run is
   `run_not_found`, of an ended one `cancelled: false`.
-- **Not carried over**: `startedVia` attribution, cost estimates, `effectiveLimits`,
-  `timezone` on reads, `nextBefore` paging (an opaque cursor instead), the instance timezone
-  (`NB_TIMEZONE`; a once is shown in UTC).
+- **Retention is the server's flag** (`--retention-days`, default 180); the built-in binding
+  runs the default.
 
 ## Tests
 
+- `test/integration/tasks-plugin-default.test.ts` boots the runtime with its defaults and
+  drives the plugin through the kernel: grants, run now, schedules, cancel, events, batches,
+  notices, forged authority, unattended refusal, the public-only runner at `/mcp/<wsId>`, and
+  workspace delete; `test/integration/tasks-off.test.ts` covers tasks off and chat off.
 - `test/integration/tasks-plugin-conformance.test.ts` runs the contract's runner
   (`contracts/tasks/runner/conformance.ts`) against `bin/nb-tasks --http` in full mode (every
   case passes) and public-only mode (only `no private tool is listed` fails, which holds a

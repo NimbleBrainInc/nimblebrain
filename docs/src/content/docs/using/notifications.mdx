@@ -194,7 +194,7 @@ damage but does not remove it.
 ### Deliver to a task
 
 Pick one of your [tasks](/using/tasks) and the route wakes it,
-handing it the matched notifications as its input.
+handing it the matched notifications as notes on its run.
 
 The task has to be expecting them. An **event** task — one whose
 schedule is a set of notifications rather than a time — carries its own match,
@@ -202,13 +202,14 @@ and runs only for items that satisfy both it and the route. Name a task
 that runs on a clock instead and the route will match, record a *refused* row,
 and start nothing; the editor marks which of your tasks can be woken.
 
-Matching items are **batched**: everything arriving inside the task's
-debounce window (30 seconds by default) starts one run, not one run each. That
-run's ledger row carries the run id once it starts, so you can go from a
-notification to the run it caused.
+Matching items are **batched**: everything the task takes inside its
+debounce window (30 seconds by default) joins one run, not one run each. Each
+item the task takes reads *delivered* on the ledger. The ledger row names no
+run; the run it joined is among the task's event runs on the Scheduled page.
 
 An event task also carries a **fire ceiling** — by default twelve runs an
-hour — and exceeding it disables the task rather than throttling it. See
+hour — and the item that would pass it is refused and the task turned off,
+rather than throttled. See
 [Tasks](/using/tasks#the-fire-ceiling) for why that is the shape.
 
 ### Check it works, before you need it
@@ -269,12 +270,11 @@ short enough that you learn the answer while you are still looking. The
 platform never retries a *refused* or *skipped* target: nothing about those
 changes until the configuration does.
 
-**A task target gets one offer, not three.** A batch that never reaches
-its run — because the runtime restarted while the debounce window was open, or
-the task was already running — reads *failed* or *skipped* and is not
-re-formed. Batches live only in the memory of the process that opened them, and
-re-firing hours later for events you have since dealt with is worse than saying
-plainly that the run did not happen.
+**A task target gets one offer, not three.** The task takes the item or
+turns it away, and the line records which. An offer the runtime restarted
+before the task answered reads *failed* and is not made again: re-firing hours
+later for events you have since dealt with is worse than saying plainly that
+the run did not happen.
 
 Retry state lives on the item itself, so a platform restart mid-delivery picks
 up where it left off, and nothing already delivered is sent again.

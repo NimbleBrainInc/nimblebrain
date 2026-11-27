@@ -100,7 +100,7 @@ export declare const DeliveryRecord: import("@sinclair/typebox").TObject<{
     outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
     /**
      * Why, for a non-`delivered` outcome — the dispatch's own classification
-     * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+     * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_offer` for a
      * deferred agent target. Opaque to the browser, which renders it as text.
      */
     classification: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -108,13 +108,6 @@ export declare const DeliveryRecord: import("@sinclair/typebox").TObject<{
     updatedAt: import("@sinclair/typebox").TString;
     /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
     nextAttemptAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    /**
-     * The task run this notification's batch started. Agent targets only,
-     * and present only once a run actually started — which is exactly the
-     * question an operator asks of a route that wakes a task, and the
-     * answer `tasks__run_result` is addressed with.
-     */
-    runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
 export type DeliveryRecord = Static<typeof DeliveryRecord>;
 /**
@@ -193,7 +186,7 @@ export declare const NotificationView: import("@sinclair/typebox").TObject<{
         outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
         /**
          * Why, for a non-`delivered` outcome — the dispatch's own classification
-         * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+         * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_offer` for a
          * deferred agent target. Opaque to the browser, which renders it as text.
          */
         classification: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -201,13 +194,6 @@ export declare const NotificationView: import("@sinclair/typebox").TObject<{
         updatedAt: import("@sinclair/typebox").TString;
         /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
         nextAttemptAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        /**
-         * The task run this notification's batch started. Agent targets only,
-         * and present only once a run actually started — which is exactly the
-         * question an operator asks of a route that wakes a task, and the
-         * answer `tasks__run_result` is addressed with.
-         */
-        runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     }>>>;
     data: import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>;
 }>;
@@ -276,7 +262,7 @@ export declare const NotificationsListOutput: import("@sinclair/typebox").TObjec
             outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
             /**
              * Why, for a non-`delivered` outcome — the dispatch's own classification
-             * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+             * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_offer` for a
              * deferred agent target. Opaque to the browser, which renders it as text.
              */
             classification: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -284,13 +270,6 @@ export declare const NotificationsListOutput: import("@sinclair/typebox").TObjec
             updatedAt: import("@sinclair/typebox").TString;
             /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
             nextAttemptAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            /**
-             * The task run this notification's batch started. Agent targets only,
-             * and present only once a run actually started — which is exactly the
-             * question an operator asks of a route that wakes a task, and the
-             * answer `tasks__run_result` is addressed with.
-             */
-            runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         }>>>;
         data: import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>;
     }>>;
@@ -472,7 +451,7 @@ export declare const NotificationsSendTestOutput: import("@sinclair/typebox").TO
         outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
         /**
          * Why, for a non-`delivered` outcome — the dispatch's own classification
-         * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+         * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_offer` for a
          * deferred agent target. Opaque to the browser, which renders it as text.
          */
         classification: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -480,13 +459,6 @@ export declare const NotificationsSendTestOutput: import("@sinclair/typebox").TO
         updatedAt: import("@sinclair/typebox").TString;
         /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
         nextAttemptAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        /**
-         * The task run this notification's batch started. Agent targets only,
-         * and present only once a run actually started — which is exactly the
-         * question an operator asks of a route that wakes a task, and the
-         * answer `tasks__run_result` is addressed with.
-         */
-        runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     }>>;
 }>;
 export type NotificationsSendTestOutput = Static<typeof NotificationsSendTestOutput>;

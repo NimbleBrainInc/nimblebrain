@@ -113,7 +113,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `features` | `object` | all `true` | Feature flags. See [Feature Flags](/config/features). |
 | `connectors` | `object` | — | Managed-connector provider settings (Composio). See [connectors](#connectors). |
 | `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
-| `tasks` | `object` | — | Task run slots, queue, and per-run ceilings. See [tasks](#tasks). |
+| `runs` | `object` | — | Unattended run slots, queue, and per-run ceilings. See [runs](#runs). |
 | `execution` | `object` | native engine | Which agent runtime executes a run: the native engine, or an agent worker the runtime dials. Experimental. See [execution](#execution). |
 | `plugins` | `object` | — | Agent Plugins the runtime runs as part of the instance, and which are system plugins. Experimental: validated at boot; a server bound to a contract the runtime consumes is started. See [plugins](#plugins). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
@@ -654,53 +654,33 @@ the first few forever.
   [Observability](/deploy/observability/#background-loops).
 </Aside>
 
-## tasks
+## runs
 
-Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight and waiting, across every workspace, the most any one run may spend, and how long an ended run's data is kept.
+Guardrails on unattended runs (a [task](/using/tasks)'s runs, and any other run started without a person in the loop): how many the runtime holds in flight and waiting, across every workspace, and the most any one run may spend.
 
 ```json
 {
-  "tasks": {
+  "runs": {
     "maxConcurrentRuns": 2,
     "maxQueuedRuns":     50,
     "maxRunIterations":  50,
     "maxRunInputTokens": 20000000,
-    "maxRunDurationMs":  600000,
-    "runRetentionDays":  180
+    "maxRunDurationMs":  600000
   }
 }
 ```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `maxConcurrentRuns` | `integer` | `2` | Unattended runs in flight at once: scheduled, Run now, and event runs, and any other run started without a person in the loop. Chat turns do not take a slot. Range: 1--100. |
-| `maxQueuedRuns` | `integer` | `50` | Runs held waiting for a slot, in each of two queues: Run now runs on the work queue, and event runs in memory. A freed slot goes first to a waiting event run, to the one whose workspace holds the fewest slots, oldest first among equals. Beyond it a run is refused and recorded as skipped. `0` refuses at the limit. Range: 0--1000. |
+| `maxConcurrentRuns` | `integer` | `2` | Unattended runs in flight at once: scheduled, Run now, event and batch runs, and any other run started without a person in the loop. Chat turns do not take a slot. A task run waits on the work queue until a slot is free. Range: 1--100. |
+| `maxQueuedRuns` | `integer` | `50` | Runs held waiting in memory for a slot, for a caller that waits at the door itself; task runs wait on the work queue and are not counted. A freed slot goes to the waiting run whose workspace holds the fewest slots, oldest first among equals. `0` refuses at the limit. Range: 0--1000. |
 | `maxRunIterations` | `integer` | `50` | Ceiling on one run's agentic iterations. Range: 1--50. |
 | `maxRunInputTokens` | `integer` | none | Ceiling on one run's input tokens, summed over every model call. Unset, there is no ceiling. Range: 1,000--100,000,000. |
 | `maxRunDurationMs` | `integer` (ms) | `600000` | Ceiling on one run's wall-clock time. Range: 10,000--600,000. A chat turn on an external runtime is held to it too, since its model credential lasts no longer. |
-| `runRetentionDays` | `integer` (days) | `180` | How long an ended run's data is kept. See [Run data retention](#run-data-retention). Range: 1--36,500. |
 
-The three per-run ceilings apply when a run starts, so they cover every stored task however it was written. A cap a task sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling. Input tokens have no runtime default: a task with no `maxInputTokens` runs under `maxRunInputTokens` when it is set, and with no input-token cap when it is not. The create and update tools report the caps that result.
+The three per-run ceilings apply when a run starts, so they cover every task however it was written. A cap a task sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling. Input tokens have no runtime default: a task with no `maxInputTokens` runs under `maxRunInputTokens` when it is set, and with no input-token cap when it is not.
 
-A scheduled run that finds every slot busy is deferred rather than queued: it keeps its next-run time and runs on the first scheduler tick with a free slot, so its place survives a restart. The queue is held in memory: runs still queued when the runtime stops are recorded as skipped.
-
-### Run data retention
-
-Every run leaves a record and its full result on the data volume, and a run asked for by id leaves a handle as well. The runtime deletes what is older than `runRetentionDays` itself, in a sweep that runs shortly after start and then once a day. There is nothing to schedule or call.
-
-| What | When it is deleted |
-|------|--------------------|
-| Archived runs (those past the newest 1,000 of their task), with their results | A calendar month (UTC) at a time, once the month ended more than `runRetentionDays` ago. Every run is kept at least that long. |
-| A requested run's handle and its idempotency key | Once the run ended more than `runRetentionDays` ago. After that the run is found by its task, and a repeat of the key starts a new run. |
-| A one-off task (an inline `tasks__run` definition), with its runs | Once it and its newest run are more than `runRetentionDays` old. |
-
-The sweep never deletes the newest 1,000 runs of a task, a run that is queued or running, anything a running or paused batch still reads, or a one-off task a batch was run on.
-
-To keep everything, set `runRetentionDays` to its maximum, `36500`. A lower value frees space sooner: a value under 30 leaves `tasks__stats` (which reads 30 days by default) fewer runs to count for busy tasks.
-
-<Aside type="caution">
-  The first sweep after an upgrade deletes run data older than the window. To keep older history, set `runRetentionDays` before starting the new version.
-</Aside>
+A configuration with a `tasks` block fails validation at boot: these ceilings belong in `runs`, and run data retention is the [tasks plugin](#tasks-and-scheduled-work)'s.
 
 ## execution
 
@@ -734,7 +714,7 @@ What stays with NimbleBrain, whichever runtime runs a turn:
 - **Tools.** The agent reaches the run's tools on its own connection to the runtime, through the same workspace wall, tool allow-list and permission checks as a native call. Nothing listens for it.
 - **Credentials.** The runtime signs a connection credential with the installation's [run key](/config/secrets/), which the worker checks against the runtime's `/.well-known/run-keys.json`. Each turn's model calls carry a credential minted for that turn, which the gateway verifies against the same key set.
 
-A worker runtime does not check a run's spend accounts or input-token cap before each model call. When the model gateway says it enforces grants (its `GET /providers` answer carries `"grants": true`), such a run still executes on the worker: the runtime reserves the run's share of each spend account (its balance divided by how many runs may share it, such as a batch's concurrency), writes the smaller of that share and the cap into the run's model credential as a token `grant`, and the gateway refuses the run's calls once its input and output tokens reach it. Otherwise a run that sets either executes on the native runtime, which checks each call, even when `default` names the worker. Chat and every other run execute on the default. Each turn's model credential lasts as long as the turn may run: a task's own duration cap, or for a chat turn `tasks.maxRunDurationMs`, at which the turn is stopped with an error naming the limit. Outside the `dev` identity provider external runtimes need the run key and a `modelGateway`, and the runtime refuses to start without them. On a developer's machine, run a worker on loopback with `NB_AGENT_AUTH=none` and leave out `modelGateway`: it calls its provider with its own key.
+A worker runtime does not check a run's spend accounts or input-token cap before each model call. When the model gateway says it enforces grants (its `GET /providers` answer carries `"grants": true`), such a run still executes on the worker: the runtime reserves the run's share of each spend account (its balance divided by how many runs may share it, such as a batch's concurrency), writes the smaller of that share and the cap into the run's model credential as a token `grant`, and the gateway refuses the run's calls once its input and output tokens reach it. Otherwise a run that sets either executes on the native runtime, which checks each call, even when `default` names the worker. Chat and every other run execute on the default. Each turn's model credential lasts as long as the turn may run: a task's own duration cap, or for a chat turn `runs.maxRunDurationMs`, at which the turn is stopped with an error naming the limit. Outside the `dev` identity provider external runtimes need the run key and a `modelGateway`, and the runtime refuses to start without them. On a developer's machine, run a worker on loopback with `NB_AGENT_AUTH=none` and leave out `modelGateway`: it calls its provider with its own key.
 
 With the `claude-code` or `codex` driver, the worker runs that coding agent's own CLI on your machine, signed in to your Claude or ChatGPT subscription, so turns need no API key. Such a runtime brings its own model: its turns, the conversation's title and the summary that folds a long history all run on it, and the chat names the runtime instead of offering models. A run with a spend budget still runs on the native engine and needs a provider. `npx nimblebrain use` sets this up; see [Run on your subscription](/config/subscriptions/).
 
@@ -747,7 +727,12 @@ Experimental. The [Agent Plugins](https://agent-plugins.org) the runtime runs as
 With no `plugins` block the runtime runs its default plugins, exactly as if the block said:
 
 ```json
-{ "plugins": { "conversations": { "source": "builtin", "system": true } } }
+{
+  "plugins": {
+    "conversations": { "source": "builtin", "system": true },
+    "tasks": { "source": "builtin", "system": true }
+  }
+}
 ```
 
 An entry of a default's name replaces it, and `false` turns it off. Other entries run beside the defaults:
@@ -763,6 +748,8 @@ An entry of a default's name replaces it, and `false` turns it off. Other entrie
   }
 }
 ```
+
+That block runs the built-in conversations plugin, a `reports` plugin reached at its URL, and no tasks.
 
 | Field | Meaning |
 |---|---|
@@ -788,6 +775,16 @@ Chat is on exactly when an enabled plugin implements the conversations contract 
 - **Turn chat off** with `"plugins": { "conversations": false }`. The chat API routes (`/v1/workspaces/<wsId>/chat/start`, a conversation's `events` and `cancel`) answer `404` with `"error": "chat_disabled"`, `GET /v1/bootstrap` reports `config.chat: false`, and the web app shows no chat panel, chat button, composer or Conversations page. Apps, tasks, files, connectors and the `/mcp` endpoint work as before.
 - **Use another implementation** of the contract by turning the built-in one off and adding yours, since the contract allows only one: `"plugins": { "conversations": false, "my-conversations": { "source": "./plugins/my-conversations", "system": true } }`.
 - **Conversations stored by a runtime before this plugin kept them** sit under `<workDir>/workspaces/<wsId>/conversations/` and are not read; to keep them, copy each `workspaces/<wsId>/conversations/` directory to the same path under `<workDir>/plugin-data/conversations/` with the runtime stopped.
+
+### Tasks and scheduled work
+
+Scheduled and unattended work is on exactly when an enabled plugin implements the tasks contract (`ai.nimblebrain.tasks`). By default that is the built-in `tasks` plugin: the runtime starts its server at boot, with its data directory at `<workDir>/plugin-data/tasks`, and runs what it says is due. Its public tools are the `tasks__*` tools, its screen is the Scheduled page in the sidebar, and its private tools are never listed or callable by agents, MCP clients or apps.
+
+- **Run grants.** When a person creates, changes or runs a task, the runtime signs a run grant for that person and workspace, and the plugin stores it with the task. Each run acts as the grant's owner, and only while they are still a member of the workspace. The grant key is an instance secret in the credential store (`nimblebrain.run_grant_key`), minted on first start; deleting it makes the next start mint another, and every task then stops running until its owner saves or runs it again.
+- **Runs go through the work queue.** The runtime asks the plugin what is due every 30 seconds and at once when the plugin says something changed, queues each run, and starts it when a [run slot](#runs) is free.
+- **Run data retention** is the plugin's: an ended run's data is deleted 180 days after it ended.
+- **Turn tasks off** with `"plugins": { "tasks": false }`. No tasks tools or Scheduled page appear, nothing is polled, and a notification route that names a task is answered `tasks_unavailable`. Chat, files, apps and the `/mcp` endpoint work as before. Tasks work with chat off: a run needs no conversation.
+- **Tasks stored by a runtime before this plugin kept them** sit under `<workDir>/workspaces/<wsId>/tasks/` and are not read; the plugin keeps its own layout. To keep a task, copy its definition (`<ownerId>/<taskId>.json`: its name, prompt, schedule and tools) into `tasks__create` as its owner.
 
 ## files
 

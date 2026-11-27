@@ -245,9 +245,7 @@ export class PostHogEventSink implements EventSink {
     if (this.named())
       this.captureToolCalled(data, metrics, isConnector, sourcePrefix, bareToolName);
     // The agent made an automation: a kernel tool, so naming it reveals nothing.
-    // On an identified deployment, `automation.created` reports every create, from any door.
-    if (data.ok && data.name === "tasks__create" && !this.named())
-      this.telemetry.capture("task.created");
+    if (data.ok && data.name === "tasks__create") this.telemetry.capture("task.created");
   }
 
   /**

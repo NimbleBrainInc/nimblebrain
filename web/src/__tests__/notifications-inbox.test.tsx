@@ -394,7 +394,7 @@ describe("the delivery ledger", () => {
               kind: "agent",
               attempts: 0,
               outcome: "deferred",
-              classification: "awaiting_batch",
+              classification: "awaiting_offer",
               updatedAt: "2026-09-01T19:00:00.000Z",
             },
           ],

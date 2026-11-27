@@ -9,7 +9,7 @@
 .nimblebrain
 .DS_Store
 **/node_modules
-# Each app UI's dist/ (the platform apps' and the conversations plugin's screen)
+# Each app UI's dist/ (the platform apps' and the default plugins' screens)
 # is built inside the image, before its source tree is copied over it; a local
 # build's dist/ would otherwise replace the fresh one.
 src/platform/*/ui/dist

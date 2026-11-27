@@ -19,7 +19,7 @@ export class RunDeadlineExceededError extends Error {
     public readonly limitMs: number,
   ) {
     super(
-      `The run on agent runtime ${runtime} reached its ${Math.round(limitMs / 1000)}s limit (tasks.maxRunDurationMs) and was stopped`,
+      `The run on agent runtime ${runtime} reached its ${Math.round(limitMs / 1000)}s limit (runs.maxRunDurationMs) and was stopped`,
     );
     this.name = "RunDeadlineExceededError";
   }
@@ -113,10 +113,9 @@ export class ConversationWorkspaceAccessDeniedError extends ConversationAccessDe
  * active member of the task's provenance workspace: removed from it, or
  * deactivated. A task runs *as its owner*, walled to the workspace it was
  * created in — so such an owner must not keep acting in that workspace (the
- * tasks analog of the conversation resume gate). The stable `code` lets the
- * tasks scheduler recognize this outcome and record the run as **skipped** (not
- * a failure — no consecutive-error count, no auto-disable) so the task
- * self-heals if the owner is re-added or restored.
+ * tasks analog of the conversation resume gate). The run worker reports it as
+ * `not_started` with `membership_revoked`, which the tasks contract answers by
+ * disabling the definition until a grant-marked call re-enables it.
  */
 export class WorkspaceMembershipRevokedError extends Error {
   readonly code = "workspace_membership_revoked";
@@ -133,9 +132,9 @@ export class WorkspaceMembershipRevokedError extends Error {
  * Thrown when an unattended run's `allowedTools` names tools that nothing the
  * run can reach matches: their connector is missing, disconnected, or not
  * running. The owner declared those tools as the run's job, so the run cannot
- * do it, and it is refused before its first model call. The stable `code` lets
- * the tasks scheduler record the run as a **failure**, which a run that never
- * attempted the tool would otherwise not be (it ends normally and reads
+ * do it, and it is refused before its first model call. The run worker reports
+ * it as `not_started` with `tools_unavailable`, a failure, which a run that
+ * never attempted the tool would otherwise not be (it ends normally and reads
  * Succeeded).
  */
 export class DeclaredToolsUnavailableError extends Error {

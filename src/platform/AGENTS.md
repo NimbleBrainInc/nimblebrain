@@ -188,9 +188,7 @@ full shape including operator fields. The tool handler becomes a thin
 wrapper that narrows the input and stamps `source: "agent"`. Internal
 callers (CLI, lifecycle.ts) call the domain directly via a runtime-
 exposed getter. **The CLI does not call the LLM-facing tool — that path
-silently no-ops or strips operator fields.** See
-`src/platform/tasks/domain.ts` for the reference implementation
-and `src/runtime/runtime.ts::registerTasksContext` for the wiring.
+silently no-ops or strips operator fields.**
 
 The cost of doing this once per domain: one extra file. The cost of not
 doing it: connector install loses connector-contributed schedules, CLI pause/

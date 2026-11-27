@@ -15,7 +15,7 @@ import { loadBrand } from "../brand/index.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
-import { type ResolvedTasksConfig, resolveTasksConfig } from "../config/tasks.ts";
+import { effectiveRunLimits, type ResolvedRunsConfig, resolveRunsConfig } from "../config/runs.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import {
   ConnectorCatalog,
@@ -103,6 +103,7 @@ import { workspaceFilesDir } from "../files/paths.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
+import { fileIdToUri } from "../files/uri.ts";
 import { generateTitleWith } from "../history/auto-title.ts";
 
 import {
@@ -174,8 +175,10 @@ import {
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
 import { type ResolvedPollConfig, resolvePollConfig } from "../notifications/poll-config.ts";
 import { positionOutbox } from "../notifications/position.ts";
+import type { TaskEventAnswer, TaskEventOffer } from "../notifications/routes.ts";
 import { NotificationStore } from "../notifications/store.ts";
 import type { NotificationsDeclaration } from "../notifications/types.ts";
+import { notificationEffectiveLevel, notificationPresentation } from "../notifications/types.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { publicOrigin } from "../oauth/public-origin.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
@@ -204,12 +207,6 @@ import {
   PermissionStore,
 } from "../permissions/permission-store.ts";
 import { isTaskForbiddenSkillTool } from "../platform/skills/source.ts";
-import type { TaskDomainContext } from "../platform/tasks/domain.ts";
-import type {
-  EventWakeAck,
-  EventWakeRequest,
-  TaskEventTrigger,
-} from "../platform/tasks/event-trigger.ts";
 import { type BoundServer, startBoundServers, stopBoundServers } from "../plugins/bound-servers.ts";
 import { checkConfiguredPlugins, type ResolvedPlugins } from "../plugins/index.ts";
 import type {
@@ -219,6 +216,7 @@ import type {
   PromptAppInfo,
 } from "../prompt/compose.ts";
 import { composeSystemSegments } from "../prompt/compose.ts";
+import { renderUnattendedPrompt } from "../prompt/unattended-work.ts";
 import type { WorkQueue } from "../providers/queue/types.ts";
 import {
   type ActivatableSkill,
@@ -250,6 +248,7 @@ import {
   loadCoreSkills,
   loadScopedSkills,
   loadSkillDir,
+  loadSystemPluginSkills,
   mergeScopedSkills,
   parseSkillFile,
   partitionSkills,
@@ -285,11 +284,10 @@ import {
 } from "../tools/credential-store-backend.ts";
 import { registerCredentialTransportCredentialProvider } from "../tools/credential-transport-credential.ts";
 import {
+  CONTRACT_SOURCE_NAMES,
   isIdentitySource,
-  isTaskForbiddenIdentityTool,
   personalConnectorWireName,
 } from "../tools/identity-sources.ts";
-import type { IdentityTaskSource } from "../tools/identity-task-source.ts";
 import {
   resolveInstanceCredentialRefs,
   type WithCredentialRefs,
@@ -311,6 +309,7 @@ import {
 import { isToolAllowedForRun, unmatchedAllowedTools } from "../tools/tool-pattern.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { toToolSchema } from "../tools/types.ts";
+import { ledgerUsageByRun } from "../usage/aggregate.ts";
 import { callCostUsd, resolveRates } from "../usage/cost.ts";
 import { createProcessLedger, type UsageLedger } from "../usage/ledger.ts";
 import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record.ts";
@@ -350,6 +349,12 @@ import {
 import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
 import { type RunDeadline, runDeadline } from "./run-deadline.ts";
 import {
+  createRunGrants,
+  newRunGrantKey,
+  RUN_GRANT_KEY_CREDENTIAL,
+  type RunGrants,
+} from "./run-grant.ts";
+import {
   createRunKey,
   parseRunKeyRing,
   RUN_KEY_CREDENTIAL,
@@ -366,6 +371,13 @@ import type {
   UserResourceLinkPart,
   UserTextPart,
 } from "./run-spec.ts";
+import {
+  createRunWorker,
+  type RunNotice,
+  type RunOutcome,
+  type RunWorker,
+  TASKS_CONTRACT,
+} from "./run-worker.ts";
 import { buildSkillsLoadedPayload, collectLoadedSkills } from "./skills-loaded-payload.ts";
 import { createSpendBalances, type SpendBalances } from "./spend.ts";
 import { isStreamedRunEvent } from "./turn-stream.ts";
@@ -497,7 +509,7 @@ export type DeclaredRuntimeConfig = Pick<RuntimeConfig, PreStoreConfigKey> &
  */
 async function loadRunKey(
   store: CredentialStore,
-  config: Pick<RuntimeConfig, "tasks" | "secrets">,
+  config: Pick<RuntimeConfig, "runs" | "secrets">,
 ): Promise<RunKey | null> {
   const ringJson = await readRunKeyRingJson(store, config.secrets?.runKeyEnv);
   if (ringJson === null) return null;
@@ -506,7 +518,7 @@ async function loadRunKey(
     issuer: publicOrigin(),
     // The operator's wall-clock ceiling on a run is the longest turn this
     // installation allows; a model credential outlives it by the leeway only.
-    maxRunMs: resolveTasksConfig(config.tasks).maxRunDurationMs,
+    maxRunMs: resolveRunsConfig(config.runs).maxRunDurationMs,
   });
 }
 
@@ -532,6 +544,94 @@ async function readRunKeyRingJson(
     purpose: "run key",
   });
   return stored ? stored.reveal() : null;
+}
+
+/**
+ * The installation's run-grant key: one instance-scope secret in the credential
+ * store (`RUN_GRANT_KEY_CREDENTIAL`), so a sealing backend holds it sealed like
+ * any other. Minted on first boot when absent. Deleting it makes the next boot
+ * mint another, and every stored grant then fails until it is re-stamped.
+ */
+async function loadRunGrants(store: CredentialStore): Promise<RunGrants> {
+  const scope = { kind: "instance" } as const;
+  const read = { caller: "runtime", purpose: "run grants" };
+  let stored = (await store.get(scope, RUN_GRANT_KEY_CREDENTIAL, read))?.reveal();
+  if (!stored) {
+    await store.put(scope, RUN_GRANT_KEY_CREDENTIAL, newRunGrantKey());
+    stored = (await store.get(scope, RUN_GRANT_KEY_CREDENTIAL, read))?.reveal();
+  }
+  if (!stored)
+    throw new Error(`[runtime] the credential store did not keep ${RUN_GRANT_KEY_CREDENTIAL}`);
+  return createRunGrants(stored);
+}
+
+/** Where each enabled system plugin lives. */
+function systemPluginRoots(resolved: ResolvedPlugins | null): string[] {
+  return (resolved?.plugins ?? []).filter((plugin) => plugin.system).map((plugin) => plugin.root);
+}
+
+/** One row of the tasks contract's `list`, as a route target, or null when it names no task. */
+function ownTaskOf(row: unknown): { id: string; name: string; eventScheduled: boolean } | null {
+  const task = row as { id?: unknown; name?: unknown; scheduleType?: unknown } | null;
+  if (typeof task?.id !== "string") return null;
+  return {
+    id: task.id,
+    name: typeof task.name === "string" ? task.name : task.id,
+    eventScheduled: task.scheduleType === "event",
+  };
+}
+
+/** What a run's outcome reads as on `automation.run_completed`. */
+function runStatusOf(outcome: RunOutcome): string {
+  switch (outcome.stopReason) {
+    case "complete":
+      return "success";
+    case "cancelled":
+      return "cancelled";
+    case "timeout":
+    case "max_iterations":
+      return "timeout";
+    case "not_started":
+      return "skipped";
+    default:
+      return "failure";
+  }
+}
+
+const RUN_TRIGGER_TELEMETRY: Readonly<Record<string, string>> = {
+  scheduled: "schedule",
+  manual: "manual",
+  event: "event",
+};
+
+/**
+ * An unattended run that ended, on an identified deployment: its outcome,
+ * never its output. `run_id` joins it to the run's `agent.chat_*` and
+ * `tool.called`, which carry its steps.
+ */
+function captureUnattendedRunEnded(
+  runtime: Pick<Runtime, "getTelemetryManager">,
+  wsId: string,
+  ownerId: string,
+  run: { runId: string; outcome: RunOutcome; trigger?: string },
+): void {
+  const { outcome } = run;
+  const duration = Date.parse(outcome.endedAt) - Date.parse(outcome.startedAt);
+  runtime.getTelemetryManager().captureAbout(
+    "automation.run_completed",
+    {
+      status: runStatusOf(outcome),
+      trigger: (run.trigger && RUN_TRIGGER_TELEMETRY[run.trigger]) ?? "none",
+      run_id: run.runId,
+      ...(Number.isFinite(duration) ? { duration_ms: duration } : {}),
+      // An incomplete cost (a call no rates were known for) is left out, never
+      // reported as a lower figure.
+      ...(!outcome.unpricedCalls && outcome.stopReason !== "not_started"
+        ? { cost_usd: outcome.costUsd }
+        : {}),
+    },
+    { userId: ownerId, workspaceId: wsId },
+  );
 }
 
 function resolveWorkDir(config: Pick<RuntimeConfig, "workDir">): string {
@@ -566,20 +666,6 @@ class MultiEventSink implements EventSink {
 }
 
 /**
- * What a workspace delete needs from the tasks scheduler.
- *
- * A structural interface `Scheduler` already satisfies, so the scheduler is
- * handed over by the tasks source at construction (like the event
- * trigger) rather than imported here — `src/runtime/` may not reach into
- * `src/platform/`, and a runtime without tasks simply has nothing
- * registered.
- */
-export interface TaskQuiescer {
-  /** Forget every task belonging to `wsId`; returns how many. */
-  dropWorkspace(wsId: string): number;
-}
-
-/**
  * What {@link Runtime.deleteWorkspace} did.
  *
  * `deleted` is the store's own idempotent answer — `false` when no such
@@ -603,14 +689,16 @@ export interface WorkspaceDeleteResult {
    */
   deleteError?: string;
   /**
-   * Why purging the workspace's conversations failed, when it did. The
-   * workspace is already deleted (archived) when the purge runs, so a failed
-   * purge leaves no live workspace; deleting the same id again runs the
-   * idempotent purge again.
+   * Why purging the workspace's conversations or tasks failed, when one did.
+   * The workspace is already deleted (archived) when the purges run, so a
+   * failed purge leaves no live workspace; deleting the same id again runs the
+   * idempotent purges again.
    */
   purgeError?: string;
   /** How many conversations the purge removed. */
   conversationsPurged: number;
+  /** How many task definitions the purge removed (their runs and batches with them). */
+  tasksPurged?: number;
 }
 
 /**
@@ -681,9 +769,9 @@ export class Runtime {
    *
    * The run doors (`startRun`, `dispatchUnattended`) wait on it. Nothing reaches
    * them over HTTP before `start()` returns, but the sources started inside
-   * `start()` (the tasks scheduler, the notifications dispatcher) run
-   * their timers from the moment they are created, and a scheduler that boots
-   * with an overdue task fires it at once.
+   * `start()` (the notifications dispatcher) run their timers from the
+   * moment they are created. The run worker starts last, after this barrier's
+   * dependencies are in place.
    */
   private readonly _bootReady = bootBarrier();
   // Protected sources are captured in start() and passed to startWorkspaceConnectors directly.
@@ -714,18 +802,20 @@ export class Runtime {
    * sources reach the user only through the identity door.
    */
   private _workspaceSources: ToolSource[] = [];
+  /** Where the enabled system plugins live: their `skills/` join the core pool. */
+  private _pluginSkillRoots: readonly string[] = [];
+  /** The server bound to the tasks contract, or null when nothing implements it (tasks off). */
+  private _tasks: BoundServer | null = null;
+  /** The run worker over {@link _tasks}: what turns the tasks contract's due work into runs. */
+  private _runWorker: RunWorker | null = null;
+  /** Signs the run grant a person's call to a grant-marked contract tool carries. */
+  private _runGrants: RunGrants | null = null;
   /**
-   * Domain-context getter for the tasks app. Set by the tasks
-   * source factory; consumed by an internal caller that needs the full
-   * domain shape — including the operator-only `source` field the
-   * LLM-facing tool schema deliberately doesn't expose. See
-   * `src/platform/AGENTS.md` § 1.4.
+   * Every bound contract tool, by wire name (`<source>__<tool>`), that no call
+   * made inside an unattended run reaches: what each contract document marks
+   * `unattended: "refused"`.
    */
-  private _tasksContextGetter: (() => TaskDomainContext) | null = null;
-  private _taskEventTrigger: TaskEventTrigger | null = null;
-  private _taskQuiescer: TaskQuiescer | null = null;
-  /** Identity sources' task surfaces, by source name (see {@link registerIdentityTaskSource}). */
-  private readonly _identityTaskSources = new Map<string, IdentityTaskSource>();
+  private _unattendedRefused: ReadonlySet<string> = new Set();
   /**
    * Per-workspace host-resources deps factory. Set in `Runtime.start()`
    * after the resolver + rate-limit are constructed; consumed by every
@@ -1153,7 +1243,9 @@ export class Runtime {
       // resolved `maxOutputTokens`). See `resolveMessageBudget`.
     };
 
-    const { contextSkills, skillMatcher } = buildSkills(config);
+    // The skills each system plugin ships join the core pool while it is enabled.
+    const pluginSkillRoots = systemPluginRoots(resolvedPlugins);
+    const { contextSkills, skillMatcher } = buildSkills(config, pluginSkillRoots);
 
     // Request-scoped context — all identity/workspace reads go through AsyncLocalStorage.
     // Set via runWithRequestContext() in chat(), handleToolCall(), and MCP handler.
@@ -1213,6 +1305,7 @@ export class Runtime {
       getWorkspaceId,
     );
     rt._hostLoopback = hostLoopback;
+    rt._pluginSkillRoots = pluginSkillRoots;
     rtHolder.rt = rt;
 
     // Everything from here to `return rt` builds what a run is composed over, so
@@ -1408,6 +1501,9 @@ export class Runtime {
       // than silent.
       await warnIfCatalogEmpty(rt.getConnectorCatalog());
 
+      // Unattended work starts once everything a run reaches is in place.
+      await rt._runWorker?.start();
+
       rt._bootReady.resolve();
       return rt;
     } catch (err) {
@@ -1446,7 +1542,23 @@ export class Runtime {
           },
         ],
       ]);
-      this._boundServers = await startBoundServers(resolved, events, overlays);
+      // A grant-marked contract tool needs the key its grants are signed with.
+      const signs = resolved.bindings.some((b) => b.grantTools.length > 0);
+      if (signs) this._runGrants = await loadRunGrants(this.getCredentialStore());
+      const grants = this._runGrants;
+      this._boundServers = await startBoundServers(
+        resolved,
+        events,
+        overlays,
+        grants ? (claims) => grants.sign(claims) : undefined,
+      );
+      // What each contract refuses an unattended run, by the name agents call it.
+      this._unattendedRefused = new Set(
+        [...this._boundServers.values()].flatMap((server) => {
+          const name = CONTRACT_SOURCE_NAMES.get(server.contract);
+          return name ? [...server.unattendedRefused].map((tool) => `${name}__${tool}`) : [];
+        }),
+      );
     }
     const conversations = this._boundServers.get(CONVERSATIONS_CONTRACT);
     if (conversations) {
@@ -1459,7 +1571,97 @@ export class Runtime {
           assertWorkspaceRootExists(join(workspacesDir, workspaceId)),
       });
     }
+    const tasks = this._boundServers.get(TASKS_CONTRACT);
+    if (tasks && this._runGrants) {
+      this._tasks = tasks;
+      this._runWorker = this.createTasksRunWorker(tasks, this._runGrants);
+    }
     return [...this._boundServers.values()].map((server) => server.source);
+  }
+
+  /**
+   * The run worker over the bound tasks server (`run-worker.ts`): it asks the
+   * server what is due, runs each occurrence through the door as the grant's
+   * owner, reports how it ended, and delivers the notices it is answered.
+   */
+  private createTasksRunWorker(tasks: BoundServer, grants: RunGrants): RunWorker {
+    return createRunWorker({
+      server: {
+        hostVersion: tasks.hostVersion,
+        call: (tool, args, scope) => tasks.call(tool, args, scope),
+        watch: (uri, scope) => tasks.watch(uri, scope),
+        connection: () => tasks.connection(),
+        onResourceUpdated: (listener) => tasks.source.subscribeResourceUpdated(listener),
+      },
+      queue: this.getWorkQueue(),
+      admission: this.getRunAdmission(),
+      spend: this.getSpendBalances(),
+      grants,
+      execute: (request) => this.executeTask(request),
+      limitsOf: (limits) =>
+        effectiveRunLimits(limits ?? {}, this.getRunsConfig(), this.getMaxIterations()),
+      isMember: (wsId, ownerId) => this.isPrincipalWorkspaceMember(wsId, ownerId),
+      workspaceIds: async () => (await this._workspaceStore.list()).map((ws) => ws.id),
+      deliver: (wsId, notices) => this.deliverContractNotices(TASKS_CONTRACT, wsId, notices),
+      ended: (wsId, ownerId, run) => {
+        const name = CONTRACT_SOURCE_NAMES.get(TASKS_CONTRACT);
+        if (name) this.announceIdentitySourceChange(name, ownerId);
+        captureUnattendedRunEnded(this, wsId, ownerId, run);
+      },
+      metered: (wsId, runId, range) =>
+        ledgerUsageByRun(this.getWorkDir(), new Set([runId]), range, wsId).get(runId),
+    });
+  }
+
+  /**
+   * Put a contract implementation's notices in a workspace's inbox, under the
+   * kernel's source name for the contract. The inbox keeps one item per
+   * (source, id), so a notice answered twice is delivered once. Best-effort: a
+   * refused write is logged and changes nothing else.
+   */
+  private deliverContractNotices(
+    contract: string,
+    wsId: string,
+    notices: readonly RunNotice[],
+  ): void {
+    const source = CONTRACT_SOURCE_NAMES.get(contract) ?? contract;
+    for (const notice of notices) {
+      try {
+        this.getNotificationStore(wsId).append(source, {
+          eventId: notice.id,
+          name: "notice",
+          timestamp: new Date().toISOString(),
+          data: {},
+          _meta: {
+            "ai.nimblebrain/notification": {
+              level: notice.level,
+              title: notice.title,
+              body: notice.body,
+            },
+          },
+        });
+      } catch (err) {
+        log.warn("[runtime] could not deliver a notice", {
+          contract,
+          workspaceId: wsId,
+          noticeId: notice.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  /** Whether this instance runs scheduled and unattended work: a plugin implements the tasks contract. */
+  isTasksEnabled(): boolean {
+    return this._tasks !== null;
+  }
+
+  /**
+   * Whether a bound contract refuses this tool (`<source>__<tool>`) to a call
+   * made inside an unattended run, as its contract document marks it.
+   */
+  isUnattendedRefused(wireName: string): boolean {
+    return this._unattendedRefused.has(wireName);
   }
 
   /**
@@ -1943,7 +2145,7 @@ export class Runtime {
       workspaceId: runWsId,
       briefingWorkspaceId: runWsId,
       input: {
-        content: [{ type: "text", text: request.prompt }],
+        content: [{ type: "text", text: renderUnattendedPrompt(request) }],
         userId: requestIdentity.id,
         ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
         ...(request.skills?.length ? { skills: request.skills } : {}),
@@ -1966,8 +2168,8 @@ export class Runtime {
       onAbort: "partial",
     });
 
-    // The deliverable (output), the activity log (toolCalls), and the usage go
-    // back to the caller, which persists the run result under `runId`.
+    // The deliverable (output), the activity log (toolCalls), the usage and
+    // the files it wrote go back to the caller, which reports the run.
     return {
       output: handle.output,
       runId: handle.runId,
@@ -1978,7 +2180,29 @@ export class Runtime {
       costUsd: handle.costUsd,
       ...(handle.unpricedCalls ? { unpricedCalls: handle.unpricedCalls } : {}),
       skillsDelivered: handle.skillsDelivered,
+      filesWritten: await this.filesWrittenBy(runWsId, ownerId, handle.runId),
     };
+  }
+
+  /**
+   * The files a run wrote, from the file store's own records: every live entry
+   * in the owner's partition the run's id stamped (`FileEntry.runId`, from the
+   * request context). Never read from a tool's output. Best-effort: a store
+   * that cannot be read reports none.
+   */
+  private async filesWrittenBy(
+    wsId: string,
+    ownerId: string,
+    runId: string,
+  ): Promise<TaskResult["filesWritten"]> {
+    try {
+      const entries = await this.getWorkspaceFileStore(wsId, ownerId).readRegistry();
+      return entries
+        .filter((entry) => entry.runId === runId)
+        .map((entry) => ({ uri: fileIdToUri(entry.id), name: entry.filename }));
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -2177,7 +2401,7 @@ export class Runtime {
       signal: spec.signal,
       ownLimitMs: spec.budget.maxRunDurationMs,
       credentialed: this.mintsModelCredential(agentRuntime),
-      ceilingMs: this.getTasksConfig().maxRunDurationMs,
+      ceilingMs: this.getRunsConfig().maxRunDurationMs,
       runtimeId: agentRuntime.id,
     });
     const engineConfig = this.buildTurnEngineConfig({
@@ -2851,12 +3075,13 @@ export class Runtime {
    * operates WITHIN it.
    *
    * An unattended run can ingest untrusted content with nobody watching, so
-   * both durable-authoring surfaces are subtracted: it must not rewrite, spawn,
-   * or fire tasks (`isTaskForbiddenIdentityTool`), nor author a skill
-   * (`isTaskForbiddenSkillTool` — durable guidance that would load itself into
-   * later conversations). An attended run keeps both; there is a human in the
-   * loop. Neither filter needs its own `unattended` check — `attended` is the
-   * one axis the run's trigger decides.
+   * both durable-authoring surfaces are subtracted: every contract tool its
+   * document marks `unattended: "refused"` (`isUnattendedRefused`: authoring,
+   * starting or stopping tasks), and skill authoring (`isTaskForbiddenSkillTool`
+   * — durable guidance that would load itself into later conversations). An
+   * attended run keeps both; there is a human in the loop. Neither filter needs
+   * its own `unattended` check — `attended` is the one axis the run's trigger
+   * decides.
    */
   private async listRunTools(
     wsId: string,
@@ -2876,7 +3101,7 @@ export class Runtime {
         .filter((t) => visible(t.name) && (attended || !isTaskForbiddenSkillTool(t.name)))
         .map(toToolSchema),
       ...identityTools
-        .filter((t) => visible(t.name) && (attended || !isTaskForbiddenIdentityTool(t.name)))
+        .filter((t) => visible(t.name) && (attended || !this.isUnattendedRefused(t.name)))
         .map(toToolSchema),
     ];
   }
@@ -3356,7 +3581,7 @@ export class Runtime {
 
   async reloadSkills(): Promise<void> {
     const all = loadAllSkills(this.config.skillDirs, globalSkillDir(this.config));
-    const core = loadCoreSkills();
+    const core = [...loadCoreSkills(), ...loadSystemPluginSkills(this._pluginSkillRoots)];
     const combined = [...core, ...all];
     const { context, skills } = partitionSkills(combined);
     this.contextSkills = context;
@@ -4445,6 +4670,9 @@ export class Runtime {
       this._systemSource,
       this.defaultEvents,
     );
+    // A workspace reached for the first time is served by the run worker now
+    // rather than at its next interval.
+    this._runWorker?.serve(wsId);
     // Wire permission context so the registry can gate disallowed tools
     // before they reach the source.execute() path.
     wsRegistry.setPermissionContext(
@@ -4653,16 +4881,11 @@ export class Runtime {
    * earlier, deliberately, since revoking upstream is the point.
    */
   async deleteWorkspace(wsId: string): Promise<WorkspaceDeleteResult> {
-    // First, before the teardown and long before the rename: disarm this
-    // workspace's tasks. The scheduler holds them in memory and nothing
-    // else drops them, so one firing mid-teardown would run against
-    // half-removed connectors, and one firing after the rename would have its
-    // store re-create the archived directory. Dropping them is what makes the
-    // correct behaviour independent of a write failing — the guard in
-    // `ensureWorkspaceDir` is the floor under it, not the mechanism.
-    const disarmed = this._taskQuiescer?.dropWorkspace(wsId) ?? 0;
-    if (disarmed > 0)
-      log.info("[runtime] disarmed tasks for deleted workspace", { wsId, disarmed });
+    // First, before the teardown and long before the rename: the run worker
+    // stops serving the workspace and stops its runs in flight, so none runs
+    // against half-removed connectors. An item still on the queue is settled
+    // unrun when it is claimed, since the workspace is no longer served.
+    await this._runWorker?.drop(wsId);
 
     const ws = await this.getWorkspaceStore().get(wsId);
     const connectors: ConnectorTeardownOutcome[] = [];
@@ -4708,12 +4931,44 @@ export class Runtime {
     }
     if (deleteError) return { deleted, connectors, deleteError, conversationsPurged: 0 };
 
-    // The purge runs after the rename: with the workspace gone no new
+    // The purges run after the rename: with the workspace gone no new
     // conversation can be created in it (`create` asserts the workspace root),
-    // and the purge waits for any create already past that check. It runs
+    // and the purge waits for any create already past that check. They run
     // whether or not the store still held the workspace, so deleting an id
-    // again retries a purge that failed; `delete_workspace` is idempotent.
-    return { deleted, connectors, ...(await this.purgeWorkspaceConversations(wsId)) };
+    // again retries a purge that failed; each `delete_workspace` is idempotent.
+    const conversations = await this.purgeWorkspaceConversations(wsId);
+    const tasks = await this.purgeWorkspaceTasks(wsId);
+    const purgeError = conversations.purgeError ?? tasks.purgeError;
+    return {
+      deleted,
+      connectors,
+      conversationsPurged: conversations.conversationsPurged,
+      tasksPurged: tasks.tasksPurged,
+      ...(purgeError ? { purgeError } : {}),
+    };
+  }
+
+  /**
+   * Purge a workspace's tasks, runs and batches through the bound tasks plugin
+   * (the contract's `delete_workspace`, walled to the workspace), which holds
+   * them apart from the workspace's directory. With nothing bound there are
+   * none. A failure is reported rather than thrown.
+   */
+  private async purgeWorkspaceTasks(
+    wsId: string,
+  ): Promise<{ tasksPurged: number; purgeError?: string }> {
+    if (!this._tasks) return { tasksPurged: 0 };
+    try {
+      const answer = await this._tasks.call(
+        "delete_workspace",
+        { version: this._tasks.hostVersion },
+        { workspaceId: wsId },
+      );
+      const removed = answer.removed as { tasks?: unknown } | undefined;
+      return { tasksPurged: typeof removed?.tasks === "number" ? removed.tasks : 0 };
+    } catch (err) {
+      return { tasksPurged: 0, purgeError: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   /** {@link deleteWorkspaceConversations}, with a failure reported rather than thrown. */
@@ -5413,85 +5668,78 @@ export class Runtime {
   }
 
   /**
-   * Register the tasks domain context getter. Called by the
-   * tasks platform source during construction. Internal callers
-   * (CLI, lifecycle) read it back via `getTasksContext()` to bypass
-   * the LLM-facing tool surface and call the domain API directly.
+   * Offer one routed notification to the task a route names: the tasks
+   * contract's private `offer_event`, as `host`, walled to the workspace and the
+   * route's author (the task's owner). The event carries its presentation only,
+   * never the connector's data. Any notices the answer carries are delivered.
+   * With no tasks plugin bound the route is answered `tasks_unavailable`.
    */
-  registerTasksContext(getter: () => TaskDomainContext): void {
-    this._tasksContextGetter = getter;
-  }
-
-  /**
-   * Get a workspace-scoped tasks domain context. Throws if the
-   * tasks source isn't registered (e.g. minimal test runtimes).
-   * Each call returns a fresh context bound to the current request's
-   * workspace — workspace switching between calls is safe.
-   */
-  getTasksContext(): TaskDomainContext {
-    if (!this._tasksContextGetter) {
-      throw new Error("Tasks source not registered — runtime started without platform sources?");
-    }
-    return this._tasksContextGetter();
-  }
-
-  /**
-   * Register the tasks event trigger. Called by the tasks platform
-   * source during construction; the notifications source reads it back through
-   * {@link wakeTaskOnNotification}.
-   *
-   * A registration rather than a direct import for the reason
-   * {@link registerTasksContext} is one: the two sources are built
-   * independently and neither may depend on the other's construction order. A
-   * runtime without tasks simply has no trigger, and a route naming one
-   * gets a ledger row saying so.
-   */
-  registerTaskEventTrigger(trigger: TaskEventTrigger): void {
-    this._taskEventTrigger = trigger;
-  }
-
-  /**
-   * Register the tasks scheduler as the thing {@link deleteWorkspace}
-   * quiesces. Called by the tasks platform source during construction,
-   * for the same reason the two registrations above are: the runtime may not
-   * import the app that owns the scheduler.
-   */
-  registerTaskQuiescer(quiescer: TaskQuiescer): void {
-    this._taskQuiescer = quiescer;
-  }
-
-  /**
-   * Register a kernel identity source's task surface, so the `/mcp` identity
-   * door can run its tools as tasks and answer lookups for them. Called by the
-   * source during construction, like the registrations above.
-   */
-  registerIdentityTaskSource(source: IdentityTaskSource): void {
-    this._identityTaskSources.set(source.name, source);
-  }
-
-  /** The task surface of the identity source by that name, or null when it has none. */
-  getIdentityTaskSource(name: string): IdentityTaskSource | null {
-    if (!isIdentitySource(name)) return null;
-    return this._identityTaskSources.get(name) ?? null;
-  }
-
-  /**
-   * Hand one routed notification to a task.
-   *
-   * The only path from a delivery to an agent run, and it starts at a route a
-   * workspace admin wrote — this function does not decide that a path exists,
-   * it carries an item down one that already does.
-   */
-  wakeTaskOnNotification(req: EventWakeRequest): EventWakeAck {
-    if (!this._taskEventTrigger) {
+  async offerTaskEvent(req: TaskEventOffer): Promise<TaskEventAnswer> {
+    if (!this._tasks) {
       return {
         accepted: false,
         outcome: "denied",
         classification: "tasks_unavailable",
-        reason: "this runtime has no tasks source, so nothing can be woken",
+        reason: "this runtime runs no tasks plugin, so no task can take the notification",
       };
     }
-    return this._taskEventTrigger.offer(req);
+    const { item } = req;
+    const presentation = notificationPresentation(item.envelope);
+    const answer = await this._tasks.call(
+      "offer_event",
+      {
+        version: this._tasks.hostVersion,
+        taskId: req.taskId,
+        event: {
+          id: item.envelope.eventId,
+          source: item.source,
+          name: item.envelope.name,
+          level: notificationEffectiveLevel(item),
+          title: presentation.title,
+          ...(presentation.subject ? { subject: presentation.subject } : {}),
+          ...(presentation.body ? { body: presentation.body } : {}),
+          receivedAt: item.receivedAt,
+        },
+        now: new Date().toISOString(),
+      },
+      { workspaceId: req.wsId, ownerId: req.ownerId },
+    );
+    const notices = Array.isArray(answer.notices) ? (answer.notices as RunNotice[]) : [];
+    if (notices.length > 0) this.deliverContractNotices(TASKS_CONTRACT, req.wsId, notices);
+    if (answer.accepted === true) return { accepted: true };
+    return {
+      accepted: false,
+      outcome: answer.outcome === "skipped" ? "skipped" : "denied",
+      classification: typeof answer.classification === "string" ? answer.classification : "refused",
+      reason:
+        typeof answer.reason === "string" ? answer.reason : "the task refused the notification",
+    };
+  }
+
+  /**
+   * An owner's saved tasks in a workspace, from the bound tasks server's public
+   * `list` (as `host`, walled to the workspace and the owner), every page. Empty
+   * with no tasks plugin bound. `eventScheduled` reads the list's optional
+   * `scheduleType`, which an implementation may leave out.
+   */
+  async listOwnTasks(
+    wsId: string,
+    ownerId: string,
+  ): Promise<Array<{ id: string; name: string; eventScheduled: boolean }>> {
+    if (!this._tasks) return [];
+    const out: Array<{ id: string; name: string; eventScheduled: boolean }> = [];
+    let cursor: string | null = null;
+    do {
+      const page = await this._tasks.call(
+        "list",
+        { limit: 100, ...(cursor ? { cursor } : {}) },
+        { workspaceId: wsId, ownerId },
+      );
+      const rows: unknown[] = Array.isArray(page.tasks) ? page.tasks : [];
+      for (const task of rows.map(ownTaskOf)) if (task) out.push(task);
+      cursor = typeof page.nextCursor === "string" ? page.nextCursor : null;
+    } while (cursor);
+    return out;
   }
 
   /** Get the loaded InstanceConfig (null when no instance.json exists). */
@@ -6319,24 +6567,21 @@ export class Runtime {
     return resolvePollConfig(this.config.notifications?.poll);
   }
 
-  /**
-   * The tasks block, resolved with its defaults and clamps. Read once,
-   * when the tasks source builds its scheduler and executor.
-   */
-  getTasksConfig(): ResolvedTasksConfig {
-    return resolveTasksConfig(this.config.tasks);
+  /** The `runs` block, resolved with its defaults and clamps. */
+  getRunsConfig(): ResolvedRunsConfig {
+    return resolveRunsConfig(this.config.runs);
   }
 
   /**
    * The pool every unattended run is admitted through (`executeTask`). Sized by
-   * `tasks.maxConcurrentRuns` / `maxQueuedRuns`. Exposed so a source that
-   * must answer at request time whether its run started or queued can hold a
-   * slot itself and hand it to `executeTask` (`TaskRequest.admission`).
-   * Created on first use, so a prototype-built test double gets one too.
+   * `runs.maxConcurrentRuns` / `maxQueuedRuns`. Exposed so a caller that takes
+   * a slot before the run starts (the run worker, with each claim) can hold it
+   * and hand it to `executeTask` (`TaskRequest.admission`). Created on first
+   * use, so a prototype-built test double gets one too.
    */
   getRunAdmission(): RunAdmission {
     if (!this._runAdmission) {
-      const { maxConcurrentRuns, maxQueuedRuns } = resolveTasksConfig(this.config?.tasks);
+      const { maxConcurrentRuns, maxQueuedRuns } = resolveRunsConfig(this.config?.runs);
       this._runAdmission = createRunAdmission({ maxConcurrentRuns, maxQueuedRuns });
     }
     return this._runAdmission;
@@ -6353,8 +6598,8 @@ export class Runtime {
   }
 
   /**
-   * The work queue (ADR-0076): triggers enqueue runs here, and the tasks
-   * scheduler's worker claims and executes them through the door. Opened at
+   * The work queue (ADR-0076): the run worker enqueues the tasks contract's
+   * due occurrences here, claims them, and executes them through the door. Opened at
    * boot (`openWorkQueue`) and closed at shutdown, after the sources that use
    * it have stopped. Created on first use, so a prototype-built test double
    * gets one too.
@@ -6513,6 +6758,9 @@ export class Runtime {
     // The conversations plugin receives a turn's writes after the engine emits
     // them; settle them before its server stops.
     await this._conversations?.flush();
+    // Stop unattended runs and let them report their end (error `internal`,
+    // transient: a shutdown is not a cancel) while the tasks server still runs.
+    await this._runWorker?.stop();
     // Stop all sources across all workspace registries. A shared source (the
     // system source, the platform apps) is not stopped by a registry; the
     // runtime created them, so it stops them here, each once.
@@ -6522,10 +6770,8 @@ export class Runtime {
       }
     }
     // Every platform source (each bound plugin server among them) and the system
-    // source, workspace-scoped and identity alike, stopped once each. Identity sources (tasks, files, conversations) sit
-    // in no workspace registry at all, and the tasks source's stop is what ends its
-    // scheduler, whose timer otherwise outlives the runtime and keeps the process
-    // alive.
+    // source, workspace-scoped and identity alike, stopped once each. Identity
+    // sources (tasks, files, conversations) sit in no workspace registry at all.
     for (const source of [...this._platformSources, this._systemSource]) {
       await source?.stop();
     }
@@ -6787,12 +7033,15 @@ function buildRuntimeEventSink(
   return new MultiEventSink([buildEventSink(config), new MetricsEventSink(), telemetry]);
 }
 
-function buildSkills(config: RuntimeConfig): {
+function buildSkills(
+  config: RuntimeConfig,
+  pluginSkillRoots: readonly string[],
+): {
   contextSkills: Skill[];
   skillMatcher: SkillMatcher;
 } {
   const all = loadAllSkills(config.skillDirs, globalSkillDir(config));
-  const core = loadCoreSkills();
+  const core = [...loadCoreSkills(), ...loadSystemPluginSkills(pluginSkillRoots)];
   const combined = [...core, ...all];
   const { context, skills } = partitionSkills(combined);
   const matcher = new SkillMatcher();
@@ -6941,10 +7190,10 @@ function buildRunContext(
     // conversation of a one-shot run correctly gets nothing.
     ...(spec.conversation ? { conversationId: spec.conversation.conversation.id } : { runId }),
     credentialSubject: runId,
-    // Unattended runs bar the task-authoring surface at tool-dispatch
-    // depth. Rides the ALS context and is preserved across the per-call
-    // restamp, so the wall is enforced at the tasks source rather than
-    // per-router-construction. See `createTasksSource`.
+    // Unattended runs bar every tool a contract marks `unattended: "refused"`
+    // at tool-dispatch depth. Rides the ALS context and is preserved across
+    // the per-call restamp, so the bound source refuses them (and stamps
+    // `unattended: true` on each call it sends) whatever router dispatched it.
     ...(attended ? {} : { unattended: true }),
     runTrigger: spec.trigger,
   };

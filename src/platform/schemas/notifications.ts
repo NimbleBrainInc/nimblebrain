@@ -185,7 +185,7 @@ export const DeliveryRecord = Type.Object({
   outcome: StringEnum(DELIVERY_OUTCOMES),
   /**
    * Why, for a non-`delivered` outcome — the dispatch's own classification
-   * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+   * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_offer` for a
    * deferred agent target. Opaque to the browser, which renders it as text.
    */
   classification: Type.Optional(Type.String()),
@@ -193,13 +193,6 @@ export const DeliveryRecord = Type.Object({
   updatedAt: Type.String(),
   /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
   nextAttemptAt: Type.Optional(Type.String()),
-  /**
-   * The task run this notification's batch started. Agent targets only,
-   * and present only once a run actually started — which is exactly the
-   * question an operator asks of a route that wakes a task, and the
-   * answer `tasks__run_result` is addressed with.
-   */
-  runId: Type.Optional(Type.String()),
 });
 export type DeliveryRecord = Static<typeof DeliveryRecord>;
 

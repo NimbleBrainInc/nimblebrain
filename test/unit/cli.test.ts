@@ -52,13 +52,13 @@ describe("loadConfig", () => {
     expect(config.maxIterations).toBe(15);
   });
 
-  it("carries the tasks block through to the runtime config", () => {
-    const configPath = writeTestConfig("tasks.json", {
-      tasks: { maxConcurrentRuns: 4, maxQueuedRuns: 10, maxRunIterations: 12 },
+  it("carries the runs block through to the runtime config", () => {
+    const configPath = writeTestConfig("runs.json", {
+      runs: { maxConcurrentRuns: 4, maxQueuedRuns: 10, maxRunIterations: 12 },
     });
 
     const config = loadConfig({ config: configPath });
-    expect(config.tasks).toEqual({
+    expect(config.runs).toEqual({
       maxConcurrentRuns: 4,
       maxQueuedRuns: 10,
       maxRunIterations: 12,
@@ -98,7 +98,7 @@ describe("loadConfig", () => {
       notifications: { poll: { intervalMs: 30000 } },
       execution: { default: "native" },
       plugins: { tasks: false },
-      tasks: {},
+      runs: {},
       files: {},
       brand: { name: "ACME" },
     };

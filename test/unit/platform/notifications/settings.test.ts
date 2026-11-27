@@ -33,8 +33,6 @@ import {
   type NotificationsSendTestOutput,
   type NotificationsSettingsOutput,
 } from "../../../../src/platform/schemas/notifications.ts";
-import type { TaskDomainContext } from "../../../../src/platform/tasks/domain.ts";
-import type { Task } from "../../../../src/platform/tasks/types.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
@@ -55,19 +53,12 @@ const TOOL = "slack__send_message";
 class FakeRuntime {
   identity: { id: string } | null = { id: USER };
   workspaces = new Map<string, Workspace>();
-  tasks: Task[] = [
-    stub<Task>({
-      id: "auto_triage",
-      name: "Triage replies",
-      schedule: { type: "event", match: { source: "acme-outbound" } },
-    }),
+  /** The caller's tasks, as the bound tasks plugin lists them. */
+  tasks = [
+    { id: "auto_triage", name: "Triage replies", eventScheduled: true },
     // A clock task is a legal thing for a route to name and a useless
     // one, so the picker has to be able to say so.
-    stub<Task>({
-      id: "auto_digest",
-      name: "Weekly digest",
-      schedule: { type: "cron", expression: "0 9 * * 1" },
-    }),
+    { id: "auto_digest", name: "Weekly digest", eventScheduled: false },
   ];
 
   getCurrentIdentity() {
@@ -104,10 +95,8 @@ class FakeRuntime {
         [TOOL, "slack__list_channels"].map((name) => ({ name, description: "", inputSchema: {} })),
     });
   }
-  getTasksContext() {
-    return stub<TaskDomainContext>({
-      definitions: () => new Map(this.tasks.map((a) => [a.id, a])),
-    });
+  async listOwnTasks(_wsId: string, ownerId: string) {
+    return ownerId === USER ? [...this.tasks] : [];
   }
 
   // The source also builds the outbox poller at construction. With no lifecycle

@@ -4,8 +4,8 @@ import type { ExecutionConfig } from "../config/execution.ts";
 import type { FeatureFlags } from "../config/features.ts";
 import type { PluginsConfig } from "../config/plugins.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
+import type { RunsConfig } from "../config/runs.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
-import type { TasksConfig } from "../config/tasks.ts";
 import type { ConnectorsConfig } from "../connectors/providers/config.ts";
 import type { PluginRequestAnswer } from "../conversation/types.ts";
 import type { EventSink, ThinkingEffort, WrapUpLimit } from "../engine/types.ts";
@@ -255,10 +255,10 @@ export interface RuntimeConfig {
   };
 
   /**
-   * Tasks — how many runs the process holds in flight and waiting, and
-   * the ceilings on any one run. See `src/config/tasks.ts`.
+   * Unattended runs — how many the process holds in flight and waiting, and
+   * the ceilings on any one run. See `src/config/runs.ts`.
    */
-  tasks?: TasksConfig;
+  runs?: RunsConfig;
 
   /**
    * Which agent runtime executes a run, and the external runtimes the
@@ -354,8 +354,7 @@ export interface ChatRequest {
    * `tasks/cancel`; inline tool calls abort their RPC.
    *
    * Without this, callers racing `runtime.chat()` against an external
-   * deadline (e.g. the tasks executor's `Promise.race` against
-   * `maxRunDurationMs`) ORPHAN the in-flight LLM/tool work — the chat
+   * deadline (a `Promise.race` against `maxRunDurationMs`) ORPHAN the in-flight LLM/tool work — the chat
    * keeps running, finishes, writes the conversation to disk, but the
    * caller never sees the result. Production proof: a task's
    * runs completed in 6-7m while the 5m
@@ -452,8 +451,18 @@ export interface ChatResult {
  * intentionally absent here.
  */
 export interface TaskRequest {
-  /** The task description. Goes in as the user message. */
+  /**
+   * The run's instruction. The door builds the opening message from it and the
+   * fields below (`renderUnattendedPrompt`): `notes` and `input` contained as
+   * data ahead of it, the `outputSchema` instruction after it.
+   */
   prompt: string;
+  /** The run's JSON input: data, never instructions. The door contains it. */
+  input?: unknown;
+  /** Context for this run (the events that woke it, a retry's reason), contained like `input`. */
+  notes?: string[];
+  /** The JSON Schema the deliverable must match; the door renders the instruction. */
+  outputSchema?: Record<string, unknown>;
   /**
    * What woke the agent. `schedule` is a tasks cron tick, `manual` an
    * operator pressing Run now; the default `api` covers a caller driving the
@@ -494,7 +503,7 @@ export interface TaskRequest {
   maxRunInputTokens?: number;
   /**
    * The run's wall-clock limit, which the caller enforces with `signal` (the
-   * tasks executor's timeout). The door bounds the run's model credential by it
+   * run worker's timeout). The door bounds the run's model credential by it
    * (`RunBudget.maxRunDurationMs`). Absent = the installation's ceiling.
    */
   maxRunDurationMs?: number;
@@ -515,17 +524,10 @@ export interface TaskRequest {
    */
   skills?: string[];
   /**
-   * Arbitrary metadata. The tasks executor stamps `source` and
-   * `taskId` here so the run is correlated to its task in logs
-   * and audit. Pass-through; the runtime does not persist a conversation.
-   */
-  metadata?: Record<string, unknown>;
-  /**
    * Cancellation signal forwarded into the engine and threaded down to
-   * every tool call. Same morning-brief contract as `ChatRequest.signal`:
-   * without it, callers racing the task against an external deadline
-   * (notably the tasks executor's `Promise.race` against
-   * `maxRunDurationMs`) orphan in-flight LLM/tool work.
+   * every tool call. Same contract as `ChatRequest.signal`: the run worker
+   * fires it to cancel, to end a run at its `maxRunDurationMs`, and at
+   * shutdown.
    *
    * A run still waiting for a run slot leaves the queue when it fires, and
    * the call rejects with an `AbortError`.
@@ -561,7 +563,7 @@ export interface TaskRequest {
  *    prompt; connector-affined skills still surface via Layer 3.
  *  - `output` rather than `response`, to reflect the deliverable contract.
  *  - `runId` is a traceability anchor — the id of the run, under which the
- *    caller (the tasks app) persists the run result (output +
+ *    caller (the run worker) reports the run's result (output +
  *    activity log + output-file refs). No conversation is created.
  *
  * Always returned on completion — including timeout, max_iterations,
@@ -623,4 +625,9 @@ export interface TaskResult {
     loadedBy: "declared" | "before_call" | "tool_use" | "activation";
     status?: "fetch_failed" | "capped" | "renamed_unheld";
   }>;
+  /**
+   * The files the run wrote, as the workspace's file store recorded them (each
+   * entry the run's own `runId` stamped), as `files://` URIs.
+   */
+  filesWritten: Array<{ uri: string; name: string }>;
 }

@@ -13,7 +13,7 @@
  * unit test's arrangement, a level clamped in one place and matched in another.
  */
 
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,19 +22,17 @@ import type { EngineEvent, EventSink, ToolResult } from "../../../src/engine/typ
 import { IdentityContext } from "../../../src/identity/context.ts";
 import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
 import { NotificationPoller, type PollTarget } from "../../../src/notifications/poller.ts";
-import { RouteDispatcher } from "../../../src/notifications/routes.ts";
+import {
+  RouteDispatcher,
+  type TaskEventAnswer,
+  type TaskEventOffer,
+} from "../../../src/notifications/routes.ts";
 import { NotificationStore } from "../../../src/notifications/store.ts";
 import type { Notification } from "../../../src/notifications/types.ts";
 import {
   dispatchUnattended,
   type UnattendedDispatchRuntime,
 } from "../../../src/orchestrator/unattended-dispatch.ts";
-import {
-  TaskEventTrigger,
-  type TaskEventTriggerDeps,
-} from "../../../src/platform/tasks/event-trigger.ts";
-import type { RunInput } from "../../../src/platform/tasks/scheduler.ts";
-import type { ScheduleSpec, Task } from "../../../src/platform/tasks/types.ts";
 import type { ToolRegistry } from "../../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
@@ -131,6 +129,7 @@ function dispatchRuntime(): UnattendedDispatchRuntime {
       return members.includes(principalId);
     },
     getEventSink: () => sink,
+    isUnattendedRefused: () => false,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
     getRegistryForWorkspace: () =>
       stub<ToolRegistry>({
@@ -173,7 +172,7 @@ let inFlight: Array<Promise<void>>;
 /** The whole loop, wired the way `createNotificationsSource` wires it. */
 function loop(
   target: PollTarget,
-  trigger?: TaskEventTrigger,
+  offerToTask?: (offer: TaskEventOffer) => Promise<TaskEventAnswer>,
 ): { poller: NotificationPoller; routes: RouteDispatcher } {
   const runtime = dispatchRuntime();
   const routes = new RouteDispatcher({
@@ -181,7 +180,14 @@ function loop(
     storeFor,
     workspaceIds: async () => (await workspaceStore.list()).map((ws) => ws.id),
     dispatch: (opts) => dispatchUnattended(runtime, opts),
-    ...(trigger ? { wakeTask: (req) => trigger.offer(req) } : {}),
+    offerToTask:
+      offerToTask ??
+      (async () => ({
+        accepted: false,
+        outcome: "denied",
+        classification: "tasks_unavailable",
+        reason: "no tasks plugin",
+      })),
     eventSink: { emit: (event) => events.push(event) },
     now: () => clock,
   });
@@ -418,78 +424,33 @@ describe("a connector's fact reaching a Slack channel", () => {
 
 describe("a connector's fact reaching a task", () => {
   const TASK = "reply-triage";
-  /**
-   * The batch window. The test closes it (`closeWindow`); the clock never does.
-   * No other timer here is armed for this long, so the spy holds only windows.
-   */
-  const DEBOUNCE = 60_001;
 
-  /**
-   * The timers the trigger armed for its batch windows, held until the test
-   * closes them. Every other timer runs for real. Holding the window is what
-   * lets a test look inside it however long a sweep takes.
-   */
-  let openWindows: Array<() => void>;
+  /** Every offer the dispatcher made, in order. */
+  let offers: TaskEventOffer[];
 
-  beforeEach(() => {
-    openWindows = [];
-    const realSetTimeout = globalThis.setTimeout;
-    const held = spyOn(globalThis, "setTimeout").mockImplementation(((
-      handler: () => void,
-      ms?: number,
-    ) => {
-      if (ms !== DEBOUNCE) return realSetTimeout(handler, ms);
-      openWindows.push(handler);
-      // A real handle, so the trigger's `clearTimeout` has something to clear.
-      return realSetTimeout(() => {}, 0);
-    }) as typeof setTimeout);
-    teardown.push(() => held.mockRestore());
-  });
-
-  /** Every run the trigger started, and the input it carried. */
-  let runs: RunInput[];
-
-  function task(schedule: Partial<ScheduleSpec> = {}): Task {
-    return {
-      id: TASK,
-      name: "Reply triage",
-      prompt: "Triage.",
-      schedule: {
-        type: "event",
-        match: { source: OUTBOX_SOURCE, name: "domain.*" },
-        debounceMs: DEBOUNCE,
-        ...schedule,
-      } as ScheduleSpec,
-      enabled: true,
-      ownerId: AUTHOR,
-      workspaceId: wsId,
-      source: "user",
-      createdAt: "2026-09-01T00:00:00.000Z",
-      updatedAt: "2026-09-01T00:00:00.000Z",
-      runCount: 0,
-      consecutiveErrors: 0,
-      cumulativeInputTokens: 0,
-      cumulativeOutputTokens: 0,
+  /** The tasks side: accepts offers for its own event task, refuses the rest as the plugin would. */
+  function tasksSide(eventScheduled = true): (offer: TaskEventOffer) => Promise<TaskEventAnswer> {
+    offers = [];
+    return async (offer) => {
+      offers.push(offer);
+      if (offer.ownerId !== AUTHOR || offer.taskId !== TASK) {
+        return {
+          accepted: false,
+          outcome: "denied",
+          classification: "task_not_found",
+          reason: "no such task",
+        };
+      }
+      if (!eventScheduled) {
+        return {
+          accepted: false,
+          outcome: "denied",
+          classification: "not_event_scheduled",
+          reason: "the task does not run on events",
+        };
+      }
+      return { accepted: true };
     };
-  }
-
-  /** The real trigger, with only the store and the scheduler stubbed out. */
-  function trigger(over: Partial<TaskEventTriggerDeps> = {}): TaskEventTrigger {
-    runs = [];
-    const made = new TaskEventTrigger({
-      // Scoped by owner: the route's author is who the dispatcher passes, and a
-      // mismatch is what makes another user's task unreachable.
-      task: (_ws, owner) => (owner === AUTHOR ? task() : undefined),
-      eventRunsSince: () => 0,
-      run: async (_ws, _owner, _id, input) => {
-        runs.push(input);
-        return { run: { id: "run_e2e01", status: "success" } };
-      },
-      disable: () => {},
-      ...over,
-    });
-    teardown.push(() => made.stop());
-    return made;
   }
 
   async function configureAgentRoute(): Promise<void> {
@@ -508,45 +469,27 @@ describe("a connector's fact reaching a task", () => {
     });
   }
 
-  /**
-   * Close every open batch window and let the runs they start settle. The
-   * stubbed run resolves at once and a settlement writes the ledger
-   * synchronously, so one turn of the event loop is enough.
-   */
-  async function closeWindow(): Promise<void> {
-    for (const fire of openWindows.splice(0)) fire();
-    await new Promise((resolve) => setImmediate(resolve));
-  }
+  /** Let every offer's answer land. */
+  const answered = () => new Promise((resolve) => setImmediate(resolve));
 
-  test("goes outbox → inbox → route → batch → run, and the ledger names the run", async () => {
+  test("goes outbox → inbox → route → offer, and the task holding it is delivered", async () => {
     await configureAgentRoute();
     const fixture = await outbox();
-    const { poller } = loop(targetFor(fixture), trigger());
+    const { poller } = loop(targetFor(fixture), tasksSide());
 
     await sweepAndSettle(poller);
     fixture.emit(fixtureEvent("evt_domain_active"));
     clock += PAST_ANY_BACKOFF_MS;
     await sweepAndSettle(poller);
+    await answered();
 
-    // Inside the window: the item is durable and the row is honest about
-    // waiting, and nothing has run.
     expect(inbox().map((item) => item.envelope.eventId)).toEqual(["evt_domain_active"]);
-    expect(inbox()[0]?.deliveries?.[0]).toMatchObject({
-      kind: "agent",
-      outcome: "deferred",
-      classification: "awaiting_batch",
-    });
-    expect(runs).toHaveLength(0);
-
-    await closeWindow();
-
-    expect(runs).toHaveLength(1);
-    expect(runs[0]?.preamble).toContain("<event>");
-    expect(runs[0]?.preamble).toContain("evt_domain_active.example");
+    expect(offers).toHaveLength(1);
+    expect(offers[0]).toMatchObject({ wsId, taskId: TASK, ownerId: AUTHOR });
+    expect(offers[0]?.item.envelope.eventId).toBe("evt_domain_active");
     expect(inbox()[0]?.deliveries?.[0]).toMatchObject({
       kind: "agent",
       outcome: "delivered",
-      runId: "run_e2e01",
       attempts: 1,
     });
     expect(
@@ -554,53 +497,44 @@ describe("a connector's fact reaching a task", () => {
     ).toHaveLength(1);
   });
 
-  test("two facts arriving in one window are one run", async () => {
+  test("each fact is offered: coalescing a burst into one run is the task's", async () => {
     await configureAgentRoute();
     const fixture = await outbox();
-    const { poller } = loop(targetFor(fixture), trigger());
+    const { poller } = loop(targetFor(fixture), tasksSide());
 
     await sweepAndSettle(poller);
     fixture.emit(fixtureEvent("evt_first"));
     fixture.emit(fixtureEvent("evt_second"));
     clock += PAST_ANY_BACKOFF_MS;
     await sweepAndSettle(poller);
-    await closeWindow();
+    await answered();
 
-    expect(runs).toHaveLength(1);
-    expect(runs[0]?.preamble).toContain("2 notifications matched");
+    expect(offers.map((o) => o.item.envelope.eventId).sort()).toEqual(["evt_first", "evt_second"]);
     for (const item of inbox()) {
-      expect(item.deliveries?.[0]).toMatchObject({ outcome: "delivered", runId: "run_e2e01" });
+      expect(item.deliveries?.[0]).toMatchObject({ outcome: "delivered" });
     }
   });
 
-  test("a route naming a clock task is refused, and the ledger says why", async () => {
+  test("a route naming a task that does not run on events is refused, and the ledger says why", async () => {
     await configureAgentRoute();
     const fixture = await outbox();
-    const { poller } = loop(
-      targetFor(fixture),
-      trigger({
-        task: () => ({
-          ...task(),
-          schedule: { type: "cron", expression: "0 9 * * *" },
-        }),
-      }),
-    );
+    const { poller } = loop(targetFor(fixture), tasksSide(false));
 
     await sweepAndSettle(poller);
     fixture.emit(fixtureEvent("evt_domain_active"));
     clock += PAST_ANY_BACKOFF_MS;
     await sweepAndSettle(poller);
+    await answered();
 
-    expect(runs).toHaveLength(0);
     expect(inbox()[0]?.deliveries?.[0]).toMatchObject({
       outcome: "denied",
       classification: "not_event_scheduled",
     });
   });
 
-  test("the source ceiling holds the wake back exactly as it holds a tool back", async () => {
+  test("the source ceiling holds the offer back exactly as it holds a tool back", async () => {
     // No `sources` entry, so the connector sits at the `info` default while the
-    // fixture emits `attention` and the task's own match asks for it.
+    // fixture emits `attention` and the route asks for it.
     await workspaceStore.update(wsId, {
       notifications: {
         routes: [
@@ -615,14 +549,14 @@ describe("a connector's fact reaching a task", () => {
     });
 
     const fixture = await outbox();
-    const { poller } = loop(targetFor(fixture), trigger());
+    const { poller } = loop(targetFor(fixture), tasksSide());
     await sweepAndSettle(poller);
     fixture.emit(fixtureEvent("evt_domain_active"));
     clock += PAST_ANY_BACKOFF_MS;
     await sweepAndSettle(poller);
-    await closeWindow();
+    await answered();
 
-    expect(runs).toHaveLength(0);
+    expect(offers).toHaveLength(0);
     expect(inbox()[0]?.deliveries ?? []).toEqual([]);
   });
 });

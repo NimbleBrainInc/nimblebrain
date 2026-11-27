@@ -6,6 +6,7 @@ import {
   loadBuiltinSkills,
   loadCoreSkills,
   loadSkillDir,
+  loadSystemPluginSkills,
   parseSkillContent,
   partitionSkills,
 } from "../../src/skills/loader.ts";
@@ -341,6 +342,19 @@ describe("loadBuiltinSkills", () => {
   });
 });
 
+describe("loadSystemPluginSkills", () => {
+  it("loads a system plugin's skills/<name>/SKILL.md, vendored", () => {
+    const skills = loadSystemPluginSkills([join(import.meta.dir, "../../packages/tasks")]);
+    const authoring = skills.find((s) => s.manifest.name === "task-authoring");
+    expect(authoring?.manifest.provenance?.origin).toBe("vendored");
+    expect(authoring?.manifest.toolAffinity).toContain("tasks__*");
+  });
+
+  it("reads nothing from a root with no skills directory", () => {
+    expect(loadSystemPluginSkills([join(tmpdir(), "no-such-plugin")])).toEqual([]);
+  });
+});
+
 describe("loadCoreSkills", () => {
   it("loads core skills including soul", () => {
     const spy = spyOn(console, "error").mockImplementation(() => {});
@@ -348,7 +362,7 @@ describe("loadCoreSkills", () => {
       const skills = loadCoreSkills();
       const names = skills.map((s) => s.manifest.name).sort();
 
-      expect(names).toEqual(["capabilities", "customer-communication", "soul", "task-authoring"]);
+      expect(names).toEqual(["capabilities", "customer-communication", "soul"]);
     } finally {
       spy.mockRestore();
     }

@@ -349,7 +349,7 @@ describe("Runtime.executeTask — admission at the door", () => {
     const gates: Array<PromiseWithResolvers<void>> = [];
     const specs: RunSpec[] = [];
     // biome-ignore-start lint/complexity/useLiteralKeys: config and resolveRequestModelString are private; bracket access is TypeScript's typed path to them
-    rt["config"] = stub<RuntimeConfig>({ tasks: { maxConcurrentRuns } });
+    rt["config"] = stub<RuntimeConfig>({ runs: { maxConcurrentRuns } });
     rt["resolveRequestModelString"] = () => "test:model";
     // biome-ignore-end lint/complexity/useLiteralKeys: config and resolveRequestModelString are private; bracket access is TypeScript's typed path to them
     rt.startRun = async (spec) => {

@@ -28,8 +28,7 @@ export type ContainmentTag =
   | "activated-skill"
   | "skill-instructions"
   | "run-input"
-  | "judge-feedback"
-  | "event"
+  | "run-note"
   | "host-instructions"
   | "conversation-history";
 
