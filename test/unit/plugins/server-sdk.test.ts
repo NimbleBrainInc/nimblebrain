@@ -45,6 +45,9 @@ const FIXTURES: unknown[] = [
   { principal: "person", grant: "g".repeat(4097) },
   { principal: "person", grant: 7 },
   { principal: "person", unattended: "true" },
+  { principal: "host", workspaceId: "ws_1", ownerId: "u", runId: "run_1" },
+  { principal: "person", runId: "" },
+  { principal: "person", runId: 7 },
   null,
   "host",
   ["host"],
@@ -78,6 +81,9 @@ describe("the host context", () => {
     expect(
       readHostContext(meta({ principal: "person", grant: "opaque.grant", unattended: true })),
     ).toEqual({ principal: "person", grant: "opaque.grant", unattended: true });
+    expect(
+      readHostContext(meta({ principal: "host", workspaceId: "ws_1", runId: "run_1" })),
+    ).toEqual({ principal: "host", workspaceId: "ws_1", runId: "run_1" });
     expect(readHostContext({})).toBeUndefined();
     expect(readHostContext({ "ai.nimblebrain/scope": { principal: "host" } })).toBeUndefined();
   });
