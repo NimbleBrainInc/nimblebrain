@@ -391,7 +391,7 @@ import {
   TASKS_CONTRACT,
 } from "./run-worker.ts";
 import { buildSkillsLoadedPayload, collectLoadedSkills } from "./skills-loaded-payload.ts";
-import { createSpendBalances, type SpendBalances } from "./spend.ts";
+import { createSpendBalances, type SpendBalances, type SpendHold } from "./spend.ts";
 import { isStreamedRunEvent } from "./turn-stream.ts";
 import type {
   ChatRequest,
@@ -2778,7 +2778,13 @@ export class Runtime {
     spec: RunSpec,
     engineConfig: EngineConfig,
     agentRuntime: AgentRuntime,
-  ): { release: () => void; grant?: number; boundBy?: string; settle?: EventSink } {
+  ): {
+    release: () => void;
+    grant?: number;
+    boundBy?: string;
+    settle?: EventSink;
+    stopOf?: SpendHold["stopOf"];
+  } {
     const accounts = spec.budget.spendAccounts ?? [];
     const cap = spec.budget.maxRunInputTokens;
     if (!this.holdsByGrant(agentRuntime)) {
@@ -2788,7 +2794,7 @@ export class Runtime {
         rates: resolveRates(spec.model),
       });
       engineConfig.spend = hold;
-      return { release: () => hold.release() };
+      return { release: () => hold.release(), stopOf: hold.stopOf };
     }
     if (!accounts.length) {
       return cap === undefined ? { release: () => {} } : { release: () => {}, grant: cap };
@@ -2801,6 +2807,7 @@ export class Runtime {
     const cappedBelow = cap !== undefined && cap <= share.tokens;
     return {
       release: () => hold.release(),
+      stopOf: hold.stopOf,
       grant: cappedBelow ? cap : share.tokens,
       ...(!cappedBelow && share.accountId !== undefined ? { boundBy: share.accountId } : {}),
       settle: {
@@ -7509,34 +7516,53 @@ function attributeGrantStop(
     RunHandle,
     "stopReason" | "finishReason" | "finishReasonRaw" | "spendAccountId" | "wrapUpLimit"
   >,
-  spend: { grant?: number; boundBy?: string },
-): Pick<
-  RunHandle,
-  "stopReason" | "finishReason" | "finishReasonRaw" | "spendAccountId" | "wrapUpLimit"
-> {
+  spend: { grant?: number; boundBy?: string; stopOf?: SpendHold["stopOf"] },
+): Pick<RunHandle, "stopReason" | StopDetailField> {
   const detail = stopDetail(result);
   const byGrant =
     spend.grant !== undefined &&
     result.stopReason === "spend_limit" &&
     result.spendAccountId === MODEL_GATEWAY_BUDGET_ACCOUNT;
-  if (!byGrant) return { stopReason: result.stopReason, ...detail };
+  if (!byGrant) return { stopReason: result.stopReason, ...withSpendStop(detail, spend) };
   const { spendAccountId: _gateway, ...rest } = detail;
   return spend.boundBy !== undefined
-    ? { stopReason: "spend_limit", ...rest, spendAccountId: spend.boundBy }
+    ? {
+        stopReason: "spend_limit",
+        ...withSpendStop({ ...rest, spendAccountId: spend.boundBy }, spend),
+      }
     : { stopReason: "max_input_tokens", ...detail };
 }
+
+/** A spend stop by one of the run's own accounts, told as its hold decided it. */
+function withSpendStop(
+  detail: Pick<RunHandle, StopDetailField>,
+  spend: { stopOf?: SpendHold["stopOf"] },
+): Pick<RunHandle, StopDetailField> {
+  const id = detail.spendAccountId;
+  if (id === undefined || id === MODEL_GATEWAY_BUDGET_ACCOUNT || !spend.stopOf) return detail;
+  return { ...detail, spendStop: spend.stopOf(id) };
+}
+
+/** The fields that say why a run stopped, beyond its stop reason. */
+type StopDetailField =
+  | "finishReason"
+  | "finishReasonRaw"
+  | "spendAccountId"
+  | "spendStop"
+  | "wrapUpLimit";
 
 /**
  * Why a run stopped, beyond its stop reason: the fields an engine result, a run
  * handle, and a task result share, copied only when set.
  */
 function stopDetail(
-  r: Pick<RunHandle, "finishReason" | "finishReasonRaw" | "spendAccountId" | "wrapUpLimit">,
-): Pick<RunHandle, "finishReason" | "finishReasonRaw" | "spendAccountId" | "wrapUpLimit"> {
+  r: Partial<Pick<RunHandle, StopDetailField>>,
+): Pick<RunHandle, StopDetailField> {
   return {
     ...(r.finishReason !== undefined ? { finishReason: r.finishReason } : {}),
     ...(r.finishReasonRaw !== undefined ? { finishReasonRaw: r.finishReasonRaw } : {}),
     ...(r.spendAccountId !== undefined ? { spendAccountId: r.spendAccountId } : {}),
+    ...(r.spendStop !== undefined ? { spendStop: r.spendStop } : {}),
     ...(r.wrapUpLimit !== undefined ? { wrapUpLimit: r.wrapUpLimit } : {}),
   };
 }

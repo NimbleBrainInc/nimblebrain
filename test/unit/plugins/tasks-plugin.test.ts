@@ -475,6 +475,19 @@ describe("a batch's budget stops", () => {
     ]);
   });
 
+  test("a budget too small for one call pauses the batch once, asking for no run again", async () => {
+    const batchId = await startBatch(4, 2, 0.0001);
+    const [a, b] = await beginAll(T0);
+    // The door reads both exhausted: no reservation held what either needed.
+    const first = await end(a, spend(T0, `task-batch:${batchId}`, "exhausted", 0, 0));
+    await end(b, spend(T0, `task-batch:${batchId}`, "exhausted", 0, 0));
+    expect(first.notices[0].id).toMatch(/^batch-paused:/);
+    expect((await due(T0)).occurrences).toEqual([]);
+    const page = await ok("batch", { batchId, results: true });
+    expect([page.batch.state, page.batch.pause.reason]).toEqual(["paused", "budget"]);
+    expect(page.results.every((r: Answer) => (r.previousRunIds ?? []).length <= 1)).toBe(true);
+  });
+
   test("a reserved stop puts the item back and waits for another run of the batch to end", async () => {
     const batchId = await startBatch(3, 2, 1);
     const [a, b] = await beginAll(T0);

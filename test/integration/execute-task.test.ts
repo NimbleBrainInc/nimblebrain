@@ -239,6 +239,7 @@ describe("runtime.executeTask", () => {
 
     expect(result.stopReason).toBe("spend_limit");
     expect(result.spendAccountId).toBe("acct-tight");
+    expect(result.spendStop).toBe("exhausted");
     expect(result.usage.inputTokens).toBe(0);
     // The run ended, so nothing holds the accounts any more.
     expect(runtime.getSpendBalances().balance("acct-tight")).toBeUndefined();
@@ -303,7 +304,34 @@ describe("runtime.executeTask", () => {
       });
       expect(result.stopReason).toBe("spend_limit");
       expect(result.spendAccountId).toBe("acct-shared");
+      // Another run holds the account but reserves nothing: the balance itself is short.
+      expect(result.spendStop).toBe("exhausted");
       expect(runtime.getSpendBalances().balance("acct-shared")).toBe(1);
+    } finally {
+      inFlight.release();
+    }
+  });
+
+  it("a stop by another run's reservation reads reserved", async () => {
+    runtime = await bootRuntime(undefined);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+    const inFlight = runtime
+      .getSpendBalances()
+      .open([{ id: "acct-held", unit: "input_tokens", remaining: 100_000_000 }], {
+        model: "test",
+        rates: null,
+      });
+    try {
+      // The other run's call reserves all but one token of the balance.
+      inFlight.check({ inputTokens: 99_999_999, maxOutputTokens: 1, minOutputTokens: 1 });
+      const result = await runtime.executeTask({
+        workspaceId: defaultWsId,
+        prompt: "score the items",
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+        spendAccounts: [{ id: "acct-held", unit: "input_tokens", remaining: 100_000_000 }],
+      });
+      expect(result.stopReason).toBe("spend_limit");
+      expect(result.spendStop).toBe("reserved");
     } finally {
       inFlight.release();
     }

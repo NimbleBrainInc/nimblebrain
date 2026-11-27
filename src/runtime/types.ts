@@ -621,6 +621,8 @@ export interface TaskResult {
    * held the cap and refused the run's next call; absent when the engine did.
    */
   spendAccountId?: string;
+  /** See `RunHandle.spendStop`. */
+  spendStop?: "exhausted" | "reserved";
   /** See `EngineResult.wrapUpLimit`. */
   wrapUpLimit?: WrapUpLimit;
   usage: TurnUsage;
