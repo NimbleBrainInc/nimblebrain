@@ -1356,6 +1356,37 @@ async function readCases(c: FullCtx): Promise<void> {
     eq([link?.name, link?.mimeType, link?.size], ["r.txt", "text/plain", made.size], "link fields");
     assert(!r.content?.some((b) => b.type === "resource" || b.type === "image"), "a body block");
   });
+  await h.run("create and info answer a resource_link to the file, and no body block", async () => {
+    // A generic type with a known extension: the link carries the recorded type (§5 Types).
+    const r = await person.call("create", {
+      manifest: { filename: "linked.md", mimeType: "application/octet-stream" },
+      body: "# linked",
+      encoding: "text",
+    });
+    assert(!r.isError, firstText(r));
+    validateOutput("create", r.structuredContent);
+    const made = obj(r.structuredContent, "create");
+    const id = str(made.id, "id");
+    for (const [tool, got] of [
+      ["create", r],
+      ["info", await person.call("info", { id })],
+    ] as const) {
+      assert(!got.isError, firstText(got));
+      const links = got.content?.filter((b) => b.type === "resource_link") ?? [];
+      eq(links.length, 1, `${tool}: one resource_link`);
+      const link = links[0];
+      eq(link?.uri, `files://${id}`, `${tool}: resource_link uri`);
+      eq(
+        [link?.name, link?.mimeType, link?.size],
+        ["linked.md", "text/markdown", Buffer.byteLength("# linked")],
+        `${tool}: link fields`,
+      );
+      assert(
+        !got.content?.some((b) => b.type === "resource" || b.type === "image"),
+        `${tool}: a body block`,
+      );
+    }
+  });
   await h.run("read's maxBytes cuts at a character boundary and says truncated", async () => {
     const made = await createFile(person, { filename: "u.txt", mimeType: "text/plain" }, "aé✓b");
     for (const [maxBytes, want] of [

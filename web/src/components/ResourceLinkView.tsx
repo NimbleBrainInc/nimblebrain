@@ -48,12 +48,20 @@ interface FetchedResource {
   bytes: Uint8Array | null;
 }
 
-/** Fetch a resource and decode its blob payload (if any) to bytes; no object URL is created. */
+/**
+ * Fetch a resource and its bytes: a blob decoded, a text encoded as UTF-8, so every
+ * resource with a body can be downloaded. No object URL is created here.
+ */
 async function fetchResource(appName: string, uri: string): Promise<FetchedResource> {
   const result = await readResource(appName, uri);
   const first = result.contents[0];
   if (!first) throw new Error("No content returned");
-  const bytes = first.blob !== undefined ? base64ToBytes(first.blob) : null;
+  const bytes =
+    first.blob !== undefined
+      ? base64ToBytes(first.blob)
+      : first.text !== undefined
+        ? new TextEncoder().encode(first.text)
+        : null;
   return { content: first, bytes };
 }
 

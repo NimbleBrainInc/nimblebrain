@@ -333,6 +333,56 @@ describe("resources/read of files:// at the MCP door", () => {
   });
 });
 
+/** A `resources/read` of a file as the chat's resource-link view sends it. */
+async function readThroughHost(
+  uri: string,
+): Promise<{ mimeType?: string; text?: string; blob?: string }> {
+  const res = await rest(`/v1/workspaces/${WS}/resources/read`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ server: "files", uri }),
+  });
+  expect(res.status).toBe(200);
+  const body = await readJson<{
+    contents: Array<{ mimeType?: string; text?: string; blob?: string }>;
+  }>(res);
+  return body.contents[0] ?? {};
+}
+
+describe("files__info gives the person a file to download", () => {
+  const PDF = new TextEncoder().encode("%PDF-1.4\n%%EOF\n");
+  for (const [filename, mimeType, body] of [
+    ["red.png", "image/png", PNG],
+    ["paper.pdf", "application/pdf", PDF],
+    ["notes.txt", "text/plain", new TextEncoder().encode("plain words")],
+  ] as const) {
+    it(`answers a resource_link to ${mimeType}, whose bytes the host serves`, async () => {
+      const file = await seedPluginFile(runtime, WS, OWNER.id, { filename, mimeType, body });
+      const result = await callFiles("info", { id: file.id });
+      const links = result.content.filter((b) => b.type === "resource_link");
+      expect(links).toEqual([
+        {
+          type: "resource_link",
+          uri: `files://${file.id}`,
+          name: filename,
+          mimeType,
+          size: body.byteLength,
+        },
+      ]);
+      const read = await readThroughHost(`files://${file.id}`);
+      expect(read.mimeType).toBe(mimeType);
+      const bytes =
+        read.blob !== undefined
+          ? Buffer.from(read.blob, "base64")
+          : Buffer.from(read.text ?? "", "utf-8");
+      expect([...bytes]).toEqual([...body]);
+      const download = await rest(`/v1/workspaces/${WS}/files/${file.id}`);
+      expect(download.status).toBe(200);
+      expect([...new Uint8Array(await download.arrayBuffer())]).toEqual([...body]);
+    });
+  }
+});
+
 describe("files__create", () => {
   it("from chat stores the file as the agent's", async () => {
     await runtime.chat({ identity: OWNER, workspaceId: WS, message: "please write a file" });
@@ -342,6 +392,25 @@ describe("files__create", () => {
     expect(created.id).toBeString();
     const info = answer<{ source: string }>(await callFiles("info", { id: created.id }));
     expect(info.source).toBe("agent");
+  }, 30_000);
+
+  it("from chat names the file in a resource_link the chat reads through the host", async () => {
+    const chat = await runtime.chat({
+      identity: OWNER,
+      workspaceId: WS,
+      message: "please write a file",
+    });
+    const store = await runtime.resolveConversationStore(WS, chat.conversationId, OWNER.id);
+    const events = await store?.readEvents(chat.conversationId);
+    const done = events?.find(
+      (e) => e.type === "tool.done" && (e as { name?: string }).name === "files__create",
+    ) as { ok?: boolean; resourceLinks?: Array<{ uri: string; name?: string; mimeType?: string }> };
+    expect(done?.ok).toBe(true);
+    expect(done.resourceLinks).toEqual([
+      { uri: expect.stringMatching(/^files:\/\//), name: "report.md", mimeType: "text/markdown" },
+    ]);
+    const read = await readThroughHost(done.resourceLinks?.[0]?.uri ?? "");
+    expect(read.text).toBe("# the report");
   }, 30_000);
 
   it("from a task run is the run's file, which the run's result names", async () => {

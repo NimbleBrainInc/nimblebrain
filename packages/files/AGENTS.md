@@ -42,6 +42,11 @@ How to run it standalone is in `README.md`.
   folder or upload of another owner or workspace answers exactly as an absent one.
 - **Provenance comes from the context**: `create` and `begin_upload` record the context's
   `conversationId` and `runId`; no argument sets either.
+- **An answer about one file names it** (`create`, `info`, `read`): `content` carries a
+  `resource_link` to `files://<id>` with the filename, recorded type and size (`fileLink` in
+  `src/server.ts`), beside the readable text; `structuredContent` is the contract's payload
+  alone. The chat renders the link with a Download button, which is how the skill hands a
+  person a file.
 - **Errors are `{ code, error }`**; a public error's text is its prefix then the id or detail.
   An unexpected failure answers `internal_error` (private) or a JSON-RPC internal error
   (public) with a fixed message; its detail goes only to stderr.

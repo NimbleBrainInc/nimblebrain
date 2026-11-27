@@ -750,6 +750,18 @@ function CopyButton({ content }: { content: string }) {
 // Tool widgets (inline app views + resource-link cards)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** The call's resource links not yet shown in this group, each marked shown. */
+function firstLinks(
+  tc: ToolCallDisplay,
+  shown: Set<string>,
+): NonNullable<ToolCallDisplay["resourceLinks"]> {
+  return (tc.resourceLinks ?? []).filter((link) => {
+    if (shown.has(link.uri)) return false;
+    shown.add(link.uri);
+    return true;
+  });
+}
+
 function ToolWidgets({
   calls,
   isLatestMessage,
@@ -772,6 +784,8 @@ function ToolWidgets({
   );
   if (widgets.length === 0 && resourceLinkCalls.length === 0 && pluginRequests.length === 0)
     return null;
+  // One file named by several calls (`files__create`, then `files__info`) shows once.
+  const shownLinks = new Set<string>();
   return (
     <>
       {pluginRequests.map((r) => (
@@ -791,7 +805,7 @@ function ToolWidgets({
         />
       ))}
       {resourceLinkCalls.flatMap((tc) =>
-        tc.resourceLinks!.map((link) =>
+        firstLinks(tc, shownLinks).map((link) =>
           // `artifact://` is the host-resolved capability-output scheme: the
           // host reads it from the data plane as the viewing user (RLS) and the
           // bytes are UNTRUSTED. Route it through ArtifactView → the sanitizing

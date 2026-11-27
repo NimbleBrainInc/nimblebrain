@@ -44,7 +44,7 @@ import {
   sweepUploads,
 } from "./private.ts";
 import * as pub from "./public.ts";
-import { isPathSegment, type Store } from "./store.ts";
+import { type FileRow, isPathSegment, type Store } from "./store.ts";
 import type { Transfers } from "./transfer.ts";
 
 export const SERVER_NAME = "files";
@@ -94,14 +94,21 @@ type Handler = (env: PrivateEnv, caller: pub.Caller, args: Checked) => unknown;
 const PUBLIC: Record<string, Handler> = {
   list: pub.list,
   search: pub.search,
-  info: pub.info,
-  create: pub.create,
   tag: pub.tag,
   move: pub.move,
   delete: pub.remove,
   create_folder: pub.createFolderTool,
   update_folder: pub.updateFolderTool,
   delete_folder: pub.deleteFolderTool,
+};
+
+/** The public tools besides `read` whose answer is one file, so carries its `resource_link`. */
+const ONE_FILE: Record<
+  string,
+  (env: PrivateEnv, caller: pub.Caller, args: Checked) => pub.FileAnswer
+> = {
+  info: pub.info,
+  create: pub.create,
 };
 
 const PRIVATE: Record<string, Handler> = {
@@ -185,19 +192,26 @@ function jsonText(result: Record<string, unknown>): Content[] {
   return [{ type: "text", text: JSON.stringify(result, null, 2) }];
 }
 
+/** The `resource_link` a public answer about one file carries (CONTRACT.md §5). */
+function fileLink(row: FileRow): Content {
+  return {
+    type: "resource_link",
+    uri: `files://${row.id}`,
+    name: row.filename,
+    mimeType: row.mimeType,
+    size: row.size,
+  };
+}
+
 async function runPublic(env: PrivateEnv, tool: string, caller: pub.Caller, args: Args) {
   if (tool === "read") {
     const { output, row } = await pub.read(env, caller, args as Checked);
-    return success(output, [
-      {
-        type: "resource_link",
-        uri: `files://${row.id}`,
-        name: row.filename,
-        mimeType: row.mimeType,
-        size: row.size,
-      },
-      { type: "text", text: pub.readText(output) },
-    ]);
+    return success(output, [fileLink(row), { type: "text", text: pub.readText(output) }]);
+  }
+  const one = ONE_FILE[tool];
+  if (one) {
+    const { output, row } = one(env, caller, args);
+    return success(output, [fileLink(row), ...jsonText(output)]);
   }
   const handler = PUBLIC[tool];
   if (!handler) throw new Error(`no handler for "${tool}"`);

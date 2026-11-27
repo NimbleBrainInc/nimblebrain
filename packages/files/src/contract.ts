@@ -78,7 +78,9 @@ export const DESCRIPTIONS: Record<string, string> = {
   search:
     "Search your files by keyword: a case-insensitive substring of the filename, description " +
     "or tags. Newest first.",
-  info: "One file's record by id: name, type, size, tags, folder and where it came from. No content.",
+  info:
+    "One file's record by id: name, type, size, tags, folder and where it came from. No content. " +
+    "The person is shown the file with a Download button: call this to give them a file.",
   read:
     "Read a file's text by id: text, code, JSON, Markdown, CSV, HTML, XML, YAML, PDF, DOCX " +
     "and XLSX, up to `maxBytes`. Pass `pages` (at most 10) to read those pages of a PDF. An " +

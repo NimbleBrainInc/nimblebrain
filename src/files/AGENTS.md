@@ -69,7 +69,9 @@ code implements. The built-in implementation is `packages/files/` (`packages/fil
     file must never run script on the shell's origin.
   - `resources/read` of `files://` at the MCP door (scoped to a source or not), the REST read
     and so the bridge: the host answers it whichever source the read names; the plugin never
-    does. The door's `resources/list` adds the caller's files from `list`.
+    does. The door's `resources/list` adds the caller's files from `list`. The chat's
+    rendering of a tool's `resource_link` (`web/src/components/ResourceLinkView.tsx`, the
+    document panel) reads through the REST read and downloads the bytes it got.
   - A run's prompt (`rehydrate.ts`): one batched `resolve` per run; images and a PDF the model
     takes are streamed in; a PDF it does not take is read as text through `read`.
   - A connector's host-resources read and list (`src/host-resources/resolver.ts`): `list`
