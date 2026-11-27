@@ -114,7 +114,10 @@ describe("resolvePlugins", () => {
         version: "1.0",
         plugin: "conversations",
         server: "store",
+        hostVersion: "1.0",
         privateTools: ["create", "events", "append_events", "delete", "delete_workspace"],
+        unattendedRefused: ["create", "events", "append_events", "delete", "delete_workspace"],
+        grantTools: [],
       },
     ]);
   });
@@ -307,29 +310,40 @@ describe("checkConfiguredPlugins", () => {
       },
     }) as ContractRegistry;
     expect(
-      checkConfiguredPlugins({ conversations: false }, { workDir: "/w", contracts }),
-    ).toBeNull();
-    expect(
       checkConfiguredPlugins({ conversations: false, tasks: false }, { workDir: "/w", contracts }),
     ).toBeNull();
   });
 
-  test("with no plugins block it binds the built-in conversations plugin, as an explicit entry does", () => {
+  test("with no plugins block it binds the built-in conversations and tasks plugins, as explicit entries do", () => {
     const byDefault = checkConfiguredPlugins(undefined, { workDir: "/w" });
     const explicit = checkConfiguredPlugins(
-      { conversations: { source: "builtin", system: true } },
+      {
+        conversations: { source: "builtin", system: true },
+        tasks: { source: "builtin", system: true },
+      },
       { workDir: "/w" },
     );
     expect(byDefault).toEqual(explicit);
-    expect(byDefault?.plugins.map((p) => [p.name, p.system])).toEqual([["conversations", true]]);
-    expect(byDefault?.bindings.map((b) => b.contract)).toEqual(["ai.nimblebrain.conversations"]);
+    expect(byDefault?.plugins.map((p) => [p.name, p.system])).toEqual([
+      ["conversations", true],
+      ["tasks", true],
+    ]);
+    expect(byDefault?.bindings.map((b) => b.contract)).toEqual([
+      "ai.nimblebrain.conversations",
+      "ai.nimblebrain.tasks",
+    ]);
+  });
+
+  test("tasks: false leaves the conversations plugin alone", () => {
+    const resolved = checkConfiguredPlugins({ tasks: false }, { workDir: "/w" });
+    expect(resolved?.plugins.map((p) => p.name)).toEqual(["conversations"]);
   });
 
   test("an operator's entry of the default's name replaces it", () => {
     const base = tmp();
     writeConversations(base);
     const resolved = checkConfiguredPlugins(
-      { conversations: { source: "./conversations", system: true } },
+      { conversations: { source: "./conversations", system: true }, tasks: false },
       { workDir: "/w", configPath: join(base, "nimblebrain.json") },
     );
     expect(resolved?.plugins.map((p) => p.root)).toEqual([join(base, "conversations")]);
@@ -339,7 +353,7 @@ describe("checkConfiguredPlugins", () => {
     const base = tmp();
     writeConversations(base);
     const resolved = checkConfiguredPlugins(
-      { conversations: { source: "./conversations", system: true } },
+      { conversations: { source: "./conversations", system: true }, tasks: false },
       { workDir: "/w", configPath: join(base, "nimblebrain.json") },
     );
     if (!resolved) throw new Error("expected a resolved set");
@@ -350,7 +364,11 @@ describe("checkConfiguredPlugins", () => {
 
     expect(() =>
       checkConfiguredPlugins(
-        { conversations: { source: "./conversations" }, gone: { source: "./gone" } },
+        {
+          conversations: { source: "./conversations" },
+          tasks: false,
+          gone: { source: "./gone" },
+        },
         { workDir: "/w", configPath: join(base, "nimblebrain.json") },
       ),
     ).toThrow(/cannot run:\n {2}- conversations \(servers\.store\).*\n {2}- gone: /);

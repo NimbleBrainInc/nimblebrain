@@ -36,7 +36,10 @@ describe("the built-in conversations plugin", () => {
         version: "1.0",
         plugin: "conversations",
         server: "conversations",
+        hostVersion: "1.0",
         privateTools: ["create", "events", "append_events", "delete", "delete_workspace"],
+        unattendedRefused: ["create", "events", "append_events", "delete", "delete_workspace"],
+        grantTools: [],
       },
     ]);
   });

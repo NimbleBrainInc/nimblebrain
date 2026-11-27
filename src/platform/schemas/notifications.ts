@@ -185,7 +185,7 @@ export const DeliveryRecord = Type.Object({
   outcome: StringEnum(DELIVERY_OUTCOMES),
   /**
    * Why, for a non-`delivered` outcome — the dispatch's own classification
-   * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+   * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_offer` for a
    * deferred agent target. Opaque to the browser, which renders it as text.
    */
   classification: Type.Optional(Type.String()),

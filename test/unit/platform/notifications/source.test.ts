@@ -213,7 +213,6 @@ describe("list", () => {
         attempts: 1,
         outcome: "delivered",
         updatedAt: "2026-09-01T18:43:00Z",
-        runId: "run_1",
       },
     ]);
     store.markRead([ref], OWNER_ID);

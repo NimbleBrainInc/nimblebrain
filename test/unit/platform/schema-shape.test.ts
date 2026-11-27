@@ -31,20 +31,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
-import { resolveTasksConfig } from "../../../src/config/tasks.ts";
 import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
 import { createComposeSource } from "../../../src/platform/compose/source.ts";
 import { createFilesSource } from "../../../src/platform/files/source.ts";
 import { createHooksSource } from "../../../src/platform/hooks/source.ts";
 import { createNotificationsSource } from "../../../src/platform/notifications/source.ts";
 import { createSkillsSource } from "../../../src/platform/skills/source.ts";
-import { createTasksSource } from "../../../src/platform/tasks/source.ts";
 import { createUsageSource } from "../../../src/platform/usage/source.ts";
-import type { WorkQueue } from "../../../src/providers/queue/types.ts";
-import { createRunAdmission } from "../../../src/runtime/admission.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
-import { createSpendBalances } from "../../../src/runtime/spend.ts";
-import { openWorkQueue } from "../../../src/runtime/work-queue.ts";
 import { createCoreToolDefs } from "../../../src/tools/core-source.ts";
 import { defineInProcessApp } from "../../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
@@ -57,7 +51,6 @@ import type { McpSource } from "../../../src/tools/mcp-source.ts";
 // reach during construction.
 
 function makeRuntimeStub(workDir: string): unknown {
-  let workQueue: WorkQueue | undefined;
   return {
     getWorkDir: () => workDir,
     getCurrentIdentity: () => null,
@@ -71,26 +64,12 @@ function makeRuntimeStub(workDir: string): unknown {
     getContextSkills: () => [],
     getMatchableSkills: () => [],
     loadConversationSkills: () => [],
-    // Tasks source registers a domain-context getter at construction.
-    // Capture-and-discard for the lint test — we never invoke handlers.
-    registerTasksContext: () => {},
-    // Same shape for the event trigger, which the tasks source also
-    // hands to the runtime at construction.
-    registerTaskEventTrigger: () => {},
-    registerTaskQuiescer: () => {},
-    registerIdentityTaskSource: () => {},
     // The notifications source builds its poller at construction. It is
     // stopped with the source in `afterEach`, and with no instances to
     // enumerate its sweep has nothing to read.
     getLifecycle: () => ({ getInstances: () => [] }),
     getNotificationsDeclaration: async () => undefined,
     getNotificationsPollConfig: () => resolvePollConfig(),
-    getTasksConfig: () => resolveTasksConfig(),
-    getRunAdmission: () => createRunAdmission(),
-    // The tasks source hands it to its scheduler; one per stub, in its work dir.
-    getWorkQueue: () => (workQueue ??= openWorkQueue(workDir)),
-    getSpendBalances: () => createSpendBalances(),
-    getMaxIterations: () => 25,
   };
 }
 
@@ -99,7 +78,6 @@ function makeRuntimeStub(workDir: string): unknown {
 const SOURCES = [
   { name: "skills", factory: createSkillsSource },
   { name: "files", factory: createFilesSource },
-  { name: "tasks", factory: createTasksSource },
   { name: "notifications", factory: createNotificationsSource },
   { name: "usage", factory: createUsageSource },
   { name: "hooks", factory: createHooksSource },

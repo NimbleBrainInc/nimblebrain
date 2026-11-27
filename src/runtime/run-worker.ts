@@ -708,8 +708,12 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
     });
     let release: () => void = () => {};
     try {
-      const answer = served.has(workspaceId) ? await beginRun(claim, workspaceId, ref) : null;
-      if (!served.has(workspaceId) && answer === null) await settle(claim);
+      // A workspace no longer served (deleted) settles its items unrun.
+      if (!served.has(workspaceId)) {
+        await settle(claim);
+        return;
+      }
+      const answer = await beginRun(claim, workspaceId, ref);
       if (!answer) return;
       if (answer.decision === "skip") {
         await skipped(workspaceId, answer);

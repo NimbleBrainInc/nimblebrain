@@ -100,7 +100,7 @@ export declare const DeliveryRecord: import("@sinclair/typebox").TObject<{
     outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
     /**
      * Why, for a non-`delivered` outcome — the dispatch's own classification
-     * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+     * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_offer` for a
      * deferred agent target. Opaque to the browser, which renders it as text.
      */
     classification: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -186,7 +186,7 @@ export declare const NotificationView: import("@sinclair/typebox").TObject<{
         outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
         /**
          * Why, for a non-`delivered` outcome — the dispatch's own classification
-         * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+         * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_offer` for a
          * deferred agent target. Opaque to the browser, which renders it as text.
          */
         classification: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -262,7 +262,7 @@ export declare const NotificationsListOutput: import("@sinclair/typebox").TObjec
             outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
             /**
              * Why, for a non-`delivered` outcome — the dispatch's own classification
-             * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+             * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_offer` for a
              * deferred agent target. Opaque to the browser, which renders it as text.
              */
             classification: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -451,7 +451,7 @@ export declare const NotificationsSendTestOutput: import("@sinclair/typebox").TO
         outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
         /**
          * Why, for a non-`delivered` outcome — the dispatch's own classification
-         * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+         * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_offer` for a
          * deferred agent target. Opaque to the browser, which renders it as text.
          */
         classification: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;

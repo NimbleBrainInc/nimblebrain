@@ -270,16 +270,13 @@ export class RouteDispatcher {
       return;
     }
     for (const { item, row } of rows) {
-      // An agent target left `deferred` is a debounce window that died with the
-      // process that opened it. The batch is NOT re-formed: the items that were
-      // in it are unknown (the window is memory, deliberately — it is one run's
-      // input and never definition), and re-firing from what a single row names
-      // would start a run for a fraction of a batch, minutes or hours late, for
-      // events an operator may since have handled. Closed out instead, so the
-      // ledger says the run did not happen rather than leaving a row that
-      // nothing in this process will ever look at again.
+      // An agent target left `deferred` is an offer whose answer died with the
+      // process that made it. It is not offered again: the task may have
+      // recorded it, and a second offer, minutes or hours late, could start a
+      // second run for an event an operator has since handled. Closed out
+      // instead, so the ledger does not hold a row nothing will look at again.
       if (row.kind === "agent") {
-        if (row.outcome === "deferred") this.#closeLostBatch(wsId, item, row);
+        if (row.outcome === "deferred") this.#closeUnansweredOffer(wsId, item, row);
         continue;
       }
       if (row.outcome !== "pending") continue;
@@ -330,8 +327,8 @@ export class RouteDispatcher {
    * to channels they did not ask to be tested.
    *
    * Awaits the tool targets, so a caller that awaits this can read the ledger
-   * immediately. Agent targets are offered into their debounce window and stay
-   * `deferred`, which is the honest answer for a target whose run has not begun.
+   * immediately. Agent targets are offered to their task and stay `deferred`
+   * until it answers.
    */
   async dispatchOne(wsId: string, item: Notification, routeId: string): Promise<void> {
     await this.#enqueue(wsId, async () => {
@@ -659,20 +656,22 @@ export class RouteDispatcher {
   }
 
   /**
-   * Close out an agent row whose batch did not survive a restart.
+   * Close out an agent row whose offer to its task had no answer when the
+   * runtime stopped. Not offered again: whether the task recorded it is not
+   * known, and a second offer could start a second run.
    *
-   * `failed` rather than `skipped`: work was owed — the task had accepted
-   * these items — and it did not happen. An operator reading the ledger should
-   * see that, not a row that reads as though nothing was ever due.
+   * `failed` rather than `skipped`: work was owed and may not have happened. An
+   * operator reading the ledger should see that, not a row that reads as
+   * though nothing was ever due.
    */
-  #closeLostBatch(wsId: string, item: Notification, row: DeliveryRecord): void {
+  #closeUnansweredOffer(wsId: string, item: Notification, row: DeliveryRecord): void {
     const closed: DeliveryRecord = {
       ...row,
       outcome: "failed",
-      classification: "batch_not_resumed",
+      classification: "offer_not_answered",
       lastError:
-        "the runtime restarted before this notification's batch reached its task; " +
-        "batches are not re-formed across a restart",
+        "the runtime restarted before the task answered this notification's offer; " +
+        "an offer is not made again across a restart",
       updatedAt: new Date(this.#now()).toISOString(),
     };
     this.#writeLedger(wsId, { source: item.source, eventId: item.envelope.eventId }, [closed]);
@@ -835,9 +834,7 @@ function matchTargets(routes: readonly NotificationRoute[], item: Notification):
  * The ledger rows a match produces, before anything has been attempted.
  *
  * A tool target starts `pending` and due now. An agent target starts
- * `deferred`, which is honest for however long the task's debounce window
- * stays open, and is rewritten when the batch settles — or straight away if the
- * offer was refused. Both carry `updatedAt` from one instant, so the rows for
+ * `deferred` until the task answers the offer, then reads where it ended up. Both carry `updatedAt` from one instant, so the rows for
  * one item share a timestamp rather than drifting across the loop.
  */
 function seedRows(matched: readonly MatchedTarget[], at: string): DeliveryRecord[] {
@@ -850,7 +847,7 @@ function seedRows(matched: readonly MatchedTarget[], at: string): DeliveryRecord
           kind: "agent",
           attempts: 0,
           outcome: "deferred",
-          classification: "awaiting_batch",
+          classification: "awaiting_offer",
           updatedAt: at,
         }
       : {

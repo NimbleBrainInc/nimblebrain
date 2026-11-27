@@ -17,12 +17,16 @@ const SINGLETON: ContractDefinition = {
   version: "1.2",
   cardinality: "singleton",
   privateTools: ["append"],
+  unattendedRefused: ["append"],
+  grantTools: [],
 };
 const ADDITIVE: ContractDefinition = {
   id: "ai.example.tools",
   version: "1.0",
   cardinality: "additive",
   privateTools: [],
+  unattendedRefused: [],
+  grantTools: [],
 };
 const REGISTRY: ContractRegistry = new Map([
   [SINGLETON.id, SINGLETON],
@@ -67,6 +71,51 @@ describe("loadContracts", () => {
       "delete_workspace",
       "events",
     ]);
+  });
+
+  test("reads the tasks contract's markings: refused unattended and grant-marked tools", () => {
+    const tasks = loadContracts().get("ai.nimblebrain.tasks");
+    expect(tasks?.grantTools.sort()).toEqual(
+      ["batch_control", "create", "run", "run_batch", "update"].sort(),
+    );
+    expect(tasks?.unattendedRefused.sort()).toEqual(
+      [
+        "batch_control",
+        "begin_run",
+        "cancel",
+        "create",
+        "delete",
+        "delete_workspace",
+        "due",
+        "end_run",
+        "offer_event",
+        "run",
+        "run_batch",
+        "update",
+      ].sort(),
+    );
+  });
+
+  test("a private tool is refused unattended whatever the document says", () => {
+    const def = parseContractDefinition(
+      doc({
+        tools: {
+          list: { visibility: "public", unattended: "allowed" },
+          append: { visibility: "private", unattended: "allowed" },
+        },
+      }),
+      "f.json",
+    );
+    expect(def.unattendedRefused).toEqual(["append"]);
+  });
+
+  test("refuses a grant on a tool that is not public and refused unattended", () => {
+    expect(() =>
+      parseContractDefinition(
+        doc({ tools: { list: { visibility: "public", unattended: "allowed", grant: true } } }),
+        "f.json",
+      ),
+    ).toThrow(/grant is allowed only on a public tool refused unattended/);
   });
 
   test("reads <name>/v<major>/contract.json, and refuses a major the version does not state", () => {
@@ -156,10 +205,21 @@ describe("checkContracts", () => {
         version: "1.3",
         plugin: "store",
         server: "store",
+        hostVersion: "1.2",
         privateTools: ["append"],
+        unattendedRefused: ["append"],
+        grantTools: [],
       },
-      { contract: ADDITIVE.id, version: "1.0", plugin: "a", server: "app", privateTools: [] },
-      { contract: ADDITIVE.id, version: "1.0", plugin: "b", server: "app", privateTools: [] },
+      ...["a", "b"].map((plugin) => ({
+        contract: ADDITIVE.id,
+        version: "1.0",
+        plugin,
+        server: "app",
+        hostVersion: "1.0",
+        privateTools: [],
+        unattendedRefused: [],
+        grantTools: [],
+      })),
     ]);
   });
 

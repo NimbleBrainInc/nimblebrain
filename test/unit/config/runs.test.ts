@@ -1,40 +1,27 @@
 import { describe, expect, it } from "bun:test";
-import {
-  describeClampedLimits,
-  effectiveRunLimits,
-  resolveTasksConfig,
-} from "../../../src/config/tasks.ts";
+import { effectiveRunLimits, resolveRunsConfig } from "../../../src/config/runs.ts";
 
-describe("resolveTasksConfig", () => {
+describe("resolveRunsConfig", () => {
   it("fills every key with its default when the block is absent, leaving no input ceiling", () => {
-    const resolved = resolveTasksConfig();
+    const resolved = resolveRunsConfig();
     expect(resolved).toEqual({
       maxConcurrentRuns: 2,
       maxQueuedRuns: 50,
       maxRunIterations: 50,
       maxRunInputTokens: undefined,
       maxRunDurationMs: 600_000,
-      runRetentionDays: 180,
     });
     expect(resolved.maxRunInputTokens).toBeUndefined();
   });
 
-  it("holds the retention window between one day and a century", () => {
-    expect(resolveTasksConfig({ runRetentionDays: 14 }).runRetentionDays).toBe(14);
-    expect(resolveTasksConfig({ runRetentionDays: 0 }).runRetentionDays).toBe(1);
-    expect(resolveTasksConfig({ runRetentionDays: 1e9 }).runRetentionDays).toBe(36_500);
-  });
-
-  it("accepts an input ceiling far above the create range, up to its own maximum", () => {
-    expect(resolveTasksConfig({ maxRunInputTokens: 20_000_000 }).maxRunInputTokens).toBe(
-      20_000_000,
-    );
-    expect(resolveTasksConfig({ maxRunInputTokens: 5e9 }).maxRunInputTokens).toBe(100_000_000);
-    expect(resolveTasksConfig({ maxRunInputTokens: 10 }).maxRunInputTokens).toBe(1_000);
+  it("accepts an input ceiling far above the range work may name, up to its own maximum", () => {
+    expect(resolveRunsConfig({ maxRunInputTokens: 20_000_000 }).maxRunInputTokens).toBe(20_000_000);
+    expect(resolveRunsConfig({ maxRunInputTokens: 5e9 }).maxRunInputTokens).toBe(100_000_000);
+    expect(resolveRunsConfig({ maxRunInputTokens: 10 }).maxRunInputTokens).toBe(1_000);
   });
 
   it("keeps values inside their range and clamps the rest", () => {
-    const resolved = resolveTasksConfig({
+    const resolved = resolveRunsConfig({
       maxConcurrentRuns: 0,
       maxQueuedRuns: 5000,
       maxRunIterations: 80,
@@ -47,12 +34,11 @@ describe("resolveTasksConfig", () => {
       maxRunIterations: 50,
       maxRunInputTokens: 200_000,
       maxRunDurationMs: 10_000,
-      runRetentionDays: 180,
     });
   });
 
   it("falls back to the default for a value that is not a number", () => {
-    const resolved = resolveTasksConfig({
+    const resolved = resolveRunsConfig({
       // biome-ignore lint/plugin/double-cast: a string from hand-edited config JSON, claimed as the number the field declares
       maxConcurrentRuns: "4" as unknown as number,
       maxQueuedRuns: Number.NaN,
@@ -62,12 +48,12 @@ describe("resolveTasksConfig", () => {
   });
 
   it("allows a zero-length queue", () => {
-    expect(resolveTasksConfig({ maxQueuedRuns: 0 }).maxQueuedRuns).toBe(0);
+    expect(resolveRunsConfig({ maxQueuedRuns: 0 }).maxQueuedRuns).toBe(0);
   });
 });
 
 describe("effectiveRunLimits", () => {
-  const ceilings = resolveTasksConfig({
+  const ceilings = resolveRunsConfig({
     maxRunIterations: 10,
     maxRunInputTokens: 50_000,
     maxRunDurationMs: 60_000,
@@ -83,23 +69,16 @@ describe("effectiveRunLimits", () => {
   });
 
   it("uses the runtime default for unset iterations and duration, and no input cap", () => {
-    const limits = effectiveRunLimits({}, resolveTasksConfig(), 25);
+    const limits = effectiveRunLimits({}, resolveRunsConfig(), 25);
     expect(limits).toEqual({ maxIterations: 25, maxRunDurationMs: 120_000 });
     expect("maxInputTokens" in limits).toBe(false);
   });
 
-  it("keeps a definition's own input cap as written when no ceiling is configured", () => {
+  it("keeps the work's own input cap as written when no ceiling is configured", () => {
     expect(effectiveRunLimits({ maxInputTokens: 900_000 }).maxInputTokens).toBe(900_000);
   });
 
   it("holds an unset input cap to a configured ceiling", () => {
     expect(effectiveRunLimits({}, ceilings).maxInputTokens).toBe(50_000);
-  });
-
-  it("describes only the caps it lowered", () => {
-    const auto = { maxIterations: 40, maxInputTokens: 2_000 };
-    const notes = describeClampedLimits(auto, effectiveRunLimits(auto, ceilings));
-    expect(notes).toHaveLength(1);
-    expect(notes[0]).toContain("maxIterations 40");
   });
 });

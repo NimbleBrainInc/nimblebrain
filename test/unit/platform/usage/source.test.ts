@@ -352,7 +352,7 @@ describe("usage source — the report's optional fields", () => {
       llmMs: 0,
       userId: "usr_alice",
       workspaceId: "ws_0021762e0e7b3844",
-      taskRunId: "run_0000000000000001",
+      runId: "run_0000000000000001",
     };
     const chats = Array.from({ length: MAX_BREAKDOWN_ROWS }, (_, i) => ({
       ts: AT,

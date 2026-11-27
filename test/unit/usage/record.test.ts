@@ -103,15 +103,14 @@ describe("each id in the ledger lands under its own name", () => {
   test("a chat's conversation id lands in conversationId", () => {
     const rec = fieldsFor({ conversationId: "conv-42" });
     expect(rec?.conversationId).toBe("conv-42");
-    expect(rec?.taskRunId).toBeUndefined();
   });
 
-  test("a task's run id lands in taskRunId, not conversationId", () => {
-    // The original defect one layer up: a run id occupying a conversation
-    // field. It must not reappear as a conversation under a new name.
-    const rec = fieldsFor({ runId: "run-42", unattended: true });
-    expect(rec?.taskRunId).toBe("run-42");
+  test("an unattended run's line names its run and no conversation", () => {
+    // A run id must never occupy a conversation field.
+    const rec = fieldsFor({ runId: "run-42", credentialSubject: "run-42", unattended: true });
+    expect(rec?.runId).toBe("run-42");
     expect(rec?.conversationId).toBeUndefined();
+    expect(rec?.taskRunId).toBeUndefined();
   });
 
   test("the run's id lands in runId — the per-turn grain", () => {
@@ -149,11 +148,10 @@ describe("each id in the ledger lands under its own name", () => {
     expect([rec?.workspaceId, rec?.userId]).toEqual(["ws_0076759dbbe19fcc", "usr_1"]);
   });
 
-  test("a background job in a workspace leaves all three ids unset", () => {
+  test("a background job in a workspace leaves both ids unset", () => {
     const rec = fieldsFor({});
     expect(rec?.origin).toBe("system");
     expect(rec?.conversationId).toBeUndefined();
-    expect(rec?.taskRunId).toBeUndefined();
     expect(rec?.runId).toBeUndefined();
   });
 

@@ -362,9 +362,9 @@ describe("the door, holding a credentialed chat turn to the installation's longe
 
   test("ends a stalled turn at the limit with RunDeadlineExceededError", async () => {
     // The configured ceiling's floor is 10s; a shorter one keeps the test fast.
-    const tasks = runtime.getTasksConfig();
-    const ceiling = spyOn(runtime, "getTasksConfig").mockReturnValue({
-      ...tasks,
+    const runs = runtime.getRunsConfig();
+    const ceiling = spyOn(runtime, "getRunsConfig").mockReturnValue({
+      ...runs,
       maxRunDurationMs: 1_000,
     });
     try {
@@ -375,7 +375,7 @@ describe("the door, holding a credentialed chat turn to the installation's longe
         identity: makeIdentity({ id: "usr_dev", email: "dev@example.com", orgRole: "admin" }),
       });
       await expect(turn).rejects.toBeInstanceOf(RunDeadlineExceededError);
-      await expect(turn).rejects.toThrow("reached its 1s limit (tasks.maxRunDurationMs)");
+      await expect(turn).rejects.toThrow("reached its 1s limit (runs.maxRunDurationMs)");
       expect(Date.now() - started).toBeGreaterThanOrEqual(1_000);
     } finally {
       ceiling.mockRestore();

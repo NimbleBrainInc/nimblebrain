@@ -83,6 +83,7 @@ function dispatchRuntime(): UnattendedDispatchRuntime {
       return members.includes(principalId);
     },
     getEventSink: () => sink,
+    isUnattendedRefused: () => false,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
     getRegistryForWorkspace: () =>
       stub<ToolRegistry>({
@@ -113,6 +114,12 @@ function dispatcher(): RouteDispatcher {
     storeFor,
     workspaceIds: async () => (await workspaceStore.list()).map((ws) => ws.id),
     dispatch: (opts) => dispatchUnattended(runtime, opts),
+    offerToTask: async () => ({
+      accepted: false,
+      outcome: "denied",
+      classification: "tasks_unavailable",
+      reason: "no tasks plugin",
+    }),
     eventSink: { emit: (event) => events.push(event) },
   });
 }
