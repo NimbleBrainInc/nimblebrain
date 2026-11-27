@@ -102,6 +102,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`packages/server-sdk/AGENTS.md`](./packages/server-sdk/AGENTS.md) | The TypeScript server SDK, counterpart of `nimblebrain-server-sdk` (Python): reading the host context, tool errors, the principal rule, reading a contract document, host metadata on the handshake; no dependencies, the contract document decides |
 | [`packages/conversations/AGENTS.md`](./packages/conversations/AGENTS.md) | The built-in conversations plugin (bound by default): never imports the kernel, call order, context per transport, filesystem layout, `seq`, cursors, the screen and its build, its host metadata, its conformance tests |
 | [`packages/tasks/AGENTS.md`](./packages/tasks/AGENTS.md) | The built-in tasks plugin (bound by default): call order, the clock rule, occurrences, fencing, grants, the change hint, the transactional filesystem layout, retention, the screen, its skill and instructions, behaviour worth knowing, its tests |
+| [`packages/files/AGENTS.md`](./packages/files/AGENTS.md) | The built-in files plugin (not yet bound): call order and walls, the transactional filesystem layout, transfer URLs and the loopback listener, completion windows, extraction and its bounds, the screen and its cursor paging, its skill, its conformance tests |
 | [`packages/cli/AGENTS.md`](./packages/cli/AGENTS.md) | The `nimblebrain` CLI (`npx nimblebrain`): setup and running, plus a thin client of the local instance's API (`mcp add`) and the agent worker `use` starts, one self-contained file on Node 20, the `{ok, error, fix}` JSON contract, the model key never in output, never touching an install it did not make |
 
 ## Conventions
@@ -181,6 +182,7 @@ packages/
 ├── server-sdk/    The TypeScript server SDK: host context, tool errors, the principal rule (see server-sdk/AGENTS.md)
 ├── conversations/ The built-in conversations plugin, bound by default: one MCP server implementing the contract on the local filesystem, and its screen (ui/) (see conversations/AGENTS.md)
 ├── tasks/         The built-in tasks plugin, bound by default: one MCP server implementing the tasks contract on the local filesystem, its screen (ui/) and its skill (skills/) (see tasks/AGENTS.md)
+├── files/         The built-in files plugin, not yet bound: one MCP server implementing the files contract on the local filesystem, its transfer listener, screen (ui/) and skill (skills/) (see files/AGENTS.md)
 ├── cli/           The `nimblebrain` CLI (see cli/AGENTS.md)
 └── server-sdk-py/ The Python Server SDK
 ```

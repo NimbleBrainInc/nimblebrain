@@ -50,4 +50,4 @@ version is one JSON document, emitted to the published tree at
 |---|---|---|---|
 | `ai.nimblebrain.conversations` | `conversations/CONTRACT.md` | `schemas/contracts/conversations/v1/contract.json` | `conversations/runner/conformance.ts` |
 | `ai.nimblebrain.tasks` | `tasks/CONTRACT.md` | `schemas/contracts/tasks/v1/contract.json` | `tasks/runner/conformance.ts` |
-| `ai.nimblebrain.files` | `files/CONTRACT.md` | `schemas/contracts/files/v1/contract.json` | not yet written |
+| `ai.nimblebrain.files` | `files/CONTRACT.md` | `schemas/contracts/files/v1/contract.json` | `files/runner/conformance.ts` |
