@@ -33,6 +33,20 @@ export interface ContractToolEntry {
    * marked `unattended: "refused"`, so no run ever receives one.
    */
   grant?: true;
+  /**
+   * The MCP tool annotations an implementation lists for this tool, stated
+   * where the document can be checked against what a server lists. Only on a
+   * public tool: a private one is never listed to an agent.
+   */
+  annotations?: ToolAnnotations;
+}
+
+/** The MCP tool annotations a contract may require of a public tool. */
+export interface ToolAnnotations {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
 }
 
 /** Everything a contract document holds except its schemas. */

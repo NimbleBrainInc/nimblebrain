@@ -310,7 +310,12 @@ contracts, never plugins. Chat is on exactly when an enabled plugin implements t
 conversations contract; the default configuration binds the built-in one. Scheduled and
 unattended work is on exactly when an enabled plugin implements the tasks contract
 (`ai.nimblebrain.tasks`); the default configuration binds the built-in one, and the kernel's run
-worker runs what it says is due.
+worker runs what it says is due. The files contract (`ai.nimblebrain.files`) is published and not
+yet implemented by any plugin: its implementation owns every agent-facing file tool, the records,
+visibility, text extraction and the bytes and their storage, and the kernel owns upload intake
+and serving. Bytes move between them by short-lived URLs the implementation issues: the kernel
+streams an upload to the URL `begin_upload` answers, and serves a file from the URL `resolve`
+answers once it finds the file.
 
 ### Run grant *(ADR-0076, tasks contract)*
 The host's signed record that an owner, in a workspace, set up work under a contract that will
@@ -320,10 +325,12 @@ it with each run, and the host verifies it (signature, key, workspace) and the o
 membership before admitting the run, which acts as the grant's owner. Distinct from a personal connector's grant and from the model gateway's
 per-run grant (ADR-0063).
 
-### Provider *(proposed, ADR-0076; not yet built)*
-Infrastructure the kernel uses and no agent calls: the work queue, pub/sub, leases,
-blobs. Configured behind a kernel interface, local by default and replaceable for
-scale. Distinct from a plugin, which is a capability agents and people use.
+### Provider *(ADR-0076)*
+Infrastructure the kernel uses and no agent calls: the work queue, pub/sub, leases.
+Configured behind a kernel interface, local by default and replaceable for
+scale. Distinct from a plugin, which is a capability agents and people use. The work queue
+is built (`src/providers/queue/`). File bytes are not a provider: the files implementation
+owns them.
 
 ## Decisions
 

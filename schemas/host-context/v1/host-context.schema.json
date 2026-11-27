@@ -26,6 +26,11 @@
       "type": "string",
       "minLength": 1
     },
+    "runId": {
+      "description": "The unattended run the call is made inside, or that a host call is made for. Absent outside a run.",
+      "type": "string",
+      "minLength": 1
+    },
     "grant": {
       "description": "The run grant for this call's workspace and owner, stamped on a person call to a tool its contract marks grant: true. Opaque to the server: it stores the value with a definition that will run unattended and returns it verbatim; only the host reads it. Absent on every other call.",
       "type": "string",
@@ -33,7 +38,7 @@
       "maxLength": 4096
     },
     "unattended": {
-      "description": "True when the call is made inside an unattended run (a task run), with no person present. A server refuses a tool its contract marks unattended: refused. Absent or false otherwise.",
+      "description": "True when a person call is made inside an unattended run (a task run), with no person present. A server refuses a tool its contract marks unattended: refused. Never on a host call; absent or false otherwise.",
       "type": "boolean"
     }
   }

@@ -1,0 +1,1842 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/contracts/files/v1/contract.json",
+  "title": "Files contract",
+  "description": "The ai.nimblebrain.files contract: its identity, version, cardinality, its tools with their visibility, unattended marking and schemas, and the closed list of errors. Every tool error is a tools/call result with isError: true whose first text content is JSON {code, error}. A private tool's code is from errors.private. A public tool's code, and the answer to a tool name the server does not have, is from errors.public, and its error begins with that entry's prefix. Beyond the prefix, error is diagnostic. A request refused before any tool runs is the transport's answer and outside this list. Normative rules: contracts/files/CONTRACT.md in the NimbleBrain repository.",
+  "contract": "ai.nimblebrain.files",
+  "version": "1.0",
+  "cardinality": "singleton",
+  "tools": {
+    "list": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "input": {
+        "$ref": "#/$defs/list_input"
+      },
+      "output": {
+        "$ref": "#/$defs/list_output"
+      }
+    },
+    "search": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "input": {
+        "$ref": "#/$defs/search_input"
+      },
+      "output": {
+        "$ref": "#/$defs/search_output"
+      }
+    },
+    "info": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "input": {
+        "$ref": "#/$defs/info_input"
+      },
+      "output": {
+        "$ref": "#/$defs/info_output"
+      }
+    },
+    "read": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "input": {
+        "$ref": "#/$defs/read_input"
+      },
+      "output": {
+        "$ref": "#/$defs/read_output"
+      }
+    },
+    "create": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
+      "input": {
+        "$ref": "#/$defs/create_input"
+      },
+      "output": {
+        "$ref": "#/$defs/create_output"
+      }
+    },
+    "tag": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "input": {
+        "$ref": "#/$defs/tag_input"
+      },
+      "output": {
+        "$ref": "#/$defs/tag_output"
+      }
+    },
+    "move": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "input": {
+        "$ref": "#/$defs/move_input"
+      },
+      "output": {
+        "$ref": "#/$defs/move_output"
+      }
+    },
+    "delete": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "input": {
+        "$ref": "#/$defs/delete_input"
+      },
+      "output": {
+        "$ref": "#/$defs/delete_output"
+      }
+    },
+    "create_folder": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
+      "input": {
+        "$ref": "#/$defs/create_folder_input"
+      },
+      "output": {
+        "$ref": "#/$defs/create_folder_output"
+      }
+    },
+    "update_folder": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "input": {
+        "$ref": "#/$defs/update_folder_input"
+      },
+      "output": {
+        "$ref": "#/$defs/update_folder_output"
+      }
+    },
+    "delete_folder": {
+      "visibility": "public",
+      "unattended": "allowed",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "input": {
+        "$ref": "#/$defs/delete_folder_input"
+      },
+      "output": {
+        "$ref": "#/$defs/delete_folder_output"
+      }
+    },
+    "begin_upload": {
+      "visibility": "private",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/begin_upload_input"
+      },
+      "output": {
+        "$ref": "#/$defs/begin_upload_output"
+      }
+    },
+    "complete_upload": {
+      "visibility": "private",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/complete_upload_input"
+      },
+      "output": {
+        "$ref": "#/$defs/complete_upload_output"
+      }
+    },
+    "resolve": {
+      "visibility": "private",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/resolve_input"
+      },
+      "output": {
+        "$ref": "#/$defs/resolve_output"
+      }
+    },
+    "delete_workspace": {
+      "visibility": "private",
+      "unattended": "refused",
+      "input": {
+        "$ref": "#/$defs/delete_workspace_input"
+      },
+      "output": {
+        "$ref": "#/$defs/delete_workspace_output"
+      }
+    }
+  },
+  "errors": {
+    "public": [
+      {
+        "code": "file_not_found",
+        "prefix": "File not found: ",
+        "meaning": "An id names no file in the caller's scope: another owner's, another workspace's, a deleted and a missing one answer alike. For move, any one id; nothing moved."
+      },
+      {
+        "code": "folder_not_found",
+        "prefix": "Folder not found: ",
+        "meaning": "A folder id names no folder in the caller's scope. Nothing was written."
+      },
+      {
+        "code": "conflict",
+        "prefix": "Conflict: ",
+        "meaning": "The call contradicts what is stored: a folder name already taken beside it, a folder moved into itself or a folder inside it, a folder deleted while it holds files or folders. Nothing was written."
+      },
+      {
+        "code": "not_paged",
+        "prefix": "Not a paged document: ",
+        "meaning": "read named pages of a file whose type has none (1.0 pages PDFs only)."
+      },
+      {
+        "code": "extraction_failed",
+        "prefix": "Text extraction failed: ",
+        "meaning": "read named pages, and the document's text could not be extracted within the implementation's bounds. A read without pages answers extractedText: null instead."
+      },
+      {
+        "code": "too_large",
+        "prefix": "Too large: ",
+        "meaning": "create's body, decoded, is over the contract's limit (CONTRACT.md §7). Nothing was written."
+      },
+      {
+        "code": "type_not_allowed",
+        "prefix": "Type not allowed: ",
+        "meaning": "create named a MIME type outside the allowlist (CONTRACT.md §7). Nothing was written."
+      },
+      {
+        "code": "scope_missing",
+        "prefix": "Scope missing: ",
+        "meaning": "tools/call reached a public tool with no workspace or no authenticated identity in its scope."
+      },
+      {
+        "code": "invalid_input",
+        "prefix": "Invalid arguments for ",
+        "meaning": "The arguments do not match the tool's input schema, or a rule the schema cannot state (a body that is not the base64 its encoding names, a folder path with an empty segment); the tool name follows the prefix, quoted. Nothing was written."
+      },
+      {
+        "code": "unknown_tool",
+        "prefix": "Unknown tool ",
+        "meaning": "No tool by that name, public or private."
+      }
+    ],
+    "private": [
+      {
+        "code": "forbidden",
+        "meaning": "A private tool was called by a principal other than host. Checked before the input and the scope, so the answer reveals nothing about either. Nothing was read or written."
+      },
+      {
+        "code": "invalid_input",
+        "meaning": "The arguments do not match the tool's input schema. Nothing was written."
+      },
+      {
+        "code": "scope_missing",
+        "meaning": "The call reached the server with no workspace in its scope, or begin_upload, complete_upload or resolve with no owner. Nothing was read or written."
+      },
+      {
+        "code": "too_large",
+        "meaning": "begin_upload declared a size over the implementation's per-file limit. Nothing was written."
+      },
+      {
+        "code": "type_not_allowed",
+        "meaning": "begin_upload named a MIME type outside the allowlist. Nothing was written."
+      },
+      {
+        "code": "upload_not_found",
+        "meaning": "complete_upload named no open upload in the caller's scope: unknown, expired, or another owner's or workspace's. Nothing was written."
+      },
+      {
+        "code": "upload_incomplete",
+        "meaning": "complete_upload found no body at the upload URL, or one whose length is not the declared size. No record was made; the upload stays open until it expires."
+      },
+      {
+        "code": "internal_error",
+        "meaning": "Anything else. The error text is diagnostic only."
+      }
+    ]
+  },
+  "$defs": {
+    "list_input": {
+      "type": "object",
+      "properties": {
+        "folderId": {
+          "pattern": "^(root|[a-z0-9][a-z0-9_-]{0,63})$",
+          "description": "Folder to list, by id; \"root\" for the top level. Omit to list files across every folder. When set, the result also holds the folders inside it.",
+          "type": "string"
+        },
+        "recursive": {
+          "description": "With `folderId`, include files in its subfolders too. Default: false.",
+          "type": "boolean"
+        },
+        "query": {
+          "description": "Case-insensitive text to match in the filename, description, or tags (and folder names).",
+          "type": "string"
+        },
+        "kinds": {
+          "description": "Keep only files of these kinds, judged from the MIME type (CONTRACT.md §5, Types).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "image",
+              "document",
+              "data",
+              "font",
+              "other"
+            ]
+          }
+        },
+        "sources": {
+          "description": "Keep only files from these sources: \"chat\" (attached in a chat), \"agent\" (written by an agent), \"app\" or \"manual\" (uploaded).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "agent",
+              "app",
+              "manual"
+            ]
+          }
+        },
+        "conversationId": {
+          "description": "Keep only files attached in or written by this conversation.",
+          "type": "string"
+        },
+        "runId": {
+          "description": "Keep only files written by this task run.",
+          "type": "string"
+        },
+        "createdAfter": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+          "description": "Keep only files created at or after this ISO 8601 date or time.",
+          "type": "string"
+        },
+        "createdBefore": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+          "description": "Keep only files created before this ISO 8601 date or time.",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Filter by tags (files must have ALL specified tags).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mimeType": {
+          "description": "Filter by MIME type prefix (e.g. 'image/' matches image/png, image/jpeg).",
+          "type": "string"
+        },
+        "sort": {
+          "type": "string",
+          "enum": [
+            "createdAt",
+            "filename",
+            "size"
+          ],
+          "description": "Sort field. Default: \"createdAt\"."
+        },
+        "order": {
+          "type": "string",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "description": "Sort direction. Default: \"desc\" for createdAt and size (newest, largest first), \"asc\" for filename."
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Max files to return. Default: 20.",
+          "type": "integer"
+        },
+        "cursor": {
+          "minLength": 1,
+          "description": "Opaque cursor from a previous response's `nextCursor`, passed back with the same filters and sort, unchanged. Omit for the first page.",
+          "type": "string"
+        }
+      }
+    },
+    "list_output": {
+      "type": "object",
+      "required": [
+        "files",
+        "total",
+        "folders",
+        "breadcrumb",
+        "facets",
+        "nextCursor"
+      ],
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "filename",
+              "mimeType",
+              "size",
+              "tags",
+              "source",
+              "conversationId",
+              "createdAt",
+              "description",
+              "folderPath"
+            ],
+            "properties": {
+              "id": {
+                "description": "The file's id: its URI is files://<id>.",
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              },
+              "mimeType": {
+                "type": "string"
+              },
+              "size": {
+                "minimum": 0,
+                "description": "The body's size in bytes.",
+                "type": "integer"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "source": {
+                "description": "Where the file came from. Known values: chat, agent, app, manual. Any other is unknown (CONTRACT.md §5).",
+                "type": "string"
+              },
+              "conversationId": {
+                "description": "The conversation the file was attached in or written by, or null.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "runId": {
+                "description": "The unattended run that wrote the file, or null.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "description": "When the record was made (RFC 3339).",
+                "type": "string"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "folderId": {
+                "description": "The file's folder, or null at the top level.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "ownerId": {
+                "description": "Advisory: the owner the file belongs to.",
+                "type": "string"
+              },
+              "workspaceId": {
+                "description": "Advisory: the workspace the file belongs to.",
+                "type": "string"
+              },
+              "folderPath": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "total": {
+          "description": "Every match, across pages.",
+          "type": "integer"
+        },
+        "folders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "parentId",
+              "createdAt",
+              "path"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "parentId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "breadcrumb": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "facets": {
+          "type": "object",
+          "required": [
+            "kinds",
+            "sources"
+          ],
+          "properties": {
+            "kinds": {
+              "type": "object",
+              "required": [
+                "image",
+                "document",
+                "data",
+                "font",
+                "other"
+              ],
+              "properties": {
+                "image": {
+                  "type": "integer"
+                },
+                "document": {
+                  "type": "integer"
+                },
+                "data": {
+                  "type": "integer"
+                },
+                "font": {
+                  "type": "integer"
+                },
+                "other": {
+                  "type": "integer"
+                }
+              }
+            },
+            "sources": {
+              "type": "object",
+              "required": [
+                "chat",
+                "agent",
+                "app",
+                "manual"
+              ],
+              "properties": {
+                "chat": {
+                  "type": "integer"
+                },
+                "agent": {
+                  "type": "integer"
+                },
+                "app": {
+                  "type": "integer"
+                },
+                "manual": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "nextCursor": {
+          "description": "Pass as `cursor` for the next page; null on the last.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "search_input": {
+      "required": [
+        "query"
+      ],
+      "type": "object",
+      "properties": {
+        "query": {
+          "description": "Search query.",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Filter by tags.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mimeType": {
+          "description": "Filter by MIME type prefix.",
+          "type": "string"
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Max results. Default: 20.",
+          "type": "integer"
+        }
+      }
+    },
+    "search_output": {
+      "type": "object",
+      "required": [
+        "files",
+        "total"
+      ],
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "filename",
+              "mimeType",
+              "size",
+              "tags",
+              "source",
+              "conversationId",
+              "createdAt",
+              "description"
+            ],
+            "properties": {
+              "id": {
+                "description": "The file's id: its URI is files://<id>.",
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              },
+              "mimeType": {
+                "type": "string"
+              },
+              "size": {
+                "minimum": 0,
+                "description": "The body's size in bytes.",
+                "type": "integer"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "source": {
+                "description": "Where the file came from. Known values: chat, agent, app, manual. Any other is unknown (CONTRACT.md §5).",
+                "type": "string"
+              },
+              "conversationId": {
+                "description": "The conversation the file was attached in or written by, or null.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "runId": {
+                "description": "The unattended run that wrote the file, or null.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "description": "When the record was made (RFC 3339).",
+                "type": "string"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "folderId": {
+                "description": "The file's folder, or null at the top level.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "ownerId": {
+                "description": "Advisory: the owner the file belongs to.",
+                "type": "string"
+              },
+              "workspaceId": {
+                "description": "Advisory: the workspace the file belongs to.",
+                "type": "string"
+              }
+            }
+          }
+        },
+        "total": {
+          "type": "integer"
+        }
+      }
+    },
+    "info_input": {
+      "required": [
+        "id"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "File ID.",
+          "type": "string"
+        }
+      }
+    },
+    "info_output": {
+      "type": "object",
+      "required": [
+        "id",
+        "filename",
+        "mimeType",
+        "size",
+        "tags",
+        "source",
+        "conversationId",
+        "createdAt",
+        "description"
+      ],
+      "properties": {
+        "id": {
+          "description": "The file's id: its URI is files://<id>.",
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "description": "The body's size in bytes.",
+          "type": "integer"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source": {
+          "description": "Where the file came from. Known values: chat, agent, app, manual. Any other is unknown (CONTRACT.md §5).",
+          "type": "string"
+        },
+        "conversationId": {
+          "description": "The conversation the file was attached in or written by, or null.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runId": {
+          "description": "The unattended run that wrote the file, or null.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createdAt": {
+          "description": "When the record was made (RFC 3339).",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "folderId": {
+          "description": "The file's folder, or null at the top level.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ownerId": {
+          "description": "Advisory: the owner the file belongs to.",
+          "type": "string"
+        },
+        "workspaceId": {
+          "description": "Advisory: the workspace the file belongs to.",
+          "type": "string"
+        }
+      }
+    },
+    "read_input": {
+      "required": [
+        "id"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "File ID.",
+          "type": "string"
+        },
+        "pages": {
+          "minItems": 1,
+          "maxItems": 10,
+          "description": "Read only these 1-based pages of a paged document (a PDF), at most 10 per call. Use it for a long PDF, or for pages past the truncated text. Omit to read the whole text.",
+          "type": "array",
+          "items": {
+            "minimum": 1,
+            "description": "1-based page number.",
+            "type": "integer"
+          }
+        },
+        "maxBytes": {
+          "minimum": 1,
+          "maximum": 1048576,
+          "description": "The most UTF-8 bytes of text to answer, across `extractedText` or `pages`. Default and most: 1048576.",
+          "type": "integer"
+        }
+      }
+    },
+    "read_output": {
+      "type": "object",
+      "required": [
+        "id",
+        "filename",
+        "mimeType",
+        "size",
+        "extractedText",
+        "truncated"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "extractedText": {
+          "description": "The file's text, when its type is extractable and extraction succeeded; null otherwise, and with `pages`.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "truncated": {
+          "description": "Whether `extractedText` stops at the text bound or at `maxBytes`.",
+          "type": "boolean"
+        },
+        "totalPages": {
+          "description": "With `pages`: the document's pages.",
+          "type": "integer"
+        },
+        "requestedPages": {
+          "description": "With `pages`: the pages asked for, sorted, once each.",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "missingPages": {
+          "description": "With `pages`: those past the document's end.",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "pages": {
+          "description": "With `pages`: each requested page that exists, in order.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "page",
+              "text",
+              "truncated",
+              "empty"
+            ],
+            "properties": {
+              "page": {
+                "type": "integer"
+              },
+              "text": {
+                "type": "string"
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "empty": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "create_input": {
+      "required": [
+        "manifest",
+        "body"
+      ],
+      "type": "object",
+      "properties": {
+        "manifest": {
+          "required": [
+            "filename",
+            "mimeType"
+          ],
+          "type": "object",
+          "properties": {
+            "filename": {
+              "description": "Filename (e.g. 'logo.png').",
+              "type": "string"
+            },
+            "folder": {
+              "description": "Folder path to put the file in, '/'-separated (e.g. 'Reports/Q3'). Folders that do not exist are created. Omit for the top level.",
+              "type": "string"
+            },
+            "mimeType": {
+              "description": "MIME type (e.g. 'image/png'), one of: text/plain, text/csv, text/markdown, text/html, text/xml, text/yaml, application/json, application/xml, application/yaml, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/pdf, image/png, image/jpeg, image/gif, image/webp, image/svg+xml, application/zip, application/gzip, font/ttf, font/otf, font/woff, font/woff2, application/octet-stream. A generic or empty type for a known text extension is read as that extension's text type (CONTRACT.md §5, Types).",
+              "type": "string"
+            },
+            "tags": {
+              "description": "Optional tags for categorization.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": {
+              "description": "Optional description of the file.",
+              "type": "string"
+            }
+          }
+        },
+        "body": {
+          "description": "File content, at most 4194304 bytes once decoded. Base64-encoded by default; pass encoding: \"text\" to write `body` verbatim.",
+          "type": "string"
+        },
+        "encoding": {
+          "type": "string",
+          "enum": [
+            "base64",
+            "text"
+          ],
+          "description": "How to read `body`. \"base64\" (the default) decodes it as standard-alphabet base64 (A-Z a-z 0-9 + /) padded with `=` to a multiple of 4; line breaks are allowed, other whitespace is not, and unpadded or base64url (-, _) bodies are rejected. \"text\" writes `body` verbatim as UTF-8 — use it for markdown, code, CSV, or any content you are composing yourself."
+        }
+      }
+    },
+    "create_output": {
+      "type": "object",
+      "required": [
+        "id",
+        "filename",
+        "size",
+        "folderId"
+      ],
+      "properties": {
+        "id": {
+          "description": "The new file's id: its URI is files://<id>.",
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "folderId": {
+          "description": "The stored file's folder, or `null` at the top level.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "tag_input": {
+      "required": [
+        "id"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "File ID.",
+          "type": "string"
+        },
+        "add": {
+          "description": "Tags to add.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "remove": {
+          "description": "Tags to remove.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "tag_output": {
+      "type": "object",
+      "required": [
+        "id",
+        "tags"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "move_input": {
+      "required": [
+        "ids",
+        "folderId"
+      ],
+      "type": "object",
+      "properties": {
+        "ids": {
+          "minItems": 1,
+          "maxItems": 200,
+          "description": "The files to move.",
+          "type": "array",
+          "items": {
+            "description": "File ID.",
+            "type": "string"
+          }
+        },
+        "folderId": {
+          "pattern": "^(root|[a-z0-9][a-z0-9_-]{0,63})$",
+          "description": "A folder id, or \"root\" for the top level.",
+          "type": "string"
+        }
+      }
+    },
+    "move_output": {
+      "type": "object",
+      "required": [
+        "ids",
+        "folderId"
+      ],
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "folderId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "delete_input": {
+      "required": [
+        "id"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "File ID.",
+          "type": "string"
+        }
+      }
+    },
+    "delete_output": {
+      "type": "object",
+      "required": [
+        "deleted"
+      ],
+      "properties": {
+        "deleted": {
+          "const": true,
+          "type": "boolean"
+        }
+      }
+    },
+    "create_folder_input": {
+      "required": [
+        "manifest"
+      ],
+      "type": "object",
+      "properties": {
+        "manifest": {
+          "required": [
+            "name"
+          ],
+          "type": "object",
+          "properties": {
+            "name": {
+              "minLength": 1,
+              "maxLength": 255,
+              "pattern": "^[^/\\\\]+$",
+              "description": "Folder name. No '/' or '\\'; unique among the folders beside it.",
+              "type": "string"
+            },
+            "parentId": {
+              "pattern": "^(root|[a-z0-9][a-z0-9_-]{0,63})$",
+              "description": "A folder id, or \"root\" for the top level.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "create_folder_output": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "parentId",
+        "createdAt",
+        "path"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parentId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "update_folder_input": {
+      "required": [
+        "id",
+        "manifest"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "description": "Folder ID.",
+          "type": "string"
+        },
+        "manifest": {
+          "description": "The fields to change: `name` renames, `parentId` moves.",
+          "type": "object",
+          "properties": {
+            "name": {
+              "minLength": 1,
+              "maxLength": 255,
+              "pattern": "^[^/\\\\]+$",
+              "description": "Folder name. No '/' or '\\'; unique among the folders beside it.",
+              "type": "string"
+            },
+            "parentId": {
+              "pattern": "^(root|[a-z0-9][a-z0-9_-]{0,63})$",
+              "description": "A folder id, or \"root\" for the top level.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "update_folder_output": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "parentId",
+        "createdAt",
+        "path"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parentId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "delete_folder_input": {
+      "required": [
+        "id"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "description": "Folder ID.",
+          "type": "string"
+        }
+      }
+    },
+    "delete_folder_output": {
+      "type": "object",
+      "required": [
+        "deleted"
+      ],
+      "properties": {
+        "deleted": {
+          "const": true,
+          "type": "boolean"
+        }
+      }
+    },
+    "begin_upload_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "version",
+        "filename",
+        "mimeType",
+        "size",
+        "source"
+      ],
+      "properties": {
+        "version": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "description": "The version of this contract the host consumes. The answer holds nothing that version does not define (CONTRACT.md §14).",
+          "type": "string"
+        },
+        "filename": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "mimeType": {
+          "minLength": 1,
+          "maxLength": 255,
+          "description": "The body's type, on the allowlist (CONTRACT.md §7).",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "description": "The body's exact length in bytes. The host sends exactly this many.",
+          "type": "integer"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "chat",
+            "app",
+            "manual"
+          ],
+          "description": "The door the body comes through."
+        },
+        "folder": {
+          "description": "Folder path, '/'-separated; missing levels are created at completion, as create's manifest.folder.",
+          "type": "string"
+        },
+        "tags": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "description": {
+          "maxLength": 4096,
+          "type": "string"
+        }
+      }
+    },
+    "begin_upload_output": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "uploadId",
+        "url",
+        "method",
+        "headers",
+        "expiresAt"
+      ],
+      "properties": {
+        "uploadId": {
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "Names this upload to complete_upload.",
+          "type": "string"
+        },
+        "url": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^https?://",
+          "description": "Where the host PUTs the body. A repeated PUT replaces the earlier body until the upload completes or expires. An absolute http(s) URL and a bearer capability: it MUST NOT appear in a public output, an error, a log or the screen (CONTRACT.md §7).",
+          "type": "string"
+        },
+        "method": {
+          "const": "PUT",
+          "type": "string"
+        },
+        "headers": {
+          "additionalProperties": false,
+          "propertyNames": {
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "maxProperties": 16,
+          "description": "Headers the host sends with the PUT, verbatim, beside its own Content-Length. Part of the capability. The host refuses an upload whose headers name a field it owns (CONTRACT.md §7).",
+          "type": "object",
+          "patternProperties": {
+            "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$": {
+              "maxLength": 1024,
+              "pattern": "^[\\t\\x20-\\x7e\\x80-\\xff]*$",
+              "type": "string"
+            }
+          }
+        },
+        "expiresAt": {
+          "format": "date-time",
+          "description": "When the URL stops accepting a request (RFC 3339): at most 900 seconds after it was issued. A request begun before it runs to its end.",
+          "type": "string"
+        }
+      }
+    },
+    "complete_upload_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "version",
+        "uploadId"
+      ],
+      "properties": {
+        "version": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "description": "The version of this contract the host consumes. The answer holds nothing that version does not define (CONTRACT.md §14).",
+          "type": "string"
+        },
+        "uploadId": {
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "The uploadId begin_upload answered.",
+          "type": "string"
+        }
+      }
+    },
+    "complete_upload_output": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "uri",
+        "file"
+      ],
+      "properties": {
+        "uri": {
+          "pattern": "^files://[a-z0-9][a-z0-9_-]{0,63}$",
+          "description": "A file's URI: files://<id>, bare (CONTRACT.md §4).",
+          "type": "string"
+        },
+        "file": {
+          "type": "object",
+          "required": [
+            "id",
+            "filename",
+            "mimeType",
+            "size",
+            "tags",
+            "source",
+            "conversationId",
+            "createdAt",
+            "description"
+          ],
+          "properties": {
+            "id": {
+              "description": "The file's id: its URI is files://<id>.",
+              "type": "string"
+            },
+            "filename": {
+              "type": "string"
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "size": {
+              "minimum": 0,
+              "description": "The body's size in bytes.",
+              "type": "integer"
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "source": {
+              "description": "Where the file came from. Known values: chat, agent, app, manual. Any other is unknown (CONTRACT.md §5).",
+              "type": "string"
+            },
+            "conversationId": {
+              "description": "The conversation the file was attached in or written by, or null.",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "runId": {
+              "description": "The unattended run that wrote the file, or null.",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "createdAt": {
+              "description": "When the record was made (RFC 3339).",
+              "type": "string"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "folderId": {
+              "description": "The file's folder, or null at the top level.",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ownerId": {
+              "description": "Advisory: the owner the file belongs to.",
+              "type": "string"
+            },
+            "workspaceId": {
+              "description": "Advisory: the workspace the file belongs to.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "resolve_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "version",
+        "uris"
+      ],
+      "properties": {
+        "version": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "description": "The version of this contract the host consumes. The answer holds nothing that version does not define (CONTRACT.md §14).",
+          "type": "string"
+        },
+        "uris": {
+          "minItems": 1,
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "pattern": "^files://[a-z0-9][a-z0-9_-]{0,63}$",
+            "description": "A file's URI: files://<id>, bare (CONTRACT.md §4).",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "resolve_output": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "files"
+      ],
+      "properties": {
+        "files": {
+          "maxItems": 100,
+          "description": "One entry per requested URI, in the order asked.",
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "uri",
+                  "found",
+                  "file",
+                  "download"
+                ],
+                "properties": {
+                  "uri": {
+                    "pattern": "^files://[a-z0-9][a-z0-9_-]{0,63}$",
+                    "description": "A file's URI: files://<id>, bare (CONTRACT.md §4).",
+                    "type": "string"
+                  },
+                  "found": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "file": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "filename",
+                      "mimeType",
+                      "size",
+                      "tags",
+                      "source",
+                      "conversationId",
+                      "createdAt",
+                      "description"
+                    ],
+                    "properties": {
+                      "id": {
+                        "description": "The file's id: its URI is files://<id>.",
+                        "type": "string"
+                      },
+                      "filename": {
+                        "type": "string"
+                      },
+                      "mimeType": {
+                        "type": "string"
+                      },
+                      "size": {
+                        "minimum": 0,
+                        "description": "The body's size in bytes.",
+                        "type": "integer"
+                      },
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "source": {
+                        "description": "Where the file came from. Known values: chat, agent, app, manual. Any other is unknown (CONTRACT.md §5).",
+                        "type": "string"
+                      },
+                      "conversationId": {
+                        "description": "The conversation the file was attached in or written by, or null.",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "runId": {
+                        "description": "The unattended run that wrote the file, or null.",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "createdAt": {
+                        "description": "When the record was made (RFC 3339).",
+                        "type": "string"
+                      },
+                      "description": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "folderId": {
+                        "description": "The file's folder, or null at the top level.",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "ownerId": {
+                        "description": "Advisory: the owner the file belongs to.",
+                        "type": "string"
+                      },
+                      "workspaceId": {
+                        "description": "Advisory: the workspace the file belongs to.",
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "download": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "url",
+                      "expiresAt"
+                    ],
+                    "properties": {
+                      "url": {
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "^https?://",
+                        "description": "Where the host GETs this file's body. An absolute http(s) URL and a bearer capability: it MUST NOT appear in a public output, an error, a log or the screen (CONTRACT.md §7).",
+                        "type": "string"
+                      },
+                      "expiresAt": {
+                        "format": "date-time",
+                        "description": "When the URL stops accepting a request (RFC 3339): at most 300 seconds after it was issued. A request begun before it runs to its end.",
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "uri",
+                  "found"
+                ],
+                "properties": {
+                  "uri": {
+                    "pattern": "^files://[a-z0-9][a-z0-9_-]{0,63}$",
+                    "description": "A file's URI: files://<id>, bare (CONTRACT.md §4).",
+                    "type": "string"
+                  },
+                  "found": {
+                    "const": false,
+                    "type": "boolean"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "delete_workspace_input": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "version"
+      ],
+      "properties": {
+        "version": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "description": "The version of this contract the host consumes. The answer holds nothing that version does not define (CONTRACT.md §14).",
+          "type": "string"
+        }
+      }
+    },
+    "delete_workspace_output": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "removed"
+      ],
+      "properties": {
+        "removed": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "files",
+            "folders"
+          ],
+          "properties": {
+            "files": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "folders": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}

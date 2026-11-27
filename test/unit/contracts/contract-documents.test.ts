@@ -4,8 +4,11 @@ import { resolve } from "node:path";
 import { type TSchema, Type } from "@sinclair/typebox";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { ALLOWED_MIME_TYPES, FILE_KINDS } from "../../../contracts/files/source/public.ts";
 import type { ContractSource } from "../../../contracts/scripts/contract-source.ts";
 import { emit } from "../../../contracts/scripts/emit-contracts.ts";
+import { EXTENSION_MIME, resolveMimeType } from "../../../src/files/mime.ts";
+import { fileKind } from "../../../src/platform/files/query.ts";
 
 const ROOT = resolve(import.meta.dir, "../../..");
 
@@ -13,6 +16,7 @@ interface ToolEntry {
   visibility: string;
   unattended: string;
   grant?: boolean;
+  annotations?: Record<string, boolean>;
   input: { $ref: string };
   output: { $ref: string };
 }
@@ -32,6 +36,7 @@ const read = (path: string) => JSON.parse(readFileSync(resolve(ROOT, path), "utf
 const DOCUMENTS = {
   conversations: read("schemas/contracts/conversations/v1/contract.json"),
   tasks: read("schemas/contracts/tasks/v1/contract.json"),
+  files: read("schemas/contracts/files/v1/contract.json"),
 };
 
 const SHARED_DEFS = ["notice", "occurrence", "run_outcome", "work_spec"];
@@ -361,6 +366,357 @@ describe("the tasks contract document", () => {
   });
 });
 
+describe("the files contract document", () => {
+  const doc = DOCUMENTS.files;
+  const ajv = compiler();
+  ajv.compile(doc);
+  const schema = (key: string) => {
+    const validate = ajv.getSchema(`${doc.$id}#/$defs/${key}`);
+    if (!validate) throw new Error(`no $defs entry ${key}`);
+    return validate;
+  };
+  const names = (keep: (t: ToolEntry) => boolean) =>
+    Object.entries(doc.tools)
+      .filter(([, t]) => keep(t))
+      .map(([name]) => name)
+      .sort();
+  const file = {
+    id: "fl_0123456789abcdef01234567",
+    filename: "report.pdf",
+    mimeType: "application/pdf",
+    size: 1024,
+    tags: [],
+    source: "chat",
+    conversationId: null,
+    createdAt: "2026-01-01T09:00:00.000Z",
+    description: null,
+  };
+  const uri = `files://${file.id}`;
+
+  test("names the contract and states its own URL", () => {
+    expect(doc.contract).toBe("ai.nimblebrain.files");
+    expect(doc.$id).toBe("https://schemas.nimblebrain.ai/contracts/files/v1/contract.json");
+    expect(doc.version).toBe("1.0");
+    expect(doc.cardinality).toBe("singleton");
+  });
+
+  test("keeps today's public tool names, with read_pdf_pages folded into read", () => {
+    expect(names((t) => t.visibility === "public")).toEqual([
+      "create",
+      "create_folder",
+      "delete",
+      "delete_folder",
+      "info",
+      "list",
+      "move",
+      "read",
+      "search",
+      "tag",
+      "update_folder",
+    ]);
+    expect(doc.tools.read_pdf_pages).toBeUndefined();
+  });
+
+  test("lets an unattended run reach every public tool, as today, and no private one", () => {
+    expect(names((t) => t.visibility === "public" && t.unattended !== "allowed")).toEqual([]);
+    expect(names((t) => t.visibility === "private")).toEqual([
+      "begin_upload",
+      "complete_upload",
+      "delete_workspace",
+      "resolve",
+    ]);
+    expect(names((t) => t.grant === true)).toEqual([]);
+  });
+
+  test("annotates every public tool, and no private one", () => {
+    const hint = (h: string, v: boolean) => names((t) => t.annotations?.[h] === v);
+    expect(hint("readOnlyHint", true)).toEqual(["info", "list", "read", "search"]);
+    expect(hint("destructiveHint", true)).toEqual([
+      "delete",
+      "delete_folder",
+      "move",
+      "tag",
+      "update_folder",
+    ]);
+    expect(hint("destructiveHint", false)).toEqual(["create", "create_folder"]);
+    expect(hint("idempotentHint", false)).toEqual(["create"]);
+    for (const [tool, entry] of Object.entries(doc.tools)) {
+      if (entry.visibility === "public") expect(entry.annotations, tool).toBeObject();
+      else expect(entry.annotations, tool).toBeUndefined();
+    }
+  });
+
+  test("every private input carries the host's version and is closed", () => {
+    for (const tool of names((t) => t.visibility === "private")) {
+      const input = doc.$defs[`${tool}_input`];
+      expect((input?.required as string[]) ?? []).toContain("version");
+      expect(input?.additionalProperties).toBe(false);
+    }
+    const ws = schema("delete_workspace_input");
+    expect(ws({ version: "1.0" })).toBe(true);
+    expect(ws({ version: "2.0" })).toBe(false);
+    expect(ws({ version: "1.0", ownerId: "u" })).toBe(false);
+  });
+
+  const at = "2026-01-01T09:05:00.000Z";
+
+  test("begin_upload takes a declared body and a door, and answers an upload URL", () => {
+    const input = schema("begin_upload_input");
+    const call = {
+      version: "1.0",
+      filename: "report.pdf",
+      mimeType: "application/pdf",
+      size: 1024,
+      source: "chat",
+    };
+    expect(input(call)).toBe(true);
+    expect(input({ ...call, folder: "Reports", tags: ["q3"] })).toBe(true);
+    expect(input({ ...call, conversationId: "conv_1" })).toBe(false);
+    expect(input({ ...call, runId: "run_1" })).toBe(false);
+    expect(input({ ...call, source: "agent" })).toBe(false);
+    expect(input({ ...call, size: -1 })).toBe(false);
+    expect(input({ ...call, ownerId: "u" })).toBe(false);
+    const { size: _size, ...noSize } = call;
+    expect(input(noSize)).toBe(false);
+    const output = schema("begin_upload_output");
+    const answer = {
+      uploadId: "up_1",
+      url: "http://127.0.0.1:41234/u/opaque-token",
+      method: "PUT",
+      headers: { "content-type": "application/pdf" },
+      expiresAt: at,
+    };
+    expect(output(answer)).toBe(true);
+    expect(output({ ...answer, maxBytes: 1024 })).toBe(false);
+    const withHeader = (name: string, value: string) => ({ ...answer, headers: { [name]: value } });
+    expect(output(withHeader("x-amz-meta-a", "v\tw"))).toBe(true);
+    expect(output(withHeader("bad name", "v"))).toBe(false);
+    expect(output(withHeader("x-a:b", "v"))).toBe(false);
+    expect(output(withHeader("x-a", "v\r\nInjected: 1"))).toBe(false);
+    expect(output(withHeader("x-a", "v\u0000"))).toBe(false);
+    expect(output(withHeader("x-a", "v".repeat(1025)))).toBe(false);
+    expect(output({ ...answer, url: "https://store.example/obj?sig=x" })).toBe(true);
+    expect(output({ ...answer, url: "file:///tmp/x" })).toBe(false);
+    expect(output({ ...answer, method: "POST" })).toBe(false);
+    expect(output({ ...answer, expiresAt: "soon" })).toBe(false);
+    expect(output({ ...answer, path: "/var/files/x" })).toBe(false);
+  });
+
+  test("complete_upload takes the upload id and answers the URI and the record", () => {
+    const input = schema("complete_upload_input");
+    expect(input({ version: "1.0", uploadId: "up_1" })).toBe(true);
+    expect(input({ version: "1.0" })).toBe(false);
+    expect(input({ version: "1.0", uploadId: "up_1", size: 1 })).toBe(false);
+    const output = schema("complete_upload_output");
+    expect(output({ uri, file })).toBe(true);
+    expect(output({ uri: "files://ws_1/x", file })).toBe(false);
+    expect(output({ uri, file, url: "https://store.example/x" })).toBe(false);
+  });
+
+  test("resolve answers each URI found, with a download URL, or absent", () => {
+    const input = schema("resolve_input");
+    expect(input({ version: "1.0", uris: [uri] })).toBe(true);
+    expect(input({ version: "1.0", uris: [] })).toBe(false);
+    expect(input({ version: "1.0", uris: Array(101).fill(uri) })).toBe(false);
+    expect(input({ version: "1.0", uris: ["https://example.com/x"] })).toBe(false);
+    const output = schema("resolve_output");
+    const download = { url: "https://store.example/obj?sig=x", expiresAt: at };
+    const found = { uri, found: true, file, download };
+    expect(output({ files: [found, { uri, found: false }] })).toBe(true);
+    const { download: _download, ...noDownload } = found;
+    expect(output({ files: [noDownload] })).toBe(false);
+    expect(output({ files: [{ ...found, download: { ...download, url: "ftp://x" } }] })).toBe(
+      false,
+    );
+    expect(output({ files: [{ ...found, download: { ...download, method: "GET" } }] })).toBe(false);
+    expect(output({ files: [{ uri, found: false, download }] })).toBe(false);
+  });
+
+  test("transfer URLs appear only in private outputs", () => {
+    const urlProperty = (value: unknown): boolean => {
+      if (Array.isArray(value)) return value.some(urlProperty);
+      if (value === null || typeof value !== "object") return false;
+      const node = value as Record<string, unknown>;
+      const props = node.properties as Record<string, unknown> | undefined;
+      if (props && Object.hasOwn(props, "url")) return true;
+      return Object.values(node).some(urlProperty);
+    };
+    const carriers = Object.keys(doc.tools)
+      .flatMap((tool) => [`${tool}_input`, `${tool}_output`])
+      .filter((key) => urlProperty(doc.$defs[key]))
+      .sort();
+    expect(carriers).toEqual(["begin_upload_output", "resolve_output"]);
+  });
+
+  test("names no blob key and no storage location anywhere", () => {
+    const text = JSON.stringify(doc).toLowerCase();
+    expect(text).not.toContain("blob");
+    for (const word of ['"bucket"', '"objectkey"', '"released"', '"record"']) {
+      expect(text).not.toContain(word);
+    }
+  });
+
+  test("list pages by an opaque cursor, with total and facets", () => {
+    const input = doc.$defs.list_input?.properties as Record<string, unknown>;
+    expect(input.cursor).toBeDefined();
+    expect(input.offset).toBeUndefined();
+    expect(schema("list_input")({ cursor: "opaque", limit: 50 })).toBe(true);
+    expect(schema("list_input")({ cursor: "" })).toBe(false);
+    expect(doc.$defs.list_output?.required).toEqual(
+      expect.arrayContaining(["files", "total", "facets", "nextCursor"]),
+    );
+    const zero = { image: 0, document: 0, data: 0, font: 0, other: 0 };
+    const page = {
+      files: [],
+      total: 0,
+      folders: [],
+      breadcrumb: [],
+      facets: { kinds: zero, sources: { chat: 0, agent: 0, app: 0, manual: 0 } },
+    };
+    expect(schema("list_output")({ ...page, nextCursor: null })).toBe(true);
+    expect(schema("list_output")({ ...page, nextCursor: "c" })).toBe(true);
+    expect(schema("list_output")(page)).toBe(false);
+  });
+
+  test("search takes an integer limit from 1 to 200", () => {
+    const search = schema("search_input");
+    expect(search({ query: "q", limit: 200 })).toBe(true);
+    expect(search({ query: "q", limit: 0 })).toBe(false);
+    expect(search({ query: "q", limit: 201 })).toBe(false);
+    expect(search({ query: "q", limit: 2.5 })).toBe(false);
+  });
+
+  test("read takes an optional maxBytes up to 1 MiB", () => {
+    const input = schema("read_input");
+    expect(input({ id: file.id, maxBytes: 4096 })).toBe(true);
+    expect(input({ id: file.id, maxBytes: 1024 * 1024 })).toBe(true);
+    expect(input({ id: file.id, maxBytes: 1024 * 1024 + 1 })).toBe(false);
+    expect(input({ id: file.id, maxBytes: 0 })).toBe(false);
+  });
+
+  test("read takes an optional page list, at most 10, and answers pages beside the record", () => {
+    const input = schema("read_input");
+    expect(input({ id: file.id })).toBe(true);
+    expect(input({ id: file.id, pages: [1, 2] })).toBe(true);
+    expect(input({ id: file.id, pages: [] })).toBe(false);
+    expect(input({ id: file.id, pages: [0] })).toBe(false);
+    expect(input({ id: file.id, pages: Array.from({ length: 11 }, (_, i) => i + 1) })).toBe(false);
+    const output = schema("read_output");
+    const base = { id: file.id, filename: "r.pdf", mimeType: "application/pdf", size: 1 };
+    expect(output({ ...base, extractedText: "hello", truncated: false })).toBe(true);
+    const paged = {
+      ...base,
+      extractedText: null,
+      truncated: false,
+      totalPages: 3,
+      requestedPages: [2, 4],
+      missingPages: [4],
+      pages: [{ page: 2, text: "two", truncated: false, empty: false }],
+    };
+    expect(output(paged)).toBe(true);
+  });
+
+  test("create keeps today's input shape, and lists the allowlist in its type", () => {
+    const create = schema("create_input");
+    const manifest = { filename: "notes.md", mimeType: "text/markdown", folder: "Reports/Q3" };
+    expect(create({ manifest, body: "# Notes", encoding: "text" })).toBe(true);
+    expect(create({ manifest, body: "aGk=" })).toBe(true);
+    expect(create({ manifest, body: "x", encoding: "hex" })).toBe(false);
+    expect(create({ manifest: { filename: "a" }, body: "x" })).toBe(false);
+    const allowlist = JSON.stringify(doc.$defs.create_input);
+    for (const type of ["text/markdown", "application/pdf", "image/svg+xml", "font/woff2"]) {
+      expect(allowlist).toContain(type);
+    }
+  });
+
+  test("a folder id is the implementation's, by grammar", () => {
+    const move = schema("move_input");
+    expect(move({ ids: [file.id], folderId: "root" })).toBe(true);
+    expect(move({ ids: [file.id], folderId: "fd_0123456789abcdef01234567" })).toBe(true);
+    expect(move({ ids: [file.id], folderId: "folder-1" })).toBe(true);
+    expect(move({ ids: [file.id], folderId: "../up" })).toBe(false);
+  });
+
+  test("a public output types a record's source as an open string", () => {
+    expect(schema("info_output")({ ...file, source: "import" })).toBe(true);
+    expect(schema("info_output")({ ...file, source: 1 })).toBe(false);
+  });
+
+  test("sizes are non-negative integers", () => {
+    expect(schema("info_output")({ ...file, size: 1.5 })).toBe(false);
+    expect(schema("info_output")({ ...file, size: -1 })).toBe(false);
+    const read = { id: file.id, filename: "a", mimeType: "text/plain", extractedText: null };
+    expect(schema("read_output")({ ...read, truncated: false, size: 2.5 })).toBe(false);
+  });
+
+  test("its public errors are the closed list the spec names", () => {
+    expect(doc.errors.public.map((e) => e.code).sort()).toEqual([
+      "conflict",
+      "extraction_failed",
+      "file_not_found",
+      "folder_not_found",
+      "invalid_input",
+      "not_paged",
+      "scope_missing",
+      "too_large",
+      "type_not_allowed",
+      "unknown_tool",
+    ]);
+    expect(doc.errors.public.find((e) => e.code === "scope_missing")?.prefix).toBe(
+      "Scope missing: ",
+    );
+    expect(doc.errors.private.map((e) => e.code).sort()).toEqual([
+      "forbidden",
+      "internal_error",
+      "invalid_input",
+      "scope_missing",
+      "too_large",
+      "type_not_allowed",
+      "upload_incomplete",
+      "upload_not_found",
+    ]);
+  });
+});
+
+describe("the files contract's type tables", () => {
+  const spec = readFileSync(resolve(ROOT, "contracts/files/CONTRACT.md"), "utf-8");
+  const types = spec.slice(spec.indexOf("**Types.**"), spec.indexOf("**Outputs.**"));
+  /** Each `| `key` | `a`, `b` |` row of the section, as [key, values]. */
+  const rows = (keys: readonly string[]) =>
+    [...types.matchAll(/^\s*\| `([^`]+)` \| (.+) \|$/gm)]
+      .filter((m) => keys.includes(m[1] ?? ""))
+      .map((m) => [m[1] ?? "", [...(m[2] ?? "").matchAll(/`([^`]+)`/g)].map((v) => v[1])] as const);
+
+  test("the extension table is the runtime's extension map", () => {
+    const table: Record<string, string> = {};
+    for (const [type, exts] of rows([...new Set(Object.values(EXTENSION_MIME))])) {
+      for (const ext of exts) if (ext) table[ext] = type;
+    }
+    expect(table).toEqual(EXTENSION_MIME);
+  });
+
+  test("the recorded type follows the stated rules", () => {
+    expect(resolveMimeType("a.TYP", "")).toBe("text/plain");
+    expect(resolveMimeType(".env", "application/octet-stream; charset=x")).toBe("text/plain");
+    expect(resolveMimeType("Makefile", undefined)).toBe("application/octet-stream");
+    expect(resolveMimeType("a.", "")).toBe("application/octet-stream");
+    expect(resolveMimeType("a.bin", "")).toBe("application/octet-stream");
+    expect(resolveMimeType("a.md", " Text/CSV; charset=utf-8 ")).toBe("Text/CSV; charset=utf-8");
+  });
+
+  test("the kind table classifies every allowlisted type as the runtime does", () => {
+    const table = new Map<string, string>();
+    for (const [kind, mimes] of rows(FILE_KINDS)) {
+      for (const mime of mimes) if (mime) table.set(mime, kind);
+    }
+    expect([...table.keys()].sort()).toEqual([...ALLOWED_MIME_TYPES].sort());
+    for (const [mime, kind] of table) {
+      expect<string>(fileKind(mime)).toBe(kind);
+      expect<string>(fileKind(`${mime.toUpperCase()}; charset=utf-8`)).toBe(kind);
+    }
+  });
+});
+
 describe("the host context schema", () => {
   const validate = compiler().compile(
     JSON.parse(
@@ -375,6 +731,14 @@ describe("the host context schema", () => {
     expect(validate({ principal: "person", unattended: true })).toBe(true);
     expect(validate({ principal: "person", grant: "" })).toBe(false);
     expect(validate({ principal: "person", unattended: "yes" })).toBe(false);
+  });
+
+  test("accepts an optional runId, on a run's calls and on the host's own", () => {
+    expect(validate({ principal: "person", unattended: true, runId: "run_1" })).toBe(true);
+    expect(validate({ principal: "host", workspaceId: "ws_1", ownerId: "u", runId: "run_1" })).toBe(
+      true,
+    );
+    expect(validate({ principal: "person", runId: "" })).toBe(false);
   });
 });
 
@@ -428,6 +792,20 @@ describe("the emitter", () => {
       { public: { read: tool() }, private: {} },
     );
     expect(() => emit(onAllowed)).toThrow(/carries a grant/);
+  });
+
+  test("refuses annotations on a private tool", () => {
+    const bad = source(
+      {
+        poll: {
+          visibility: "private",
+          unattended: "refused",
+          annotations: { readOnlyHint: true },
+        },
+      },
+      { public: {}, private: { poll: tool() } },
+    );
+    expect(() => emit(bad)).toThrow(/carries annotations/);
   });
 
   test("refuses a $ref in a public tool's schema", () => {

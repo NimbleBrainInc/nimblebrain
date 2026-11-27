@@ -60,7 +60,7 @@ enters the runtime. This decision replaces it.
 - **Plugins** are capabilities that agents and people use: tools, screens, records.
   Conversations, tasks, files and every domain app are plugins, reached over MCP.
 - **Providers** are infrastructure the kernel uses constantly and no agent calls: the
-  work queue, pub/sub for change notification, leases, blob storage. A provider has no
+  work queue, pub/sub for change notification, leases. A provider has no
   tools and no screen. It is a configured implementation behind a kernel interface,
   local by default and replaceable for scale.
 
@@ -267,11 +267,14 @@ ones**, chosen in configuration, held to a conformance suite of its own:
   deciding a run is due) only enqueues; the door executes whatever a worker claims.
 - **Pub/sub**: change notifications that reach every runtime process.
 - **Leases**: claims on work that must happen once.
-- **Blobs**: large write-once bodies, held by reference.
 
 Locally each is in-process or on the filesystem. At scale each is a shared service. A
 provider declares whether it is safe for more than one process, and boot refuses a
 topology it cannot serve.
+
+**File bytes are not a provider.** The files implementation owns its bytes and its storage,
+private to it, and moves bytes to and from the kernel by short-lived URLs it issues (the files
+contract). The kernel reads and writes no file storage of its own.
 
 **With shared providers and system plugins reached by URL, runtime processes are
 interchangeable workers.** Conversations, tasks and files each scale as one server of
@@ -340,7 +343,7 @@ kernel's `history/`.
   installs everywhere but lets a workspace remove a plugin is a later addition, made
   when someone needs it.
 - Moving to this layout is incremental: conversations first, then tasks with the work
-  queue, then files with blobs. The work happens on a dedicated branch and reaches
+  queue, then files. The work happens on a dedicated branch and reaches
   `main` when each step is complete and passes its conformance suites.
 
 ## Alternatives considered
@@ -354,7 +357,7 @@ kernel's `history/`.
 - **In-process domain stores with a storage-provider registry (ADR-0075).** Superseded:
   the boundary does not serialize, so it can leak, and the registry is a second
   extension model beside MCP for capabilities.
-- **Infrastructure as MCP plugins too.** Rejected: a queue, pub/sub, leases and blobs
+- **Infrastructure as MCP plugins too.** Rejected: a queue, pub/sub and leases
   have no tools and no screen, are used by the kernel alone at high frequency, and need
   semantics (long-polling, acknowledgement) a tool call carries poorly.
 - **A plain HTTP contract for records.** Rejected: MCP carries the same semantics in tool
