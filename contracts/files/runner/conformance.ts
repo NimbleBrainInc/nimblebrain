@@ -581,8 +581,16 @@ async function get(url: string, headers: Record<string, string> = {}): Promise<R
   return fetch(url, { method: "GET", headers, redirect: "manual" });
 }
 
-async function put(url: string, body: Uint8Array, headers: Record<string, string> = {}) {
-  return fetch(url, { method: "PUT", body, headers, redirect: "manual" });
+/** An upload's transfer: its URL and the headers its PUT must carry (CONTRACT.md §7). */
+interface Grant {
+  url: string;
+  headers: Obj;
+}
+
+/** PUT a body to an upload's URL with every header `begin_upload` returned for it. */
+async function put(up: Grant, body: Uint8Array): Promise<Response> {
+  const headers = up.headers as Record<string, string>;
+  return fetch(up.url, { method: "PUT", body, headers, redirect: "manual" });
 }
 
 /** The body a GET answers, checked for status 200, its length and its encoding. */
@@ -664,8 +672,8 @@ async function upload(
   };
 }
 
-async function putOk(url: string, body: Buffer, headers: Obj = {}): Promise<void> {
-  const res = await put(url, body, headers as Record<string, string>);
+async function putOk(up: Grant, body: Buffer): Promise<void> {
+  const res = await put(up, body);
   assert(res.status >= 200 && res.status < 300, `PUT answered ${res.status}`);
 }
 
@@ -1592,7 +1600,7 @@ async function uploadCases(c: FullCtx): Promise<void> {
         { conversation, run },
       );
       eq(Number((await okCall(person, "list", {})).total), before, "begin_upload made a file");
-      await putOk(up.url, body, up.headers);
+      await putOk(up, body);
       const done = await okCall(host, "complete_upload", {
         version: VERSION,
         uploadId: up.uploadId,
@@ -1628,13 +1636,13 @@ async function uploadCases(c: FullCtx): Promise<void> {
         "upload_incomplete",
         "no body",
       );
-      await putOk(up.url, body.subarray(0, 5));
+      await putOk(up, body.subarray(0, 5));
       expectCode(
         await host.call("complete_upload", { version: VERSION, uploadId: up.uploadId }),
         "upload_incomplete",
         "short",
       );
-      await putOk(up.url, body);
+      await putOk(up, body);
       await okCall(host, "complete_upload", { version: VERSION, uploadId: up.uploadId });
     },
   );
@@ -1642,8 +1650,8 @@ async function uploadCases(c: FullCtx): Promise<void> {
     const first = Buffer.from("first-body");
     const second = Buffer.from("other-body");
     const up = await upload(c, first);
-    await putOk(up.url, first);
-    await putOk(up.url, second);
+    await putOk(up, first);
+    await putOk(up, second);
     const done = await okCall(host, "complete_upload", { version: VERSION, uploadId: up.uploadId });
     const got = await download(await downloadUrl(c, String(obj(done.file, "file").id)));
     eq(got.toString(), "other-body", "body");
@@ -1653,7 +1661,7 @@ async function uploadCases(c: FullCtx): Promise<void> {
     async () => {
       const body = Buffer.from("idempotent");
       const up = await upload(c, body);
-      await putOk(up.url, body);
+      await putOk(up, body);
       const first = await okCall(host, "complete_upload", {
         version: VERSION,
         uploadId: up.uploadId,
@@ -1672,7 +1680,7 @@ async function uploadCases(c: FullCtx): Promise<void> {
     async () => {
       const body = Buffer.from("replayed");
       const up = await upload(c, body);
-      await putOk(up.url, body);
+      await putOk(up, body);
       const first = await okCall(host, "complete_upload", {
         version: VERSION,
         uploadId: up.uploadId,
@@ -1693,7 +1701,7 @@ async function uploadCases(c: FullCtx): Promise<void> {
     async () => {
       const body = Buffer.from("deleted since");
       const up = await upload(c, body);
-      await putOk(up.url, body);
+      await putOk(up, body);
       const first = await okCall(host, "complete_upload", {
         version: VERSION,
         uploadId: up.uploadId,
@@ -1718,7 +1726,7 @@ async function uploadCases(c: FullCtx): Promise<void> {
       for (const [filename, mimeType, want] of cases) {
         const body = Buffer.from("x");
         const up = await upload(c, body, { filename, mimeType });
-        await putOk(up.url, body);
+        await putOk(up, body);
         const done = await okCall(host, "complete_upload", {
           version: VERSION,
           uploadId: up.uploadId,
@@ -1730,8 +1738,8 @@ async function uploadCases(c: FullCtx): Promise<void> {
   await h.run("a PUT past the declared size is refused and stores nothing", async () => {
     const body = Buffer.from("declared");
     const up = await upload(c, body);
-    await putOk(up.url, body);
-    const res = await put(up.url, Buffer.concat([body, Buffer.from("-and-more")]));
+    await putOk(up, body);
+    const res = await put(up, Buffer.concat([body, Buffer.from("-and-more")]));
     const own =
       isLoopbackUrl(up.url) ||
       (c.opts.server !== undefined && new URL(up.url).origin === new URL(c.opts.server).origin);
@@ -1744,9 +1752,9 @@ async function uploadCases(c: FullCtx): Promise<void> {
   await h.run("an upload URL stops accepting once its upload is completed", async () => {
     const body = Buffer.from("closed");
     const up = await upload(c, body);
-    await putOk(up.url, body);
+    await putOk(up, body);
     await okCall(host, "complete_upload", { version: VERSION, uploadId: up.uploadId });
-    const res = await put(up.url, body);
+    const res = await put(up, body);
     assert(res.status < 200 || res.status >= 300, `a PUT after completion answered ${res.status}`);
   });
   await h.run(
@@ -1754,7 +1762,7 @@ async function uploadCases(c: FullCtx): Promise<void> {
     async () => {
       const body = Buffer.from("walled");
       const up = await upload(c, body);
-      await putOk(up.url, body);
+      await putOk(up, body);
       const args = { version: VERSION, uploadId: up.uploadId };
       expectCode(
         await host.call("complete_upload", args, { owner: c.owner2 }),
@@ -1809,7 +1817,7 @@ async function transferCases(c: FullCtx): Promise<void> {
       const body = Buffer.from("shape");
       const up = await upload(c, body);
       checkTransferUrl(up.url, up.expiresAt, UPLOAD_TTL_S, up.issuedAt);
-      await putOk(up.url, body);
+      await putOk(up, body);
       const done = await okCall(c.host, "complete_upload", {
         version: VERSION,
         uploadId: up.uploadId,
@@ -1838,7 +1846,7 @@ async function transferCases(c: FullCtx): Promise<void> {
       );
       const dl = await downloadUrl(c, made.id);
       for (const res of [
-        await put(dl, body),
+        await fetch(dl, { method: "PUT", body, redirect: "manual" }),
         await fetch(dl, { method: "POST", redirect: "manual" }),
       ]) {
         assert(res.status < 200 || res.status >= 300, `download URL answered ${res.status}`);
@@ -1934,7 +1942,7 @@ async function expiryCases(c: FullCtx): Promise<void> {
     await h.run(graceCase, async () => {
       const body = Buffer.from("in time");
       const up = await upload(c, body);
-      await putOk(up.url, body);
+      await putOk(up, body);
       await sleep(Math.max(0, Date.parse(up.expiresAt) - Date.now()) + 1_000);
       await okCall(host, "complete_upload", { version: VERSION, uploadId: up.uploadId });
     });
@@ -1942,7 +1950,7 @@ async function expiryCases(c: FullCtx): Promise<void> {
       const body = Buffer.from("too late");
       const up = await upload(c, body);
       await sleep(Math.max(0, Date.parse(up.expiresAt) - Date.now()) + 1_000);
-      const res = await put(up.url, body);
+      const res = await put(up, body);
       assert(res.status < 200 || res.status >= 300, `a late PUT answered ${res.status}`);
       expectCode(
         await host.call("complete_upload", { version: VERSION, uploadId: up.uploadId }),
@@ -1961,7 +1969,7 @@ async function expiryCases(c: FullCtx): Promise<void> {
     await h.run(pastGrace, async () => {
       const body = Buffer.from("never completed");
       const up = await upload(c, body);
-      await putOk(up.url, body);
+      await putOk(up, body);
       await sleep(Math.max(0, Date.parse(up.expiresAt) - Date.now()) + GRACE_S * 1000 + 2_000);
       expectCode(
         await host.call("complete_upload", { version: VERSION, uploadId: up.uploadId }),
@@ -2075,7 +2083,7 @@ async function deleteWorkspaceCases(c: FullCtx): Promise<void> {
       await createFile(b, { filename: "b.txt", mimeType: "text/plain" }, "b");
       const body = Buffer.from("open upload");
       const up = await upload(c, body, {}, { workspace: ws });
-      await putOk(up.url, body);
+      await putOk(up, body);
       const out = await okCall(
         host,
         "delete_workspace",
