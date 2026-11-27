@@ -50,11 +50,11 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 | `info` | public | allowed | `readOnlyHint: true` | One file's record, without its body |
 | `read` | public | allowed | `readOnlyHint: true` | One file's extracted text, whole or by page, up to a byte bound |
 | `create` | public | allowed | `destructiveHint: false`, `idempotentHint: false` | Store a file whose content the caller sends |
-| `tag` | public | allowed | `destructiveHint: false` | Add and remove a file's tags |
+| `tag` | public | allowed | `destructiveHint: true` | Add and remove a file's tags |
 | `move` | public | allowed | `destructiveHint: true` | Move files into a folder, all or none |
 | `delete` | public | allowed | `destructiveHint: true` | Delete a file and its bytes |
 | `create_folder` | public | allowed | `destructiveHint: false` | Create a folder |
-| `update_folder` | public | allowed | `destructiveHint: false` | Rename or move a folder |
+| `update_folder` | public | allowed | `destructiveHint: true` | Rename or move a folder |
 | `delete_folder` | public | allowed | `destructiveHint: true` | Delete an empty folder |
 | `begin_upload` | private | refused | — | Open an upload: answers its id and a short-lived upload URL |
 | `complete_upload` | private | refused | — | Make the file from an upload's body: answers its URI and record |
@@ -62,7 +62,8 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 | `delete_workspace` | private | refused | — | Purge every owner's files, folders and bytes in a workspace |
 
 Every public tool that is not read-only is annotated `readOnlyHint: false` beside what the
-table shows. A private tool carries no annotations: no agent sees it.
+table shows. A tool that removes or relocates anything (a tag, a file, a folder, a name) is
+`destructiveHint: true`; one that only adds is `false`. A private tool carries no annotations: no agent sees it.
 
 ## 2. Scope and principal
 
@@ -222,7 +223,8 @@ configuration for it.
   runs to its end; one begun after is refused. An upload URL also stops accepting once its
   upload is completed.
 - **is absolute `https:`**, or `http:` only to a loopback address (`127.0.0.0/8`, `[::1]`,
-  `localhost`), at most 4096 characters.
+  `localhost`), at most 4096 characters, on an origin the operator lists for the
+  implementation's binding (loopback when none are listed; §10).
 - **MUST NOT appear** in a public output, an error, a log line, a span, the screen or any
   notification. It crosses only the private outputs above.
 
@@ -230,7 +232,9 @@ configuration for it.
 streamed, and its `Content-Length`; it MAY answer `Range` requests. An upload URL accepts a
 `PUT` of at most `maxBytes` bytes (at least `size`) with the `headers` `begin_upload` named, and
 answers a 2xx once the body is stored. After `delete` answers, no URL issued since serves the
-file; one issued before serves it at most until it expires.
+file; one issued before serves it at most until it expires. That window is unreachable from
+outside: only the host ever holds a download URL, and it fetches from it at once after the
+`resolve` that answered it, under the caller's context.
 
 **A local implementation** (one the host runs on its own machine, over stdio) serves its URLs
 from an HTTP listener bound to a loopback address on a port it chooses, started with the
@@ -242,6 +246,9 @@ the traffic never leaves the machine. An implementation the host reaches over a 
 **The host's side of a transfer:**
 
 - It accepts only a URL valid against the rules above, and refuses any other scheme.
+- **It fetches only from the origins the operator lists for that binding** (host
+  configuration, not a field of this contract); with none listed, only loopback origins. A URL
+  outside the allowed origins is a failed transfer, and the host sends it no request.
 - It follows no redirect: a 3xx answer is a failed transfer.
 - It sends no credential, cookie or header of its own beyond `Content-Length` and, on a `PUT`,
   the `headers` `begin_upload` named.
@@ -365,6 +372,11 @@ visibility and bytes.
    on every call it makes for them, and overwrites any a caller supplied. A `host` call never
    carries `unattended`.
 8. **Transfer URLs stay inside the host** (§7): it never logs one, shows one or passes one on.
+9. **Transfer origins are the operator's.** The host fetches a transfer URL only when its
+   origin is one the operator lists for the implementation's binding, or a loopback origin when
+   none are listed; any other URL is a failed transfer (§7). An operator binding a managed
+   implementation lists the origins it issues URLs from (its own HTTPS endpoint, its object
+   store's).
 
 ## 11. Errors
 
@@ -438,8 +450,9 @@ difference:
   texts keep `File not found: ` and `Folder not found: `; a taken folder name, a folder moved
   into itself and a non-empty folder are `Conflict: …`; a bad base64 body is
   `Invalid arguments for "create": …`.
-- **Annotations are stated for every tool**: `destructiveHint: true` on `move`, `delete` and
-  `delete_folder`, `destructiveHint: false` on the other writes, and `idempotentHint: false` on
+- **Annotations are stated for every tool**: `destructiveHint: true` on `tag`, `move`,
+  `update_folder`, `delete` and `delete_folder`, `destructiveHint: false` on `create` and
+  `create_folder`, and `idempotentHint: false` on
   `create`.
 - **Ids are the implementation's.** A folder id is matched by the grammar of §4 instead of one
   implementation's `fd_` and 24 hex characters.

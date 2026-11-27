@@ -428,13 +428,14 @@ describe("the files contract document", () => {
   test("annotates every public tool, and no private one", () => {
     const hint = (h: string, v: boolean) => names((t) => t.annotations?.[h] === v);
     expect(hint("readOnlyHint", true)).toEqual(["info", "list", "read", "search"]);
-    expect(hint("destructiveHint", true)).toEqual(["delete", "delete_folder", "move"]);
-    expect(hint("destructiveHint", false)).toEqual([
-      "create",
-      "create_folder",
+    expect(hint("destructiveHint", true)).toEqual([
+      "delete",
+      "delete_folder",
+      "move",
       "tag",
       "update_folder",
     ]);
+    expect(hint("destructiveHint", false)).toEqual(["create", "create_folder"]);
     expect(hint("idempotentHint", false)).toEqual(["create"]);
     for (const [tool, entry] of Object.entries(doc.tools)) {
       if (entry.visibility === "public") expect(entry.annotations, tool).toBeObject();

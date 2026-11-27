@@ -79,7 +79,7 @@
       "unattended": "allowed",
       "annotations": {
         "readOnlyHint": false,
-        "destructiveHint": false
+        "destructiveHint": true
       },
       "input": {
         "$ref": "#/$defs/tag_input"
@@ -135,7 +135,7 @@
       "unattended": "allowed",
       "annotations": {
         "readOnlyHint": false,
-        "destructiveHint": false
+        "destructiveHint": true
       },
       "input": {
         "$ref": "#/$defs/update_folder_input"
