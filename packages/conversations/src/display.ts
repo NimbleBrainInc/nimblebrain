@@ -510,13 +510,31 @@ function sumRunUsage(llmResponses: LlmResponseEvent[]): DisplayUsage {
   };
 }
 
+/**
+ * A run that produced no model response: shown only once it is known to have ended without
+ * completing (its terminator says why, or a later turn cut it off), as an assistant message
+ * with no text that carries the reason. A run still open, or one that completed with
+ * nothing to say, shows nothing.
+ */
+function unansweredRun(scan: RunScan): DisplayMessage | null {
+  const ended = scan.abandoned || scan.terminated;
+  if (!ended || !scan.stopReason || scan.stopReason === "complete") return null;
+  return {
+    role: "assistant",
+    content: "",
+    blocks: [],
+    timestamp: scan.endTs,
+    stopReason: scan.stopReason,
+  };
+}
+
 function collectRun(
   events: ReadEvent[],
   start: number,
   runId: string,
 ): [DisplayMessage | null, number] {
   const scan = scanRun(events, start, runId);
-  if (scan.llmResponses.length === 0) return [null, scan.nextIndex];
+  if (scan.llmResponses.length === 0) return [unansweredRun(scan), scan.nextIndex];
   const { blocks, toolCalls } = buildRunBlocks(scan);
   const content = blocks
     .filter((b): b is { type: "text"; text: string } => b.type === "text")

@@ -112,6 +112,9 @@ export function conversationEventRoutes(ctx: AppContext) {
       // already rendered (0 / absent = full replay of the in-flight turn).
       const afterSeq = parseAfterSeq(c.req.query("afterSeq"));
       const scope = { workspaceId: c.var.workspaceId, ownerId: callerId };
+      // A turn whose process died has a start and no end; with no turn running
+      // here it is closed as interrupted, so the viewer reads it as such.
+      await ctx.runtime.closeInterruptedTurn(scope, conversationId);
       const replay = ctx.runtime.getTurnReplay(scope, conversationId, afterSeq);
 
       // Create the SSE stream. The manager replays the buffered in-flight turn
