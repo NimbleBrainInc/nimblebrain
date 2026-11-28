@@ -37,6 +37,7 @@ import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useEvents } from "../hooks/useEvents";
 import { useCanWriteActiveWorkspace } from "../hooks/useScopedRole";
 import {
+  catalogLine,
   ownerLine,
   pluginAccount,
   pluginConnected,
@@ -146,6 +147,7 @@ function PluginMeta({ plugin, slug }: { plugin: Plugin; slug: string }) {
   return (
     <div className="mt-1 space-y-0.5 text-sm text-muted-foreground">
       <p data-testid="plugin-owner">{ownerLine(plugin)}</p>
+      {catalogLine(plugin) && <p data-testid="plugin-catalog">{catalogLine(plugin)}</p>}
       {plugin.apps.length > 0 && (
         <p data-testid="plugin-apps">
           {plugin.apps.length === 1 ? "App: " : "Apps: "}
@@ -186,6 +188,7 @@ function WorkspacePlugin({ plugin, slug, wsId }: { plugin: Plugin; slug: string;
           wsId={wsId}
           listPath={`/w/${slug}/plugins`}
           hasSkills={plugin.skills.some((s) => s.serverName === server.serverName)}
+          removable={plugin.required !== true}
           meta={i === 0 ? <PluginMeta plugin={plugin} slug={slug} /> : undefined}
         />
       ))}
@@ -208,6 +211,7 @@ function WorkspaceConnector({
   wsId,
   listPath,
   hasSkills,
+  removable,
   meta,
 }: {
   serverName: string;
@@ -215,6 +219,8 @@ function WorkspaceConnector({
   wsId: string;
   listPath: string;
   hasSkills: boolean;
+  /** False for a required plugin's connector, which no one removes here. */
+  removable: boolean;
   meta?: React.ReactNode;
 }) {
   const navigate = useNavigate();
@@ -280,6 +286,7 @@ function WorkspaceConnector({
         canManage={canManage}
         onChanged={refresh}
         onUninstall={() => setConfirmingUninstall(true)}
+        removable={removable}
         meta={meta}
       />
 

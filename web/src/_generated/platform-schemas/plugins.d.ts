@@ -102,6 +102,17 @@ export declare const Plugin: import("@sinclair/typebox").TObject<{
         /** The view's route, opened at `/w/<workspace>/app/<route>`, when it declares one. */
         route: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     }>>;
+    /**
+     * True when a `required` catalog puts it in every workspace (ADR-0076): no
+     * person can uninstall it, and it goes only when its catalog drops it.
+     */
+    required: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+    /**
+     * True when the catalog it was installed from no longer lists it, or is no
+     * longer configured. It stays installed until someone removes it; it cannot
+     * be updated. Absent while its catalog cannot be read.
+     */
+    noLongerOffered: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
 }>;
 export type Plugin = Static<typeof Plugin>;
 export declare const PluginsListOutput: import("@sinclair/typebox").TObject<{
@@ -153,6 +164,17 @@ export declare const PluginsListOutput: import("@sinclair/typebox").TObject<{
             /** The view's route, opened at `/w/<workspace>/app/<route>`, when it declares one. */
             route: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         }>>;
+        /**
+         * True when a `required` catalog puts it in every workspace (ADR-0076): no
+         * person can uninstall it, and it goes only when its catalog drops it.
+         */
+        required: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+        /**
+         * True when the catalog it was installed from no longer lists it, or is no
+         * longer configured. It stays installed until someone removes it; it cannot
+         * be updated. Absent while its catalog cannot be read.
+         */
+        noLongerOffered: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     }>>;
 }>;
 export type PluginsListOutput = Static<typeof PluginsListOutput>;

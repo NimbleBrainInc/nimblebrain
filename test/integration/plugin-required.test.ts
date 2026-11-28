@@ -178,6 +178,7 @@ describe("a required catalog", () => {
     const listed = (await tool(rt, wsId)({ action: "list_plugins" }))
       .structuredContent as PluginsListOutput;
     const notion = listed.plugins.find((p) => p.servers[0]?.serverName === NOTION_SERVER);
+    expect(notion?.required).toBe(true);
     expect(notion?.servers[0]?.status).toBe("not_connected");
   });
 

@@ -71,6 +71,8 @@ export interface PluginListingFacts {
   personalRecords?: readonly InstalledPluginRecord[];
   /** Display fields by plugin address, from the catalogs' listings. */
   displays?: ReadonlyMap<string, PluginDisplay>;
+  /** The addresses of installed plugins their catalog no longer offers. */
+  notOffered?: ReadonlySet<string>;
   overlays: readonly BoundSkillFacts[];
   published: readonly BoundSkillFacts[];
   /** The workspace's placements (`PlacementRegistry.forWorkspace`). */
@@ -83,6 +85,7 @@ export function projectPlugins(facts: PluginListingFacts): PluginsListOutput {
     (g): Plugin => ({
       id: g.address ? `workspace:plugin:${g.address}` : `workspace:${g.connectors[0]?.serverName}`,
       ...g.display,
+      ...recordFlags(g, facts.notOffered),
       owner: { kind: "workspace" },
       granted: true,
       servers: g.connectors.map(serverOf),
@@ -102,6 +105,7 @@ export function projectPlugins(facts: PluginListingFacts): PluginsListOutput {
     return {
       id: g.address ? `person:plugin:${g.address}` : `person:${g.connectors[0]?.serverName}`,
       ...g.display,
+      ...recordFlags(g, facts.notOffered),
       owner: { kind: "person" },
       granted,
       servers: g.connectors.map(serverOf),
@@ -112,9 +116,22 @@ export function projectPlugins(facts: PluginListingFacts): PluginsListOutput {
   return { wsId: facts.wsId, plugins: [...workspacePlugins, ...personalPlugins] };
 }
 
+/** What a plugin's record and its catalog say about it: required, or no longer offered. */
+function recordFlags(
+  g: Group<ConnectorFacts>,
+  notOffered: ReadonlySet<string> | undefined,
+): Pick<Plugin, "required" | "noLongerOffered"> {
+  if (!g.address) return {};
+  return {
+    ...(g.required ? { required: true } : {}),
+    ...(notOffered?.has(g.address) ? { noLongerOffered: true } : {}),
+  };
+}
+
 /** One listed plugin: a record's connections, or one connector no record names. */
 interface Group<C extends ConnectorFacts> {
   address?: string;
+  required?: boolean;
   connectors: C[];
   display: Pick<Plugin, "displayName" | "description" | "iconUrl">;
 }
@@ -141,7 +158,12 @@ function grouped<C extends ConnectorFacts>(
     const listed = displays?.get(record.address);
     // One connection: it is the plugin to the person, so it shows as itself.
     const source = mine.length === 1 || !listed ? displayOf(first) : listed;
-    groups.push({ address: record.address, connectors: mine, display: source });
+    groups.push({
+      address: record.address,
+      ...(record.required ? { required: true } : {}),
+      connectors: mine,
+      display: source,
+    });
   }
   for (const c of connectors) {
     if (!claimed.has(c.serverName)) groups.push({ connectors: [c], display: displayOf(c) });

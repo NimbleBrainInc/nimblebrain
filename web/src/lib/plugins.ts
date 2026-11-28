@@ -36,6 +36,17 @@ export function ownerLine(plugin: Plugin): string {
   return plugin.owner.kind === "person" ? "Uses your account" : "Uses the workspace's account";
 }
 
+/**
+ * What the plugin's catalog says about it, when that is worth a line: a
+ * required plugin cannot be removed here, and one its catalog no longer offers
+ * stays installed but gets no updates. Null otherwise.
+ */
+export function catalogLine(plugin: Plugin): string | null {
+  if (plugin.required) return "Required in every workspace; it cannot be removed here";
+  if (plugin.noLongerOffered) return "No longer offered by its catalog; it stays installed";
+  return null;
+}
+
 /** A skill's scope as it appears in its page's URL: the tiers a person authors in. */
 export type AuthoredSkillScope = "workspace" | "user" | "org";
 

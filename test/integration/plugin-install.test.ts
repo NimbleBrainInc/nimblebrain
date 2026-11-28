@@ -14,6 +14,7 @@ import { join } from "node:path";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import type { PluginsListOutput } from "../../src/platform/schemas/plugins.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import { McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
@@ -815,5 +816,48 @@ describe("plugin install", () => {
     const updated = await call({ action: "update_plugin", address: "wiki@test" });
     expect(updated.structuredContent).toMatchObject({ updated: true, reconnectedConnectors: [] });
     expect((await workspace(rt, wsId)).connectors.map((c) => c.url)).toEqual([NOTION.url]);
+  }, 30_000);
+
+  test("an item its available catalog drops stays installed and shows as no longer offered", async () => {
+    writeListing([bareConnectorEntry("linear", LINEAR), bareConnectorEntry("notion", NOTION)]);
+    const { rt, wsId, call } = await boot();
+    await call({ action: "install", address: "linear@test" });
+    const plugins = async () =>
+      ((await call({ action: "list_plugins" })).structuredContent as PluginsListOutput).plugins;
+    expect((await plugins())[0]?.noLongerOffered).toBeUndefined();
+
+    writeListing([bareConnectorEntry("notion", NOTION)]);
+    await rt.getCatalogListings().refresh();
+    const [linear] = await plugins();
+    expect(linear?.servers.map((s) => s.serverName)).toEqual([LINEAR_SERVER]);
+    expect(linear?.noLongerOffered).toBe(true);
+    expect(linear?.required).toBeUndefined();
+    expect((await workspace(rt, wsId)).plugins?.map((p) => p.address)).toEqual(["linear@test"]);
+    const update = await call({ action: "update_plugin", address: "linear@test" });
+    expect(update.structuredContent).toMatchObject({ error: "NOT_OFFERED" });
+
+    // Its catalog leaving the configuration says the same; uninstall still works.
+    const other = join(workDir, "other.json");
+    writeFileSync(other, listingBytes([]));
+    await rt.shutdown();
+    const restarted = await Runtime.start({
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
+      logging: { disabled: true },
+      workDir,
+      catalogs: [{ source: other, policy: "available", name: "other" }],
+    });
+    runtime = restarted;
+    await restarted.ensureWorkspaceRegistry(wsId);
+    const again = createManageConnectorsTool({
+      runtime: restarted,
+      getIdentity: () => ADMIN,
+      getWorkspaceId: () => wsId,
+    });
+    const listed = (await again.handler({ action: "list_plugins" }))
+      .structuredContent as PluginsListOutput;
+    expect(listed.plugins[0]?.noLongerOffered).toBe(true);
+    const removed = await again.handler({ action: "uninstall", address: "linear@test" });
+    expect(removed.isError).toBe(false);
   }, 30_000);
 });

@@ -2,6 +2,7 @@ import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import { brandName } from "../brand/index.ts";
 import { type BrowseResult, browseCatalog } from "../catalogs/browse.ts";
 import { SERVER_RECORD_TYPE } from "../catalogs/listing.ts";
+import type { CatalogSnapshot } from "../catalogs/reader.ts";
 import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import { catalogEntryForRef } from "../connectors/catalog/catalog.ts";
@@ -775,7 +776,7 @@ async function handleListPlugins(
     wsId,
     workspaceRecords,
     personalRecords,
-    displays: await pluginDisplays(ctx, [...workspaceRecords, ...personalRecords]),
+    ...(await pluginListingFacts(ctx, [...workspaceRecords, ...personalRecords])),
     workspace: workspace.map((c) => ({ ...c, description: c.catalog?.description })),
     personal: personal.map((c) => ({ ...c, ...deriveConnectorStatus({ state: c.state }) })),
     overlays: ctx.runtime.listConnectorOverlays(wsId),
@@ -795,29 +796,57 @@ async function handleListPlugins(
 
 /**
  * How the catalogs' listings show each installed plugin, by address: the
- * entries' display fields, never an artifact. Only read when some record is
- * installed; a listing that cannot be read shows none.
+ * entries' display fields, never an artifact. And which ones their catalog no
+ * longer offers: its listing was read and lists no such entry, or the catalog
+ * is no longer configured (ADR-0077: an `available` item stays installed and
+ * shows as no longer offered). A catalog that cannot be read says neither.
+ * Only read when some record is installed.
  */
-async function pluginDisplays(
+async function pluginListingFacts(
   ctx: ManageConnectorsContext,
   records: readonly InstalledPluginRecord[],
-): Promise<Map<string, PluginDisplay>> {
-  const out = new Map<string, PluginDisplay>();
-  if (records.length === 0) return out;
+): Promise<{ displays: Map<string, PluginDisplay>; notOffered: Set<string> }> {
+  if (records.length === 0) return { displays: new Map(), notOffered: new Set() };
   const wanted = new Set(records.map((r) => r.address));
   try {
-    for (const snapshot of await ctx.runtime.getCatalogListings().snapshots()) {
-      for (const e of snapshot.entries) {
-        if (!wanted.has(e.address) || out.has(e.address)) continue;
-        out.set(e.address, {
-          displayName: e.displayName,
-          ...(e.description ? { description: e.description } : {}),
-          ...(e.iconUrl ? { iconUrl: e.iconUrl } : {}),
-        });
-      }
-    }
+    const snapshots = await ctx.runtime.getCatalogListings().snapshots();
+    return { displays: displaysOf(snapshots, wanted), notOffered: notOfferedOf(snapshots, wanted) };
   } catch (err) {
     log.warn(`[plugins] listings cannot be read for the plugin list: ${String(err)}`);
+    return { displays: new Map(), notOffered: new Set() };
+  }
+}
+
+/** The listing entries' display fields for each wanted address, first catalog first. */
+function displaysOf(
+  snapshots: readonly CatalogSnapshot[],
+  wanted: ReadonlySet<string>,
+): Map<string, PluginDisplay> {
+  const out = new Map<string, PluginDisplay>();
+  for (const e of snapshots.flatMap((s) => s.entries)) {
+    if (!wanted.has(e.address) || out.has(e.address)) continue;
+    out.set(e.address, {
+      displayName: e.displayName,
+      ...(e.description ? { description: e.description } : {}),
+      ...(e.iconUrl ? { iconUrl: e.iconUrl } : {}),
+    });
+  }
+  return out;
+}
+
+/** The wanted addresses whose catalog is unconfigured, or was read and lists no such entry. */
+function notOfferedOf(
+  snapshots: readonly CatalogSnapshot[],
+  wanted: ReadonlySet<string>,
+): Set<string> {
+  const out = new Set<string>();
+  for (const address of wanted) {
+    const catalog = address.slice(address.lastIndexOf("@") + 1);
+    const snapshot = snapshots.find((s) => s.catalog.name === catalog);
+    if (!snapshot) out.add(address);
+    else if (snapshot.origin !== "none" && !snapshot.entries.some((e) => e.address === address)) {
+      out.add(address);
+    }
   }
   return out;
 }

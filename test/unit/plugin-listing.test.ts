@@ -125,6 +125,25 @@ describe("projectPlugins", () => {
     ]);
   });
 
+  test("a plugin says when it is required and when its catalog no longer offers it", () => {
+    const out = projectPlugins(
+      facts({
+        workspace: [ready("com-a-mcp"), ready("com-b-mcp"), ready("hand-added")],
+        workspaceRecords: [
+          { ...record("a@acme", ["com.a/mcp"]), required: true },
+          record("b@nimblebrain", ["com.b/mcp"]),
+        ],
+        notOffered: new Set(["b@nimblebrain"]),
+      }),
+    );
+    expectValid(out);
+    expect(out.plugins.map((p) => [p.id, p.required, p.noLongerOffered])).toEqual([
+      ["workspace:plugin:a@acme", true, undefined],
+      ["workspace:plugin:b@nimblebrain", undefined, true],
+      ["workspace:hand-added", undefined, undefined],
+    ]);
+  });
+
   test("a connection two records share is listed under each, for workspace and personal owners", () => {
     const records = [
       record("one@test", ["com.notion/mcp"]),
