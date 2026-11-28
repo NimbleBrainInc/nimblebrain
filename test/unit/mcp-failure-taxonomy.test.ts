@@ -127,8 +127,8 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     ).toBe("rate-limited");
     // Message-only, no numeric code — what a caller sees once the code has been
     // dropped en route. `startToolAsTask` re-throws a task-creation failure as
-    // a bare `new Error(firstMsg.error?.message)`, keeping the server's text and
-    // nothing else; a heterogeneous remote can present the same way. A code-only
+    // a `TaskCreationRejectedError` carrying only the reported text; a
+    // heterogeneous remote can present the same way. A code-only
     // check would send these to `unknown` → `transport-dead` and restart a healthy
     // source.
     expect(

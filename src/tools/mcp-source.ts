@@ -379,7 +379,11 @@ interface RecoveryShape<T> {
   miss?: (err: unknown) => T;
 }
 
-/** A task-creation error the connector answered, not a transport failure. */
+/**
+ * A task creation that the {@link TaskClient} reported as a first `error`
+ * message rather than a throw. Typed so the infrastructure marker can refuse
+ * it: a client behind that seam may carry the server's text in that message.
+ */
 class TaskCreationRejectedError extends Error {}
 
 /**
@@ -2517,8 +2521,9 @@ export class McpSource implements ToolSource {
           // toward its strike budget — see `INFRA_ERROR_META_KEY` for why that
           // matters and why the marker is host-owned.
           //
-          // It requires an allowlisted class AND excludes known server-authored
-          // errors: protocol answers and task-creation responses. This is a
+          // It requires an allowlisted class AND that the throw is none of the
+          // types that carry a server's answer: a `ProtocolError`, a
+          // `TaskWireError`, or a `TaskCreationRejectedError`. That is a
           // denylist of known origins, not proof of transport origin.
           //
           // It is load-bearing because three of the allowlisted classes are
@@ -2529,11 +2534,15 @@ export class McpSource implements ToolSource {
           // exempted exactly when the guard should trip. A `ProtocolError` IS the
           // server answering, so it never earns the marker.
           //
-          // A bare Error is not proof of transport origin. Task creation keeps
-          // its server-authored message for recovery classification, but carries
-          // a distinct type so it cannot earn the infrastructure exemption.
-          // An allowlist over throw types would drop transport errors that arrive
-          // as a plain TypeError or generic Error.
+          // On the task wire a server's error answering `tools/call` rejects as
+          // a `TaskWireError`. A creation failure reported as a first `error`
+          // message is host text on today's wire (`input_required`), but the
+          // `TaskClient` seam exists so the SDK's client can replace the wire,
+          // and a client that reports a server's refusal that way would carry
+          // server text into this decision; `TaskCreationRejectedError` refuses
+          // it. A bare Error is not proof of transport origin, but an allowlist
+          // over throw types would drop transport errors that arrive as a plain
+          // TypeError or generic Error.
           const kind = classifyConnectionFailure(e);
           const infra =
             INFRA_FAILURE_CLASSES.has(kind) &&
@@ -3800,9 +3809,9 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   //    `code = response.status`, so a refused POST and a refused mid-stream SSE
   //    reopen both arrive carrying a real numeric 429.
   //  - the MESSAGE catches the paths where that code is already gone.
-  //    `startToolAsTask` re-throws a task-creation failure as a
-  //    `TaskCreationRejectedError` with the server's text, keeping its message
-  //    classification. Heterogeneous remotes are the second reason —
+  //    `startToolAsTask` turns a task-creation failure reported as a stream
+  //    message into a `TaskCreationRejectedError` carrying only that text.
+  //    Heterogeneous remotes are the second reason —
   //    the same one that makes session-lost match on text.
   //
   // The `rate limit` stem is deliberately left unanchored: `rate_limit_exceeded`
