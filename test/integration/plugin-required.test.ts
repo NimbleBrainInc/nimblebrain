@@ -5,7 +5,8 @@
  * uninstall one, or install one for themselves; an item the catalog drops, or
  * the whole catalog leaving the configuration, is uninstalled everywhere; a
  * catalog turned `available` keeps its items without the mark; a failing item
- * is isolated and retried; a pass with nothing to do changes nothing.
+ * is isolated and retried; a pass with nothing to do changes nothing; an
+ * entry the listing rejects as invalid is never taken for one it dropped.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -41,6 +42,11 @@ const LINEAR: FixtureServer = {
   url: "https://mcp.linear.test/mcp",
   meta: { auth: "dcr" },
 };
+const GITHUB: FixtureServer = {
+  name: "com.github/mcp",
+  url: "https://mcp.github.test/mcp",
+  meta: { auth: "dcr" },
+};
 const NOTION_AT = "notion@acme";
 const LINEAR_AT = "linear@acme";
 const NOTION_SERVER = "com-notion-mcp";
@@ -66,9 +72,25 @@ function requiredListing(
   servers: Record<string, FixtureServer>,
   policy: "required" | "available" = "required",
 ): CatalogConfig {
-  const bytes = listingBytes(Object.entries(servers).map(([n, s]) => bareConnectorEntry(n, s)));
+  return pinnedListing(
+    Object.entries(servers).map(([n, s]) => bareConnectorEntry(n, s)),
+    policy,
+  );
+}
+
+/** Write a listing of `entries` as given and return the catalog entry that pins it. */
+function pinnedListing(
+  entries: unknown[],
+  policy: "required" | "available" = "required",
+): CatalogConfig {
+  const bytes = listingBytes(entries);
   writeFileSync(listingPath, bytes);
   return { source: listingPath, policy, name: "acme", sha256: sha256Of(bytes) };
+}
+
+/** A listing entry for `server` whose digest the listing parser rejects. */
+function invalidEntry(name: string, server: FixtureServer): Record<string, unknown> {
+  return { ...bareConnectorEntry(name, server), digest: "sha256:not-hex" };
 }
 
 async function boot(catalogs: CatalogConfig[]): Promise<Runtime> {
@@ -196,6 +218,65 @@ describe("a required catalog", () => {
         connectors: [NOTION_SERVER],
       });
     }
+  });
+
+  test("an item whose entry the listing rejects as invalid stays installed, unchanged", async () => {
+    const first = await boot([requiredListing(BOTH)]);
+    const a = await workspace(first, "A");
+    await first.reconcileRequiredPlugins();
+    const before = await first.getWorkspaceStore().get(a);
+    const rt = await boot([
+      pinnedListing([bareConnectorEntry("notion", NOTION), invalidEntry("linear", LINEAR)]),
+    ]);
+    const [snapshot] = await rt.getCatalogListings().snapshots();
+    expect(snapshot?.diagnostics).toHaveLength(1);
+    const pass = await rt.reconcileRequiredPlugins();
+    expect(pass).toMatchObject({ removed: [], updated: [], failed: [] });
+    expect(await state(rt, a)).toEqual({
+      records: [
+        [NOTION_AT, true],
+        [LINEAR_AT, true],
+      ],
+      connectors: [LINEAR_SERVER, NOTION_SERVER],
+    });
+    expect((await rt.getWorkspaceStore().get(a))?.plugins).toEqual(before?.plugins);
+  });
+
+  test("a listing that rejects one entry holds its removals and still installs and updates", async () => {
+    const first = await boot([requiredListing({ ...BOTH, github: GITHUB })]);
+    const a = await workspace(first, "A");
+    await first.reconcileRequiredPlugins();
+    const digestOf = async (r: Runtime) =>
+      (await r.getWorkspaceStore().get(a))?.plugins?.find((p) => p.address === NOTION_AT)?.digest;
+    const before = await digestOf(first);
+
+    // Notion's pin moves, Linear's entry is invalid, GitHub is dropped.
+    const moved = { ...NOTION, url: "https://mcp2.notion.test/mcp" };
+    const rt = await boot([
+      pinnedListing([bareConnectorEntry("notion", moved), invalidEntry("linear", LINEAR)]),
+    ]);
+    const pass = await rt.reconcileRequiredPlugins();
+    expect(pass.failed).toEqual([]);
+    expect(pass.removed).toEqual([]);
+    expect(await digestOf(rt)).not.toBe(before);
+    expect((await state(rt, a)).connectors).toEqual([
+      LINEAR_SERVER,
+      "com-github-mcp",
+      NOTION_SERVER,
+    ]);
+
+    // Once the listing is clean, the dropped item goes and the rest stay.
+    const clean = await boot([
+      pinnedListing([bareConnectorEntry("notion", moved), bareConnectorEntry("linear", LINEAR)]),
+    ]);
+    await clean.reconcileRequiredPlugins();
+    expect(await state(clean, a)).toEqual({
+      records: [
+        [NOTION_AT, true],
+        [LINEAR_AT, true],
+      ],
+      connectors: [LINEAR_SERVER, NOTION_SERVER],
+    });
   });
 
   test("a pin that moves an item's digest updates it in every workspace", async () => {

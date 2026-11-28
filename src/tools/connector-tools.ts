@@ -809,7 +809,9 @@ async function handleListPlugins(
  * entries' display fields, never an artifact. And which ones their catalog no
  * longer offers: its listing was read and lists no such entry, or the catalog
  * is no longer configured (ADR-0077: an `available` item stays installed and
- * shows as no longer offered). A catalog that cannot be read says neither.
+ * shows as no longer offered). A catalog that cannot be read says neither,
+ * nor does one whose listing dropped an entry as invalid, since that entry may
+ * be one it still lists: that item shows as installed, without the flag.
  * Only read when some record is installed.
  */
 async function pluginListingFacts(
@@ -844,7 +846,7 @@ function displaysOf(
   return out;
 }
 
-/** The wanted addresses whose catalog is unconfigured, or was read and lists no such entry. */
+/** The wanted addresses whose catalog is unconfigured, or was read clean and lists no such entry. */
 function notOfferedOf(
   snapshots: readonly CatalogSnapshot[],
   wanted: ReadonlySet<string>,
@@ -854,7 +856,11 @@ function notOfferedOf(
     const catalog = address.slice(address.lastIndexOf("@") + 1);
     const snapshot = snapshots.find((s) => s.catalog.name === catalog);
     if (!snapshot) out.add(address);
-    else if (snapshot.origin !== "none" && !snapshot.entries.some((e) => e.address === address)) {
+    else if (
+      snapshot.origin !== "none" &&
+      snapshot.diagnostics.length === 0 &&
+      !snapshot.entries.some((e) => e.address === address)
+    ) {
       out.add(address);
     }
   }

@@ -20,7 +20,10 @@
  * - **Absent.** A `required` record whose catalog is configured, required and
  *   readable but no longer lists it, or whose catalog is no longer configured
  *   at all, is uninstalled. A required catalog that cannot be read decides
- *   nothing: its items stay until it can be.
+ *   nothing: its items stay until it can be. Nor does one whose listing
+ *   dropped an entry as invalid: the dropped entry may be an item the
+ *   publisher still lists, so the catalog removes nothing until its listing
+ *   is clean, while its valid entries install and update as usual.
  * - **Demoted.** A `required` record whose catalog is now `available` loses
  *   the mark, and stays installed like any other.
  *
@@ -79,10 +82,15 @@ interface CatalogView {
   policy: CatalogPolicy;
   /** The listed addresses and their digests, or null when the catalog could not be read. */
   listed: Map<string, string | undefined> | null;
+  /** Whether an address missing from `listed` was dropped by the publisher: read, and no entry rejected. */
+  decidesAbsence: boolean;
 }
 
 /** The reasons already logged per workspace and item, so a failure repeated each pass logs once. */
 const reported = new Map<string, string>();
+
+/** The listings (catalog and sha256) already logged as holding removals, so each logs once. */
+const held = new Set<string>();
 
 /** Run one pass. Never throws: a failure is in `failed`. */
 export async function reconcileRequiredPlugins(
@@ -133,9 +141,20 @@ function catalogViews(
   for (const catalog of catalogs) {
     const snapshot = snapshots.find((s) => s.catalog.name === catalog.name);
     const readable = snapshot !== undefined && snapshot.origin !== "none";
+    const rejected = readable ? snapshot.diagnostics.length : 0;
+    if (rejected > 0 && catalog.policy === "required") {
+      const key = `${catalog.name} ${snapshot?.sha256}`;
+      if (!held.has(key)) {
+        held.add(key);
+        log.warn(
+          `[plugins] required catalog "${catalog.name}" dropped ${rejected} invalid entries; it removes nothing until its listing is clean, and an installed item it dropped stays as it is`,
+        );
+      }
+    }
     views.set(catalog.name, {
       policy: catalog.policy,
       listed: readable ? new Map(snapshot.entries.map((e) => [e.address, e.digest])) : null,
+      decidesAbsence: readable && rejected === 0,
     });
   }
   return views;
@@ -221,8 +240,8 @@ async function ensureStillRequired(
     result.demoted.push(act);
     return;
   }
-  // A required catalog that cannot be read decides nothing.
-  if (view && (!view.listed || view.listed.has(record.address))) return;
+  // A required catalog that cannot be read, or that rejected an entry, decides no removal.
+  if (view && (!view.decidesAbsence || view.listed?.has(record.address))) return;
   await pass.ready();
   const done = await uninstallPlugin(ctx, owner, record.address, { asReconcile: true });
   if (done.isError) fail(result, act, errorOf(done));

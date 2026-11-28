@@ -64,9 +64,11 @@ Every row's status comes from its listing alone, and Browse never opens an artif
 | `available` | Stays installed. The plugin list shows it as no longer offered, and it cannot be updated; an admin removes it when they choose. |
 | `required` | Uninstalled from every workspace by the required reconcile. |
 
+An entry the listing drops as invalid has not left its catalog. While any entry of a listing is invalid, nothing from that catalog shows as no longer offered or is uninstalled, and an installed item whose entry is invalid stays as it is; the catalog's valid entries install and update as usual.
+
 ## Required catalogs
 
-A `required` catalog's items are in every workspace, including each workspace created later, and nobody can remove one there. The runtime keeps that true itself: at startup, when a workspace is created, and every five minutes it installs each item the catalog lists into every workspace that lacks it (a few workspaces at a time), updates one whose digest the pin moved, and uninstalls one the catalog no longer lists. A required catalog that cannot be read changes nothing until it can be. Nothing has to be run by hand, and a pass with nothing to do fetches nothing.
+A `required` catalog's items are in every workspace, including each workspace created later, and nobody can remove one there. The runtime keeps that true itself: at startup, when a workspace is created, and every five minutes it installs each item the catalog lists into every workspace that lacks it (a few workspaces at a time), updates one whose digest the pin moved, and uninstalls one the catalog no longer lists. A required catalog that cannot be read changes nothing until it can be. One whose listing has an invalid entry removes nothing until the listing is clean. Nothing has to be run by hand, and a pass with nothing to do fetches nothing.
 
 - **Pinned.** A required catalog must carry `sha256`, so what every workspace receives changes only when you move the pin and restart.
 - **Workspaces only.** A required item belongs to each workspace. Nobody installs one for themselves, since they already have it in each of their workspaces.

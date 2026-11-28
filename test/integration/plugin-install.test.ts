@@ -862,6 +862,22 @@ describe("plugin install", () => {
     expect(removed.isError).toBe(false);
   }, 30_000);
 
+  test("an item whose entry its available catalog rejects as invalid is not shown as no longer offered", async () => {
+    writeListing([bareConnectorEntry("linear", LINEAR), bareConnectorEntry("notion", NOTION)]);
+    const { rt, call } = await boot();
+    await call({ action: "install", address: "linear@test" });
+    writeListing([
+      { ...bareConnectorEntry("linear", LINEAR), digest: "sha256:not-hex" },
+      bareConnectorEntry("notion", NOTION),
+    ]);
+    await rt.getCatalogListings().refresh();
+    const [linear] = (
+      (await call({ action: "list_plugins" })).structuredContent as PluginsListOutput
+    ).plugins;
+    expect(linear?.servers.map((s) => s.serverName)).toEqual([LINEAR_SERVER]);
+    expect(linear?.noLongerOffered).toBeUndefined();
+  }, 30_000);
+
   test("a static plugin row reads its setup from that one artifact only at set-up", async () => {
     const LEDGER: FixtureServer = {
       name: "com.acme/ledger",
