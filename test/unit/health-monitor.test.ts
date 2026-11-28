@@ -81,6 +81,22 @@ describe("HealthMonitor", () => {
     expect(eventNames(sink)).not.toContain("connector.recovered");
   });
 
+  it("marks a source dead when a stop during its restart makes the restart fail", async () => {
+    const source = makeMockSource("disconnected-mid-restart");
+    source.alive = false;
+    source.restart = async () => {
+      source.restartCalls++;
+      source.userStopped = true;
+      return false;
+    };
+    const monitor = new HealthMonitor(() => [source], makeEventCollector(), { baseDelayMs: 1 });
+
+    await monitor.check();
+
+    expect(source.restartCalls).toBe(1);
+    expect(monitor.getStatus()[0]?.state).toBe("dead");
+  });
+
   it("detects crashed subprocess and restarts it", async () => {
     const source = makeMockSource("test-connector");
     const sink = makeEventCollector();

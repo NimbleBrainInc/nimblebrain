@@ -1760,12 +1760,8 @@ export class McpSource implements ToolSource {
    */
   private async reconnectOnDemand(): Promise<boolean> {
     if (this.client) return true;
-    // isStopped() is checked-then-acted-on (the restart drives stop()/start()), so a
-    // deliberate stop() interleaving after this check could be undone by the restart.
-    // The window is tiny and self-correcting (the completed stop leaves the next call
-    // client===null && stopped, which blocks revival), and HealthMonitor's reconnect
-    // path carries the identical check-then-restart shape — so this matches existing
-    // behavior rather than introducing a new race.
+    // A deliberate stop() that lands after this check is still honoured: the restart
+    // detects an outside stop through `stopGeneration` and stays stopped.
     if (this.isStopped()) return false;
     const now = Date.now();
     if (

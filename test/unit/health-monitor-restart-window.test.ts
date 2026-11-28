@@ -2,8 +2,10 @@ import { describe, expect, it, spyOn } from "bun:test";
 import type { Client, Transport } from "@modelcontextprotocol/client";
 import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { HealthMonitor } from "../../src/tools/health-monitor.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { payloadsOf } from "../helpers/engine-events.ts";
 import { mcpSourceInternals } from "../helpers/mcp-source-internals.ts";
 import { stub } from "../helpers/stub.ts";
 
@@ -23,11 +25,11 @@ function gate() {
 }
 
 /** A crashed remote source whose close blocks on `closed`, and whose start succeeds. */
-function crashedSource(closed: Promise<void>) {
+function crashedSource(closed: Promise<void>, sink: EventSink = new NoopEventSink()) {
   const source = new McpSource(
     "svc",
     { type: "remote", url: new URL("https://svc.example.com/mcp") },
-    new NoopEventSink(),
+    sink,
   );
   const internal = mcpSourceInternals(source);
   internal.client = stub<Client>({ close: () => closed });
@@ -78,6 +80,29 @@ describe("a restart in flight is not a deliberate stop", () => {
 
     expect(await restarting).toBe(false);
     expect(internal.client).toBeNull();
+    expect(source.isStopped()).toBe(true);
+  });
+
+  it("does not report a restart failure when an outside stop makes start throw", async () => {
+    const events: EngineEvent[] = [];
+    const { source } = crashedSource(Promise.resolve(), { emit: (event) => events.push(event) });
+    const { closed: started, release: markStarted } = gate();
+    const { closed: continueStart, release: releaseStart } = gate();
+    source.start = async () => {
+      markStarted();
+      await continueStart;
+      throw new Error("connection closed by stop");
+    };
+
+    const restarting = source.restart();
+    await started;
+    await source.stop();
+    releaseStart();
+
+    expect(await restarting).toBe(false);
+    expect(payloadsOf(events, "connector.health").map((d) => d.event)).not.toContain(
+      "source.restart_failed",
+    );
     expect(source.isStopped()).toBe(true);
   });
 
