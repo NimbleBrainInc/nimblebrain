@@ -669,6 +669,139 @@ describe("plugin install", () => {
     );
   }, 30_000);
 
+  // An update stopped at any step, then retried, leaves no credential minted
+  // for the old settings and reports the sign-in it owes.
+  const interruptions: Array<{
+    at: string;
+    arm: (rt: Runtime, owner: "workspace" | "identity") => () => void;
+  }> = [
+    {
+      at: "the credentials could not be deleted",
+      arm: () => {
+        const original = McpOAuthRecords.prototype.deleteAll;
+        McpOAuthRecords.prototype.deleteAll = async () => {
+          throw new Error("injected: delete failed");
+        };
+        return () => {
+          McpOAuthRecords.prototype.deleteAll = original;
+        };
+      },
+    },
+    {
+      at: "the credentials were deleted",
+      arm: (rt, owner) => {
+        const lifecycle = rt.getLifecycle();
+        const key = owner === "workspace" ? "replaceConnectionRef" : "signOutIdentityConnector";
+        const original = lifecycle[key];
+        Object.assign(lifecycle, {
+          [key]: async (...args: unknown[]) => {
+            await (original as (...a: unknown[]) => Promise<void>).apply(lifecycle, args);
+            throw new Error("injected: after credential deletion");
+          },
+        });
+        return () => Object.assign(lifecycle, { [key]: original });
+      },
+    },
+    {
+      at: "the new settings were stored",
+      arm: (rt, owner) => {
+        if (owner === "identity") {
+          const original = IdentityConnectorStore.prototype.add;
+          IdentityConnectorStore.prototype.add = async function (
+            this: IdentityConnectorStore,
+            ...a
+          ) {
+            await original.apply(this, a);
+            throw new Error("injected: after settings persist");
+          };
+          return () => {
+            IdentityConnectorStore.prototype.add = original;
+          };
+        }
+        const store = rt.getWorkspaceStore();
+        const original = store.update;
+        store.update = async (...a: Parameters<typeof store.update>) => {
+          const result = await original.apply(store, a);
+          if (a[1].connectors) throw new Error("injected: after settings persist");
+          return result;
+        };
+        return () => {
+          store.update = original;
+        };
+      },
+    },
+    {
+      at: "every connection moved, before the record",
+      arm: (rt) => {
+        const records = rt.getPluginRecords();
+        const original = records.put;
+        records.put = async () => {
+          throw new Error("injected: before record write");
+        };
+        return () => {
+          records.put = original;
+        };
+      },
+    },
+  ];
+
+  for (const owner of ["workspace", "identity"] as const) {
+    for (const { at, arm } of interruptions) {
+      test(`${owner}: an update stopped after ${at} signs out on retry`, async () => {
+        writeListing([publish("notion", notionPlugin())]);
+        const { rt, wsId, call } = await boot();
+        const scope = owner === "identity" ? { scope: "identity" } : {};
+        await call({ action: "install", address: "notion@test", ...scope });
+        const tokens = new McpOAuthRecords({
+          owner:
+            owner === "workspace"
+              ? { type: "workspace", wsId }
+              : { type: "user", userId: ADMIN.id },
+          serverName: NOTION_SERVER,
+        });
+        await tokens.write("tokens", { access_token: "old-origin" });
+
+        const moved = "https://mcp.notion-next.test/mcp";
+        writeListing([
+          publish(
+            "notion",
+            pluginZip({ name: "notion", servers: { notion: { ...NOTION, url: moved } } }),
+          ),
+        ]);
+        await rt.getCatalogListings().refresh();
+        const storedUrl = async () =>
+          owner === "workspace"
+            ? (await workspace(rt, wsId)).connectors[0]?.url
+            : (await new IdentityConnectorStore({ workDir }).get(ADMIN.id, NOTION_SERVER))?.url;
+
+        const disarm = arm(rt, owner);
+        const failed = await call({
+          action: "update_plugin",
+          address: "notion@test",
+          ...scope,
+        }).then(
+          (r) => r.isError === true,
+          () => true,
+        );
+        disarm();
+        expect(failed).toBe(true);
+        // New settings are never stored beside the old credentials.
+        if ((await storedUrl()) === moved) expect(await tokens.has("tokens")).toBe(false);
+
+        const retried = await call({ action: "update_plugin", address: "notion@test", ...scope });
+        expect(retried.structuredContent).toMatchObject({
+          updated: true,
+          reconnectedConnectors: [NOTION_SERVER],
+        });
+        expect(await storedUrl()).toBe(moved);
+        expect(await tokens.has("tokens")).toBe(false);
+        if (owner === "workspace") {
+          expect(rt.getLifecycle().getInstance(NOTION_SERVER, wsId)?.ref?.url).toBe(moved);
+        }
+      }, 30_000);
+    }
+  }
+
   test("an update of a plugin that shares a server another plugin supplies leaves the connection", async () => {
     const wiki = (url: string) =>
       pluginZip({ name: "wiki", servers: { docs: { ...NOTION, url } } });

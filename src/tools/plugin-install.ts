@@ -91,12 +91,13 @@ export interface ConnectorOps {
    * Connect one server from its record's projection, marking a new connection
    * `installedBy`; `alreadyInstalled` when it was connected. With
    * `reconfigure`, an existing connection is moved to the projection's
-   * connection settings (`reconnected` when it was).
+   * connection settings (`reconnected` when it was); `previous` is the
+   * server's listing as the plugin's current record projects it.
    */
   connect(
     owner: PluginOwner,
     listing: CatalogListing,
-    opts: { installedBy: string; reconfigure: boolean },
+    opts: { installedBy: string; reconfigure: boolean; previous?: CatalogListing },
   ): Promise<ToolResult>;
   /** Remove one connection, as the connector's own uninstall does. */
   disconnect(owner: PluginOwner, serverName: string): Promise<ToolResult>;
@@ -185,7 +186,9 @@ async function connectAll(
   address: string,
   contents: PluginContents,
   records: InstalledPluginRecord[],
-  reconfigure: (name: string) => boolean = () => false,
+  reconfigure: (name: string) => { reconfigure: boolean; previous?: CatalogListing } = () => ({
+    reconfigure: false,
+  }),
 ): Promise<{ connected: Connected[] } | ToolResult> {
   const listings: Array<{ listing: CatalogListing; name: string }> = [];
   for (const server of contents.servers) {
@@ -202,7 +205,7 @@ async function connectAll(
     for (const { listing, name } of listings) {
       const result = await ctx.ops.connect(owner, listing, {
         installedBy: address,
-        reconfigure: reconfigure(name),
+        ...reconfigure(name),
       });
       if (result.isError) return result;
       const sc = (result.structuredContent ?? {}) as Record<string, unknown>;
@@ -517,10 +520,14 @@ async function updatePluginNow(
   const others = records.filter((r) => r !== record);
 
   // A server's record is its first supplier's in install order: this plugin
-  // moves a connection only where that is itself (or nobody yet).
+  // moves a connection only where that is itself (or nobody yet). Its current
+  // record says what the connection was set up from until the new one lands.
   const suppliesIt = (name: string) => {
     const supplier = records.find((r) => r.connectors.some((c) => c.name === name));
-    return !supplier || supplier === record;
+    if (supplier && supplier !== record) return { reconfigure: false };
+    const was = record.connectors.find((c) => c.name === name);
+    const previous = was ? projectServerDetailToCatalogListing(was.server) : null;
+    return { reconfigure: true, ...(previous ? { previous } : {}) };
   };
   const connected = await connectAll(ctx, owner, address, contents, records, suppliesIt);
   if ("isError" in connected) return connected;

@@ -2005,11 +2005,18 @@ async function reconfigureIdentityConnection(
   if (!opts.reconfigure || isBrokeredAuthKind(action.auth)) return null;
   const candidate = await identityConnectorRef(ctx, callerId, entry, action, undefined);
   if ("__err" in candidate) return errResult(candidate.__err);
-  const next = reconnectedRef(existing, candidate);
+  const previousAction = remoteInstallOf(opts.previous);
+  const previous =
+    opts.previous && previousAction
+      ? await identityConnectorRef(ctx, callerId, opts.previous, previousAction, undefined)
+      : null;
+  const next = owedMove(existing, candidate, previous && !("__err" in previous) ? previous : null);
   if (!next) return null;
+  // Signed out before the new settings are stored, so an interruption leaves
+  // old or new settings with no credential, never new with old.
   const workDir = ctx.runtime.getWorkDir();
-  await new IdentityConnectorStore({ workDir }).add(callerId, next);
   await ctx.runtime.getLifecycle().signOutIdentityConnector(callerId, next.serverName, { workDir });
+  await new IdentityConnectorStore({ workDir }).add(callerId, next);
   return reconnectedResult(entry.name, next.serverName, { scope: "identity" });
 }
 
@@ -3063,6 +3070,13 @@ interface PluginConnectOptions {
    * existing connection is moved to the record's connection settings.
    */
   reconfigure?: boolean;
+  /**
+   * The server's listing as the plugin's current record projects it. When its
+   * settings differ from the update's, the move is owed even where the stored
+   * ref already matches (an update that stopped before its record), so a retry
+   * repeats the sign-out and reports it.
+   */
+  previous?: CatalogListing;
 }
 
 /** The `installedBy` mark a plugin install puts on a connection it creates. */
@@ -3096,6 +3110,29 @@ function reconnectedRef(existing: ConnectorRef, candidate: ConnectorRef): Connec
     else Object.assign(next, { [key]: candidate[key] });
   }
   return next;
+}
+
+/**
+ * The ref to move `existing` to, or null when no move is owed: the stored
+ * settings differ from `candidate`'s, or the plugin's previous record
+ * (`previous`, its projected ref) does, which a stopped update leaves behind
+ * once it has stored the new settings.
+ */
+function owedMove(
+  existing: ConnectorRef,
+  candidate: ConnectorRef,
+  previous: ConnectorRef | null,
+): ConnectorRef | null {
+  const next = reconnectedRef(existing, candidate);
+  if (next) return next;
+  return previous && reconnectedRef(previous, candidate) ? { ...existing } : null;
+}
+
+/** `listing`'s remote install, when it validates as one. */
+function remoteInstallOf(listing: CatalogListing | undefined): RemoteOAuthInstall | null {
+  if (listing?.install.kind !== "remote-oauth") return null;
+  const validated = validateRemoteOAuthInstall(listing, listing.install);
+  return "error" in validated ? null : validated.action;
 }
 
 function reconnectedResult(
@@ -3142,20 +3179,21 @@ async function reconfigureWorkspaceConnection(
   if (!existing || brokeredRef(existing) || isBrokeredAuthKind(action.auth)) return null;
   const wiring = await resolveInstallWiring(ctx, wsId, ws, entry, action);
   if ("error" in wiring) return errResult(wiring.error);
-  const candidate = buildRemoteConnectorRef(
-    action,
-    serverName,
-    undefined,
-    undefined,
-    wiring.staticOAuthClient,
+  const settingsOf = (a: RemoteOAuthInstall) =>
+    buildRemoteConnectorRef(a, serverName, undefined, undefined, wiring.staticOAuthClient);
+  const previousAction = remoteInstallOf(opts.previous);
+  const next = owedMove(
+    existing,
+    settingsOf(action),
+    previousAction ? settingsOf(previousAction) : null,
   );
-  const next = reconnectedRef(existing, candidate);
   if (!next) return null;
-  await putWorkspaceConnector(ctx, wsId, next);
+  // Credentials go before the new settings are stored, so an interruption
+  // leaves old or new settings with no credential, never new with old.
   const lifecycle = ctx.runtime.getLifecycle();
-  if (lifecycle.getInstance(serverName, wsId)) {
-    await lifecycle.replaceConnectionRef(serverName, wsId, next);
-  } else {
+  await lifecycle.replaceConnectionRef(serverName, wsId, next);
+  await putWorkspaceConnector(ctx, wsId, next);
+  if (!lifecycle.getInstance(serverName, wsId)) {
     await lifecycle.seedInstance(serverName, action.url, next, undefined, wsId);
   }
   const warning =

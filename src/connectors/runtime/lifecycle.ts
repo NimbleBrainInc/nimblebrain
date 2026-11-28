@@ -1526,15 +1526,24 @@ export class ConnectorLifecycleManager {
    * connection lands in `not_authenticated`, so the next Connect runs
    * `startAuth` with `ref`.
    *
-   * The caller persists `ref` to the workspace record; this updates the copy the
-   * live instance reads. No-op when the connector is not installed here.
+   * The caller persists `ref` to the workspace record; run before that write,
+   * an interruption never leaves the new settings stored beside the old
+   * credentials. This updates the copy the live instance reads. With no live
+   * instance only the records go. A record that cannot be deleted throws, and
+   * the live instance keeps its previous ref, matching what is stored.
    */
   async replaceConnectionRef(serverName: string, wsId: string, ref: ConnectorRef): Promise<void> {
     const instance = this.instances.get(`${serverName}|${wsId}`);
+    const previous = instance?.ref;
+    if (instance) instance.ref = { ...ref };
+    try {
+      if (instance) await this.teardownConnectionSource(serverName, wsId);
+      await new McpOAuthRecords({ owner: { type: "workspace", wsId }, serverName }).deleteAll();
+    } catch (err) {
+      if (instance) instance.ref = previous;
+      throw err;
+    }
     if (!instance) return;
-    instance.ref = { ...ref };
-    await this.teardownConnectionSource(serverName, wsId);
-    await new McpOAuthRecords({ owner: { type: "workspace", wsId }, serverName }).deleteAll();
     this.recordConnectionStateChange(
       serverName,
       wsId,

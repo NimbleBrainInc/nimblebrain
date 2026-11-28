@@ -77,9 +77,11 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   connector, record, hook or member write never loses another.
 - **Update moves only the connections this plugin supplies** (it is the first record naming the
   server). When the new record changes the endpoint, transport, scopes, authorization params or
-  OAuth client, the ref is rewritten in place and the connection's OAuth records go: it signs in
-  again (`reconnectedConnectors`). A brokered connection is left alone (its endpoint is the
-  broker's session). A connection another plugin supplies is not changed.
+  OAuth client, the connection's OAuth records go, then the ref is rewritten in place: it signs in
+  again (`reconnectedConnectors`). Credentials go first so an interruption never stores new settings
+  beside old credentials, and the move is judged against the plugin's current record as well as the
+  stored ref, so a retry of a stopped update repeats it until the new record lands. A brokered
+  connection is left alone (its endpoint is the broker's session). A connection another plugin supplies is not changed.
 - **A plugin's skills are managed** (`src/skills/managed-skills.ts`): a bound one in the owner's
   `connector-skills/<serverName>/`, any other in `plugin-skills/<address>/`, each marked by
   provenance `plugin:<address>:<skill>`. The skill tools refuse to write any file in either
