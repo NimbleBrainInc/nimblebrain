@@ -60,6 +60,7 @@
     "test:web": "cd web && bun run test",
     "test:platform-apps": "for ui in src/platform/*/ui; do if [ -f \"$ui/package.json\" ] && [ -n \"$(find \"$ui/src\" \\( -name '*.test.ts' -o -name '*.test.tsx' \\) -print -quit 2>/dev/null)\" ]; then (cd \"$ui\" && bun test --isolate) || exit 1; fi; done",
     "eval": "bun test test/eval/",
+    "eval:bench": "bun --no-env-file test/eval/bench/run.ts",
     "check:platform-app-transport": "bun run scripts/check-platform-app-transport.ts",
     "check:workspace-paths": "bun run scripts/check-workspace-paths.ts",
     "check:conversation-paths": "bun run scripts/check-conversation-paths.ts",
