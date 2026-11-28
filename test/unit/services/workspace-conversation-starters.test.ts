@@ -1,124 +1,97 @@
+/**
+ * Workspace conversation starters come from the installed-plugin records
+ * (ADR-0077): each record's starters, under the first of its connections the
+ * workspace has. Nothing reads a catalog or opens an archive.
+ */
+
 import { describe, expect, it } from "bun:test";
-import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
 import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
-import {
-  type WorkspaceConversationStartersDeps,
-  workspaceConversationStarters,
-} from "../../../src/services/workspace-conversation-starters.ts";
-import type { ServerConversationStarters } from "../../../src/skills/connector-skill-resolver.ts";
-import { stub } from "../../helpers/stub.ts";
+import type { InstalledPluginRecord } from "../../../src/plugins/installed/record.ts";
+import { workspaceConversationStarters } from "../../../src/services/workspace-conversation-starters.ts";
 
 const WS = "ws_000f7ed6658f9d30";
 
-function ref(serverName: string, url: string, lockedServer?: string): ConnectorRef {
+function ref(serverName: string): ConnectorRef {
+  return { url: `https://${serverName}.example.test/mcp`, serverName };
+}
+
+function record(
+  address: string,
+  names: string[],
+  starters: Array<{ title: string; text: string }>,
+): InstalledPluginRecord {
   return {
-    url,
-    serverName,
-    ...(lockedServer
-      ? {
-          skillsLock: [
-            {
-              plugin: "gmail@nimblebrain",
-              server: lockedServer,
-              skill: "gmail",
-              version: "c".repeat(64),
-              digest: "d".repeat(64),
-              sha: "s",
-            },
-          ],
-        }
-      : {}),
+    address,
+    digest: `sha256:${"a".repeat(64)}`,
+    type: "application/agent-plugins+zip",
+    installedAt: "2026-11-27T00:00:00.000Z",
+    connectors: names.map((name) => ({
+      key: name,
+      name,
+      server: { name, version: "1.0.0", description: name },
+    })),
+    skills: [],
+    starters,
   };
 }
 
-function entries(byKey: Record<string, string>): Map<string, ConnectorCatalogEntry> {
-  return new Map(
-    Object.entries(byKey).map(([key, id]) => [key, stub<ConnectorCatalogEntry>({ id })]),
-  );
-}
-
-const GMAIL: ServerConversationStarters = {
-  server: "com.google/gmail",
-  plugin: "gmail",
-  conversationStarters: [{ title: "Summarize my unread email", text: "Summarize it." }],
-};
-const LINEAR: ServerConversationStarters = {
-  server: "app.linear/mcp",
-  plugin: "linear",
-  conversationStarters: [{ title: "What's due?", text: "List my issues." }],
-};
-
-function deps(
-  over: Partial<WorkspaceConversationStartersDeps> & { asked?: string[][] } = {},
-): WorkspaceConversationStartersDeps & { asked: string[][] } {
-  const asked = over.asked ?? [];
-  return {
-    connectors: over.connectors ?? (async () => []),
-    catalogByIdMap: over.catalogByIdMap ?? (async () => new Map()),
-    catalogByUrl: over.catalogByUrl ?? (async () => new Map()),
-    resolveConversationStarters:
-      over.resolveConversationStarters ??
-      (async (servers) => {
-        asked.push([...servers]);
-        return [GMAIL, LINEAR].filter((s) => servers.includes(s.server));
-      }),
-    asked,
-  };
-}
+const GMAIL = record(
+  "gmail@nimblebrain",
+  ["com.google/gmail"],
+  [{ title: "Summarize my unread email", text: "Summarize it." }],
+);
+const LINEAR = record(
+  "linear@nimblebrain",
+  ["app.linear/mcp"],
+  [{ title: "What's due?", text: "List my issues." }],
+);
 
 describe("workspaceConversationStarters", () => {
   it("gives each installed plugin's starters under this workspace's server name", async () => {
-    const d = deps({
-      connectors: async () => [
-        ref("gmail", "https://gmail.example/mcp", "com.google/gmail"),
-        ref("linear", "https://mcp.linear.app/mcp"),
-      ],
-      catalogByUrl: async () => entries({ "https://mcp.linear.app/mcp": "app.linear/mcp" }),
+    const out = await workspaceConversationStarters(WS, {
+      connectors: async () => [ref("com-google-gmail"), ref("app-linear-mcp")],
+      records: async () => [GMAIL, LINEAR],
     });
-    expect(await workspaceConversationStarters(WS, d)).toEqual([
+    expect(out).toEqual([
       {
-        serverName: "gmail",
+        serverName: "com-google-gmail",
         plugin: "gmail",
         title: "Summarize my unread email",
         text: "Summarize it.",
       },
-      { serverName: "linear", plugin: "linear", title: "What's due?", text: "List my issues." },
+      {
+        serverName: "app-linear-mcp",
+        plugin: "linear",
+        title: "What's due?",
+        text: "List my issues.",
+      },
     ]);
   });
 
-  it("reads the catalog only when some connector's lock records no registry name", async () => {
-    let catalogReads = 0;
-    const d = deps({
-      connectors: async () => [ref("gmail", "https://gmail.example/mcp", "com.google/gmail")],
-      catalogByUrl: async () => {
-        catalogReads++;
-        return new Map();
+  it("gives a connector no record names no starters", async () => {
+    const out = await workspaceConversationStarters(WS, {
+      connectors: async () => [ref("com-google-gmail"), ref("hand-added")],
+      records: async () => [],
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("gives a plugin with no connection here none, and a multi-server plugin its starters once", async () => {
+    const suite = record("suite@x", ["com.a/mcp", "com.b/mcp"], [{ title: "Go", text: "Go." }]);
+    const out = await workspaceConversationStarters(WS, {
+      connectors: async () => [ref("com-b-mcp"), ref("com-a-mcp")],
+      records: async () => [suite, GMAIL],
+    });
+    expect(out).toEqual([{ serverName: "com-a-mcp", plugin: "suite", title: "Go", text: "Go." }]);
+  });
+
+  it("gives none rather than an error when the records cannot be read", async () => {
+    const out = await workspaceConversationStarters(WS, {
+      connectors: async () => [ref("com-google-gmail")],
+      records: async () => {
+        throw new Error("disk");
       },
     });
-    await workspaceConversationStarters(WS, d);
-    expect(catalogReads).toBe(0);
-  });
-
-  it("asks for nothing when no connector maps to a catalog server", async () => {
-    const d = deps({ connectors: async () => [ref("custom", "https://custom.example/mcp")] });
-    expect(await workspaceConversationStarters(WS, d)).toEqual([]);
-    expect(d.asked).toEqual([]);
-  });
-
-  it("skips a row it cannot use", async () => {
-    const d = deps({
-      connectors: async () => [stub<ConnectorRef>({ serverName: "", url: "https://x.example" })],
-    });
-    expect(await workspaceConversationStarters(WS, d)).toEqual([]);
-  });
-
-  it("gives none, never an error, when the catalog cannot be read", async () => {
-    const d = deps({
-      connectors: async () => [ref("gmail", "https://gmail.example/mcp", "com.google/gmail")],
-      resolveConversationStarters: async () => {
-        throw new Error("plugin catalog fetch failed: HTTP 503");
-      },
-    });
-    expect(await workspaceConversationStarters(WS, d)).toEqual([]);
+    expect(out).toEqual([]);
   });
 });

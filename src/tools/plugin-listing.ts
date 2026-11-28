@@ -8,13 +8,15 @@ import type {
   PluginSkill,
   PluginsListOutput,
 } from "../platform/schemas/plugins.ts";
+import { connectionOf, type InstalledPluginRecord } from "../plugins/installed/record.ts";
 
 /**
- * The plugin listing (`manage_connectors` `list_plugins`) as a projection over
- * the connectors that exist today, until plugins are installed as plugins
- * (ADR-0068): each connector installed in the workspace is a workspace plugin
- * with one server, and each of the caller's personal connectors is a person's
- * plugin with one server, granted here or not (ADR-0069).
+ * The plugin listing (`manage_connectors` `list_plugins`), read from the
+ * installed-plugin records (ADR-0077): each record of the workspace is a
+ * workspace plugin with the connections it lists, and each record of the
+ * caller's is a person's plugin, granted here or not (ADR-0069). A connector
+ * no record names (one added by URL, or a catalog install adoption left plain)
+ * is listed as a plugin of its own, with one server. Nothing opens an archive.
  *
  * Pure: the handler reads the facts through the code paths the other actions
  * use (`list_installed`, `list_personal_connectors`, `list_bound_skills`, the
@@ -52,10 +54,23 @@ export interface BoundSkillFacts {
   description?: string;
 }
 
+/** How a listing entry shows an installed plugin, by its address, when its catalog still lists it. */
+export interface PluginDisplay {
+  displayName: string;
+  description?: string;
+  iconUrl?: string;
+}
+
 export interface PluginListingFacts {
   wsId: string;
   workspace: readonly ConnectorFacts[];
   personal: readonly PersonalConnectorFacts[];
+  /** The workspace's installed-plugin records, in install order. */
+  workspaceRecords?: readonly InstalledPluginRecord[];
+  /** The caller's installed-plugin records, in install order. */
+  personalRecords?: readonly InstalledPluginRecord[];
+  /** Display fields by plugin address, from the catalogs' listings. */
+  displays?: ReadonlyMap<string, PluginDisplay>;
   overlays: readonly BoundSkillFacts[];
   published: readonly BoundSkillFacts[];
   /** The workspace's placements (`PlacementRegistry.forWorkspace`). */
@@ -63,39 +78,84 @@ export interface PluginListingFacts {
 }
 
 export function projectPlugins(facts: PluginListingFacts): PluginsListOutput {
-  const workspacePlugins = facts.workspace.map(
-    (c): Plugin => ({
-      id: `workspace:${c.serverName}`,
-      displayName: c.displayName,
-      ...(c.description ? { description: c.description } : {}),
-      ...(c.iconUrl ? { iconUrl: c.iconUrl } : {}),
+  const workspace = grouped(facts.workspace, facts.workspaceRecords ?? [], facts.displays);
+  const workspacePlugins = workspace.map(
+    (g): Plugin => ({
+      id: g.address ? `workspace:plugin:${g.address}` : `workspace:${g.connectors[0]?.serverName}`,
+      ...g.display,
       owner: { kind: "workspace" },
       granted: true,
-      servers: [serverOf(c)],
-      skills: skillsOf(c.serverName, facts),
-      apps: appsOf(c, facts),
+      servers: g.connectors.map(serverOf),
+      skills: g.connectors.flatMap((c) => skillsOf(c.serverName, facts)),
+      apps: g.connectors.flatMap((c) => appsOf(c, facts)),
     }),
   );
   // A personal connector's skills and views are not composed into the
   // workspace: overlays, published skills and placements are keyed by the
   // workspace's own connectors, whose server name a personal one may share. Its
   // apps come from its own placements, and only where it is granted, since a
-  // view of a plugin that does not act here cannot render here.
-  const personalPlugins = facts.personal.map((c): Plugin => {
-    const granted = c.grantedWorkspaces.includes(facts.wsId);
+  // view of a plugin that does not act here cannot render here. A person's
+  // plugin acts here when every connection it has here is granted.
+  const personal = grouped(facts.personal, facts.personalRecords ?? [], facts.displays);
+  const personalPlugins = personal.map((g): Plugin => {
+    const granted = g.connectors.every((c) => c.grantedWorkspaces.includes(facts.wsId));
     return {
-      id: `person:${c.serverName}`,
-      displayName: c.displayName,
-      ...(c.description ? { description: c.description } : {}),
-      ...(c.iconUrl ? { iconUrl: c.iconUrl } : {}),
+      id: g.address ? `person:plugin:${g.address}` : `person:${g.connectors[0]?.serverName}`,
+      ...g.display,
       owner: { kind: "person" },
       granted,
-      servers: [serverOf(c)],
+      servers: g.connectors.map(serverOf),
       skills: [],
-      apps: granted ? personalAppsOf(c) : [],
+      apps: granted ? g.connectors.flatMap(personalAppsOf) : [],
     };
   });
   return { wsId: facts.wsId, plugins: [...workspacePlugins, ...personalPlugins] };
+}
+
+/** One listed plugin: a record's connections, or one connector no record names. */
+interface Group<C extends ConnectorFacts> {
+  address?: string;
+  connectors: C[];
+  display: Pick<Plugin, "displayName" | "description" | "iconUrl">;
+}
+
+/**
+ * The connectors grouped by the record that names them, in install order,
+ * then each connector no record names on its own. A record none of whose
+ * connections is installed here is left out.
+ */
+function grouped<C extends ConnectorFacts>(
+  connectors: readonly C[],
+  records: readonly InstalledPluginRecord[],
+  displays: ReadonlyMap<string, PluginDisplay> | undefined,
+): Group<C>[] {
+  const claimed = new Set<string>();
+  const groups: Group<C>[] = [];
+  for (const record of records) {
+    const names = record.connectors.map(connectionOf);
+    const mine = connectors.filter(
+      (c) => names.includes(c.serverName) && !claimed.has(c.serverName),
+    );
+    if (mine.length === 0) continue;
+    for (const c of mine) claimed.add(c.serverName);
+    const first = mine[0] as C;
+    const listed = displays?.get(record.address);
+    // One connection: it is the plugin to the person, so it shows as itself.
+    const source = mine.length === 1 || !listed ? displayOf(first) : listed;
+    groups.push({ address: record.address, connectors: mine, display: source });
+  }
+  for (const c of connectors) {
+    if (!claimed.has(c.serverName)) groups.push({ connectors: [c], display: displayOf(c) });
+  }
+  return groups;
+}
+
+function displayOf(c: ConnectorFacts | PluginDisplay): Group<ConnectorFacts>["display"] {
+  return {
+    displayName: c.displayName,
+    ...(c.description ? { description: c.description } : {}),
+    ...(c.iconUrl ? { iconUrl: c.iconUrl } : {}),
+  };
 }
 
 function serverOf(c: ConnectorFacts): Plugin["servers"][number] {

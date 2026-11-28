@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Ajv from "ajv";
-
+import { noCatalogListings } from "../../src/catalogs/reader.ts";
 import type { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.ts";
 import type { ManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
@@ -29,6 +29,8 @@ import type { UserStore } from "../../src/identity/user.ts";
 import { ADMIT_ALL } from "../../src/permissions/admin-tools.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
 import { PluginsListOutput } from "../../src/platform/schemas/plugins.ts";
+import type { InstalledPluginRecord } from "../../src/plugins/installed/record.ts";
+import { createPluginRecordStore } from "../../src/plugins/installed/record.ts";
 import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import type { ConnectorOverlayInfo } from "../../src/skills/connector-skill-store.ts";
@@ -81,6 +83,64 @@ function placement(p: Partial<PlacementEntry> & { serverName: string }): Placeme
 }
 
 describe("projectPlugins", () => {
+  function record(address: string, names: string[]): InstalledPluginRecord {
+    return {
+      address,
+      digest: `sha256:${"a".repeat(64)}`,
+      type: "application/agent-plugins+zip",
+      installedAt: "2026-11-27T00:00:00.000Z",
+      connectors: names.map((name) => ({
+        key: name,
+        name,
+        server: { name, version: "1.0.0", description: name },
+      })),
+      skills: [],
+      starters: [],
+    };
+  }
+  const ready = (serverName: string) => ({
+    serverName,
+    displayName: serverName,
+    status: "ready" as const,
+  });
+
+  test("a record is one plugin with every connection it lists; one no record names is its own", () => {
+    const out = projectPlugins(
+      facts({
+        workspace: [ready("com-a-mcp"), ready("com-b-mcp"), ready("hand-added")],
+        workspaceRecords: [record("suite@test", ["com.a/mcp", "com.b/mcp", "com.c/mcp"])],
+        displays: new Map([["suite@test", { displayName: "Suite", description: "Both" }]]),
+        overlays: [{ server: "com-b-mcp", name: "guide" }],
+      }),
+    );
+    expectValid(out);
+    expect(
+      out.plugins.map((p) => [p.id, p.displayName, p.servers.map((s) => s.serverName)]),
+    ).toEqual([
+      ["workspace:plugin:suite@test", "Suite", ["com-a-mcp", "com-b-mcp"]],
+      ["workspace:hand-added", "hand-added", ["hand-added"]],
+    ]);
+    expect(out.plugins[0]?.skills).toEqual([
+      { name: "guide", kind: "overlay", serverName: "com-b-mcp" },
+    ]);
+  });
+
+  test("a one-connection record shows as its connection, and a record with none here is left out", () => {
+    const out = projectPlugins(
+      facts({
+        workspace: [ready("com-notion-mcp")],
+        workspaceRecords: [
+          record("notion@test", ["com.notion/mcp"]),
+          record("gone@test", ["x.y/z"]),
+        ],
+        displays: new Map([["notion@test", { displayName: "Notion plugin" }]]),
+      }),
+    );
+    expect(out.plugins.map((p) => [p.id, p.displayName])).toEqual([
+      ["workspace:plugin:notion@test", "com-notion-mcp"],
+    ]);
+  });
+
   test("a workspace connector is a workspace plugin with one server, granted", () => {
     const out = projectPlugins(
       facts({
@@ -405,6 +465,8 @@ async function buildHarness(opts: {
     listConnectorOverlays: () => opts.overlays ?? [],
     listPublishedSkills: async () => opts.published ?? [],
     getPlacementRegistry: () => placements,
+    getPluginRecords: () => createPluginRecordStore({ workspaces: workspaceStore, workDir }),
+    getCatalogListings: () => noCatalogListings(),
   });
   const tool = createManageConnectorsTool({
     runtime,

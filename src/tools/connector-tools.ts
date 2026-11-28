@@ -57,7 +57,7 @@ import { log } from "../observability/log.ts";
 import { type ConnectorAdmission, filterAdmittedTools } from "../permissions/admin-tools.ts";
 import type { PermissionOwner, ToolPolicy } from "../permissions/permission-store.ts";
 import type { PluginAccount, PluginsListOutput } from "../platform/schemas/plugins.ts";
-import type { PluginOwner } from "../plugins/installed/record.ts";
+import type { InstalledPluginRecord, PluginOwner } from "../plugins/installed/record.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { canonicalJson } from "../util/jcs.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
@@ -80,7 +80,7 @@ import {
   uninstallPlugin,
   updatePlugin,
 } from "./plugin-install.ts";
-import { accountOf, projectPlugins } from "./plugin-listing.ts";
+import { accountOf, type PluginDisplay, projectPlugins } from "./plugin-listing.ts";
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 import type { Tool, ToolSource } from "./types.ts";
 import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
@@ -765,13 +765,19 @@ async function handleListPlugins(
     return errResult("No workspace in scope — call from a workspace.");
   }
   if (!callerId) return errResult("Authentication required.");
-  const [workspace, personal, published] = await Promise.all([
+  const records = ctx.runtime.getPluginRecords();
+  const [workspace, personal, published, workspaceRecords, personalRecords] = await Promise.all([
     listInstalledEntries(ctx, wsId, callerId, { withIdentity: true }),
     listPersonalConnectorEntries(ctx, callerId, { withPlacements: true }),
     ctx.runtime.listPublishedSkills(wsId),
+    records.list({ kind: "workspace", wsId }),
+    records.list({ kind: "person", userId: callerId }),
   ]);
   const output: PluginsListOutput = projectPlugins({
     wsId,
+    workspaceRecords,
+    personalRecords,
+    displays: await pluginDisplays(ctx, [...workspaceRecords, ...personalRecords]),
     workspace: workspace.map((c) => ({ ...c, description: c.catalog?.description })),
     personal: personal.map((c) => ({ ...c, ...deriveConnectorStatus({ state: c.state }) })),
     overlays: ctx.runtime.listConnectorOverlays(wsId),
@@ -787,6 +793,35 @@ async function handleListPlugins(
     structuredContent: output,
     isError: false,
   };
+}
+
+/**
+ * How the catalogs' listings show each installed plugin, by address: the
+ * entries' display fields, never an artifact. Only read when some record is
+ * installed; a listing that cannot be read shows none.
+ */
+async function pluginDisplays(
+  ctx: ManageConnectorsContext,
+  records: readonly InstalledPluginRecord[],
+): Promise<Map<string, PluginDisplay>> {
+  const out = new Map<string, PluginDisplay>();
+  if (records.length === 0) return out;
+  const wanted = new Set(records.map((r) => r.address));
+  try {
+    for (const snapshot of await ctx.runtime.getCatalogListings().snapshots()) {
+      for (const e of snapshot.entries) {
+        if (!wanted.has(e.address) || out.has(e.address)) continue;
+        out.set(e.address, {
+          displayName: e.displayName,
+          ...(e.description ? { description: e.description } : {}),
+          ...(e.iconUrl ? { iconUrl: e.iconUrl } : {}),
+        });
+      }
+    }
+  } catch (err) {
+    log.warn(`[plugins] listings cannot be read for the plugin list: ${String(err)}`);
+  }
+  return out;
 }
 
 /**
