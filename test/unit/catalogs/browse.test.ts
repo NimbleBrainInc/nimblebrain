@@ -185,6 +185,21 @@ describe("browseCatalog", () => {
     expect(entries.filter((e) => e.catalog === "nimblebrain")).toEqual([]);
   });
 
+  test("an entry whose server map holds a non-server value is dropped, and the rest list", async () => {
+    // A key with a line break escapes the map's key pattern; the map refuses it.
+    const malformed = {
+      ...listingEntry({ name: "broken" }),
+      extensions: { "ai.nimblebrain": { servers: { "a\nb": null } } },
+    };
+    const { entries, errors } = await browse({
+      nimblebrain: writeListing("nb", [malformed, ahrefs]),
+    });
+    expect(errors).toEqual([]);
+    expect(entries.filter((e) => e.catalog === "nimblebrain").map((e) => e.address)).toEqual([
+      "ahrefs@nimblebrain",
+    ]);
+  });
+
   test("a catalog that cannot be read is reported, and the others still list", async () => {
     const { entries, errors } = await browse({
       nimblebrain: writeListing("nb", [ahrefs]),

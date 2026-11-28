@@ -28,7 +28,7 @@ describe("resolveCatalogs", () => {
     ]);
   });
 
-  test("an empty list offers nothing", () => {
+  test("an empty list resolves to no catalogs to read", () => {
     expect(resolveCatalogs([])).toEqual([]);
   });
 

@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { noCatalogListings } from "../../src/catalogs/reader.ts";
+import { createCatalogListings, noCatalogListings } from "../../src/catalogs/reader.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../../src/config/privilege.ts";
@@ -23,6 +23,7 @@ import type {
   ToolPromotionContext,
 } from "../../src/tools/system-tools.ts";
 import { createSystemTools } from "../../src/tools/system-tools.ts";
+import { listingBytes, listingEntry, pathCatalog } from "../helpers/ai-catalog.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { stub } from "../helpers/stub.ts";
 
@@ -929,6 +930,41 @@ describe("search — scope: catalog", () => {
     expect(text).toContain("ai.nimblebrain/ipinfo");
     expect(text).toContain("dev.acme/asana");
   });
+
+  it.each([
+    ["first", ["sky", "books"]],
+    ["second", ["books", "sky"]],
+  ])(
+    "finds a server two catalogs describe differently by the %s catalog's text",
+    async (_, order) => {
+      workDir = mkdtempSync(join(tmpdir(), "nb-search-catalog-"));
+      const catalogDir = join(workDir, "catalog");
+      mkdirSync(catalogDir);
+      writeFileSync(join(catalogDir, "catalog.json"), JSON.stringify({ servers: TWO_SERVERS }));
+      const text = { sky: "astronomy", books: "accounting" } as Record<string, string>;
+      const catalogs = (order as string[]).map((name) => {
+        const file = join(workDir as string, `${name}.json`);
+        const entry = listingEntry({
+          name: "ipinfo",
+          description: `${text[name]} tools`,
+          servers: { ipinfo: { name: "ai.nimblebrain/ipinfo", auth: "none" } },
+        });
+        writeFileSync(file, listingBytes([entry]));
+        return pathCatalog(name, file);
+      });
+      const listings = createCatalogListings({ catalogs, cacheDir: join(workDir, "cache") });
+      const runtime = stub<Runtime>({
+        getConnectorCatalog: () => new ConnectorCatalog(catalogDir),
+        getCatalogListings: () => listings,
+        getManagedConnectorRegistry: () => managedConnectorRegistryOf([]),
+      });
+      for (const query of ["astronomy", "accounting"]) {
+        const result = await search(runtime, query);
+        expect(extractText(result.content)).toContain("Found 1 result(s)");
+        expect(extractText(result.content)).toContain(query);
+      }
+    },
+  );
 
   it("returns no results when there is no runtime (no catalog to query)", async () => {
     const registry = await makeRegistry();

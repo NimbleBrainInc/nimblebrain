@@ -591,7 +591,7 @@
       }
     },
     "catalogs": {
-      "description": "The AI Catalog listings this instance offers to install from (ADR-0077), side by side with no precedence: Browse lists every catalog's items, each addressed name@catalog. Absent: NimbleBrain's catalog, read at <NB_PLUGIN_CATALOG_URL>/.well-known/ai-catalog.json (https://catalog.nimblebrain.ai by default). An empty list offers nothing. Read from this file only; the override file cannot set it.",
+      "description": "The AI Catalog listings this instance offers to install from (ADR-0077), side by side with no precedence: Browse lists every catalog's items, each addressed name@catalog. Absent: NimbleBrain's catalog, read at <NB_PLUGIN_CATALOG_URL>/.well-known/ai-catalog.json (https://catalog.nimblebrain.ai by default). An empty list reads no listings; until install reads an item's own archive, the connector list's records still show under the reserved catalog curated. Read from this file only; the override file cannot set it.",
       "type": "array",
       "items": {
         "type": "object",

@@ -34,7 +34,7 @@ An install names a row by its `id`, its server's registry name. The runtime reso
 | `name` | The catalog part of an item's address. Default: from the source, the domain label before the last (`nimblebrain` for `catalog.nimblebrain.ai`) or a path's last segment (`local`). Two catalogs that derive one name are refused until one sets `name`. `curated` is reserved. |
 | `refreshMinutes` | How often an unpinned listing is read again. Default 15. |
 
-With no `catalogs` key, the instance reads NimbleBrain's catalog at `<NB_PLUGIN_CATALOG_URL>/.well-known/ai-catalog.json` ([catalog.nimblebrain.ai](https://catalog.nimblebrain.ai/.well-known/ai-catalog.json) by default). An empty list offers nothing. Only the seed config sets it; the override file cannot.
+With no `catalogs` key, the instance reads NimbleBrain's catalog at `<NB_PLUGIN_CATALOG_URL>/.well-known/ai-catalog.json` ([catalog.nimblebrain.ai](https://catalog.nimblebrain.ai/.well-known/ai-catalog.json) by default). An empty list reads no listings; the connector list's records still show under `curated` (see [What a row shows](#what-a-row-shows)) until install reads an item's own archive. Only the seed config sets it; the override file cannot.
 
 Each listing is:
 

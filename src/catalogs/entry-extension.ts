@@ -63,6 +63,9 @@ export const CatalogEntryExtension = Type.Object(
     ),
     servers: Type.Optional(
       Type.Record(Type.String({ minLength: 1 }), CatalogEntryServer, {
+        // A key the pattern does not match (one with a line break) is refused,
+        // so every value in the map is a server.
+        additionalProperties: false,
         description:
           "The item's servers, by server key (the key the artifact uses for the server): each one's registry name and auth. It describes what the artifact holds so the listing can be read without it; an install reads the servers from the verified artifact, never from here.",
       }),

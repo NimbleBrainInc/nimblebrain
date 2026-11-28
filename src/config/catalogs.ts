@@ -106,7 +106,8 @@ export function defaultCatalogs(env: Env = process.env): CatalogConfig[] {
  * block that cannot work: a `required` catalog without a pin, a malformed pin,
  * a URL that is neither `https` nor loopback `http`, two catalogs of one
  * source or one name, or a name that is reserved or not a short lowercase id.
- * An empty list is valid and offers nothing.
+ * An empty list is valid and reads no listings; the connector list's records
+ * still show under `curated` until install reads an item's own archive.
  */
 export function resolveCatalogs(
   configured: CatalogConfig[] | undefined,

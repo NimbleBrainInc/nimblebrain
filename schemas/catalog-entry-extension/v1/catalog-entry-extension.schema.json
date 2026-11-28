@@ -20,6 +20,7 @@
       "type": "string"
     },
     "servers": {
+      "additionalProperties": false,
       "description": "The item's servers, by server key (the key the artifact uses for the server): each one's registry name and auth. It describes what the artifact holds so the listing can be read without it; an install reads the servers from the verified artifact, never from here.",
       "type": "object",
       "patternProperties": {

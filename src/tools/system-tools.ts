@@ -851,8 +851,10 @@ async function searchCatalog(runtime: Runtime | undefined, query: string): Promi
           brokers: runtime.getManagedConnectorRegistry(),
         })
       : null;
-    const unique = [...new Map((aggregated?.entries ?? []).map((e) => [e.id, e])).values()];
-    const results = matchEntriesByQuery(unique, query);
+    // Match every row first: each catalog's row carries its own searchable
+    // text, so a server matches when any catalog's description of it does.
+    const matched = matchEntriesByQuery(aggregated?.entries ?? [], query);
+    const results = [...new Map(matched.map((e) => [e.id, e])).values()];
     if (results.length === 0) {
       // Distinguish "the catalog could not be read" from "no such server".
       // Browse collects a read failure into `errors` instead of
