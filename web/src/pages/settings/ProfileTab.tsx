@@ -164,10 +164,9 @@ export function ProfileTab() {
   }, [load, user?.displayName]);
 
   // The theme follows the field once the person changes it, so an Undo
-  // switches it back too. The value the page loads is not applied: with no
-  // theme stored the browser's own stands, and with one stored the shell has
-  // applied it already. A cleared theme drops this browser's copy, so the
-  // deployment's default applies.
+  // switches it back too. The value the page loads is not applied: the shell
+  // has applied the stored theme, or the default when none is stored. A
+  // cleared theme drops this browser's copy, so the default applies.
   const theme = form.values.theme;
   const shownTheme: Theme = theme || defaults?.theme || "system";
   const configuredDefault = defaults?.model ?? "";
@@ -222,7 +221,7 @@ export function ProfileTab() {
                   id="timezone"
                   value={form.values.timezone}
                   onChange={(tz) => form.commit("timezone", tz)}
-                  placeholder={defaults ? `Default (${defaults.timezone})` : "Default"}
+                  defaultLabel={defaults ? `Default (${defaults.timezone})` : "Default"}
                 />
               </Clearable>
             </AutosaveField>

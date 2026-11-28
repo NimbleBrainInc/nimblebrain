@@ -2226,6 +2226,11 @@ export class Runtime {
       onEstablished: () => this.maybeGenerateTitle(conversation, request, store),
     });
 
+    // The store records the turn's events as the engine emits them, without
+    // waiting. Settle them before answering, so a reload after the reply (or
+    // after a detached turn's `done`) reads the reply.
+    await store.flush();
+
     return {
       response: handle.output,
       conversationId: conversation.id,

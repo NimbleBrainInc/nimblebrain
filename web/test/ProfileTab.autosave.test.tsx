@@ -242,9 +242,9 @@ describe("each field saves alone", () => {
 });
 
 describe("the theme", () => {
-  // With no theme saved on the server, the browser's own choice stands.
-  // Opening the page must not replace it with the form's fallback.
-  test("opening the page leaves a theme the person chose in this browser alone", async () => {
+  // The shell decides the theme from the stored preference; opening the page
+  // applies none of its own, so the form's fallback never replaces it.
+  test("opening the page leaves this browser's theme to the shell", async () => {
     storedTheme = null;
     localStorage.setItem("nb-theme", "dark");
     mounted = await mount();
@@ -298,6 +298,32 @@ const themeButton = (c: HTMLElement, label: string) =>
   Array.from(c.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")).find((b) =>
     b.textContent?.includes(label),
   )!;
+
+describe("opening the page saves nothing", () => {
+  // Saves come only from a person's choice or the × clear. Mounting with
+  // every preference unset must leave each on the default, unsaved.
+  test("with every preference unset, mounting saves nothing and shows each default", async () => {
+    storedTheme = null;
+    mounted = await mount();
+    await flush();
+    expect(sets()).toEqual([]);
+    expect(mounted.container.textContent).not.toContain("updated");
+    expect(mounted.container.textContent).not.toContain("Saved");
+
+    const trigger = mounted.container.querySelector("#timezone")!;
+    expect(trigger.textContent).toContain("Default (Pacific/Honolulu)");
+    expect(select(mounted.container)!.value).toBe("");
+    expect(themeButton(mounted.container, "System").textContent).toContain("Default (System)");
+  });
+
+  // The default in force is a value, like the model's "Follow the default"
+  // and the theme's "Default (System)", not an empty field's placeholder.
+  test("the default timezone renders as a value, not a placeholder", async () => {
+    mounted = await mount();
+    const trigger = mounted.container.querySelector("#timezone")!;
+    expect(trigger.className).not.toContain("text-muted-foreground");
+  });
+});
 
 describe("a preference the person set can go back to the default", () => {
   test("an unset timezone shows the deployment's default and offers no clear", async () => {

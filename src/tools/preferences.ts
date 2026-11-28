@@ -53,22 +53,25 @@ export function ownPreferences(prefs: UserPreferences | undefined): OwnPreferenc
 
 /**
  * Each preference in force: the person's own when they set it, else the
- * default. A stored timezone `Intl` does not know is not in force, as in
- * `effectiveTimezone`.
+ * default. A stored value the runtime would not use is not in force: a
+ * timezone `Intl` does not know, as in `effectiveTimezone`, and a model
+ * `isModelPermitted` refuses, the check `Runtime.getModelSlots` applies on read.
  */
 export function effectivePreferences(
   prefs: UserPreferences | undefined,
   defaults: PreferenceDefaults,
+  isModelPermitted: (model: string) => boolean,
 ): EffectivePreferences {
   const own = ownPreferences(prefs);
   const pick = (value: string | undefined, fallback: string) =>
     value ? { value, source: "own" as const } : { value: fallback, source: "default" as const };
   const timezone = own.timezone && isKnownTimezone(own.timezone) ? own.timezone : undefined;
+  const model = own.model && isModelPermitted(own.model) ? own.model : undefined;
   return {
     timezone: pick(timezone, defaults.timezone),
     locale: pick(own.locale, defaults.locale),
     theme: pick(own.theme, defaults.theme),
-    model: pick(own.model, defaults.model),
+    model: pick(model, defaults.model),
   };
 }
 

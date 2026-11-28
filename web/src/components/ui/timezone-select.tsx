@@ -32,15 +32,18 @@ function formatOffset(tz: string): string {
 interface TimezoneSelectProps {
   value: string;
   onChange: (value: string) => void;
-  /** What the trigger shows with no value, e.g. the default that applies. */
-  placeholder?: string;
+  /**
+   * What the trigger shows with no value: the default in force, e.g.
+   * `Default (Pacific/Honolulu)`. It is a value, so it renders as one.
+   */
+  defaultLabel?: string;
   id?: string;
 }
 
 export function TimezoneSelect({
   value,
   onChange,
-  placeholder = "Select timezone...",
+  defaultLabel = "Default",
   id,
 }: TimezoneSelectProps) {
   const [open, setOpen] = useState(false);
@@ -78,7 +81,7 @@ export function TimezoneSelect({
     }
   }, [open, value]);
 
-  const displayValue = value || placeholder;
+  const displayValue = value || defaultLabel;
 
   return (
     <div ref={containerRef} className="relative">
@@ -96,7 +99,6 @@ export function TimezoneSelect({
         className={cn(
           "flex h-8 w-full items-center justify-between rounded-sm border border-input bg-transparent px-2.5 py-1 text-sm transition-colors",
           "hover:border-ring focus-visible:outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
-          !value && "text-muted-foreground",
         )}
       >
         <span className="flex items-center gap-2 truncate">

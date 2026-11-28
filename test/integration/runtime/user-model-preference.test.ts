@@ -222,6 +222,33 @@ describe("saving a choice", () => {
     }
   });
 
+  // The stored choice is kept, and reported as the person's; what is in force
+  // is the default the turn runs on, as `getModelSlots` decides.
+  it("reports the default in force when policy narrowed past the stored choice", async () => {
+    const runtime = await start("save-narrowed", ["claude-sonnet-4-6"]);
+    try {
+      const userId = await seedUser(runtime);
+      await runtime.getUserStore().update(userId, { preferences: { models: { default: CHOSEN } } });
+      const identity: UserIdentity | null = await runtime.getUserStore().get(userId);
+      if (!identity) throw new Error(`user ${userId} not found`);
+      const tool = createCoreToolDefs(runtime).find((d) => d.name === "set_preferences");
+      if (!tool) throw new Error("set_preferences tool not found");
+      const res = await runWithRequestContext({ identity }, () =>
+        tool.handler({ locale: "de-DE" }),
+      );
+      expect(res.isError).toBeFalsy();
+      const out = res.structuredContent as {
+        preferences: { model?: string };
+        effective: { model: { value: string; source: string } };
+      };
+      expect(out.preferences.model).toBe(CHOSEN);
+      expect(out.effective.model).toEqual({ value: CONFIGURED_DEFAULT, source: "default" });
+      expect(slotsFor(runtime, CHOSEN).default).toBe(CONFIGURED_DEFAULT);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
   it("clears the choice on null", async () => {
     const runtime = await start("save-clear", ["claude-sonnet-4-6", "claude-opus-4-6"]);
     try {

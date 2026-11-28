@@ -92,8 +92,9 @@ export function ThemeProvider({
   /**
    * Stores a theme the person chose outside Settings (the palette, the
    * shortcut) as their server preference. Absent while no one is signed in: a
-   * toggle on the sign-in page lives in this browser only, and the account's
-   * own preference, when it has one, applies once the shell loads.
+   * toggle on the sign-in page lives in this browser only. Once the shell has
+   * read the account's preferences, their theme applies, or the default when
+   * they have none.
    */
   savePreference?: (pref: ThemePreference) => Promise<void>;
 }) {
@@ -157,6 +158,9 @@ export function ThemeProvider({
   }, []);
 
   const clearPreference = useCallback(() => {
+    // As in `applyPreference`: a read taken before a toggle's save lands is
+    // older than the theme the person just chose.
+    if (pendingSaves.current > 0) return;
     localStorage.removeItem(LS_KEY);
     const resolved = resolvePreference(currentPreference());
     modeRef.current = resolved;

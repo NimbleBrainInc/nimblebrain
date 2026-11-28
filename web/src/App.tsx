@@ -328,7 +328,7 @@ function AuthenticatedAppContent({
   onLogout: () => void;
 }) {
   const config = useChatConfigContext();
-  const { applyPreference } = useTheme();
+  const { applyPreference, clearPreference } = useTheme();
   const wsCtx = useWorkspaceContext();
   const onServerNotification = useServerNotificationRelay();
   useEvents({
@@ -356,13 +356,20 @@ function AuthenticatedAppContent({
     },
   });
 
-  // Sync server-side theme preference to the client theme context
+  // The person's server-side theme is the one in force: applied when they have
+  // one, and when a completed read shows none (cleared from chat, another tab,
+  // or before this load), this browser's copy is dropped so the default
+  // applies. Nothing is decided before the preferences have been read.
+  const preferencesRead = config.preferences !== undefined;
   const serverTheme = config.preferences?.theme;
   useEffect(() => {
+    if (!preferencesRead) return;
     if (serverTheme === "light" || serverTheme === "dark" || serverTheme === "system") {
       applyPreference(serverTheme);
+    } else {
+      clearPreference();
     }
-  }, [serverTheme, applyPreference]);
+  }, [preferencesRead, serverTheme, applyPreference, clearPreference]);
 
   const navigate = useNavigate();
   const location = useLocation();

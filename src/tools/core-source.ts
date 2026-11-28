@@ -707,7 +707,9 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             data: { fields: ["preferences"] },
           });
 
-          const effective = effectivePreferences(preferences, preferenceDefaults(runtime));
+          const effective = effectivePreferences(preferences, preferenceDefaults(runtime), (m) =>
+            runtime.isModelPermitted(m),
+          );
           const changed = Object.keys(input).filter(
             (k) => input[k as keyof SetPreferencesInput] !== undefined,
           );

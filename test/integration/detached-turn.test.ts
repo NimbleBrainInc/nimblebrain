@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatResponse } from "../../src/api/schemas/responses.ts";
@@ -157,6 +157,33 @@ describe("detached turns (server-authoritative streaming)", () => {
     expect(store).not.toBeNull();
     const events = await store!.readEvents(conversationId);
     expect(events.length).toBeGreaterThan(0);
+  });
+
+  // A viewer that reloads on `done` reads the stored conversation, so the reply
+  // is stored by the time `done` is published.
+  it("has stored the reply when it publishes `done`", async () => {
+    let storedAtDone: string | undefined;
+    const prev = runtime.onTurnEvent;
+    runtime.onTurnEvent = (key, e) => {
+      prev?.(key, e);
+      if (e.type !== "done") return;
+      const id = (e.data as ChatResponse).conversationId;
+      storedAtDone = readFileSync(
+        join(ownerConversationsDir(testDir, TEST_WORKSPACE_ID, DEV_IDENTITY.id), `${id}.jsonl`),
+        "utf-8",
+      );
+    };
+    try {
+      const { conversationId } = await runtime.startTurn({
+        identity: DEV_IDENTITY,
+        message: "Store me before done",
+        workspaceId: TEST_WORKSPACE_ID,
+      });
+      await waitFor(() => !runtime.isTurnActive(SCOPE, conversationId));
+      expect(storedAtDone).toContain('"type":"run.done"');
+    } finally {
+      runtime.onTurnEvent = prev;
+    }
   });
 
   it("refuses an unknown provided id without creating it or reserving a run", async () => {
