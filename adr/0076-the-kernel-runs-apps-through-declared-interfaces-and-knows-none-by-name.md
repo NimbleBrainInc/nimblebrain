@@ -1,9 +1,10 @@
 # 0076. The kernel runs apps through declared interfaces, and knows none by name
 
-- Status: Proposed; amended by ADR-0077 (a catalog's shape; plugins as the managed unit)
+- Status: Proposed
 - Date: 2026-11-24
 - Serves: secure RBAC; orchestrate remote MCP
 - Supersedes: ADR-0075 (on acceptance)
+- Related: [ADR-0077](./0077-everything-installed-from-a-catalog-is-a-plugin-and-its-record-says-what-it-owns.md) (what a catalog lists, and plugins as the managed unit)
 
 ## Context
 

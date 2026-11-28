@@ -3,7 +3,8 @@
 - Status: Accepted
 - Date: 2026-11-27
 - Serves: manage skills; orchestrate remote MCP; secure RBAC
-- Amends: [ADR-0068](./0068-a-plugin-is-the-unit-of-install-and-a-catalog-vouches-for-it.md) (the AI Catalog is the install listing; the installed record names the plugin; pins move to installed artifacts), [ADR-0076](./0076-the-kernel-runs-apps-through-declared-interfaces-and-knows-none-by-name.md) (a catalog's shape, with an optional pin and a path source; plugins as the managed unit)
+- Amends: [ADR-0068](./0068-a-plugin-is-the-unit-of-install-and-a-catalog-vouches-for-it.md) (the AI Catalog is the install listing; the installed record names the plugin; pins move to installed artifacts)
+- Related: [ADR-0076](./0076-the-kernel-runs-apps-through-declared-interfaces-and-knows-none-by-name.md) (Proposed, and edited to match: a catalog's shape, with an optional pin and a path source; plugins as the managed unit)
 
 ## Context
 
@@ -28,11 +29,13 @@ an archive URL and a digest, so Browse reads a second file, `connectors.yaml`, a
 list of `ServerDetail`s, and can show neither a skill-only plugin nor anything a
 plugin says about itself without opening it.
 
-The pins are compiled into the image. `src/config/plugin-catalog.ts` holds the
-digests of the index and the connector list, so moving the catalog forward is a
-release, and every installed connector is re-bound when the pin moves. There is
-one catalog: `NB_CURATED_CATALOG_DIR` replaces it wholesale rather than adding
-to it.
+The pins belong to the deployment, not to what is installed.
+`src/config/plugin-catalog.ts` compiles default digests of the index and the
+connector list into the image, and `NB_PLUGIN_CATALOG_URL`,
+`NB_PLUGIN_CATALOG_SHA256` and `NB_PLUGIN_CATALOG_CONNECTORS_SHA256` override
+them. Either way one pin covers every workspace, and every installed connector
+is re-bound when it moves. There is one catalog: `NB_CURATED_CATALOG_DIR`
+replaces it wholesale rather than adding to it.
 
 The AI Catalog specification lists typed artifacts of any kind (plugins, skills,
 MCP servers) by `url` and `digest`, or inline as `data`, with an `extensions`
@@ -104,7 +107,7 @@ the packaging is internal.
 The operator's configuration holds the catalogs. A tenant control plane that
 edits the same list comes later.
 
-### The listing is an AI Catalog, and it is display only
+### The listing is an AI Catalog, and Browse reads nothing else
 
 A listing is an AI Catalog document. **Browse reads listings, never artifacts.**
 An entry carries what Browse needs to show and gate it: `identifier`,
@@ -117,18 +120,42 @@ An entry carries what Browse needs to show and gate it: `identifier`,
   ask for;
 - `nimblebrainOnly`, as today.
 
-In `plugin.json` the extension's `servers` stays key to registry name; the
-published extension schema gives the listing entry's form its own definition, so
-v1 still only adds.
+The extension has two shapes, so it has two schemas, each addressed by its own
+`$id` under `schemas/<thing>/v<major>/`, and a reader knows which applies from
+where the extension sits:
 
-**A listing can mislabel but never grant.** Install reads the verified artifact,
-and only the artifact decides what is installed.
+- the plugin extension,
+  `https://schemas.nimblebrain.ai/plugin-extension/v1/plugin-extension.schema.json`,
+  for `plugin.json` only and unchanged: `servers` maps each key to a registry
+  name. Its description covers manifests only, not AI Catalog entries;
+- the catalog-entry extension,
+  `https://schemas.nimblebrain.ai/catalog-entry-extension/v1/catalog-entry-extension.schema.json`,
+  for an AI Catalog entry: `iconUrl`, `category`, `nimblebrainOnly`, and
+  `servers` mapping each key to `{name, auth}`.
+
+**A listing selects; the artifact decides.** An entry selects what gets
+installed: its `url`, its `digest` and any inline `data`. So the catalog source
+is trusted for selection. What an install produces comes only from the verified
+artifact; the entry's display fields and extension are never read at install
+and grant nothing.
+
+### A bare connector
+
+A connector listed on its own is an entry of type
+`application/vnd.nimblebrain.server+json` whose inline `data` is the server's
+MCP Registry `server.json` record: the `ServerDetail` the catalog serves at
+`/v0.1/servers`, not a Server Card, so it carries auth. Its `digest` is the one
+the AI Catalog specification defines for inline data: `sha256:` and the hex
+SHA-256 of the record's UTF-8 bytes after JSON Canonicalization Scheme
+(RFC 8785). The type is NimbleBrain's because the specification registers none
+for a registry record; NimbleBrain proposes a standard one upstream, and entries
+move to it if the specification adopts one.
 
 ### Install
 
 1. Look up `name@catalog` in the cached listing.
-2. Fetch `url` and verify `digest` (or take inline `data`, verified the same
-   way).
+2. Fetch `url` and verify `digest` over the bytes fetched, or take inline
+   `data` and verify `digest` over its canonical form (*A bare connector*).
 3. Validate the manifest; refuse a `stdio` server (ADR-0068).
 4. For each server, read its record, a `ServerDetail`: the plugin archive's
    `ai.nimblebrain/servers/<key>.json`, or the listing's inline record for a bare
@@ -138,21 +165,31 @@ and only the artifact decides what is installed.
 7. Write the installed-plugin record.
 
 **Pinning moves to what is installed.** Each record holds its artifact's digest.
-No artifact digest or listing digest is compiled into the image.
+No artifact digest or listing digest is compiled into the image or set
+deployment-wide.
 
 ### Several catalogs side by side
 
 Items are addressed `name@catalog`, so two catalogs may list the same name. A
-server connects once per owner however many plugins name it; its record comes
-from whichever plugin installed it first and is never swapped silently. To
-prefer one catalog's item over another's, the operator leaves it out of the
-other's policy. There is no precedence logic.
+server connects once per owner however many plugins name it. Its `ServerDetail`
+belongs to the plugin that supplied it: when that plugin updates, the
+`ServerDetail` updates; when that plugin is uninstalled while another installed
+plugin still names the server, the `ServerDetail` is re-read from the next
+remaining plugin, in install order, and the connection stays. Nothing else
+changes it, so no plugin swaps another's server silently. To prefer one
+catalog's item over another's, the operator leaves it out of the other's policy.
+There is no precedence logic.
 
 ### Updates
 
 An entry whose digest differs from the record's is an update. From an
 `available` catalog an admin applies it ("update available"); from a `required`
 catalog the reconcile applies it.
+
+Presence follows policy. An item removed from a `required` catalog, or a
+`required` catalog removed from configuration, is uninstalled by the reconcile
+from every workspace. An item removed from an `available` catalog stays
+installed and shows as no longer offered.
 
 ## Consequences
 
@@ -163,12 +200,16 @@ catalog the reconcile applies it.
   once, at install or update.
 - Guidance a catalog removes leaves an install on its next update, because the
   record lists what the plugin owns.
-- A catalog moves forward without a release. A `required` catalog moves when its
-  operator changes the pin; an `available` one moves when its publisher
-  publishes.
-- A live `available` listing is trusted for display only. A compromised listing
-  can show a false name or icon; it cannot change what an install fetches past
-  its own digest, and the record pins that.
+- Each catalog moves on its own, and what is installed moves only by an update.
+  A `required` catalog moves when its operator changes the pin; an `available`
+  one moves when its publisher publishes.
+- Digest verification protects the integrity of what is fetched and keeps
+  installed pins stable: an install runs exactly the bytes its entry named, and
+  its record does not change until an update. It does not authenticate the
+  publisher. An unpinned listing that is compromised can name another `url` and
+  `digest` and so steer later installs and updates, which is why a `required`
+  catalog must be pinned and an update from an `available` catalog is applied
+  by an admin.
 - A managed skill can no longer be edited in place. A person who wants a
   variant keeps a copy, and the copy does not receive the plugin's updates.
 - A catalog publisher must write the entry extension (`servers` with auth,
@@ -178,18 +219,27 @@ catalog the reconcile applies it.
 
 ### Existing installs
 
-No data migration. A boot reconcile maps each installed connector to its plugin
-through the listings' `servers` maps, fetches that plugin's artifact, and writes
-its record, keeping the existing connection and credential. A connector no
-listing names stays a bare connector, the owner's own. The connector-skill
-materializations and `skillsLock` give way to the plugin's managed skills as each
-record is written.
+No data migration. A boot reconcile adopts an installed connector into a plugin
+only when all three hold:
+
+1. the connector already carries catalog provenance: it was installed from a
+   catalog, and its `skillsLock` records a plugin;
+2. exactly one listing entry names its server in `servers`;
+3. that plugin's artifact, fetched and verified, contains the server.
+
+It then writes the plugin's record, keeping the existing connection and
+credential, and the connector-skill materializations and `skillsLock` give way
+to the plugin's managed skills. Otherwise the connector stays a plain
+connector, unchanged, and the reconcile logs the entries that claim it. A
+connector its owner added by URL is never adopted, whatever a listing names,
+because adoption would let an uninstall remove what the owner made.
 
 ### Retired
 
 - the zip-scanning skill and starter resolver (`connector-skill-resolver.ts`)
   and the additive skill reconcile;
-- the image-compiled index and connector-list pins (`src/config/plugin-catalog.ts`);
+- the deployment-wide index and connector-list pins, their compiled defaults
+  and their environment overrides (`src/config/plugin-catalog.ts`);
 - `connectors.yaml` as a runtime input;
 - `NB_CURATED_CATALOG_DIR` as a replacement: it becomes one path catalog that
   adds to the others.
@@ -198,8 +248,8 @@ record is written.
 
 Each step lands on its own:
 
-1. the listing: the AI Catalog reader, the entry extension in the published
-   schema, `catalogs` with URL and path sources, pins and live refresh, and
+1. the listing: the AI Catalog reader, the catalog-entry extension schema and
+   the plugin extension schema's narrowed description, `catalogs` with URL and path sources, pins and live refresh, and
    Browse reading listings;
 2. the installed-plugin record, and install, uninstall and update through it,
    with one-item packaging for a bare skill or connector and managed skills;
@@ -208,12 +258,6 @@ Each step lands on its own:
 4. `required` catalogs reconciled into every workspace;
 5. retiring the resolver, the compiled pins, `connectors.yaml` and the
    replacing directory.
-
-### Open
-
-- The entry `type` for a bare connector whose server record is inline `data`.
-- A connector that more than one listing entry names, at the existing-install
-  reconcile.
 
 ## Alternatives considered
 

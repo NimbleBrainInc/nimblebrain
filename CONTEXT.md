@@ -265,18 +265,21 @@ Catalog listing URL or a mounted path, `policy` `required` or `available`
 must carry. An entry lists a plugin, skill or connector with what Browse shows
 and gates on (`extensions["ai.nimblebrain"]`: `iconUrl`, `category`, `servers`
 with each server's auth, `nimblebrainOnly`). Browse reads listings, never
-artifacts. A listing is display only: install reads the artifact verified
-against the entry's digest, so a false listing can mislabel but never grant.
-Catalogs sit side by side, with no precedence between them.
+artifacts. An entry selects what installs (its `url`, `digest` or inline
+`data`), so the catalog source is trusted for selection; what an install
+produces comes only from the artifact verified against that digest. That is why
+a `required` catalog must be pinned. Catalogs sit side by side, with no
+precedence between them.
 
 ### Installed plugin record *(decided, ADR-0077; not yet built)*
 One per install per owner: `name@catalog`, the digest of the artifact fetched,
 and exactly what it produced (connectors, skills, conversation starters).
 Uninstall removes what it lists; a connection that two installed plugins name
-stays until the last is removed. Update replaces the digest and what the plugin
-owns. Readers of installed state read records; nothing scans artifacts. The
-pin of what is installed is the record's digest, never one compiled into the
-image.
+stays until the last is removed, its `ServerDetail` re-read from the next
+remaining plugin in install order. Update replaces the digest and what the
+plugin owns. Readers of installed state read records; nothing scans artifacts.
+The pin of what is installed is the record's digest, never one compiled into
+the image or set for the whole deployment.
 
 ### Managed skill *(decided, ADR-0077; not yet built)*
 A skill an installed plugin produced, marked with its plugin and read-only.
@@ -315,8 +318,10 @@ How far a catalog's items reach, set by the operator when attaching the catalog:
 `required` installs every item in it in every workspace, including workspaces created
 later, and a workspace cannot remove one; `available` offers them to install. Policy
 decides presence, not authorization: a plugin that needs each person to sign in still
-asks each person. The kernel reconciles every workspace to its required plugins. A
-catalog cannot implement a kernel contract or make a plugin a system plugin.
+asks each person. The kernel reconciles every workspace to its required plugins, so an
+item dropped from a `required` catalog, or the catalog itself, is uninstalled
+everywhere; an item dropped from an `available` catalog stays installed, shown as no
+longer offered (ADR-0077). A catalog cannot implement a kernel contract or make a plugin a system plugin.
 
 ### Contract *(ADR-0076)*
 The versioned, language-neutral interface between the kernel and whatever implements a
@@ -384,7 +389,7 @@ Foundational (secure RBAC):
 - [0069](adr/0069-a-plugin-belongs-to-a-workspace-or-a-person-and-a-personal-plugin-acts-only-where-its-owner-grants-it.md) — a plugin belongs to a workspace or a person; a personal plugin acts in a workspace only while its owner grants it there, and the grant covers its connectors and skills (amended by 0070)
 - [0070](adr/0070-a-models-request-to-use-a-personal-plugin-returns-at-once-and-the-answer-is-the-persons-next-message.md) — a model's request to use a personal plugin returns at once; the person answers in the client, and the model learns the answer as their next message
 - [0075](adr/0075-stored-records-go-through-domain-stores-that-a-configured-storage-provider-supplies.md) — every record goes through a domain store that names no medium, and one configured storage provider (files by default) serves a deployment's records; blobs are a separate store
-- [0076](adr/0076-the-kernel-runs-apps-through-declared-interfaces-and-knows-none-by-name.md) — the kernel owns boot, identity and scope, the door, governance and hosting, and names no plugin; capabilities are Agent Plugins behind versioned contracts, system plugins are the operator's, infrastructure is configured providers; would supersede 0075 (proposed; amended by 0077)
+- [0076](adr/0076-the-kernel-runs-apps-through-declared-interfaces-and-knows-none-by-name.md) — the kernel owns boot, identity and scope, the door, governance and hosting, and names no plugin; capabilities are Agent Plugins behind versioned contracts, system plugins are the operator's, infrastructure is configured providers; would supersede 0075 (proposed; related: 0077)
 
 Manage skills:
 
@@ -404,7 +409,7 @@ Manage skills:
 - [0055](adr/0055-guidance-for-one-app-is-a-skill-bound-to-its-tools.md) — guidance for one app is a skill bound to its tools
 - [0072](adr/0072-a-person-turns-their-own-skill-off-in-one-workspace-on-their-own-record.md) — a person's own skill applies in every workspace unless they turn it off in one; the off is stored on their record and dropped where the user tier is collected (proposed)
 - [0068](adr/0068-a-plugin-is-the-unit-of-install-and-a-catalog-vouches-for-it.md) — a plugin is the unit of install, a catalog vouches for it, and the runtime reconciles what is installed (amended by 0077)
-- [0077](adr/0077-everything-installed-from-a-catalog-is-a-plugin-and-its-record-says-what-it-owns.md) — everything installed from a catalog is a plugin with a record of what it produced; a catalog is an AI Catalog listing, `{source, policy, sha256?}`, read for display only; pins live on installed records
+- [0077](adr/0077-everything-installed-from-a-catalog-is-a-plugin-and-its-record-says-what-it-owns.md) — everything installed from a catalog is a plugin with a record of what it produced; a catalog is an AI Catalog listing, `{source, policy, sha256?}`, the only thing Browse reads; pins live on installed records
 
 Orchestrate over remote MCP:
 
