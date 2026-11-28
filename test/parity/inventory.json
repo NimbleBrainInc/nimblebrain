@@ -1,0 +1,5090 @@
+[
+ {
+  "id": "API-01",
+  "area": "REST API, auth, config, env",
+  "item": "Health",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "API-02",
+  "area": "REST API, auth, config, env",
+  "item": "Bootstrap (shell's first call: identity, workspaces with unread counts, models, providers, limits, feature flags)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "API-03",
+  "area": "REST API, auth, config, env",
+  "item": "Workspace shell (placements, nav for one workspace)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "API-04",
+  "area": "REST API, auth, config, env",
+  "item": "Chat turn start (JSON or multipart with attachments), SSE stream of the turn",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "API-05",
+  "area": "REST API, auth, config, env",
+  "item": "Cancel an in-flight turn",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "API-06",
+  "area": "REST API, auth, config, env",
+  "item": "Conversation event stream (resume or replay an in-flight turn from `afterSeq`)",
+  "status": "unknown",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "API-07",
+  "area": "REST API, auth, config, env",
+  "item": "Identity event stream (workspace/notification/connector events for the signed-in user)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "API-08",
+  "area": "REST API, auth, config, env",
+  "item": "Workspace tool call (the shell's one write door)",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "API-09",
+  "area": "REST API, auth, config, env",
+  "item": "Identity tool call (tools that need no workspace: profile, workspace management, personal connectors)",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "API-10",
+  "area": "REST API, auth, config, env",
+  "item": "Workspace-free file download",
+  "status": "changed-by-decision",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "API-11",
+  "area": "REST API, auth, config, env",
+  "item": "Workspace file download (Range passed through, host headers)",
+  "status": "moved",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "API-12",
+  "area": "REST API, auth, config, env",
+  "item": "Read a resource (`ui://`, `files://`, connector resources)",
+  "status": "moved",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "API-13",
+  "area": "REST API, auth, config, env",
+  "item": "Upload files to a workspace (multipart, optional conversationId tag)",
+  "status": "unknown",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "API-14",
+  "area": "REST API, auth, config, env",
+  "item": "App UI resource proxy (an app's inlined HTML, gzip + weak ETag, revalidate each use)",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "API-15",
+  "area": "REST API, auth, config, env",
+  "item": "MCP door, per workspace (2026-07-28 revision only)",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "API-16",
+  "area": "REST API, auth, config, env",
+  "item": "Bare MCP refused",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "API-17",
+  "area": "REST API, auth, config, env",
+  "item": "Protected Resource Metadata per workspace (RFC 9728)",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "API-18",
+  "area": "REST API, auth, config, env",
+  "item": "PRM for anything else",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "API-19",
+  "area": "REST API, auth, config, env",
+  "item": "Authorization Server Metadata proxy (RFC 8414)",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "API-20",
+  "area": "REST API, auth, config, env",
+  "item": "Run key set (JWKS a gateway checks turn credentials against)",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "API-21",
+  "area": "REST API, auth, config, env",
+  "item": "Brand script for the login page",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "API-22",
+  "area": "REST API, auth, config, env",
+  "item": "Prometheus metrics (in-cluster only, never `/v1/metrics`)",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "API-23",
+  "area": "REST API, auth, config, env",
+  "item": "Sign-in redirect (OIDC/WorkOS)",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "API-24",
+  "area": "REST API, auth, config, env",
+  "item": "Sign-in callback",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "API-25",
+  "area": "REST API, auth, config, env",
+  "item": "Refresh session",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "API-26",
+  "area": "REST API, auth, config, env",
+  "item": "Sign out",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "API-27",
+  "area": "REST API, auth, config, env",
+  "item": "Connector OAuth initiate (workspace connector)",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "API-28",
+  "area": "REST API, auth, config, env",
+  "item": "Connector OAuth initiate (personal connector)",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "API-29",
+  "area": "REST API, auth, config, env",
+  "item": "Connector OAuth callback",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "API-30",
+  "area": "REST API, auth, config, env",
+  "item": "Composio auth initiate (workspace)",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "API-31",
+  "area": "REST API, auth, config, env",
+  "item": "Composio auth initiate (personal)",
+  "status": "same",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "API-32",
+  "area": "REST API, auth, config, env",
+  "item": "Composio callback",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "API-33",
+  "area": "REST API, auth, config, env",
+  "item": "Composio white-label proxy redirect",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "API-34",
+  "area": "REST API, auth, config, env",
+  "item": "Inbound webhook door",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "API-35",
+  "area": "REST API, auth, config, env",
+  "item": "JSON 404 fallback and central error handler",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "API-36",
+  "area": "REST API, auth, config, env",
+  "item": "CORS allowlist",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "API-37",
+  "area": "REST API, auth, config, env",
+  "item": "Cross-site write rejection (Fetch-Site)",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "API-38",
+  "area": "REST API, auth, config, env",
+  "item": "Untrusted browser origin at `/mcp` (DNS rebinding)",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "API-39",
+  "area": "REST API, auth, config, env",
+  "item": "Host allowlist for the routes answered without sign-in",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "API-40",
+  "area": "REST API, auth, config, env",
+  "item": "Security headers (HSTS, CSP; `NB_HSTS`, `NB_CSP`)",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "API-41",
+  "area": "REST API, auth, config, env",
+  "item": "Rate limits: chat, tool call, MCP (`NB_CHAT_RATE_LIMIT`, `NB_TOOL_RATE_LIMIT`, `NB_MCP_RATE_LIMIT`)",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "API-42",
+  "area": "REST API, auth, config, env",
+  "item": "Body limits (1 MB JSON, the chat and upload limits, the server ceiling)",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "API-43",
+  "area": "REST API, auth, config, env",
+  "item": "Request metrics and tracing (route-pattern labels, OTel spans)",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "API-44",
+  "area": "REST API, auth, config, env",
+  "item": "SSE heartbeat",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "AUTH-01",
+  "area": "REST API, auth, config, env",
+  "item": "Provider selection from `instance.json` (`auth.adapter`: dev, oidc, workos); no instance file means no provider",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "AUTH-02",
+  "area": "REST API, auth, config, env",
+  "item": "Dev provider (local, no IdP)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AUTH-03",
+  "area": "REST API, auth, config, env",
+  "item": "OIDC provider: auth-code + PKCE, refresh, JWKS verification, OIDC bearer treated as first-party",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AUTH-04",
+  "area": "REST API, auth, config, env",
+  "item": "WorkOS provider (AuthKit): sessions, user directory, authorization server for MCP clients (`WORKOS_API_KEY`)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AUTH-05",
+  "area": "REST API, auth, config, env",
+  "item": "Sign-in cookies `__Host-nb_session`, `__Host-nb_refresh`, `__Host-nb_login` (Secure, Path=/)",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "AUTH-06",
+  "area": "REST API, auth, config, env",
+  "item": "Token grants: a first-party session vs a resource token whose audience must name `/mcp/<wsId>`",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "AUTH-07",
+  "area": "REST API, auth, config, env",
+  "item": "Workspace membership gate (`requireWorkspace`)",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "AUTH-08",
+  "area": "REST API, auth, config, env",
+  "item": "Run keys: turn credentials signed per run (model gateway, ACP worker audiences)",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "AUTH-09",
+  "area": "REST API, auth, config, env",
+  "item": "Tenant service-token mint from the fleet authorizer (`NB_FLEET_AUTHORIZER_TOKEN_URL`)",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "AUTH-10",
+  "area": "REST API, auth, config, env",
+  "item": "Org roles gate admin tools (`orgRole`; `isToolVisibleToRole`)",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "AUTH-11",
+  "area": "REST API, auth, config, env",
+  "item": "Auth-failure audit event (`audit.auth_failure`); a transient verification failure is not audited",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-01",
+  "area": "REST API, auth, config, env",
+  "item": "`providers.{anthropic,openai,google,greenpt,nebius,local,xai}`",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CFG-02",
+  "area": "REST API, auth, config, env",
+  "item": "`models.default` / `models.fast`",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CFG-03",
+  "area": "REST API, auth, config, env",
+  "item": "`modelPolicy.allowed`",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CFG-04",
+  "area": "REST API, auth, config, env",
+  "item": "`maxIterations` (25, cap 50), `maxInputTokens`, `maxOutputTokens`",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CFG-05",
+  "area": "REST API, auth, config, env",
+  "item": "`thinking`, `thinkingEffort`, `thinkingBudgetTokens`",
+  "status": "same",
+  "use": "M",
+  "harness": "eval"
+ },
+ {
+  "id": "CFG-06",
+  "area": "REST API, auth, config, env",
+  "item": "`maxToolResultSize`",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CFG-07",
+  "area": "REST API, auth, config, env",
+  "item": "`allowInsecureRemotes`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-08",
+  "area": "REST API, auth, config, env",
+  "item": "`logging.{dir,disabled,level,retentionDays}`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-09",
+  "area": "REST API, auth, config, env",
+  "item": "`http.{port,host}` (plus `PORT`, `NB_HOST` env)",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-10",
+  "area": "REST API, auth, config, env",
+  "item": "`workDir` (plus `NB_WORK_DIR`)",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-11",
+  "area": "REST API, auth, config, env",
+  "item": "`usage.ledger`",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CFG-12",
+  "area": "REST API, auth, config, env",
+  "item": "`secrets.{backend,config,runKeyEnv}`",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-13",
+  "area": "REST API, auth, config, env",
+  "item": "`telemetry.{enabled,identify}`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-14",
+  "area": "REST API, auth, config, env",
+  "item": "`features.skillManagement`",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-15",
+  "area": "REST API, auth, config, env",
+  "item": "`features.toolDiscovery`",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-16",
+  "area": "REST API, auth, config, env",
+  "item": "`features.fileContext`",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-17",
+  "area": "REST API, auth, config, env",
+  "item": "`features.userManagement`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-18",
+  "area": "REST API, auth, config, env",
+  "item": "`features.workspaceManagement`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-19",
+  "area": "REST API, auth, config, env",
+  "item": "`features.compaction`",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CFG-20",
+  "area": "REST API, auth, config, env",
+  "item": "`connectors.{providers,gateways,oauthClients}` (Composio, Smithery, gateways, static OAuth clients)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CFG-21",
+  "area": "REST API, auth, config, env",
+  "item": "`notifications.poll`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-22",
+  "area": "REST API, auth, config, env",
+  "item": "`execution.{default,modelGateway,runtimes}` (native engine vs ACP runtimes, gateway)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CFG-23",
+  "area": "REST API, auth, config, env",
+  "item": "`tasks.maxConcurrentRuns` / `maxQueuedRuns`",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "CFG-24",
+  "area": "REST API, auth, config, env",
+  "item": "`tasks.maxRunIterations` / `maxRunInputTokens` / `maxRunDurationMs`",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CFG-25",
+  "area": "REST API, auth, config, env",
+  "item": "`tasks.runRetentionDays`",
+  "status": "moved",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-26",
+  "area": "REST API, auth, config, env",
+  "item": "`files.{maxFileSize,maxTotalSize,maxFilesPerMessage,maxExtractedTextSize}`",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CFG-27",
+  "area": "REST API, auth, config, env",
+  "item": "`brand.{name,defaultTheme,homepageUrl,logo,favicon,colors,fonts}`",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "CFG-28",
+  "area": "REST API, auth, config, env",
+  "item": "`plugins` (engine only: system plugins, `false` turns off conversations, tasks or files, `servers.<key>.url`, `transferOrigins`)",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "CFG-29",
+  "area": "REST API, auth, config, env",
+  "item": "`workspaces.deletedRetentionDays` (engine only: tombstone purge window)",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "ENV-01",
+  "area": "REST API, auth, config, env",
+  "item": "`ALLOWED_ORIGINS`",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "ENV-02",
+  "area": "REST API, auth, config, env",
+  "item": "`NB_CHAT_RATE_LIMIT`, `NB_TOOL_RATE_LIMIT`, `NB_MCP_RATE_LIMIT`",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "ENV-03",
+  "area": "REST API, auth, config, env",
+  "item": "`NB_HSTS`, `NB_CSP`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "ENV-04",
+  "area": "REST API, auth, config, env",
+  "item": "`NB_LOG_FORMAT`, `NB_LOG_LEVEL`, `NB_SERVICE_NAME`, `NB_DEBUG`",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "ENV-05",
+  "area": "REST API, auth, config, env",
+  "item": "`OTEL_EXPORTER_OTLP_ENDPOINT`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "ENV-06",
+  "area": "REST API, auth, config, env",
+  "item": "`NB_VERSION`, `NB_BUILD_SHA`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "ENV-07",
+  "area": "REST API, auth, config, env",
+  "item": "`NB_HOST_LOOPBACK`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "ENV-08",
+  "area": "REST API, auth, config, env",
+  "item": "`NB_CONNECTOR_START_CONCURRENCY`",
+  "status": "same",
+  "use": "L",
+  "harness": "pressure"
+ },
+ {
+  "id": "ENV-09",
+  "area": "REST API, auth, config, env",
+  "item": "`NB_TENANT_ID`, `HOSTNAME`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "ENV-10",
+  "area": "REST API, auth, config, env",
+  "item": "`NB_FLEET_AUTHORIZER_TOKEN_URL`",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "ENV-11",
+  "area": "REST API, auth, config, env",
+  "item": "`COMPOSIO_API_KEY`, `SMITHERY_API_KEY`, `WORKOS_API_KEY`",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "ENV-12",
+  "area": "REST API, auth, config, env",
+  "item": "`GREENPT_API_KEY`, `NEBIUS_API_KEY`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "ENV-13",
+  "area": "REST API, auth, config, env",
+  "item": "`NB_TIMEZONE` (the instance default timezone for schedules without one; the tasks server falls back to `Pacific/Honolulu`)",
+  "status": "unknown",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-1",
+  "area": "MCP door",
+  "item": "Bare `/mcp` refused",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-2",
+  "area": "MCP door",
+  "item": "Workspace door auth",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-3",
+  "area": "MCP door",
+  "item": "Membership wall",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-4",
+  "area": "MCP door",
+  "item": "Deleted workspace at door",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-5",
+  "area": "MCP door",
+  "item": "Untrusted browser Origin",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-6",
+  "area": "MCP door",
+  "item": "Rate limit per identity+grant kind",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "MCP-7",
+  "area": "MCP door",
+  "item": "Request body bound",
+  "status": "unknown",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "MCP-8",
+  "area": "MCP door",
+  "item": "Protocol revision 2026-07-28 only",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-9",
+  "area": "MCP door",
+  "item": "`server/discover` / capabilities",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-10",
+  "area": "MCP door",
+  "item": "Door instructions",
+  "status": "same",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "MCP-11",
+  "area": "MCP door",
+  "item": "GET/DELETE (no session, no standalone stream)",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-12",
+  "area": "MCP door",
+  "item": "`subscriptions/listen` at door",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-13",
+  "area": "MCP door",
+  "item": "`tools/list`",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-14",
+  "area": "MCP door",
+  "item": "`tools/call` routing + wall",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-15",
+  "area": "MCP door",
+  "item": "Agent vs app call gate",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-16",
+  "area": "MCP door",
+  "item": "Personal connectors (`my_*`)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-17",
+  "area": "MCP door",
+  "item": "Progress relay",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-18",
+  "area": "MCP door",
+  "item": "Input-required / elicitation relay",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-19",
+  "area": "MCP door",
+  "item": "Task-augmented connector calls",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-20",
+  "area": "MCP door",
+  "item": "Task-augmented `tasks__run` (identity task source)",
+  "status": "missing",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-21",
+  "area": "MCP door",
+  "item": "`skills/list`, `skills/get` (SEP-2640)",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-22",
+  "area": "MCP door",
+  "item": "`prompts/list` (connector prompts)",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-23",
+  "area": "MCP door",
+  "item": "`prompts/get` incl. input-required",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-24",
+  "area": "MCP door",
+  "item": "`completion/complete`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-25",
+  "area": "MCP door",
+  "item": "`resources/list` unscoped",
+  "status": "unknown",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-26",
+  "area": "MCP door",
+  "item": "`resources/list` scoped (bridge)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-27",
+  "area": "MCP door",
+  "item": "`resources/templates/list`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-28",
+  "area": "MCP door",
+  "item": "`resources/read` resolution order",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-29",
+  "area": "MCP door",
+  "item": "`files://<id>` read at door",
+  "status": "moved",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-30",
+  "area": "MCP door",
+  "item": "`ui://` screens of platform apps",
+  "status": "moved",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "MCP-31",
+  "area": "MCP door",
+  "item": "`skill://` reads",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-32",
+  "area": "MCP door",
+  "item": "`conversation://<id>`",
+  "status": "same",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "MCP-33",
+  "area": "MCP door",
+  "item": "Kernel announces writes (`list_changed`)",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "MCP-34",
+  "area": "MCP door",
+  "item": "Unattended refusal inside runs",
+  "status": "unknown",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-40",
+  "area": "MCP door",
+  "item": "nb__search",
+  "status": "same",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "MCP-41",
+  "area": "MCP door",
+  "item": "nb__read_resource",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-42",
+  "area": "MCP door",
+  "item": "nb__status",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-43",
+  "area": "MCP door",
+  "item": "nb__use_skill",
+  "status": "same",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "MCP-44",
+  "area": "MCP door",
+  "item": "nb__request_plugin",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-45",
+  "area": "MCP door",
+  "item": "nb__manage_tools",
+  "status": "same",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "MCP-46",
+  "area": "MCP door",
+  "item": "nb__manage_users (app-only)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-47",
+  "area": "MCP door",
+  "item": "nb__manage_workspaces (app-only)",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-48",
+  "area": "MCP door",
+  "item": "nb__manage_connectors (app-only)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-49",
+  "area": "MCP door",
+  "item": "nb__get_config (app-only)",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-50",
+  "area": "MCP door",
+  "item": "nb__set_model_config (app-only)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-51",
+  "area": "MCP door",
+  "item": "nb__set_preferences",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-52",
+  "area": "MCP door",
+  "item": "nb__workspace_info (app-only)",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-53",
+  "area": "MCP door",
+  "item": "nb__set_telemetry (app-only)",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-54",
+  "area": "MCP door",
+  "item": "nb__list_artifacts",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-55",
+  "area": "MCP door",
+  "item": "nb__read_artifact",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-56",
+  "area": "MCP door",
+  "item": "nb__briefing (app-only)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-57",
+  "area": "MCP door",
+  "item": "nb__conversation_starters (app-only)",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-58",
+  "area": "MCP door",
+  "item": "nb__open_app",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "MCP-60",
+  "area": "MCP door",
+  "item": "conversations__list",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-61",
+  "area": "MCP door",
+  "item": "conversations__get",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-62",
+  "area": "MCP door",
+  "item": "conversations__search",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-63",
+  "area": "MCP door",
+  "item": "conversations__update",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-64",
+  "area": "MCP door",
+  "item": "conversations__stats",
+  "status": "moved",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-65",
+  "area": "MCP door",
+  "item": "conversations__export",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-66",
+  "area": "MCP door",
+  "item": "Pre-engine conversations readable",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-67",
+  "area": "MCP door",
+  "item": "skills__list",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-68",
+  "area": "MCP door",
+  "item": "skills__read",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-69",
+  "area": "MCP door",
+  "item": "skills__loading_log",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-70",
+  "area": "MCP door",
+  "item": "skills__create",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-71",
+  "area": "MCP door",
+  "item": "skills__update",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-72",
+  "area": "MCP door",
+  "item": "skills__history",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-73",
+  "area": "MCP door",
+  "item": "skills__restore",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-74",
+  "area": "MCP door",
+  "item": "skills__delete",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-75",
+  "area": "MCP door",
+  "item": "skills__set_status (app-only)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-76",
+  "area": "MCP door",
+  "item": "skills__set_here (app-only)",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-77",
+  "area": "MCP door",
+  "item": "skills__activate",
+  "status": "same",
+  "use": "M",
+  "harness": "eval"
+ },
+ {
+  "id": "MCP-78",
+  "area": "MCP door",
+  "item": "skills__deactivate",
+  "status": "same",
+  "use": "L",
+  "harness": "eval"
+ },
+ {
+  "id": "MCP-79",
+  "area": "MCP door",
+  "item": "notifications__list",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-80",
+  "area": "MCP door",
+  "item": "notifications__mark_read",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-81",
+  "area": "MCP door",
+  "item": "notifications__settings (app-only)",
+  "status": "unknown",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-82",
+  "area": "MCP door",
+  "item": "notifications__set_source_level (app-only)",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-83",
+  "area": "MCP door",
+  "item": "notifications__set_routes (app-only)",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-84",
+  "area": "MCP door",
+  "item": "notifications__send_test (app-only)",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-85",
+  "area": "MCP door",
+  "item": "usage__report",
+  "status": "unknown",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-86",
+  "area": "MCP door",
+  "item": "compose__effective_context",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-87",
+  "area": "MCP door",
+  "item": "compose__assembled_context",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-88",
+  "area": "MCP door",
+  "item": "hooks__list_webhooks (app-only)",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-89",
+  "area": "MCP door",
+  "item": "hooks__rotate_webhook (app-only)",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "MCP-90",
+  "area": "MCP door",
+  "item": "tasks__* family",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "MCP-91",
+  "area": "MCP door",
+  "item": "files__* family",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "W1",
+  "area": "Web app and app bridge",
+  "item": "Sign-in gate and bootstrap",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "W2",
+  "area": "Web app and app bridge",
+  "item": "Landing redirect",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "W3",
+  "area": "Web app and app bridge",
+  "item": "Workspace route guard",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "W4",
+  "area": "Web app and app bridge",
+  "item": "Workspace overview",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "W5",
+  "area": "Web app and app bridge",
+  "item": "Overview \"runs needing review\" count",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "W6",
+  "area": "Web app and app bridge",
+  "item": "App route per placement",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "W7",
+  "area": "Web app and app bridge",
+  "item": "Context inspector",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "W8",
+  "area": "Web app and app bridge",
+  "item": "Notifications inbox page",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W9",
+  "area": "Web app and app bridge",
+  "item": "Plugins page (installed)",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "W10",
+  "area": "Web app and app bridge",
+  "item": "Plugins browse / connector directory",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "W11",
+  "area": "Web app and app bridge",
+  "item": "Plugin detail",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "W12",
+  "area": "Web app and app bridge",
+  "item": "Skills list",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W13",
+  "area": "Web app and app bridge",
+  "item": "Skill page / new skill / editor",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W14",
+  "area": "Web app and app bridge",
+  "item": "Legacy redirects",
+  "status": "same",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "W15",
+  "area": "Web app and app bridge",
+  "item": "Workspace settings shell",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W16",
+  "area": "Web app and app bridge",
+  "item": "Workspace General tab",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W17",
+  "area": "Web app and app bridge",
+  "item": "Workspace Members tab",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W18",
+  "area": "Web app and app bridge",
+  "item": "Workspace MCP tab",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W19",
+  "area": "Web app and app bridge",
+  "item": "Workspace Notifications tab",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W20",
+  "area": "Web app and app bridge",
+  "item": "Workspace Webhooks tab",
+  "status": "same",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "W21",
+  "area": "Web app and app bridge",
+  "item": "Profile page / General",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W22",
+  "area": "Web app and app bridge",
+  "item": "Org settings shell",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W23",
+  "area": "Web app and app bridge",
+  "item": "Org Workspaces tab",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W24",
+  "area": "Web app and app bridge",
+  "item": "Org workspace detail",
+  "status": "same",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "W25",
+  "area": "Web app and app bridge",
+  "item": "Org Archives tab",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "W26",
+  "area": "Web app and app bridge",
+  "item": "Org Users tab",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W27",
+  "area": "Web app and app bridge",
+  "item": "Org Usage tab",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W28",
+  "area": "Web app and app bridge",
+  "item": "Org Skills tab",
+  "status": "same",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "W29",
+  "area": "Web app and app bridge",
+  "item": "Org Models tab",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "W30",
+  "area": "Web app and app bridge",
+  "item": "Org About tab",
+  "status": "same",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "W31",
+  "area": "Web app and app bridge",
+  "item": "Not found",
+  "status": "same",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "WS1",
+  "area": "Web app and app bridge",
+  "item": "Shell layout + sidebar placements",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WS2",
+  "area": "Web app and app bridge",
+  "item": "Top bar",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WS3",
+  "area": "Web app and app bridge",
+  "item": "Workspace switcher",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WS4",
+  "area": "Web app and app bridge",
+  "item": "Inbox toggle + unread dot",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WS5",
+  "area": "Web app and app bridge",
+  "item": "Command palette",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WS6",
+  "area": "Web app and app bridge",
+  "item": "Recent conversations popover",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WS7",
+  "area": "Web app and app bridge",
+  "item": "Chat panel (chrome, sidebar/fullscreen, resize)",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WS8",
+  "area": "Web app and app bridge",
+  "item": "Chat send / stream / cancel",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WS9",
+  "area": "Web app and app bridge",
+  "item": "Chat attachments (multipart)",
+  "status": "moved",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WS10",
+  "area": "Web app and app bridge",
+  "item": "Attachment image preview / file link",
+  "status": "changed-by-decision",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WS11",
+  "area": "Web app and app bridge",
+  "item": "Load conversation history",
+  "status": "moved",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "WS12",
+  "area": "Web app and app bridge",
+  "item": "Model picker",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WS13",
+  "area": "Web app and app bridge",
+  "item": "Inline app view + tool-result cards",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WS14",
+  "area": "Web app and app bridge",
+  "item": "Artifact panel",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WS15",
+  "area": "Web app and app bridge",
+  "item": "Plugin request card",
+  "status": "same",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "WS16",
+  "area": "Web app and app bridge",
+  "item": "Link safety modal",
+  "status": "same",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "WS17",
+  "area": "Web app and app bridge",
+  "item": "Shell tour, release banner, telemetry consent, keyboard shortcuts, help menu, user menu, mobile drawer",
+  "status": "same",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "WS18",
+  "area": "Web app and app bridge",
+  "item": "Live events",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "WS19",
+  "area": "Web app and app bridge",
+  "item": "Logout",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WA1",
+  "area": "Web app and app bridge",
+  "item": "Conversations screen: list",
+  "status": "moved",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WA2",
+  "area": "Web app and app bridge",
+  "item": "Conversations screen: search",
+  "status": "moved",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WA3",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: home",
+  "status": "moved",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WA4",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: describe box (create from text)",
+  "status": "moved",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WA5",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: task page",
+  "status": "moved",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WA6",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: task editor",
+  "status": "moved",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WA7",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: schedule picker",
+  "status": "moved",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WA8",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: run dialog + input editor",
+  "status": "moved",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WA9",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: runs view",
+  "status": "moved",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WA10",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: \"via <client>\" attribution on runs/batches",
+  "status": "unknown",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "WA11",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: activity view, paging",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WA12",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: result view",
+  "status": "moved",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WA13",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: cancel run",
+  "status": "moved",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WA14",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: batch dialog + batch pane",
+  "status": "moved",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "WA15",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: criteria editor + judge picker",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "WA16",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: assessment panel",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "WA17",
+  "area": "Web app and app bridge",
+  "item": "Scheduled: saved card (`ui://tasks/card`)",
+  "status": "moved",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WA18",
+  "area": "Web app and app bridge",
+  "item": "Files screen: browse/list + pager",
+  "status": "changed-by-decision",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WA19",
+  "area": "Web app and app bridge",
+  "item": "Files screen: upload",
+  "status": "moved",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WA20",
+  "area": "Web app and app bridge",
+  "item": "Files screen: folders",
+  "status": "moved",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WA21",
+  "area": "Web app and app bridge",
+  "item": "Files screen: detail overlay",
+  "status": "moved",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WA22",
+  "area": "Web app and app bridge",
+  "item": "Files screen: tag, delete, multi-select",
+  "status": "moved",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WB1",
+  "area": "Web app and app bridge",
+  "item": "`ui/initialize` handshake",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "WB2",
+  "area": "Web app and app bridge",
+  "item": "`ui/notifications/initialized`",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "WB3",
+  "area": "Web app and app bridge",
+  "item": "`ui/notifications/request-teardown`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "WB4",
+  "area": "Web app and app bridge",
+  "item": "`tools/call`",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "WB5",
+  "area": "Web app and app bridge",
+  "item": "`resources/read`",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "WB6",
+  "area": "Web app and app bridge",
+  "item": "`resources/list`, `resources/templates/list`",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "WB7",
+  "area": "Web app and app bridge",
+  "item": "`tasks/get`, `tasks/cancel` (SEP-2663)",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "WB8",
+  "area": "Web app and app bridge",
+  "item": "`ui/message`",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WB9",
+  "area": "Web app and app bridge",
+  "item": "`ui/open-link`",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WB10",
+  "area": "Web app and app bridge",
+  "item": "`ui/notifications/size-changed`",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "WB11",
+  "area": "Web app and app bridge",
+  "item": "`ui/update-model-context`",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "WB12",
+  "area": "Web app and app bridge",
+  "item": "`ui/download-file`",
+  "status": "same",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "WB13",
+  "area": "Web app and app bridge",
+  "item": "`ui/request-display-mode`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "WB14",
+  "area": "Web app and app bridge",
+  "item": "`notifications/message` (app log)",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "WB15",
+  "area": "Web app and app bridge",
+  "item": "`ai.nimblebrain/open`, `open-connector-settings`",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WB16",
+  "area": "Web app and app bridge",
+  "item": "`ai.nimblebrain/location`",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WB17",
+  "area": "Web app and app bridge",
+  "item": "`ai.nimblebrain/navigate` (host\u2192app)",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WB18",
+  "area": "Web app and app bridge",
+  "item": "`ai.nimblebrain/notify`",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "WB19",
+  "area": "Web app and app bridge",
+  "item": "`ai.nimblebrain/request-file` (picker)",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "WB20",
+  "area": "Web app and app bridge",
+  "item": "`ai.nimblebrain/upload-files` (held files)",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "WB21",
+  "area": "Web app and app bridge",
+  "item": "`ai.nimblebrain/keydown`",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "WB22",
+  "area": "Web app and app bridge",
+  "item": "Unserved method",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "WB23",
+  "area": "Web app and app bridge",
+  "item": "Envelope validation",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "WB24",
+  "area": "Web app and app bridge",
+  "item": "Host \u2192 app: `tool-result`, `tool-input`, `host-context-changed`",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "WB25",
+  "area": "Web app and app bridge",
+  "item": "Relayed server notifications",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "WB26",
+  "area": "Web app and app bridge",
+  "item": "Iframe scoping + app channel",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "WB27",
+  "area": "Web app and app bridge",
+  "item": "Host constants document",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-1",
+  "area": "Chat",
+  "item": "Start a turn (JSON)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-2",
+  "area": "Chat",
+  "item": "Chat body fields",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-3",
+  "area": "Chat",
+  "item": "`maxIterations` in body schema",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-4",
+  "area": "Chat",
+  "item": "Body and rate limits",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "CH-5",
+  "area": "Chat",
+  "item": "Malformed conversation id",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-6",
+  "area": "Chat",
+  "item": "Run already in progress",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-7",
+  "area": "Chat",
+  "item": "Model not allowed / unqualified",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-8",
+  "area": "Chat",
+  "item": "Turn survives client disconnect",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-9",
+  "area": "Chat",
+  "item": "Event stream subscribe and replay",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-10",
+  "area": "Chat",
+  "item": "Stream frames",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-11",
+  "area": "Chat",
+  "item": "SSE connected frame and heartbeat",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "CH-12",
+  "area": "Chat",
+  "item": "Stream errors",
+  "status": "unknown",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-13",
+  "area": "Chat",
+  "item": "Cancel (Stop)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-14",
+  "area": "Chat",
+  "item": "Cancel before start resolves",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "CH-15",
+  "area": "Chat",
+  "item": "Workspace SSE",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-16",
+  "area": "Chat",
+  "item": "Multipart chat with files",
+  "status": "moved",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-17",
+  "area": "Chat",
+  "item": "Uploads off",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-18",
+  "area": "Chat",
+  "item": "Attachment limits",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-19",
+  "area": "Chat",
+  "item": "MIME allowlist",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-20",
+  "area": "Chat",
+  "item": "Type recovered from extension",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-21",
+  "area": "Chat",
+  "item": "Text/DOCX/XLSX text into the message",
+  "status": "moved",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-22",
+  "area": "Chat",
+  "item": "Attachment-only message",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-23",
+  "area": "Chat",
+  "item": "Images to vision models",
+  "status": "same",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "CH-24",
+  "area": "Chat",
+  "item": "PDFs",
+  "status": "same",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "CH-25",
+  "area": "Chat",
+  "item": "Attachments on resume",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-26",
+  "area": "Chat",
+  "item": "Attachment chip and image preview",
+  "status": "changed-by-decision",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "CH-27",
+  "area": "Chat",
+  "item": "Tool calls in a turn",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-28",
+  "area": "Chat",
+  "item": "Tool errors as results",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-29",
+  "area": "Chat",
+  "item": "Inline app UI in chat",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "CH-30",
+  "area": "Chat",
+  "item": "Long-running (task-augmented) tools and input relay",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-31",
+  "area": "Chat",
+  "item": "Max iterations",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-32",
+  "area": "Chat",
+  "item": "Max output tokens",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-33",
+  "area": "Chat",
+  "item": "Thinking/reasoning resolution",
+  "status": "same",
+  "use": "M",
+  "harness": "eval"
+ },
+ {
+  "id": "CH-34",
+  "area": "Chat",
+  "item": "History window and reasoning replay",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-35",
+  "area": "Chat",
+  "item": "History compaction",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "CH-36",
+  "area": "Chat",
+  "item": "Mid-turn compaction",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "CH-37",
+  "area": "Chat",
+  "item": "Auto-title",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-38",
+  "area": "Chat",
+  "item": "Conversation storage",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-39",
+  "area": "Chat",
+  "item": "Old on-disk conversations",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-40",
+  "area": "Chat",
+  "item": "Resume and workspace binding",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-41",
+  "area": "Chat",
+  "item": "Resume after losing membership",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-42",
+  "area": "Chat",
+  "item": "Conversation bound to a model",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-43",
+  "area": "Chat",
+  "item": "`conversations__list`",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-44",
+  "area": "Chat",
+  "item": "`conversations__get`",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-45",
+  "area": "Chat",
+  "item": "`conversations__search`",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-46",
+  "area": "Chat",
+  "item": "`conversations__update`",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-47",
+  "area": "Chat",
+  "item": "`conversations__stats`",
+  "status": "moved",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-48",
+  "area": "Chat",
+  "item": "`conversations__export`",
+  "status": "moved",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-49",
+  "area": "Chat",
+  "item": "Public input bounds",
+  "status": "unknown",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-50",
+  "area": "Chat",
+  "item": "Conversations screen",
+  "status": "moved",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "CH-51",
+  "area": "Chat",
+  "item": "Shell recent conversations",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "CH-52",
+  "area": "Chat",
+  "item": "Delete a conversation",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-53",
+  "area": "Chat",
+  "item": "Conversations on workspace delete",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-54",
+  "area": "Chat",
+  "item": "Available models",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-55",
+  "area": "Chat",
+  "item": "Per-request model and allowlist",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-56",
+  "area": "Chat",
+  "item": "Default and fast model slots",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-57",
+  "area": "Chat",
+  "item": "Model picker",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "CH-58",
+  "area": "Chat",
+  "item": "Provider registry and gateway",
+  "status": "same",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "CH-59",
+  "area": "Chat",
+  "item": "System prompt composition",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-60",
+  "area": "Chat",
+  "item": "Containment tags",
+  "status": "unknown",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-61",
+  "area": "Chat",
+  "item": "Unattended-work prompt",
+  "status": "unknown",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CH-62",
+  "area": "Chat",
+  "item": "Briefing and conversation starters",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CH-63",
+  "area": "Chat",
+  "item": "Streaming render and Stop button",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "FI-1",
+  "area": "Files",
+  "item": "`files__list`",
+  "status": "changed-by-decision",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-2",
+  "area": "Files",
+  "item": "`files__search`",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-3",
+  "area": "Files",
+  "item": "`files__read` (text)",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-4",
+  "area": "Files",
+  "item": "`files__read` (binary/image)",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-5",
+  "area": "Files",
+  "item": "`files__read_pdf_pages`",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-6",
+  "area": "Files",
+  "item": "`files__create`",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-7",
+  "area": "Files",
+  "item": "`files__create` bounds",
+  "status": "unknown",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-8",
+  "area": "Files",
+  "item": "`files__info`",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-9",
+  "area": "Files",
+  "item": "`files__tag`",
+  "status": "moved",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-10",
+  "area": "Files",
+  "item": "`files__delete`",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-11",
+  "area": "Files",
+  "item": "`files__move`",
+  "status": "moved",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-12",
+  "area": "Files",
+  "item": "`files__create_folder`",
+  "status": "moved",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-13",
+  "area": "Files",
+  "item": "`files__update_folder`",
+  "status": "moved",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-14",
+  "area": "Files",
+  "item": "`files__delete_folder`",
+  "status": "moved",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-15",
+  "area": "Files",
+  "item": "Error shape and ids",
+  "status": "unknown",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-16",
+  "area": "Files",
+  "item": "Workspace-free download",
+  "status": "changed-by-decision",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "FI-17",
+  "area": "Files",
+  "item": "Workspace download",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "FI-18",
+  "area": "Files",
+  "item": "Served Content-Type",
+  "status": "unknown",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "FI-19",
+  "area": "Files",
+  "item": "Upload",
+  "status": "moved",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "FI-20",
+  "area": "Files",
+  "item": "Upload response and count",
+  "status": "unknown",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-21",
+  "area": "Files",
+  "item": "Uploads off",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-22",
+  "area": "Files",
+  "item": "REST resource read",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "FI-23",
+  "area": "Files",
+  "item": "`resources/read files://`",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-24",
+  "area": "Files",
+  "item": "`resources/list` of files",
+  "status": "unknown",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-25",
+  "area": "Files",
+  "item": "Resource template",
+  "status": "moved",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-26",
+  "area": "Files",
+  "item": "MCP body size",
+  "status": "same",
+  "use": "L",
+  "harness": "pressure"
+ },
+ {
+  "id": "FI-27",
+  "area": "Files",
+  "item": "Bridge upload",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "FI-28",
+  "area": "Files",
+  "item": "Bridge read and download",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "FI-29",
+  "area": "Files",
+  "item": "Connector host-resources",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "FI-30",
+  "area": "Files",
+  "item": "Parsers",
+  "status": "moved",
+  "use": "H",
+  "harness": "pressure"
+ },
+ {
+  "id": "FI-31",
+  "area": "Files",
+  "item": "PDF text sidecar",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "FI-32",
+  "area": "Files",
+  "item": "Type from extension",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-33",
+  "area": "Files",
+  "item": "Chat attachments, limits, allowlist, rehydration",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "FI-34",
+  "area": "Files",
+  "item": "Files a run wrote",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "FI-35",
+  "area": "Files",
+  "item": "Provenance filter",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-36",
+  "area": "Files",
+  "item": "Owner partition",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "FI-37",
+  "area": "Files",
+  "item": "Screen refresh on writes",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "FI-38",
+  "area": "Files",
+  "item": "Files screen",
+  "status": "moved",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "FI-39",
+  "area": "Files",
+  "item": "Old on-disk files",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "FI-40",
+  "area": "Files",
+  "item": "`fileContext` flag",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "FI-41",
+  "area": "Files",
+  "item": "Files on workspace delete",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "FI-42",
+  "area": "Files",
+  "item": "Plugin start and default binding",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-01",
+  "area": "Tasks",
+  "item": "`tasks__create`",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-02",
+  "area": "Tasks",
+  "item": "`tasks__update` as a patch (`null` clears, omitted keeps)",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-03",
+  "area": "Tasks",
+  "item": "`tasks__delete`",
+  "status": "unknown",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-04",
+  "area": "Tasks",
+  "item": "`tasks__list`: filters (enabled, kind) and cursor",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-05",
+  "area": "Tasks",
+  "item": "`tasks__list` `source` filter (user/agent) and `startedVia`",
+  "status": "unknown",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-06",
+  "area": "Tasks",
+  "item": "`tasks__status`",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-07",
+  "area": "Tasks",
+  "item": "`tasks__run` on a saved task (Run now)",
+  "status": "unknown",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-08",
+  "area": "Tasks",
+  "item": "`tasks__run` as an MCP Task (task-augmented call, `tasks/get`, `tasks/cancel`)",
+  "status": "missing",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-09",
+  "area": "Tasks",
+  "item": "One-off run from an inline definition",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-10",
+  "area": "Tasks",
+  "item": "Run input and `inputSchema`",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-11",
+  "area": "Tasks",
+  "item": "`tasks__run_result`",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-12",
+  "area": "Tasks",
+  "item": "`tasks__run_result` `taskId` argument",
+  "status": "unknown",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-13",
+  "area": "Tasks",
+  "item": "`tasks__runs` with filters",
+  "status": "moved",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-14",
+  "area": "Tasks",
+  "item": "`tasks__runs` paging (`before` replaced by `cursor`)",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-15",
+  "area": "Tasks",
+  "item": "`tasks__cancel`",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-16",
+  "area": "Tasks",
+  "item": "`tasks__upcoming`",
+  "status": "unknown",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-17",
+  "area": "Tasks",
+  "item": "`tasks__stats`",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-18",
+  "area": "Tasks",
+  "item": "`tasks__run_batch`",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-19",
+  "area": "Tasks",
+  "item": "`tasks__batch` result rows",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-20",
+  "area": "Tasks",
+  "item": "`tasks__batches`",
+  "status": "moved",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-21",
+  "area": "Tasks",
+  "item": "`tasks__batch_control`",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-22",
+  "area": "Tasks",
+  "item": "`tasks__assess` (a person's verdict or re-judging)",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-23",
+  "area": "Tasks",
+  "item": "`tasks__judges`",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-24",
+  "area": "Tasks",
+  "item": "Criteria, `judge`, `confidenceThreshold`, `onPoorResult` on the manifest",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-25",
+  "area": "Tasks",
+  "item": "Error shape and codes",
+  "status": "unknown",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-26",
+  "area": "Tasks",
+  "item": "Cron schedule with a timezone",
+  "status": "moved",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-27",
+  "area": "Tasks",
+  "item": "Cron without a timezone (instance default `NB_TIMEZONE`)",
+  "status": "unknown",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "TSK-28",
+  "area": "Tasks",
+  "item": "Interval schedule (min 60000 ms)",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-29",
+  "area": "Tasks",
+  "item": "Once schedule (`at`) and a missed once",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-30",
+  "area": "Tasks",
+  "item": "Event schedule (`match` with debounce and fire ceiling)",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-31",
+  "area": "Tasks",
+  "item": "Admin routing of notifications to a task (the only event path), including inbound webhooks (src/hooks) through notifications",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-32",
+  "area": "Tasks",
+  "item": "`enabled:false` pauses the schedule and events; `run` still runs it",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-33",
+  "area": "Tasks",
+  "item": "No schedule: runs only on demand",
+  "status": "moved",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-34",
+  "area": "Tasks",
+  "item": "A run fires as its owner, walled to the task's workspace",
+  "status": "moved",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-35",
+  "area": "Tasks",
+  "item": "Membership re-checked each run; a removed or deactivated owner",
+  "status": "unknown",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-36",
+  "area": "Tasks",
+  "item": "`allowedTools` globs bound what the run can reach",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-37",
+  "area": "Tasks",
+  "item": "Authoring tools refused inside an unattended run",
+  "status": "moved",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-38",
+  "area": "Tasks",
+  "item": "`allowedTools` naming a tasks authoring tool refused at write time",
+  "status": "unknown",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-39",
+  "area": "Tasks",
+  "item": "Declared `skills` loaded before the first model call",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-40",
+  "area": "Tasks",
+  "item": "`model` and `thinkingEffort` per task",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-41",
+  "area": "Tasks",
+  "item": "Per-run caps (`maxIterations`, `maxInputTokens`, `maxRunDurationMs`) lowered to the operator's ceilings",
+  "status": "moved",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "TSK-42",
+  "area": "Tasks",
+  "item": "Token budget (daily, monthly or lifetime) through spend accounts; a spent budget disables",
+  "status": "moved",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "TSK-43",
+  "area": "Tasks",
+  "item": "Run admission: global slots (`maxConcurrentRuns`), a bounded queue (`maxQueuedRuns`), fair share between workspaces",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "TSK-44",
+  "area": "Tasks",
+  "item": "One run per task (exclusive key)",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-45",
+  "area": "Tasks",
+  "item": "Durable queue and leases (survive restart)",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "TSK-46",
+  "area": "Tasks",
+  "item": "Interrupted run recovery",
+  "status": "moved",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "TSK-47",
+  "area": "Tasks",
+  "item": "Failure backoff and auto-disable after a streak (transient failures counted separately)",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-48",
+  "area": "Tasks",
+  "item": "`outputSchema` checks the deliverable (pass/fail, \"Poor result\")",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-49",
+  "area": "Tasks",
+  "item": "Activity log per run (tool name, ok, why, ms; never input or output)",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-50",
+  "area": "Tasks",
+  "item": "`filesWritten` on a run result",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-51",
+  "area": "Tasks",
+  "item": "Execution and label vocabulary, derived on read",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-52",
+  "area": "Tasks",
+  "item": "Estimated cost per day on a task summary",
+  "status": "unknown",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "TSK-53",
+  "area": "Tasks",
+  "item": "Batch budget as one USD spend account; `exceeds_share`",
+  "status": "moved",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "TSK-54",
+  "area": "Tasks",
+  "item": "Stop rule (`stopWhen` `minPassRate` after `afterItems`)",
+  "status": "moved",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-55",
+  "area": "Tasks",
+  "item": "Batch runs leave the task's schedule alone and bypass the one-run-per-task rule",
+  "status": "moved",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-56",
+  "area": "Tasks",
+  "item": "Batch restart reconcile",
+  "status": "moved",
+  "use": "L",
+  "harness": "pressure"
+ },
+ {
+  "id": "TSK-57",
+  "area": "Tasks",
+  "item": "Batch-paused notice",
+  "status": "moved",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-58",
+  "area": "Tasks",
+  "item": "Run-failed notice, once per failing stretch",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-59",
+  "area": "Tasks",
+  "item": "Task-disabled notice (streak, budget, fire ceiling)",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-60",
+  "area": "Tasks",
+  "item": "Poor-result notice",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-61",
+  "area": "Tasks",
+  "item": "Notice wording and naming in the inbox",
+  "status": "unknown",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "TSK-62",
+  "area": "Tasks",
+  "item": "Run retention (default 180 days), configurable by `tasks.runRetentionDays`",
+  "status": "unknown",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-63",
+  "area": "Tasks",
+  "item": "Config block `tasks` renamed `runs` (`maxConcurrentRuns`, `maxQueuedRuns`, `maxRunIterations`, `maxRunInputTokens`, `maxRunDurationMs`)",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-64",
+  "area": "Tasks",
+  "item": "Tasks off",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-65",
+  "area": "Tasks",
+  "item": "On-disk tasks at `workspaces/<ws>/tasks/<owner>/` read at boot",
+  "status": "changed-by-decision",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "TSK-66",
+  "area": "Tasks",
+  "item": "Workspace delete removes tasks",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "TSK-67",
+  "area": "Tasks",
+  "item": "Change hint refreshes views",
+  "status": "moved",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "TSK-68",
+  "area": "Tasks",
+  "item": "Scheduled screen `ui://tasks/panel` (sidebar \"Scheduled\", route `@nimblebraininc/tasks`): home, task page, editor, schedule picker, runs, result, activity, batch pane",
+  "status": "moved",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "TSK-69",
+  "area": "Tasks",
+  "item": "Criteria editor and judge-verdict UI",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "TSK-70",
+  "area": "Tasks",
+  "item": "Card view under a `create` call `ui://tasks/card`",
+  "status": "moved",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "TSK-71",
+  "area": "Tasks",
+  "item": "Task-authoring guide: a chat skill bound to `tasks__*` and the MCP server `instructions`",
+  "status": "moved",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "CN-1",
+  "area": "Connectors",
+  "item": "List catalog",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-2",
+  "area": "Connectors",
+  "item": "List directory (browse)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-3",
+  "area": "Connectors",
+  "item": "Server detail / catalog read",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-4",
+  "area": "Connectors",
+  "item": "List installed",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-5",
+  "area": "Connectors",
+  "item": "Get installed",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-6",
+  "area": "Connectors",
+  "item": "Install remote-OAuth catalog entry (workspace)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-7",
+  "area": "Connectors",
+  "item": "Install refused off-catalog",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-8",
+  "area": "Connectors",
+  "item": "Install direct URL (local dev)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-9",
+  "area": "Connectors",
+  "item": "Duplicate install",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-10",
+  "area": "Connectors",
+  "item": "Install personal (identity) connector",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-11",
+  "area": "Connectors",
+  "item": "Grant / revoke personal connector into workspace",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-12",
+  "area": "Connectors",
+  "item": "List personal connectors / personal catalog",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-13",
+  "area": "Connectors",
+  "item": "Disconnect (sign out, keep installed)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-14",
+  "area": "Connectors",
+  "item": "Uninstall workspace connector",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-15",
+  "area": "Connectors",
+  "item": "Uninstall personal connector",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-16",
+  "area": "Connectors",
+  "item": "Start / stop connector source",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-17",
+  "area": "Connectors",
+  "item": "Boot start of every workspace's connectors",
+  "status": "same",
+  "use": "H",
+  "harness": "pressure"
+ },
+ {
+  "id": "CN-18",
+  "area": "Connectors",
+  "item": "Crash recovery of a source",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "CN-19",
+  "area": "Connectors",
+  "item": "User-facing start errors / busy",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-20",
+  "area": "Connectors",
+  "item": "Workspace create with connector refs",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-21",
+  "area": "Connectors",
+  "item": "Connector teardown on workspace delete",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-22",
+  "area": "Connectors",
+  "item": "Instance seeding of connectors",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-23",
+  "area": "Connectors",
+  "item": "Catalog UI names (`withCatalogUi`)",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-24",
+  "area": "Connectors",
+  "item": "Connector URL validation",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-25",
+  "area": "Connectors",
+  "item": "Host loopback alias (Docker)",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-26",
+  "area": "Connectors",
+  "item": "Server Card fetch",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-27",
+  "area": "Connectors",
+  "item": "Start OAuth (workspace)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-28",
+  "area": "Connectors",
+  "item": "Start OAuth (personal)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-29",
+  "area": "Connectors",
+  "item": "OAuth callback",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "CN-30",
+  "area": "Connectors",
+  "item": "Return-to-conversation after connect",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "CN-31",
+  "area": "Connectors",
+  "item": "DCR / discovery OAuth provider",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-32",
+  "area": "Connectors",
+  "item": "Static OAuth client per workspace",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-33",
+  "area": "Connectors",
+  "item": "Instance OAuth clients (env)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-34",
+  "area": "Connectors",
+  "item": "Redirect URI",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-35",
+  "area": "Connectors",
+  "item": "Token refresh",
+  "status": "same",
+  "use": "H",
+  "harness": "pressure"
+ },
+ {
+  "id": "CN-36",
+  "area": "Connectors",
+  "item": "Background re-auth required",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-37",
+  "area": "Connectors",
+  "item": "OAuth identity claims (account name)",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-38",
+  "area": "Connectors",
+  "item": "Connection re-validation sweep",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "CN-39",
+  "area": "Connectors",
+  "item": "Connection probe",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-40",
+  "area": "Connectors",
+  "item": "Pending-auth buffer + running notify",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-41",
+  "area": "Connectors",
+  "item": "In-band auth errors",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-42",
+  "area": "Connectors",
+  "item": "Static API-key / header credentials",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-43",
+  "area": "Connectors",
+  "item": "Delete / list secret keys",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-44",
+  "area": "Connectors",
+  "item": "Composio brokered install (API key)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-45",
+  "area": "Connectors",
+  "item": "Composio OAuth initiate / callback / proxy",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-46",
+  "area": "Connectors",
+  "item": "Smithery brokered provider",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-47",
+  "area": "Connectors",
+  "item": "Managed provider registry",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-48",
+  "area": "Connectors",
+  "item": "Gateway transport credential (hosted MCP vendor key)",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-49",
+  "area": "Connectors",
+  "item": "Credential store backends (file, registered)",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-50",
+  "area": "Connectors",
+  "item": "Credential sealing + key ring + canary",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-51",
+  "area": "Connectors",
+  "item": "Re-seal reconcile",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-52",
+  "area": "Connectors",
+  "item": "SSRF-guarded fetch for connector traffic",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-53",
+  "area": "Connectors",
+  "item": "Health monitor",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "CN-54",
+  "area": "Connectors",
+  "item": "`on_ready` notification",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-55",
+  "area": "Connectors",
+  "item": "`on_removing` notification",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-56",
+  "area": "Connectors",
+  "item": "Host-only tools",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-57",
+  "area": "Connectors",
+  "item": "Admin tools declaration",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-58",
+  "area": "Connectors",
+  "item": "Tool permissions get/set",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-59",
+  "area": "Connectors",
+  "item": "List connector tools",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-60",
+  "area": "Connectors",
+  "item": "Record sources (record arguments)",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-61",
+  "area": "Connectors",
+  "item": "Resource arguments resolver",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-62",
+  "area": "Connectors",
+  "item": "Host-resources capability advertise",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-63",
+  "area": "Connectors",
+  "item": "Host-resources `resources/read` of `files://`",
+  "status": "moved",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-64",
+  "area": "Connectors",
+  "item": "Host-resources `resources/list` (mime/tag filter, cursor)",
+  "status": "moved",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-65",
+  "area": "Connectors",
+  "item": "Host-resources rate limit",
+  "status": "same",
+  "use": "L",
+  "harness": "pressure"
+ },
+ {
+  "id": "CN-66",
+  "area": "Connectors",
+  "item": "Connector skills from plugin archive",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-67",
+  "area": "Connectors",
+  "item": "Plugin conversation starters",
+  "status": "unknown",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-68",
+  "area": "Connectors",
+  "item": "Connector skills reconcile (boot + install)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-69",
+  "area": "Connectors",
+  "item": "List / read bound skills",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-70",
+  "area": "Connectors",
+  "item": "List plugins",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-71",
+  "area": "Connectors",
+  "item": "App instructions in prompt",
+  "status": "same",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "CN-72",
+  "area": "Connectors",
+  "item": "Plugin-mode MCP source (bound plugins)",
+  "status": "changed-by-decision",
+  "use": "\u2014",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-73",
+  "area": "Connectors",
+  "item": "`nb__search` catalog scope",
+  "status": "same",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "CN-74",
+  "area": "Connectors",
+  "item": "`nb__request_plugin`",
+  "status": "same",
+  "use": "L",
+  "harness": "eval"
+ },
+ {
+  "id": "CN-75",
+  "area": "Connectors",
+  "item": "`nb__manage_tools` add/remove promotion",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-76",
+  "area": "Connectors",
+  "item": "Webhook door",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-77",
+  "area": "Connectors",
+  "item": "Hook declarations from connector `_meta`",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-78",
+  "area": "Connectors",
+  "item": "Header stripping / forwardable path",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "CN-79",
+  "area": "Connectors",
+  "item": "List webhooks",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-80",
+  "area": "Connectors",
+  "item": "Rotate webhook",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "CN-81",
+  "area": "Connectors",
+  "item": "Hook \u2192 task wake (event schedule)",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-1",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "List skills (all layers)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-2",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Read skill",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-3",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Skill loading log",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-4",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Create skill",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-5",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Update skill (patch, body modes)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-6",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Skill history",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-7",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Restore skill version",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-8",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Delete skill",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-9",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Set skill status (on/off)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-10",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Set skill here (workspace override)",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-11",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Activate / deactivate (session)",
+  "status": "same",
+  "use": "M",
+  "harness": "eval"
+ },
+ {
+  "id": "AD-12",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`nb__use_skill`",
+  "status": "same",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "AD-13",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Core skills (bootstrap, soul, customer-communication)",
+  "status": "same",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "AD-14",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`task-authoring` skill",
+  "status": "moved",
+  "use": "M",
+  "harness": "eval"
+ },
+ {
+  "id": "AD-15",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "System plugin skills (`files` skill)",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "eval"
+ },
+ {
+  "id": "AD-16",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Skill matching (triggers, tool affinity)",
+  "status": "same",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "AD-17",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Built-in authoring guide",
+  "status": "same",
+  "use": "L",
+  "harness": "eval"
+ },
+ {
+  "id": "AD-18",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Skill frontmatter validation",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "AD-19",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Skill walling per workspace",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-20",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Org/workspace instructions as skill layers",
+  "status": "same",
+  "use": "H",
+  "harness": "eval"
+ },
+ {
+  "id": "AD-21",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Unattended skills allowlist",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-22",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Context inspector (`compose__effective_context`, `compose__assembled_context`)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-23",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Get config",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-24",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Set model config (org admin)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-25",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Set preferences",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "AD-26",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Workspace info",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "AD-27",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Telemetry consent",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-28",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Briefing / conversation starters",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-29",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`nb__status`",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "AD-30",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Inbox list",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-31",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Mark read",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-32",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Notification settings read",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-33",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Set source level",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-34",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Set routes",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-35",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Send test notification",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-36",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Outbox poller",
+  "status": "same",
+  "use": "H",
+  "harness": "pressure"
+ },
+ {
+  "id": "AD-37",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Route to connector tool target",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-38",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Route to agent (task) target",
+  "status": "moved",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-39",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Delivery record `runId`",
+  "status": "missing",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-40",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Undelivered offer after restart",
+  "status": "same",
+  "use": "L",
+  "harness": "pressure"
+ },
+ {
+  "id": "AD-41",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Route retry backoff",
+  "status": "same",
+  "use": "L",
+  "harness": "pressure"
+ },
+ {
+  "id": "AD-42",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Usage report",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-43",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Usage ledger write per model call",
+  "status": "unknown",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-44",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Run counts in report",
+  "status": "unknown",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-45",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Ledger cost by run (batch/lost run)",
+  "status": "moved",
+  "use": "L",
+  "harness": "pressure"
+ },
+ {
+  "id": "AD-46",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Request rate limits (chat, tools/call, mcp)",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "AD-47",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Engine limits (iterations, tool result size, promoted tools)",
+  "status": "same",
+  "use": "H",
+  "harness": "pressure"
+ },
+ {
+  "id": "AD-48",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Spend accounts (reserve before each model call)",
+  "status": "same",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "AD-49",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Create workspace (org admin)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-50",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Rename (workspace admin) / update connectors (org admin)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-51",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "List workspaces",
+  "status": "changed-by-decision",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-52",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Delete workspace",
+  "status": "changed-by-decision",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-53",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Every door refuses a deleted workspace",
+  "status": "changed-by-decision",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-54",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "List archives",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-55",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Purge archive",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-56",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Restore deleted workspace",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-57",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Purge reconcile and retention",
+  "status": "changed-by-decision",
+  "use": "M",
+  "harness": "pressure"
+ },
+ {
+  "id": "AD-58",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Add member",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-59",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Remove member",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-60",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Update member role",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-61",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "List members (any member)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-62",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Org admin self-seat",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-63",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Root missing guard",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "AD-64",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Create user",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-65",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Update user (role/name)",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-66",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Delete (deactivate) user",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-67",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Restore user",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-68",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "List users",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-69",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Org settings tabs",
+  "status": "same",
+  "use": "M",
+  "harness": "browser"
+ },
+ {
+  "id": "AD-70",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Org Archives tab",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "AD-71",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Org usage names deleted workspaces",
+  "status": "changed-by-decision",
+  "use": "L",
+  "harness": "browser"
+ },
+ {
+  "id": "AD-72",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Role gates (org_admin / ws_admin / member)",
+  "status": "same",
+  "use": "H",
+  "harness": "contract"
+ },
+ {
+  "id": "AD-73",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Identity providers (dev, oidc, workos)",
+  "status": "same",
+  "use": "H",
+  "harness": "browser"
+ },
+ {
+  "id": "AD-74",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "PostHog `tool.called`, `agent.chat_*`, `agent.error`, `skill.created`, `connector.*`",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-75",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`task.created` (anonymous deployments)",
+  "status": "unknown",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-76",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`automation.created` (identified deployments)",
+  "status": "missing",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-77",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`automation.run_completed`",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-78",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`workspace.created`, `member.added`",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-79",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`NB_DEBUG` namespaces, structured logs, OTel spans",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "AD-80",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`init` (default)",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-81",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`doctor`",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-82",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`status`",
+  "status": "same",
+  "use": "H",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-83",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`open`",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-84",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`key`",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-85",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`local-model`",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-86",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`use`",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-87",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Subscription agent worker (ACP)",
+  "status": "same",
+  "use": "M",
+  "harness": "eval"
+ },
+ {
+  "id": "AD-88",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`telemetry`",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-89",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`up` / `down`",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-90",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`logs`",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-91",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`update`",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-92",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`uninstall`",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-93",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`mcp add",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-94",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`help` / `help --json` / `--version`",
+  "status": "same",
+  "use": "L",
+  "harness": "contract"
+ },
+ {
+  "id": "AD-95",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "`{ok,error,fix}` JSON contract + exit codes",
+  "status": "same",
+  "use": "M",
+  "harness": "contract"
+ },
+ {
+  "id": "AD-96",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Login item (macOS launchd)",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-97",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Update check notice",
+  "status": "same",
+  "use": "L",
+  "harness": "parity"
+ },
+ {
+  "id": "AD-98",
+  "area": "Skills, notifications, usage, workspaces, org admin, CLI",
+  "item": "Coding-agent connect + skill install",
+  "status": "same",
+  "use": "M",
+  "harness": "parity"
+ }
+]

@@ -28,6 +28,7 @@ bun run test               # Unit then integration (stops at the first failing s
 bun run test:unit          # Unit tests only (fast, ~10s)
 bun run test:integration   # Integration tests only
 bun run test:conformance   # MCP conformance suite against /mcp/<wsId> (not in verify; see test/conformance/AGENTS.md)
+bun run test:parity        # Parity scenarios against this tree, another checkout or a deployment (see test/parity/AGENTS.md)
 bun run lint               # Biome linter
 bun run format:check       # Biome format diff (no writes) — matches CI
 bun run check              # TypeScript strict mode
@@ -98,6 +99,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`src/model/AGENTS.md`](./src/model/AGENTS.md) | Model provider workarounds: Gemini errors sent inside the stream |
 | [`src/observability/AGENTS.md`](./src/observability/AGENTS.md) | `NB_DEBUG` / `nb_debug` namespaces, structured logs, OTel spans, what may be stamped |
 | [`web/AGENTS.md`](./web/AGENTS.md) | Web shell: gating workspace writes, forms that save as they change and notices, shell rules, chat panel workspace scope, main-area views |
+| [`test/parity/AGENTS.md`](./test/parity/AGENTS.md) | The parity scenarios: grading inventory items over HTTP and MCP against this tree, another checkout or a deployment, the directive model, capabilities, checks, the baseline, the generated coverage report |
 | [`test/conformance/AGENTS.md`](./test/conformance/AGENTS.md) | The MCP conformance suite against `/mcp/<wsId>`: what it measures, the per-version baselines, the pin, where it runs in CI |
 | [`web/src/bridge/AGENTS.md`](./web/src/bridge/AGENTS.md) | MCP App Bridge rules: iframe scoping, handshake gate, notification relay, host capabilities |
 | [`packages/server-sdk/AGENTS.md`](./packages/server-sdk/AGENTS.md) | The TypeScript server SDK, counterpart of `nimblebrain-server-sdk` (Python): reading the host context, tool errors, the principal rule, reading a contract document, host metadata on the handshake; no dependencies, the contract document decides |

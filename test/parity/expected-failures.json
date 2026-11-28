@@ -1,0 +1,3 @@
+{
+  "TSK-07": "Run now in a workspace the run worker does not serve yet (created since boot, and not yet woken by a chat turn) stays queued until the worker's next due interval (DUE_INTERVAL_MS, 30 s): the worker watches the due hint per served workspace, so the first hint from a new workspace is not delivered. Later runs there start in about 200 ms; main runs it at once. Repro: as an org admin, nb__manage_workspaces {action:\"create\"}, then in it tasks__create and tasks__run, then poll tasks__run_result: about 30 s until it ends. Scenario tasks.new-workspace."
+}

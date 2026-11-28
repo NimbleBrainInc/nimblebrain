@@ -1,0 +1,1944 @@
+{
+ "AD-1": [
+  "test/integration/skills-read-tools.test.ts",
+  "test/integration/skill-lifecycle.test.ts",
+  "test/unit/platform/skills/tools.test.ts"
+ ],
+ "AD-10": [
+  "test/integration/skill-off-here.test.ts"
+ ],
+ "AD-11": [
+  "test/integration/skill-mute-scope.test.ts"
+ ],
+ "AD-12": [
+  "test/unit/platform/skills/use.test.ts",
+  "test/integration/trigger-skill-not-redelivered.test.ts"
+ ],
+ "AD-13": [
+  "test/unit/skills.test.ts"
+ ],
+ "AD-14": [
+  "test/unit/skills.test.ts",
+  "test/unit/plugins/tasks-skill-examples.test.ts",
+  "test/integration/trigger-skill-not-redelivered.test.ts"
+ ],
+ "AD-16": [
+  "test/integration/skills-per-request-matcher.test.ts",
+  "test/unit/skills.test.ts",
+  "test/unit/skills/select.test.ts"
+ ],
+ "AD-17": [
+  "test/unit/skills/authoring-guide.test.ts"
+ ],
+ "AD-18": [
+  "test/unit/platform/skills/mutation.test.ts",
+  "test/unit/skills/authored-frontmatter.test.ts",
+  "test/unit/skill-validator.test.ts"
+ ],
+ "AD-19": [
+  "test/integration/workspace-tier-skills.test.ts"
+ ],
+ "AD-2": [
+  "test/integration/skills-read-tools.test.ts",
+  "test/integration/skill-history.test.ts"
+ ],
+ "AD-21": [
+  "test/unit/orchestrator/unattended-dispatch.test.ts"
+ ],
+ "AD-22": [
+  "test/integration/compose-effective-context.test.ts",
+  "test/integration/compose-assembled-context.test.ts",
+  "test/unit/platform/compose/source.test.ts"
+ ],
+ "AD-23": [
+  "test/integration/get-config-tool.test.ts"
+ ],
+ "AD-24": [
+  "test/integration/core-source.test.ts",
+  "test/integration/get-config-tool.test.ts"
+ ],
+ "AD-25": [
+  "test/integration/runtime/user-model-preference.test.ts"
+ ],
+ "AD-26": [
+  "test/integration/core-source.test.ts"
+ ],
+ "AD-27": [
+  "test/integration/core-source.test.ts"
+ ],
+ "AD-28": [
+  "test/unit/tools/conversation-starters-tool.test.ts",
+  "test/unit/services/briefing-collector.test.ts"
+ ],
+ "AD-29": [
+  "test/integration/status-reports-turn-model.test.ts"
+ ],
+ "AD-3": [
+  "test/integration/skills-read-tools.test.ts",
+  "test/unit/platform/skills/tools.test.ts"
+ ],
+ "AD-30": [
+  "test/unit/platform/notifications/source.test.ts"
+ ],
+ "AD-31": [
+  "test/unit/platform/notifications/source.test.ts"
+ ],
+ "AD-32": [
+  "test/unit/platform/notifications/settings.test.ts"
+ ],
+ "AD-33": [
+  "test/unit/platform/notifications/settings.test.ts"
+ ],
+ "AD-34": [
+  "test/unit/platform/notifications/settings.test.ts"
+ ],
+ "AD-35": [
+  "test/unit/notifications/send-test.test.ts"
+ ],
+ "AD-36": [
+  "test/unit/notifications/poller.test.ts"
+ ],
+ "AD-37": [
+  "test/unit/notifications/routes.test.ts",
+  "test/unit/notifications/route-delivery-e2e.test.ts"
+ ],
+ "AD-38": [
+  "test/unit/notifications/route-delivery-e2e.test.ts"
+ ],
+ "AD-4": [
+  "test/integration/skill-lifecycle.test.ts",
+  "test/unit/platform/skills/mutation.test.ts",
+  "test/integration/skills-feature-gate.test.ts"
+ ],
+ "AD-40": [
+  "test/unit/notifications/routes.test.ts"
+ ],
+ "AD-41": [
+  "test/unit/notifications/routes.test.ts"
+ ],
+ "AD-42": [
+  "test/integration/usage-ledger-wired.test.ts",
+  "test/unit/platform/usage/source.test.ts",
+  "test/unit/usage/aggregate.test.ts"
+ ],
+ "AD-43": [
+  "test/unit/usage/record.test.ts",
+  "test/integration/usage-ledger-wired.test.ts"
+ ],
+ "AD-46": [
+  "test/integration/api/request-rate-limit.test.ts"
+ ],
+ "AD-47": [
+  "test/unit/engine.test.ts"
+ ],
+ "AD-48": [
+  "test/unit/engine-spend-accounts.test.ts",
+  "test/integration/execution/gateway-budget-refusal.test.ts"
+ ],
+ "AD-49": [
+  "test/unit/tools/workspace-mgmt-tools.test.ts"
+ ],
+ "AD-5": [
+  "test/integration/skill-history.test.ts",
+  "test/unit/platform/skills/mutation.test.ts"
+ ],
+ "AD-50": [
+  "test/unit/tools/workspace-mgmt-tools.test.ts"
+ ],
+ "AD-51": [
+  "test/unit/tools/workspace-mgmt-tools.test.ts",
+  "test/integration/workspace-tombstone.test.ts"
+ ],
+ "AD-52": [
+  "test/integration/workspace-tombstone.test.ts",
+  "test/integration/workspace-delete-cascade.test.ts",
+  "test/unit/tools/workspace-mgmt-tools.test.ts"
+ ],
+ "AD-53": [
+  "test/integration/workspace-tombstone.test.ts"
+ ],
+ "AD-54": [
+  "test/unit/tools/workspace-mgmt-tools.test.ts"
+ ],
+ "AD-55": [
+  "test/unit/tools/workspace-mgmt-tools.test.ts",
+  "test/integration/workspace-tombstone.test.ts"
+ ],
+ "AD-56": [
+  "test/integration/workspace-tombstone.test.ts",
+  "test/integration/workspace-delete-cascade.test.ts",
+  "test/unit/tools/workspace-mgmt-tools.test.ts"
+ ],
+ "AD-57": [
+  "test/integration/workspace-tombstone.test.ts",
+  "test/integration/workspace-delete-cascade.test.ts"
+ ],
+ "AD-58": [
+  "test/unit/tools/workspace-members-tools.test.ts"
+ ],
+ "AD-59": [
+  "test/unit/tools/workspace-members-tools.test.ts"
+ ],
+ "AD-6": [
+  "test/integration/skill-history.test.ts"
+ ],
+ "AD-60": [
+  "test/unit/tools/workspace-members-tools.test.ts"
+ ],
+ "AD-61": [
+  "test/unit/tools/workspace-members-tools.test.ts"
+ ],
+ "AD-62": [
+  "test/unit/tools/workspace-mgmt-tools.test.ts"
+ ],
+ "AD-63": [
+  "test/unit/workspace/workspace-root-guard.test.ts"
+ ],
+ "AD-64": [
+  "test/unit/tools/user-tools.test.ts"
+ ],
+ "AD-65": [
+  "test/unit/tools/user-tools.test.ts"
+ ],
+ "AD-66": [
+  "test/unit/tools/user-tools.test.ts",
+  "test/integration/runtime/deactivated-owner-runs.test.ts"
+ ],
+ "AD-67": [
+  "test/unit/tools/user-tools.test.ts",
+  "test/integration/runtime/deactivated-owner-runs.test.ts"
+ ],
+ "AD-68": [
+  "test/unit/tools/user-tools.test.ts"
+ ],
+ "AD-7": [
+  "test/integration/skill-history.test.ts"
+ ],
+ "AD-70": [
+  "web/src/__tests__/org-deleted-workspaces-tab.test.tsx"
+ ],
+ "AD-72": [
+  "test/unit/workspace/authz.test.ts",
+  "test/unit/tools/workspace-mgmt-tools.test.ts",
+  "test/unit/tools/workspace-members-tools.test.ts"
+ ],
+ "AD-73": [
+  "test/integration/oidc-auth.test.ts",
+  "test/integration/identity/oidc-adapter.test.ts",
+  "test/integration/instance-identity-provider.test.ts"
+ ],
+ "AD-74": [
+  "test/unit/posthog-sink.test.ts"
+ ],
+ "AD-75": [
+  "test/unit/posthog-sink.test.ts"
+ ],
+ "AD-78": [
+  "test/unit/telemetry-lifecycle.test.ts"
+ ],
+ "AD-79": [
+  "test/unit/observability.test.ts"
+ ],
+ "AD-8": [
+  "test/integration/skill-lifecycle.test.ts"
+ ],
+ "AD-80": [
+  "packages/cli/test/lifecycle.test.ts",
+  "packages/cli/test/telemetry.test.ts"
+ ],
+ "AD-81": [
+  "packages/cli/test/cli.test.ts"
+ ],
+ "AD-82": [
+  "packages/cli/test/cli.test.ts",
+  "packages/cli/test/lifecycle.test.ts"
+ ],
+ "AD-83": [
+  "packages/cli/test/open.test.ts"
+ ],
+ "AD-84": [
+  "packages/cli/test/lifecycle.test.ts"
+ ],
+ "AD-85": [
+  "packages/cli/test/local-model.test.ts"
+ ],
+ "AD-86": [
+  "packages/cli/test/use.test.ts"
+ ],
+ "AD-87": [
+  "packages/cli/test/subscription.test.ts",
+  "packages/cli/test/use.test.ts"
+ ],
+ "AD-88": [
+  "packages/cli/test/telemetry.test.ts"
+ ],
+ "AD-89": [
+  "packages/cli/test/lifecycle.test.ts"
+ ],
+ "AD-9": [
+  "test/unit/platform/skills/mutation.test.ts",
+  "test/integration/skills-always-loading.test.ts"
+ ],
+ "AD-90": [
+  "packages/cli/test/lifecycle.test.ts"
+ ],
+ "AD-91": [
+  "packages/cli/test/lifecycle.test.ts"
+ ],
+ "AD-92": [
+  "packages/cli/test/lifecycle.test.ts"
+ ],
+ "AD-93": [
+  "packages/cli/test/mcp.test.ts"
+ ],
+ "AD-94": [
+  "packages/cli/test/help.test.ts",
+  "packages/cli/test/cli.test.ts"
+ ],
+ "AD-95": [
+  "packages/cli/test/cli.test.ts",
+  "packages/cli/test/help.test.ts"
+ ],
+ "AD-97": [
+  "packages/cli/test/updates.test.ts"
+ ],
+ "AD-98": [
+  "packages/cli/test/agent-picker.test.ts",
+  "packages/cli/test/lifecycle.test.ts"
+ ],
+ "API-01": [
+  "test/integration/api.test.ts"
+ ],
+ "API-02": [
+  "test/integration/bootstrap-default-workspace.test.ts",
+  "test/integration/bootstrap-composer-config.test.ts"
+ ],
+ "API-03": [
+  "test/integration/shell-endpoint.test.ts",
+  "test/integration/rest-workspace-path.test.ts"
+ ],
+ "API-04": [
+  "test/integration/api.test.ts",
+  "test/integration/detached-turn-http.test.ts",
+  "test/integration/api-integration.test.ts"
+ ],
+ "API-05": [
+  "test/integration/detached-turn-http.test.ts",
+  "test/integration/rest-workspace-path.test.ts"
+ ],
+ "API-06": [
+  "test/integration/detached-turn-http.test.ts",
+  "test/integration/rest-workspace-path.test.ts"
+ ],
+ "API-07": [
+  "test/integration/api.test.ts",
+  "test/unit/sse-event-manager.test.ts",
+  "test/integration/security/workspace-isolation.test.ts"
+ ],
+ "API-08": [
+  "test/integration/api-integration.test.ts",
+  "test/integration/api.test.ts",
+  "test/integration/api/mcp-workspace-scope.test.ts"
+ ],
+ "API-09": [
+  "test/integration/no-workspace-tool-call.test.ts"
+ ],
+ "API-10": [
+  "test/integration/rest-workspace-path.test.ts"
+ ],
+ "API-11": [
+  "test/integration/files-plugin-default.test.ts",
+  "test/integration/files-off.test.ts"
+ ],
+ "API-12": [
+  "test/unit/api/read-resource-handler.test.ts",
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "API-13": [
+  "test/integration/resource-upload.test.ts",
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "API-14": [
+  "test/integration/app-resource-http-cache.test.ts",
+  "test/integration/app-resource-compression.test.ts"
+ ],
+ "API-15": [
+  "test/integration/mcp-server-endpoint.test.ts",
+  "test/unit/api/mcp-workspace-path.test.ts"
+ ],
+ "API-16": [
+  "test/integration/mcp-server-endpoint.test.ts",
+  "test/unit/api/mcp-workspace-path.test.ts"
+ ],
+ "API-17": [
+  "test/unit/api/well-known-routes.test.ts"
+ ],
+ "API-18": [
+  "test/unit/api/well-known-routes.test.ts",
+  "test/integration/oauth-callback-public.test.ts"
+ ],
+ "API-19": [
+  "test/unit/api/well-known-routes.test.ts"
+ ],
+ "API-20": [
+  "test/integration/run-key-route.test.ts"
+ ],
+ "API-21": [
+  "test/unit/brand/brand-surfaces.test.ts"
+ ],
+ "API-22": [
+  "test/unit/api-metrics.test.ts",
+  "test/integration/metrics-endpoint.test.ts"
+ ],
+ "API-23": [
+  "test/unit/api/oidc-signin-flow.test.ts"
+ ],
+ "API-24": [
+  "test/unit/api/oidc-signin-flow.test.ts"
+ ],
+ "API-25": [
+  "test/unit/identity/oidc-refresh.test.ts",
+  "test/integration/cross-site-writes.test.ts"
+ ],
+ "API-26": [
+  "test/unit/api/auth-routes.test.ts",
+  "test/integration/oauth-callback-public.test.ts"
+ ],
+ "API-27": [
+  "test/unit/api/mcp-auth-routes.test.ts"
+ ],
+ "API-28": [
+  "test/integration/identity-oauth-flow.test.ts",
+  "test/unit/api/mcp-auth-routes.test.ts"
+ ],
+ "API-29": [
+  "test/unit/api/mcp-auth-routes.test.ts",
+  "test/unit/api/connectors-redirect.test.ts"
+ ],
+ "API-30": [
+  "test/unit/composio-auth.test.ts"
+ ],
+ "API-31": [
+  "test/unit/composio-callback-binding.test.ts"
+ ],
+ "API-32": [
+  "test/unit/composio-auth.test.ts"
+ ],
+ "API-33": [
+  "test/unit/composio-auth.test.ts"
+ ],
+ "API-34": [
+  "test/integration/hooks-door.test.ts"
+ ],
+ "API-35": [
+  "test/integration/api.test.ts",
+  "test/integration/route-middleware-scope.test.ts"
+ ],
+ "API-36": [
+  "test/unit/api/workspace-route-surface.test.ts"
+ ],
+ "API-37": [
+  "test/integration/cross-site-writes.test.ts",
+  "test/integration/rest-workspace-path.test.ts"
+ ],
+ "API-38": [
+  "test/unit/api/origin.test.ts",
+  "test/unit/api/mcp-workspace-path.test.ts",
+  "test/integration/tool-call-origin.test.ts"
+ ],
+ "API-39": [
+  "test/integration/local-host-allowlist.test.ts",
+  "test/unit/api/host.test.ts"
+ ],
+ "API-40": [
+  "test/unit/api/security-headers.test.ts"
+ ],
+ "API-41": [
+  "test/integration/api/request-rate-limit.test.ts",
+  "test/unit/api/mcp-workspace-path.test.ts"
+ ],
+ "API-42": [
+  "test/integration/body-limit-routes.test.ts"
+ ],
+ "API-43": [
+  "test/unit/api-metrics.test.ts",
+  "test/unit/observability.test.ts"
+ ],
+ "AUTH-01": [
+  "test/integration/instance-identity-provider.test.ts",
+  "test/integration/oidc-auth.test.ts"
+ ],
+ "AUTH-02": [
+  "test/integration/instance-identity-provider.test.ts",
+  "test/integration/api.test.ts"
+ ],
+ "AUTH-03": [
+  "test/integration/oidc-auth.test.ts",
+  "test/integration/identity/oidc-adapter.test.ts",
+  "test/unit/api/oidc-signin-flow.test.ts"
+ ],
+ "AUTH-04": [
+  "test/unit/identity/workos-authkit.test.ts",
+  "test/integration/first-party-client-tokens.test.ts"
+ ],
+ "AUTH-05": [
+  "test/unit/api/oidc-signin-flow.test.ts",
+  "test/unit/identity/oidc-refresh.test.ts"
+ ],
+ "AUTH-06": [
+  "test/unit/api/mcp-workspace-path.test.ts",
+  "test/integration/first-party-client-tokens.test.ts"
+ ],
+ "AUTH-07": [
+  "test/integration/rest-workspace-path.test.ts",
+  "test/integration/mcp-server-endpoint.test.ts"
+ ],
+ "AUTH-08": [
+  "test/integration/run-key-route.test.ts",
+  "test/integration/run-key-env.test.ts"
+ ],
+ "AUTH-09": [
+  "test/unit/tenant-key-mint.test.ts"
+ ],
+ "AUTH-10": [
+  "test/unit/features.test.ts"
+ ],
+ "AUTH-11": [
+  "test/unit/identity/transient-auth.test.ts",
+  "test/unit/audit-events.test.ts"
+ ],
+ "CFG-01": [
+  "test/integration/get-config-tool.test.ts",
+  "test/unit/config/model-providers.test.ts"
+ ],
+ "CFG-02": [
+  "test/integration/runtime/user-model-preference.test.ts",
+  "test/integration/get-config-tool.test.ts"
+ ],
+ "CFG-03": [
+  "test/integration/api/model-policy-http.test.ts",
+  "test/integration/runtime/request-model-policy.test.ts"
+ ],
+ "CFG-04": [
+  "test/unit/engine.test.ts",
+  "test/unit/engine-run-input-cap.test.ts"
+ ],
+ "CFG-05": [
+  "test/unit/resolve-thinking.test.ts",
+  "test/unit/engine.test.ts"
+ ],
+ "CFG-06": [
+  "test/unit/engine.test.ts"
+ ],
+ "CFG-07": [
+  "test/integration/workspace-oauth-provider.test.ts"
+ ],
+ "CFG-09": [
+  "test/integration/cli.test.ts"
+ ],
+ "CFG-11": [
+  "test/integration/usage-ledger-wired.test.ts"
+ ],
+ "CFG-12": [
+  "test/integration/secrets-door-boot.test.ts",
+  "test/unit/config/secrets-block.test.ts"
+ ],
+ "CFG-13": [
+  "test/unit/telemetry-manager.test.ts"
+ ],
+ "CFG-14": [
+  "test/integration/skills-feature-gate.test.ts",
+  "test/unit/features.test.ts"
+ ],
+ "CFG-15": [
+  "test/unit/features.test.ts"
+ ],
+ "CFG-17": [
+  "test/unit/runtime/features-identity.test.ts"
+ ],
+ "CFG-18": [
+  "test/unit/runtime/features-identity.test.ts"
+ ],
+ "CFG-19": [
+  "test/integration/compaction-wiring.test.ts"
+ ],
+ "CFG-20": [
+  "test/unit/composio-config.test.ts",
+  "test/unit/instance-oauth-clients.test.ts"
+ ],
+ "CFG-21": [
+  "test/unit/notifications/poll-config.test.ts"
+ ],
+ "CFG-22": [
+  "test/integration/execution/runtime-selection.test.ts"
+ ],
+ "CFG-23": [
+  "test/unit/runtime/admission.test.ts",
+  "test/unit/config/runs.test.ts"
+ ],
+ "CFG-24": [
+  "test/unit/config/runs.test.ts",
+  "test/unit/engine-run-input-cap.test.ts"
+ ],
+ "CFG-26": [
+  "test/integration/resource-upload.test.ts",
+  "test/integration/files-limit.test.ts",
+  "test/integration/bootstrap-default-workspace.test.ts"
+ ],
+ "CFG-27": [
+  "test/unit/brand/brand-surfaces.test.ts",
+  "test/unit/brand/brand.test.ts"
+ ],
+ "CFG-28": [
+  "test/integration/files-off.test.ts",
+  "test/integration/tasks-off.test.ts",
+  "test/integration/chat-disabled.test.ts"
+ ],
+ "CFG-29": [
+  "test/integration/workspace-tombstone.test.ts"
+ ],
+ "CH-1": [
+  "test/integration/detached-turn-http.test.ts",
+  "test/integration/detached-turn.test.ts"
+ ],
+ "CH-10": [
+  "test/unit/engine.test.ts",
+  "test/unit/api/conversation-events.test.ts"
+ ],
+ "CH-12": [
+  "test/integration/detached-turn-http.test.ts",
+  "test/integration/runtime/find-conversation.test.ts"
+ ],
+ "CH-13": [
+  "test/integration/detached-turn-http.test.ts",
+  "test/integration/detached-turn.test.ts"
+ ],
+ "CH-15": [
+  "test/integration/api.test.ts",
+  "test/unit/sse-event-manager.test.ts",
+  "test/integration/identity-server-notification-relay.test.ts"
+ ],
+ "CH-16": [
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "CH-17": [
+  "test/integration/files-off.test.ts"
+ ],
+ "CH-18": [
+  "test/unit/files/intake.test.ts",
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "CH-19": [
+  "test/unit/files/intake.test.ts",
+  "test/integration/resource-upload.test.ts"
+ ],
+ "CH-2": [
+  "test/integration/chat-metadata.test.ts",
+  "test/integration/appcontext-chat.test.ts",
+  "test/integration/conversation-model-pin.test.ts"
+ ],
+ "CH-20": [
+  "test/unit/plugins/files-plugin.test.ts"
+ ],
+ "CH-21": [
+  "test/integration/files-plugin-default.test.ts",
+  "test/unit/files/intake.test.ts"
+ ],
+ "CH-23": [
+  "test/integration/runtime/vision-multiturn.test.ts",
+  "test/unit/files/rehydrate.test.ts",
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "CH-24": [
+  "test/unit/files/rehydrate.test.ts"
+ ],
+ "CH-25": [
+  "test/integration/runtime/vision-multiturn.test.ts",
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "CH-27": [
+  "test/unit/engine.test.ts"
+ ],
+ "CH-28": [
+  "test/unit/engine.test.ts"
+ ],
+ "CH-31": [
+  "test/unit/engine.test.ts",
+  "test/integration/core-source.test.ts"
+ ],
+ "CH-32": [
+  "test/unit/resolve-max-output-tokens.test.ts"
+ ],
+ "CH-33": [
+  "test/unit/resolve-thinking.test.ts"
+ ],
+ "CH-34": [
+  "test/unit/window.test.ts"
+ ],
+ "CH-35": [
+  "test/integration/compaction-wiring.test.ts",
+  "test/unit/compaction.test.ts"
+ ],
+ "CH-36": [
+  "test/integration/mid-turn-compaction-wiring.test.ts",
+  "test/unit/mid-turn-compaction.test.ts"
+ ],
+ "CH-37": [
+  "test/integration/runtime/title-with-turn.test.ts",
+  "test/unit/auto-title.test.ts"
+ ],
+ "CH-38": [
+  "test/integration/conversations-plugin-default.test.ts",
+  "contracts/conversations/runner/conformance.ts"
+ ],
+ "CH-4": [
+  "test/integration/body-limit-routes.test.ts",
+  "test/integration/api/request-rate-limit.test.ts"
+ ],
+ "CH-40": [
+  "test/integration/conversation-access.test.ts",
+  "test/integration/runtime/resume-workspace-context.test.ts",
+  "test/integration/detached-turn-http.test.ts"
+ ],
+ "CH-41": [
+  "test/integration/runtime/resume-requires-workspace-membership.test.ts"
+ ],
+ "CH-42": [
+  "test/integration/conversation-model-pin.test.ts"
+ ],
+ "CH-43": [
+  "contracts/conversations/runner/conformance.ts",
+  "test/integration/conversations-plugin-default.test.ts"
+ ],
+ "CH-44": [
+  "contracts/conversations/runner/conformance.ts"
+ ],
+ "CH-45": [
+  "contracts/conversations/runner/conformance.ts"
+ ],
+ "CH-46": [
+  "contracts/conversations/runner/conformance.ts"
+ ],
+ "CH-47": [
+  "contracts/conversations/runner/conformance.ts"
+ ],
+ "CH-48": [
+  "contracts/conversations/runner/conformance.ts"
+ ],
+ "CH-49": [
+  "test/unit/plugins/conversations-plugin-bounds.test.ts"
+ ],
+ "CH-5": [
+  "test/integration/detached-turn-http.test.ts"
+ ],
+ "CH-50": [
+  "test/integration/conversations-plugin-default.test.ts"
+ ],
+ "CH-53": [
+  "test/integration/conversations-plugin-default.test.ts",
+  "test/integration/workspace-delete-conversations.test.ts"
+ ],
+ "CH-54": [
+  "test/integration/bootstrap-composer-config.test.ts",
+  "test/integration/get-config-tool.test.ts"
+ ],
+ "CH-55": [
+  "test/integration/api/model-policy-http.test.ts",
+  "test/integration/runtime/request-model-policy.test.ts"
+ ],
+ "CH-56": [
+  "test/integration/core-source.test.ts",
+  "test/integration/conversation-model-pin.test.ts"
+ ],
+ "CH-57": [
+  "web/src/__tests__/chat-panel-model-control.test.tsx"
+ ],
+ "CH-58": [
+  "test/unit/model-registry.test.ts",
+  "test/unit/runtime/model-gateway-providers.test.ts"
+ ],
+ "CH-59": [
+  "test/integration/compose-effective-context.test.ts",
+  "test/unit/prompt.test.ts"
+ ],
+ "CH-6": [
+  "test/integration/chat-start-concurrent.test.ts"
+ ],
+ "CH-60": [
+  "test/unit/prompt-injection.test.ts",
+  "test/unit/containment-tag-plugin.test.ts"
+ ],
+ "CH-61": [
+  "test/unit/unattended-work.test.ts"
+ ],
+ "CH-62": [
+  "test/unit/tools/conversation-starters-tool.test.ts"
+ ],
+ "CH-7": [
+  "test/integration/api/model-policy-http.test.ts"
+ ],
+ "CH-8": [
+  "test/integration/chat-turn-disconnect.test.ts",
+  "test/integration/detached-turn.test.ts"
+ ],
+ "CH-9": [
+  "test/integration/detached-turn-http.test.ts"
+ ],
+ "CN-10": [
+  "test/integration/identity-target-install.test.ts"
+ ],
+ "CN-11": [
+  "test/unit/connector-grants.test.ts"
+ ],
+ "CN-12": [
+  "test/unit/connector-grants.test.ts",
+  "test/unit/connector-tools.test.ts"
+ ],
+ "CN-13": [
+  "test/unit/connector-tools.test.ts",
+  "test/integration/identity-oauth-flow.test.ts"
+ ],
+ "CN-14": [
+  "test/unit/connector-tools.test.ts",
+  "test/integration/connector-lifecycle-notify.test.ts",
+  "test/integration/secret-headers-install.test.ts"
+ ],
+ "CN-15": [
+  "test/integration/identity-target-install.test.ts"
+ ],
+ "CN-16": [
+  "test/integration/boot-start-failure-survives.test.ts",
+  "test/unit/lifecycle-recover-source.test.ts"
+ ],
+ "CN-17": [
+  "test/integration/boot-start-failure-survives.test.ts",
+  "test/unit/connector-boot-start-failure.test.ts"
+ ],
+ "CN-18": [
+  "test/unit/lifecycle-recover-source.test.ts",
+  "test/unit/mcp-source-recovery.test.ts"
+ ],
+ "CN-19": [
+  "test/unit/lifecycle-start-error-message.test.ts",
+  "test/integration/identity-oauth-flow.test.ts"
+ ],
+ "CN-2": [
+  "test/unit/connector-tools.test.ts"
+ ],
+ "CN-20": [
+  "test/unit/tools/workspace-mgmt-tools.test.ts"
+ ],
+ "CN-21": [
+  "test/integration/workspace-delete-cascade.test.ts"
+ ],
+ "CN-23": [
+  "test/unit/connectors/catalog-ui.test.ts"
+ ],
+ "CN-24": [
+  "test/unit/url-validator.test.ts"
+ ],
+ "CN-25": [
+  "test/unit/host-loopback.test.ts"
+ ],
+ "CN-26": [
+  "test/unit/connectors/server-card-sdk-parity.test.ts",
+  "test/integration/direct-url-install.test.ts"
+ ],
+ "CN-27": [
+  "test/unit/api/mcp-auth-routes.test.ts"
+ ],
+ "CN-28": [
+  "test/integration/identity-oauth-flow.test.ts"
+ ],
+ "CN-29": [
+  "test/unit/api/mcp-auth-routes.test.ts",
+  "test/integration/oauth-callback-public.test.ts"
+ ],
+ "CN-3": [
+  "test/unit/catalog-read.test.ts",
+  "test/unit/catalog-listing-projection.test.ts"
+ ],
+ "CN-31": [
+  "test/integration/workspace-oauth-provider.test.ts",
+  "test/unit/workspace-oauth-provider.test.ts"
+ ],
+ "CN-32": [
+  "test/unit/connector-tools.test.ts"
+ ],
+ "CN-33": [
+  "test/unit/instance-oauth-clients.test.ts",
+  "test/unit/connector-tools.test.ts"
+ ],
+ "CN-35": [
+  "test/unit/oauth-refresh-fetch.test.ts",
+  "test/unit/oauth-refresh-rotation.test.ts",
+  "test/integration/mcp-source-in-band-auth.test.ts"
+ ],
+ "CN-36": [
+  "test/unit/workspace-oauth-provider.test.ts"
+ ],
+ "CN-37": [
+  "test/unit/connector-grants.test.ts",
+  "test/unit/connector-tools.test.ts"
+ ],
+ "CN-38": [
+  "test/unit/connection-revalidator.test.ts"
+ ],
+ "CN-39": [
+  "test/unit/composio-connection-probe.test.ts",
+  "test/unit/smithery-connection-probe.test.ts"
+ ],
+ "CN-4": [
+  "test/unit/connector-tools.test.ts"
+ ],
+ "CN-41": [
+  "test/unit/in-band-auth-errors.test.ts",
+  "test/integration/mcp-source-in-band-auth.test.ts"
+ ],
+ "CN-42": [
+  "test/integration/secret-headers-install.test.ts",
+  "test/integration/secret-headers-connection.test.ts"
+ ],
+ "CN-43": [
+  "test/unit/connector-tools.test.ts"
+ ],
+ "CN-44": [
+  "test/unit/connector-tools-composio-apikey.test.ts"
+ ],
+ "CN-45": [
+  "test/unit/composio-auth.test.ts",
+  "test/unit/composio-callback-binding.test.ts"
+ ],
+ "CN-46": [
+  "test/unit/smithery-provider.test.ts",
+  "test/unit/smithery-teardown.test.ts"
+ ],
+ "CN-47": [
+  "test/unit/managed-connector-registry.test.ts"
+ ],
+ "CN-48": [
+  "test/unit/gateway-credential.test.ts",
+  "test/unit/composio-transport-credential.test.ts"
+ ],
+ "CN-49": [
+  "test/unit/credential-store-backend.test.ts"
+ ],
+ "CN-5": [
+  "test/unit/connector-tools.test.ts",
+  "test/integration/direct-url-install.test.ts"
+ ],
+ "CN-50": [
+  "test/unit/credential-seal.test.ts",
+  "test/integration/secrets-door-wrong-key-boot.test.ts"
+ ],
+ "CN-51": [
+  "test/unit/credential-store-reseal.test.ts"
+ ],
+ "CN-52": [
+  "test/unit/ssrf-guarded-fetch.test.ts",
+  "test/integration/workspace-oauth-provider.test.ts"
+ ],
+ "CN-53": [
+  "test/unit/health-monitor.test.ts"
+ ],
+ "CN-54": [
+  "test/integration/connector-lifecycle-notify.test.ts",
+  "test/unit/lifecycle/notify.test.ts"
+ ],
+ "CN-55": [
+  "test/integration/connector-lifecycle-notify.test.ts",
+  "test/unit/lifecycle/notify.test.ts"
+ ],
+ "CN-56": [
+  "test/unit/host-only-tools.test.ts",
+  "test/integration/connector-lifecycle-host-only.test.ts"
+ ],
+ "CN-57": [
+  "test/integration/connector-admin-tools.test.ts",
+  "test/unit/admin-tools.test.ts"
+ ],
+ "CN-58": [
+  "test/integration/policy-enforcement-end-to-end.test.ts",
+  "test/unit/connector-grants.test.ts"
+ ],
+ "CN-59": [
+  "test/integration/direct-url-install.test.ts"
+ ],
+ "CN-6": [
+  "test/unit/connector-tools.test.ts",
+  "test/unit/api/mcp-auth-routes.test.ts"
+ ],
+ "CN-60": [
+  "test/unit/connector-tools.test.ts",
+  "test/integration/record-arguments-grant.test.ts"
+ ],
+ "CN-61": [
+  "test/unit/host-resources-resource-arguments.test.ts",
+  "test/integration/resource-arguments.test.ts"
+ ],
+ "CN-62": [
+  "test/unit/host-resources-capability.test.ts"
+ ],
+ "CN-63": [
+  "test/unit/host-resources-resolver.test.ts",
+  "test/unit/host-resources-handlers.test.ts"
+ ],
+ "CN-64": [
+  "test/unit/host-resources-handlers.test.ts"
+ ],
+ "CN-65": [
+  "test/unit/host-resources-rate-limit.test.ts"
+ ],
+ "CN-66": [
+  "test/integration/connector-skills.test.ts",
+  "test/integration/connector-skill-lifecycle.test.ts"
+ ],
+ "CN-67": [
+  "test/unit/plugins/manifest.test.ts",
+  "test/unit/tools/conversation-starters-tool.test.ts"
+ ],
+ "CN-69": [
+  "test/integration/connector-skills-audit.test.ts"
+ ],
+ "CN-7": [
+  "test/unit/connector-tools.test.ts",
+  "test/integration/identity-target-install.test.ts"
+ ],
+ "CN-70": [
+  "test/unit/plugin-listing.test.ts"
+ ],
+ "CN-71": [
+  "test/unit/prompt-injection.test.ts"
+ ],
+ "CN-72": [
+  "test/integration/files-plugin-default.test.ts",
+  "test/integration/tasks-plugin-default.test.ts"
+ ],
+ "CN-73": [
+  "test/unit/system-tools.test.ts"
+ ],
+ "CN-74": [
+  "test/unit/plugin-request.test.ts"
+ ],
+ "CN-75": [
+  "test/unit/tools/manage-tools.test.ts"
+ ],
+ "CN-76": [
+  "test/integration/hooks-door.test.ts"
+ ],
+ "CN-77": [
+  "test/unit/hooks-declaration.test.ts",
+  "test/unit/hooks-provisioning.test.ts"
+ ],
+ "CN-78": [
+  "test/integration/hooks-door.test.ts",
+  "test/unit/hooks-declaration.test.ts"
+ ],
+ "CN-79": [
+  "test/unit/platform/hooks/source.test.ts"
+ ],
+ "CN-8": [
+  "test/integration/direct-url-install.test.ts",
+  "test/unit/connector-tools-direct-url.test.ts"
+ ],
+ "CN-80": [
+  "test/unit/platform/hooks/source.test.ts"
+ ],
+ "CN-81": [
+  "test/integration/tasks-plugin-default.test.ts"
+ ],
+ "CN-9": [
+  "test/integration/identity-target-install.test.ts"
+ ],
+ "ENV-01": [
+  "test/integration/local-host-allowlist.test.ts",
+  "test/integration/cross-site-writes.test.ts"
+ ],
+ "ENV-02": [
+  "test/integration/api/request-rate-limit.test.ts"
+ ],
+ "ENV-03": [
+  "test/unit/api/security-headers.test.ts"
+ ],
+ "ENV-07": [
+  "test/integration/direct-url-install.test.ts"
+ ],
+ "ENV-08": [
+  "test/unit/runtime/workspace-runtime.test.ts"
+ ],
+ "ENV-09": [
+  "test/unit/composio-auth.test.ts",
+  "test/unit/smithery-provider.test.ts"
+ ],
+ "ENV-10": [
+  "test/unit/tenant-key-mint.test.ts"
+ ],
+ "ENV-11": [
+  "test/unit/composio-config.test.ts"
+ ],
+ "ENV-12": [
+  "test/unit/model-registry.test.ts"
+ ],
+ "FI-1": [
+  "contracts/files/runner/conformance.ts",
+  "test/integration/files-plugin-conformance.test.ts"
+ ],
+ "FI-10": [
+  "contracts/files/runner/conformance.ts"
+ ],
+ "FI-11": [
+  "contracts/files/runner/conformance.ts"
+ ],
+ "FI-12": [
+  "contracts/files/runner/conformance.ts"
+ ],
+ "FI-13": [
+  "contracts/files/runner/conformance.ts"
+ ],
+ "FI-14": [
+  "contracts/files/runner/conformance.ts"
+ ],
+ "FI-16": [
+  "test/integration/rest-workspace-path.test.ts"
+ ],
+ "FI-17": [
+  "test/integration/files-plugin-default.test.ts",
+  "contracts/files/runner/conformance.ts"
+ ],
+ "FI-19": [
+  "test/integration/resource-upload.test.ts",
+  "test/integration/files-plugin-default.test.ts",
+  "test/integration/body-limit-routes.test.ts"
+ ],
+ "FI-2": [
+  "contracts/files/runner/conformance.ts"
+ ],
+ "FI-21": [
+  "test/integration/files-off.test.ts"
+ ],
+ "FI-22": [
+  "test/unit/api/read-resource-handler.test.ts"
+ ],
+ "FI-23": [
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "FI-24": [
+  "test/integration/mcp-door-identity-resources.test.ts",
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "FI-25": [
+  "contracts/files/runner/conformance.ts"
+ ],
+ "FI-27": [
+  "test/integration/files-plugin-default.test.ts",
+  "packages/files/ui/src/upload.test.ts"
+ ],
+ "FI-28": [
+  "web/src/__tests__/bridge/bridge-spec-surfaces.test.ts",
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "FI-29": [
+  "test/unit/host-resources-resolver.test.ts",
+  "test/unit/host-resources-capability.test.ts",
+  "test/integration/host-resources-call-scope.test.ts"
+ ],
+ "FI-3": [
+  "contracts/files/runner/conformance.ts",
+  "test/unit/plugins/files-plugin.test.ts"
+ ],
+ "FI-30": [
+  "test/unit/plugins/files-plugin.test.ts",
+  "contracts/files/runner/conformance.ts"
+ ],
+ "FI-31": [
+  "test/unit/files/rehydrate.test.ts"
+ ],
+ "FI-32": [
+  "contracts/files/runner/conformance.ts"
+ ],
+ "FI-33": [
+  "test/integration/files-plugin-default.test.ts",
+  "test/unit/files/intake.test.ts",
+  "test/unit/files/rehydrate.test.ts"
+ ],
+ "FI-34": [
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "FI-35": [
+  "contracts/files/runner/conformance.ts"
+ ],
+ "FI-36": [
+  "contracts/files/runner/conformance.ts",
+  "test/integration/mcp-door-identity-resources.test.ts"
+ ],
+ "FI-38": [
+  "packages/files/ui/src/useFileList.test.ts",
+  "packages/files/ui/src/upload.test.ts"
+ ],
+ "FI-4": [
+  "contracts/files/runner/conformance.ts"
+ ],
+ "FI-41": [
+  "contracts/files/runner/conformance.ts",
+  "test/integration/workspace-tombstone.test.ts"
+ ],
+ "FI-42": [
+  "test/integration/files-plugin-default.test.ts",
+  "test/integration/files-off.test.ts"
+ ],
+ "FI-5": [
+  "contracts/files/runner/conformance.ts"
+ ],
+ "FI-6": [
+  "contracts/files/runner/conformance.ts",
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "FI-8": [
+  "contracts/files/runner/conformance.ts",
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "FI-9": [
+  "contracts/files/runner/conformance.ts"
+ ],
+ "MCP-1": [
+  "test/unit/api/mcp-workspace-path.test.ts",
+  "test/integration/mcp-server-endpoint.test.ts",
+  "test/integration/mcp-server-identity-bound.test.ts"
+ ],
+ "MCP-10": [
+  "test/integration/mcp-connector-skills.test.ts"
+ ],
+ "MCP-11": [
+  "test/integration/mcp-server-endpoint.test.ts"
+ ],
+ "MCP-13": [
+  "test/integration/mcp-server-identity-bound.test.ts",
+  "test/integration/mcp-tool-visibility.test.ts",
+  "test/integration/connector-admin-tools.test.ts"
+ ],
+ "MCP-14": [
+  "test/integration/mcp-server-identity-bound.test.ts",
+  "test/integration/api/mcp-workspace-scope.test.ts"
+ ],
+ "MCP-15": [
+  "test/integration/mcp-tool-visibility.test.ts",
+  "test/integration/mcp-endpoint-tasks.test.ts"
+ ],
+ "MCP-16": [
+  "test/integration/personal-connector-policy.test.ts",
+  "test/unit/orchestrator/route.test.ts"
+ ],
+ "MCP-17": [
+  "test/integration/mcp-caller-passthrough.test.ts"
+ ],
+ "MCP-18": [
+  "test/integration/mcp-caller-passthrough.test.ts",
+  "test/unit/api/mcp-input-relay.test.ts"
+ ],
+ "MCP-19": [
+  "test/integration/mcp-endpoint-tasks.test.ts",
+  "test/integration/mcp-era-negotiation.test.ts"
+ ],
+ "MCP-2": [
+  "test/unit/api/mcp-workspace-path.test.ts",
+  "test/integration/mcp-server-endpoint.test.ts",
+  "test/integration/first-party-client-tokens.test.ts"
+ ],
+ "MCP-21": [
+  "test/integration/mcp-connector-skills.test.ts",
+  "test/unit/skills/skills-extension.test.ts"
+ ],
+ "MCP-22": [
+  "test/integration/mcp-connector-prompts.test.ts"
+ ],
+ "MCP-23": [
+  "test/integration/mcp-connector-prompts.test.ts",
+  "test/integration/mcp-caller-passthrough.test.ts"
+ ],
+ "MCP-24": [
+  "test/integration/mcp-connector-prompts.test.ts"
+ ],
+ "MCP-25": [
+  "test/integration/mcp-door-identity-resources.test.ts",
+  "test/integration/mcp-resources.test.ts"
+ ],
+ "MCP-26": [
+  "test/integration/mcp-resources.test.ts",
+  "test/integration/server-notification-relay.test.ts"
+ ],
+ "MCP-27": [
+  "test/integration/server-notification-relay.test.ts"
+ ],
+ "MCP-28": [
+  "test/integration/mcp-resources.test.ts",
+  "test/integration/mcp-server-identity-bound.test.ts"
+ ],
+ "MCP-29": [
+  "test/integration/files-plugin-default.test.ts",
+  "test/integration/files-off.test.ts"
+ ],
+ "MCP-3": [
+  "test/unit/api/mcp-workspace-path.test.ts",
+  "test/integration/mcp-server-identity-bound.test.ts",
+  "test/integration/mcp-server-endpoint.test.ts"
+ ],
+ "MCP-30": [
+  "test/integration/conversations-plugin-default.test.ts",
+  "test/integration/tasks-plugin-default.test.ts",
+  "test/integration/files-plugin-conformance.test.ts"
+ ],
+ "MCP-31": [
+  "test/integration/mcp-connector-skills.test.ts",
+  "test/unit/system-tools.test.ts"
+ ],
+ "MCP-32": [
+  "test/unit/open-app.test.ts"
+ ],
+ "MCP-33": [
+  "test/integration/identity-server-notification-relay.test.ts",
+  "test/integration/server-notification-relay.test.ts"
+ ],
+ "MCP-34": [
+  "test/unit/orchestrator/unattended-dispatch.test.ts",
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "MCP-4": [
+  "test/integration/workspace-tombstone.test.ts"
+ ],
+ "MCP-40": [
+  "test/unit/system-tools.test.ts"
+ ],
+ "MCP-41": [
+  "test/unit/system-tools.test.ts"
+ ],
+ "MCP-42": [
+  "test/integration/status-reports-turn-model.test.ts",
+  "test/integration/skill-lifecycle.test.ts",
+  "test/unit/system-tools.test.ts"
+ ],
+ "MCP-43": [
+  "test/unit/platform/skills/use.test.ts",
+  "test/integration/trigger-skill-not-redelivered.test.ts"
+ ],
+ "MCP-44": [
+  "test/unit/plugin-request.test.ts"
+ ],
+ "MCP-45": [
+  "test/unit/engine.test.ts",
+  "test/unit/system-tools.test.ts"
+ ],
+ "MCP-46": [
+  "test/unit/tools/user-tools.test.ts"
+ ],
+ "MCP-47": [
+  "test/unit/tools/workspace-mgmt-tools.test.ts",
+  "test/unit/tools/workspace-members-tools.test.ts"
+ ],
+ "MCP-48": [
+  "test/integration/connector-tools-install.test.ts",
+  "test/integration/direct-url-install.test.ts"
+ ],
+ "MCP-49": [
+  "test/integration/get-config-tool.test.ts"
+ ],
+ "MCP-5": [
+  "test/unit/api/mcp-workspace-path.test.ts",
+  "test/unit/api/origin.test.ts"
+ ],
+ "MCP-50": [
+  "test/integration/core-source.test.ts"
+ ],
+ "MCP-51": [
+  "test/integration/no-workspace-tool-call.test.ts",
+  "test/integration/runtime/user-model-preference.test.ts"
+ ],
+ "MCP-52": [
+  "test/integration/core-source.test.ts"
+ ],
+ "MCP-53": [
+  "test/integration/core-source.test.ts"
+ ],
+ "MCP-54": [
+  "test/unit/tools/core-artifact-tools.test.ts"
+ ],
+ "MCP-55": [
+  "test/unit/tools/core-artifact-tools.test.ts"
+ ],
+ "MCP-57": [
+  "test/unit/tools/conversation-starters-tool.test.ts"
+ ],
+ "MCP-58": [
+  "test/unit/open-app.test.ts"
+ ],
+ "MCP-6": [
+  "test/integration/api/request-rate-limit.test.ts",
+  "test/unit/api/mcp-workspace-path.test.ts"
+ ],
+ "MCP-60": [
+  "contracts/conversations/runner/conformance.ts",
+  "test/integration/conversations-plugin-default.test.ts",
+  "test/unit/plugins/conversations-plugin-bounds.test.ts"
+ ],
+ "MCP-61": [
+  "contracts/conversations/runner/conformance.ts",
+  "test/unit/plugins/conversations-plugin-bounds.test.ts"
+ ],
+ "MCP-62": [
+  "contracts/conversations/runner/conformance.ts",
+  "test/unit/plugins/conversations-plugin-bounds.test.ts"
+ ],
+ "MCP-63": [
+  "contracts/conversations/runner/conformance.ts",
+  "test/unit/plugins/conversations-plugin-bounds.test.ts"
+ ],
+ "MCP-64": [
+  "contracts/conversations/runner/conformance.ts"
+ ],
+ "MCP-65": [
+  "contracts/conversations/runner/conformance.ts"
+ ],
+ "MCP-67": [
+  "test/integration/skill-lifecycle.test.ts",
+  "test/integration/skills-read-tools.test.ts"
+ ],
+ "MCP-68": [
+  "test/integration/skills-read-tools.test.ts",
+  "test/integration/skill-history.test.ts"
+ ],
+ "MCP-69": [
+  "test/integration/skills-read-tools.test.ts",
+  "test/unit/platform/skills/tools.test.ts"
+ ],
+ "MCP-7": [
+  "test/integration/body-limit-routes.test.ts",
+  "test/unit/api/mcp-request-body.test.ts",
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "MCP-70": [
+  "test/integration/skill-lifecycle.test.ts",
+  "test/integration/skills-feature-gate.test.ts"
+ ],
+ "MCP-71": [
+  "test/integration/skill-history.test.ts",
+  "test/integration/skill-lifecycle.test.ts"
+ ],
+ "MCP-72": [
+  "test/integration/skill-history.test.ts"
+ ],
+ "MCP-73": [
+  "test/integration/skill-history.test.ts"
+ ],
+ "MCP-74": [
+  "test/integration/skill-lifecycle.test.ts"
+ ],
+ "MCP-75": [
+  "test/unit/platform/skills/mutation.test.ts",
+  "test/integration/skills-always-loading.test.ts"
+ ],
+ "MCP-76": [
+  "test/integration/skill-off-here.test.ts"
+ ],
+ "MCP-77": [
+  "test/integration/skill-mute-scope.test.ts"
+ ],
+ "MCP-78": [
+  "test/integration/skill-mute-scope.test.ts"
+ ],
+ "MCP-79": [
+  "test/unit/platform/notifications/source.test.ts"
+ ],
+ "MCP-8": [
+  "test/integration/mcp-server-endpoint.test.ts",
+  "test/integration/mcp-era-negotiation.test.ts"
+ ],
+ "MCP-80": [
+  "test/unit/platform/notifications/source.test.ts"
+ ],
+ "MCP-81": [
+  "test/unit/platform/notifications/settings.test.ts"
+ ],
+ "MCP-82": [
+  "test/unit/platform/notifications/settings.test.ts"
+ ],
+ "MCP-83": [
+  "test/unit/platform/notifications/settings.test.ts"
+ ],
+ "MCP-84": [
+  "test/unit/platform/notifications/settings.test.ts",
+  "test/integration/tasks-plugin-default.test.ts"
+ ],
+ "MCP-85": [
+  "test/integration/usage-ledger-wired.test.ts"
+ ],
+ "MCP-86": [
+  "test/integration/compose-effective-context.test.ts"
+ ],
+ "MCP-87": [
+  "test/integration/compose-assembled-context.test.ts"
+ ],
+ "MCP-88": [
+  "test/unit/platform/hooks/source.test.ts"
+ ],
+ "MCP-89": [
+  "test/unit/platform/hooks/source.test.ts"
+ ],
+ "MCP-9": [
+  "test/integration/mcp-endpoint-tasks.test.ts",
+  "test/integration/mcp-connector-skills.test.ts",
+  "test/integration/mcp-resources.test.ts"
+ ],
+ "MCP-90": [
+  "contracts/tasks/runner/conformance.ts",
+  "test/integration/tasks-plugin-conformance.test.ts",
+  "test/integration/tasks-plugin-default.test.ts"
+ ],
+ "MCP-91": [
+  "contracts/files/runner/conformance.ts",
+  "test/integration/files-plugin-conformance.test.ts",
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "TSK-01": [
+  "contracts/tasks/runner/conformance.ts",
+  "test/integration/tasks-plugin-default.test.ts"
+ ],
+ "TSK-02": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-03": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-06": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-07": [
+  "test/integration/tasks-plugin-default.test.ts",
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-08": [
+  "test/integration/mcp-endpoint-tasks.test.ts"
+ ],
+ "TSK-09": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-10": [
+  "test/integration/tasks-plugin-default.test.ts",
+  "test/unit/unattended-work.test.ts"
+ ],
+ "TSK-11": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-14": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-15": [
+  "test/integration/tasks-plugin-default.test.ts",
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-16": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-18": [
+  "contracts/tasks/runner/conformance.ts",
+  "test/integration/tasks-plugin-default.test.ts"
+ ],
+ "TSK-19": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-20": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-21": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-25": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-26": [
+  "contracts/tasks/runner/conformance.ts",
+  "test/unit/plugins/tasks-plugin.test.ts"
+ ],
+ "TSK-28": [
+  "test/unit/plugins/tasks-plugin.test.ts"
+ ],
+ "TSK-29": [
+  "contracts/tasks/runner/conformance.ts",
+  "test/unit/plugins/tasks-plugin.test.ts",
+  "test/integration/tasks-plugin-default.test.ts"
+ ],
+ "TSK-30": [
+  "contracts/tasks/runner/conformance.ts",
+  "test/unit/plugins/tasks-plugin.test.ts"
+ ],
+ "TSK-31": [
+  "test/integration/tasks-plugin-default.test.ts",
+  "test/unit/notifications/routes.test.ts"
+ ],
+ "TSK-32": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-34": [
+  "test/integration/execute-task.test.ts"
+ ],
+ "TSK-35": [
+  "test/integration/runtime/task-run-requires-membership.test.ts",
+  "test/integration/runtime/deactivated-owner-runs.test.ts",
+  "test/unit/orchestrator/unattended-dispatch.test.ts"
+ ],
+ "TSK-36": [
+  "test/integration/task-allowed-tools.test.ts"
+ ],
+ "TSK-37": [
+  "test/integration/execute-task.test.ts",
+  "test/integration/tasks-plugin-default.test.ts",
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-38": [
+  "test/unit/plugins/tasks-plugin.test.ts",
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-39": [
+  "test/integration/task-declared-skills.test.ts"
+ ],
+ "TSK-40": [
+  "test/integration/execute-task.test.ts"
+ ],
+ "TSK-41": [
+  "test/unit/config/runs.test.ts",
+  "test/integration/execute-task.test.ts"
+ ],
+ "TSK-42": [
+  "test/unit/plugins/tasks-plugin.test.ts",
+  "contracts/tasks/runner/conformance.ts",
+  "test/integration/execute-task.test.ts"
+ ],
+ "TSK-43": [
+  "test/unit/runtime/admission.test.ts"
+ ],
+ "TSK-44": [
+  "test/unit/plugins/tasks-plugin.test.ts",
+  "contracts/tasks/runner/conformance.ts",
+  "test/unit/runtime/run-worker.test.ts"
+ ],
+ "TSK-46": [
+  "contracts/tasks/runner/conformance.ts",
+  "test/unit/plugins/tasks-plugin.test.ts"
+ ],
+ "TSK-47": [
+  "test/unit/plugins/tasks-plugin.test.ts"
+ ],
+ "TSK-48": [
+  "contracts/tasks/runner/conformance.ts",
+  "test/integration/tasks-plugin-default.test.ts"
+ ],
+ "TSK-50": [
+  "test/integration/files-plugin-default.test.ts"
+ ],
+ "TSK-51": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-53": [
+  "test/unit/plugins/tasks-plugin.test.ts",
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-54": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-57": [
+  "test/unit/plugins/tasks-plugin.test.ts"
+ ],
+ "TSK-58": [
+  "test/unit/plugins/tasks-plugin.test.ts"
+ ],
+ "TSK-59": [
+  "test/unit/plugins/tasks-plugin.test.ts",
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-60": [
+  "test/integration/tasks-plugin-default.test.ts",
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-62": [
+  "contracts/tasks/runner/conformance.ts",
+  "test/unit/plugins/tasks-plugin.test.ts"
+ ],
+ "TSK-63": [
+  "test/unit/config/runs.test.ts"
+ ],
+ "TSK-64": [
+  "test/integration/tasks-off.test.ts"
+ ],
+ "TSK-66": [
+  "test/integration/tasks-plugin-default.test.ts",
+  "test/integration/workspace-tombstone.test.ts",
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-68": [
+  "packages/tasks/ui/src/components/SchedulePicker.test.ts",
+  "packages/tasks/ui/src/components/editor-form.test.ts",
+  "packages/tasks/ui/src/components/BatchPane.test.ts"
+ ],
+ "TSK-70": [
+  "contracts/tasks/runner/conformance.ts"
+ ],
+ "TSK-71": [
+  "test/unit/plugins/tasks-skill-examples.test.ts"
+ ],
+ "W1": [
+  "web/src/__tests__/login-goes-straight-to-sign-in.test.tsx",
+  "web/src/__tests__/login-hands-over-bootstrap.test.tsx",
+  "web/src/api/try-bootstrap.test.ts"
+ ],
+ "W10": [
+  "web/src/__tests__/connector-browse-installed.test.tsx",
+  "web/src/__tests__/connector-browse-entry-action.test.tsx",
+  "web/src/__tests__/connector-secret-install.test.tsx"
+ ],
+ "W11": [
+  "web/src/__tests__/plugin-detail-page.test.tsx",
+  "web/src/__tests__/uninstall-connector-dialog.test.tsx",
+  "web/src/__tests__/tool-permissions-table.test.tsx"
+ ],
+ "W12": [
+  "web/src/__tests__/plugins-skills.test.tsx"
+ ],
+ "W13": [
+  "web/src/__tests__/skill-edit-patch.test.ts"
+ ],
+ "W19": [
+  "web/src/__tests__/workspace-notifications-tab.test.tsx"
+ ],
+ "W2": [
+  "web/src/__tests__/landing-redirect.test.tsx"
+ ],
+ "W20": [
+  "web/src/__tests__/workspace-webhooks-tab.test.tsx"
+ ],
+ "W25": [
+  "web/src/__tests__/org-deleted-workspaces-tab.test.tsx"
+ ],
+ "W27": [
+  "web/src/__tests__/usage-totals-cards.test.tsx"
+ ],
+ "W29": [
+  "web/src/__tests__/model-config-patch.test.ts"
+ ],
+ "W3": [
+  "web/src/__tests__/workspace-route-guard.test.tsx"
+ ],
+ "W31": [
+  "web/src/__tests__/NotFoundPage.test.tsx"
+ ],
+ "W6": [
+  "web/src/lib/routable-placements.test.ts",
+  "web/src/__tests__/SlotRenderer.test.tsx"
+ ],
+ "W7": [
+  "web/src/__tests__/ContextInspectorPage.test.tsx"
+ ],
+ "W8": [
+  "web/src/__tests__/notifications-inbox.test.tsx",
+  "web/src/lib/inbox-pages.test.ts"
+ ],
+ "W9": [
+  "web/src/__tests__/plugins-page.test.tsx"
+ ],
+ "WA1": [
+  "packages/conversations/ui/src/paging.test.ts"
+ ],
+ "WA11": [
+  "packages/tasks/ui/src/lib/activity.test.ts"
+ ],
+ "WA12": [
+  "packages/tasks/ui/src/components/RunSteps.test.tsx",
+  "packages/tasks/ui/src/components/page.test.tsx"
+ ],
+ "WA14": [
+  "packages/tasks/ui/src/components/BatchPane.test.ts",
+  "packages/tasks/ui/src/lib/csv.test.ts"
+ ],
+ "WA17": [
+  "packages/tasks/ui/src/components/saved-card.test.tsx",
+  "packages/tasks/ui/src/lib/saved-task.test.ts"
+ ],
+ "WA18": [
+  "packages/files/ui/src/useFileList.test.ts"
+ ],
+ "WA19": [
+  "packages/files/ui/src/upload.test.ts"
+ ],
+ "WA20": [
+  "packages/files/ui/src/dialogs.test.tsx"
+ ],
+ "WA22": [
+  "packages/files/ui/src/useSelection.test.tsx"
+ ],
+ "WA3": [
+  "packages/tasks/ui/src/components/views.test.tsx",
+  "packages/tasks/ui/src/components/HomeView.stats.test.tsx"
+ ],
+ "WA4": [
+  "packages/tasks/ui/src/lib/describe.test.ts"
+ ],
+ "WA5": [
+  "packages/tasks/ui/src/components/page.test.tsx",
+  "packages/tasks/ui/src/components/TasksUI.toggle.test.tsx"
+ ],
+ "WA6": [
+  "packages/tasks/ui/src/components/save-guard.test.tsx",
+  "packages/tasks/ui/src/components/editor-form.test.ts",
+  "packages/tasks/ui/src/components/TaskEditor.input.test.tsx"
+ ],
+ "WA7": [
+  "packages/tasks/ui/src/components/SchedulePicker.test.ts",
+  "packages/tasks/ui/src/lib/schedule-label.test.ts",
+  "packages/tasks/ui/src/components/TaskEditor.timezone.test.tsx"
+ ],
+ "WA8": [
+  "packages/tasks/ui/src/lib/schemaForm.test.ts",
+  "packages/tasks/ui/src/lib/inferSchema.test.ts"
+ ],
+ "WA9": [
+  "packages/tasks/ui/src/components/runs-view.test.tsx",
+  "packages/tasks/ui/src/components/RunBadge.test.tsx"
+ ],
+ "WB1": [
+  "web/src/__tests__/bridge/bridge-spec-surfaces.test.ts",
+  "web/src/__tests__/bridge/bridge-tasks.test.ts",
+  "test/unit/bridge-extensions.test.ts"
+ ],
+ "WB10": [
+  "test/unit/bridge-extensions.test.ts"
+ ],
+ "WB11": [
+  "web/src/__tests__/bridge/bridge-app-state.test.ts",
+  "web/src/__tests__/AppWithChat.test.tsx"
+ ],
+ "WB12": [
+  "web/src/__tests__/bridge/bridge-spec-surfaces.test.ts"
+ ],
+ "WB13": [
+  "web/src/__tests__/bridge/bridge-spec-surfaces.test.ts"
+ ],
+ "WB14": [
+  "web/src/__tests__/bridge/bridge-spec-surfaces.test.ts"
+ ],
+ "WB15": [
+  "web/src/__tests__/bridge/bridge-open.test.ts"
+ ],
+ "WB16": [
+  "web/src/__tests__/bridge/bridge-spec-surfaces.test.ts",
+  "web/src/__tests__/top-bar.test.tsx"
+ ],
+ "WB17": [
+  "web/src/__tests__/bridge/bridge-spec-surfaces.test.ts",
+  "web/src/__tests__/slot-renderer-target.test.tsx"
+ ],
+ "WB18": [
+  "web/src/__tests__/bridge/bridge-notify.test.ts"
+ ],
+ "WB19": [
+  "web/src/__tests__/bridge/bridge-spec-surfaces.test.ts"
+ ],
+ "WB2": [
+  "test/unit/bridge-extensions.test.ts"
+ ],
+ "WB20": [
+  "web/src/__tests__/bridge/bridge-spec-surfaces.test.ts",
+  "test/unit/bridge/host-capabilities.test.ts"
+ ],
+ "WB22": [
+  "web/src/__tests__/bridge/bridge-transport.test.ts",
+  "test/unit/bridge-extensions.test.ts"
+ ],
+ "WB23": [
+  "test/unit/bridge-validate.test.ts"
+ ],
+ "WB24": [
+  "test/unit/bridge-extensions.test.ts",
+  "web/src/__tests__/inline-app-view-theme.test.tsx",
+  "test/unit/bridge/host-extensions.test.ts"
+ ],
+ "WB25": [
+  "web/src/hooks/useServerNotificationRelay.test.ts",
+  "web/src/__tests__/bridge/bridge-tasks.test.ts"
+ ],
+ "WB26": [
+  "web/src/bridge/__tests__/iframe.test.ts",
+  "web/src/__tests__/bridge/bridge-target-origin.test.ts"
+ ],
+ "WB27": [
+  "test/unit/bridge/host-constants.test.ts"
+ ],
+ "WB3": [
+  "test/unit/bridge-extensions.test.ts"
+ ],
+ "WB4": [
+  "web/src/__tests__/bridge/bridge-transport.test.ts"
+ ],
+ "WB5": [
+  "web/src/__tests__/bridge/bridge-transport.test.ts"
+ ],
+ "WB6": [
+  "web/src/__tests__/bridge/bridge-resources.test.ts"
+ ],
+ "WB7": [
+  "web/src/__tests__/bridge/bridge-tasks.test.ts"
+ ],
+ "WB8": [
+  "test/unit/bridge-extensions.test.ts",
+  "web/src/__tests__/bridge/bridge-spec-surfaces.test.ts"
+ ],
+ "WB9": [
+  "test/unit/bridge-extensions.test.ts",
+  "web/src/__tests__/bridge/bridge-spec-surfaces.test.ts"
+ ],
+ "WS1": [
+  "web/src/__tests__/workspace-nav.test.tsx"
+ ],
+ "WS10": [
+  "web/src/lib/streamdown-config.test.tsx"
+ ],
+ "WS12": [
+  "web/src/__tests__/chat-panel-model-control.test.tsx"
+ ],
+ "WS13": [
+  "web/src/__tests__/inline-app-view-theme.test.tsx",
+  "web/src/__tests__/personal-app-inline.test.tsx"
+ ],
+ "WS14": [
+  "web/src/__tests__/ArtifactPanel.test.tsx"
+ ],
+ "WS15": [
+  "web/src/__tests__/plugin-request-card.test.tsx"
+ ],
+ "WS17": [
+  "web/src/__tests__/sidebar-drawer-navigation.test.tsx"
+ ],
+ "WS18": [
+  "web/src/__tests__/useEvents.test.tsx",
+  "web/src/__tests__/events-client.test.ts"
+ ],
+ "WS2": [
+  "web/src/__tests__/top-bar.test.tsx"
+ ],
+ "WS3": [
+  "web/src/__tests__/chat-panel-workspace-rescope.test.tsx",
+  "web/src/__tests__/workspace-list-refresh.test.tsx"
+ ],
+ "WS4": [
+  "web/src/__tests__/inbox-preview.test.tsx",
+  "web/src/__tests__/workspace-unread.test.tsx"
+ ],
+ "WS7": [
+  "web/src/__tests__/resize-handle.test.tsx",
+  "web/src/__tests__/chat-panel-closed-inert.test.tsx"
+ ],
+ "WS8": [
+  "web/src/api/conversation-stream.test.ts",
+  "web/src/__tests__/chat-panel-composer-busy.test.tsx"
+ ],
+ "WS9": [
+  "web/src/__tests__/message-input-file-limits.test.tsx",
+  "web/src/lib/attachment-limits.test.ts"
+ ]
+}
