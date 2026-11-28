@@ -128,6 +128,7 @@ describe("skills source — tools list", () => {
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       "activate",
+      "copy",
       "create",
       "deactivate",
       "delete",
@@ -230,6 +231,7 @@ describe("skills source — unattended-run wall", () => {
     "restore",
     "set_status",
     "set_here",
+    "copy",
   ];
   const READS = ["list", "read", "history", "loading_log"];
 

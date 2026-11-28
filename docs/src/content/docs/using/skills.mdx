@@ -168,6 +168,12 @@ It reaches the agent before its first call to one of those tools, on the same ca
 
 What a connector's author wants every workspace to know is the server's own guidance: its `instructions` and the [skills it publishes](#skills-published-by-an-mcp-server). The host does not read an `app://instructions` resource; text a server publishes there does not reach the prompt.
 
+## Managed skills
+
+A skill a plugin brought with it is **managed**: installing the plugin from a catalog wrote it, and the plugin owns it. Updating the plugin replaces it, and uninstalling the plugin removes it. A skill bound to one of the plugin's servers (it names the server under `metadata.nimblebrain.server`) is that connector's overlay, below. Any other loads like an authored skill, listed under the name `plugin:<plugin>@<catalog>:<skill>` so two plugins never shadow each other.
+
+A managed skill is read-only. `skills__update`, `skills__delete`, `skills__restore` and `skills__set_status` refuse it and say so. To change one, make your own copy with `skills__copy` (`id`, and an optional `name`): the copy is a personal skill you can edit, and no plugin update or uninstall touches it.
+
 ## Connector skill overlays
 
 Installing a connector can automatically apply a short **usage overlay** — curated guidance for *that* connector's tools (e.g. "confirm the recipient before sending mail"). Overlays target the connectors you don't author yourself (Composio and other third-party MCP servers). Each one is a skill in that connector's plugin in the [NimbleBrain catalog](https://catalog.nimblebrain.ai): the plugin names its server by registry name (`com.google/gmail`), and the skill names that server under `metadata.nimblebrain.server`. A connector whose server no catalog plugin binds a skill to gets no overlay.
@@ -185,7 +191,7 @@ Resolution is **always on and fail-soft**. The runtime reads the catalog's Nimbl
 | `NB_PLUGIN_CATALOG_URL` | `https://catalog.nimblebrain.ai` | The catalog to read; the [connector list](/config/connectors-catalog/#where-the-connector-list-lives) comes from it too |
 | `NB_PLUGIN_CATALOG_SHA256` | compiled into the release | The pin: `sha256sum` of the catalog's `nimblebrain/marketplace.json`, read from `nimblebrain/marketplace/<sha256>.json` |
 
-Uninstalling the connector removes its materialized overlays.
+Uninstalling the connector removes its materialized overlays. A connector installed as a plugin takes its overlays from the plugin's own archive at install, not from the pinned index, and uninstalling or updating the plugin removes or replaces exactly those.
 
 ## Skills published by an MCP server
 

@@ -22,7 +22,7 @@
  */
 
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { Value } from "@sinclair/typebox/value";
 import { isToolEnabled, type ResolvedFeatures } from "../../config/features.ts";
 import type { ConversationEvent } from "../../conversation/types.ts";
@@ -55,6 +55,7 @@ import {
   resolveLoadingMechanism,
   type SkillLoadingMechanism,
 } from "../../skills/loading.ts";
+import { isManagedSkillPath, managedSkillPlugin } from "../../skills/managed-skills.ts";
 import {
   DEFAULT_LOADING_STRATEGY,
   DEFAULT_SKILL_PRIORITY,
@@ -100,6 +101,8 @@ import {
   SkillPriority,
   SkillsActivateInput,
   SkillsActivationOutput,
+  SkillsCopyInput,
+  SkillsCopyOutput,
   SkillsCreateInput,
   SkillsDeactivateInput,
   SkillsDeleteInput,
@@ -180,7 +183,8 @@ const SKILLS_UPDATE_DESCRIPTION =
   "`body` you MUST also pass `body_mode`: `append` adds it to the skill (use this to add a " +
   "rule — it keeps everything already there), `replace` overwrites the whole body. Snapshots " +
   "the current version to `_versions/` first; `skills__history` lists those snapshots and " +
-  "`skills__restore` puts one back. Connector (Layer 1) skills are not editable. A change that " +
+  "`skills__restore` puts one back. Connector (Layer 1) skills are not editable, nor is a " +
+  "plugin's managed skill: copy that with `skills__copy` and edit the copy. A change that " +
   "leaves a skill loading on its own (`always`, `tool-affinity` or `triggers`: setting one, or " +
   "editing a skill that already has one) is refused: the user makes it in Skills settings.";
 
@@ -209,6 +213,15 @@ const SKILLS_DELETE_DESCRIPTION =
   "Snapshots to `_versions/` before removing the live file. Confirm with the user before " +
   "deleting org- or workspace-scope skills. Connector (Layer 1) skills cannot be deleted via " +
   "the platform — those ship with the connector.";
+
+const SKILLS_COPY_DESCRIPTION =
+  "Copy a skill you can read into an editable personal (user-scope) skill. The `id` is the " +
+  "filesystem path returned by `skills__list`. Use it for a plugin's managed skill, which is " +
+  "read-only: the plugin replaces it on update and removes it on uninstall, while the copy is " +
+  "yours and no plugin touches it (nor does it receive the plugin's updates). `name` defaults " +
+  "to the original's file name; a personal skill of that name already existing is refused. A " +
+  "copy that would load on its own (`always`, `tool-affinity` or `triggers`) is refused: the " +
+  "user makes it in Skills settings.";
 
 const SKILLS_SET_STATUS_DESCRIPTION =
   "Durably enable or disable a skill by writing `status` to its frontmatter. INTERNAL: the Skills " +
@@ -443,6 +456,20 @@ export function createSkillsSource(
       handler: async (input) => {
         try {
           return await deleteSkillHandler(runtime, input, eventSink, authoringGuidePath);
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    }),
+    typedTool({
+      name: "copy",
+      description: SKILLS_COPY_DESCRIPTION,
+      meta: { ...WORKSPACE_OPTIONAL_META },
+      inputSchema: SkillsCopyInput,
+      outputSchema: SkillsCopyOutput,
+      handler: async (input) => {
+        try {
+          return await copySkillHandler(runtime, input, eventSink, authoringGuidePath);
         } catch (err) {
           return errorResult(err);
         }
@@ -839,7 +866,12 @@ function realPathInSkillDirOrThrow(
   const inConnectorRoot = connectorSkillRoots(authoringGuidePath)
     .map(realOrSelf)
     .some((root) => real === root || real.startsWith(`${root}/`));
-  if (!inConnectorRoot && !skillTierOfPath(realOrSelf(runtime.getWorkDir()), real)) {
+  const realWorkDir = realOrSelf(runtime.getWorkDir());
+  if (
+    !inConnectorRoot &&
+    !skillTierOfPath(realWorkDir, real) &&
+    !isManagedSkillPath(realWorkDir, real)
+  ) {
     throw new Error(`Skill path "${target}" resolves through a symlink outside allowed roots`);
   }
   return real;
@@ -893,6 +925,21 @@ function assertSymlinkBoundaryOrThrow(
   // the same skills-directory rule as `scopeOfPath`: a link out of `skills/`
   // into the rest of the workspace or user tree is not in any tier.
   const realScope: WritableScope | "provided" = skillTierOfPath(realWorkDir, real) ?? "provided";
+
+  // A managed skill links only within its own owner's managed stores.
+  if (isManagedSkillPath(workDir, target)) {
+    const owner = (p: string, base: string) =>
+      relative(resolve(base), p).split(sep).slice(0, 2).join("/");
+    if (
+      !isManagedSkillPath(realWorkDir, real) ||
+      owner(real, realWorkDir) !== owner(resolve(target), workDir)
+    ) {
+      throw new Error(
+        `Skill path "${target}" resolves through a symlink outside its plugin's store`,
+      );
+    }
+    return;
+  }
 
   if (realScope !== expectedScope) {
     throw new Error(
@@ -1594,6 +1641,9 @@ async function checkPathAccess(
 
   const workDir = runtime.getWorkDir();
 
+  if (isManagedSkillPath(workDir, path)) {
+    return managedSkillAccess(runtime, path, workDir, identity, mode);
+  }
   if (scope === "provided") return connectorAccess(mode);
   if (scope === "org") return orgAccess(mode, ORG_ADMIN_ROLES.has(identity.orgRole));
   if (scope === "user") return userScopeAccess(path, workDir, identity);
@@ -1602,6 +1652,25 @@ async function checkPathAccess(
 
 /** Authenticated caller identity — the non-null shape `checkPathAccess` has already gated on. */
 type SkillIdentity = NonNullable<ReturnType<Runtime["getCurrentIdentity"]>>;
+
+/**
+ * A plugin's managed skill: read under its owner's wall (a member of the
+ * workspace whose store holds it, or the person whose store does), never
+ * written.
+ */
+async function managedSkillAccess(
+  runtime: Runtime,
+  path: string,
+  workDir: string,
+  identity: SkillIdentity,
+  mode: AccessMode,
+): Promise<PermissionDecision> {
+  if (mode === "write") {
+    return { allowed: false, reason: managedSkillMessage(path) };
+  }
+  if (extractUserIdFromPath(path, workDir)) return userScopeAccess(path, workDir, identity);
+  return workspaceScopeAccess(runtime, path, workDir, identity, "read");
+}
 
 /** Connector-tier access: Layer 1 vendored skills are world-readable, never mutable. */
 function connectorAccess(mode: AccessMode): PermissionDecision {
@@ -1742,6 +1811,8 @@ function scopeOfPath(
 ): WritableScope | "provided" | null {
   const tier = skillTierOfPath(runtime.getWorkDir(), path);
   if (tier) return tier;
+  // A plugin's managed skill: read-only, read under its owner's wall.
+  if (isManagedSkillPath(runtime.getWorkDir(), path)) return "provided";
   const real = resolve(path);
   for (const root of connectorSkillRoots(authoringGuidePath)) {
     if (real === root || real.startsWith(`${root}/`)) return "provided";
@@ -1838,6 +1909,43 @@ function currentRoleHint(runtime: Runtime, scope: WritableScope | "provided"): s
     return `org=${identity.orgRole}`;
   }
   return identity.orgRole;
+}
+
+/**
+ * Why a plugin's managed skill is not edited in place, and what to do instead.
+ * Names the skill and its plugin when the file says them.
+ */
+function managedSkillMessage(path: string): string {
+  let name = (path.split("/").pop() ?? "").replace(/\.md$/, "");
+  let address: string | null = null;
+  try {
+    const skill = existsSync(path) ? parseSkillFile(path) : null;
+    if (skill) {
+      name = skill.manifest.name;
+      address = managedSkillPlugin(skill.manifest.provenance?.source);
+    }
+  } catch {
+    // An unreadable file is still in a plugin's store, and still not edited here.
+  }
+  return (
+    `"${name}" is managed by ${address ? `the plugin ${address}` : "a plugin"}: it is replaced ` +
+    "when the plugin updates and removed when it is uninstalled. Make your own copy with " +
+    "skills__copy, then edit the copy."
+  );
+}
+
+/** The error a write to a managed skill returns. */
+function managedNotMutable(path: string): ToolErrorResult {
+  const message = managedSkillMessage(path);
+  return {
+    content: textContent(message),
+    structuredContent: {
+      error: "skill_managed_by_plugin",
+      suggested_action: "copy_with_skills__copy",
+      message,
+    },
+    isError: true,
+  };
 }
 
 function connectorNotMutable(): ToolErrorResult {
@@ -2524,6 +2632,9 @@ async function gateSkillPath(
   const snapErr = snapshotPathError(id);
   if (snapErr) return { error: snapErr };
   if (id.startsWith(SKILL_URI_PREFIX)) return { error: connectorNotMutable() };
+  if (access === "write" && isManagedSkillPath(runtime.getWorkDir(), id)) {
+    return { error: managedNotMutable(id) };
+  }
   const scope = scopeOfPath(runtime, id, authoringGuidePath);
   if (scope === "provided") return { error: connectorNotMutable() };
   if (!scope) return { error: errorResult(new Error(unrecognizedIdMessage(id))) };
@@ -2636,6 +2747,112 @@ async function restoreSkillHandler(
     structuredContent: { id: path, name, scope: gate.scope, version },
     isError: false,
   };
+}
+
+/**
+ * `skills__copy`: an editable personal skill from one the caller can read. The
+ * original is read through the same gates `skills__read` runs; the copy is
+ * written as `skills__create` writes a user-scope skill, so it obeys the same
+ * auto-load rule. It carries the original's manifest and body and an `import`
+ * provenance naming where it came from, so nothing marks it as a plugin's.
+ */
+async function copySkillHandler(
+  runtime: Runtime,
+  input: SkillsCopyInput,
+  eventSink: EventSink,
+  authoringGuidePath: string,
+): Promise<TypedToolResult<typeof SkillsCopyOutput>> {
+  const { id } = input;
+  if (!id || id.startsWith(SKILL_URI_PREFIX)) {
+    return errorResult(new Error("`id` must be a skill's filesystem path from skills__list."));
+  }
+  const gate = await gateCopySource(runtime, id, authoringGuidePath);
+  if (gate) return gate;
+  const original = parseSkillFile(id);
+  if (!original) return errorResult(new Error(`Skill at "${id}" could not be parsed`));
+
+  const name = input.name ?? (id.split("/").pop() ?? "").replace(/\.md$/, "");
+  assertValidName(name);
+  let dir: string;
+  try {
+    dir = scopeDir(runtime, "user");
+  } catch (err) {
+    return errorResult(err);
+  }
+  const target = join(dir, `${name}.md`);
+  const permission = await checkPathAccess(runtime, target, "user", "write");
+  if (!permission.allowed) {
+    return permissionDenied(permission.reason ?? "Permission denied", {
+      path: target,
+      scope: "user",
+    });
+  }
+  if (existsSync(target)) {
+    return errorResult(
+      new Error(`You already have a skill named "${name}". Pass another \`name\` for the copy.`),
+    );
+  }
+
+  const now = new Date().toISOString();
+  const createdBy = runtime.getCurrentIdentity()?.id;
+  const { scope: _scope, provenance: _provenance, ...rest } = original.manifest;
+  const manifest: SkillManifest = {
+    ...rest,
+    name,
+    status: "active",
+    provenance: {
+      origin: "import",
+      source: id,
+      createdAt: now,
+      updatedAt: now,
+      ...(createdBy ? { createdBy } : {}),
+    },
+  };
+  const autoLoad = autoLoadWriteRefusal(manifest, undefined);
+  if (autoLoad) return autoLoad;
+  try {
+    writeSkill(dir, name, manifest, original.body);
+  } catch (err) {
+    return errorResult(err instanceof Error ? err : new Error(String(err)));
+  }
+  await reloadBootSkills(runtime);
+  eventSink.emit({ type: "skill.created", data: { id: target, name, scope: "user" } });
+  return {
+    content: textContent(
+      `Copied "${original.manifest.name}" to your own skill "${name}" → ${target}. Edit the copy; ` +
+        "it does not receive the original's updates.",
+    ),
+    structuredContent: { id: target, name, scope: "user", copiedFrom: id },
+    isError: false,
+  };
+}
+
+/** The read gates a copy's original passes, or the error that stops it. */
+async function gateCopySource(
+  runtime: Runtime,
+  id: string,
+  authoringGuidePath: string,
+): Promise<ToolErrorResult | null> {
+  const snapErr = snapshotPathError(id);
+  if (snapErr) return snapErr;
+  const scope = scopeOfPath(runtime, id, authoringGuidePath);
+  if (!scope) return errorResult(new Error(unrecognizedIdMessage(id)));
+  if (!existsSync(id)) {
+    return errorResult(
+      new Error(`Skill not found at "${id}". Call skills__list to get current paths.`),
+    );
+  }
+  const permission = await checkPathAccess(runtime, id, scope, "read");
+  if (!permission.allowed) {
+    return permissionDenied(permission.reason ?? "Permission denied", { path: id, scope });
+  }
+  try {
+    realPathInSkillDirOrThrow(runtime, id, authoringGuidePath);
+    assertSymlinkBoundaryOrThrow(runtime, id, scope);
+  } catch (err) {
+    return errorResult(err);
+  }
+  return null;
 }
 
 async function deleteSkillHandler(

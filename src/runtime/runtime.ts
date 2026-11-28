@@ -272,6 +272,7 @@ import {
   parseSkillFile,
   partitionSkills,
 } from "../skills/loader.ts";
+import { loadManagedPoolSkills, managedSkillRoots } from "../skills/managed-skills.ts";
 import { type SkillMatch, SkillMatcher } from "../skills/matcher.ts";
 import { partitionSkillsByRole } from "../skills/select.ts";
 import {
@@ -6694,15 +6695,35 @@ export class Runtime {
 
     // No workspace in the request (the org and profile settings pages): there
     // is no workspace tier to merge, so org and user skills list as themselves.
+    // A plugin's unbound managed skills join their owner's pool ahead of the
+    // owner's authored skills, read-only and named `plugin:<address>:<skill>`.
     const workspacePool = wsId
-      ? loadScopedSkills(this.getWorkspaceContext(wsId).getDataPath("skills"), "workspace")
+      ? [
+          ...loadManagedPoolSkills(
+            managedSkillRoots(workDir, { kind: "workspace", wsId }).pluginSkills,
+          ),
+          ...loadScopedSkills(this.getWorkspaceContext(wsId).getDataPath("skills"), "workspace"),
+        ]
       : [];
 
     const userPool = userId
-      ? loadUserTierSkills(workDir, userId, options.keepOffHere ? null : wsId)
+      ? [
+          ...this.userManagedSkills(workDir, userId, options.keepOffHere ? null : wsId),
+          ...loadUserTierSkills(workDir, userId, options.keepOffHere ? null : wsId),
+        ]
       : [];
 
     return mergeScopedSkills(orgPool, workspacePool, userPool);
+  }
+
+  /** A person's plugins' unbound managed skills, less the ones they turned off in `wsId`. */
+  private userManagedSkills(workDir: string, userId: string, wsId: string | null): Skill[] {
+    const skills = loadManagedPoolSkills(
+      managedSkillRoots(workDir, { kind: "person", userId }).pluginSkills,
+    );
+    if (!wsId || skills.length === 0) return skills;
+    const off = skillsOffIn(workDir, userId, wsId);
+    return off.size === 0 ? skills : skills.filter((s) => !off.has(s.manifest.name));
   }
 
   /**

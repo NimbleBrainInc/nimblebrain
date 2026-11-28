@@ -66,6 +66,7 @@ export const FEATURE_TOOL_MAP: Record<string, keyof FeatureFlags> = {
   skills__restore: "skillManagement",
   skills__set_status: "skillManagement",
   skills__set_here: "skillManagement",
+  skills__copy: "skillManagement",
   // Unprefixed names (used during system tool registration)
   manage_users: "userManagement",
   manage_workspaces: "workspaceManagement",
