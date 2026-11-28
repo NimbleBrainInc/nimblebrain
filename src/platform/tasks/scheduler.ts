@@ -2022,11 +2022,7 @@ export class Scheduler {
     let minDelay = MAX_TIMER_MS;
 
     for (const auto of this.definitions.values()) {
-      if (!auto.enabled) continue;
-      // Never arms a timer: an event schedule's absent `nextRunAt` is not a
-      // pending first run, and reading it as one would spin the timer at zero
-      // delay for as long as such a task exists.
-      if (isEventSchedule(auto.schedule)) continue;
+      if (!this.isTimerCandidate(auto)) continue;
       if (!auto.nextRunAt) {
         if (!dueWithoutNextRunAt(auto)) continue;
         // Due immediately
@@ -2046,10 +2042,17 @@ export class Scheduler {
     this.timer = runDetached(() => setTimeout(() => this.onTimer(), minDelay));
   }
 
+  /** An active run still owns its due time; event schedules have no timer. */
+  private isTimerCandidate(auto: Task): boolean {
+    return (
+      auto.enabled && !this.activeRuns.has(Scheduler.keyOf(auto)) && !isEventSchedule(auto.schedule)
+    );
+  }
+
   /**
    * Timer callback. Iterates enabled definitions, checks due + backoff +
-   * concurrency, and dispatches runs. Awaits all dispatched runs before
-   * re-arming to ensure nextRunAt is updated before the next tick.
+   * concurrency, and dispatches runs. Each recorded run also re-arms the timer
+   * when it frees a slot, so a deferred task need not wait for the whole batch.
    */
   async onTimer(): Promise<void> {
     if (!this.running) return;
@@ -2058,28 +2061,20 @@ export class Scheduler {
     const dispatched: Promise<TaskRun>[] = [];
 
     for (const auto of byNextRunAt(this.definitions.values())) {
-      // One task cannot take the timer down with it. `armTimer()` below
-      // is the only thing that re-arms, and the promise this runs inside is
-      // discarded by the `setTimeout` that scheduled it — so a throw reaching
-      // here would stop the scheduler for EVERY workspace, silently and until
-      // the process restarts. `recordSkipped` writes to the store before it
-      // reads, so a store that refuses a write (a workspace archived under a
-      // run) is one way to throw. That refusal is permanent — the workspace is
-      // gone — and it lands before `nextRunAt` advances, so the task is
-      // dropped as `dropWorkspace` would have; kept, it stays due and the timer
-      // re-arms at zero delay.
+      // A sync dispatch error or a rejected run must not stop the sweep. A
+      // deleted workspace's task is dropped: its stale nextRunAt would
+      // otherwise re-arm the timer at zero delay forever.
       try {
         const run = this.considerForDispatch(auto, now);
-        if (run) dispatched.push(run);
+        if (run)
+          dispatched.push(
+            run.catch((err) => {
+              this.sweepError(auto, err);
+              throw err;
+            }),
+          );
       } catch (err) {
-        if (err instanceof WorkspaceRootMissingError) {
-          this.definitions.delete(Scheduler.keyOf(auto));
-        }
-        log.warn("[tasks] scheduler sweep skipped one task", {
-          taskId: auto.id,
-          workspaceId: auto.workspaceId,
-          error: err instanceof Error ? err.message : String(err),
-        });
+        this.sweepError(auto, err);
       }
     }
 
@@ -2094,6 +2089,16 @@ export class Scheduler {
     this.armTimer();
   }
 
+  /** A deleted workspace cannot keep a due task in the timer's zero-delay loop. */
+  private sweepError(auto: Task, err: unknown): void {
+    if (err instanceof WorkspaceRootMissingError) this.definitions.delete(Scheduler.keyOf(auto));
+    log.warn("[tasks] scheduler sweep skipped one task", {
+      taskId: auto.id,
+      workspaceId: auto.workspaceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   /**
    * Whether `auto` runs on this tick, and the dispatched run when it does.
    *
@@ -2106,12 +2111,10 @@ export class Scheduler {
     if (!isDue(auto, now)) return null;
     if (isInBackoff(auto, now)) return null;
 
-    // Per-task concurrency guard
+    // An active task's past nextRunAt is its current occurrence, not another
+    // due run. Completion advances it; an overlapping tick records nothing.
     const key = Scheduler.keyOf(auto);
-    if (this.duplicateOf(key) === "Already running") {
-      this.recordSkipped(auto, "Previous run still active");
-      return null;
-    }
+    if (this.duplicateOf(key) === "Already running") return null;
 
     // The runtime's run slots are shared by every unattended run. A due run
     // with no free slot is deferred: no run is recorded and `nextRunAt` stays
@@ -2174,6 +2177,7 @@ export class Scheduler {
       trigger === "scheduled" && isOnceSchedule(auto.schedule) ? auto.schedule?.at : undefined;
 
     let recorded: { run: TaskRun; result: TaskRunResult | null };
+    let hasRecord = false;
     try {
       recorded = await this.executeAndRecord(auto, controller, {
         runId,
@@ -2185,6 +2189,7 @@ export class Scheduler {
         requested,
         batch: batchRun?.options,
       });
+      hasRecord = true;
     } finally {
       // The slot is free whether the run's record landed or its write threw.
       // Releasing it admits the next queued run. `executeTask` releases it as
@@ -2193,6 +2198,9 @@ export class Scheduler {
       this.activeInfo.delete(key);
       this.scheduledInFlight.delete(runId);
       lease.release();
+      // Re-arm only after updateAfterRun/runRecorded landed and the slot is
+      // free. A deferred due task can now run while sibling runs continue.
+      if (hasRecord) this.armTimer();
     }
     // After the slot is free and the task is no longer running, so a retry
     // the assessment asks for is an ordinary run.
@@ -2438,7 +2446,12 @@ export class Scheduler {
     // config edits) without clobbering them. Per-task files mean a
     // concurrent edit to a sibling task can never be lost here.
     const auto = loadTask(this.config.workDir, wsId, ownerId, task.id);
-    if (!auto) return;
+    if (!auto) {
+      // A task deleted while its run was active must leave the timer too:
+      // its in-memory nextRunAt still names the completed occurrence.
+      this.definitions.delete(Scheduler.keyOf(task));
+      return;
+    }
     // Stamp the authoritative workspace + owner (the path IS the binding) — same
     // backfill `loadAll` does on read, so `keyOf(auto)` below matches the
     // composite key the timer loaded under and heals any record missing them.

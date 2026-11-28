@@ -705,7 +705,7 @@ describe("Scheduler — cron schedule with no next run", () => {
     expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
   });
 
-  it("clears nextRunAt on a skipped run whose cron has no next run", async () => {
+  it("leaves an active cron occurrence alone until its run advances the schedule", async () => {
     const auto = makeTask({
       schedule: { type: "cron", expression: "* * * * *" },
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
@@ -715,20 +715,24 @@ describe("Scheduler — cron schedule with no next run", () => {
     const { executor, resolve } = createBlockingExecutor();
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
     scheduler.start();
-    scheduler.onTimer();
+    const firstTick = scheduler.onTimer();
     await new Promise((r) => setTimeout(r, 50));
 
-    // While the first run is still active, the schedule runs out of dates
-    // and the timer still holds a due run, so the next tick skips it.
+    // While the first run is active, the schedule runs out of dates. An
+    // overlapping tick must not create a second row for the same occurrence.
     const stored = loadDefs(tmpDir).get(auto.id)!;
     saveTask(tmpDir, WS, OWNER, { ...stored, schedule: PAST_YEAR });
     defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
     await scheduler.onTimer();
 
     expect(executor).toHaveBeenCalledTimes(1);
-    expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
+    expect(readRuns(tmpDir, WS, OWNER, auto.id)).toEqual([]);
+    expect(defOf(scheduler, auto.id)?.nextRunAt).toBeDefined();
 
     resolve(makeSuccessRun(auto.id));
+    await firstTick;
+    expect(readRuns(tmpDir, WS, OWNER, auto.id)).toHaveLength(1);
+    expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
     scheduler.stop();
   });
 
@@ -768,7 +772,7 @@ describe("Scheduler — concurrency", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("skips second run while first is active (per-task guard)", async () => {
+  it("does not record a skip for an overlapping tick while the run is active", async () => {
     const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
@@ -781,19 +785,24 @@ describe("Scheduler — concurrency", () => {
     scheduler.start();
 
     // Fire onTimer (don't await — executor blocks forever)
-    scheduler.onTimer();
+    const firstTick = scheduler.onTimer();
     // Yield to let microtasks settle (dispatch is sync, executor is async)
     await new Promise((r) => setTimeout(r, 50));
 
-    // The executor is running (blocking). Now trigger again.
+    // A task edit reloads the stale due time while the run is still active.
+    scheduler.reload();
+    // An overlapping tick must not record the same occurrence as skipped.
     scheduler.onTimer();
     await new Promise((r) => setTimeout(r, 50));
 
     // Executor should only have been called once
     expect(executor).toHaveBeenCalledTimes(1);
+    expect(readRuns(tmpDir, WS, OWNER, auto.id)).toEqual([]);
 
     // Resolve the blocking executor
     resolve(makeSuccessRun(auto.id));
+    await firstTick;
+    expect(readRuns(tmpDir, WS, OWNER, auto.id)).toHaveLength(1);
     scheduler.stop();
   });
 
@@ -816,6 +825,7 @@ describe("Scheduler — concurrency", () => {
     executor: Executor;
     callLog: string[];
     release: () => void;
+    releaseOne: () => void;
   } {
     const pending: Array<(run: TaskRun) => void> = [];
     const callLog: string[] = [];
@@ -828,8 +838,35 @@ describe("Scheduler — concurrency", () => {
     const release = () => {
       for (const r of pending.splice(0)) r(makeSuccessRun("any"));
     };
-    return { executor, callLog, release };
+    const releaseOne = () => pending.shift()?.(makeSuccessRun("any"));
+    return { executor, callLog, release, releaseOne };
   }
+
+  it("dispatches a deferred task when the first batch slot frees", async () => {
+    seedThreeDue(tmpDir);
+    const { executor, callLog, release, releaseOne } = createHeldExecutor();
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 2 }),
+    });
+    scheduler.start();
+    const tick = scheduler.onTimer();
+    let batchSettled = false;
+    void tick.then(() => {
+      batchSettled = true;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(callLog).toEqual(["auto-1", "auto-2"]);
+
+    releaseOne();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(callLog).toEqual(["auto-1", "auto-2", "auto-3"]);
+    expect(batchSettled).toBe(false);
+
+    release();
+    await tick;
+    scheduler.stop();
+  });
 
   it("test_global_limit_reached_defers_the_run_instead_of_skipping_it", async () => {
     const [, , auto3] = seedThreeDue(tmpDir);
@@ -1837,10 +1874,9 @@ describe("Scheduler — skipped runs advance nextRunAt", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("a skip refused because the workspace is gone drops the task instead of re-arming at zero delay", async () => {
-    // `recordSkipped` writes before it advances `nextRunAt`, so a refused
-    // write leaves the task due. Kept, the timer would re-arm at zero
-    // delay and sweep it again immediately, forever.
+  it("a run whose workspace disappears drops the task instead of re-arming at zero delay", async () => {
+    // Recording the completed run will fail after the workspace is removed.
+    // Kept, its old nextRunAt would re-arm at zero delay forever.
     const defs = new Map<string, Task>();
     defs.set(
       "auto-ghost",
@@ -1851,17 +1887,17 @@ describe("Scheduler — skipped runs advance nextRunAt", () => {
     );
     seedDefs(tmpDir, defs);
 
-    // Its first run is held open, so the next tick finds it still active and
-    // takes the `recordSkipped` path.
-    const { executor } = createBlockingExecutor();
+    const { executor, resolve } = createBlockingExecutor();
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
     scheduler.start();
-    scheduler.onTimer();
+    const firstTick = scheduler.onTimer();
     await new Promise((r) => setTimeout(r, 50));
     rmSync(join(tmpDir, "workspaces", WS), { recursive: true, force: true });
     defOf(scheduler, "auto-ghost")!.nextRunAt = new Date(Date.now() - 1000).toISOString();
 
     await scheduler.onTimer();
+    resolve(makeSuccessRun("auto-ghost"));
+    await firstTick;
 
     expect(defOf(scheduler, "auto-ghost")).toBeUndefined();
     expect(existsSync(join(tmpDir, "workspaces", WS))).toBe(false);
@@ -2561,7 +2597,7 @@ describe("Scheduler — cron schedule whose next run cannot be computed", () => 
     expect(loadDefs(tmpDir).get(auto.id)?.runCount).toBe(1);
   });
 
-  it("clears nextRunAt on a skipped run whose next run fails to compute", async () => {
+  it("an active run clears nextRunAt when its next time cannot be computed", async () => {
     const auto = makeTask({
       schedule: { type: "cron", expression: "* * * * *" },
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
@@ -2571,20 +2607,24 @@ describe("Scheduler — cron schedule whose next run cannot be computed", () => 
     const { executor, resolve } = createBlockingExecutor();
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
     scheduler.start();
-    scheduler.onTimer();
+    const firstTick = scheduler.onTimer();
     await new Promise((r) => setTimeout(r, 50));
 
-    // While the first run is still active, the timezone stops resolving and
-    // the timer still holds a due run, so the next tick skips it.
+    // While the run is active, the stored timezone stops resolving. An
+    // overlapping tick leaves its current occurrence alone.
     const stored = loadDefs(tmpDir).get(auto.id)!;
     saveTask(tmpDir, WS, OWNER, { ...stored, schedule: BAD_TZ });
     defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
     await scheduler.onTimer();
 
     expect(executor).toHaveBeenCalledTimes(1);
-    expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
+    expect(readRuns(tmpDir, WS, OWNER, auto.id)).toEqual([]);
+    expect(defOf(scheduler, auto.id)?.nextRunAt).toBeDefined();
 
     resolve(makeSuccessRun(auto.id));
+    await firstTick;
+    expect(readRuns(tmpDir, WS, OWNER, auto.id)).toHaveLength(1);
+    expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
     scheduler.stop();
   });
 });
