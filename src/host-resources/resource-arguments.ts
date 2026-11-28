@@ -160,11 +160,14 @@ function accepts(spec: ResourceArgumentSpec, value: string): boolean {
  * workspace's (the calling connector holds no record-arguments grant); `too_large` is the
  * resource's own (over `maxChars`: drop the citation); `over_limit` is the
  * call's (too many URIs, or past the per-call size budget: split the call).
+ * `unavailable` is a failed or timed-out read from the serving connector; the
+ * caller may retry it.
  */
 export type ResourceArgumentErrorCode =
   | "scheme_not_declared"
   | "not_granted"
   | "not_found"
+  | "unavailable"
   | "ambiguous"
   | "not_text"
   | "too_large"
@@ -199,7 +202,7 @@ export interface ResourceServingSource {
   readonly name: string;
   /** The server's `resources/templates/list`. */
   resourceTemplates(): Promise<readonly { uriTemplate: string }[]>;
-  /** The server's `resources/read` result contents, or null when it returned nothing or failed. */
+  /** The server's `resources/read` contents, null for a miss, or a rejection on failure. */
   readResourceContents(
     uri: string,
     opts?: { signal?: AbortSignal },
@@ -244,9 +247,40 @@ export interface ResourceArgumentsResolverDeps {
   /** Most bytes of resolved text per call. */
   maxSize?: number;
   maxUris?: number;
+  /** Per-read deadline; configurable for deterministic tests. */
+  readTimeoutMs?: number;
 }
 
 const NOT_FOUND_MESSAGE = "No connector in this workspace returned this resource.";
+const READ_TIMEOUT_MS = 15_000;
+const UNAVAILABLE_MESSAGE = "The serving connector could not read this resource; retry the call.";
+
+/** Bound a read even when its source ignores the abort signal. */
+async function readWithinDeadline<T>(
+  read: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  callerSignal?: AbortSignal,
+): Promise<T> {
+  if (callerSignal?.aborted) throw new Error("Resource read cancelled");
+  const controller = new AbortController();
+  let rejectAborted: (error: Error) => void = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    rejectAborted = reject;
+  });
+  const abort = () => {
+    if (controller.signal.aborted) return;
+    controller.abort();
+    rejectAborted(new Error("Resource read cancelled or timed out"));
+  };
+  const timer = setTimeout(abort, timeoutMs);
+  callerSignal?.addEventListener("abort", abort, { once: true });
+  try {
+    return await Promise.race([read(controller.signal), aborted]);
+  } finally {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", abort);
+  }
+}
 
 /**
  * Worst-case UTF-8 bytes of a string of `chars` UTF-16 code units: three per
@@ -274,10 +308,9 @@ const MAX_UTF8_BYTES_PER_CHAR = 3;
  * connector outside a narrowed grant reads as `not_found`, the same answer as
  * one no connector serves.
  *
- * "No connector serves it", "the read failed", and "the read returned nothing"
- * all collapse to `not_found`, as `ai.nimblebrain/resources/read` collapses
- * them: the calling connector learns nothing about what exists beyond the
- * contents it is handed. The real cause goes to the log.
+ * "No connector serves it" and "the read returned nothing" are `not_found`.
+ * A failed or timed-out read is `unavailable`, so the calling tool can retry.
+ * The real cause goes to the log, not to the calling connector.
  */
 export function createResourceArgumentsResolver(
   deps: ResourceArgumentsResolverDeps,
@@ -333,12 +366,30 @@ export function createResourceArgumentsResolver(
         owner.name,
       );
     }
-    const contents = await owner
-      .readResourceContents(uri, ctx.signal ? { signal: ctx.signal } : undefined)
-      .catch(() => null);
+    return readFromOwner(uri, ctx, owner);
+  }
+
+  async function readFromOwner(
+    uri: string,
+    ctx: ResourceArgumentsContext,
+    owner: ResourceServingSource,
+  ): Promise<Outcome> {
+    let contents: ReadResourceResult["contents"] | null;
+    try {
+      contents = await readWithinDeadline(
+        (signal) => owner.readResourceContents(uri, { signal }),
+        deps.readTimeoutMs ?? READ_TIMEOUT_MS,
+        ctx.signal,
+      );
+    } catch (err) {
+      log.warn(
+        `[resource-arguments] [${ctx.connectorId}:${ctx.workspaceId}] read ${uri} from ${owner.name} unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return outcome(uri, "unavailable", UNAVAILABLE_MESSAGE, owner.name);
+    }
     if (!contents || contents.length === 0) {
       log.warn(
-        `[resource-arguments] [${ctx.connectorId}:${ctx.workspaceId}] read ${uri} from ${owner.name} returned nothing (collapsing to not_found)`,
+        `[resource-arguments] [${ctx.connectorId}:${ctx.workspaceId}] read ${uri} from ${owner.name} returned nothing`,
       );
       return outcome(uri, "not_found", NOT_FOUND_MESSAGE, owner.name);
     }

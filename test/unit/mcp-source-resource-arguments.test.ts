@@ -6,7 +6,7 @@
  * in-memory transports; the 2026-07-28 wire is covered over HTTP in
  * `test/integration/resource-arguments.test.ts`.
  */
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import type { EventSink } from "../../src/engine/types.ts";
 import {
@@ -41,7 +41,7 @@ function crmServer(): Server {
   }));
   server.setRequestHandler("resources/read", async (request) => {
     if (request.params.uri !== "crm://signals/42") {
-      throw new Error("not found");
+      throw new Error("resource not found");
     }
     return { contents: [{ uri: request.params.uri, mimeType: "application/json", text: SIGNAL }] };
   });
@@ -88,6 +88,23 @@ describe("McpSource resource arguments", () => {
   const started: McpSource[] = [];
   afterEach(async () => {
     await Promise.all(started.splice(0).map((s) => s.stop()));
+  });
+
+  it("surfaces an owner failure to the resolver while preserving the UI reader's null", async () => {
+    const crm = new McpSource(
+      "crm",
+      { type: "inProcess", createServer: async () => linked(crmServer()) },
+      NoopSink,
+    );
+    await crm.start();
+    started.push(crm);
+    const client = mcpSourceInternals(crm).client;
+    if (!client) throw new Error("CRM source did not start");
+    const read = spyOn(client, "readResource").mockRejectedValue(new Error("owner unavailable"));
+
+    await expect(crm.readResourceContents("crm://signals/42")).rejects.toThrow("owner unavailable");
+    expect(await crm.readResource("crm://signals/42")).toBeNull();
+    read.mockRestore();
   });
 
   async function setUp(opts: { withResolver: boolean }) {
