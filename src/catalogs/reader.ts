@@ -22,12 +22,21 @@
  *   cached copy is read, else the catalog lists nothing and the error says why.
  *   A failed read is retried after `RETRY_AFTER_MS` (or the interval, if
  *   shorter).
+ *
+ * Across catalogs, **one connection name is one server.** A server's
+ * connection is its registry name slugified (`slugifyServerName`), so two
+ * different registry names that slugify to one connection would install into
+ * one another's connection. The entry that names the later of them, in
+ * configuration order and then listing order, is dropped with a diagnostic on
+ * its catalog's snapshot ({@link refuseConnectionCollisions}). The same name
+ * from two catalogs is one server listed twice, not a collision.
  */
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ResolvedCatalog } from "../config/catalogs.ts";
+import { slugifyServerName } from "../connectors/runtime/paths.ts";
 import { log } from "../observability/log.ts";
 import { fetchBounded, sha256Hex } from "../util/pinned-fetch.ts";
 import {
@@ -118,9 +127,22 @@ export function createCatalogListings(opts: CatalogListingsOptions): CatalogList
     return current;
   };
 
+  // The last read's snapshots and what the collision pass made of them, so a
+  // caller gets the same objects until a catalog's snapshot changes.
+  let last: { read: CatalogSnapshot[]; out: CatalogSnapshot[] } | null = null;
+  const snapshots = async (): Promise<CatalogSnapshot[]> => {
+    const read = await Promise.all(opts.catalogs.map((c) => one(c)));
+    if (last && read.length === last.read.length && read.every((s, i) => s === last?.read[i])) {
+      return last.out;
+    }
+    const out = refuseConnectionCollisions(read);
+    last = { read, out };
+    return out;
+  };
+
   return {
     catalogs: () => [...opts.catalogs],
-    snapshots: () => Promise.all(opts.catalogs.map((c) => one(c))),
+    snapshots,
     refresh: async () => {
       await Promise.all(
         opts.catalogs.map((c) => {
@@ -240,10 +262,53 @@ function readCache(
 
 function reportDiagnostics(catalog: ResolvedCatalog, diagnostics: ListingDiagnostic[]): void {
   for (const d of diagnostics) {
+    const at = d.index === undefined ? "" : ` ${d.index}`;
     log.warn(
-      `[catalogs] catalog "${catalog.name}" entry ${d.index}${d.identifier ? ` (${d.identifier})` : ""} dropped: ${d.message}`,
+      `[catalogs] catalog "${catalog.name}" entry${at}${d.identifier ? ` (${d.identifier})` : ""} dropped: ${d.message}`,
     );
   }
+}
+
+/** Every registry name an entry lists: its extension's servers, or a bare connector's record. */
+function namesOf(entry: ListedEntry): string[] {
+  const names = Object.values(entry.servers).map((s) => s.name);
+  const data = entry.data as { name?: unknown } | undefined;
+  if (typeof data?.name === "string" && !names.includes(data.name)) names.push(data.name);
+  return names;
+}
+
+/**
+ * Drop each entry that names a server whose connection an earlier entry's
+ * different server already takes, in configuration then listing order, with a
+ * diagnostic on its snapshot. Snapshots with nothing dropped are returned as
+ * they are.
+ */
+export function refuseConnectionCollisions(snapshots: CatalogSnapshot[]): CatalogSnapshot[] {
+  const taken = new Map<string, { name: string; address: string }>();
+  return snapshots.map((snapshot) => {
+    const kept: ListedEntry[] = [];
+    const dropped: ListingDiagnostic[] = [];
+    for (const entry of snapshot.entries) {
+      const clash = namesOf(entry)
+        .map((name) => ({ name, prior: taken.get(slugifyServerName(name)) }))
+        .find(({ name, prior }) => prior && prior.name !== name);
+      if (clash?.prior) {
+        dropped.push({
+          identifier: entry.identifier,
+          message: `its server "${clash.name}" takes connection "${slugifyServerName(clash.name)}", which "${clash.prior.name}" (${clash.prior.address}) already takes`,
+        });
+        continue;
+      }
+      for (const name of namesOf(entry)) {
+        const key = slugifyServerName(name);
+        if (!taken.has(key)) taken.set(key, { name, address: entry.address });
+      }
+      kept.push(entry);
+    }
+    if (dropped.length === 0) return snapshot;
+    reportDiagnostics(snapshot.catalog, dropped);
+    return { ...snapshot, entries: kept, diagnostics: [...snapshot.diagnostics, ...dropped] };
+  });
 }
 
 /** A catalog's cache directory name: a digest of its source, so a rename keeps its copy. */

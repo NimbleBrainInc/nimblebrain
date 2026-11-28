@@ -71,7 +71,8 @@ export interface ListedEntry {
 
 /** Something wrong with one entry, which was dropped. */
 export interface ListingDiagnostic {
-  index: number;
+  /** The entry's position in its document; absent for one dropped across catalogs. */
+  index?: number;
   identifier?: string;
   message: string;
 }

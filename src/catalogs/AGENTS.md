@@ -44,6 +44,11 @@ Scope: `src/catalogs/`. The AI Catalog listings the operator names in `catalogs`
   `{servers: [...]}` files with `bun run catalog:convert` and mounts the listing it writes.
 - **Catalogs sit side by side.** The same server from two catalogs is a row under each; there
   is no precedence, dedupe or merge between catalogs.
+- **One connection name is one server.** Two different registry names that slugify to one
+  connection would install into each other's connection, so `snapshots()` drops the entry
+  naming the later one (configuration order, then listing order) with a diagnostic on its
+  snapshot (`refuseConnectionCollisions`). A dropped entry makes its listing not clean, so it is
+  neither "no longer offered" nor removed by the required reconcile.
 - **`entry-extension.ts` (TypeBox) is the source of
   `schemas/catalog-entry-extension/v1/catalog-entry-extension.schema.json`**, which
   `listing.ts` validates against. Edit the TypeBox, run `bun run emit:catalog-entry-extension`;
