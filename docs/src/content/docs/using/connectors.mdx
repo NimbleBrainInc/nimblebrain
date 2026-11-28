@@ -59,7 +59,11 @@ A plugin is three things, and each has one action that ends it. The verbs are th
 
 **Sign out** appears only for a connection someone signed in to: the **dcr** and **static** kinds, and a brokered connector whose broker can reconnect it, such as an OAuth **composio** toolkit. Signing out is reversible — **Connect** re-runs that sign-in, with the same or another account. A **provider** connector (one of the platform's own services) or one with a stored credential has no sign-in, so there is nothing to sign out of and the menu does not offer it; take it out with **Remove**.
 
+For a workspace OAuth connection, Sign out gives the vendor up to 15 seconds to revoke its tokens, then clears the local OAuth records even if the vendor does not respond.
+
 Sign out is shared: it signs the connector out for everyone in the workspace, and asks you to confirm first. The connector stays installed with its tool permissions and settings, and reads **Not signed in** with a **Connect** action — a resting state, not an error. The agent can't use it until someone signs in again. To take it out entirely, use **Remove**, which removes it for everyone in the workspace. A connection that stops working without anyone signing it out (the vendor revoked or expired its access) reads **Reconnect** in amber instead, because someone needs to act on it. **provider** and **smithery** connectors have no interactive sign-in: their credential is held by the platform or the broker, so they reconnect without prompting you.
+
+If a sealed OAuth credential can no longer be opened, Sign out still clears the local records so Connect can start fresh. The old token cannot be revoked upstream in that case; revoke it at the vendor if needed.
 
 If the workspace connector is already connected, sign out before connecting a different account. A Connect request made while it is still connected is refused without changing the existing connection.
 

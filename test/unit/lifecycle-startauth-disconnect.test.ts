@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +14,7 @@ import { log } from "../../src/observability/log.ts";
 import { hasMcpOAuthAuthLost, McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
-import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -155,6 +155,73 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
   beforeEach(() => {
     sink = new CapturingSink();
     lifecycle = new ConnectorLifecycleManager(sink);
+  });
+
+  test("passes an abort signal to workspace OAuth revocation", async () => {
+    const wsId = "ws_0076759dbbe19fcc";
+    seedWorkspaceRoot(workDir, wsId);
+    const instance = seedInstance(lifecycle, "granola", wsId, "workspace", {
+      url: "https://example.test/mcp",
+      serverName: "granola",
+    });
+    const revoke = spyOn(
+      WorkspaceOAuthProvider.prototype,
+      "revokeAndDeleteTokens",
+    ).mockImplementation(async function (this: WorkspaceOAuthProvider) {
+      const signal = Reflect.get(this, "abortSignal");
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal.aborted).toBe(false);
+      return { revoked: {}, deletedLocal: true };
+    });
+    try {
+      await lifecycle.disconnect("granola", wsId, "_workspace", { workDir });
+      expect(revoke).toHaveBeenCalledTimes(1);
+      expect(instance.connections?.get("_workspace")?.state).toBe("not_authenticated");
+    } finally {
+      revoke.mockRestore();
+    }
+  });
+
+  test("aborts a revocation that never settles after 15 seconds and still disconnects", async () => {
+    const wsId = "ws_0076759dbbe19fcc";
+    seedWorkspaceRoot(workDir, wsId);
+    const instance = seedInstance(lifecycle, "granola", wsId, "workspace", {
+      url: "https://example.test/mcp",
+      serverName: "granola",
+    });
+    let revokeStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      revokeStarted = resolve;
+    });
+    // An authorization server that accepts the connection and never answers:
+    // the revocation settles only when the lifecycle aborts its signal.
+    const revoke = spyOn(
+      WorkspaceOAuthProvider.prototype,
+      "revokeAndDeleteTokens",
+    ).mockImplementation(function (this: WorkspaceOAuthProvider) {
+      const signal: AbortSignal = Reflect.get(this, "abortSignal");
+      return new Promise((resolve) => {
+        signal.addEventListener("abort", () =>
+          resolve({ revoked: {}, deletedLocal: true, error: "revocation aborted" }),
+        );
+        revokeStarted();
+      });
+    });
+    jest.useFakeTimers();
+    try {
+      const pending = lifecycle.disconnect("granola", wsId, "_workspace", { workDir });
+      await started;
+      jest.advanceTimersByTime(14_999);
+      await Promise.resolve();
+      expect(instance.connections?.get("_workspace")?.state).not.toBe("not_authenticated");
+      jest.advanceTimersByTime(1);
+      const outcome = await pending;
+      expect(outcome.revokeError).toBe("revocation aborted");
+      expect(instance.connections?.get("_workspace")?.state).toBe("not_authenticated");
+    } finally {
+      jest.useRealTimers();
+      revoke.mockRestore();
+    }
   });
 
   test("rejects when connector is not installed", async () => {

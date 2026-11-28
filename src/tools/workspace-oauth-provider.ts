@@ -16,6 +16,7 @@ import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { log } from "../observability/log.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
+import { CredentialSealError } from "./credential-seal.ts";
 import { McpOAuthRecords } from "./mcp-oauth-records.ts";
 import {
   type AuthorizationResponse,
@@ -206,8 +207,8 @@ export interface WorkspaceOAuthProviderOptions {
    * AbortSignal threaded into every outbound `fetch()` the provider
    * makes — the redirect-probe loop in `redirectToAuthorization` and
    * the revocation requests in `revokeAndDeleteTokens`. Lifecycle
-   * aborts this when its 15s `startAuth` timeout fires (or when the
-   * race resolves cleanly), so an unresponsive auth server's TCP
+   * aborts this when a `startAuth` attempt fails or Disconnect's 15s
+   * revocation deadline expires, so an unresponsive auth server's TCP
    * read doesn't outlive the user's intent.
    *
    * Optional — flows started outside the lifecycle path (CLI utilities,
@@ -1848,7 +1849,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * Order of operations:
    *
    *   1. Read the stored tokens + DCR client info (or static client
-   *      from `oauthClient` / cached in-memory).
+   *      from `oauthClient` / cached in-memory). A sealed record that
+   *      cannot open skips revocation and goes straight to step 4,
+   *      clearing every record and reporting `error`.
    *   2. Discover the AS's `revocation_endpoint` via the well-known
    *      OAuth metadata path: `<server-origin>/.well-known/oauth-authorization-server`.
    *      We bind discovery to the connector URL's origin since that's the
@@ -1896,8 +1899,6 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       allowInsecure: this.allowInsecureRemotes,
       fleetInternal: false,
     });
-    const tokens = await this.readTokens("revoke");
-    const clientInfo = await this.clientInformation();
     const result: {
       revoked: { access?: boolean; refresh?: boolean };
       deletedLocal: boolean;
@@ -1906,6 +1907,24 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       revoked: {},
       deletedLocal: false,
     };
+    let tokens: OAuthTokens | undefined;
+    let clientInfo: OAuthClientInformationMixed | undefined;
+    try {
+      tokens = await this.readTokens("revoke");
+      clientInfo = await this.clientInformation();
+    } catch (err) {
+      if (!(err instanceof CredentialSealError)) throw err;
+      // Disconnect deliberately discards local credentials. A sealed record
+      // that cannot open prevents upstream revocation, but must not strand the
+      // connection in a state where Connect reads the same broken record.
+      log.warn(
+        `[oauth] ${this.serverName} skipping upstream revoke: stored credentials could not open (${err.reason}). Local records will be cleared.`,
+      );
+      await this.invalidateCredentials("all");
+      result.deletedLocal = true;
+      result.error = "Stored OAuth credentials could not be opened; upstream revocation skipped";
+      return result;
+    }
 
     // No tokens to revoke — just clear local state.
     if (!tokens) {
