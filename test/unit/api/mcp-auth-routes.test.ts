@@ -8,6 +8,7 @@ import { mcpAuthRoutes } from "../../../src/api/routes/mcp-auth.ts";
 import type { ApiErrorBody, OAuthInitiateResponse } from "../../../src/api/schemas/responses.ts";
 import type { AppContext, AppEnv } from "../../../src/api/types.ts";
 import {
+  ConnectorAlreadyConnectedError,
   ConnectorBusyError,
   type ConnectorLifecycleManager,
 } from "../../../src/connectors/runtime/lifecycle.ts";
@@ -299,6 +300,24 @@ describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
     expect(res.status).toBe(200);
     const body = await readJson<OAuthInitiateResponse>(res);
     expect(body.authorizationUrl).toBeNull();
+    expect(res.headers.get("Set-Cookie")).toBeNull();
+  });
+
+  test("returns 409 without a cookie when the workspace connector is already connected", async () => {
+    lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
+    spyOn(lifecycle, "startAuth").mockRejectedValue(new ConnectorAlreadyConnectedError("granola"));
+
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "granola" }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(await readJson<ApiErrorBody>(res)).toMatchObject({
+      error: "connector_already_connected",
+      message: "This connector is already connected. Sign out before connecting another account.",
+    });
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });
 

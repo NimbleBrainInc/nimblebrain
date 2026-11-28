@@ -65,6 +65,8 @@ Sign out is shared: it signs the connector out for everyone in the workspace, an
 
 If a sealed OAuth credential can no longer be opened, Sign out still clears the local records so Connect can start fresh. The old token cannot be revoked upstream in that case; revoke it at the vendor if needed.
 
+If the workspace connector is already connected, sign out before connecting a different account. A Connect request made while it is still connected is refused without changing the existing connection.
+
 ## The auth kinds
 
 Every connector declares how it authenticates. As a user you rarely need to care — the **Install / Connect** button does the right thing — but it explains what each one asks of you, and who had to set it up first.

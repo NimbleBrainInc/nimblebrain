@@ -123,6 +123,14 @@ export class ConnectorBusyError extends Error {
   }
 }
 
+/** A workspace connector is already running; changing its account requires a disconnect first. */
+export class ConnectorAlreadyConnectedError extends Error {
+  constructor(serverName: string) {
+    super(`[lifecycle] "${serverName}" is already connected — disconnect before reconnecting`);
+    this.name = "ConnectorAlreadyConnectedError";
+  }
+}
+
 // Connection states that end an OAuth flow's lifetime from the
 // coalesce-mutex's perspective. `starting` and `pending_auth` are
 // deliberately omitted — they are the in-flight states that the mutex
@@ -1037,9 +1045,7 @@ export class ConnectorLifecycleManager {
       return { authorizationUrl: existingConn.authorizationUrl };
     }
     if (existingConn?.state === "running") {
-      throw new Error(
-        `[lifecycle] principal "${principalId}" already connected to "${serverName}" — disconnect before reconnecting`,
-      );
+      throw new ConnectorAlreadyConnectedError(serverName);
     }
 
     // Tear down any stale source for this principal. Necessary after
