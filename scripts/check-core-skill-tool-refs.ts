@@ -1,20 +1,21 @@
 #!/usr/bin/env bun
 /**
- * Lint: tool and scope references in shipped core skills must resolve against
+ * Lint: tool and scope references in shipped skills must resolve against
  * the static tool contracts they describe.
  *
- * Core-skill Markdown can drift independently from the schemas AJV validates
+ * Shipped skill Markdown can drift independently from the schemas AJV validates
  * before a handler runs. A stale tool name or scope therefore teaches the model
  * to make a call the platform itself rejects. This check keeps that prose and
  * the statically declared contracts in lockstep without constructing a runtime.
  *
  * Scope: backticked and bold-marked references in Markdown files directly
- * under `src/skills/core/`. Both shapes declare contracts in these prompts — a
+ * under `src/skills/core/` and `src/skills/builtin/`. Both shapes declare contracts — a
  * bullet names its tool in bold and its arguments in backticks — so both are
  * checked. Tool contracts come from TypeScript files under
  * `src/tools/` (`nb__*`) and each platform app's `source.ts` / `schemas.ts`
- * declarations (`<source>__*`). Explicit examples for dynamically installed
- * connectors are syntax examples, so only their namespace shape is static.
+ * declarations (`<source>__*`). Platform app ids (`nb__<source>`) name a
+ * source, not a tool. Explicit examples for dynamically installed connectors
+ * are syntax examples, so only their namespace shape is static.
  */
 
 import { readFileSync } from "node:fs";
@@ -24,6 +25,7 @@ import * as ts from "typescript";
 
 const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const CORE_SKILLS_ROOT = join(ROOT, "src", "skills", "core");
+const BUILTIN_SKILLS_ROOT = join(ROOT, "src", "skills", "builtin");
 const TOOLS_ROOT = join(ROOT, "src", "tools");
 const PLATFORM_ROOT = join(ROOT, "src", "platform");
 
@@ -261,6 +263,7 @@ interface ValidationContext {
   contracts: ToolContract[];
   index: Map<string, ToolContract>;
   sources: Set<string>;
+  appIds: Set<string>;
   acceptedBySource: Map<string, string[]>;
 }
 
@@ -329,7 +332,12 @@ function validateMarkdownLine(
   context: ValidationContext,
   blockOwner: ToolContract | null,
 ): LineValidation {
-  const { tools, ownerTools, scopes } = markdownReferences(line);
+  const refs = markdownReferences(line);
+  const isAppId = (ref: LocatedReference) =>
+    context.appIds.has(ref.token) && !context.index.has(ref.token);
+  const tools = refs.tools.filter((ref) => !isAppId(ref));
+  const ownerTools = refs.ownerTools.filter((ref) => !isAppId(ref));
+  const { scopes } = refs;
   const references: string[] = [];
   const violations: ReferenceViolation[] = [];
 
@@ -360,7 +368,7 @@ function validateMarkdownLine(
   };
 }
 
-/** Validate one Markdown core skill against already-extracted contracts. */
+/** Validate one shipped Markdown skill against already-extracted contracts. */
 export function validateCoreSkill(
   file: string,
   markdown: string,
@@ -372,6 +380,11 @@ export function validateCoreSkill(
     contracts,
     index: contractIndex(contracts),
     sources: new Set(contracts.map((contract) => contract.source)),
+    appIds: new Set(
+      contracts
+        .filter((contract) => contract.source !== "nb")
+        .map((contract) => `nb__${contract.source}`),
+    ),
     acceptedBySource: acceptedToolsBySource(contracts),
   };
   const references = new Set<string>();
@@ -417,17 +430,19 @@ function main(): void {
   const violations: ReferenceViolation[] = [];
   let scanned = 0;
 
-  for (const rel of new Glob("*.md").scanSync({ cwd: CORE_SKILLS_ROOT })) {
-    const file = join(CORE_SKILLS_ROOT, rel);
-    const displayPath = relative(ROOT, file).split("\\").join("/");
-    const result = validateCoreSkill(displayPath, readFileSync(file, "utf-8"), contracts);
-    for (const reference of result.references) references.add(reference);
-    violations.push(...result.violations);
-    scanned++;
+  for (const root of [CORE_SKILLS_ROOT, BUILTIN_SKILLS_ROOT]) {
+    for (const rel of new Glob("*.md").scanSync({ cwd: root })) {
+      const file = join(root, rel);
+      const displayPath = relative(ROOT, file).split("\\").join("/");
+      const result = validateCoreSkill(displayPath, readFileSync(file, "utf-8"), contracts);
+      for (const reference of result.references) references.add(reference);
+      violations.push(...result.violations);
+      scanned++;
+    }
   }
 
   if (violations.length > 0) {
-    console.error(`✗ Found ${violations.length} invalid core-skill tool/schema reference(s):\n`);
+    console.error(`✗ Found ${violations.length} invalid shipped-skill tool/schema reference(s):\n`);
     for (const violation of violations) {
       console.error(`  ${violation.file}:${violation.line}  ${violation.token}`);
       console.error(`    owner: ${violation.owner}`);
@@ -437,7 +452,7 @@ function main(): void {
   }
 
   console.log(
-    `✓ ${references.size} distinct tool/scope references validated across ${scanned} core skills`,
+    `✓ ${references.size} distinct tool/scope references validated across ${scanned} shipped skills`,
   );
 }
 
