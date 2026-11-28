@@ -35,6 +35,11 @@ import { Input } from "../ui/input";
 export interface OAuthClientSetupTarget {
   /** Catalog entry id — what `set_oauth_client` writes against. */
   id: string;
+  /**
+   * The Browse row's address, for a plugin not installed yet: the server
+   * reads the entry's setup from that plugin's artifact.
+   */
+  address?: string;
   /** Display name, for the dialog's title. */
   name: string;
   /** Vendor portal + hint + the key the client secret is stored at. */
@@ -144,7 +149,7 @@ export function OAuthClientSetupModal({
     setBusy(true);
     setError(null);
     try {
-      await setConnectorOAuthClient(entry.id, clientId.trim(), clientSecret.trim());
+      await setConnectorOAuthClient(entry.id, clientId.trim(), clientSecret.trim(), entry.address);
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

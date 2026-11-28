@@ -149,11 +149,7 @@ describe("browseCatalog", () => {
     expect(entries.some((e) => e.address?.endsWith("@curated"))).toBe(false);
   });
 
-  test("an entry Browse cannot describe is left out: unlisted setup, several servers, another type", async () => {
-    const unlistedStatic = listingEntry({
-      name: "drive",
-      servers: { drive: { name: "com.google/drive", auth: "static" } },
-    });
+  test("an entry Browse cannot describe is left out: several servers, another type", async () => {
     const twoServers = listingEntry({
       name: "suite",
       servers: {
@@ -162,19 +158,48 @@ describe("browseCatalog", () => {
       },
     });
     const skill = { ...listingEntry({ name: "notes" }), type: "application/agent-skills+zip" };
-    const { entries } = await browse({
-      nimblebrain: writeListing("nb", [unlistedStatic, twoServers, skill]),
-    });
+    const { entries } = await browse({ nimblebrain: writeListing("nb", [twoServers, skill]) });
     expect(entries.filter((e) => e.catalog === "nimblebrain")).toEqual([]);
   });
 
-  test("a bare connector carries the setup a static row shows, which a plugin entry cannot", async () => {
+  test("a static plugin entry is a set-up row whose setup is in its artifact", async () => {
     const staticPlugin = listingEntry({
-      name: "boxplugin",
-      servers: { box: { name: "com.box/files", auth: "static" } },
+      name: "drive",
+      servers: { drive: { name: "com.google/drive", auth: "static" } },
     });
-    const { entries } = await browse({ nimblebrain: writeListing("nb", [staticPlugin, box]) });
-    expect(entries.map((e) => e.address)).toEqual(["com-box-files@nimblebrain"]);
+    const file = writeListing("nb", [staticPlugin]);
+    const before = await browse({ nimblebrain: file }, { configured: false });
+    const row = before.entries.find((e) => e.address === "drive@nimblebrain");
+    expect(row).toMatchObject({
+      id: "com.google/drive",
+      status: "setup",
+      setupFromArtifact: true,
+      oauthClientConfigured: false,
+      install: { kind: "remote-oauth", auth: "static" },
+    });
+    expect(row?.install).not.toHaveProperty("oauthClientSetup");
+    const after = await browse({ nimblebrain: file }, { configured: true });
+    expect(after.entries[0]?.status).toBe("ready");
+  });
+
+  test("a broker plugin entry is hidden without its broker and ready with it", async () => {
+    const gmail = listingEntry({
+      name: "gmail",
+      servers: { gmail: { name: "com.google/gmail", auth: "composio" } },
+    });
+    const file = writeListing("nb", [gmail]);
+    expect((await browse({ nimblebrain: file })).entries).toEqual([]);
+    const withBroker = await browse({ nimblebrain: file }, { brokers: composio });
+    expect(withBroker.entries[0]).toMatchObject({
+      address: "gmail@nimblebrain",
+      status: "ready",
+      setupFromArtifact: true,
+    });
+  });
+
+  test("a bare connector carries its setup inline and needs no artifact read", async () => {
+    const { entries } = await browse({ nimblebrain: writeListing("nb", [box]) });
+    expect(entries[0]?.setupFromArtifact).toBeUndefined();
     expect(entries[0]?.install).toMatchObject({
       auth: "static",
       oauthClientSetup: STATIC_SETUP.oauthClientSetup,

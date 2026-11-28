@@ -17,15 +17,18 @@
  * Several catalogs sit side by side. The same server listed by two catalogs is
  * a row under each, with no precedence between them.
  *
- * **A row's setup comes from its listing.** Installing a row reads its
- * artifact (`src/tools/plugin-install.ts`), never anything here. A bare
- * connector's row is projected from its own inline record, which carries every
- * setup fact the web asks for before install (a static entry's OAuth client
- * portal and secret key, a broker's fields, secret headers). A plugin's row
- * names its one server's auth in the extension, and only `dcr` and `none` need
- * nothing more; an entry this shape cannot show (no server, several, or setup
- * its listing cannot describe) is left out and logged, and still installs by
- * its address. A publisher lists a server that needs setup as a bare connector.
+ * **A row's setup comes from its listing, or later from its one artifact.**
+ * Installing a row reads its artifact (`src/tools/plugin-install.ts`), never
+ * anything here. A bare connector's row is projected from its own inline
+ * record, which carries every setup fact the web asks for before install (a
+ * static entry's OAuth client portal and secret key, a broker's fields, secret
+ * headers). A plugin's row names its one server's auth in the extension: `dcr`
+ * and `none` need nothing more, and any other auth gives a row marked
+ * `setupFromArtifact`, whose setup facts `manage_connectors get_setup` reads
+ * from that plugin's verified artifact when a person opens its set-up or
+ * installs it, never while browsing. An entry with no server or several, or of
+ * a type Browse cannot show, is left out and logged; it still installs by its
+ * address.
  */
 
 import type { CatalogError } from "../connectors/catalog/catalog.ts";
@@ -48,8 +51,12 @@ export interface Brokers {
 export interface BrowseDeps {
   listings: CatalogListings;
   brokers: Brokers;
-  /** Whether the workspace has the OAuth client a static entry needs; absent outside a workspace. */
-  isOAuthClientConfigured?: (catalogId: string, clientSecretKey: string) => Promise<boolean>;
+  /**
+   * Whether the workspace (or the instance) has the OAuth client a static entry
+   * needs; absent outside a workspace. With no secret key (a plugin row whose
+   * setup is in its artifact), whether a client id is set.
+   */
+  isOAuthClientConfigured?: (catalogId: string, clientSecretKey?: string) => Promise<boolean>;
 }
 
 /** Browse's rows, and the catalogs that could not be read. */
@@ -125,10 +132,10 @@ function oauthProbe(deps: BrowseDeps): OAuthProbe {
     }
     const setup = install.oauthClientSetup;
     const probe = deps.isOAuthClientConfigured;
-    if (!setup || !probe) return Promise.resolve(undefined);
+    if (!probe || (!setup && !record.setupFromArtifact)) return Promise.resolve(undefined);
     let pending = memo.get(record.id);
     if (!pending) {
-      pending = probe(record.id, setup.clientSecretKey);
+      pending = probe(record.id, setup?.clientSecretKey);
       memo.set(record.id, pending);
     }
     return pending;
@@ -157,6 +164,7 @@ async function listedRow(
     ...(entry.category ? { category: entry.category } : {}),
     ...(entry.tags ? { tags: entry.tags } : {}),
     install: record.install,
+    ...(record.setupFromArtifact ? { setupFromArtifact: true } : {}),
     ...(oauthClientConfigured !== undefined ? { oauthClientConfigured } : {}),
     address: entry.address,
     catalog: entry.catalog,
@@ -169,8 +177,9 @@ const SELF_DESCRIBED_AUTH = new Set(["dcr", "none"]);
 
 /**
  * Where a row's server and setup come from: a bare connector's inline record,
- * else the extension alone when its one server's auth needs no setup. A string
- * says why there is no row.
+ * else the extension, whose one server's auth is all the row needs or marks
+ * the rest as its artifact's (`setupFromArtifact`). A string says why there is
+ * no row.
  */
 function rowSetup(entry: ListedEntry): { record: CatalogListing; auth: string } | string {
   if (entry.type === SERVER_RECORD_TYPE) {
@@ -182,9 +191,6 @@ function rowSetup(entry: ListedEntry): { record: CatalogListing; auth: string } 
   const servers = Object.values(entry.servers);
   if (servers.length !== 1) return `${servers.length} servers`;
   const server = servers[0] as { name: string; auth: string };
-  if (!SELF_DESCRIBED_AUTH.has(server.auth)) {
-    return `${server.auth} setup for ${server.name} that a plugin entry cannot describe; list it as a bare connector`;
-  }
   return {
     record: {
       id: server.name,
@@ -197,6 +203,7 @@ function rowSetup(entry: ListedEntry): { record: CatalogListing; auth: string } 
         transportType: "streamable-http",
         auth: server.auth,
       },
+      ...(SELF_DESCRIBED_AUTH.has(server.auth) ? {} : { setupFromArtifact: true }),
     },
     auth: server.auth,
   };

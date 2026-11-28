@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
@@ -859,5 +860,64 @@ describe("plugin install", () => {
     expect(listed.plugins[0]?.noLongerOffered).toBe(true);
     const removed = await again.handler({ action: "uninstall", address: "linear@test" });
     expect(removed.isError).toBe(false);
+  }, 30_000);
+
+  test("a static plugin row reads its setup from that one artifact only at set-up", async () => {
+    const LEDGER: FixtureServer = {
+      name: "com.acme/ledger",
+      url: "https://mcp.ledger.test/mcp",
+      meta: {
+        auth: "static",
+        oauthClientSetup: {
+          portalUrl: "https://developer.ledger.test/",
+          hint: "Create an OAuth app",
+          clientSecretKey: "ledger.client_secret",
+        },
+      },
+    };
+    const ledger = pluginZip({ name: "ledger", servers: { ledger: LEDGER } });
+    writeListing([
+      publish("ledger", ledger, { servers: { ledger: { name: LEDGER.name, auth: "static" } } }),
+      publish("notion", notionPlugin(), {
+        servers: { notion: { name: NOTION.name, auth: "dcr" } },
+      }),
+    ]);
+    const { rt, wsId, call } = await boot();
+    type Row = CatalogListing & { address?: string };
+    const rows = async () =>
+      ((await call({ action: "list_directory" })).structuredContent as { entries: Row[] }).entries;
+
+    const row = (await rows()).find((e) => e.address === "ledger@test");
+    expect(row).toMatchObject({ status: "setup", setupFromArtifact: true });
+    expect(artifactFetches()).toEqual([]);
+
+    const setup = await call({ action: "get_setup", address: "ledger@test" });
+    const entry = (setup.structuredContent as { entry: Row }).entry;
+    expect(entry.install).toMatchObject({
+      url: LEDGER.url,
+      auth: "static",
+      oauthClientSetup: LEDGER.meta?.oauthClientSetup,
+    });
+    expect(entry.setupFromArtifact).toBeUndefined();
+    expect(artifactFetches()).toHaveLength(1);
+    await call({ action: "get_setup", address: "ledger@test" });
+    expect(artifactFetches()).toHaveLength(1);
+
+    const saved = await call({
+      action: "set_oauth_client",
+      catalogId: LEDGER.name,
+      address: "ledger@test",
+      clientId: "cid",
+      clientSecret: "secret",
+    });
+    expect(saved.isError).toBe(false);
+    expect((await rows()).find((e) => e.address === "ledger@test")?.status).toBe("ready");
+
+    const installed = await call({ action: "install", address: "ledger@test" });
+    expect(installed.isError).toBe(false);
+    const ref = (await workspace(rt, wsId)).connectors.find(
+      (c) => c.serverName === "com-acme-ledger",
+    );
+    expect(ref?.oauthClient).toMatchObject({ clientId: "cid" });
   }, 30_000);
 });

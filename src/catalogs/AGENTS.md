@@ -19,13 +19,16 @@ Scope: `src/catalogs/`. The AI Catalog listings the operator names in `catalogs`
   the artifact against `digest`, and connects each server from the archive's own record. A
   listing entry keeps its inline `data` (`ListedEntry.data`) for that, and for
   `listed-records.ts` below.
-- **A row's setup comes from its listing, nothing else.** A bare connector's row is projected
-  from its inline record, which carries every fact the web asks for before install (an OAuth
-  client portal and secret key, a broker's fields, secret headers). A plugin entry's row takes
-  only its one server's auth from the extension, so it is a row only for `dcr`/`none`; any
-  other entry this shape cannot show is logged and left out, and still installs by address. A
-  publisher lists a server that needs setup as a bare connector. The extension is not widened
-  to carry setup: the record already does.
+- **Every plugin entry of one server is a row; setup it lacks is read from its one artifact,
+  later.** A row's status is the listing's (`servers[].auth`). A bare connector's row is
+  projected from its inline record, which carries every fact the web asks for before install
+  (an OAuth client portal and secret key, a broker's fields, secret headers). A plugin entry's
+  row has only its server's auth; for any auth but `dcr`/`none` it is marked
+  `setupFromArtifact`, and `manage_connectors get_setup` (and `set_oauth_client` by
+  `address`) reads the record from that one plugin's verified artifact when a person opens
+  set-up or installs, cached by digest. Never during Browse. The extension is not widened to
+  carry setup: the artifact's record already does. An entry with several servers or a type
+  Browse cannot show is logged and left out, and still installs by address.
 - **A listing's bare connectors are the connector list's records** for a connector no plugin
   record supplies (`listed-records.ts`, read by `ConnectorCatalog` after the owner's records
   and before the pinned list): verified against `digest`, schema-checked, and one the safety

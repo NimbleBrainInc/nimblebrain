@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import { brandName } from "../brand/index.ts";
 import { type BrowseResult, browseCatalog } from "../catalogs/browse.ts";
@@ -6,7 +7,11 @@ import type { CatalogSnapshot } from "../catalogs/reader.ts";
 import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import { catalogEntryForRef } from "../connectors/catalog/catalog.ts";
-import type { SecretHeaderRef } from "../connectors/catalog/server-detail.ts";
+import {
+  projectServerDetailToCatalogListing,
+  serverDetailToCatalogEntry,
+} from "../connectors/catalog/projection.ts";
+import type { SecretHeaderRef, ServerDetail } from "../connectors/catalog/server-detail.ts";
 import type {
   CatalogListing,
   ConnectorCatalogEntry,
@@ -57,6 +62,7 @@ import { log } from "../observability/log.ts";
 import { type ConnectorAdmission, filterAdmittedTools } from "../permissions/admin-tools.ts";
 import type { PermissionOwner, ToolPolicy } from "../permissions/permission-store.ts";
 import type { PluginAccount, PluginsListOutput } from "../platform/schemas/plugins.ts";
+import { ArtifactError, obtainArtifact, readArtifact } from "../plugins/installed/artifact.ts";
 import type { InstalledPluginRecord, PluginOwner } from "../plugins/installed/record.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { canonicalJson } from "../util/jcs.ts";
@@ -75,6 +81,7 @@ import { hasMcpOAuthTokens, McpOAuthRecords } from "./mcp-oauth-records.ts";
 import { McpSource, REMOTE_TOOL_LIST_MAX_AGE_MS } from "./mcp-source.ts";
 import {
   type ConnectorOps,
+  findListedEntry,
   installPlugin,
   type PluginInstallContext,
   uninstallPlugin,
@@ -289,6 +296,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           enum: [
             "list_catalog",
             "list_directory",
+            "get_setup",
             "list_installed",
             "get_installed",
             "list_tools",
@@ -325,7 +333,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         address: {
           type: "string",
           description:
-            "A catalog item's address, `name@catalog` (e.g. `notion@nimblebrain`), as Browse lists it. For `install` it may stand in for `entry`; for `uninstall` it removes that plugin and exactly what its install produced; for `update_plugin` (required) it replaces the plugin with what its catalog lists now. With `scope: \"identity\"` it is the caller's own plugin.",
+            "A catalog item's address, `name@catalog` (e.g. `notion@nimblebrain`), as Browse lists it. For `install` it may stand in for `entry`; for `uninstall` it removes that plugin and exactly what its install produced; for `update_plugin` (required) it replaces the plugin with what its catalog lists now; for `get_setup` (required) it names the Browse row whose full install action to read; for `set_oauth_client` it names the row whose OAuth client is set, when the client's server is not installed yet. With `scope: \"identity\"` it is the caller's own plugin.",
         },
         entry: {
           type: "object",
@@ -404,6 +412,8 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           return handleListCatalog(ctx, args.wsId);
         case "list_directory":
           return handleListDirectory(ctx, args.wsId);
+        case "get_setup":
+          return handleGetSetup(ctx, args.wsId, args.address);
         case "list_installed":
           return handleListInstalled(ctx, args.wsId, args.callerId, args.listInstalledScope);
         case "get_installed":
@@ -459,14 +469,12 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         case "set_record_sources":
           return handleSetRecordSources(ctx, args.wsId, args.serverName, args.sources);
         case "set_oauth_client":
-          return handleSetOAuthClient(
-            ctx,
-            args.wsId,
-            args.identity,
-            args.catalogId,
-            args.clientId,
-            args.clientSecret,
-          );
+          return handleSetOAuthClient(ctx, args.wsId, args.identity, {
+            catalogId: args.catalogId,
+            address: args.address,
+            clientId: args.clientId,
+            clientSecret: args.clientSecret,
+          });
         case "remove_oauth_client":
           return handleRemoveOAuthClient(ctx, args.wsId, args.identity, args.catalogId);
         case "get_redirect_uri":
@@ -661,7 +669,7 @@ async function handleListCatalog(
 /** Browse's rows for this runtime: its catalogs' listings. */
 function browse(
   ctx: ManageConnectorsContext,
-  isOAuthClientConfigured?: (catalogId: string, clientSecretKey: string) => Promise<boolean>,
+  isOAuthClientConfigured?: (catalogId: string, clientSecretKey?: string) => Promise<boolean>,
 ): Promise<BrowseResult> {
   return browseCatalog({
     listings: ctx.runtime.getCatalogListings(),
@@ -691,9 +699,11 @@ async function handleListDirectory(
   const credStore = wsId ? ctx.runtime.getCredentialStore() : null;
   const isOAuthClientConfigured =
     wsId && ws && credStore
-      ? async (catalogId: string, clientSecretKey: string): Promise<boolean> => {
+      ? async (catalogId: string, clientSecretKey?: string): Promise<boolean> => {
           if (instanceOAuthClient(catalogId)) return true;
           if (!ws.oauthClients?.[catalogId]?.clientId) return false;
+          // A plugin row whose secret key is in its artifact: the client id decides.
+          if (!clientSecretKey) return true;
           const secret = await credStore.get({ kind: "workspace", wsId }, clientSecretKey, {
             caller: "connector-tools:list_directory",
             purpose: "report whether OAuth client setup is complete",
@@ -4870,6 +4880,103 @@ async function handleUninstallIdentity(
 }
 
 /**
+ * The catalog entry whose OAuth client `set_oauth_client` sets: the
+ * workspace's connector list's record for `catalogId`, else, for a Browse row
+ * not installed yet, the record its item's artifact carries (`address`, read
+ * as `get_setup` reads it). The row must name the same server.
+ */
+async function oauthClientEntry(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  catalogId: string,
+  address: string,
+): Promise<ConnectorCatalogEntry | ToolResult | null> {
+  const listed = await ctx.runtime
+    .getConnectorCatalog({ kind: "workspace", wsId })
+    .catalogById(catalogId);
+  if (listed || !address) return listed;
+  const detail = await setupRecord(ctx, address);
+  if ("isError" in detail) return detail;
+  if (detail.name !== catalogId) {
+    return errResult(`${address} names ${detail.name}, not "${catalogId}".`);
+  }
+  return serverDetailToCatalogEntry(detail);
+}
+
+/**
+ * The server record a Browse row's setup is read from: a bare connector's
+ * inline record, else the one server record in the item's verified artifact
+ * (`ai.nimblebrain/servers/<key>.json`), fetched only now and cached by
+ * digest, the cache install reads too.
+ */
+async function setupRecord(
+  ctx: ManageConnectorsContext,
+  address: string,
+): Promise<ServerDetail | ToolResult> {
+  const entry = await findListedEntry(ctx.runtime, address);
+  if (!entry) {
+    return codedErr(
+      "NOT_IN_CATALOG",
+      `"${address}" is not listed by any of this instance's catalogs.`,
+    );
+  }
+  try {
+    const { bytes } = await obtainArtifact(entry, {
+      cacheDir: join(ctx.runtime.getWorkDir(), "cache", "plugins"),
+    });
+    const servers = readArtifact(entry, bytes).servers;
+    if (servers.length !== 1) {
+      return codedErr("INVALID", `${address} connects ${servers.length} servers, not one.`);
+    }
+    return (servers[0] as { detail: ServerDetail }).detail;
+  } catch (e) {
+    if (e instanceof ArtifactError) return codedErr(e.code, e.message);
+    throw e;
+  }
+}
+
+/**
+ * `get_setup`: a Browse row with its full install action, for the set-up and
+ * install flow. A row marked `setupFromArtifact` takes it from its plugin's
+ * verified artifact, read only now (one fetch, cached by digest); any other
+ * row is returned as Browse shows it. Its status and OAuth client state are
+ * Browse's.
+ */
+async function handleGetSetup(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  address: string,
+): Promise<ToolResult> {
+  if (!address) return errResult("address is required for get_setup.");
+  const directory = await handleListDirectory(ctx, wsId);
+  const rows = (directory.structuredContent as { entries?: CatalogListing[] } | undefined)?.entries;
+  const row = rows?.find((e) => e.address === address);
+  if (!row) {
+    return codedErr("NOT_IN_CATALOG", `"${address}" is not a row this instance's Browse lists.`);
+  }
+  if (!row.setupFromArtifact) {
+    return {
+      content: textContent(`Setup for ${address}.`),
+      structuredContent: { entry: row },
+      isError: false,
+    };
+  }
+  const detail = await setupRecord(ctx, address);
+  if ("isError" in detail) return detail;
+  const listing = projectServerDetailToCatalogListing(detail);
+  if (listing?.id !== row.id) {
+    return codedErr("INVALID", `${address}'s artifact does not hold the server its listing names.`);
+  }
+  const { setupFromArtifact: _deferred, ...shown } = row;
+  const entry: CatalogListing = { ...shown, install: listing.install };
+  return {
+    content: textContent(`Setup for ${address}.`),
+    structuredContent: { entry },
+    isError: false,
+  };
+}
+
+/**
  * Configure (or rotate) the OAuth client credentials a workspace will use
  * to authenticate against a static-auth catalog connector. Two stores
  * write together so the next install of this connector finds both
@@ -4894,10 +5001,9 @@ async function handleSetOAuthClient(
   ctx: ManageConnectorsContext,
   wsId: string | null,
   identity: UserIdentity | null,
-  catalogId: string,
-  clientId: string,
-  clientSecret: string,
+  input: { catalogId: string; address: string; clientId: string; clientSecret: string },
 ): Promise<ToolResult> {
+  const { catalogId, address, clientId, clientSecret } = input;
   if (!wsId) return errResult("Workspace context required.");
   if (!catalogId) return errResult("catalogId is required.");
   if (!clientId.trim()) return errResult("clientId is required.");
@@ -4915,9 +5021,8 @@ async function handleSetOAuthClient(
     };
   }
 
-  const entry = await ctx.runtime
-    .getConnectorCatalog({ kind: "workspace", wsId })
-    .catalogById(catalogId);
+  const entry = await oauthClientEntry(ctx, wsId, catalogId, address);
+  if (entry && "isError" in entry) return entry;
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
   if (entry.auth !== "static") {
     return errResult(`"${entry.name}" is a DCR connector — OAuth client setup not required.`);

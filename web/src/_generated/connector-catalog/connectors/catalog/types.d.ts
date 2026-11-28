@@ -53,6 +53,15 @@ export interface CatalogListing {
     tags?: string[];
     install: InstallAction;
     /**
+     * Set on a Browse row of a plugin entry whose server needs setup the listing
+     * does not carry (`static`, a broker, secret headers): `install` holds only
+     * the server's auth, and the full install action (an OAuth client portal and
+     * secret key, a broker's fields, secret headers) is read from the plugin's
+     * verified artifact by `manage_connectors get_setup`, when a person opens its
+     * set-up or installs it. Never read while browsing.
+     */
+    setupFromArtifact?: boolean;
+    /**
      * For static-auth entries: whether the workspace has OAuth client
      * app credentials configured (both clientId in workspace.json and
      * client_secret in the credential store). DCR / direct-url entries

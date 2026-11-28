@@ -55,7 +55,7 @@ A row is one listing entry: its `displayName`, `description` and `tags`, and fro
 
 The same server listed by two catalogs is a row under each, with no precedence between them. To prefer one catalog's item, leave it out of the other.
 
-A row shows the setup its install will ask for, from its listing alone. A connector listed on its own (a bare connector, below) carries its whole server record inline, so its row shows everything the record says: a static entry's OAuth app portal and secret key, a broker's fields, secret headers. A plugin entry's row knows only the auth its server declares in the extension, so it is a row only when that auth needs nothing first (`dcr`, `none`); list a server that needs setup as a bare connector. An entry Browse cannot show (no server or several, or setup its listing cannot describe) is logged once per read; it still installs by its address.
+Every row's status comes from its listing alone, and Browse never opens an artifact. A connector listed on its own (a bare connector, below) carries its whole server record inline, so its row also carries everything the record says: a static entry's OAuth app portal and secret key, a broker's fields, secret headers. A plugin entry's listing names only its server's auth, so for any auth but `dcr` and `none` its row is marked `setupFromArtifact`. When an admin opens its set-up or installs it, `manage_connectors get_setup` reads those details from that one plugin's verified artifact (its `ai.nimblebrain/servers/<key>.json`), once, cached by digest. `set_oauth_client` takes the row's `address` the same way, so a plugin's OAuth client can be set up before it is installed. An entry Browse cannot show (no server or several, or a type it cannot install) is logged once per read; it still installs by its address.
 
 ### When an item leaves its catalog
 
@@ -129,7 +129,7 @@ The kinds and what each asks of a *user* are documented once, in [Connectors →
 - **`provider`** names a credential provider that supplies the transport credential server-side, with no user or OAuth client. Two things use it: the platform's own connectors, whose credential the runtime mints against the fleet authorizer, and a **gateway** you hold one account key for — see [gateway endpoints](#auth-provider-for-a-gateway-endpoint) below.
 
 <Aside type="caution">
-  NimbleBrain's plugin catalog lists **DCR entries only**: connectors that install with nothing to configure, so a fresh install has a full Browse with no setup. Everything else, including `auth: static` and brokered entries, belongs in your own [path catalog](#path-catalogs).
+  NimbleBrain's catalog lists DCR, brokered and `auth: static` plugins. A brokered one shows only where this instance configures its broker, and a static one asks a workspace admin for an OAuth client first, unless the instance declares one. A server only your deployment can offer (your own OAuth app, a fleet service) belongs in your own [path catalog](#path-catalogs).
 </Aside>
 
 <Aside type="caution" title="A brokered entry must be in your catalog">

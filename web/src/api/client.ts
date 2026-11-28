@@ -1207,14 +1207,28 @@ export async function setConnectorOAuthClient(
   catalogId: string,
   clientId: string,
   clientSecret: string,
+  /** A Browse row's address, when its server is a plugin's not installed yet. */
+  address?: string,
 ): Promise<{ ok: boolean; catalogId: string; clientId: string }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "set_oauth_client",
     catalogId,
     clientId,
     clientSecret,
+    ...(address ? { address } : {}),
   });
   return unwrapStructured(result, "set_oauth_client");
+}
+
+/**
+ * A Browse row with its full install action. A row marked `setupFromArtifact`
+ * shows only its server's auth; the server reads the rest (an OAuth client
+ * portal and secret key, a broker's fields, secret headers) from that one
+ * plugin's verified artifact. Any other row comes back as listed.
+ */
+export async function getCatalogSetup(address: string): Promise<CatalogListing> {
+  const result = await callTool("nb", "manage_connectors", { action: "get_setup", address });
+  return unwrapStructured<{ entry: CatalogListing }>(result, "get_setup").entry;
 }
 
 /**
