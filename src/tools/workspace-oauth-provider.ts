@@ -16,6 +16,7 @@ import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { log } from "../observability/log.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
+import { CredentialSealError } from "./credential-seal.ts";
 import { McpOAuthRecords } from "./mcp-oauth-records.ts";
 import {
   type AuthorizationResponse,
@@ -1896,8 +1897,6 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       allowInsecure: this.allowInsecureRemotes,
       fleetInternal: false,
     });
-    const tokens = await this.readTokens("revoke");
-    const clientInfo = await this.clientInformation();
     const result: {
       revoked: { access?: boolean; refresh?: boolean };
       deletedLocal: boolean;
@@ -1906,6 +1905,24 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       revoked: {},
       deletedLocal: false,
     };
+    let tokens: OAuthTokens | undefined;
+    let clientInfo: OAuthClientInformationMixed | undefined;
+    try {
+      tokens = await this.readTokens("revoke");
+      clientInfo = await this.clientInformation();
+    } catch (err) {
+      if (!(err instanceof CredentialSealError)) throw err;
+      // Disconnect deliberately discards local credentials. A sealed record
+      // that cannot open prevents upstream revocation, but must not strand the
+      // connection in a state where Connect reads the same broken record.
+      log.warn(
+        `[oauth] ${this.serverName} skipping upstream revoke: stored credentials could not open (${err.reason}). Local records will be cleared.`,
+      );
+      await this.invalidateCredentials("all");
+      result.deletedLocal = true;
+      result.error = "Stored OAuth credentials could not be opened; upstream revocation skipped";
+      return result;
+    }
 
     // No tokens to revoke — just clear local state.
     if (!tokens) {
