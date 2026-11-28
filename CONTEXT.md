@@ -281,8 +281,12 @@ hooks, admin tools) comes from that owner's records, never another owner's.
 Uninstall removes what it lists; a connection that two installed plugins name
 stays until the last is removed, its `ServerDetail` re-read from the next
 remaining plugin in install order. Update replaces the digest and what the
-plugin owns. Readers of installed state read records; nothing scans artifacts
-(starters and the plugin list move onto records in a later step).
+plugin owns. Readers of installed state (conversation starters, the plugin
+list, a connection's managed skills) read records; nothing scans artifacts. A
+connector a catalog installed before records existed is adopted at boot when
+exactly one listing entry names its server and that entry's verified artifact
+contains it; otherwise it stays a plain connector, as does one its owner added
+by URL.
 The pin of what is installed is the record's digest, never one compiled into
 the image or set for the whole deployment.
 
