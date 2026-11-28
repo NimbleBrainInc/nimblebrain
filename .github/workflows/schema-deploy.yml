@@ -21,11 +21,9 @@ name: Deploy Schemas
 # listed in LEGACY_ALIASES below and are never removed.
 #
 # Auth: GitHub OIDC -> the schemas deploy IAM role. No long-lived AWS keys.
-# The role needs S3 write on the prefixes this tree publishes: each top-level
-# directory under `schemas/` (today `config/`, `host/`, `host-bridge/`), plus
-# the legacy `v1/` alias keys. Granting a new top-level directory is an infra change outside this
-# repo; until it lands, its upload is refused (403). Nothing else in the bucket
-# is writable by the role. Repo vars: SCHEMAS_DEPLOY_ROLE_ARN,
+# This tree is the only publisher of the schemas bucket, so the role may write
+# any key in it (no delete), and a new top-level directory needs no infra change.
+# Repo vars: SCHEMAS_DEPLOY_ROLE_ARN,
 # SCHEMAS_CF_DISTRIBUTION_ID.
 
 on:
