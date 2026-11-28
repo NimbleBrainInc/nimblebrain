@@ -234,6 +234,13 @@ export type ConnectorRef = {
      * one without it.
      */
     installedBy?: string;
+    /**
+     * `"owner"` on a connection its owner added (by URL, or as a workspace's
+     * connector row), stamped by every path that does. A plugin never adopts,
+     * takes over or removes a connection with this mark. A connection with
+     * neither this nor `installedBy` was made before either was recorded.
+     */
+    addedBy?: "owner";
 };
 /** A connector's self-description, stored for display. See `ConnectorRef.display`. */
 export interface ConnectorDisplay {

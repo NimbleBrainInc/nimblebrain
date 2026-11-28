@@ -41,7 +41,7 @@ function toConnectorRef(b: Record<string, unknown>): ConnectorRef {
   if (serverName === "") {
     throw new Error(`Connector "${url}" needs a serverName to register it under.`);
   }
-  return { url, serverName };
+  return { url, serverName, addedBy: "owner" };
 }
 
 /**

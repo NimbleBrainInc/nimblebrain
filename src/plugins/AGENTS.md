@@ -65,8 +65,9 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   created is reused and a skill file rewritten in place, so a stopped install finishes on the
   next one. Uninstall removes what the record lists (a connection another record names stays),
   then the record.
-- **A connection a plugin creates carries `installedBy` (its address); one without it is the
-  owner's.** Install reuses a connection only when it carries `installedBy` and either this
+- **A connection a plugin creates carries `installedBy` (its address); one its owner adds carries
+  `addedBy: "owner"`, stamped by every owner path (`direct-url` install, `manage_workspaces`
+  create and update rows).** One with neither predates both marks and is the owner's too. Install reuses a connection only when it carries `installedBy` and either this
   plugin made it or an installed record names it; anything else is refused, whatever its URL.
   Uninstall never removes a connection without it. Never infer provenance from a URL.
 - **One install, uninstall or update per owner at a time** (`oneAtATime` in
@@ -84,10 +85,10 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   connection is left alone (its endpoint is the broker's session). A connection another plugin supplies is not changed.
 - **Existing installs are adopted at boot, before any connector starts** (`src/tools/plugin-adopt.ts`,
   called from `Runtime.start` through `adoptExistingInstalls`, under the owner's lifecycle lock). A
-  connector qualifies only when it carries no `installedBy`, its owner did not add it
-  (`addedByOwner`: the `direct-url` path alone writes `transport.auth: {type: "none"}`, and adds
-  `display` only when the server's card describes itself, so `display` alone does not mark it),
-  no record names it, exactly one listing entry names its server (by its lock's or its broker's
+  connector qualifies only when it carries no `installedBy` and no `addedBy: "owner"`, carries
+  positive evidence of a catalog install (`catalogEvidence`: a `skillsLock` naming a plugin and
+  server, a broker's stamp, an `oauthClient`, or provider auth; fields only the catalog install
+  path wrote, never an owner path), no record names it, exactly one listing entry names its server (by its lock's or its broker's
   recorded name, else by a name that slugifies to its connection), and that entry's verified
   artifact carries the server at the connector's endpoint (the same remote URL, or for a brokered
   connector the name its broker stamped); every catalog must have a readable listing, or
@@ -95,8 +96,10 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   binding's file, whatever else the old binding left removed), then the record, then
   `installedBy` with the lock dropped. Anything else stays a plain connector, logged with its
   claimants: its lock stays as provenance for a later boot, and the skill files its old binding
-  materialized are removed, so it carries no catalog skill (nothing else would ever update them). A record that names a connector still carrying its lock is an adoption that stopped,
-  and is finished with no fetch. Artifacts are fetched only for connectors being adopted, a few at
+  materialized are removed, so it carries no catalog skill (nothing else would ever update them),
+  unless a committed record names it. A record that names a connector not yet marked is an
+  adoption that stopped: it is marked with no fetch, and a skill the record lists that is missing
+  is written again from the artifact at the record's digest. Artifacts are fetched only for connectors being adopted, a few at
   a time and a bounded number per boot.
 - **Required items are kept by the kernel** (`src/tools/plugin-required.ts`, run by
   `Runtime.reconcileRequiredPlugins` at boot, on `WorkspaceStore.onCreated`, and on an interval).

@@ -21,6 +21,10 @@
  *    inline, verified against the entry's digest and safety-scrubbed
  *    (`listedServerRecords`). A connector installed before records existed,
  *    which no plugin adopted, reads its record here.
+ * 3. **The owner's plain connections' view.** A connection no plugin created,
+ *    whose server exactly one plugin entry of the listings names and serves at
+ *    its endpoint, reads that entry's verified artifact's record
+ *    (`src/catalogs/plain-records.ts`). Read only: it is no install record.
  *
  * A catalog built for no owner is source 2 alone.
  *
@@ -90,6 +94,9 @@ const INSTALLED_FILE_PREFIX = "plugin ";
 /** What a record a listing carries names as its file. */
 const LISTED_FILE_PREFIX = "listing ";
 
+/** What a record read for a plain connection names as its file. */
+const VIEWED_FILE_PREFIX = "view ";
+
 type Tagged = { file: string; detail: ServerDetail; refused?: true };
 
 export class ConnectorCatalog {
@@ -102,14 +109,16 @@ export class ConnectorCatalog {
   constructor(
     private listed?: ListedServerRecords,
     private installed?: InstalledServerRecords,
+    private viewed?: InstalledServerRecords,
   ) {}
 
   /**
    * The same list as `installed`'s owner sees it, sharing this instance's read
-   * of the listings: a sweep over many owners reads them once.
+   * of the listings: a sweep over many owners reads them once. `viewed` is
+   * that owner's plain connections' records, read after the listings.
    */
-  forOwner(installed: InstalledServerRecords): ConnectorCatalog {
-    const view = new ConnectorCatalog(this.listed, installed);
+  forOwner(installed: InstalledServerRecords, viewed?: InstalledServerRecords): ConnectorCatalog {
+    const view = new ConnectorCatalog(this.listed, installed, viewed);
     view.list = this.list;
     return view;
   }
@@ -203,9 +212,14 @@ export class ConnectorCatalog {
     ]);
     const installedNames = new Set(installed.map((s) => s.detail.name));
     const fromListings = listed.filter((l) => !installedNames.has(l.detail.name));
+    // Read only when no other source names the server: a view never shadows a record.
+    const named = new Set([...installedNames, ...listed.map((l) => l.detail.name)]);
+    const viewed = (await readTagged(this.viewed, VIEWED_FILE_PREFIX)).filter(
+      (v) => !named.has(v.detail.name),
+    );
     const strip = ({ file, detail }: Tagged) => ({ file, detail });
     return {
-      servers: [...installed, ...fromListings.filter((l) => !l.refused)].map(strip),
+      servers: [...installed, ...fromListings.filter((l) => !l.refused), ...viewed].map(strip),
       refused: fromListings.filter((l) => l.refused).map(strip),
     };
   }

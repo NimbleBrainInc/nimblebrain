@@ -101,7 +101,7 @@ Each server becomes one entry named by its server name (`io.acme.support/mcp` is
 
 ## Where the connector list lives
 
-The connector list holds the server records an installed connector reads (its display, host UI, OAuth client setup, `adminTools`). It reads, first per server name: the owner's installed plugins' records, then every configured listing's [bare connectors](#a-bare-connector). Nothing else: the runtime reads no `connectors.yaml` and compiles no list or pin into the image. A connector no record supplies and no listing names reads no catalog record, and keeps working as a plain connector.
+The connector list holds the server records an installed connector reads (its display, host UI, OAuth client setup, `adminTools`). It reads, first per server name: the owner's installed plugins' records, then every configured listing's [bare connectors](#a-bare-connector), then, for a connector no plugin installed, the record in the one listed plugin that serves its server at the connector's URL (read from that plugin's verified archive, once, and never making the connector the plugin's). Nothing else: the runtime reads no `connectors.yaml` and compiles no list or pin into the image. A connector no record supplies and no listing names reads no catalog record, and keeps working as a plain connector.
 
 To offer your own connectors, list them in a catalog: publish an AI Catalog, or [convert a connector list](#converting-a-connector-list) into a path catalog, and add it to `catalogs`.
 

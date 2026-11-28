@@ -1,8 +1,7 @@
 /**
  * Adopting existing installs into plugins at boot (ADR-0077, "Existing
- * installs"): a connector a catalog install made before records existed (its
- * `skillsLock` records a plugin, or it carries no mark of its owner adding it)
- * is adopted when exactly one listing entry names its server and that entry's
+ * installs"): a connector a catalog install made before records existed (it
+ * carries a field only that install wrote, and no owner's mark) is adopted when exactly one listing entry names its server and that entry's
  * verified artifact contains it at the connector's endpoint. Otherwise
  * it stays a plain connector, unchanged but for the skills its old binding
  * materialized, which go. After adoption, starters and the plugin list read
@@ -24,6 +23,7 @@ import { parseSkillFile } from "../../src/skills/loader.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import { createCoreToolDefs } from "../../src/tools/core-source.ts";
 import { adoptExistingInstalls } from "../../src/tools/plugin-adopt.ts";
+import { createManageWorkspacesTool } from "../../src/tools/workspace-mgmt-tools.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { listingBytes } from "../helpers/ai-catalog.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
@@ -45,6 +45,7 @@ const ADMIN: UserIdentity = {
   preferences: {},
 };
 const PERSON = "usr_adopt_person";
+const ORG_ADMIN: UserIdentity = { ...ADMIN, orgRole: "admin" };
 
 const NOTION: FixtureServer = {
   name: "com.notion/mcp",
@@ -429,11 +430,9 @@ describe("adopting existing installs at boot", () => {
 
   test("a catalog install at another endpoint than its listed server's is not adopted", async () => {
     const ref: ConnectorRef = {
+      ...preRecordRef(NOTION, NOTION_SERVER),
       url: "https://elsewhere.test/mcp",
-      serverName: NOTION_SERVER,
-      transport: { type: "streamable-http" },
-      oauthScope: "workspace",
-    } as ConnectorRef;
+    };
     await seedPreRecordWorkspace([ref]);
     writeListing([publish("notion", notionPlugin(), NOTION_CLAIM)]);
     const rt = await boot();
@@ -545,5 +544,174 @@ describe("adopting existing installs at boot", () => {
     expect(ws.connectors[0]?.installedBy).toBe("notion@test");
     expect(ws.connectors[0]?.skillsLock).toBeUndefined();
     expect(ws.plugins).toEqual([record]);
+  });
+
+  test("a connector a workspace's owner authored is never adopted, and outlives the matching plugin", async () => {
+    await seedPreRecordWorkspace([]);
+    writeListing([publish("notion", notionPlugin(), NOTION_CLAIM)]);
+    const rt = await boot();
+    const workspaces = createManageWorkspacesTool({
+      getIdentity: () => ORG_ADMIN,
+      workspaceStore: rt.getWorkspaceStore(),
+      runtime: rt,
+    });
+    const updated = await workspaces.handler({
+      action: "update",
+      workspaceId: WS,
+      connectors: [{ url: NOTION.url, serverName: NOTION_SERVER }],
+    });
+    expect(updated.isError).toBe(false);
+    const authored = (await workspaceRecord(rt)).connectors;
+    expect(authored).toEqual([{ url: NOTION.url, serverName: NOTION_SERVER, addedBy: "owner" }]);
+
+    const result = await adoptExistingInstalls({
+      workDir,
+      workspaces: rt.getWorkspaceStore(),
+      records: rt.getPluginRecords(),
+      snapshots: () => rt.getCatalogListings().snapshots(),
+    });
+    expect(result.adopted).toEqual([]);
+    expect(artifactFetches()).toEqual([]);
+    await stop();
+    const again = await boot();
+    expect((await workspaceRecord(again)).connectors).toEqual(authored);
+    expect((await workspaceRecord(again)).plugins ?? []).toEqual([]);
+
+    // The plugin naming its server installs over nothing, and its uninstall removes nothing.
+    const call = (args: Record<string, unknown>) =>
+      runWithRequestContext({ identity: ADMIN, workspaceId: WS }, () =>
+        createManageConnectorsTool({
+          runtime: again,
+          getIdentity: () => ADMIN,
+          getWorkspaceId: () => WS,
+        }).handler(args),
+      );
+    const installed = await call({ action: "install", entry: { address: "notion@test" } });
+    expect(installed.isError).toBe(true);
+    await call({ action: "uninstall", address: "notion@test" });
+    expect((await workspaceRecord(again)).connectors).toEqual(authored);
+    expect((await workspaceRecord(again)).plugins ?? []).toEqual([]);
+  }, 30_000);
+
+  test("a workspace's connector created with the workspace carries its owner's mark and is never adopted", async () => {
+    writeListing([publish("notion", notionPlugin(), NOTION_CLAIM)]);
+    const rt = await boot();
+    const created = await createManageWorkspacesTool({
+      getIdentity: () => ORG_ADMIN,
+      workspaceStore: rt.getWorkspaceStore(),
+      runtime: rt,
+    }).handler({
+      action: "create",
+      name: "Authored",
+      connectors: [{ url: NOTION.url, serverName: NOTION_SERVER }],
+    });
+    const wsId = (created.structuredContent as { workspace: { id: string } }).workspace.id;
+    const result = await adoptExistingInstalls({
+      workDir,
+      workspaces: rt.getWorkspaceStore(),
+      records: rt.getPluginRecords(),
+      snapshots: () => rt.getCatalogListings().snapshots(),
+    });
+    expect(result.adopted).toEqual([]);
+    const ws = await rt.getWorkspaceStore().get(wsId);
+    expect(ws?.connectors).toEqual([
+      { url: NOTION.url, serverName: NOTION_SERVER, addedBy: "owner" },
+    ]);
+    expect(ws?.plugins ?? []).toEqual([]);
+  });
+
+  test("a legacy connector with no catalog evidence stays plain, and reads its record from the view", async () => {
+    // As a pre-record DCR or static install stored it, or a row an owner wrote
+    // before owner marks existed: nothing only the catalog writes.
+    const asana: FixtureServer = {
+      name: "io.asana/mcp",
+      url: "https://mcp.asana.test/mcp",
+      title: "Asana",
+      meta: {
+        auth: "static",
+        oauthClientSetup: {
+          portalUrl: "https://app.asana.test/developers",
+          hint: "Create an OAuth app.",
+          clientSecretKey: "asana.client_secret",
+        },
+      },
+    };
+    const ref: ConnectorRef = { url: asana.url, serverName: "io-asana-mcp" };
+    await seedPreRecordWorkspace([ref]);
+    writeListing([
+      publish("asana", pluginZip({ name: "asana", servers: { asana } }), {
+        asana: { name: asana.name, auth: "static" },
+      }),
+    ]);
+    const rt = await boot();
+
+    const ws = await workspaceRecord(rt);
+    expect(ws.connectors).toEqual([ref]);
+    expect(ws.plugins ?? []).toEqual([]);
+    const own = rt.getConnectorCatalog({ kind: "workspace", wsId: WS });
+    const entry = await own.catalogById(asana.name);
+    expect(entry?.name).toBe("Asana");
+    expect(entry?.oauthClientSetup?.clientSecretKey).toBe("asana.client_secret");
+    const { servers } = await own.servers();
+    expect(servers.find((x) => x.detail.name === asana.name)?.file).toBe("view asana@test");
+    // The view fetched the artifact once; another read fetches nothing.
+    const fetched = artifactFetches().length;
+    expect(fetched).toBe(1);
+    await rt.getConnectorCatalog({ kind: "workspace", wsId: WS }).catalogById(asana.name);
+    expect(artifactFetches()).toHaveLength(fetched);
+    // A view grants no ownership: still unmarked, still no record.
+    expect((await workspaceRecord(rt)).connectors).toEqual([ref]);
+  });
+
+  test("a connector at another endpoint than the listed server gets no view", async () => {
+    const ref: ConnectorRef = { url: "https://elsewhere.test/mcp", serverName: NOTION_SERVER };
+    await seedPreRecordWorkspace([ref]);
+    writeListing([publish("notion", notionPlugin(), NOTION_CLAIM)]);
+    const rt = await boot();
+    const own = rt.getConnectorCatalog({ kind: "workspace", wsId: WS });
+    expect(await own.catalogById(NOTION.name)).toBeNull();
+  });
+
+  test("a marking that fails after the record keeps the plugin's skills, and a retry finishes it", async () => {
+    await seedPreRecordWorkspace([]);
+    writeListing([publish("notion", notionPlugin(), NOTION_CLAIM)]);
+    const rt = await boot();
+    const store = rt.getWorkspaceStore();
+    await store.update(WS, { connectors: [preRecordRef(NOTION, NOTION_SERVER)] });
+    // A store whose connector write fails once: the mark, after the record landed.
+    let failed = false;
+    const failing = Object.create(store) as WorkspaceStore;
+    failing.update = async (id, patch) => {
+      if (!failed && patch.connectors) {
+        failed = true;
+        throw new Error("disk full");
+      }
+      return store.update(id, patch);
+    };
+    const deps = {
+      workDir,
+      records: rt.getPluginRecords(),
+      snapshots: () => rt.getCatalogListings().snapshots(),
+    };
+    await adoptExistingInstalls({ ...deps, workspaces: failing });
+    expect(failed).toBe(true);
+
+    const bound = join(connectorSkillsDir(), NOTION_SERVER, "notion.md");
+    const unbound = join(workDir, "workspaces", WS, "plugin-skills", "notion@test", "writing.md");
+    let ws = await workspaceRecord(rt);
+    expect(ws.plugins?.map((p) => p.address)).toEqual(["notion@test"]);
+    expect(ws.connectors[0]?.installedBy).toBeUndefined();
+    expect(existsSync(bound)).toBe(true);
+    expect(readFileSync(bound, "utf-8")).toContain("from the plugin");
+
+    // A retry marks it; a skill the record lists and the disk lost is written again.
+    rmSync(bound);
+    rmSync(unbound);
+    await adoptExistingInstalls({ ...deps, workspaces: store });
+    ws = await workspaceRecord(rt);
+    expect(ws.connectors[0]?.installedBy).toBe("notion@test");
+    expect(ws.connectors[0]?.skillsLock).toBeUndefined();
+    expect(readFileSync(bound, "utf-8")).toContain("from the plugin");
+    expect(existsSync(unbound)).toBe(true);
   });
 });

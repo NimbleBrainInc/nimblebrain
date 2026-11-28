@@ -8,27 +8,33 @@
  * **What qualifies.** A connector is adopted into the plugin at `name@catalog`
  * only when all of these hold:
  *
- * 1. it carries catalog provenance: no `installedBy` (no plugin made it), and
- *    not added by its owner ({@link addedByOwner}: a `direct-url` install's
- *    `transport.auth` of `none`, or its `display`), and no record of its owner
- *    names it. A connector its owner added by URL is never adopted, whatever a
- *    listing names, because adoption would let an uninstall remove what the
- *    owner made;
+ * 1. it carries positive evidence of a catalog install ({@link catalogEvidence}),
+ *    a field only the catalog install path ever wrote: a `skillsLock` naming a
+ *    plugin and its server, a broker's stamp (`brokered`, naming the catalog
+ *    entry), a pre-registered OAuth client (`oauthClient`, bound from the
+ *    catalog entry's setup), or provider auth (`transport.auth.type:
+ *    "provider"`, from the operator's entry). It carries no `installedBy` (no
+ *    plugin made it), no `addedBy: "owner"` (every path an owner adds a
+ *    connector by stamps it), and no record of its owner names it. A connector
+ *    with no such evidence is never adopted, whatever a listing names, because
+ *    adoption would let an uninstall remove what its owner made;
  * 2. exactly one entry across the configured listings names its server (in its
  *    `servers`, or a bare connector's inline record): by the registry name its
  *    `skillsLock` or its broker's stamp records, else by a name that slugifies
  *    to its connection. A listing that cannot be read at all leaves every
  *    candidate for the next boot, since "exactly one" cannot be judged without it;
  * 3. that entry's artifact, fetched and verified against its digest, contains
- *    the server at the connector's endpoint: a remote URL equal to the
- *    connector's, or, for a brokered connector (its URL is a per-install
+ *    the server at the connector's endpoint (`servesAt`): a remote URL equal to
+ *    the connector's, or, for a brokered connector (its URL is a per-install
  *    session), the record its broker stamped by name.
  *
  * Otherwise the connector stays a plain connector and the reconcile logs the
- * entries that claim it, once per boot. A plain connector carries no catalog
- * skill: the files an old binding materialized in `connector-skills/` are
- * removed, and its `skillsLock` stays as provenance, so a later boot whose
- * listings name its server adopts it then.
+ * entries that claim it, once per boot. A plain connector reads its server's
+ * record through the connector list's read-only view
+ * (`src/catalogs/plain-records.ts`), and carries no catalog skill: the files
+ * an old binding materialized in `connector-skills/` are removed, except for a
+ * connector a committed record names, and its `skillsLock` stays as
+ * provenance, so a later boot whose listings name its server adopts it then.
  *
  * **What adoption writes**, per plugin and owner, under the owner's lifecycle
  * lock (`oneAtATime`, shared with install, uninstall and update):
@@ -45,7 +51,9 @@
  *
  * The record is written before the connectors are marked, so a boot that
  * stops between the two finds a record naming a connector not yet marked (or
- * still carrying its lock), and finishes marking it with no fetch. A later boot
+ * still carrying its lock), and finishes marking it with no fetch; a skill the
+ * record lists that is missing then is written again from the artifact at the
+ * record's digest (the cached copy, else the listed one). A later boot
  * fetches nothing for an adopted connector; it reads the listings again only
  * for connectors still plain.
  *
@@ -55,17 +63,17 @@
  * plugin several owners have is fetched once.
  */
 
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { SERVER_RECORD_TYPE } from "../catalogs/listing.ts";
+import { claimsOf, type ListedEntry, recordedRegistry, servesAt } from "../catalogs/claims.ts";
 import type { CatalogSnapshot } from "../catalogs/reader.ts";
-import { brokeredRef } from "../connectors/runtime/brokered.ts";
 import { serverNameFromRef } from "../connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../connectors/runtime/types.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { log } from "../observability/log.ts";
 import {
   ArtifactError,
+  type ArtifactSelection,
   obtainArtifact,
   type PluginContents,
   readArtifact,
@@ -79,6 +87,7 @@ import {
 import {
   type ManagedSkillRoots,
   managedSkillRoots,
+  pluginSkillsDirName,
   removeUnownedConnectorSkills,
 } from "../skills/managed-skills.ts";
 import { serializePerWorkspace } from "../workspace/serialize.ts";
@@ -90,8 +99,6 @@ export const MAX_FETCHES_PER_BOOT = 20;
 
 /** How many artifacts adoption fetches at once. */
 export const FETCH_CONCURRENCY = 3;
-
-type ListedEntry = CatalogSnapshot["entries"][number];
 
 export interface PluginAdoptionDeps {
   workDir: string;
@@ -126,28 +133,26 @@ interface Candidate {
 }
 
 /**
- * Whether its owner added `ref` by URL (ADR-0065). `handleInstallDirectUrl` is
- * the one path that does, and every ref it writes carries
- * `transport.auth: {type: "none"}`, which no catalog install writes (a catalog
- * ref's transport names only its class, a provider credential, or a broker's
- * session); it adds `display` only when the server's card describes itself.
+ * Whether `ref` carries a field only a catalog install wrote: a lock naming a
+ * plugin and its server, a broker's stamp, a pre-registered OAuth client, or
+ * provider auth. No path an owner adds a connector by writes any of them
+ * (`direct-url` writes `transport.auth: none`, a workspace's connector rows
+ * only a URL and a name), so this is evidence, not a guess from a missing field.
  */
-export function addedByOwner(ref: ConnectorRef): boolean {
-  return ref.display !== undefined || ref.transport?.auth?.type === "none";
+export function catalogEvidence(ref: ConnectorRef): boolean {
+  return (
+    recordedRegistry(ref) !== null ||
+    ref.oauthClient !== undefined ||
+    ref.transport?.auth?.type === "provider"
+  );
 }
 
 /**
- * Whether `ref` was installed from a catalog before records existed: neither a
- * plugin's connection nor one its owner added by URL.
+ * Whether `ref` is a catalog install made before records existed: no plugin
+ * made it, its owner did not add it, and it carries catalog evidence.
  */
 export function hasCatalogProvenance(ref: ConnectorRef): boolean {
-  return !ref.installedBy && !addedByOwner(ref);
-}
-
-/** The registry name a pre-record catalog install recorded: its lock's, else its broker's stamp. */
-function recordedRegistry(ref: ConnectorRef): string | null {
-  const lock = ref.skillsLock?.find((e) => e.plugin && e.server);
-  return lock?.server ?? brokeredRef(ref)?.connectorId ?? null;
+  return !ref.installedBy && ref.addedBy !== "owner" && catalogEvidence(ref);
 }
 
 function ownerLabel(owner: PluginOwner): string {
@@ -232,7 +237,9 @@ class SharedReads {
   }
 
   /** The verified contents of `entry`'s artifact, or why it cannot be read. */
-  artifact(entry: ListedEntry): Promise<{ contents: PluginContents; digest: string } | string> {
+  artifact(
+    entry: ArtifactSelection,
+  ): Promise<{ contents: PluginContents; digest: string } | string> {
     const key = `${entry.address} ${entry.digest ?? ""}`;
     let read = this.#artifacts.get(key);
     if (!read) {
@@ -270,25 +277,6 @@ class SharedReads {
   }
 }
 
-/** The registry names `entry` lists: its extension's servers, or a bare connector's inline record. */
-function namesListed(entry: ListedEntry): string[] {
-  const names = Object.values(entry.servers).map((s) => s.name);
-  const data = entry.data as { name?: unknown } | undefined;
-  if (entry.type === SERVER_RECORD_TYPE && typeof data?.name === "string") names.push(data.name);
-  return names;
-}
-
-/**
- * The registry name under which `entry` lists candidate `c`'s server, or null:
- * the name it recorded, else (with none recorded) a name that slugifies to its
- * connection.
- */
-function claimedName(entry: ListedEntry, c: Candidate): string | null {
-  const names = namesListed(entry);
-  if (c.registry) return names.includes(c.registry) ? c.registry : null;
-  return names.find((n) => connectionOf({ name: n }) === c.serverName) ?? null;
-}
-
 async function adoptForOwner(
   deps: PluginAdoptionDeps,
   owner: PluginOwner,
@@ -301,16 +289,18 @@ async function adoptForOwner(
   if (refs.length === 0) return;
   const records = await deps.records.list(owner);
   const { finish, candidates } = triage(refs, records);
-  for (const [serverName, address] of finish) {
-    await markConnector(deps, identity, owner, serverName, address);
-    result.adopted.push({ owner, serverName, address });
+  for (const [serverName, record] of finish) {
+    await markConnector(deps, identity, owner, serverName, record.address);
+    result.adopted.push({ owner, serverName, address: record.address });
+  }
+  for (const record of new Set(finish.values())) {
+    await restoreMissingSkills(deps.workDir, owner, record, shared);
   }
   if (candidates.length === 0) return;
-  const adoptedNow = new Set<string>();
   try {
-    await adoptCandidates(deps, identity, owner, shared, result, candidates, adoptedNow);
+    await adoptCandidates(deps, identity, owner, shared, result, candidates);
   } finally {
-    retireOldBindings(deps.workDir, owner, candidates, adoptedNow);
+    await retireOldBindings(deps, owner, candidates);
   }
 }
 
@@ -321,7 +311,6 @@ async function adoptCandidates(
   shared: SharedReads,
   result: PluginAdoptionResult,
   candidates: readonly Candidate[],
-  adoptedNow: Set<string>,
 ): Promise<void> {
   const entries = await shared.entries();
   if (!entries) return;
@@ -339,7 +328,6 @@ async function adoptCandidates(
     if (typeof read === "string" || adopted.length === 0) continue;
     await adoptInto(deps, identity, owner, entry, read, adopted);
     for (const c of adopted) {
-      adoptedNow.add(c.serverName);
       result.adopted.push({ owner, serverName: c.serverName, address: entry.address });
     }
   }
@@ -350,21 +338,28 @@ async function adoptCandidates(
  * binding materialized for it goes, so it loads as a plain connector, with its
  * server's own published skills. Its `skillsLock` stays, as the provenance a
  * later boot adopts it by, and adoption then writes the plugin's skills.
+ *
+ * A connector a committed record names is not plain, whether or not its mark
+ * landed: its skills are the plugin's. The records are read again here, after
+ * adoption, so a mark that failed after its record was written never costs
+ * the plugin its skills; when they cannot be read, nothing is removed.
  */
-function retireOldBindings(
-  workDir: string,
+async function retireOldBindings(
+  deps: PluginAdoptionDeps,
   owner: PluginOwner,
   candidates: readonly Candidate[],
-  adoptedNow: ReadonlySet<string>,
-): void {
+): Promise<void> {
   let roots: ManagedSkillRoots;
+  let named: Set<string>;
   try {
-    roots = managedSkillRoots(workDir, owner);
+    roots = managedSkillRoots(deps.workDir, owner);
+    const records = await deps.records.list(owner);
+    named = new Set(records.flatMap((r) => r.connectors.map((c) => connectionOf(c))));
   } catch {
     return;
   }
   for (const c of candidates) {
-    if (adoptedNow.has(c.serverName)) continue;
+    if (named.has(c.serverName)) continue;
     try {
       removeUnownedConnectorSkills({ roots, serverName: c.serverName, keep: new Set() });
     } catch (err) {
@@ -373,6 +368,50 @@ function retireOldBindings(
       );
     }
   }
+}
+
+/**
+ * Write again the skills `record` lists that are missing (an adoption whose
+ * cleanup ran before its marks landed), from the artifact at the record's
+ * digest: the cached copy, else the listed one when it is still that digest.
+ * The record is not rewritten; what it lists is what is written.
+ */
+async function restoreMissingSkills(
+  workDir: string,
+  owner: PluginOwner,
+  record: InstalledPluginRecord,
+  shared: SharedReads,
+): Promise<void> {
+  const roots = managedSkillRoots(workDir, owner);
+  const pathOf = (skill: InstalledPluginRecord["skills"][number]): string => {
+    const connector = skill.server
+      ? record.connectors.find((c) => c.key === skill.server)
+      : undefined;
+    return connector
+      ? join(roots.connectorSkills, connectionOf(connector), `${skill.name}.md`)
+      : join(roots.pluginSkills, pluginSkillsDirName(record.address), `${skill.name}.md`);
+  };
+  if (record.skills.every((s) => existsSync(pathOf(s)))) return;
+  const listed = (await shared.entries())?.find((e) => e.address === record.address);
+  // The record's digest, from the cache; a listed copy only while it is that digest.
+  const read = await shared.artifact(
+    listed?.digest === record.digest
+      ? listed
+      : { address: record.address, name: record.address, type: record.type, digest: record.digest },
+  );
+  if (typeof read === "string") {
+    log.warn(
+      `[plugins] ${ownerLabel(owner)}: the missing skills of ${record.address} were not restored: ${read}`,
+    );
+    return;
+  }
+  const keys = new Set(record.connectors.map((c) => c.key));
+  materializeSkills(workDir, owner, record.address, {
+    ...read.contents,
+    servers: read.contents.servers.filter((s) => keys.has(s.key)),
+    skills: read.contents.skills.filter((s) => !s.server || keys.has(s.server)),
+  });
+  log.info(`[plugins] ${ownerLabel(owner)}: restored the missing skills of ${record.address}`);
 }
 
 /** The candidates the verified artifact contains; each other one is left with why. */
@@ -385,7 +424,9 @@ function adoptable(
     for (const c of group) left(c, `its artifact cannot be read: ${read}`);
     return [];
   }
-  const adopted = group.filter((c) => contains(read, c));
+  const adopted = group.filter((c) =>
+    read.contents.servers.some((s) => c.registry !== null && servesAt(s, c.registry, c.ref)),
+  );
   for (const c of group) {
     if (!adopted.includes(c)) {
       left(c, "the verified artifact does not contain its server at the connector's endpoint");
@@ -395,32 +436,15 @@ function adoptable(
 }
 
 /**
- * Whether the artifact carries the candidate's server at the endpoint it is
- * connected to: the record's remote URL is the connector's, or, for a brokered
- * connector (whose URL is a per-install session), the broker stamped the
- * record's name. A same-name server at another endpoint is another server.
- */
-function contains(read: { contents: PluginContents }, c: Candidate): boolean {
-  const brokered = brokeredRef(c.ref);
-  return read.contents.servers.some(
-    (s) =>
-      s.name === c.registry &&
-      (brokered
-        ? brokered.connectorId === s.name
-        : (s.detail.remotes ?? []).some((r) => r.url === c.ref.url)),
-  );
-}
-
-/**
  * The owner's connectors a record already names but that still carry the old
- * binding (an adoption that stopped before marking them), by the record's
- * address, and the connectors with catalog provenance no record names.
+ * binding (an adoption that stopped before marking them), with that record,
+ * and the connectors with catalog provenance no record names.
  */
 function triage(
   refs: readonly ConnectorRef[],
   records: readonly InstalledPluginRecord[],
-): { finish: Map<string, string>; candidates: Candidate[] } {
-  const finish = new Map<string, string>();
+): { finish: Map<string, InstalledPluginRecord>; candidates: Candidate[] } {
+  const finish = new Map<string, InstalledPluginRecord>();
   const candidates: Candidate[] = [];
   for (const ref of refs) {
     const serverName = serverNameFromRef(ref);
@@ -436,7 +460,7 @@ function triage(
     // names but that is not marked yet, or that still carries its lock.
     const unmarked = hasCatalogProvenance(ref);
     const lockLeft = ref.installedBy === named.address && ref.skillsLock !== undefined;
-    if (unmarked || lockLeft) finish.set(serverName, named.address);
+    if (unmarked || lockLeft) finish.set(serverName, named);
   }
   return { finish, candidates };
 }
@@ -449,10 +473,7 @@ function byClaimant(
 ): Map<string, { entry: ListedEntry; candidates: Candidate[] }> {
   const groups = new Map<string, { entry: ListedEntry; candidates: Candidate[] }>();
   for (const candidate of candidates) {
-    const claims = entries.flatMap((e) => {
-      const name = claimedName(e, candidate);
-      return name ? [{ entry: e, name }] : [];
-    });
+    const claims = claimsOf(entries, candidate.serverName, candidate.registry);
     const claimants = claims.map((x) => x.entry);
     const claim = claims[0];
     const c = claim ? { ...candidate, registry: claim.name } : candidate;

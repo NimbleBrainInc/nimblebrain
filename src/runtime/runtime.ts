@@ -13,6 +13,7 @@ import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import type { ConversationStreamEvents, TurnFrame } from "../api/schemas/events.ts";
 import { loadBrand } from "../brand/index.ts";
 import { listedServerRecords } from "../catalogs/listed-records.ts";
+import { plainConnectorRecords } from "../catalogs/plain-records.ts";
 import {
   type CatalogListings,
   createCatalogListings,
@@ -5967,9 +5968,10 @@ export class Runtime {
   /**
    * The connector list, as `owner` sees it: the server records the plugins
    * that owner installed supplied, first per name in its install order, ahead
-   * of the listings' bare connectors. One owner's plugins never shape another
-   * owner's connection, so a read about an installed connection names its
-   * owner; with none, the read is the listings' alone. A fresh instance per
+   * of the listings' bare connectors, and then the read-only view of that
+   * owner's plain connections (`plainConnectorRecords`). One owner's plugins
+   * never shape another owner's connection, so a read about an installed
+   * connection names its owner; with none, the read is the listings' alone. A fresh instance per
    * request, so its read cache lives exactly as long as the request that
    * opened it. `sharing` reuses another catalog's read of the listings, for a
    * sweep over many owners.
@@ -5983,7 +5985,19 @@ export class Runtime {
       new ConnectorCatalog(async () =>
         listedServerRecords(await this._catalogListings.snapshots()),
       );
-    return owner ? base.forOwner(() => this.installedServerRecords(owner)) : base;
+    if (!owner) return base;
+    return base.forOwner(
+      () => this.installedServerRecords(owner),
+      () =>
+        plainConnectorRecords({
+          workDir: this.getWorkDir(),
+          refs: async () =>
+            owner.kind === "workspace"
+              ? ((await this.getWorkspaceStore().get(owner.wsId))?.connectors ?? [])
+              : new IdentityConnectorStore({ workDir: this.getWorkDir() }).list(owner.userId),
+          snapshots: () => this._catalogListings.snapshots(),
+        }),
+    );
   }
 
   /**

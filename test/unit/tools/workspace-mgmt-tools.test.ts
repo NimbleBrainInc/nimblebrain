@@ -217,6 +217,8 @@ describe("nb__manage_workspaces", () => {
       expect(parsed.workspace.connectors).toEqual([{ serverName: "echo", name: "Echo" }]);
       const stored = await store.get(parsed.workspace.id);
       expect(stored?.connectors[0]?.url).toBe("https://echo.example.com/mcp");
+      // Its owner added it: no plugin ever adopts, takes over or removes it.
+      expect(stored?.connectors[0]?.addedBy).toBe("owner");
     });
 
     test("requires name", async () => {
@@ -373,6 +375,7 @@ describe("nb__manage_workspaces", () => {
         "https://echo.example.com/mcp",
         "https://bash.example.com/mcp",
       ]);
+      expect(stored?.connectors.map((c) => c.addedBy)).toEqual(["owner", "owner"]);
     });
 
     test("refuses a connector row with no reachable url", async () => {

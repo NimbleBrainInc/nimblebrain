@@ -299,6 +299,7 @@ describe("an install with a card", () => {
         description: "Forecasts, in development",
         iconUrl: "data:image/svg+xml;base64,PHN2Zy8+",
       },
+      addedBy: "owner",
     });
     const raw = JSON.stringify(row);
     for (const grant of ["hooks", "adminTools", "recordArguments", "notifications"]) {

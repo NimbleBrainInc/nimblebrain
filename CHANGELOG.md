@@ -137,7 +137,7 @@
 
 ### Changed
 
-- **Connectors installed from a catalog before plugins were recorded become plugins at startup** when exactly one catalog lists their server and its verified archive contains it at the connector's URL (or, brokered, under the name its broker stamped), keeping their connection and credentials; conversation starters and the plugin list read installed plugins' records instead of opening catalog archives. [Docs](https://docs.nimblebrain.ai/using/skills/#connector-skill-overlays).
+- **Connectors installed from a catalog before plugins were recorded become plugins at startup** when they carry a field only a catalog install wrote, exactly one catalog lists their server, and its verified archive contains it at the connector's URL (or, brokered, under the name its broker stamped), keeping their connection and credentials; conversation starters and the plugin list read installed plugins' records instead of opening catalog archives. [Docs](https://docs.nimblebrain.ai/using/skills/#connector-skill-overlays).
 - **Replacing a workspace's OAuth client signs its connections out before it is saved**, so a failure leaves the old client stored.
 - **Browse hides a brokered connector whose broker this instance does not configure**, since it could never install; it used to show and refuse at install.
 - **Task telemetry:** `automation.run_completed` carries no `automation_id` or batch flag, `automation.created` is not sent, and `task.created` reports on every deployment. [Docs](https://docs.nimblebrain.ai/using/telemetry/).

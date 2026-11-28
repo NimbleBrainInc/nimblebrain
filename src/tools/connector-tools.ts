@@ -2543,6 +2543,7 @@ async function handleInstallDirectUrl(
     oauthScope: "workspace",
     ...(card?.ui ? { ui: card.ui } : {}),
     ...(display ? { display } : {}),
+    addedBy: "owner",
   };
   const lifecycle = ctx.runtime.getLifecycle();
   await putWorkspaceConnector(ctx, wsId, ref);

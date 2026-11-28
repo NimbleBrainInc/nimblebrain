@@ -224,6 +224,7 @@ function workspaceRow(plugin: WorkspacePlugin, deps: WorkspaceSeedDeps): Connect
       transport: { type: "streamable-http", auth: { type: "none" } },
       oauthScope: "workspace",
       display: { title: plugin.title },
+      addedBy: "owner",
     };
   }
   const entry = catalogEntry(deps.catalog, plugin.catalogId);
@@ -270,6 +271,7 @@ function mockRow(serverName: string, apiKey: boolean, deps: WorkspaceSeedDeps): 
         }
       : {}),
     display: { title: mock.title, description: mock.description },
+    addedBy: "owner",
   };
 }
 
