@@ -90,7 +90,7 @@ const SSE_ROUTES: { [K in WorkspaceStreamEngineEvent]?: SseRoute<K> } = {
   // (`src/tools/server-notifications.ts`). Each is stamped with its one owner.
   // A workspace's source is stamped with the workspace whose registry received
   // it, and never reaches a member of another workspace. A person's own app
-  // (`conversations`, `files`, `tasks`) belongs to no workspace, so it is
+  // (`conversations`, `files`, `tasks`, a personal connector) belongs to no workspace, so it is
   // stamped with the user who owns the changed data and reaches that user alone —
   // never every member of a workspace they happen to share.
   "server.notification": { scope: "owner", wsIdField: "workspaceId", userIdField: "userId" },

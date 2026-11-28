@@ -125,7 +125,7 @@ export type ConnectionStateChangedEvent =
   | (ConnectionStateChangedFields & { userId: string });
 
 interface ServerNotificationFields {
-  /** The bare server name, an iframe's `data-app`. */
+  /** The name the server's views carry as `data-app` (`my_<server>` for a personal connector). */
   server: string;
   /** One of the host's relayed notification methods. */
   method: string;

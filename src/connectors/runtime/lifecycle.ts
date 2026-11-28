@@ -37,6 +37,7 @@ import {
   peekFlowOwner,
 } from "../../tools/oauth-flow-registry.ts";
 import { SharedSourceRef, ToolRegistry } from "../../tools/registry.ts";
+import { createPersonalConnectorNotificationRelay } from "../../tools/server-notifications.ts";
 import type { ToolSource } from "../../tools/types.ts";
 import { WorkspaceOAuthProvider } from "../../tools/workspace-oauth-provider.ts";
 import { validateAdditionalAuthorizationParams } from "../../util/oauth-params.ts";
@@ -2026,11 +2027,18 @@ export class ConnectorLifecycleManager {
     await clearIdentityConnectorCredentials(workDir, userId, serverName, brokeredRef(ref));
   }
 
-  /** The user's personal-connector registry, created on first access. */
+  /**
+   * The user's personal-connector registry, created on first access. It relays
+   * its connectors' server notifications to their views, stamped with this user:
+   * every source in it is this user's own.
+   */
   private userRegistry(userId: string): ToolRegistry {
     let registry = this.registriesByUser.get(userId);
     if (!registry) {
       registry = new ToolRegistry();
+      registry.setServerNotificationListener(
+        createPersonalConnectorNotificationRelay(userId, this.eventSink),
+      );
       this.registriesByUser.set(userId, registry);
     }
     return registry;

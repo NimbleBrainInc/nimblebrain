@@ -22,6 +22,11 @@
  *     (`announceResourceListChangedFor`), and a notification that names no one
  *     is dropped rather than guessed at.
  *
+ *     A personal connector is one person's own connection, held in that
+ *     person's registry, so the registry's relay stamps its notification with
+ *     its owner and names it by its marked name (`my_<server>`), the name its
+ *     views mount under (`createPersonalConnectorNotificationRelay`).
+ *
  * Three rules shape the relay, and each exists because the server is untrusted:
  *
  *   - **Allowlist.** Only methods listed in `RELAYED_SERVER_NOTIFICATIONS` pass.
@@ -45,7 +50,11 @@ import type {
 } from "@modelcontextprotocol/client";
 import { serverNotificationsRelayedTotal } from "../api/metrics.ts";
 import type { EventSink } from "../engine/types.ts";
-import { isIdentitySource, isPersonalConnectorName } from "./identity-sources.ts";
+import {
+  isIdentitySource,
+  isPersonalConnectorName,
+  personalConnectorWireName,
+} from "./identity-sources.ts";
 import type { ToolSource } from "./types.ts";
 
 /** `notifications/resources/list_changed`, typed from the SDK so a spec rename fails the build. */
@@ -103,17 +112,17 @@ export function relayableParams(params: unknown): Record<string, unknown> | unde
 }
 
 /**
- * Whether a bare server name can have views to deliver to, and should. The
- * relay asks before it delivers.
+ * Whether a source, by the name its registry holds it under, can have views to
+ * deliver to, and should. The relay asks before it delivers.
  *
- * A personal connector has no listener, and the marker is NOT stripped to find
- * one. `server` is matched against an iframe's `data-app`, and a personal
- * connector cannot mount an iframe: a `ui://` read resolves through
- * `readIdentityAppResource` (kernel identity sources only) or `readAppResource`
- * (the workspace registry), and a connector is in neither. De-marking would
- * therefore never reach the connector's own surface — it would reach a
- * WORKSPACE app of the same name, refreshing an unrelated app. That same-name
- * collision is the exact thing the marker exists to prevent.
+ * A registry holds every source under its bare name, a personal connector
+ * included, so a marked (`my_`) name never arrives here from a source a relay
+ * owns: a workspace source cannot take the reserved marker. One that does is
+ * refused, so a marked name is never stamped with a workspace and never
+ * de-marked to find a listener, which would reach a WORKSPACE app of the same
+ * bare name. A personal connector's views carry its marked name as their
+ * `data-app`; the personal relay adds the marker when it delivers
+ * (`createPersonalConnectorNotificationRelay`).
  *
  * System tools (`nb`) render no app data of their own; signalling for them
  * makes iframes re-fetch on every streaming chunk (flicker + tool-call
@@ -144,7 +153,7 @@ export type ServerNotificationOwner = { workspaceId: string } | { userId: string
 
 /** The engine event a relayed notification becomes, before SSE fan-out. */
 export type ServerNotificationEventData = {
-  /** The bare server name — what an iframe's `data-app` carries. */
+  /** The name the server's views carry as `data-app` (`my_<server>` for a personal connector). */
   server: string;
   method: RelayedServerNotificationMethod;
   params?: Record<string, unknown>;
@@ -163,10 +172,11 @@ interface CoalesceWindow {
 }
 
 /**
- * The relay both owners share: guard, attribute with `ownerOf`, coalesce, and
+ * The relay every owner shares: guard, attribute with `ownerOf`, coalesce, and
  * emit `server.notification` on `eventSink`. `ownerOf` is asked as each
  * notification arrives; `null` means the notification names no owner, and it
- * is counted and dropped.
+ * is counted and dropped. `viewName` maps the source's registry name to the
+ * name its views carry as `data-app`; the guard reads the registry name.
  *
  * Its state is the open coalescing windows, which close on their own within
  * `RELAY_COALESCE_WINDOW_MS` of the last notification, so there is nothing to
@@ -175,6 +185,7 @@ interface CoalesceWindow {
 function createRelay(
   eventSink: EventSink,
   ownerOf: () => ServerNotificationOwner | null,
+  viewName: (sourceName: string) => string = (sourceName) => sourceName,
 ): ServerNotificationRelay {
   const windows = new Map<string, CoalesceWindow>();
 
@@ -217,8 +228,9 @@ function createRelay(
     return opened;
   };
 
-  return (server: string, notification: ServerNotification): void => {
-    if (!server || !hasAppViews(server)) return;
+  return (sourceName: string, notification: ServerNotification): void => {
+    if (!sourceName || !hasAppViews(sourceName)) return;
+    const server = viewName(sourceName);
 
     const owner = ownerOf();
     if (!owner) {
@@ -247,6 +259,20 @@ export function createServerNotificationRelay(
   eventSink: EventSink,
 ): ServerNotificationRelay {
   return createRelay(eventSink, () => ({ workspaceId }));
+}
+
+/**
+ * Build the relay for one person's personal connectors: every notification it
+ * takes is stamped with `userId`, the connector's owner, and named by the
+ * connector's marked name (`my_<server>`), the `data-app` its views carry. The
+ * lifecycle wires one into each user's registry, which holds that person's
+ * connectors and no one else's, so the registry is where the owner is known.
+ */
+export function createPersonalConnectorNotificationRelay(
+  userId: string,
+  eventSink: EventSink,
+): ServerNotificationRelay {
+  return createRelay(eventSink, () => ({ userId }), personalConnectorWireName);
 }
 
 /**

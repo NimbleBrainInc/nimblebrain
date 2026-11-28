@@ -124,7 +124,8 @@ const ServerNotificationFields = {
 
 /**
  * An app server's notification, relayed to that server's views. `server` is the
- * bare server name (an iframe's `data-app`), `method` one of
+ * name the server's views carry as `data-app`: its source name, marked
+ * (`my_<server>`) for a personal connector. `method` one of
  * `RELAYED_SERVER_NOTIFICATIONS`, `params` what the SDK parsed, size-capped.
  *
  * It names exactly one owner: `workspaceId` for a workspace's source, or

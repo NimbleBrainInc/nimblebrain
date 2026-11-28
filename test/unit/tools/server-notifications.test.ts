@@ -19,6 +19,7 @@ import { defineInProcessApp, type InProcessResource } from "../../../src/tools/i
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
 import { SharedSourceRef, ToolRegistry } from "../../../src/tools/registry.ts";
 import {
+  createPersonalConnectorNotificationRelay,
   createServerNotificationRelay,
   MAX_RELAYED_PARAMS_BYTES,
   RELAY_COALESCE_WINDOW_MS,
@@ -364,5 +365,34 @@ describe("createServerNotificationRelay — the host sets the rate", () => {
     jest.advanceTimersByTime(RELAY_COALESCE_WINDOW_MS);
 
     expect(payloadsOf(events, "server.notification")[1]?.params).toEqual({ _meta: { n: 2 } });
+  });
+});
+
+describe("the personal-connector relay", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test("names the connector by its marked name and stamps its owner, never a workspace", () => {
+    jest.useFakeTimers();
+    const { sink, events } = recordingSink();
+    const relay = createPersonalConnectorNotificationRelay("usr_alice", sink);
+
+    relay("crm", LIST_CHANGED);
+
+    expect(payloadsOf(events, "server.notification")).toEqual([
+      { server: "my_crm", userId: "usr_alice", method: RESOURCES_LIST_CHANGED },
+    ]);
+  });
+
+  test("drops a name that is already marked rather than stripping the marker", () => {
+    jest.useFakeTimers();
+    const { sink, events } = recordingSink();
+    const relay = createPersonalConnectorNotificationRelay("usr_alice", sink);
+
+    relay("my_crm", LIST_CHANGED);
+    relay("nb", LIST_CHANGED);
+
+    expect(events).toEqual([]);
   });
 });

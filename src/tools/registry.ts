@@ -120,8 +120,9 @@ export class ToolRegistry implements ToolRouter {
   /**
    * Fired with a source's name and a notification its server sent, for the
    * notifications a host relays to the server's views. A workspace registry
-   * wires this to its relay (see `createWorkspaceRegistry`); null for
-   * registries with no consumer.
+   * wires this to its relay (see `createWorkspaceRegistry`), and a person's
+   * personal-connector registry to theirs (`createPersonalConnectorNotificationRelay`);
+   * null for registries with no consumer.
    */
   private serverNotificationListener:
     | ((sourceName: string, notification: ServerNotification) => void)
