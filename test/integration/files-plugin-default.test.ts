@@ -239,6 +239,37 @@ describe("a chat turn's attachments", () => {
     }
   }, 30_000);
 
+  it("come back with the message on reload, as its files, and the person's text alone", async () => {
+    const form = new FormData();
+    form.append("message", "summarize this");
+    form.append("files", new File(["delta epsilon"], "brief.txt", { type: "text/plain" }));
+    const res = await rest(`/v1/workspaces/${WS}/chat/start`, { method: "POST", body: form });
+    expect(res.status).toBe(200);
+    const { conversationId } = await readJson<ChatStartResponse>(res);
+    const source = runtime.getIdentitySource("conversations");
+    if (!source) throw new Error("no conversations source");
+    const get = () =>
+      runWithRequestContext({ identity: OWNER, workspaceId: WS }, () =>
+        source.execute("get", { id: conversationId, expand: "full" }),
+      );
+    type Got = {
+      messages: Array<{ role: string; content: string; files?: Array<{ filename: string }> }>;
+    };
+    let got: Got = { messages: [] };
+    await eventually(
+      async () => {
+        got = answer<Got>(await get());
+        return got.messages.some((m) => m.role === "user");
+      },
+      20_000,
+      "the stored user message",
+    );
+    const user = got.messages.find((m) => m.role === "user");
+    expect(user?.content).toBe("summarize this");
+    expect(user?.files?.map((f) => f.filename)).toEqual(["brief.txt"]);
+    expect(JSON.stringify(got.messages)).not.toContain("--- Attached:");
+  }, 30_000);
+
   it("are refused all together when one breaks a check, and nothing is stored", async () => {
     const count = answer<{ total: number }>(await callFiles("list", {})).total;
     const form = new FormData();

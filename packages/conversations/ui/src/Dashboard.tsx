@@ -10,8 +10,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationList } from "./ConversationList";
 import { groupByDate } from "./dateUtils";
 import { Header } from "./Header";
+import { type Loaded, readNext, readPages } from "./paging";
 import { SearchResults } from "./SearchResults";
-import type { FilterKey, ListResult, SearchResultData } from "./types";
+import type { FilterKey, SearchResultData } from "./types";
 
 type View = "list" | "search";
 
@@ -40,7 +41,11 @@ export function Dashboard() {
   const workspaceId = workspace?.id;
 
   const [view, setView] = useState<View>("list");
-  const [conversations, setConversations] = useState<ListResult["conversations"]>([]);
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const conversations = loaded?.conversations ?? [];
+  /** Pages read so far, so a background refresh reads as many again. */
+  const pagesRef = useRef(1);
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResultData | null>(null);
@@ -63,12 +68,9 @@ export function Dashboard() {
         // scope can't be wrong here and can't be omitted into a cross-workspace
         // read — which is what happened while the host-context handshake was
         // still in flight and this app had no workspace to send.
-        const result = await app.callTool<ListResult>("list", {});
-        if (result.isError) {
-          setError("Failed to load conversations");
-          return;
-        }
-        setConversations(result.data.conversations || []);
+        const next = await readPages(app, opts?.background ? pagesRef.current : 1);
+        pagesRef.current = next.pages;
+        setLoaded(next);
       } catch (err) {
         setError(errorMessage(err, "Failed to load conversations"));
       } finally {
@@ -77,6 +79,22 @@ export function Dashboard() {
     },
     [app],
   );
+
+  // The next page, after the rows already shown.
+  const loadMore = useCallback(async () => {
+    if (!loaded?.nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const next = await readNext(app, loaded);
+      pagesRef.current = next.pages;
+      setLoaded(next);
+    } catch (err) {
+      setError(errorMessage(err, "Failed to load conversations"));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [app, loaded, loadingMore]);
 
   const runSearch = useCallback(
     async (query: string, opts?: { background?: boolean }) => {
@@ -201,7 +219,7 @@ export function Dashboard() {
   return (
     <>
       <Header
-        totalCount={conversations.length}
+        totalCount={loaded?.totalCount ?? 0}
         loading={loading}
         groups={groups}
         activeFilter={activeFilter}
@@ -224,13 +242,25 @@ export function Dashboard() {
             onOpen={handleOpenConversation}
           />
         ) : (
-          <ConversationList
-            loading={loading}
-            groups={groups}
-            activeFilter={activeFilter}
-            totalConversations={conversations.length}
-            onOpen={handleOpenConversation}
-          />
+          <>
+            <ConversationList
+              loading={loading}
+              groups={groups}
+              activeFilter={activeFilter}
+              totalConversations={conversations.length}
+              onOpen={handleOpenConversation}
+            />
+            {!loading && loaded?.nextCursor && (
+              <button
+                type="button"
+                className="load-more"
+                onClick={loadMore}
+                disabled={loadingMore}
+              >
+                {loadingMore ? "Loading…" : "Load more"}
+              </button>
+            )}
+          </>
         )}
       </div>
     </>

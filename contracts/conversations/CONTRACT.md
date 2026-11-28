@@ -48,7 +48,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 |---|---|---|---|
 | `list` | public | allowed | One page of the caller's conversations, newest first |
 | `get` | public | allowed | One conversation: its metadata and, by `expand`, its messages |
-| `search` | public | allowed | The caller's conversations whose messages contain a text |
+| `search` | public | allowed | The caller's conversations whose title or message text contains a text |
 | `update` | public | allowed | Retitle a conversation |
 | `stats` | public | allowed | Token usage over a period |
 | `export` | public | allowed | A conversation as Markdown or JSON |

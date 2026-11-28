@@ -890,7 +890,7 @@
       "type": "object",
       "properties": {
         "query": {
-          "description": "Search query. Case-insensitive substring match on message content.",
+          "description": "Search query. Case-insensitive substring match on the title and the text of messages a person sees; tool calls, tool output, reasoning and usage are not searched.",
           "type": "string"
         },
         "limit": {

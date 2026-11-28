@@ -446,6 +446,42 @@ async function calibrationForConversation(
 }
 
 /**
+ * Append a run's opening message to its conversation. A resumed conversation's
+ * last run may have no end: the process that ran it died mid-turn. This turn
+ * holds the conversation, so that run is not running; it is closed as
+ * interrupted before this turn's message.
+ */
+async function appendOpeningMessage(
+  binding: RunConversationBinding,
+  message: StoredMessage,
+): Promise<void> {
+  if (binding.resumed) await closeInterrupted(binding.store, binding.conversation.id);
+  await binding.store.append(binding.conversation, message);
+}
+
+/**
+ * Close a conversation's interrupted last run. A failure leaves the run open
+ * (it still reads as interrupted to every reader) and is logged, never thrown:
+ * it must not stop the turn or the read that asked.
+ */
+async function closeInterrupted(
+  store: ConversationEventStore,
+  conversationId: string,
+  idle?: () => boolean,
+): Promise<void> {
+  try {
+    if (await store.closeInterruptedRun(conversationId, idle)) {
+      log.info("[conversations] closed an interrupted run", { conversationId });
+    }
+  } catch (err) {
+    log.warn("[conversations] could not close an interrupted run", {
+      conversationId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Refuse to start on a configured model id that is not `provider:model`.
  *
  * The CLI loader's schema already refuses one in `nimblebrain.json`; this is
@@ -1799,6 +1835,20 @@ export class Runtime {
     return this.runBus.isActive(conversationKey(scope, conversationId));
   }
 
+  /**
+   * Close the conversation's last run as interrupted when it has a start, no
+   * end, and no turn is running for the conversation here: the process that
+   * ran it stopped mid-turn. A viewer opening the conversation calls it, so
+   * the turn reads as interrupted rather than unanswered.
+   */
+  async closeInterruptedTurn(scope: ContractScope, conversationId: string): Promise<void> {
+    const key = conversationKey(scope, conversationId);
+    const idle = () => !this.runBus.isActive(key) && !this.activeConversations.has(key);
+    if (!idle() || !this.isChatEnabled()) return;
+    const store = this.workspaceConversationStore(scope.workspaceId, scope.ownerId);
+    await closeInterrupted(store, conversationId, idle);
+  }
+
   /** Highest event sequence number for a conversation's current/last run. */
   turnSeq(scope: ContractScope, conversationId: string): number {
     return this.runBus.currentSeq(conversationKey(scope, conversationId));
@@ -2385,7 +2435,7 @@ export class Runtime {
     // after the gate, is what keeps a refused resume from writing to a log it
     // may no longer act in.
     const userMessage = buildOpeningMessage(spec.input);
-    if (binding) await binding.store.append(binding.conversation, userMessage);
+    if (binding) await appendOpeningMessage(binding, userMessage);
     callEstablished(spec, reqCtx, runId);
 
     // Read the resumed conversation once, before composition: calibration, the
@@ -7728,8 +7778,8 @@ function unpricedOf(partial: { unpricedCalls: () => number }): { unpricedCalls?:
 }
 
 /**
- * Build a user message's content blocks: the text message plus any
- * `resource_link` attachment parts. Falls back to a synthetic `[Uploaded: …]`
+ * Build a user message's content blocks: the text message, then each
+ * attachment's part (a `resource_link`, or its text marked `attached`). Falls back to a synthetic `[Uploaded: …]`
  * text part when there's no text and no text content parts (a file-only upload)
  * so the content is never empty.
  */
@@ -7745,7 +7795,7 @@ function buildUserMessageContent(request: ChatRequest): Array<UserTextPart | Use
   if (request.contentParts?.length) {
     for (const part of request.contentParts) {
       if (part.type === "text") {
-        userContent.push({ type: "text", text: part.text });
+        userContent.push({ type: "text", text: part.text, attached: true });
       } else if (part.type === "resource_link") {
         userContent.push({
           type: "resource_link",

@@ -38,6 +38,11 @@ bound to `ai.nimblebrain.conversations` (ADR-0076): by default the built-in plug
 - **`active` on a relayed `list` is the host's fact.** The plugin reports what it can know; the
   bound source overlays every row's `active` from the run bus (`overlayListActive`) on every
   `list` it relays, to agents, the door and apps.
+- **A turn whose process died is closed as interrupted.** Run liveness is the host's, so the
+  kernel closes it: a conversation's last run with a start and no end gets `run.done`
+  stopReason `interrupted` (`closeInterruptedRun`) when its event stream is subscribed with
+  no turn running for it (`Runtime.closeInterruptedTurn`), and when a turn resumes it, before
+  the new message. Never at boot: finding them means reading every owner's conversations.
 - **Cost is not a conversation's.** The contract never prices (CONTRACT.md §4, §8); a turn's cost
   is on its usage, and spend on the usage ledger.
 

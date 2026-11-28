@@ -125,6 +125,13 @@ export interface ConversationEventStore extends EventSink {
   appendEvent(id: string, event: ConversationEvent): void;
   /** Every stored event of a conversation, in order; `[]` when it is not there. */
   readEvents(id: string): Promise<ConversationEvent[]>;
+  /**
+   * Close a conversation's last run when it has a start and no end: its writer
+   * stopped (the process died mid-turn), so it ends `run.done` stopReason
+   * `interrupted`. `idle` is asked just before the end is written; false leaves
+   * the run open (a turn began meanwhile). True when an end was written.
+   */
+  closeInterruptedRun(id: string, idle?: () => boolean): Promise<boolean>;
   /** Settle every write this store has accepted. */
   flush(): Promise<void>;
 }

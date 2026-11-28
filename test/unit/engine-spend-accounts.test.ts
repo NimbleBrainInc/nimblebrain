@@ -425,7 +425,9 @@ describe("AgentEngine on a model call a cancel cuts off", () => {
 
     const [cut, ...more] = r.cutOff();
     expect(more).toHaveLength(0);
-    expect(cut!.content).toEqual([]);
+    // The text the call streamed before the stop is its content, so the
+    // stopped reply keeps what the person saw.
+    expect(cut!.content).toEqual([{ type: "text", text: "x".repeat(400) }]);
     expect(cut!.finishReason).toBe("stop");
     // The call's input is at least the previous call's (the prefix only grows),
     // and the part the previous call read or wrote to the cache is a cache read.
