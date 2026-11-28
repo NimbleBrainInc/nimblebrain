@@ -1,6 +1,9 @@
 import { type Context, Hono } from "hono";
 import { WORKSPACE_PRINCIPAL_ID } from "../../connectors/runtime/connection.ts";
-import { ConnectorBusyError } from "../../connectors/runtime/lifecycle.ts";
+import {
+  ConnectorAlreadyConnectedError,
+  ConnectorBusyError,
+} from "../../connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../identity/connector-store.ts";
 import { getBouncerMode } from "../../oauth/bouncer-config.ts";
 import {
@@ -292,6 +295,13 @@ async function startAuthorization(
     });
     return result.authorizationUrl;
   } catch (err) {
+    if (err instanceof ConnectorAlreadyConnectedError) {
+      return apiError(
+        409,
+        "connector_already_connected",
+        "This connector is already connected. Sign out before connecting another account.",
+      );
+    }
     // Don't leak SDK / DNS / TLS details in the response body.
     // Workspace-authed callers, but the surface is wide and the
     // body crosses trust boundaries (proxies, browser dev tools,

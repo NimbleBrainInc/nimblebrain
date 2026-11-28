@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
-import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import {
+  ConnectorAlreadyConnectedError,
+  ConnectorLifecycleManager,
+} from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { log } from "../../src/observability/log.ts";
@@ -141,7 +144,7 @@ describe("ConnectorLifecycleManager.startAuth — validation & idempotence", () 
 
     await expect(
       lifecycle.startAuth("granola", "ws_0076759dbbe19fcc", "_workspace", OPTS),
-    ).rejects.toThrow(/already connected/);
+    ).rejects.toBeInstanceOf(ConnectorAlreadyConnectedError);
   });
 });
 

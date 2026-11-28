@@ -61,6 +61,8 @@ A plugin is three things, and each has one action that ends it. The verbs are th
 
 Sign out is shared: it signs the connector out for everyone in the workspace, and asks you to confirm first. The connector stays installed with its tool permissions and settings, and reads **Not signed in** with a **Connect** action — a resting state, not an error. The agent can't use it until someone signs in again. To take it out entirely, use **Remove**, which removes it for everyone in the workspace. A connection that stops working without anyone signing it out (the vendor revoked or expired its access) reads **Reconnect** in amber instead, because someone needs to act on it. **provider** and **smithery** connectors have no interactive sign-in: their credential is held by the platform or the broker, so they reconnect without prompting you.
 
+If the workspace connector is already connected, sign out before connecting a different account. A Connect request made while it is still connected is refused without changing the existing connection.
+
 ## The auth kinds
 
 Every connector declares how it authenticates. As a user you rarely need to care — the **Install / Connect** button does the right thing — but it explains what each one asks of you, and who had to set it up first.
