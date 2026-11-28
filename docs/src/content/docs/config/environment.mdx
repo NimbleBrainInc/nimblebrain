@@ -83,7 +83,6 @@ The platform builds every outward-facing URL (OAuth callbacks, post-login landin
 | `NB_PLUGIN_CATALOG_URL` | No | `https://catalog.nimblebrain.ai` | The NimbleBrain plugin catalog. With no [`catalogs`](/config/connectors-catalog/#catalogs-what-browse-lists) in the config, Browse lists its AI Catalog at `<url>/.well-known/ai-catalog.json`; install reads the [connector list](/config/connectors-catalog/#where-the-connector-list-lives) from it, and connector skills come from it. |
 | `NB_PLUGIN_CATALOG_CONNECTORS_SHA256` | No | compiled into the release | The pin of the connector list: `sha256sum` of the catalog's `nimblebrain/connectors.yaml`. A list that does not match is refused. Bump it with `NB_PLUGIN_CATALOG_SHA256`, from the same catalog build. |
 | `NB_PLUGIN_CATALOG_SHA256` | No | compiled into the release | The pin of the catalog's NimbleBrain index, which connector skills come from. See [Skills](/using/skills/#connector-skill-overlays). |
-| `NB_CURATED_CATALOG_DIR` | No | unset | A directory of `ServerDetail` YAML/JSON files (or a single such file) that replaces the plugin catalog's connector list wholesale: install reads server records from it, and Browse lists its records that no catalog listing names under the catalog `curated`. Every `*.yaml`/`*.yml`/`*.json` in it is read in sorted filename order and re-read on each lookup, so editing a mounted ConfigMap takes effect without a restart. This is where `auth: static` and brokered (`composio`, `smithery`) entries belong. See [Connectors Catalog](/config/connectors-catalog/). |
 
 ### Secrets
 

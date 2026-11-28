@@ -93,6 +93,18 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   claimants. A record that names a connector still carrying its lock is an adoption that stopped,
   and is finished with no fetch. Artifacts are fetched only for connectors being adopted, a few at
   a time and a bounded number per boot.
+- **Required items are kept by the kernel** (`src/tools/plugin-required.ts`, run by
+  `Runtime.reconcileRequiredPlugins` at boot, on `WorkspaceStore.onCreated`, and on an interval).
+  Each pass installs or updates, as the workspace's owner, every entry of every readable `required`
+  catalog through the one install path, with `kernelConnectorOps` (admitted by policy, past the
+  allow-list) in place of a person's ops, and uninstalls a `required` record its catalog no longer
+  lists or whose catalog is gone; an unreadable required catalog decides nothing. A record whose
+  catalog is required is marked `required` by install itself, whoever installed it, and only an
+  uninstall with `asReconcile` removes it. Workspaces only: a personal install of a required item
+  is refused. Never add a second way in for required items; the reconcile is the invariant.
+- **An item its `available` catalog drops stays installed** and `list_plugins` marks it
+  `noLongerOffered`; nothing removes it on its own. `required` and `noLongerOffered` are read
+  from the record and the listings, never from an artifact.
 - **Starters and the plugin list read records.** `nb__conversation_starters`
   (`src/services/workspace-conversation-starters.ts`) gives each record's starters under the first of
   its connections the workspace has; `list_plugins` (`src/tools/plugin-listing.ts`) lists each
