@@ -98,6 +98,7 @@ describe("loadConfig", () => {
       notifications: { poll: { intervalMs: 30000 } },
       execution: { default: "native" },
       plugins: { tasks: false },
+      catalogs: [],
       runs: {},
       workspaces: { deletedRetentionDays: 7 },
       files: {},
@@ -111,6 +112,7 @@ describe("loadConfig", () => {
     const config: Record<string, unknown> = { ...loadConfig({ config: configPath }) };
     loadBrand({});
     expect(configurable.filter((k) => config[k] === undefined)).toEqual([]);
+    expect(config.catalogs).toEqual([]);
     expect(config.usage).toEqual({ ledger: { retentionMonths: 6 } });
     expect(config.notifications).toEqual({ poll: { intervalMs: 30000 } });
   });

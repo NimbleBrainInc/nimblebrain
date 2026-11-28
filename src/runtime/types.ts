@@ -1,5 +1,6 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import type { Brand } from "../brand/index.ts";
+import type { CatalogConfig } from "../config/catalogs.ts";
 import type { ExecutionConfig } from "../config/execution.ts";
 import type { FeatureFlags } from "../config/features.ts";
 import type { PluginsConfig } from "../config/plugins.ts";
@@ -279,6 +280,12 @@ export interface RuntimeConfig {
    * `src/config/plugins.ts`.
    */
   plugins?: PluginsConfig;
+
+  /**
+   * The AI Catalog listings this instance offers to install from (ADR-0077).
+   * Absent: NimbleBrain's catalog. See `src/config/catalogs.ts`.
+   */
+  catalogs?: CatalogConfig[];
 
   /**
    * Runtimes an embedder or a test hands the runtime directly, beside those
