@@ -182,7 +182,7 @@ Resolution is **always on and fail-soft**. The runtime reads the catalog's Nimbl
 
 | Env | Default | What it sets |
 |---|---|---|
-| `NB_PLUGIN_CATALOG_URL` | `https://catalog.nimblebrain.ai` | The catalog to read; the [connector list](/config/connectors-catalog/#where-the-catalog-lives) comes from it too |
+| `NB_PLUGIN_CATALOG_URL` | `https://catalog.nimblebrain.ai` | The catalog to read; the [connector list](/config/connectors-catalog/#where-the-connector-list-lives) comes from it too |
 | `NB_PLUGIN_CATALOG_SHA256` | compiled into the release | The pin: `sha256sum` of the catalog's `nimblebrain/marketplace.json`, read from `nimblebrain/marketplace/<sha256>.json` |
 
 Uninstalling the connector removes its materialized overlays.

@@ -116,6 +116,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `workspaces` | `object` | — | How long a deleted workspace can be restored before it is purged. See [workspaces](#workspaces). |
 | `execution` | `object` | native engine | Which agent runtime executes a run: the native engine, or an agent worker the runtime dials. Experimental. See [execution](#execution). |
 | `plugins` | `object` | — | Agent Plugins the runtime runs as part of the instance, and which are system plugins. Experimental: validated at boot; a server bound to a contract the runtime consumes is started. See [plugins](#plugins). |
+| `catalogs` | `array` | NimbleBrain's catalog | The AI Catalog listings Browse offers to install from, each `{source, policy, sha256?, name?, refreshMinutes?}`. A `required` catalog must carry `sha256`. See [catalogs](#catalogs). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow plain HTTP to `localhost`, `127.0.0.1` and `::1` for remote connectors. Private ranges and cloud-metadata hosts stay refused. Dev only. |
 | `telemetry` | `object` | unset (a person decides) | Usage telemetry, anonymous unless `identify` is set. See [telemetry](#telemetry). |
@@ -814,6 +815,20 @@ Files are on exactly when an enabled plugin implements the files contract (`ai.n
 - **Bytes move by short-lived URLs** the plugin issues, never through agents or the browser. The runtime fetches them only from the plugin's own server origin, the origins listed in `transferOrigins`, and loopback for a plugin it starts; it follows no redirect, and refuses a host name that resolves to a loopback, link-local, unspecified or multicast address. A listed origin is allowed at the scheme it is listed with, `http` or `https`: the listing is the operator's decision, and so is its TLS.
 - **Turn files off** with `"plugins": { "files": false }`. No `files__*` tools or Files page appear, an attachment or upload is refused, and every file route answers `404` with `"error": "files_disabled"`. Chat, tasks, apps and the `/mcp` endpoint work as before.
 - **Files stored by a runtime before this plugin kept them** sit under `<workDir>/workspaces/<wsId>/files/` and are not read; a link to one shows as unavailable. To keep a file, upload it again in its workspace.
+
+## catalogs
+
+The [AI Catalog](https://ai-catalog.io/spec/) listings this instance offers to install from, side by side. Browse lists each listed item as `name@catalog`, read from the listings alone. With no `catalogs` key the runtime reads NimbleBrain's catalog, exactly as if the block said:
+
+```json
+{
+  "catalogs": [
+    { "source": "https://catalog.nimblebrain.ai/.well-known/ai-catalog.json", "policy": "available" }
+  ]
+}
+```
+
+A `required` catalog without `sha256` is refused at load, so what every workspace receives moves only when you move its pin. The fields, the refresh and cache rules, and how each row's status is derived are in [Connectors Catalog → Catalogs](/config/connectors-catalog/#catalogs-what-browse-lists). The override file cannot set `catalogs`.
 
 ## files
 
