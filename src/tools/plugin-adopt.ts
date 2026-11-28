@@ -6,23 +6,27 @@
  * exactly as it is.
  *
  * **What qualifies.** A connector is adopted into the plugin at `name@catalog`
- * only when all three hold:
+ * only when all of these hold:
  *
- * 1. it carries catalog provenance: its `skillsLock` records a plugin and the
- *    server it was bound to (a catalog install wrote both before records
- *    existed; nothing writes a lock now), it carries no `installedBy`, and no record of its owner names it.
- *    A connector its owner added by URL carries no lock (and a `display`), so it
- *    is never adopted, whatever a listing names;
- * 2. exactly one entry across the configured listings names that server in its
- *    `servers` (or, for a bare connector, is its inline record). A listing that
- *    cannot be read at all leaves every candidate for the next boot, since
- *    "exactly one" cannot be judged without it;
+ * 1. it carries catalog provenance: no `installedBy` (no plugin made it), and
+ *    not added by its owner ({@link addedByOwner}: a `direct-url` install's
+ *    `transport.auth` of `none`, or its `display`), and no record of its owner
+ *    names it. A connector its owner added by URL is never adopted, whatever a
+ *    listing names, because adoption would let an uninstall remove what the
+ *    owner made;
+ * 2. exactly one entry across the configured listings names its server (in its
+ *    `servers`, or a bare connector's inline record): by the registry name its
+ *    `skillsLock` or its broker's stamp records, else by a name that slugifies
+ *    to its connection. A listing that cannot be read at all leaves every
+ *    candidate for the next boot, since "exactly one" cannot be judged without it;
  * 3. that entry's artifact, fetched and verified against its digest, contains
- *    the server.
+ *    the server at the connector's endpoint: a remote URL equal to the
+ *    connector's, or, for a brokered connector (its URL is a per-install
+ *    session), the record its broker stamped by name.
  *
  * Otherwise the connector stays a plain connector and the reconcile logs the
  * entries that claim it, once per boot. A plain connector carries no catalog
- * skill: the files its old binding materialized in `connector-skills/` are
+ * skill: the files an old binding materialized in `connector-skills/` are
  * removed, and its `skillsLock` stays as provenance, so a later boot whose
  * listings name its server adopts it then.
  *
@@ -40,9 +44,10 @@
  *    its `skillsLock` dropped. Its connection, settings and credentials stay.
  *
  * The record is written before the connectors are marked, so a boot that
- * stops between the two finds a record naming a connector that still carries
- * its lock, and finishes marking it with no fetch. A second boot finds nothing
- * to adopt and reads no listing and no artifact.
+ * stops between the two finds a record naming a connector not yet marked (or
+ * still carrying its lock), and finishes marking it with no fetch. A later boot
+ * fetches nothing for an adopted connector; it reads the listings again only
+ * for connectors still plain.
  *
  * **Bounded.** An artifact is fetched only for a plugin some connector is being
  * adopted into, at most {@link MAX_FETCHES_PER_BOOT} per boot and
@@ -54,6 +59,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { SERVER_RECORD_TYPE } from "../catalogs/listing.ts";
 import type { CatalogSnapshot } from "../catalogs/reader.ts";
+import { brokeredRef } from "../connectors/runtime/brokered.ts";
 import { serverNameFromRef } from "../connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../connectors/runtime/types.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
@@ -110,15 +116,38 @@ export interface PluginAdoptionResult {
 interface Candidate {
   ref: ConnectorRef;
   serverName: string;
-  /** The registry name its lock records (`com.notion/mcp`). */
-  registry: string;
+  /**
+   * The registry name of its server (`com.notion/mcp`): what its lock records,
+   * else the catalog id a broker stamped on it. Null for a catalog install that
+   * recorded neither, whose server is the one listed under a name that
+   * slugifies to its `serverName`.
+   */
+  registry: string | null;
 }
 
-/** The registry name a pre-record catalog install's lock records, or null when it has none. */
-export function catalogProvenance(ref: ConnectorRef): string | null {
-  if (ref.installedBy || ref.display) return null;
+/**
+ * Whether its owner added `ref` by URL (ADR-0065). `handleInstallDirectUrl` is
+ * the one path that does, and every ref it writes carries
+ * `transport.auth: {type: "none"}`, which no catalog install writes (a catalog
+ * ref's transport names only its class, a provider credential, or a broker's
+ * session); it adds `display` only when the server's card describes itself.
+ */
+export function addedByOwner(ref: ConnectorRef): boolean {
+  return ref.display !== undefined || ref.transport?.auth?.type === "none";
+}
+
+/**
+ * Whether `ref` was installed from a catalog before records existed: neither a
+ * plugin's connection nor one its owner added by URL.
+ */
+export function hasCatalogProvenance(ref: ConnectorRef): boolean {
+  return !ref.installedBy && !addedByOwner(ref);
+}
+
+/** The registry name a pre-record catalog install recorded: its lock's, else its broker's stamp. */
+function recordedRegistry(ref: ConnectorRef): string | null {
   const lock = ref.skillsLock?.find((e) => e.plugin && e.server);
-  return lock?.server ?? null;
+  return lock?.server ?? brokeredRef(ref)?.connectorId ?? null;
 }
 
 function ownerLabel(owner: PluginOwner): string {
@@ -241,11 +270,23 @@ class SharedReads {
   }
 }
 
-/** Whether `entry` names the server with registry name `registry`. */
-function claims(entry: ListedEntry, registry: string): boolean {
-  if (Object.values(entry.servers).some((s) => s.name === registry)) return true;
+/** The registry names `entry` lists: its extension's servers, or a bare connector's inline record. */
+function namesListed(entry: ListedEntry): string[] {
+  const names = Object.values(entry.servers).map((s) => s.name);
   const data = entry.data as { name?: unknown } | undefined;
-  return entry.type === SERVER_RECORD_TYPE && data?.name === registry;
+  if (entry.type === SERVER_RECORD_TYPE && typeof data?.name === "string") names.push(data.name);
+  return names;
+}
+
+/**
+ * The registry name under which `entry` lists candidate `c`'s server, or null:
+ * the name it recorded, else (with none recorded) a name that slugifies to its
+ * connection.
+ */
+function claimedName(entry: ListedEntry, c: Candidate): string | null {
+  const names = namesListed(entry);
+  if (c.registry) return names.includes(c.registry) ? c.registry : null;
+  return names.find((n) => connectionOf({ name: n }) === c.serverName) ?? null;
 }
 
 async function adoptForOwner(
@@ -346,13 +387,28 @@ function adoptable(
   }
   const adopted = group.filter((c) => contains(read, c));
   for (const c of group) {
-    if (!adopted.includes(c)) left(c, "the verified artifact does not contain its server");
+    if (!adopted.includes(c)) {
+      left(c, "the verified artifact does not contain its server at the connector's endpoint");
+    }
   }
   return adopted;
 }
 
+/**
+ * Whether the artifact carries the candidate's server at the endpoint it is
+ * connected to: the record's remote URL is the connector's, or, for a brokered
+ * connector (whose URL is a per-install session), the broker stamped the
+ * record's name. A same-name server at another endpoint is another server.
+ */
 function contains(read: { contents: PluginContents }, c: Candidate): boolean {
-  return read.contents.servers.some((s) => s.name === c.registry);
+  const brokered = brokeredRef(c.ref);
+  return read.contents.servers.some(
+    (s) =>
+      s.name === c.registry &&
+      (brokered
+        ? brokered.connectorId === s.name
+        : (s.detail.remotes ?? []).some((r) => r.url === c.ref.url)),
+  );
 }
 
 /**
@@ -371,12 +427,16 @@ function triage(
     if (!serverName) continue;
     const named = records.find((r) => r.connectors.some((c) => connectionOf(c) === serverName));
     if (!named) {
-      const registry = catalogProvenance(ref);
-      if (registry) candidates.push({ ref, serverName, registry });
+      if (hasCatalogProvenance(ref)) {
+        candidates.push({ ref, serverName, registry: recordedRegistry(ref) });
+      }
       continue;
     }
-    const unfinished = !ref.installedBy || ref.installedBy === named.address;
-    if (ref.skillsLock && !ref.display && unfinished) finish.set(serverName, named.address);
+    // Adoption writes the record before the mark: a catalog install the record
+    // names but that is not marked yet, or that still carries its lock.
+    const unmarked = hasCatalogProvenance(ref);
+    const lockLeft = ref.installedBy === named.address && ref.skillsLock !== undefined;
+    if (unmarked || lockLeft) finish.set(serverName, named.address);
   }
   return { finish, candidates };
 }
@@ -388,9 +448,15 @@ function byClaimant(
   left: (c: Candidate, claimants: string[], why: string) => void,
 ): Map<string, { entry: ListedEntry; candidates: Candidate[] }> {
   const groups = new Map<string, { entry: ListedEntry; candidates: Candidate[] }>();
-  for (const c of candidates) {
-    const claimants = entries.filter((e) => claims(e, c.registry));
-    const entry = claimants[0];
+  for (const candidate of candidates) {
+    const claims = entries.flatMap((e) => {
+      const name = claimedName(e, candidate);
+      return name ? [{ entry: e, name }] : [];
+    });
+    const claimants = claims.map((x) => x.entry);
+    const claim = claims[0];
+    const c = claim ? { ...candidate, registry: claim.name } : candidate;
+    const entry = claim?.entry;
     if (claimants.length !== 1 || !entry) {
       left(
         c,
@@ -417,7 +483,7 @@ function leave(
 ): void {
   result.unchanged.push({ owner, serverName: c.serverName, claimants, why });
   log.info(
-    `[plugins] ${ownerLabel(owner)}: ${c.serverName} (${c.registry}) stays a plain connector: ${why}${claimants.length > 0 ? ` (claimed by ${claimants.join(", ")})` : ""}`,
+    `[plugins] ${ownerLabel(owner)}: ${c.serverName} (${c.registry ?? "no recorded server"}) stays a plain connector: ${why}${claimants.length > 0 ? ` (claimed by ${claimants.join(", ")})` : ""}`,
   );
 }
 

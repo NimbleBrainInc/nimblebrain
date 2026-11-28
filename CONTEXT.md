@@ -284,9 +284,10 @@ stays until the last is removed, its `ServerDetail` re-read from the next
 remaining plugin in install order. Update replaces the digest and what the
 plugin owns. Readers of installed state (conversation starters, the plugin
 list, a connection's managed skills) read records; nothing scans artifacts. A
-connector a catalog installed before records existed is adopted at boot when
-exactly one listing entry names its server and that entry's verified artifact
-contains it; otherwise it stays a plain connector with no catalog skill (the
+connector a catalog installed before records existed (any connector neither a
+plugin made nor its owner added by URL) is adopted at boot when exactly one
+listing entry names its server and that entry's verified artifact contains it
+at the connector's endpoint; otherwise it stays a plain connector with no catalog skill (the
 skills its old binding materialized go), as does one its owner added by URL.
 Every install from a catalog writes a record: an install by id installs the one
 listing entry that names the server, and nothing installs from a connector list.

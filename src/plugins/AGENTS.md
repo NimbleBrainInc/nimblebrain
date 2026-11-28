@@ -84,9 +84,13 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   connection is left alone (its endpoint is the broker's session). A connection another plugin supplies is not changed.
 - **Existing installs are adopted at boot, before any connector starts** (`src/tools/plugin-adopt.ts`,
   called from `Runtime.start` through `adoptExistingInstalls`, under the owner's lifecycle lock). A
-  connector qualifies only when its `skillsLock` records a plugin and server, it carries no
-  `installedBy` and no `display`, no record names it, exactly one listing entry names its server,
-  and that entry's verified artifact contains it; every catalog must have a readable listing, or
+  connector qualifies only when it carries no `installedBy`, its owner did not add it
+  (`addedByOwner`: the `direct-url` path alone writes `transport.auth: {type: "none"}`, and adds
+  `display` only when the server's card describes itself, so `display` alone does not mark it),
+  no record names it, exactly one listing entry names its server (by its lock's or its broker's
+  recorded name, else by a name that slugifies to its connection), and that entry's verified
+  artifact carries the server at the connector's endpoint (the same remote URL, or for a brokered
+  connector the name its broker stamped); every catalog must have a readable listing, or
   adoption waits for the next boot. It writes the managed skills (a bound one in place of the old
   binding's file, whatever else the old binding left removed), then the record, then
   `installedBy` with the lock dropped. Anything else stays a plain connector, logged with its

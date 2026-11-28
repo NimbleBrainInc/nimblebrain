@@ -1,8 +1,9 @@
 /**
  * Adopting existing installs into plugins at boot (ADR-0077, "Existing
  * installs"): a connector a catalog install made before records existed (its
- * `skillsLock` records a plugin) is adopted when exactly one listing entry
- * names its server and that entry's verified artifact contains it. Otherwise
+ * `skillsLock` records a plugin, or it carries no mark of its owner adding it)
+ * is adopted when exactly one listing entry names its server and that entry's
+ * verified artifact contains it at the connector's endpoint. Otherwise
  * it stays a plain connector, unchanged but for the skills its old binding
  * materialized, which go. After adoption, starters and the plugin list read
  * the record, and nothing opens an archive again.
@@ -348,6 +349,126 @@ describe("adopting existing installs at boot", () => {
     expect(artifactFetches()).toHaveLength(1);
     const ws = await workspaceRecord(rt);
     expect(ws.connectors).toEqual([ref]);
+    expect(ws.plugins ?? []).toEqual([]);
+  });
+
+  test("a catalog install with no lock and no display is adopted, and reads its record after", async () => {
+    // As the old connector list installed it: its server's URL and an OAuth
+    // client, nothing that names a plugin.
+    const asana: FixtureServer = {
+      name: "io.asana/mcp",
+      url: "https://mcp.asana.test/mcp",
+      title: "Asana",
+      meta: {
+        auth: "static",
+        oauthClientSetup: {
+          portalUrl: "https://app.asana.test/developers",
+          hint: "Create an OAuth app.",
+          clientSecretKey: "asana.client_secret",
+        },
+      },
+    };
+    const ref: ConnectorRef = {
+      url: asana.url,
+      serverName: "io-asana-mcp",
+      transport: { type: "streamable-http" },
+      oauthScope: "workspace",
+      oauthClient: { clientId: "cid", clientSecretKey: "asana.client_secret" },
+    } as ConnectorRef;
+    await seedPreRecordWorkspace([ref]);
+    writeListing([
+      publish("asana", pluginZip({ name: "asana", servers: { asana } }), {
+        asana: { name: asana.name, auth: "static" },
+      }),
+    ]);
+    const rt = await boot();
+
+    const ws = await workspaceRecord(rt);
+    expect(ws.connectors[0]).toEqual({ ...ref, installedBy: "asana@test" });
+    expect(ws.plugins?.map((p) => p.address)).toEqual(["asana@test"]);
+    const own = rt.getConnectorCatalog({ kind: "workspace", wsId: WS });
+    const entry = await own.catalogById(asana.name);
+    expect(entry?.name).toBe("Asana");
+    expect(entry?.oauthClientSetup?.clientSecretKey).toBe("asana.client_secret");
+    const { servers } = await own.servers();
+    expect(servers.find((x) => x.detail.name === asana.name)?.file).toBe("plugin asana@test");
+  });
+
+  test("a brokered catalog install is adopted by its broker's stamp, and reads its broker block after", async () => {
+    const gmail: FixtureServer = {
+      name: "com.google/gmail",
+      url: "https://composio.test/placeholder",
+      title: "Gmail",
+      meta: { auth: "composio", composio: { toolkit: "gmail" } },
+    };
+    const ref: ConnectorRef = {
+      url: "https://composio.test/mcp/session_1",
+      serverName: "com-google-gmail",
+      transport: { type: "streamable-http" },
+      oauthScope: "workspace",
+      brokered: { provider: "composio", connectorId: gmail.name },
+    } as ConnectorRef;
+    await seedPreRecordWorkspace([ref]);
+    writeListing([
+      publish("gmail", pluginZip({ name: "gmail", servers: { gmail } }), {
+        gmail: { name: gmail.name, auth: "composio" },
+      }),
+    ]);
+    const rt = await boot();
+
+    const ws = await workspaceRecord(rt);
+    expect(ws.connectors[0]?.installedBy).toBe("gmail@test");
+    const { servers } = await rt.getConnectorCatalog({ kind: "workspace", wsId: WS }).servers();
+    const record = servers.find((x) => x.detail.name === gmail.name);
+    expect(record?.file).toBe("plugin gmail@test");
+    expect(record?.detail._meta?.["ai.nimblebrain/connector"]).toMatchObject({
+      auth: "composio",
+      composio: { toolkit: "gmail" },
+    });
+  });
+
+  test("a catalog install at another endpoint than its listed server's is not adopted", async () => {
+    const ref: ConnectorRef = {
+      url: "https://elsewhere.test/mcp",
+      serverName: NOTION_SERVER,
+      transport: { type: "streamable-http" },
+      oauthScope: "workspace",
+    } as ConnectorRef;
+    await seedPreRecordWorkspace([ref]);
+    writeListing([publish("notion", notionPlugin(), NOTION_CLAIM)]);
+    const rt = await boot();
+
+    expect(artifactFetches()).toHaveLength(1);
+    const ws = await workspaceRecord(rt);
+    expect(ws.connectors).toEqual([ref]);
+    expect(ws.plugins ?? []).toEqual([]);
+    const result = await adoptExistingInstalls({
+      workDir,
+      workspaces: rt.getWorkspaceStore(),
+      records: rt.getPluginRecords(),
+      snapshots: () => rt.getCatalogListings().snapshots(),
+    });
+    expect(result.unchanged[0]?.why).toBe(
+      "the verified artifact does not contain its server at the connector's endpoint",
+    );
+  });
+
+  test("a connector its owner added by URL with no card is never adopted", async () => {
+    // A `direct-url` install whose server gave no card: no `display`, but the
+    // transport only that path writes.
+    const byUrl: ConnectorRef = {
+      url: NOTION.url,
+      serverName: NOTION_SERVER,
+      transport: { type: "streamable-http", auth: { type: "none" } },
+      oauthScope: "workspace",
+    };
+    await seedPreRecordWorkspace([byUrl]);
+    writeListing([publish("notion", notionPlugin(), NOTION_CLAIM)]);
+    const rt = await boot();
+
+    expect(artifactFetches()).toEqual([]);
+    const ws = await workspaceRecord(rt);
+    expect(ws.connectors).toEqual([byUrl]);
     expect(ws.plugins ?? []).toEqual([]);
   });
 
