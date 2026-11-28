@@ -39,6 +39,7 @@ function resolverOver(
     maxChars?: number;
     maxSize?: number;
     maxUris?: number;
+    readTimeoutMs?: number;
     rateLimit?: TokenBucketRateLimit;
     grant?: RecordArgumentsGrant | null;
   } = {},
@@ -51,6 +52,7 @@ function resolverOver(
     maxChars: opts.maxChars ?? 1000,
     ...(opts.maxSize !== undefined ? { maxSize: opts.maxSize } : {}),
     ...(opts.maxUris !== undefined ? { maxUris: opts.maxUris } : {}),
+    ...(opts.readTimeoutMs !== undefined ? { readTimeoutMs: opts.readTimeoutMs } : {}),
   });
   return {
     /** The entries a call carries. */
@@ -196,7 +198,7 @@ describe("createResourceArgumentsResolver", () => {
     expect(hostile.reads).toEqual([]);
   });
 
-  it("passes a read that fails or returns nothing as unresolved", async () => {
+  it("distinguishes a failed read from a missing resource", async () => {
     const failing: ResourceServingSource = {
       name: "crm",
       resourceTemplates: async () => [{ uriTemplate: "crm://signals/{id}" }],
@@ -208,8 +210,28 @@ describe("createResourceArgumentsResolver", () => {
     const entries = await resolverOver({ [WS_A]: [failing, empty] }).resolve(
       declared("crm://signals/1", "crm2://signals/1"),
     );
-    expect(entries["crm://signals/1"]).toMatchObject({ error: { code: "not_found" } });
+    expect(entries["crm://signals/1"]).toMatchObject({ error: { code: "unavailable" } });
     expect(entries["crm2://signals/1"]).toMatchObject({ error: { code: "not_found" } });
+  });
+
+  it("bounds a stalled read and aborts the serving connector's request", async () => {
+    let signal: AbortSignal | undefined;
+    const stalled: ResourceServingSource = {
+      name: "crm",
+      resourceTemplates: async () => [{ uriTemplate: "crm://signals/{id}" }],
+      readResourceContents: async (_uri, opts) => {
+        signal = opts?.signal;
+        return new Promise<null>(() => {});
+      },
+    };
+    const started = performance.now();
+    const entries = await resolverOver({ [WS_A]: [stalled] }, { readTimeoutMs: 10 }).resolve(
+      declared("crm://signals/1"),
+    );
+
+    expect(entries["crm://signals/1"]).toMatchObject({ error: { code: "unavailable" } });
+    expect(signal?.aborted).toBe(true);
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 
   it("never resolves from a connector in another workspace", async () => {

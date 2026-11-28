@@ -2711,15 +2711,16 @@ export class McpSource implements ToolSource {
 
   /**
    * Read a resource and return the server's `contents` as they came, every
-   * entry, or null where {@link readResource} would return null. For a reader
-   * that hands the result on rather than rendering it: the
+   * entry, or null when the server returned no resource. Unlike the UI reader,
+   * transport and auth failures reject so the caller can report unavailable.
+   * For a reader that hands the result on rather than rendering it: the
    * `ai.nimblebrain/resource-arguments` resolver passes it to another connector.
    */
   async readResourceContents(
     uri: string,
     opts?: { signal?: AbortSignal },
   ): Promise<ReadResourceResult["contents"] | null> {
-    return this.readResourceAs(uri, opts, (result) =>
+    return this.readResourceAs(uri, { ...opts, failOnUnavailable: true }, (result) =>
       result.contents && result.contents.length > 0 ? result.contents : null,
     );
   }
@@ -2727,7 +2728,14 @@ export class McpSource implements ToolSource {
   /** The read both public readers share: one recovery policy, one projection each. */
   private async readResourceAs<T>(
     uri: string,
-    opts: { logFailures?: boolean; reconnect?: boolean; signal?: AbortSignal } | undefined,
+    opts:
+      | {
+          logFailures?: boolean;
+          reconnect?: boolean;
+          signal?: AbortSignal;
+          failOnUnavailable?: boolean;
+        }
+      | undefined,
     project: (result: Awaited<ReturnType<Client["readResource"]>>) => T | null,
   ): Promise<T | null> {
     if (!this.client) {
@@ -2739,6 +2747,7 @@ export class McpSource implements ToolSource {
       // a not-yet-started/tearing-down client and stay cheap. Only when no client is
       // available do we log (on the app-surface path) and return the null.
       if (!(opts?.reconnect && (await this.reconnectOnDemand()))) {
+        if (opts?.failOnUnavailable) throw new Error(`Source ${this.name} has no active client`);
         if (opts?.logFailures) {
           log.warn("[mcp] readResource: source has no active client connection", {
             uri,
@@ -2750,7 +2759,10 @@ export class McpSource implements ToolSource {
     }
     // `reconnectOnDemand()` returns true only with a live client, but narrow for the
     // compiler (and defend a race that re-nulled it) before the read below.
-    if (!this.client) return null;
+    if (!this.client) {
+      if (opts?.failOnUnavailable) throw new Error(`Source ${this.name} has no active client`);
+      return null;
+    }
     // A real failure (a torn transport, a dropped connection, an exhausted
     // recovery) is NOT a missing resource — log it ONLY on the app-surface path
     // (the resource proxy passes `logFailures`), where a failure is anomalous.
@@ -2758,6 +2770,7 @@ export class McpSource implements ToolSource {
     // resource never spams. The null (404) is preserved either way; this only
     // makes the anomalous case visible.
     const logAndNull = (err: unknown): null => {
+      if (opts?.failOnUnavailable) throw err;
       if (opts?.logFailures) {
         log.warn("[mcp] readResource failed", {
           uri,

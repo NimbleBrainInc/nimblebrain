@@ -191,7 +191,8 @@ Each resolution is recorded on the host's trace of the tool call: one `resource_
 |---|---|
 | `scheme_not_declared` | The string's scheme is not one the argument declares, or the string has no scheme. The host did not read it. |
 | `not_granted` | Your server holds no record-arguments grant in this workspace. The host did not read it. |
-| `not_found` | No server in the workspace serves the URI, or its server returned nothing or failed. These are one code on purpose, as in [host resources](/extensions/host-resources/#scope-which-files-a-server-can-see): a read tells your server nothing about what exists beyond the contents it is handed. |
+| `not_found` | No server in the workspace serves the URI, or the serving server returned no resource. |
+| `unavailable` | The serving server's read failed or exceeded the 15-second per-resource deadline. Retry the call; this does not mean the record is missing. |
 | `ambiguous` | More than one server in the workspace serves the URI. A workspace admin resolves it by removing one. |
 | `not_text` | The resource's contents include a non-text (`blob`) entry. The host hands on text only. |
 | `too_large` | The resource has more than `maxChars` characters of text. Permanent: the same resource is refused on every call, so drop the citation. |
