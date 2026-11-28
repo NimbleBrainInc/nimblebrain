@@ -28,6 +28,7 @@ bun run test               # Unit then integration (stops at the first failing s
 bun run test:unit          # Unit tests only (fast, ~10s)
 bun run test:integration   # Integration tests only
 bun run test:conformance   # MCP conformance suite against /mcp/<wsId> (not in verify; see test/conformance/AGENTS.md)
+bun run test:e2e           # End-to-end scenarios over HTTP, SSE and MCP; --smoke for the post-deploy set (see test/e2e/AGENTS.md)
 bun run lint               # Biome linter
 bun run format:check       # Biome format diff (no writes) — matches CI
 bun run check              # TypeScript strict mode
@@ -98,6 +99,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`src/model/AGENTS.md`](./src/model/AGENTS.md) | Model provider workarounds: Gemini errors sent inside the stream |
 | [`src/observability/AGENTS.md`](./src/observability/AGENTS.md) | `NB_DEBUG` / `nb_debug` namespaces, structured logs, OTel spans, what may be stamped |
 | [`web/AGENTS.md`](./web/AGENTS.md) | Web shell: gating workspace writes, forms that save as they change and notices, shell rules, chat panel workspace scope, main-area views |
+| [`test/e2e/AGENTS.md`](./test/e2e/AGENTS.md) | End-to-end scenarios: public interfaces only, user journeys, running in-process, against a deployment and as smoke, the directive model, the cleanup guarantees on a deployment, adding a scenario and when to tag it smoke |
 | [`test/conformance/AGENTS.md`](./test/conformance/AGENTS.md) | The MCP conformance suite against `/mcp/<wsId>`: what it measures, the per-version baselines, the pin, where it runs in CI |
 | [`web/src/bridge/AGENTS.md`](./web/src/bridge/AGENTS.md) | MCP App Bridge rules: iframe scoping, handshake gate, notification relay, host capabilities |
 | [`packages/server-sdk/AGENTS.md`](./packages/server-sdk/AGENTS.md) | The TypeScript server SDK, counterpart of `nimblebrain-server-sdk` (Python): reading the host context, tool errors, the principal rule, reading a contract document, host metadata on the handshake; no dependencies, the contract document decides |
@@ -135,9 +137,12 @@ Tests use `createEchoModel()` from `test/helpers/echo-model.ts` and `StaticToolR
 |------|-----------|---------|-------------------|
 | Unit | `test/unit/` | `bun run test:unit` | Pure logic, mocked deps, no I/O or servers |
 | Integration | `test/integration/` | `bun run test:integration` | `Runtime.start()`, HTTP servers, real crypto, subprocesses |
+| End-to-end | `test/e2e/` | `bun run test:e2e` (`--smoke` after a deploy) | User journeys through the public interfaces only (REST, SSE, MCP), against this tree in-process or a deployment |
 | Eval | `test/eval/` | `bun run eval` | LLM evals, require `ANTHROPIC_API_KEY` |
 
 **Classification rule:** If a test calls `Runtime.start()`, `startServer()`, `Bun.serve()`, or `spawnSync()`, it belongs in `test/integration/`. Everything else goes in `test/unit/`.
+
+**An end-to-end scenario reaches the system only over the wire**, so the same scenario runs in CI and against a deployment; one that needs an internal import is an integration test. `test:integration` runs every scenario in-process (`e2e-suite.test.ts`). See `test/e2e/AGENTS.md`.
 
 Shared test helpers live in `test/helpers/` (imported by both unit and integration).
 
