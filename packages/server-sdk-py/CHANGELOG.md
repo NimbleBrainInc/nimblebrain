@@ -6,6 +6,10 @@
 
 - `host(ctx).read` and `.list` send their request on the stream of the tool call they serve. The host answers host-resources requests only there, for the user that call was made for, and refuses one on the connection's standalone stream with `-32003`. See [Host Resources](https://docs.nimblebrain.ai/extensions/host-resources/).
 
+### Changed
+
+- A surfaced `not_found`, `conflict` and `forbidden` error is logged at `WARNING` rather than `ERROR`, as `bad_input` already was. `auth_required` and every other code stay at `ERROR`. `service_errors_total` is unchanged. See [Errors](https://docs.nimblebrain.ai/server-sdk/errors/).
+
 ## [0.9.0]
 
 ### Changed

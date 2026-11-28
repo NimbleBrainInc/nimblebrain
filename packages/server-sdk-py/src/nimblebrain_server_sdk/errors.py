@@ -251,14 +251,22 @@ class ServiceError(Exception):
 
 _log = logging.getLogger(__name__)
 
+_CALLER_SIDE = frozenset(
+    {ErrorCode.BAD_INPUT, ErrorCode.NOT_FOUND, ErrorCode.CONFLICT, ErrorCode.FORBIDDEN}
+)
+
 
 def _log_level(err: ServiceError) -> int:
-    """The level a surfaced error is logged at: ``WARNING`` for ``bad_input``, else ``ERROR``.
+    """The level a surfaced error is logged at: ``WARNING`` for the caller's side, else ``ERROR``.
 
-    ``bad_input`` is the caller's mistake and the server worked as intended, so it stays out of
-    an error-level alert. It is still counted in ``service_errors_total``.
+    ``bad_input``, ``not_found``, ``conflict`` and ``forbidden`` are the caller's mistake or a
+    routine answer, and the server worked as intended, so they stay out of an error-level alert.
+    That holds for a ``forbidden`` built from an upstream 403 too, which is most often one
+    user's permission. ``auth_required`` stays at ``ERROR`` whatever its origin: it is either a
+    request that did not come through the edge or the server's own credential failing upstream.
+    Every error is still counted in ``service_errors_total``.
     """
-    return logging.WARNING if err.code is ErrorCode.BAD_INPUT else logging.ERROR
+    return logging.WARNING if err.code in _CALLER_SIDE else logging.ERROR
 
 
 def _log_only(err: ServiceError) -> None:
