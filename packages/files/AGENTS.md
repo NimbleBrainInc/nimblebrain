@@ -54,15 +54,22 @@ How to run it standalone is in `README.md`.
 ## Storage (`src/store.ts`)
 
 - **Layout:** `<data>/workspaces/<workspaceId>/state.json` (every owner's file and folder
-  records, and uploads open or within their completion window), `bodies/<fileId>` (a file's
-  body, written once), `uploads/<uploadId>` (the body last PUT to an open upload).
+  records, and each upload completed within its completion window), `bodies/<fileId>` (a
+  file's body, written once), `uploads/<uploadId>` (the body last PUT to an open upload).
+- **An open upload lives in memory only**, like its URL: a restart kills both, so a record of
+  it on disk would buy nothing. `begin_upload` writes nothing; `complete_upload` is the
+  upload's one commit. `state.json` is rewritten whole on every commit, so a write per
+  `begin_upload` makes a run of uploads cost the square of a workspace's records.
+- **A completed upload keeps its file's id, its URL's `expiresAt`, and the fields a later call
+  can change (`tags`, `folderId`) as they were.** A repeat rebuilds the first record from the
+  file's row and those; a tool that comes to change another field of a row adds it there.
 - **`state.json` is the only commit point.** A call changes the workspace in memory; the
   bodies it adds are made durable under `bodies/` first (each fsynced, then the directory),
   then `state.json` is replaced atomically (fsynced, renamed, the workspace directory
   fsynced), and only then are the bodies it removes unlinked. A new directory is fsynced into
   its parent. A workspace's first load in a process removes what no committed record names
   (a body written before a commit that never landed, one left by a delete whose unlink never
-  ran, a completed upload's body, temporary files), so storage holds what the state says. A
+  ran, every upload's body, temporary files), so storage holds what the state says. A
   call that throws evicts the workspace from memory; the reload rereads the state and removes
   nothing, since a PUT may be streaming to a temporary file.
 - **No body is visible partly written.** `create` writes beside the final name, fsyncs and
@@ -77,8 +84,8 @@ How to run it standalone is in `README.md`.
 
 - **A transfer URL is `<origin>/t/<id>.<secret>`**: a 128-bit id finds the grant and a 256-bit
   secret is compared in constant time as the text issued, never decoded: base64 decoding
-  ignores unused low bits and padding, so another spelling would pass. Grants live in memory: a restart kills every URL, an
-  open upload then expires and a host resolves again.
+  ignores unused low bits and padding, so another spelling would pass. Grants live in memory: a restart kills every URL and
+  every open upload, and a host begins again or resolves again.
 - **The listener**: over stdio, its own `Bun.serve` bound to `127.0.0.1` on a port the OS
   picks, started before the server answers; over HTTP, the server's own origin under `/t/`
   (`--transfer-origin` names another). It answers a GET of a live download grant (200, or
@@ -91,10 +98,11 @@ How to run it standalone is in `README.md`.
   stores nothing.
 - **Completion**: `complete_upload` measures the stored body; absent or another length is
   `upload_incomplete` and the upload stays open. It succeeds up to 300 s past `expiresAt`
-  (`COMPLETION_GRACE_MS`), and a repeat answers the first `{ uri, file }` (kept with the
-  upload's record, so tags or a move since do not change it) while that file exists, in that
-  same window. Past the window an upload is retired with its bytes: on the next
-  call into its workspace, and every minute for a loaded workspace.
+  (`COMPLETION_GRACE_MS`), and a repeat answers the first `{ uri, file }` (rebuilt from what the
+  completed upload keeps, so tags or a move since do not change it) while that file exists, in
+  that same window. Past the window an upload is retired, an open one with its bytes, on the
+  next call into its workspace and every minute for a loaded workspace. Retiring commits
+  nothing: a retired completed upload leaves `state.json` with the next commit.
 - **A download GET re-checks the record**: a file deleted since its URL was issued is 404.
 - **The per-file limit** for `begin_upload` is `--max-file-bytes`, else `NB_FILES_MAX_FILE_BYTES`,
   else 25 MiB. The variable is a launch convention, not part of the contract: the runtime's

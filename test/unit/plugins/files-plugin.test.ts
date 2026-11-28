@@ -1,6 +1,6 @@
 /**
  * The files plugin (`packages/files/`) on what the black-box runner cannot drive: the store's
- * commit point and crash recovery, the upload windows on a clock the test sets (completion
+ * commit point and crash recovery, an upload's one commit, the upload windows on a clock the test sets (completion
  * within and past the grace, an abandoned upload's bytes removed, a repeat answer once its
  * file is gone), the transfer handler's grammar, extraction of DOCX and XLSX with its
  * budgets, and internal failures carrying no detail. Calls go through the server's own
@@ -130,7 +130,7 @@ describe("the store's commit point", () => {
     expect((await ok("list", { folderId: "root" }, person)).folders).toHaveLength(1);
   });
 
-  test("an upload's stored body survives a restart; a completed one's is removed", async () => {
+  test("a restart removes every upload's body; an open upload is gone and begins again", async () => {
     const open = await uploaded("still open");
     const done = await uploaded("completed");
     await ok("complete_upload", { version: "1.0", uploadId: done.uploadId });
@@ -139,8 +139,13 @@ describe("the store's commit point", () => {
     writeFileSync(join(wsDir(), "uploads", `${open.uploadId}.abc.tmp`), "a PUT cut short");
     fresh();
     await ok("list", {}, person);
-    expect(readdirSync(join(wsDir(), "uploads"))).toEqual([open.uploadId]);
-    await ok("complete_upload", { version: "1.0", uploadId: open.uploadId });
+    expect(readdirSync(join(wsDir(), "uploads"))).toEqual([]);
+    expect(code(await call("complete_upload", { version: "1.0", uploadId: open.uploadId }))).toBe(
+      "upload_not_found",
+    );
+    const again = await uploaded("still open");
+    await ok("complete_upload", { version: "1.0", uploadId: again.uploadId });
+    expect((await ok("list", {}, person)).total).toBe(2);
   });
 });
 
@@ -246,6 +251,68 @@ describe("the store's durable order", () => {
   });
 });
 
+const stateWritesOf = (ops: string[]) => ops.filter((op) => op === "rename state.json").length;
+
+describe("an upload's one commit", () => {
+  const stateWrites = stateWritesOf;
+
+  test("begin_upload writes nothing; complete_upload writes the state once", async () => {
+    let begun: Answer = {};
+    const opening = await fsOps(async () => {
+      begun = await ok("begin_upload", {
+        version: "1.0",
+        filename: "u.txt",
+        mimeType: "text/plain",
+        size: 3,
+        source: "app",
+      });
+    });
+    expect(opening).toEqual([]);
+    expect(existsSync(join(wsDir(), "state.json"))).toBe(false);
+    const res = await transfers.handle(new Request(begun.url, { method: "PUT", body: "one" }));
+    expect(res.status).toBe(204);
+    const completing = await fsOps(() =>
+      ok("complete_upload", { version: "1.0", uploadId: begun.uploadId }),
+    );
+    expect(stateWrites(completing)).toBe(1);
+    const repeating = await fsOps(() =>
+      ok("complete_upload", { version: "1.0", uploadId: begun.uploadId }),
+    );
+    expect(stateWrites(repeating)).toBe(0);
+  });
+
+  test("a burst of uploads leaves state that grows with its files alone", async () => {
+    const stateSize = () => fs.statSync(join(wsDir(), "state.json")).size;
+    const burst = async (n: number) => {
+      for (let i = 0; i < n; i++) {
+        const begun = await uploaded(`body ${i}`, { tags: ["burst"] });
+        await ok("complete_upload", { version: "1.0", uploadId: begun.uploadId });
+      }
+    };
+    await burst(20);
+    const twenty = stateSize();
+    await burst(20);
+    const forty = stateSize();
+    const state = JSON.parse(fs.readFileSync(join(wsDir(), "state.json"), "utf-8"));
+    expect(Object.keys(state)).toEqual(["files", "folders", "completed"]);
+    expect(Object.keys(state.completed)).toHaveLength(40);
+    for (const done of Object.values(state.completed)) {
+      expect(Object.keys(done as object).sort()).toEqual([
+        "expiresAt",
+        "fileId",
+        "folderId",
+        "tags",
+      ]);
+    }
+    // Linear: the second twenty add what the first did, give or take an id's digits.
+    expect(Math.abs(forty - 2 * twenty)).toBeLessThan(twenty * 0.05);
+    // A completed upload keeps no copy of its file's record: less than its row holds.
+    const perFile = JSON.stringify(Object.entries(state.files)[0]).length;
+    const perUpload = JSON.stringify(Object.entries(state.completed)[0]).length;
+    expect(perUpload).toBeLessThan(perFile * 0.6);
+  });
+});
+
 describe("upload windows, on the plugin's clock", () => {
   test("a body PUT in time completes up to 300 s past expiresAt, and not after", async () => {
     const a = await uploaded("within");
@@ -308,6 +375,22 @@ describe("upload windows, on the plugin's clock", () => {
     expect(await ok("complete_upload", { version: "1.0", uploadId: begun.uploadId })).toEqual(
       first,
     );
+    clock = Date.parse(begun.expiresAt) + COMPLETION_GRACE_MS + 1;
+    expect(code(await call("complete_upload", { version: "1.0", uploadId: begun.uploadId }))).toBe(
+      "upload_not_found",
+    );
+  });
+
+  test("a completed upload is retired past its window, and leaves the state with a commit", async () => {
+    const begun = await uploaded("retired");
+    await ok("complete_upload", { version: "1.0", uploadId: begun.uploadId });
+    const kept = () =>
+      Object.keys(JSON.parse(fs.readFileSync(join(wsDir(), "state.json"), "utf-8")).completed);
+    expect(kept()).toEqual([begun.uploadId]);
+    clock = Date.parse(begun.expiresAt) + COMPLETION_GRACE_MS + 1;
+    expect(stateWritesOf(await fsOps(() => ok("list", {}, person)))).toBe(0);
+    await ok("create_folder", { manifest: { name: "Commit" } }, person);
+    expect(kept()).toEqual([]);
   });
 
   test("a call that throws while a PUT streams leaves the PUT's body in place", async () => {
