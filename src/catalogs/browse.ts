@@ -17,23 +17,36 @@
  * Several catalogs sit side by side. The same server listed by two catalogs is
  * a row under each, with no precedence between them.
  *
- * **Install still reads the connector list.** Until install fetches the
- * entry's artifact, it re-resolves the row's `id` (its server's registry name)
- * to the server record in the connector list (`ConnectorCatalog`: the pinned
- * `connectors.yaml`, or `NB_CURATED_CATALOG_DIR` when set), as it always has.
- * So a row carries that record's `install` action, and an entry is listed only
- * when it names exactly one server and the connector list holds that server's
- * record. The connector list's records that no listing names (a mounted
- * directory's fleet services and tenant entries) are listed under the reserved
- * catalog `curated`, so nothing an operator mounted leaves Browse.
+ * **A row's setup comes from the connector list when the listing lacks it.**
+ * Installing a row reads its artifact (`src/tools/plugin-install.ts`), never
+ * anything here. But a row also shows and gates on setup a listing does not
+ * carry yet (a static entry's OAuth client portal and secret key, a broker's
+ * fields, secret headers), so a row of one server takes its `install` facts
+ * from the connector list's record of that server when the list holds one
+ * (`ConnectorCatalog`), else from the extension alone (`dcr` and `none`, which
+ * need no setup). A bare connector's row is projected from its own inline
+ * record. An entry this shape cannot show (no server, several, or setup the
+ * listing cannot describe) is left out and logged; it still installs by its
+ * address.
+ *
+ * **A mounted directory's own records stay rows.** With `NB_CURATED_CATALOG_DIR`
+ * set, the directory's records no listing names (fleet services, a tenant's
+ * entries) are rows of the reserved catalog `curated`, and install them from
+ * the directory, until that directory is a path catalog of its own. With no
+ * directory mounted there are no `curated` rows.
  */
 
 import { CONNECTOR_LIST_CATALOG_NAME } from "../config/catalogs.ts";
 import type { CatalogError, ConnectorCatalog } from "../connectors/catalog/catalog.ts";
+import {
+  projectServerDetailToCatalogListing,
+  validateServerDetailSafety,
+} from "../connectors/catalog/projection.ts";
+import { type ServerDetail, validateServerDetail } from "../connectors/catalog/server-detail.ts";
 import type { BrowseStatus, CatalogListing } from "../connectors/catalog/types.ts";
 import { log } from "../observability/log.ts";
 import type { ListedEntry } from "./listing.ts";
-import { PLUGIN_TYPES } from "./listing.ts";
+import { PLUGIN_TYPES, SERVER_RECORD_TYPE } from "./listing.ts";
 import type { CatalogListings, CatalogSnapshot } from "./reader.ts";
 
 /** The brokers this instance has, by auth kind. */
@@ -77,9 +90,10 @@ const reported = new WeakSet<CatalogSnapshot>();
 
 /** Build Browse from every catalog's listing. Never throws. */
 export async function browseCatalog(deps: BrowseDeps): Promise<BrowseResult> {
+  const mounted = deps.connectorCatalog.isMounted();
   const [snapshots, records, servers] = await Promise.all([
     deps.listings.snapshots(),
-    deps.connectorCatalog.listings(),
+    deps.connectorCatalog.listings({ installed: false }),
     deps.connectorCatalog.servers(),
   ]);
   const byName = new Map(records.map((r) => [r.id, r]));
@@ -88,15 +102,15 @@ export async function browseCatalog(deps: BrowseDeps): Promise<BrowseResult> {
   const entries: CatalogListing[] = [];
   const named = new Set<string>();
   for (const snapshot of snapshots) {
-    for (const entry of snapshot.entries) {
-      for (const server of Object.values(entry.servers)) named.add(server.name);
-    }
+    for (const name of namedServers(snapshot)) named.add(name);
     entries.push(...(await snapshotRows(snapshot, byName, deps.brokers, configured)));
   }
-  for (const record of records) {
-    if (named.has(record.id)) continue;
-    const row = await curatedRow(record, deps.brokers, configured);
-    if (row) entries.push(row);
+  if (mounted) {
+    for (const record of records) {
+      if (named.has(record.id)) continue;
+      const row = await curatedRow(record, deps.brokers, configured);
+      if (row) entries.push(row);
+    }
   }
 
   const errors: CatalogError[] = [
@@ -106,6 +120,17 @@ export async function browseCatalog(deps: BrowseDeps): Promise<BrowseResult> {
     ...servers.errors,
   ];
   return { entries, errors };
+}
+
+/** The registry names a catalog's entries name: in their extension, or as a bare connector's record. */
+function namedServers(snapshot: CatalogSnapshot): string[] {
+  return snapshot.entries.flatMap((entry) => {
+    const inline = (entry.data as { name?: unknown } | undefined)?.name;
+    return [
+      ...Object.values(entry.servers).map((s) => s.name),
+      ...(typeof inline === "string" ? [inline] : []),
+    ];
+  });
 }
 
 /** One catalog's rows; the items it lists that cannot be installed here yet are logged once. */
@@ -153,23 +178,20 @@ function oauthProbe(deps: BrowseDeps): OAuthProbe {
   };
 }
 
-/** A listed entry's row, null when hidden, or why it cannot be installed here yet. */
+/** A listed entry's row, null when hidden, or why it cannot be shown here. */
 async function listedRow(
   entry: ListedEntry,
   records: Map<string, CatalogListing>,
   brokers: Brokers,
   configured: OAuthProbe,
 ): Promise<CatalogListing | null | string> {
-  if (!PLUGIN_TYPES.includes(entry.type)) return `type ${entry.type}`;
-  const servers = Object.values(entry.servers);
-  if (servers.length !== 1) return `${servers.length} servers`;
-  const server = servers[0] as { name: string; auth: string };
+  const setup = rowSetup(entry, records);
+  if (typeof setup === "string") return setup;
+  const { record, auth } = setup;
   // A broker this instance lacks hides the entry whatever the connector list holds.
-  if (browseStatus(server.auth, { brokers }) === "hidden") return null;
-  const record = records.get(server.name);
-  if (!record) return `no record for ${server.name} in the connector list`;
+  if (browseStatus(auth, { brokers }) === "hidden") return null;
   const oauthClientConfigured = await configured(record);
-  const status = browseStatus(server.auth, { brokers, oauthClientConfigured });
+  const status = browseStatus(auth, { brokers, oauthClientConfigured });
   if (status === "hidden") return null;
   return {
     id: record.id,
@@ -184,6 +206,57 @@ async function listedRow(
     catalog: entry.catalog,
     status,
   };
+}
+
+/** Auth kinds whose row needs no setup facts beyond the kind itself. */
+const SELF_DESCRIBED_AUTH = new Set(["dcr", "none"]);
+
+/**
+ * Where a row's server and setup come from: a bare connector's inline record,
+ * else the connector list's record of its one server, else the extension alone
+ * when its auth needs no setup. A string says why there is no row.
+ */
+function rowSetup(
+  entry: ListedEntry,
+  records: Map<string, CatalogListing>,
+): { record: CatalogListing; auth: string } | string {
+  if (entry.type === SERVER_RECORD_TYPE) {
+    const record = inlineRecord(entry.data);
+    if (record?.install.kind !== "remote-oauth") return "an inline record that cannot be installed";
+    return { record, auth: record.install.auth };
+  }
+  if (!PLUGIN_TYPES.includes(entry.type)) return `type ${entry.type}`;
+  const servers = Object.values(entry.servers);
+  if (servers.length !== 1) return `${servers.length} servers`;
+  const server = servers[0] as { name: string; auth: string };
+  const listed = records.get(server.name);
+  if (listed) return { record: listed, auth: server.auth };
+  if (!SELF_DESCRIBED_AUTH.has(server.auth)) {
+    return `${server.auth} setup for ${server.name} that its listing does not describe`;
+  }
+  return {
+    record: {
+      id: server.name,
+      name: entry.displayName,
+      description: entry.description ?? "",
+      install: {
+        kind: "remote-oauth",
+        // What the row stands for: the artifact install reads the server's own URL from.
+        url: entry.url ?? "",
+        transportType: "streamable-http",
+        auth: server.auth,
+      },
+    },
+    auth: server.auth,
+  };
+}
+
+/** A bare connector's inline `server.json` record as an install action, or null. */
+function inlineRecord(data: unknown): CatalogListing | null {
+  if (!validateServerDetail(data).valid) return null;
+  const detail = data as ServerDetail;
+  if (validateServerDetailSafety(detail)) return null;
+  return projectServerDetailToCatalogListing(detail);
 }
 
 /** A connector-list record no listing names, under the reserved catalog; null when hidden. */

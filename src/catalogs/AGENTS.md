@@ -14,11 +14,20 @@ Scope: `src/catalogs/`. The AI Catalog listings the operator names in `catalogs`
 - **Browse reads listings, never artifacts.** Building a row never opens a plugin archive or
   any entry `url`. What a row shows comes from the entry; its status from the extension's
   `servers[].auth` (`browseStatus`). An entry's fields grant nothing at install.
-- **Install still reads the connector list** (`ConnectorCatalog`) in this step: a row's `id`
-  is its server's registry name and its `install` is that record's. So a listed entry is a
-  row only when it names exactly one server the connector list holds, and the list's records
-  no listing names are rows of the reserved catalog `curated`. When install fetches the
-  artifact instead, drop that join and the `curated` rows.
+- **Install reads the item's artifact, never a row.** A row is addressed `name@catalog`, and
+  install (`src/tools/plugin-install.ts`) looks the address up in the cached listing, verifies
+  the artifact against `digest`, and connects each server from the archive's own record. A
+  listing entry keeps its inline `data` (`ListedEntry.data`) for that; nothing else reads it.
+- **A row's setup may come from the connector list, nothing else.** A row shows setup the
+  extension does not carry (an OAuth client portal and secret key, a broker's fields, secret
+  headers), so a one-server row takes its `install` from the connector list's record of that
+  server when the list holds one (`listings({ installed: false })`), else from the extension
+  alone for `dcr`/`none`; a bare connector's row is projected from its inline record. An entry
+  this shape cannot show is logged and left out; it still installs by address.
+- **`curated` rows are a mounted directory's only.** With `NB_CURATED_CATALOG_DIR` set
+  (`ConnectorCatalog.isMounted()`), its records no listing names are rows of the reserved
+  catalog `curated` and install from the directory as plain connectors, with no record, until
+  step 4 makes the directory a path catalog. The pinned connector list never yields a row.
 - **Catalogs sit side by side.** The same server from two catalogs is a row under each; there
   is no precedence, dedupe or merge between catalogs.
 - **`entry-extension.ts` (TypeBox) is the source of
