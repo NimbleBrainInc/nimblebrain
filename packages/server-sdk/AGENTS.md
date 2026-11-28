@@ -29,6 +29,8 @@ It covers four things:
   grant as the opaque string the host stamped (a server stores it and returns it verbatim) and
   `unattended` as a boolean; refusing a tool on an unattended call is the server's, from the
   contract document's marking.
+- **`now` is read as the string the host stamped**, checked against the schema's pattern (RFC
+  3339, UTC, `Z`). A server that decides on the call's instant parses it itself.
 
 Rules:
 

@@ -5,7 +5,12 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { HOST_CONTEXT_META_KEY, stampHostContext } from "../../../src/plugins/bound-servers.ts";
+import type { Transport } from "@modelcontextprotocol/client";
+import {
+  HOST_CONTEXT_META_KEY,
+  stamped,
+  stampHostContext,
+} from "../../../src/plugins/bound-servers.ts";
 
 /** The params of a stamped request. */
 function paramsOf(message: unknown): { name?: string; _meta: Record<string, unknown> } {
@@ -44,5 +49,54 @@ describe("stampHostContext", () => {
     expect(stampHostContext(note, person)).toBe(note);
     const response = { jsonrpc: "2.0" as const, id: 3, result: {} };
     expect(stampHostContext(response, person)).toBe(response);
+  });
+});
+
+describe("stamped", () => {
+  /** A transport that records what it is asked to send. */
+  function recording(): { transport: Transport; sent: unknown[] } {
+    const sent: unknown[] = [];
+    const transport: Transport = {
+      start: async () => {},
+      close: async () => {},
+      send: async (message) => {
+        sent.push(message);
+      },
+    };
+    return { transport, sent };
+  }
+
+  test("every request carries now, the host's clock as it is sent, over a caller's value", async () => {
+    const { transport, sent } = recording();
+    stamped(transport, undefined);
+    const before = Date.now();
+    await transport.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "due",
+        _meta: { [HOST_CONTEXT_META_KEY]: { principal: "host", now: "1999-01-01T00:00:00Z" } },
+      },
+    });
+    await transport.send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+    const after = Date.now();
+    expect(sent).toHaveLength(2);
+    for (const message of sent) {
+      const context = paramsOf(message)._meta[HOST_CONTEXT_META_KEY] as Record<string, unknown>;
+      expect(context.principal).toBe("person");
+      expect(context.now).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/);
+      const at = Date.parse(context.now as string);
+      expect(at).toBeGreaterThanOrEqual(before);
+      expect(at).toBeLessThanOrEqual(after);
+    }
+  });
+
+  test("leaves notifications unstamped", async () => {
+    const { transport, sent } = recording();
+    stamped(transport, undefined);
+    const note = { jsonrpc: "2.0" as const, method: "notifications/initialized" };
+    await transport.send(note);
+    expect(sent[0]).toBe(note);
   });
 });

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.nimblebrain.ai/host-context/v1/host-context.schema.json",
   "title": "NimbleBrain host context",
-  "description": "The authenticated context a NimbleBrain host stamps on every request it sends to a plugin server, at params._meta[\"ai.nimblebrain/context\"]: who is calling and the scope the call is walled to. The host sets it and overwrites any value a caller supplied. A server believes it only from an authenticated host transport. A value that fails this schema is no context: the call names no principal, so it is not host, and has no scope. Normative rules: contracts/host-context/CONTEXT.md in the NimbleBrain repository.",
+  "description": "The authenticated context a NimbleBrain host stamps on every request it sends to a plugin server, at params._meta[\"ai.nimblebrain/context\"]: who is calling, the scope the call is walled to, and the host's clock when it sent the call. The host sets it and overwrites any value a caller supplied. A server believes it only from an authenticated host transport. A value that fails this schema is no context: the call names no principal, so it is not host, and has no scope. Normative rules: contracts/host-context/CONTEXT.md in the NimbleBrain repository.",
   "type": "object",
   "required": ["principal"],
   "properties": {
@@ -36,6 +36,11 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 4096
+    },
+    "now": {
+      "description": "The host's clock when it sent the request, as an RFC 3339 instant in UTC (Z, fractional seconds allowed). The host stamps it on every request. A decision a contract assigns to the call's now is taken on this instant, never on the server's own clock.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
     },
     "unattended": {
       "description": "True when a person call is made inside an unattended run (a task run), with no person present. A server refuses a tool its contract marks unattended: refused. Never on a host call; absent or false otherwise.",
