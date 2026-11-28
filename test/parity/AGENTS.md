@@ -8,8 +8,8 @@ MCP only, so the same scenarios run against this tree, another checkout, or a de
   grades it against `expected-failures.json`; `test/integration/parity-suite.test.ts` runs the
   same in CI. `PARITY_TREE=<checkout>` serves another tree (a `main` worktree, with its own
   `bun install`) from a child process (`serve.ts`). `PARITY_BASE_URL` + `PARITY_TOKEN`
-  (`PARITY_TOKEN_B` for a second person outside the first's workspace, `PARITY_WORKSPACE`,
-  `PARITY_CAPABILITIES=org-admin`) runs against a deployment. `PARITY_ONLY=chat,files` picks
+  (`PARITY_TOKEN_B` for a second person, `PARITY_CAPABILITIES=org-admin`) runs against a
+  deployment. `PARITY_ONLY=chat,files` picks
   scenarios by id prefix. The report is `.cache/parity/<label>.json` (`PARITY_REPORT`);
   `bun run test:parity diff a.json b.json` lists the items whose status differs.
 - **Reach the runtime over the wire, never by import.** A scenario uses `client.ts` (REST,
@@ -21,6 +21,16 @@ MCP only, so the same scenarios run against this tree, another checkout, or a de
   echoes a message without one (text, then a line per file part). A call held for guidance
   is made again. A deployment's real model ignores directives, so a scenario that needs one
   declares `scripted-model` and is skipped there.
+- **A deployment run writes only in workspaces it creates, and leaves none behind.** Every
+  scenario writes (conversations, files, tasks, installs), and a deployment's workspaces are
+  real. So against a deployment the suite creates the run's workspaces as the org admin (Alice's,
+  and Bob's, which Alice then leaves) and deletes and purges them in a `finally`, failed or not;
+  without `org-admin` every scenario is skipped with that reason. A scenario that creates a
+  workspace calls `t.disposable(ws)` as soon as it exists, and the suite deletes and purges it
+  when the scenario ends. A change to the person rather than a workspace (a preference) is put
+  back in the scenario's own `finally`. A workspace the run could not purge is listed in the
+  report's `leftBehind` and fails the run. In-process and tree runs use the first workspace of a
+  throwaway work directory.
 - **Declare what a scenario needs** (`requires`): `scripted-model`, `second-identity`,
   `org-admin`, `fixture-catalog`. A target lacking one skips the scenario, and the report says
   why for each item.
@@ -33,9 +43,11 @@ MCP only, so the same scenarios run against this tree, another checkout, or a de
   behaviour until it is settled. When `main` and this tree agree and the inventory says
   otherwise, the check follows the trees and says so.
 - **Ids outside the inventory are `NEW-<area>-<n>`**, and `coverage.ts` describes each.
-- **The baseline only shrinks.** `expected-failures.json` maps an item to its finding and
-  repro. A graded run fails on a failure outside it and on an entry that passes; a fix removes
-  its entry in the same change. A new entry is a regression unless it is a finding the suite
+- **The baseline only shrinks.** An `expected-failures.json` entry names one check (item,
+  scenario, check label), the error it fails with, and the finding with its repro. Any other
+  failure on that item, or that check failing another way, is a regression. A graded run fails
+  on a failure outside the baseline, on an entry that passes, and on a scenario that throws; a
+  fix removes its entry in the same change. A new entry is a regression unless it is a finding the suite
   just exposed, recorded with its repro.
 - **`COVERAGE.md` is generated** from `inventory.json`, the scenarios' `covers` and
   `existing-coverage.json` (item → existing test files): run `bun --no-env-file

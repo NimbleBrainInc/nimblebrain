@@ -7,7 +7,14 @@
 import type { Caller, ParityClient } from "../client.ts";
 import { structured, textOf } from "../client.ts";
 import { directive } from "../directive-model.ts";
-import { expect, expectEq, Mismatch, type Scenario, until } from "../scenario.ts";
+import {
+  expect,
+  expectEq,
+  Mismatch,
+  type Scenario,
+  type ScenarioContext,
+  until,
+} from "../scenario.ts";
 
 const TIMEZONE = "Pacific/Honolulu";
 
@@ -100,114 +107,125 @@ export const tasksAuthoring: Scenario = {
   covers: ["TSK-01", "TSK-25", "TSK-26", "TSK-27", "TSK-29", "TSK-06", "TSK-04", "TSK-03"],
   requires: ["scripted-model"],
   async run(t) {
-    const tasks = tasksOf(t.client, t.alice, t.ws);
+    // The timezone is the person's, outside any workspace: put it back however
+    // the scenario ends. An unset one is written back as "", which reads as unset.
+    const before = (await t.client.bootstrap(t.alice)).user.preferences?.timezone ?? "";
     await t.client.tool(t.alice, t.ws, "nb__set_preferences", { timezone: TIMEZONE });
-    const name = `Parity Morning ${Date.now().toString(36)}`;
-    const turn = await t.client.turn(t.alice, t.ws, {
-      message: `schedule it ${directive({
-        steps: [
-          [
-            {
-              tool: "tasks__create",
-              args: {
-                manifest: {
-                  name,
-                  schedule: { cron: "0 8 * * *", timezone: "{{timezone}}" },
-                  allowedTools: ["files__*"],
-                },
-                body: "Summarize my files in one line.",
-              },
-            },
-          ],
-        ],
-        reply: "scheduled",
-        echoResults: true,
-      })}`,
-    });
-    const created = turn.done?.toolCalls.filter((c) => c.name === "tasks__create").at(-1);
-    const taskId = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-
-    await t.check(
-      ["TSK-01", "TSK-26"],
-      "the model's create, with the timezone from its prompt, schedules the next 08:00 there",
-      async () => {
-        expect(created?.ok, "tasks__create succeeded in the turn", created);
-        const status = structured<{ task: Task; nextRunAt?: string }>(
-          await tasks.call("status", { taskId }),
-        );
-        expectEq(status.task?.schedule?.timezone, TIMEZONE, "the stored timezone");
-        const next = status.nextRunAt ?? status.task?.nextRunAt;
-        expect(next, "a nextRunAt", status);
-        expectEq(clockIn(next, TIMEZONE), "08:00", "08:00 in the zone");
-        const ahead = Date.parse(next) - Date.now();
-        expect(ahead > 0 && ahead <= 24 * 3600_000, "within the next day", next);
-        return { taskId: status.task.id, nextRunAt: next, schedule: status.task.schedule };
-      },
-    );
-
-    const again = await tasks.call("create", { manifest: { name }, body: "x" });
-    await t.check("TSK-01", "a second create of the same name is refused, naming the task", () => {
-      expect(again.isError, "refused", textOf(again));
-      expect(textOf(again).includes(taskId), "names the existing id", textOf(again));
-      return textOf(again).slice(0, 200);
-    });
-
-    // Inventory TSK-25 (unknown): errors are `{code, error}` with a closed code.
-    await t.check("TSK-25", "the refusal is {code, error} with code task_exists", () => {
-      expectEq(codeOf(again), "task_exists", "code");
-      return structured(again);
-    });
-
-    await t.check(["TSK-06", "TSK-04"], "status and list show the task", async () => {
-      const list = structured<{ tasks: Task[] }>(await tasks.call("list", {}));
-      expect(
-        list.tasks.some((x) => x.id === taskId),
-        "listed",
-        list.tasks.map((x) => x.id),
-      );
-      const status = structured<{ task: Task; recentRuns: unknown[] }>(
-        await tasks.call("status", { taskId }),
-      );
-      expect(Array.isArray(status.recentRuns), "recentRuns", status);
-      return { listed: list.tasks.length, recentRuns: status.recentRuns.length };
-    });
-
-    // Inventory TSK-27 (unknown): the contract requires a timezone with cron.
-    await t.check("TSK-27", "a cron without a timezone is refused invalid_input", async () => {
-      const r = await tasks.call("create", {
-        manifest: { name: `${name} no tz`, schedule: { cron: "0 8 * * *" } },
-        body: "x",
-      });
-      expect(r.isError, "refused", textOf(r));
-      expectEq(codeOf(r), "invalid_input", "code");
-      return textOf(r).slice(0, 200);
-    });
-
-    await t.check("TSK-29", "a once schedule in the past is refused at create", async () => {
-      const r = await tasks.call("create", {
-        manifest: {
-          name: `${name} past`,
-          schedule: { at: new Date(Date.now() - 3600_000).toISOString() },
-        },
-        body: "x",
-      });
-      expect(r.isError, "refused", { answer: structured(r), text: textOf(r).slice(0, 300) });
-      return textOf(r).slice(0, 300);
-    });
-
-    await t.check(
-      "TSK-03",
-      "delete removes the task; deleting a missing one answers deleted:false",
-      async () => {
-        const del = structured<{ deleted: boolean }>(await tasks.call("delete", { taskId }));
-        expectEq(del.deleted, true, "deleted");
-        const again = structured<{ deleted: boolean }>(await tasks.call("delete", { taskId }));
-        expectEq(again.deleted, false, "a missing task");
-        return { del, again };
-      },
-    );
+    try {
+      await authoring(t);
+    } finally {
+      await t.client.tool(t.alice, t.ws, "nb__set_preferences", { timezone: before });
+    }
   },
 };
+
+async function authoring(t: ScenarioContext): Promise<void> {
+  const tasks = tasksOf(t.client, t.alice, t.ws);
+  const name = `Parity Morning ${Date.now().toString(36)}`;
+  const turn = await t.client.turn(t.alice, t.ws, {
+    message: `schedule it ${directive({
+      steps: [
+        [
+          {
+            tool: "tasks__create",
+            args: {
+              manifest: {
+                name,
+                schedule: { cron: "0 8 * * *", timezone: "{{timezone}}" },
+                allowedTools: ["files__*"],
+              },
+              body: "Summarize my files in one line.",
+            },
+          },
+        ],
+      ],
+      reply: "scheduled",
+      echoResults: true,
+    })}`,
+  });
+  const created = turn.done?.toolCalls.filter((c) => c.name === "tasks__create").at(-1);
+  const taskId = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+  await t.check(
+    ["TSK-01", "TSK-26"],
+    "the model's create, with the timezone from its prompt, schedules the next 08:00 there",
+    async () => {
+      expect(created?.ok, "tasks__create succeeded in the turn", created);
+      const status = structured<{ task: Task; nextRunAt?: string }>(
+        await tasks.call("status", { taskId }),
+      );
+      expectEq(status.task?.schedule?.timezone, TIMEZONE, "the stored timezone");
+      const next = status.nextRunAt ?? status.task?.nextRunAt;
+      expect(next, "a nextRunAt", status);
+      expectEq(clockIn(next, TIMEZONE), "08:00", "08:00 in the zone");
+      const ahead = Date.parse(next) - Date.now();
+      expect(ahead > 0 && ahead <= 24 * 3600_000, "within the next day", next);
+      return { taskId: status.task.id, nextRunAt: next, schedule: status.task.schedule };
+    },
+  );
+
+  const again = await tasks.call("create", { manifest: { name }, body: "x" });
+  await t.check("TSK-01", "a second create of the same name is refused, naming the task", () => {
+    expect(again.isError, "refused", textOf(again));
+    expect(textOf(again).includes(taskId), "names the existing id", textOf(again));
+    return textOf(again).slice(0, 200);
+  });
+
+  // Inventory TSK-25 (unknown): errors are `{code, error}` with a closed code.
+  await t.check("TSK-25", "the refusal is {code, error} with code task_exists", () => {
+    expectEq(codeOf(again), "task_exists", "code");
+    return structured(again);
+  });
+
+  await t.check(["TSK-06", "TSK-04"], "status and list show the task", async () => {
+    const list = structured<{ tasks: Task[] }>(await tasks.call("list", {}));
+    expect(
+      list.tasks.some((x) => x.id === taskId),
+      "listed",
+      list.tasks.map((x) => x.id),
+    );
+    const status = structured<{ task: Task; recentRuns: unknown[] }>(
+      await tasks.call("status", { taskId }),
+    );
+    expect(Array.isArray(status.recentRuns), "recentRuns", status);
+    return { listed: list.tasks.length, recentRuns: status.recentRuns.length };
+  });
+
+  // Inventory TSK-27 (unknown): the contract requires a timezone with cron.
+  await t.check("TSK-27", "a cron without a timezone is refused invalid_input", async () => {
+    const r = await tasks.call("create", {
+      manifest: { name: `${name} no tz`, schedule: { cron: "0 8 * * *" } },
+      body: "x",
+    });
+    expect(r.isError, "refused", textOf(r));
+    expectEq(codeOf(r), "invalid_input", "code");
+    return textOf(r).slice(0, 200);
+  });
+
+  await t.check("TSK-29", "a once schedule in the past is refused at create", async () => {
+    const r = await tasks.call("create", {
+      manifest: {
+        name: `${name} past`,
+        schedule: { at: new Date(Date.now() - 3600_000).toISOString() },
+      },
+      body: "x",
+    });
+    expect(r.isError, "refused", { answer: structured(r), text: textOf(r).slice(0, 300) });
+    return textOf(r).slice(0, 300);
+  });
+
+  await t.check(
+    "TSK-03",
+    "delete removes the task; deleting a missing one answers deleted:false",
+    async () => {
+      const del = structured<{ deleted: boolean }>(await tasks.call("delete", { taskId }));
+      expectEq(del.deleted, true, "deleted");
+      const again = structured<{ deleted: boolean }>(await tasks.call("delete", { taskId }));
+      expectEq(again.deleted, false, "a missing task");
+      return { del, again };
+    },
+  );
+}
 
 export const tasksRuns: Scenario = {
   id: "tasks.runs",
@@ -475,6 +493,7 @@ export const tasksNewWorkspace: Scenario = {
     );
     const ws = created.workspace?.id ?? created.id;
     if (!ws) throw new Mismatch("create answered no id", created);
+    t.disposable(ws);
     const tasks = tasksOf(t.client, t.alice, ws);
     const made = structured<{ task?: Task }>(
       await tasks.call("create", {

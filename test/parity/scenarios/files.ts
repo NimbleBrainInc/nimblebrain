@@ -370,6 +370,8 @@ export const filesOwnerWall: Scenario = {
       }),
     );
     const ws = (created as { id?: string; workspace?: { id: string } }).workspace?.id ?? created.id;
+    if (!ws) throw new Error("create answered no id");
+    t.disposable(ws);
     const bootBob = await t.client.bootstrap(bob);
     const bobId = bootBob.user.id;
     await t.client.identityTool(t.alice, "nb__manage_workspaces", {

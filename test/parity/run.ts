@@ -73,6 +73,10 @@ async function run(): Promise<number> {
       );
     }
   }
+  for (const s of report.scenarios.filter((s) => s.status === "errored")) {
+    console.log(`  ERRORED ${s.id}: ${s.error?.split("\n")[0]}`);
+  }
+  for (const why of report.leftBehind) console.log(`  LEFT BEHIND ${why}`);
   console.log(`report: ${out}`);
   if (!graded && env.PARITY_STRICT !== "1") return 0;
   return isClean(report) ? 0 : 1;

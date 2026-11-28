@@ -44,6 +44,7 @@ export const workspacesLifecycle: Scenario = {
     const created = await admin({ action: "create", name });
     const ws = workspaceIdOf(structured(created));
     if (!ws) throw new Mismatch("create answered no id", textOf(created));
+    t.disposable(ws);
 
     await t.check(
       "AD-49",

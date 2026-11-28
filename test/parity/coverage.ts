@@ -130,10 +130,7 @@ export async function renderCoverage(): Promise<string> {
     .sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }))
     .map((i) => `${i.id} (${i.use}, ${i.harness})`);
 
-  const baselineRows = Object.entries(baseline).map(([id, finding]) => [
-    id,
-    finding.replace(/\|/g, "\\|"),
-  ]);
+  const baselineRows = baseline.map((e) => [e.item, e.finding.replace(/\|/g, "\\|")]);
 
   return `# Parity coverage
 

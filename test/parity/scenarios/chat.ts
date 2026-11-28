@@ -264,11 +264,17 @@ export const chatCancel: Scenario = {
         const replayed = replay.events
           .map((e) => e.seq)
           .filter((s): s is number => s !== undefined);
+        const suffix = seqs.filter((s) => s > cut);
+        expectEq(first.end, "done", "the first viewer saw the turn end");
+        expectEq(replay.status, 200, "the replay is served");
+        expectEq(replay.end, "done", "the replay reaches the turn's end");
+        expect(replayed.length > 0, "the replay returns events", { cut, replayed });
         expect(
           replayed.every((s) => s > cut),
           "only events after the cut",
           { cut, replayed },
         );
+        expectEq(replayed, suffix, "the replay is the events after the cut");
         return { cut, firstEnd: first.end, replayed: replay.events.map((e) => e.type) };
       },
     );

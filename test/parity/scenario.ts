@@ -27,9 +27,9 @@ export interface ScenarioContext {
   alice: Caller;
   /** An org member outside `ws`; absent unless the target offers `second-identity`. */
   bob?: Caller;
-  /** Alice's workspace the scenarios run in. */
+  /** Alice's workspace the scenarios run in. Against a deployment, one the suite created. */
   ws: string;
-  /** Bob's own workspace, when there is a Bob. */
+  /** Bob's workspace, which Alice is not in, when there is a Bob. */
   bobWs?: string;
   /** The fixture catalog's artifact server, under `fixture-catalog`. */
   catalogBase?: string;
@@ -44,6 +44,11 @@ export interface ScenarioContext {
   ): Promise<void>;
   /** A value for later steps, kept with the scenario's evidence. */
   note(key: string, value: unknown): void;
+  /**
+   * A workspace the scenario created: the suite deletes and purges it when the
+   * scenario ends, failed or not. Register it as soon as it exists.
+   */
+  disposable(ws: string): void;
 }
 
 export interface Scenario {
