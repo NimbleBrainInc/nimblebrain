@@ -839,8 +839,8 @@ async function searchCatalog(runtime: Runtime | undefined, query: string): Promi
     // Route agent discovery through the SAME function Browse uses —
     // `browseCatalog`. One read path, not two, so the sets cannot drift, and
     // it is what drops an entry this runtime cannot install, so the agent is
-    // never shown a connector whose install would be refused downstream. Two
-    // catalogs listing one server give it one result: the agent installs by id.
+    // never shown a connector whose install would be refused downstream. Each
+    // result names the catalog item's address, which is what install takes.
     //
     // No runtime (non-agent/test paths) ⇒ no catalog ⇒ no results;
     // the production agent always has one.
@@ -854,7 +854,7 @@ async function searchCatalog(runtime: Runtime | undefined, query: string): Promi
     // Match every row first: each catalog's row carries its own searchable
     // text, so a server matches when any catalog's description of it does.
     const matched = matchEntriesByQuery(aggregated?.entries ?? [], query);
-    const results = [...new Map(matched.map((e) => [e.id, e])).values()];
+    const results = [...new Map(matched.map((e) => [e.address ?? e.id, e])).values()];
     if (results.length === 0) {
       // Distinguish "the catalog could not be read" from "no such server".
       // Browse collects a read failure into `errors` instead of
@@ -876,7 +876,8 @@ async function searchCatalog(runtime: Runtime | undefined, query: string): Promi
     }
     const lines = [`Found ${results.length} result(s) for "${query}":\n`];
     for (const r of results) {
-      lines.push(`- **${r.id}** (${r.name}): ${r.description ?? ""}`);
+      const at = r.address ? `, ${r.address}` : "";
+      lines.push(`- **${r.id}** (${r.name}${at}): ${r.description ?? ""}`);
     }
     return { content: textContent(lines.join("\n")), isError: false };
   } catch {
