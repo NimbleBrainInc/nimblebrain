@@ -4,10 +4,11 @@
  * outcome) are the published document's, and `views.ts` and `flow.ts` turn
  * these records into them.
  *
- * Instants are ISO 8601 strings. Every instant a decision is taken on came
- * from the host (`due`'s `now`, `begin_run`'s `now`, `offer_event`'s `now`,
- * an outcome's `startedAt`/`endedAt`); `createdAt`/`updatedAt`/`requestedAt`
- * are this plugin's own clock and only label a record (CONTRACT.md §6).
+ * Instants are ISO 8601 strings, and every one came from the host: a call's
+ * context `now` (which also stamps `createdAt`/`updatedAt`/`requestedAt`), or
+ * an argument naming a horizon or a past instant (`due`'s `until`, an
+ * outcome's `startedAt`/`endedAt`, an event's `receivedAt`). This plugin reads
+ * no clock (CONTRACT.md §6).
  */
 
 /** A schedule as a caller writes it, and as it is stored: exactly one form. */
@@ -106,8 +107,8 @@ export interface TaskDef extends DefinitionFields {
   lastRunLabel?: string;
   usage: WindowUsage;
   /**
-   * The host's `now` of the first `due` after the definition was saved: the host instant a
-   * one-off's retention is judged from, since `createdAt` is this plugin's own clock.
+   * The context `now` of the first `due` after the definition was saved: the instant a
+   * one-off's retention is judged from, once the host has listed it.
    */
   seenAt?: string;
   /** Events this task accepted, by `source` NUL `id`, with the host's `now` they arrived at. */
@@ -300,11 +301,6 @@ export interface WorkspaceState {
    * appended by a call that never committed, and are cut off on load.
    */
   log: { file: string; length: number };
-  /**
-   * The latest `now` a `due` gave for the workspace: an instant the host's clock has
-   * passed, so a write naming a once at or before it names a time already gone.
-   */
-  hostNow?: string;
 }
 
 export function emptyState(): WorkspaceState {

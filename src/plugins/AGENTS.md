@@ -218,6 +218,9 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   bound server passes it, after every other `_meta` merge, and it overwrites
   `params._meta["ai.nimblebrain/context"]` (`contracts/host-context/CONTEXT.md`). Never set
   the context anywhere else, and never build a second transport to a bound server.
+- **The send stamps `now`, the host's clock read once per request** (`stamped`), on every
+  request, host or person, replacing any value a caller supplied. A contract decision
+  assigned to the call's `now` is taken on it, so no caller can move a plugin's clock.
 - **The principal comes from the call path, not from data.** `host` only inside
   `BoundServer.call` and `BoundServer.watch`, whose scope lives in a module-private
   `AsyncLocalStorage` nothing exports (a host scope may name the turn's conversation or the

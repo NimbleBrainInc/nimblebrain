@@ -1,7 +1,8 @@
 # The host context, version 1
 
 Every contract a NimbleBrain host consumes (`contracts/<name>/CONTRACT.md`) is called with the
-same authenticated context: who is calling, and the scope the call is walled to. This file is
+same authenticated context: who is calling, the scope the call is walled to, and the host's
+clock when it sent the call. This file is
 its normative rule. Its shape is one JSON Schema,
 [`schemas/host-context/v1/host-context.schema.json`](../../schemas/host-context/v1/host-context.schema.json),
 published at its `$id`. A contract says which dimensions its tools need and what it answers
@@ -16,7 +17,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 
 ```json
 { "principal": "person", "workspaceId": "ws_0123456789abcdef", "ownerId": "user_1",
-  "conversationId": "conv_0123456789abcdef" }
+  "conversationId": "conv_0123456789abcdef", "now": "2026-01-01T12:00:00.000Z" }
 ```
 
 | Field | Required | Meaning |
@@ -26,6 +27,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 | `ownerId` | no | the verified identity whose records the call reads and writes |
 | `conversationId` | no | the conversation the call is made inside, during a chat turn |
 | `runId` | no | the unattended run the call is made inside, during a run (§5) |
+| `now` | no | the host's clock when it sent the request: an RFC 3339 instant in UTC, `Z` only, fractional seconds allowed (§2) |
 | `grant` | no | the run grant for the call's workspace and owner, on a `person` call to a tool its contract marks `grant: true` (§6) |
 | `unattended` | no | `true` when the call is made inside an unattended run, with no person present (§7) |
 
@@ -45,6 +47,14 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
   through, the owner from the signed-in identity, the conversation from the turn that made the
   call, the run from the run that made the call or that the host's own call is made for. A
   dimension the host cannot verify is left out, never guessed or defaulted.
+- **The host stamps `now`, its clock when it sends the request, on every request.** One
+  instant per request, so every decision a call makes is taken on one clock, the host's, and
+  a test or a replay can state it. A plugin never falls back to its own clock for a decision a
+  contract assigns to the call's `now`: a call without it fails as that contract says for a
+  missing context, and a contract that reads `now` says so.
+- **A decision made outside any host call uses the plugin's own clock, and its contract says
+  so.** Serving a transfer URL, or a sweep the plugin runs on a timer, has no request whose
+  `now` it could take; the contract names each such decision, so its clock is never a guess.
 
 ## 3. A server believes it only from the host
 

@@ -272,6 +272,11 @@ configuration for it.
   runs to its end; one begun after is refused. An upload URL also stops accepting once its
   upload is completed. The host does not refuse a URL before trying it because of
   `expiresAt`; the URL's answer decides.
+- **expires on the implementation's own clock**, the one that issued `expiresAt`. Serving a
+  URL and removing an expired upload's bytes are decided outside any host call, so no
+  context's `now` reaches them (`contracts/host-context/CONTEXT.md` §2), and `complete_upload`'s
+  completion window is judged on the same clock, so one expiry never mixes two clocks. This
+  contract does not read the context's `now`.
 - **is absolute `http:` or `https:`**, at most 4096 characters, with no userinfo, on an
   origin the host is allowed to fetch from for the implementation's binding (§10). Which scheme
   a deployment uses is the deployment's choice.

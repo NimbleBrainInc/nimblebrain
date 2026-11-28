@@ -1,6 +1,6 @@
 /**
- * `upcoming` and `stats`: reads rendered on this plugin's own clock (the
- * window ahead, the default `since`), which decide nothing (CONTRACT.md §6).
+ * `upcoming` and `stats`: reads rendered on the call's `now` (the window ahead,
+ * the default `since`), which decide nothing (CONTRACT.md §6).
  */
 
 import { Cron } from "croner";
@@ -37,7 +37,7 @@ function ownerOpen(tx: Tx, caller: Caller): RunRecord[] {
 
 export function upcoming(tx: Tx, caller: Caller, args: Checked) {
   const days = args.days ?? DEFAULT_UPCOMING_DAYS;
-  const now = Date.now();
+  const now = Date.parse(caller.now);
   const windowEnd = now + days * DAY_MS;
   const tasks = ownerTasks(tx, caller);
   const nameOf = (uid: string) => tasks.find((t) => t.uid === uid)?.name;
@@ -177,7 +177,8 @@ const STATS_RECENT_RUNS = 14;
 const STATS_ERROR_CHARS = 240;
 
 export function stats(tx: Tx, caller: Caller, args: Checked) {
-  const since = args.since ?? new Date(Date.now() - STATS_DEFAULT_DAYS * DAY_MS).toISOString();
+  const since =
+    args.since ?? new Date(Date.parse(caller.now) - STATS_DEFAULT_DAYS * DAY_MS).toISOString();
   let tasks: TaskDef[];
   if (args.taskId !== undefined) {
     const task = findTask(tx.ws.state, caller.ownerId, args.taskId);

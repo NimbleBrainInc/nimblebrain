@@ -4,8 +4,8 @@
  * input schema, walled to one workspace and owner, inside one store
  * transaction. The grant-marked ones (`create`, `update`, `run`, `run_batch`,
  * `batch_control`) re-stamp the definition they name with the call's grant
- * (§9). Instants here are this plugin's own clock, used only to stamp records
- * and to render reads (§6).
+ * (§9). Every instant here is the call's `now`, the host's clock as it sent
+ * the call (§6): this plugin reads no clock.
  */
 
 import { createHash } from "node:crypto";
@@ -42,19 +42,18 @@ import { scheduleProblem } from "./schedule.ts";
 import type { Tx } from "./store.ts";
 import { batchView, type ResultFilter, resultsPage, taskRecord, taskSummary } from "./views.ts";
 
-/** What a public call is walled to, and the grant the host stamped. */
+/** What a call is walled to, the instant it is judged at, and the grant the host stamped. */
 export interface Caller {
   workspaceId: string;
   ownerId: string;
+  /** The context's `now`, as an ISO instant: every record and decision of the call uses it. */
+  now: string;
   grant?: string;
 }
 
 type Args = Record<string, unknown>;
 // biome-ignore lint/suspicious/noExplicitAny: each input was checked against its contract schema
 type Checked = any;
-
-const wallNow = () => Date.now();
-const stamp = () => new Date().toISOString();
 
 const DEFINITION_FIELDS = [
   "description",
@@ -130,18 +129,17 @@ function checkAllowedTools(tool: string, allowedTools: unknown): void {
 }
 
 /**
- * Refuse a once at or before the latest `now` the host gave (`hostNow`): the host's clock
- * has passed it, so it could only be recorded missed. A time after that instant is judged
- * on the next `due`, which runs it within its grace (CONTRACT.md §6).
+ * Refuse a once at or before the call's `now`: the host's clock has passed it, so it could
+ * only be recorded missed. A later time is judged on the `due` that would list it, which
+ * runs it within its grace (CONTRACT.md §6).
  */
-function checkOnceAhead(tx: Tx, tool: string, schedule: Schedule | undefined): void {
-  const seen = tx.ws.state.hostNow;
-  if (!schedule || !("at" in schedule) || seen === undefined) return;
-  if (Date.parse(schedule.at) > Date.parse(seen)) return;
+function checkOnceAhead(caller: Caller, tool: string, schedule: Schedule | undefined): void {
+  if (!schedule || !("at" in schedule)) return;
+  if (Date.parse(schedule.at) > Date.parse(caller.now)) return;
   throw invalidInput(
     tool,
     `the one-time schedule's at (${schedule.at}) has already passed by the host's clock ` +
-      `(${seen}). Give a later time, or use run to run it now.`,
+      `(${caller.now}). Give a later time, or use run to run it now.`,
   );
 }
 
@@ -177,7 +175,7 @@ function newTask(
   caller: Caller,
   fields: Partial<TaskDef> & Pick<TaskDef, "id" | "name" | "prompt" | "kind">,
 ): TaskDef {
-  const now = stamp();
+  const now = caller.now;
   return {
     uid: newUid(),
     ownerId: caller.ownerId,
@@ -212,7 +210,7 @@ export function create(tx: Tx, caller: Caller, args: Checked) {
   });
   checkAllowedTools("create", task.allowedTools);
   checkDefinition("create", task);
-  checkOnceAhead(tx, "create", task.schedule);
+  checkOnceAhead(caller, "create", task.schedule);
   if (findTask(tx.ws.state, caller.ownerId, id)) {
     throw publicError(
       "task_exists",
@@ -222,7 +220,7 @@ export function create(tx: Tx, caller: Caller, args: Checked) {
   putTask(tx.ws.state, task);
   tx.changed();
   return {
-    task: taskRecord(task, caller.workspaceId, wallNow()),
+    task: taskRecord(task, caller.workspaceId, Date.parse(caller.now)),
     message: `Task "${task.name}" created (id: ${id}).`,
   };
 }
@@ -252,17 +250,17 @@ export function update(tx: Tx, caller: Caller, args: Checked) {
     updated = true;
   }
   checkDefinition("update", task);
-  if (manifest.schedule) checkOnceAhead(tx, "update", task.schedule);
+  if (manifest.schedule) checkOnceAhead(caller, "update", task.schedule);
   if ("schedule" in manifest) rescheduled(task, manifest, before.retired);
   if (manifest.enabled !== undefined) setEnabled(task, manifest.enabled === true);
   if (JSON.stringify(task.tokenBudget) !== before.budget)
     task.usage = { window: "", input: 0, output: 0 };
   task.grant = grantOf(caller);
-  task.updatedAt = stamp();
+  task.updatedAt = caller.now;
   delete task.seenAt;
   tx.changed();
   return {
-    task: taskRecord(task, caller.workspaceId, wallNow()),
+    task: taskRecord(task, caller.workspaceId, Date.parse(caller.now)),
     updated: updated || manifest.enabled !== undefined,
     message: `Task "${task.name}" updated.`,
   };
@@ -357,7 +355,7 @@ export function status(tx: Tx, caller: Caller, args: Checked) {
     .filter((r) => r.taskUid === task.uid)
     .slice(0, limit);
   return {
-    task: taskRecord(task, caller.workspaceId, wallNow()),
+    task: taskRecord(task, caller.workspaceId, Date.parse(caller.now)),
     recentRuns: runs.map((r) => runView(r)),
   };
 }
@@ -468,7 +466,7 @@ export function run(tx: Tx, caller: Caller, args: Checked) {
     ownerId: caller.ownerId,
     trigger: "manual",
     status: "queued",
-    requestedAt: stamp(),
+    requestedAt: caller.now,
     inputTokens: 0,
     outputTokens: 0,
     iterations: 0,
@@ -556,12 +554,12 @@ export function cancel(tx: Tx, caller: Caller, args: Checked) {
       ...open,
       status: "cancelled",
       error: "Cancelled while queued",
-      completedAt: stamp(),
+      completedAt: caller.now,
     };
     delete ended.events;
     tx.endRun(ended);
     const batch = ended.batchId ? tx.ws.state.batches[ended.batchId] : undefined;
-    if (batch) batchRunCancelled(tx, batch, ended, stamp());
+    if (batch) batchRunCancelled(tx, batch, ended, caller.now);
     tx.changed();
     return answer(true, `Run "${run.id}" cancelled before it started.`);
   }
@@ -622,7 +620,7 @@ export function runBatch(tx: Tx, caller: Caller, args: Checked) {
       "stopWhen needs runs that are assessed, but the task has no outputSchema",
     );
   }
-  const now = stamp();
+  const now = caller.now;
   const batch: Batch = {
     id: newBatchId(),
     taskId: task.id,
@@ -702,7 +700,7 @@ export function batchControl(tx: Tx, caller: Caller, args: Checked) {
   const grant = grantOf(caller);
   const task = allTasks(tx.ws.state).find((t) => t.uid === found.taskUid);
   if (task) task.grant = grant;
-  const result = controlBatch(tx, found, args.action as BatchAction, args.budgetUsd, stamp());
+  const result = controlBatch(tx, found, args.action as BatchAction, args.budgetUsd, caller.now);
   return { batch: batchView(found), affected: result.affected, message: result.message };
 }
 

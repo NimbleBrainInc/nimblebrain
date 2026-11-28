@@ -48,6 +48,17 @@ const FIXTURES: unknown[] = [
   { principal: "host", workspaceId: "ws_1", ownerId: "u", runId: "run_1" },
   { principal: "person", runId: "" },
   { principal: "person", runId: 7 },
+  { principal: "host", workspaceId: "ws_1", now: "2026-01-01T12:00:00Z" },
+  { principal: "person", now: "2026-01-01T12:00:00.123Z" },
+  { principal: "person", now: "2026-01-01T12:00:00.123456789Z" },
+  { principal: "person", now: "2026-01-01T12:00:00.1234567890Z" },
+  { principal: "person", now: "2026-01-01T12:00:00+00:00" },
+  { principal: "person", now: "2026-01-01T12:00:00.000-10:00" },
+  { principal: "person", now: "2026-01-01 12:00:00Z" },
+  { principal: "person", now: "2026-01-01T12:00:00z" },
+  { principal: "person", now: "2026-01-01" },
+  { principal: "person", now: "" },
+  { principal: "person", now: 1767268800000 },
   null,
   "host",
   ["host"],
@@ -84,6 +95,10 @@ describe("the host context", () => {
     expect(
       readHostContext(meta({ principal: "host", workspaceId: "ws_1", runId: "run_1" })),
     ).toEqual({ principal: "host", workspaceId: "ws_1", runId: "run_1" });
+    expect(readHostContext(meta({ principal: "host", now: "2026-01-01T12:00:00.5Z" }))).toEqual({
+      principal: "host",
+      now: "2026-01-01T12:00:00.5Z",
+    });
     expect(readHostContext({})).toBeUndefined();
     expect(readHostContext({ "ai.nimblebrain/scope": { principal: "host" } })).toBeUndefined();
   });

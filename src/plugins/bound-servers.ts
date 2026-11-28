@@ -15,7 +15,8 @@
  * Every request to the server passes through one transport `send`, which sets
  * `params._meta["ai.nimblebrain/context"]` after every other `_meta` merge and
  * overwrites whatever a caller put there (`contracts/host-context/CONTEXT.md`).
- * A `person` call made inside an unattended run carries `unattended: true`; a
+ * Every request carries `now`, the host's clock as it is sent. A `person` call
+ * made inside an unattended run carries `unattended: true`; a
  * `person` call to a tool the contract marks `grant: true`, with a workspace and
  * an owner and outside any run, carries the host's run grant for them (§6, §7).
  */
@@ -48,6 +49,8 @@ export interface HostContext {
   grant?: string;
   /** True on every call made inside an unattended run. */
   unattended?: boolean;
+  /** The host's clock when it sent the request, RFC 3339 in UTC; stamped on every request. */
+  now?: string;
 }
 
 /**
@@ -218,14 +221,20 @@ export function stampHostContext(message: Message, context: HostContext): Messag
   } as Message;
 }
 
-/** `transport`, with every request it sends stamped with the context of the call that sent it. */
-function stamped(
+/**
+ * `transport`, with every request it sends stamped with the context of the call that sent it
+ * and `now`, the host's clock read once as the request is sent, replacing any value a caller
+ * supplied. Every decision a contract assigns to the call's `now` is taken on that instant.
+ */
+export function stamped(
   transport: Transport,
   grants: { contract: string; tools: ReadonlySet<string>; sign: GrantSigner } | undefined,
 ): Transport {
   const send = transport.send.bind(transport);
-  transport.send = (message, options) =>
-    send(stampHostContext(message, contextFor(message, currentContext(), grants)), options);
+  transport.send = (message, options) => {
+    const context = contextFor(message, currentContext(), grants);
+    return send(stampHostContext(message, { ...context, now: new Date().toISOString() }), options);
+  };
   return transport;
 }
 

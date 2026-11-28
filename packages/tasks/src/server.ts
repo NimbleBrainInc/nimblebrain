@@ -9,8 +9,9 @@
  *   3. a public tool marked `unattended: "refused"` on a call with `unattended: true` is
  *      `unattended_refused`;
  *   4. arguments that fail the tool's input schema are `invalid_input`;
- *   5. a call missing what its tool is walled to is `scope_missing` (public tools and
- *      `offer_event`: a workspace and an owner; the other private tools: a workspace);
+ *   5. a call missing what its tool is walled to, or the context's `now`, is
+ *      `scope_missing` (public tools and `offer_event`: a workspace and an owner; the other
+ *      private tools: a workspace; every tool: `now`, the instant the call is judged at);
  *   6. a tool marked `grant: true` called with no grant is `grant_missing`;
  *   7. the tool runs, walled to that scope, as one store transaction.
  *
@@ -81,7 +82,7 @@ export interface ServerOptions {
   store: Store;
   /** The built screen's HTML file; a placeholder page when absent. */
   screenPath?: string;
-  /** How long an ended run's data is kept, judged on `due`'s `now`. */
+  /** How long an ended run's data is kept, judged on the first `due` page's `now`. */
   retentionMs?: number;
 }
 
@@ -109,10 +110,10 @@ const PUBLIC: Record<string, Handler> = {
 };
 
 const PRIVATE: Record<string, Handler> = {
-  due: (tx, _caller, args, retentionMs) => due(tx, args, retentionMs),
-  begin_run: (tx, _caller, args) => beginRun(tx, args),
+  due: (tx, caller, args, retentionMs) => due(tx, caller.now, args, retentionMs),
+  begin_run: (tx, caller, args) => beginRun(tx, caller.now, args),
   end_run: (tx, _caller, args) => endRun(tx, args),
-  offer_event: (tx, caller, args) => offerEvent(tx, caller.ownerId, args),
+  offer_event: (tx, caller, args) => offerEvent(tx, caller, args),
 };
 
 /** What a caller is told about a failure the contract has no code for; the detail goes to stderr. */
@@ -139,14 +140,29 @@ function isReadOnly(tool: string): boolean {
   return CONTRACT.tools[tool]?.unattended === "allowed";
 }
 
-/** The scope a tool is walled to, or what is missing. */
-function scopeOf(tool: string, ctx: CallContext): pub.Caller | { missing: "workspace" | "owner" } {
+type Missing = "workspace" | "owner" | "now";
+
+/**
+ * The context's `now` as one instant, at millisecond precision, or undefined when it has none
+ * or names no real date (the schema's pattern admits a month 13).
+ */
+function instantOf(now: string | undefined): string | undefined {
+  if (now === undefined) return undefined;
+  const ms = Date.parse(now);
+  return Number.isNaN(ms) ? undefined : new Date(ms).toISOString();
+}
+
+/** The scope a tool is walled to and the instant it is judged at, or what is missing. */
+function scopeOf(tool: string, ctx: CallContext): pub.Caller | { missing: Missing } {
   if (!ctx.workspaceId || !isPathSegment(ctx.workspaceId)) return { missing: "workspace" };
   const needsOwner = toolVisibility(CONTRACT, tool) === "public" || tool === "offer_event";
   if (needsOwner && !ctx.ownerId) return { missing: "owner" };
+  const now = instantOf(ctx.now);
+  if (now === undefined) return { missing: "now" };
   return {
     workspaceId: ctx.workspaceId,
     ownerId: ctx.ownerId ?? "",
+    now,
     ...(ctx.grant ? { grant: ctx.grant } : {}),
   };
 }
@@ -179,9 +195,20 @@ function refusalBefore(tool: string, args: Args, ctx: CallContext): ToolErrorRes
   return null;
 }
 
-function scopeMissing(tool: string, missing: "workspace" | "owner"): ToolErrorResult {
+function scopeMissing(tool: string, missing: Missing): ToolErrorResult {
   if (toolVisibility(CONTRACT, tool) === "private") {
-    return toolError("scope_missing", `the call carries no ${missing} in its scope`);
+    return toolError(
+      "scope_missing",
+      missing === "now"
+        ? "the call carries no now in its host context"
+        : `the call carries no ${missing} in its scope`,
+    );
+  }
+  if (missing === "now") {
+    return toolError(
+      "scope_missing",
+      `${publicErrorPrefix(CONTRACT, "scope_missing")}now in the host context: every call is judged at the host's instant.`,
+    );
   }
   const what = missing === "workspace" ? "workspace" : "authenticated identity";
   return toolError(

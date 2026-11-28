@@ -6273,7 +6273,6 @@ export class Runtime {
           ...(presentation.body ? { body: presentation.body } : {}),
           receivedAt: item.receivedAt,
         },
-        now: new Date().toISOString(),
       },
       { workspaceId: req.wsId, ownerId: req.ownerId },
     );

@@ -7,7 +7,8 @@
  *
  * 1. **Due.** It calls private `due` on an interval and at once on the change
  *    hint (`tasks://due/<workspaceId>`, watched per workspace as `host`), with
- *    its own `now` and an `until` past the next call. Each occurrence is
+ *    an `until` past the next call; the implementation judges it at the `now`
+ *    the transport stamps on the call's host context. Each occurrence is
  *    enqueued on the work queue under its key, scoped to the workspace, not
  *    before its `notBefore`; each run in `cancel` this process holds is stopped.
  * 2. **Claim.** A claim is taken only while a run slot is free, and the slot is
@@ -510,10 +511,13 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
     st.watchedConnection = st.closeWatch ? connection : null;
   }
 
-  /** One page of `due`; every page repeats the first's `now` and `until`. */
+  /**
+   * One page of `due`; every page repeats the first's `until`, and its cursor carries the
+   * first page's `now`, so one listing is judged at one instant.
+   */
   async function duePage(
     workspaceId: string,
-    args: { version: string; now: string; until: string },
+    args: { version: string; until: string },
     cursor: string | null,
   ): Promise<DueAnswer> {
     const page = await deps.server.call(
@@ -528,12 +532,7 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
   }
 
   async function listDue(workspaceId: string): Promise<void> {
-    const now = new Date();
-    const args = {
-      version,
-      now: now.toISOString(),
-      until: new Date(now.getTime() + DUE_HORIZON_MS).toISOString(),
-    };
+    const args = { version, until: new Date(Date.now() + DUE_HORIZON_MS).toISOString() };
     const cancel = new Set<string>();
     let cursor: string | null = null;
     do {
@@ -676,7 +675,7 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
     try {
       raw = await deps.server.call(
         "begin_run",
-        { version, ref, attempt: claim.attempt, token: claim.token, now: new Date().toISOString() },
+        { version, ref, attempt: claim.attempt, token: claim.token },
         scope(workspaceId),
       );
     } catch (err) {

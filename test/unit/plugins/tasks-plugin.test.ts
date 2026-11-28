@@ -40,6 +40,8 @@ const iso = (ms: number) => new Date(ms).toISOString();
 let dir: string;
 let store: Store;
 let token = 1;
+/** The host's clock: the `now` stamped on every call's context; `due` and `begin` move it. */
+let clock = T0;
 
 /** A tool's answer, read loosely: each was checked against its contract schema. */
 // biome-ignore lint/suspicious/noExplicitAny: answers are read field by field in assertions
@@ -49,6 +51,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "tasks-plugin-"));
   store = new Store(dir);
   token = 1;
+  clock = T0;
 });
 
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -64,10 +67,11 @@ async function call(
   args: Record<string, unknown>,
   principal: "host" | "person" = "person",
 ) {
+  const now = iso(clock);
   const ctx =
     principal === "host"
-      ? { principal, workspaceId: WS }
-      : { principal, workspaceId: WS, ownerId: OWNER, grant: GRANT };
+      ? { principal, workspaceId: WS, now }
+      : { principal, workspaceId: WS, ownerId: OWNER, grant: GRANT, now };
   return (await callTool({ store }, tool, args, ctx)) as Result;
 }
 
@@ -81,15 +85,14 @@ async function ok(
   return r.structuredContent as Answer;
 }
 
-const due = (now: number, until = now) =>
-  ok("due", { version: "1.0", now: iso(now), until: iso(until) }, "host");
+function due(now: number, until = now) {
+  clock = now;
+  return ok("due", { version: "1.0", until: iso(until) }, "host");
+}
 
 async function begin(ref: string, now: number) {
-  return ok(
-    "begin_run",
-    { version: "1.0", ref, attempt: 1, token: token++, now: iso(now) },
-    "host",
-  );
+  clock = now;
+  return ok("begin_run", { version: "1.0", ref, attempt: 1, token: token++ }, "host");
 }
 
 function outcome(start: number, extra: Record<string, unknown> = {}) {
@@ -149,7 +152,7 @@ describe("the store", () => {
   });
 
   test("an append whose commit never landed is gone after a restart, and the retry records one", async () => {
-    await ok("create", { manifest: { name: "Late", schedule: { at: iso(T0) } }, body: "p" });
+    await ok("create", { manifest: { name: "Late", schedule: { at: iso(T0 + MIN) } }, body: "p" });
     await ok("list", {});
     const committed = readFileSync(join(wsDir(), "state.json"), "utf-8");
     // The due that finds the once missed appends its skipped run; the crash comes before
@@ -358,7 +361,7 @@ describe("schedules", () => {
     const ran = (await ok("status", { taskId: "once" })).task;
     expect([ran.enabled, ran.onceDone.outcome]).toEqual([false, "ran"]);
 
-    // Ahead of the host's latest now when saved; the host is down until long past it.
+    // Ahead of the call's now when saved; the host is down until long past it.
     await ok("create", {
       manifest: { name: "Late", schedule: { at: iso(T0 + 2 * HOUR) } },
       body: "p",
@@ -369,8 +372,8 @@ describe("schedules", () => {
     expect(late.recentRuns[0].execution).toBe("skipped");
   });
 
-  test("a once at or before the host's latest now is refused at create and update", async () => {
-    await due(T0 + HOUR);
+  test("a once at or before the call's now is refused at create and update, with no due before", async () => {
+    clock = T0 + HOUR;
     const past = await call("create", {
       manifest: { name: "Gone", schedule: { at: iso(T0) } },
       body: "p",
@@ -598,7 +601,7 @@ describe("an internal failure", () => {
       logged.push(String(chunk));
       return true;
     });
-    const priv = await call("due", { version: "1.0", now: iso(T0), until: iso(T0) }, "host");
+    const priv = await call("due", { version: "1.0", until: iso(T0) }, "host");
     expect(JSON.parse(priv.content[0]!.text).code).toBe("internal_error");
     expect(priv.content[0]!.text).not.toContain(dir);
     let thrown: unknown;
@@ -610,5 +613,62 @@ describe("an internal failure", () => {
     expect(thrown).toBeInstanceOf(ProtocolError);
     expect((thrown as Error).message).not.toContain(dir);
     expect(logged.join("")).toContain(dir);
+  });
+});
+
+describe("the clock", () => {
+  const codeOf = (r: Result) => JSON.parse(r.content[0]?.text ?? "{}").code;
+
+  test("a call with no now, or a now that names no date, reads and writes nothing", async () => {
+    const person = { principal: "person" as const, workspaceId: WS, ownerId: OWNER, grant: GRANT };
+    const host = { principal: "host" as const, workspaceId: WS };
+    const create = { manifest: { name: "Never" }, body: "p" };
+    expect(codeOf((await callTool({ store }, "create", create, person)) as Result)).toBe(
+      "scope_missing",
+    );
+    const monthless = { ...person, now: "2031-13-01T00:00:00Z" };
+    expect(codeOf((await callTool({ store }, "create", create, monthless)) as Result)).toBe(
+      "scope_missing",
+    );
+    const due = { version: "1.0", until: iso(T0) };
+    expect(codeOf((await callTool({ store }, "due", due, host)) as Result)).toBe("scope_missing");
+    expect((await ok("list", {})).tasks).toEqual([]);
+  });
+
+  test("records and reads take the call's now", async () => {
+    clock = T0 + 7 * MIN;
+    const { task } = await ok("create", { manifest: { name: "Stamped" }, body: "p" });
+    expect([task.createdAt, task.updatedAt]).toEqual([iso(clock), iso(clock)]);
+    clock = T0 + 9 * MIN;
+    const { runId } = await ok("run", { taskId: "stamped" });
+    const { queued } = await ok("upcoming", {});
+    expect(queued.find((q: Answer) => q.runId === runId).queuedAt).toBe(iso(clock));
+    expect((await ok("stats", {})).since).toBe(iso(clock - 30 * 24 * HOUR));
+  });
+
+  test("a later due page is judged at the first page's now, whatever its own", async () => {
+    await ok("create", { manifest: { name: "A" }, body: "p" });
+    await ok("create", { manifest: { name: "B" }, body: "p" });
+    await ok("run", { taskId: "a" });
+    await ok("run", { taskId: "b" });
+    clock = T0;
+    const first = await ok("due", { version: "1.0", until: iso(T0 + HOUR), limit: 1 }, "host");
+    expect(first.nextCursor).toBeString();
+    // Saved between the pages: the next page anchors it, at the listing's one instant.
+    clock = T0 + 5 * MIN;
+    await ok("create", { manifest: { name: "Tick", schedule: { intervalMs: HOUR } }, body: "p" });
+    const later = await ok(
+      "due",
+      { version: "1.0", until: iso(T0 + HOUR), limit: 10, cursor: first.nextCursor },
+      "host",
+    );
+    const tick = later.occurrences.find((o: { ref: string }) => o.ref.startsWith("s:"));
+    expect(tick.notBefore).toBe(iso(T0));
+    const forged = await call(
+      "due",
+      { version: "1.0", until: iso(T0), cursor: "bm90LWEtY3Vyc29y" },
+      "host",
+    );
+    expect(codeOf(forged)).toBe("invalid_input");
   });
 });

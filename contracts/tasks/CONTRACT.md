@@ -70,8 +70,8 @@ The key words MUST, MUST NOT, SHOULD and MAY are as in RFC 2119.
 ## 2. Scope and principal
 
 **Every call carries the host context** ([`contracts/host-context/CONTEXT.md`](../host-context/CONTEXT.md)).
-No schema in this contract has a workspace, owner or principal input. This contract reads
-`principal`, `workspaceId`, `ownerId`, `grant` and `unattended`.
+No schema in this contract has a workspace, owner, principal or clock input. This contract
+reads `principal`, `workspaceId`, `ownerId`, `now`, `grant` and `unattended`.
 
 - **Public tools and `offer_event` are walled to one workspace and one owner.** A task belongs
   to the owner and workspace of the call that created it.
@@ -81,7 +81,9 @@ No schema in this contract has a workspace, owner or principal input. This contr
 - **Out of scope is indistinguishable from absent.** Another owner's or another workspace's
   task, run or batch answers exactly as one that does not exist (`task_not_found`,
   `run_not_found`, `batch_not_found`; left out of lists).
-- **A call missing what its tool is walled to reads and writes nothing**: `scope_missing`.
+- **Every call is judged at its context's `now`** (§6), so every tool needs one.
+- **A call missing what its tool is walled to, or missing `now`, reads and writes nothing**:
+  `scope_missing`.
 - **Workspaces are the host's.** The implementation never decides whether a workspace exists;
   it creates whatever storage it needs on first use, and a workspace it holds nothing for reads
   as one with no tasks. Keeping tasks out of a deleted workspace is the host's invariant.
@@ -200,13 +202,15 @@ runs**, runs it, and enforces every limit. Nothing runs except through this flow
 
 ### 5.1 Due
 
-1. **The host calls `due({ version, now, until, cursor?, limit? })` for each workspace it
-   serves**, as `host`, walled to that workspace. The answer is the occurrences in that
-   workspace whose run the implementation has decided is owed and not yet begun, due at or
-   before `until`, paged by an opaque `nextCursor` (`null` on the last page), and `cancel`, the
-   runs to stop (§5.3). **Every later page
-   repeats the first page's `now` and `until`**, so one listing is judged at one instant. The
-   host MUST call `due` for the workspace again before `until` passes.
+1. **The host calls `due({ version, until, cursor?, limit? })` for each workspace it
+   serves**, as `host`, walled to that workspace, judged at the context's `now`. The answer is
+   the occurrences in that workspace whose run the implementation has decided is owed and not
+   yet begun, due at or before `until`, paged by an opaque `nextCursor` (`null` on the last
+   page), and `cancel`, the runs to stop (§5.3). **The cursor carries the first page's `now`**,
+   which the implementation stores in the cursor it mints, and a later page (sent with the
+   same `until`) is judged at that instant whatever its own context's `now`, so one listing is
+   judged at one instant. The host MUST call `due` for the workspace again before `until`
+   passes.
 2. **An occurrence is `{ key, ref, notBefore? }`.** `notBefore` is when it is due, absent for
    at once. `ref` is what `begin_run` is called with. `key` names the occurrence and its
    `notBefore` exactly: an occurrence whose time changes is a new occurrence with a new key,
@@ -215,7 +219,7 @@ runs**, runs it, and enforces every limit. Nothing runs except through this flow
    `key`, not before `notBefore`. Enqueueing is idempotent per key, so the implementation lists
    an occurrence on every `due` until it is begun, and a repeat is one item.
 4. **Retention.** On each `due` (its first page), the implementation removes the data of runs
-   that ended longer ago than its configured retention, judged on that call's `now`: their
+   that ended longer ago than its configured retention, judged on the first page's `now`: their
    records, results and the idempotency keys that name them, and one-offs whose definition and
    newest run are older. It never removes an open run, a run of a batch that is not settled, or a
    one-off a batch names. The retention period is the implementation's configuration.
@@ -233,9 +237,9 @@ runs**, runs it, and enforces every limit. Nothing runs except through this flow
 
 ### 5.2 Begin
 
-6. **A worker claims an item** and calls `begin_run({ version, ref, attempt, token, now })` as
-   `host`, walled to the workspace. `attempt` and `token` are the claim's; `now` is the host's
-   clock (§6).
+6. **A worker claims an item** and calls `begin_run({ version, ref, attempt, token })` as
+   `host`, walled to the workspace, judged at the context's `now` (§6). `attempt` and `token`
+   are the claim's.
 7. **The implementation answers a skip or a run:**
    - `{ decision: "skip", reason, interrupted?, notices? }` for an occurrence that is no longer
      owed (the definition changed, was disabled or deleted, the run was cancelled while queued,
@@ -253,8 +257,8 @@ runs**, runs it, and enforces every limit. Nothing runs except through this flow
    earlier token). The host then stops that run if it still runs, and ends it with `end_run`,
    `stopReason: "error"`, `error: { code: "interrupted", transient: true }` and the usage and
    cost its metering recorded for the run, which closes the record, its budget and its notices.
-   That host never saw the run start, so the record keeps the `now` of the `begin_run` that
-   answered it as its start, whatever the outcome's `startedAt` says.
+   That host never saw the run start, so the record keeps the context `now` of the
+   `begin_run` that answered it as its start, whatever the outcome's `startedAt` says.
    A scheduled run that crashed after `begin_run` is recorded, never run again: running it
    again would repeat what it already sent or wrote.
 
@@ -300,10 +304,10 @@ what a refused run (`not_started`, `exclusive_busy`) means for its records.
 ### 5.6 Events
 
 A workspace admin's route names a task; the host offers each notification that reaches the
-route with `offer_event({ version, taskId, event, now })`, as `host`, walled to the workspace
-and the route's author (the task's owner). The event carries its presentation only (`id`,
-`source`, `name`, `level`, `title`, `subject`, `body`, `receivedAt`), never the connector's
-data.
+route with `offer_event({ version, taskId, event })`, as `host`, walled to the workspace and
+the route's author (the task's owner), judged at the context's `now`. The event carries its
+presentation only (`id`, `source`, `name`, `level`, `title`, `subject`, `body`,
+`receivedAt`), never the connector's data.
 
 - **`{ accepted: true }`** means the implementation recorded the event durably before it
   answered. **`{ accepted: false, outcome, classification, reason }`** refuses it: `skipped` for
@@ -311,10 +315,11 @@ data.
   `denied` for a configuration only a person changes. `classification` is machine-readable
   diagnosis and decides nothing. Either answer MAY carry `notices`.
 - **A burst is one run.** An accepted event joins the task's pending event occurrence, due at
-  the first event's `now` plus the task's `debounceMs`. Events are deduplicated by (`source`,
-  `id`) for at least the run-retention period. The run carries them in its work spec's `notes`.
+  the context `now` of the first event's `offer_event` plus the task's `debounceMs`. Events
+  are deduplicated by (`source`, `id`) for at least the run-retention period. The run carries
+  them in its work spec's `notes`.
 - **The fire ceiling ends a loop.** A task that would pass `maxFiresPerHour`, counted on the
-  host's `now`, is disabled and the event refused.
+  context's `now`, is disabled and the event refused.
 
 ### 5.7 Workspace deletion
 
@@ -323,25 +328,25 @@ in the workspace, and any storage held for it. Idempotent.
 
 ## 6. The clock rule
 
-**Every instant the implementation decides on arrives as an argument from the host**: `now` and
-`until` on `due`, `now` on `begin_run` and `offer_event`, and the outcome's `startedAt` and
-`endedAt`. The implementation MUST NOT read a wall clock to decide whether anything is due,
-late, spent, expired, or allowed.
+**Every instant the implementation decides on or records is the context's `now`, or an
+argument naming a horizon or a past instant**: `due`'s `until`, the outcome's `startedAt` and
+`endedAt`, an event's `receivedAt`, a schedule's `at` and a read's `since`. It MUST NOT read
+a clock. The host stamps `now` on every call (`contracts/host-context/CONTEXT.md` §2), so every
+decision is the host's clock and a stated `now` reproduces it.
 
 - **A schedule saved or changed is anchored on the `now` of the next `due`** for its workspace:
   that call computes its first occurrence.
 - **A once already past is refused at write.** `create` and `update` fail `invalid_input` for
-  an `at` at or before the latest `now` a `due` gave for the workspace: the host's clock has
-  passed it, so it could only be missed. A later `at` is judged on the next `due` as any once
-  is. A workspace no `due` has reached yet refuses none.
-- **Retention is judged on `due`'s `now`** (§5.1).
-- **Budget periods are UTC calendar days and months**, judged on the host's `now`.
+  an `at` at or before the call's `now`: it could only be missed. A later `at` is judged on the
+  `due` that would list it, as any once is.
+- **Retention is judged on the first page's `now`** (§5.1).
+- **Budget periods are UTC calendar days and months**, judged on the call's `now`.
 - **Lateness, backoff and the fire ceiling** are judged on the `now` of the call that decides
   them. A once's lateness is judged only on the `due` that would list it: past its grace
   there, it is recorded missed and not listed; once listed, it is owed, and `begin_run` never
   skips it as late however long the host's queue held it.
-- The implementation MAY read its own clock to stamp a record (`createdAt`) and to render a
-  public read (`upcoming`'s window, `stats`' default `since`). Neither decides anything.
+- **Records and reads use the call's `now`**: `createdAt` and `updatedAt`, a run's
+  `requestedAt`, `upcoming`'s window and `stats`' default `since`.
 - The host's queue alone is the timer: `notBefore` is the only way the implementation delays
   work.
 
@@ -569,8 +574,9 @@ the runner checks at least:
 - the unattended rule, `grant_missing` on every grant-marked tool, and `invalid_input` for an
   `allowedTools` entry that names only `refused` tools;
 - that a grant never appears outside `begin_run`'s run answer;
-- the clock rule, driving `due`, `begin_run` and `offer_event` with a stated `now`, retention on
-  `due` included;
+- the clock rule, with a stated context `now` on every call: `scope_missing` without one,
+  retention on `due` included, a later `due` page judged at the first page's instant, a once
+  at or before the call's `now` refused, and records stamped with the call's `now`;
 - cancel: a cancelled run that `begin_run` answered appears in `due`'s `cancel` on every call
   until its `end_run`, and no id outside those runs ever does;
 - fencing: `token_stale` on a lower token, the same answer for a repeated (`ref`, `token`), and

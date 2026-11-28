@@ -28,6 +28,11 @@ export interface HostContext {
   grant?: string;
   /** True when the call is made inside an unattended run, with no person present. */
   unattended?: boolean;
+  /**
+   * The host's clock when it sent the request, an RFC 3339 instant in UTC (`Z`). A decision a
+   * contract assigns to the call's `now` is taken on it, never on the server's own clock.
+   */
+  now?: string;
 }
 
 /**
@@ -43,6 +48,9 @@ const OPTIONAL_STRINGS = ["workspaceId", "ownerId", "conversationId", "runId"] a
 
 /** The longest grant the schema accepts. */
 const MAX_GRANT_LENGTH = 4096;
+
+/** The schema's `now`: an RFC 3339 instant in UTC, `Z` only, fractional seconds allowed. */
+const NOW_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
 
 /** A non-empty string no longer than `max`. */
 function isText(value: unknown, max = Number.POSITIVE_INFINITY): value is string {
@@ -61,6 +69,10 @@ function optionalFields(r: Record<string, unknown>): Omit<HostContext, "principa
   if (r.grant !== undefined) {
     if (!isText(r.grant, MAX_GRANT_LENGTH)) return undefined;
     out.grant = r.grant;
+  }
+  if (r.now !== undefined) {
+    if (typeof r.now !== "string" || !NOW_PATTERN.test(r.now)) return undefined;
+    out.now = r.now;
   }
   if (r.unattended !== undefined) {
     if (typeof r.unattended !== "boolean") return undefined;

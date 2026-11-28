@@ -35,7 +35,8 @@ in `README.md`.
 - **Every `tools/call` is decided in one order** (`src/server.ts`): `unknown_tool`, `forbidden`
   (private tool, principal not `host`), `unattended_refused` (public tool marked refused, call
   with `unattended: true`), `invalid_input`, `scope_missing` (public tools and `offer_event`
-  need a workspace and an owner; the other private tools a workspace), `grant_missing` (any
+  need a workspace and an owner; the other private tools a workspace; every tool the
+  context's `now`), `grant_missing` (any
   tool marked `grant: true` called with no grant), then the tool. A private tool called by the
   host with `unattended: true` runs: the contract has no private code for it.
 - **Errors are `{ code, error }`**; a public error's text is its prefix then the id or detail.
@@ -44,13 +45,15 @@ in `README.md`.
 
 ## The clock rule
 
-Every decision is taken on a host instant: `due`'s `now` and `until`, `begin_run`'s and
-`offer_event`'s `now`, an outcome's `startedAt`/`endedAt`. The plugin's own clock only stamps
-`createdAt`/`updatedAt`/`requestedAt` and renders `upcoming`'s window and `stats`' default
-`since`. A schedule check that needs no clock (an unknown timezone, a cron that matches no
-date) is decided at write time, and so is a once at or before the latest `due`'s `now`, a
-host instant already passed. A once's lateness is decided only on the `due` that would
-produce it: whether the host was down at its time is knowable only there.
+The plugin reads no clock. Every instant it decides on or records is the call's context
+`now` (`Caller.now`, `src/public.ts`; a call without one is `scope_missing`) or an argument:
+`due`'s `until`, an outcome's `startedAt`/`endedAt`, an event's `receivedAt`, a read's
+`since`. `createdAt`/`updatedAt`/`requestedAt`, `upcoming`'s window and `stats`' default
+`since` use the call's `now`. A later `due` page is judged at the first page's `now`, which
+its cursor carries. A schedule check that needs no clock (an unknown timezone, a cron that
+matches no date) is decided at write time, and so is a once at or before the call's `now`. A
+once's lateness is decided only on the `due` that would produce it: whether the host was
+down at its time is knowable only there.
 
 ## How the run flow is kept (`src/flow.ts`)
 
@@ -63,7 +66,7 @@ produce it: whether the host was down at its time is knowable only there.
 - **`due`** anchors, retires a once not yet listed whose `notBefore` is more than
   `ONCE_GRACE_MS` (1 h) before its `now` (recorded skipped: missed; never listed), and lists
   occurrences at or before `until`, ordered by (`notBefore`, key),
-  paged by a cursor that encodes that position. `cancel` is every begun run asked to stop whose
+  paged by a cursor that encodes that position and the first page's `now`. `cancel` is every begun run asked to stop whose
   `end_run` has not landed, whole on every page. Retention runs on the first page only.
 - **Fencing** (`state.fences`, per ref): the highest token and what it was answered. The same
   token repeats the answer (a run's grant and work spec are read back from the answer blob); a
@@ -85,7 +88,7 @@ produce it: whether the host was down at its time is knowable only there.
   per token cap, `task-batch:<batch id>` in USD), `exclusiveKey: task:<uid>` (none for a batch
   run) and the trigger. No prompt text wraps any of it.
 - **`end_run`** derives the record from the outcome (`src/runs.ts`): its start (the outcome's,
-  except an `interrupted` close keeps `begin_run`'s `now`, since that host never saw the run), status, execution and
+  except an `interrupted` close keeps the `begin_run`'s context `now`, since that host never saw the run), status, execution and
   label, unrecovered tool failures, the output-schema verdict; then the task's state: run count,
   budget window usage, last run, the failure streak (backoff, auto-disable, the one run-failed
   notice per stretch), a once retired, the next occurrence; then the batch's item.
@@ -122,7 +125,7 @@ produce it: whether the host was down at its time is knowable only there.
 - **One process owns a data directory.** All I/O is synchronous, so one process's calls never
   interleave; two processes on one directory are not serialized. The workspace id is the only
   path segment taken from a call.
-- **Retention** (`--retention-days`, default 180) is judged on `due`'s `now`: ended runs and
+- **Retention** (`--retention-days`, default 180) is judged on the first `due` page's `now`: ended runs and
   their blobs, fences and keys; skip fences and event dedup entries as old; one-offs with no
   runs left whose first `due` (`seenAt`) is older. Never an open run, a run of a running or
   paused batch, or a one-off a batch names. Batches are kept.
@@ -148,8 +151,8 @@ the sidebar placement (`HOST_META`), through the server SDK's `declareHostMeta`.
   learns at once. The claim's `Already running` skip stays as the backstop for what the
   call cannot see (a scheduled or event run that begins first).
 - **Instants are the host's.** A schedule is placed on the next `due`, not at write time. An
-  `at` at or before the latest `now` a `due` gave (`state.hostNow`) is refused at write
-  (`invalid_input`): the host's clock has passed it. A later `at` is judged on the `due` that
+  `at` at or before the call's `now` is refused at write (`invalid_input`): the host's clock
+  has passed it. A later `at` is judged on the `due` that
   would produce it: within its grace it is listed and runs, past it it is missed. A once
   produced in time runs however long the queue holds it; only one first seen past its grace
   (the host was down) is missed.
@@ -158,7 +161,7 @@ the sidebar placement (`HOST_META`), through the server SDK's `declareHostMeta`.
 - **`grant_invalid` and `membership_revoked` disable the definition at once** with a notice; a
   grant-marked call re-stamps it and `enabled: true` turns it back on.
 - **Every auto-disable raises a notice** (failure streak, budget, grant, fire ceiling).
-- **The fire ceiling is judged when an event arrives**, on its `now`, and refuses that event
+- **The fire ceiling is judged when an event arrives**, on the offer's context `now`, and refuses that event
   (`denied`, `event_fire_ceiling`).
 - **Event runs carry their events as `notes`** (data); the host frames them.
 - **Writes do not validate what only the host knows**: a model reference, `allowedTools` globs,

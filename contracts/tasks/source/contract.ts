@@ -90,7 +90,7 @@ export const CONTRACT = {
         code: "scope_missing",
         prefix: "[tasks] no ",
         meaning:
-          "tools/call reached a public tool with no workspace or no authenticated identity in its scope.",
+          "tools/call reached a public tool with no workspace, no authenticated identity, or no now in its host context.",
       },
       {
         code: "invalid_input",
@@ -117,7 +117,7 @@ export const CONTRACT = {
       {
         code: "scope_missing",
         meaning:
-          "The call reached the server with no workspace in its scope, or offer_event with no owner. Nothing was read or written.",
+          "The call reached the server with no workspace or no now in its host context, or offer_event with no owner. Nothing was read or written.",
       },
       {
         code: "token_stale",
