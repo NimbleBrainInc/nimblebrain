@@ -148,6 +148,50 @@ export interface ResourceTemplateInfo {
   view?: string;
 }
 
+type ListedResourceTemplate = Awaited<
+  ReturnType<Client["listResourceTemplates"]>
+>["resourceTemplates"][number];
+
+function resourceTemplateInfo(t: ListedResourceTemplate): ResourceTemplateInfo {
+  const view = t._meta?.[TEMPLATE_VIEW_META];
+  return {
+    uriTemplate: t.uriTemplate,
+    name: t.name,
+    ...(typeof t.title === "string" ? { title: t.title } : {}),
+    ...(typeof view === "string" && view.length > 0 ? { view } : {}),
+  };
+}
+
+function nextResourceTemplateCursor(
+  cursor: string | undefined,
+  seen: Set<string>,
+): string | undefined {
+  if (!cursor) return undefined;
+  if (seen.has(cursor)) throw new Error("resource template cursor repeated");
+  seen.add(cursor);
+  return cursor;
+}
+
+/** Read a complete listing under one deadline; a partial page set is never cached. */
+async function readResourceTemplatePages(client: Client): Promise<ResourceTemplateInfo[]> {
+  const list: ResourceTemplateInfo[] = [];
+  const seenCursors = new Set<string>();
+  const deadline = Date.now() + RESOURCE_TEMPLATES_TIMEOUT_MS;
+  let cursor: string | undefined;
+  do {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("resource template listing timed out");
+    const res = await client.listResourceTemplates(cursor ? { cursor } : undefined, {
+      timeout: remaining,
+    });
+    for (const t of res.resourceTemplates) {
+      list.push(resourceTemplateInfo(t));
+    }
+    cursor = nextResourceTemplateCursor(res.nextCursor, seenCursors);
+  } while (cursor);
+  return list;
+}
+
 /**
  * Per-connector context threaded into McpSource so its Client can answer
  * inbound `ai.nimblebrain/resources/*` requests. Owned by the caller
@@ -1894,11 +1938,10 @@ export class McpSource implements ToolSource {
 
   /**
    * The resource templates this server advertises (`resources/templates/list`,
-   * first page), memoized per connection. Empty when the server declares no
+   * all pages), memoized per connection. Empty when the server declares no
    * `resources` capability, does not answer the method, or is not connected and
-   * has never answered. The prompt reads this on every assembly, so a failure is
-   * memoized as empty rather than retried each turn, and the request carries a
-   * short timeout so a slow server cannot stall a turn.
+   * has never answered. A failed read is retried on the next lookup, while a
+   * shared deadline bounds the listing so a slow server cannot stall a turn.
    *
    * `fresh` asks the server again. A server redeployed behind a stateless HTTP
    * transport keeps its connection, so the memo can outlive the templates it
@@ -1909,29 +1952,17 @@ export class McpSource implements ToolSource {
     if (!opts.fresh && this.resourceTemplatesMemo) return this.resourceTemplatesMemo;
     const client = this.client;
     if (!client?.getServerCapabilities()?.resources) return [];
-    let list: ResourceTemplateInfo[] | null = null;
     try {
-      const res = await client.listResourceTemplates(undefined, {
-        timeout: RESOURCE_TEMPLATES_TIMEOUT_MS,
-      });
-      list = res.resourceTemplates.map((t) => {
-        const view = t._meta?.[TEMPLATE_VIEW_META];
-        return {
-          uriTemplate: t.uriTemplate,
-          name: t.name,
-          ...(typeof t.title === "string" ? { title: t.title } : {}),
-          ...(typeof view === "string" && view.length > 0 ? { view } : {}),
-        };
-      });
+      const list = await readResourceTemplatePages(client);
+      if (this.client === client) this.resourceTemplatesMemo = list;
+      return list;
     } catch (err) {
       log.debug(
         "mcp",
         `resource-templates source=${this.name} error=${err instanceof Error ? err.message : String(err)}`,
       );
+      return this.resourceTemplatesMemo ?? [];
     }
-    const answer = list ?? this.resourceTemplatesMemo ?? [];
-    if (this.client === client) this.resourceTemplatesMemo = answer;
-    return answer;
   }
 
   /** Sanitized `serverInfo.version` from the MCP `initialize` response.
