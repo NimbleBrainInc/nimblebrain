@@ -1849,7 +1849,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * Order of operations:
    *
    *   1. Read the stored tokens + DCR client info (or static client
-   *      from `oauthClient` / cached in-memory).
+   *      from `oauthClient` / cached in-memory). A sealed record that
+   *      cannot open skips revocation and goes straight to step 4,
+   *      clearing every record and reporting `error`.
    *   2. Discover the AS's `revocation_endpoint` via the well-known
    *      OAuth metadata path: `<server-origin>/.well-known/oauth-authorization-server`.
    *      We bind discovery to the connector URL's origin since that's the
