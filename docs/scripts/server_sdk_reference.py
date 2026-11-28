@@ -307,7 +307,7 @@ def main(
             body += [f"## {KIND_TITLE[kind]}", ""]
             for name, obj in entries:
                 body += _entry(name, obj, problems, dotted)
-        (out / f"{slug}.md").write_text("\n".join(body).rstrip() + "\n")
+        (out / f"{slug}.md").write_text("\n".join(body).rstrip() + "\n", encoding="utf-8")
         index_rows.append(
             f"| [`{dotted}`](/server-sdk/reference/{slug}/) | `{install}` | {summary} |"
         )
@@ -335,7 +335,7 @@ def main(
         "and may change in any release. See [Compatibility and stability](/server-sdk/compatibility/).",
         "",
     ]
-    (out / "index.md").write_text("\n".join(index))
+    (out / "index.md").write_text("\n".join(index), encoding="utf-8")
 
     for problem in problems:
         print(f"error: {problem}", file=sys.stderr)
