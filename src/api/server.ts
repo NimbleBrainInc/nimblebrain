@@ -130,7 +130,7 @@ export function startServer(options: ServerOptions): ServerHandle {
   // omits it. Sweep cadence: NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS (default 300).
   const revalidatorProbes: ConnectionHealthProbe[] = [];
   for (const provider of runtime.getManagedConnectorRegistry().list()) {
-    const probe = provider.probe?.(runtime.getConnectorCatalog());
+    const probe = provider.probe?.((owner) => runtime.getConnectorCatalog(owner));
     if (probe) revalidatorProbes.push(probe);
   }
   const intervalMs = revalidatorIntervalMsFromEnv();

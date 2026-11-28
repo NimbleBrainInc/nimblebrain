@@ -10,6 +10,7 @@
  * order, which decides whose server record a shared connection reads.
  */
 
+import type { CatalogOwner } from "../../connectors/catalog/binding.ts";
 import type { ServerDetail } from "../../connectors/catalog/server-detail.ts";
 import { slugifyServerName } from "../../connectors/runtime/paths.ts";
 import { IdentityConnectorStore } from "../../identity/connector-store.ts";
@@ -17,7 +18,13 @@ import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { ConversationStarter } from "../extension.ts";
 
 /** Who a plugin is installed for (ADR-0069): a workspace, or one person. */
-export type PluginOwner = { kind: "workspace"; wsId: string } | { kind: "person"; userId: string };
+export type PluginOwner = CatalogOwner;
+
+/** Whether two owners are the same workspace or the same person. */
+export function sameOwner(a: PluginOwner, b: PluginOwner): boolean {
+  if (a.kind === "workspace") return b.kind === "workspace" && a.wsId === b.wsId;
+  return b.kind === "person" && a.userId === b.userId;
+}
 
 /** One server a plugin names, and the connection it uses. */
 export interface InstalledPluginConnector {
@@ -75,11 +82,8 @@ export interface PluginRecordStore {
 export function createPluginRecordStore(deps: {
   workspaces: WorkspaceStore;
   workDir: string;
-  /** Called after every write, so a reader that caches records can drop them. */
-  onChange?: () => void;
 }): PluginRecordStore {
   const identity = new IdentityConnectorStore({ workDir: deps.workDir });
-  const changed = () => deps.onChange?.();
 
   const list = async (owner: PluginOwner): Promise<InstalledPluginRecord[]> => {
     if (owner.kind === "person") return identity.listPlugins(owner.userId);
@@ -101,7 +105,6 @@ export function createPluginRecordStore(deps: {
         else plugins.push(record);
         await deps.workspaces.update(owner.wsId, { plugins });
       }
-      changed();
     },
     remove: async (owner, address) => {
       let removed: boolean;
@@ -114,25 +117,7 @@ export function createPluginRecordStore(deps: {
         removed = next.length !== plugins.length;
         if (removed) await deps.workspaces.update(owner.wsId, { plugins: next });
       }
-      if (removed) changed();
       return removed;
     },
   };
-}
-
-/**
- * The server record each connection reads, by registry name, from `records`
- * in install order: the first record naming a server supplies it, so a
- * plugin's update moves it and its uninstall hands it to the next.
- */
-export function suppliedServerRecords(
-  records: readonly InstalledPluginRecord[],
-): Map<string, { address: string; server: ServerDetail }> {
-  const out = new Map<string, { address: string; server: ServerDetail }>();
-  for (const record of records) {
-    for (const c of record.connectors) {
-      if (!out.has(c.name)) out.set(c.name, { address: record.address, server: c.server });
-    }
-  }
-  return out;
 }

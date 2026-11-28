@@ -105,7 +105,11 @@ function writeListing(entries: unknown[]): void {
   writeFileSync(listingPath, listingBytes(entries));
 }
 
-async function boot(): Promise<{
+async function boot(
+  catalogs: Array<{ source: string; policy: "available"; name: string }> = [
+    { source: listingPath, policy: "available", name: "test" },
+  ],
+): Promise<{
   rt: Runtime;
   wsId: string;
   call: (input: Record<string, unknown>) => Promise<ToolResult>;
@@ -115,7 +119,7 @@ async function boot(): Promise<{
     languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
-    catalogs: [{ source: listingPath, policy: "available", name: "test" }],
+    catalogs,
   });
   runtime = rt;
   const ws = await rt.getWorkspaceStore().create("Plugins", {
@@ -191,7 +195,8 @@ describe("plugin install", () => {
     const names = rt.loadConversationSkills(wsId, ADMIN.id).map((s) => s.manifest.name);
     expect(names).toContain("plugin:notion@test:writing");
     // The connector list reads the plugin's record for the connection.
-    expect((await rt.getConnectorCatalog().catalogById("com.notion/mcp"))?.url).toBe(NOTION.url);
+    const own = { kind: "workspace" as const, wsId };
+    expect((await rt.getConnectorCatalog(own).catalogById("com.notion/mcp"))?.url).toBe(NOTION.url);
 
     const removed = await call({ action: "uninstall", address: "notion@test" });
     expect(removed.isError).toBe(false);
@@ -201,7 +206,7 @@ describe("plugin install", () => {
     expect(after.plugins ?? []).toEqual([]);
     expect(existsSync(bound)).toBe(false);
     expect(existsSync(unbound)).toBe(false);
-    expect(await rt.getConnectorCatalog().catalogById("com.notion/mcp")).toBeNull();
+    expect(await rt.getConnectorCatalog(own).catalogById("com.notion/mcp")).toBeNull();
   }, 30_000);
 
   test("Browse's row installs by its address, and uninstalling its connector removes the plugin", async () => {
@@ -285,7 +290,9 @@ describe("plugin install", () => {
     expect(ws.connectors.map((c) => c.serverName)).toEqual([NOTION_SERVER]);
     expect(ws.plugins?.map((p) => p.address)).toEqual(["notion@test", "wiki@test"]);
     const supplier = async () =>
-      (await rt.installedServerRecords()).find((r) => r.detail.name === NOTION.name)?.address;
+      (await rt.installedServerRecords({ kind: "workspace", wsId })).find(
+        (r) => r.detail.name === NOTION.name,
+      )?.address;
     expect(await supplier()).toBe("notion@test");
 
     // The connector two plugins use is not removed by name.
@@ -412,5 +419,90 @@ describe("plugin install", () => {
     expect(removed.isError).toBe(false);
     expect(await store.list(ADMIN.id)).toEqual([]);
     expect(await store.listPlugins(ADMIN.id)).toEqual([]);
+  }, 30_000);
+
+  test("two workspaces install one server from two catalogs, and each reads its own record", async () => {
+    // One registry name, two catalogs, two records: different title, placement, hook, admin tool.
+    const variant = (label: string) =>
+      pluginZip({
+        name: "notion",
+        servers: {
+          notion: {
+            ...NOTION,
+            title: `Notion from ${label}`,
+            host: {
+              hostVersion: "1.5",
+              placements: [
+                {
+                  slot: "sidebar.apps",
+                  resourceUri: `ui://notion/${label}`,
+                  label: `Notion ${label}`,
+                },
+              ],
+              hooks: [
+                { vendor: label, route: `/ingest/${label}`, registerTool: "set_webhook_url" },
+              ],
+              adminTools: [`configure_${label}`],
+            },
+          },
+        },
+      });
+    const alphaListing = join(workDir, "alpha.json");
+    const betaListing = join(workDir, "beta.json");
+    writeFileSync(alphaListing, listingBytes([publish("notion", variant("alpha"))]));
+    writeFileSync(betaListing, listingBytes([publish("notion", variant("beta"))]));
+    const {
+      rt,
+      wsId: first,
+      call,
+    } = await boot([
+      { source: alphaListing, policy: "available", name: "alpha" },
+      { source: betaListing, policy: "available", name: "beta" },
+    ]);
+    const second = (
+      await rt.getWorkspaceStore().create("Other", {
+        members: [{ userId: ADMIN.id, role: "admin" }],
+      })
+    ).id;
+    await rt.ensureWorkspaceRegistry(second);
+
+    expect((await call({ action: "install", address: "notion@alpha" })).isError).toBe(false);
+    const other = createManageConnectorsTool({
+      runtime: rt,
+      getIdentity: () => ADMIN,
+      getWorkspaceId: () => second,
+    });
+    expect((await other.handler({ action: "install", address: "notion@beta" })).isError).toBe(
+      false,
+    );
+
+    for (const [wsId, label] of [
+      [first, "alpha"],
+      [second, "beta"],
+    ] as const) {
+      const owner = { kind: "workspace" as const, wsId };
+      const entry = await rt.getConnectorCatalog(owner).catalogById(NOTION.name);
+      expect(entry?.name).toBe(`Notion from ${label}`);
+      expect(entry?.ui?.placements?.map((p) => p.resourceUri)).toEqual([`ui://notion/${label}`]);
+      expect(entry?.hooks?.map((h) => h.vendor)).toEqual([label]);
+      expect(entry?.adminTools).toEqual({ kind: "names", names: [`configure_${label}`] });
+      expect((await rt.connectorTitles(owner)).get(NOTION_SERVER)).toBe(`Notion from ${label}`);
+      const placed = rt.getPlacementRegistry().forWorkspace(wsId);
+      expect(placed.filter((p) => p.serverName === NOTION_SERVER).map((p) => p.label)).toEqual([
+        `Notion ${label}`,
+      ]);
+    }
+    // A read for no owner is the operator's list alone, which holds neither.
+    expect(await rt.getConnectorCatalog().catalogById(NOTION.name)).toBeNull();
+
+    // Uninstalling one workspace's plugin leaves the other's record in place.
+    await call({ action: "uninstall", address: "notion@alpha" });
+    const left = await rt
+      .getConnectorCatalog({ kind: "workspace", wsId: second })
+      .catalogById(NOTION.name);
+    expect(left?.name).toBe("Notion from beta");
+    expect(
+      await rt.getConnectorCatalog({ kind: "workspace", wsId: first }).catalogById(NOTION.name),
+    ).toBeNull();
   }, 30_000);
 });

@@ -317,7 +317,7 @@ describe("example-broker — probe", () => {
 
   test("the registered probe is dispatched by the ref's provider id", async () => {
     const provider = h.runtime.getManagedConnectorRegistry().get(PROVIDER_ID);
-    const probe = provider?.probe?.(h.runtime.getConnectorCatalog());
+    const probe = provider?.probe?.((owner) => h.runtime.getConnectorCatalog(owner));
     expect(probe?.providerId).toBe(PROVIDER_ID);
 
     const target: ProbeTarget = {

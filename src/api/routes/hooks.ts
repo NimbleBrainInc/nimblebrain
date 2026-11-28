@@ -325,8 +325,10 @@ async function forwardAdmitted(
   try {
     // A minted fleet connector forwards with its catalog entry's credential
     // settings, the same transport its MCP connection runs with.
-    const { transportConfig } = await resolveRefTransport(ref, () =>
-      ctx.runtime.getConnectorCatalog().catalogEntries(),
+    const { transportConfig } = await resolveRefTransport(
+      ref,
+      (owner) => ctx.runtime.getConnectorCatalog(owner).catalogEntries(),
+      { kind: "workspace", wsId },
     );
     const upstream = await forwardDelivery({
       baseUrl: ref.url,

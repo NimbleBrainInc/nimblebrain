@@ -20,6 +20,7 @@ import {
   mintBrowserBinding,
 } from "../../../oauth/flow-binding.ts";
 import { log } from "../../../observability/log.ts";
+import type { CatalogOwner } from "../../catalog/binding.ts";
 import type { ConnectorCatalogEntry } from "../../catalog/types.ts";
 import { composioAuthConfigId, validateComposioConfig } from "./config.ts";
 import {
@@ -148,7 +149,7 @@ export function composioAuthRoutes(ctx: AppContext) {
         return apiError(404, "connector_not_found", `Connector "${connectorId}" not installed.`);
       }
 
-      const entry = await loadInitiateCatalogEntry(ctx, connectorId);
+      const entry = await loadInitiateCatalogEntry(ctx, connectorId, { kind: "workspace", wsId });
       if (entry instanceof Response) return entry;
 
       const creds = resolveComposioCredentials(entry, connectorId, wsId);
@@ -196,7 +197,7 @@ export function composioAuthRoutes(ctx: AppContext) {
       return apiError(404, "connector_not_found", `"${serverName}" is not one of your connectors.`);
     }
 
-    const entry = await loadInitiateCatalogEntry(ctx, connectorId);
+    const entry = await loadInitiateCatalogEntry(ctx, connectorId, { kind: "person", userId });
     if (entry instanceof Response) return entry;
 
     // `resolveComposioCredentials` uses its second arg only for log context —
@@ -224,7 +225,14 @@ export function composioAuthRoutes(ctx: AppContext) {
     if (validated instanceof Response) return validated;
     const { connectedAccountId, status, cid, owner, returnTarget } = validated;
 
-    const entry = await loadCallbackCatalogEntry(ctx, c, cid);
+    const entry = await loadCallbackCatalogEntry(
+      ctx,
+      c,
+      cid,
+      owner.type === "workspace"
+        ? { kind: "workspace", wsId: owner.wsId }
+        : { kind: "person", userId: owner.userId },
+    );
     if (entry instanceof Response) return entry;
 
     const composioUser = composioUserId(owner);
@@ -332,8 +340,9 @@ async function parseInitiateRequest(
 async function loadInitiateCatalogEntry(
   ctx: AppContext,
   connectorId: string,
+  owner: CatalogOwner,
 ): Promise<ComposioCatalogEntry | Response> {
-  const directory = ctx.runtime.getConnectorCatalog();
+  const directory = ctx.runtime.getConnectorCatalog(owner);
   const entry = await directory.catalogById(connectorId);
   if (!entry) {
     return apiError(404, "connector_not_found", `Connector "${connectorId}" not in catalog.`);
@@ -684,8 +693,9 @@ async function loadCallbackCatalogEntry(
   ctx: AppContext,
   c: Context<AppEnv>,
   cid: string,
+  owner: CatalogOwner,
 ): Promise<ComposioCatalogEntry | Response> {
-  const directory = ctx.runtime.getConnectorCatalog();
+  const directory = ctx.runtime.getConnectorCatalog(owner);
   const entry = await directory.catalogById(cid);
   if (entry?.auth !== "composio" || !entry.composio) {
     return c.text(`connector "${cid}" is not Composio-backed`, 400);

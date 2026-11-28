@@ -6,6 +6,7 @@
  */
 
 import { createHash } from "node:crypto";
+import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
 import { canonicalJsonBytes } from "../../src/util/jcs.ts";
 import { AGENT_PLUGINS_MANIFEST_SCHEMA, zip } from "./plugin-catalog.ts";
 
@@ -15,19 +16,30 @@ export interface FixtureServer {
   url: string;
   /** `_meta["ai.nimblebrain/connector"]`. */
   meta?: Record<string, unknown>;
+  /** `_meta["ai.nimblebrain/host"]`. */
+  host?: Record<string, unknown>;
+  /** The record's `title`; default `<name> title`. */
+  title?: string;
   /** Run locally instead: `mcp.json` names a command. */
   stdio?: boolean;
 }
 
 /** A `ServerDetail` the way the catalog writes one into an archive. */
-export function serverRecord(server: FixtureServer): Record<string, unknown> {
+export function serverRecord(server: FixtureServer): ServerDetail {
   return {
     name: server.name,
-    title: `${server.name} title`,
+    title: server.title ?? `${server.name} title`,
     description: `${server.name} server`,
     version: "1.0.0",
     remotes: [{ type: "streamable-http", url: server.url }],
-    ...(server.meta ? { _meta: { "ai.nimblebrain/connector": server.meta } } : {}),
+    ...(server.meta || server.host
+      ? {
+          _meta: {
+            ...(server.meta ? { "ai.nimblebrain/connector": server.meta } : {}),
+            ...(server.host ? { "ai.nimblebrain/host": server.host } : {}),
+          },
+        }
+      : {}),
   };
 }
 

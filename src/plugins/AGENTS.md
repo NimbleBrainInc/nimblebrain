@@ -54,10 +54,13 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   `ai.nimblebrain/servers/<key>.json`, a `stdio` server refused. A bare connector or skill reads
   as a one-item plugin. `record.ts` is the installed-plugin record and its store.
 - **A record lives beside its owner's connectors**: `workspace.json#plugins`, or
-  `users/<id>/connectors.json#plugins`, in install order. Write it through
-  `Runtime.getPluginRecords()`, which drops the runtime's read of every owner's records, so the
-  connector list (`Runtime.installedServerRecords`, read ahead of `ConnectorCatalog`'s own) sees
-  the change. The first record naming a server supplies its `ServerDetail`.
+  `users/<id>/connectors.json#plugins`, in install order, through `Runtime.getPluginRecords()`.
+- **A plugin-supplied server record is its owner's alone.** `Runtime.getConnectorCatalog(owner)`
+  reads that owner's records (`installedServerRecords(owner)`) ahead of the connector list, the
+  first record naming a server in its install order supplying the `ServerDetail`. Every read
+  about an installed connection (display, placements, hooks, admin tools, notifications, broker
+  config, minted transport, in-band auth) names the connection's owner; a read with no owner
+  is the connector list alone. Never build one owner's view from another's records.
 - **The record is written last; every step before it is idempotent.** A connected server is
   reused and a skill file rewritten in place, so a stopped install finishes on the next one.
   Uninstall removes what the record lists (a connection another record names stays), then the

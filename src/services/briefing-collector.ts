@@ -40,8 +40,8 @@ export const FACET_READ_TIMEOUT_MS = 5_000;
 export interface BriefingCollectorDeps {
   /** The workspace's own MCP source for a server, or null when it has none. */
   resolveSource: (wsId: string, serverName: string) => McpSource | null;
-  /** Each connector's display name (the catalog entry's title) by server name. */
-  connectorTitles: () => Promise<ReadonlyMap<string, string>>;
+  /** Each of a workspace's connectors' display names (its catalog entry's title) by server name. */
+  connectorTitles: (wsId: string) => Promise<ReadonlyMap<string, string>>;
   now?: () => number;
   readTimeoutMs?: number;
 }
@@ -165,7 +165,8 @@ export function createBriefingCollector(deps: BriefingCollectorDeps): BriefingCo
       const running = instances
         .filter((inst) => inst.wsId === wsId && inst.state === "running")
         .sort((a, b) => appPriority(a) - appPriority(b));
-      const titles = running.length > 0 ? await deps.connectorTitles() : new Map<string, string>();
+      const titles =
+        running.length > 0 ? await deps.connectorTitles(wsId) : new Map<string, string>();
       const perConnector = await Promise.all(
         running.map((inst) => collectConnector(wsId, inst, force, titles)),
       );

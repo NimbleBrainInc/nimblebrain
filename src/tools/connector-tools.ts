@@ -640,7 +640,9 @@ async function handleListCatalog(
   ctx: ManageConnectorsContext,
   wsId: string | null,
 ): Promise<ToolResult> {
-  const catalog = await ctx.runtime.getConnectorCatalog().catalogEntries();
+  const catalog = await ctx.runtime
+    .getConnectorCatalog(wsId ? { kind: "workspace", wsId } : undefined)
+    .catalogEntries();
   const ws = wsId ? await ctx.runtime.getWorkspaceStore().get(wsId) : null;
   const allowList = ws?.connectorsAllowList;
   const filtered =
@@ -1326,7 +1328,7 @@ async function listInstalledEntries(
   // though they're called separately. Reaching for the lookup tables
   // (rather than the raw catalog list + manual map-build) keeps the
   // construction concern inside the facade.
-  const directory = ctx.runtime.getConnectorCatalog();
+  const directory = ctx.runtime.getConnectorCatalog({ kind: "workspace", wsId });
   const catalogByUrl = await directory.catalogByUrl();
   // O(1) catalog lookups for brokered connectors whose persisted `ref.url` is a
   // per-install session URL and therefore misses `catalogByUrl`. Built once per
@@ -1895,7 +1897,11 @@ async function handleInstallIdentity(
 
   // Host UI placement is SERVER-authored: resolve from the operator-trusted
   // catalog by id, never the caller's entry (a forged entry can't inject chrome).
-  const trustedUi = (await ctx.runtime.getConnectorCatalog().catalogById(entry.id))?.ui;
+  const trustedUi = (
+    await ctx.runtime
+      .getConnectorCatalog({ kind: "person", userId: callerId })
+      .catalogById(entry.id)
+  )?.ui;
 
   // Resolve install wiring, owner-generic. DCR carries none (no session, no
   // client secret). A brokered connector creates the upstream session bound to
@@ -1994,7 +2000,7 @@ async function handleConnectApiKey(
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
 
-  const resolved = await resolveApiKeyConnector(ctx, catalogId);
+  const resolved = await resolveApiKeyConnector(ctx, catalogId, wsId);
   if ("error" in resolved) return errResult(resolved.error);
   const { entry, config, provider, connectApiKey } = resolved;
 
@@ -2080,6 +2086,7 @@ function stringFields(raw: Record<string, unknown>): Record<string, string> {
 async function resolveApiKeyConnector(
   ctx: ManageConnectorsContext,
   catalogId: string,
+  wsId: string,
 ): Promise<
   | {
       entry: ConnectorCatalogEntry;
@@ -2089,7 +2096,9 @@ async function resolveApiKeyConnector(
     }
   | { error: string }
 > {
-  const entry = await ctx.runtime.getConnectorCatalog().catalogById(catalogId);
+  const entry = await ctx.runtime
+    .getConnectorCatalog({ kind: "workspace", wsId })
+    .catalogById(catalogId);
   if (!entry) return { error: `Connector "${catalogId}" not in catalog.` };
   const config = brokeredCatalogConfig(entry);
   if (!config) return { error: `Connector "${catalogId}" is not brokered (auth=${entry.auth}).` };
@@ -2257,7 +2266,9 @@ async function handleInstallRemoteOAuth(
   // Host UI placement (sidebar app, etc.) is SERVER-authored metadata, read
   // from the operator-trusted catalog entry for this id. Placements are
   // re-validated at registration (`sanitizePlacements`).
-  const trusted = await ctx.runtime.getConnectorCatalog().catalogById(entry.id);
+  const trusted = await ctx.runtime
+    .getConnectorCatalog({ kind: "workspace", wsId })
+    .catalogById(entry.id);
   const trustedUi = trusted?.ui;
 
   // serverName is the slugified canonical reverse-DNS form — opaque,
@@ -2511,7 +2522,9 @@ async function refuseDirectServerName(
       `This workspace already has a connector named "${serverName}". Remove it first, or pass another serverName.`,
     );
   }
-  const catalog = await ctx.runtime.getConnectorCatalog().catalogEntries();
+  const catalog = await ctx.runtime
+    .getConnectorCatalog({ kind: "workspace", wsId })
+    .catalogEntries();
   if (catalog.some((e) => slugifyServerName(e.id) === serverName)) {
     return codedErr(
       "NAME_IS_CATALOG_ENTRY",
@@ -2541,7 +2554,7 @@ async function startDirectSource(
         allowInsecureRemotes: allowInsecure,
         workspaceContext: new WorkspaceContext({ wsId, workDir: ctx.runtime.getWorkDir() }),
         connectorMcp: ctx.runtime.getConnectorMcpDeps(wsId),
-        readCatalog: () => ctx.runtime.getConnectorCatalog().catalogEntries(),
+        readCatalog: (owner) => ctx.runtime.getConnectorCatalog(owner).catalogEntries(),
       },
     );
     return undefined;
@@ -3164,7 +3177,7 @@ async function eagerStartRemoteSource(
       allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
       workspaceContext: new WorkspaceContext({ wsId, workDir: ctx.runtime.getWorkDir() }),
       connectorMcp: ctx.runtime.getConnectorMcpDeps(wsId),
-      readCatalog: () => ctx.runtime.getConnectorCatalog().catalogEntries(),
+      readCatalog: (owner) => ctx.runtime.getConnectorCatalog(owner).catalogEntries(),
     });
     return undefined;
   } catch (err) {
@@ -3396,7 +3409,9 @@ async function workspaceOAuthClientOf(
 ): Promise<{ catalogId: string; clientSecretKey: string; inUse: boolean } | undefined> {
   const secret = oauthClientSecretRef(ref?.oauthClient);
   if (!ref?.url || !isCredentialRef(secret)) return undefined;
-  const entry = (await ctx.runtime.getConnectorCatalog().catalogByUrl()).get(ref.url);
+  const entry = (
+    await ctx.runtime.getConnectorCatalog({ kind: "workspace", wsId: ws.id }).catalogByUrl()
+  ).get(ref.url);
   if (
     entry?.auth !== "static" ||
     entry.oauthClientSetup?.clientSecretKey !== secret.key ||
@@ -4135,7 +4150,7 @@ export async function listUngrantedPersonalPlugins(
   const [grants, refs, catalog] = await Promise.all([
     ctx.runtime.getPermissionStore().listConnectorGrants(callerId),
     new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).list(callerId),
-    ctx.runtime.getConnectorCatalog().catalogEntries(),
+    ctx.runtime.getConnectorCatalog({ kind: "person", userId: callerId }).catalogEntries(),
   ]);
   const byServerName = new Map(catalog.map((e) => [slugifyServerName(e.id), e]));
   const owner = { type: "user", userId: callerId } as const;
@@ -4202,7 +4217,9 @@ async function listPersonalConnectorEntries(
   // Enrich display metadata from the operator-trusted catalog (keyed by the same
   // slug the ref stamps) — the URL ref carries no human name/description. Falls
   // back to the slug when the catalog no longer lists the connector.
-  const catalog = await ctx.runtime.getConnectorCatalog().catalogEntries();
+  const catalog = await ctx.runtime
+    .getConnectorCatalog({ kind: "person", userId: callerId })
+    .catalogEntries();
   const byServerName = new Map(catalog.map((e) => [slugifyServerName(e.id), e]));
 
   const owner = { type: "user", userId: callerId } as const;
@@ -4534,7 +4551,9 @@ async function handleSetOAuthClient(
     };
   }
 
-  const entry = await ctx.runtime.getConnectorCatalog().catalogById(catalogId);
+  const entry = await ctx.runtime
+    .getConnectorCatalog({ kind: "workspace", wsId })
+    .catalogById(catalogId);
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
   if (entry.auth !== "static") {
     return errResult(`"${entry.name}" is a DCR connector — OAuth client setup not required.`);
@@ -4686,7 +4705,9 @@ async function handleRemoveOAuthClient(
     };
   }
 
-  const entry = await ctx.runtime.getConnectorCatalog().catalogById(catalogId);
+  const entry = await ctx.runtime
+    .getConnectorCatalog({ kind: "workspace", wsId })
+    .catalogById(catalogId);
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
 
   // Guard: refuse if the connector is currently installed. Removing

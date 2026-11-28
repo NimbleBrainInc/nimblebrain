@@ -25,7 +25,7 @@
  * **Uninstall** removes exactly what the record lists: each connection no
  * other plugin of the owner names, and the managed skills. A connection
  * another plugin names stays, and its server record is then that plugin's
- * (the first remaining in install order, `suppliedServerRecords`). The record
+ * (the first remaining in the owner's install order). The record
  * goes last, so an uninstall that stops can be run again.
  *
  * **Update** is an admin's act when the listing's digest differs from the
@@ -170,7 +170,7 @@ async function connectAll(
     listings.push(listing);
   }
   const pending = contents.servers.map((s) => ({ address, detail: s.detail }));
-  return ctx.runtime.withPendingServerRecords(pending, async () => {
+  return ctx.runtime.withPendingServerRecords(owner, pending, async () => {
     const connected: Array<{ serverName: string; alreadyInstalled: boolean; warning?: string }> =
       [];
     for (const listing of listings) {

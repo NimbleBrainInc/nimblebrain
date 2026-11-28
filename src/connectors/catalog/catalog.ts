@@ -11,11 +11,13 @@
  * artifact, never this list; only a row of a mounted directory no listing
  * names installs from it (the reserved catalog `curated`).
  *
- * **Installed plugins' records come first.** A plugin installed from a catalog
- * (ADR-0077) carries each server's record in its artifact, and its installed
- * record keeps it; those are read ahead of the list below, first per name in
- * install order, so a connection reads the record of the plugin that supplied
- * it and never another copy.
+ * **An owner's installed plugins' records come first.** A plugin installed
+ * from a catalog (ADR-0077) carries each server's record in its artifact, and
+ * its installed record keeps it. A catalog built for one owner (a workspace or
+ * a person, `Runtime.getConnectorCatalog(owner)`) reads that owner's records
+ * ahead of the list below, first per name in its install order, so a
+ * connection reads the record of the plugin its own owner installed, never
+ * another owner's. A catalog built for no owner is the list alone.
  *
  * **Where the rest of the list comes from** (`catalogLocation`), one source at a time:
  *
@@ -131,9 +133,10 @@ export async function warnIfCatalogEmpty(catalog: ConnectorCatalog): Promise<voi
 }
 
 /**
- * The server records installed plugins supplied (ADR-0077), each tagged with
- * the plugin that supplied it. Read ahead of the connector list, so what an
- * installed connection reads is its plugin's record.
+ * The server records one owner's installed plugins supplied (ADR-0077), each
+ * tagged with the plugin that supplied it, in that owner's install order. Read
+ * ahead of the connector list, so what an owner's connection reads is its own
+ * plugin's record.
  */
 export type InstalledServerRecords = () => Promise<
   Array<{ address: string; detail: ServerDetail }>
@@ -146,10 +149,23 @@ export class ConnectorCatalog {
   /** Memoized `servers()` result for this instance. */
   private cache: Promise<AggregatedServers> | null = null;
 
+  /** The operator list's read, shared with every view {@link forOwner} makes. */
+  private list: { read: Promise<AggregatedServers> | null } = { read: null };
+
   constructor(
     private location: CatalogLocation,
     private installed?: InstalledServerRecords,
   ) {}
+
+  /**
+   * The same list as `installed`'s owner sees it, sharing this instance's read
+   * of the operator's list: a sweep over many owners reads the list once.
+   */
+  forOwner(installed: InstalledServerRecords): ConnectorCatalog {
+    const view = new ConnectorCatalog(this.location, installed);
+    view.list = this.list;
+    return view;
+  }
 
   /**
    * Read the catalog directory and return the raw `ServerDetail[]`
@@ -259,24 +275,35 @@ export class ConnectorCatalog {
   /** Drop the per-instance memoization. Test / admin escape hatch. */
   resetCache(): void {
     this.cache = null;
+    this.list = { read: null };
   }
 
   // ── internals ────────────────────────────────────────────────────
 
   private async read(): Promise<AggregatedServers> {
-    const installed = await this.readInstalled();
+    const [installed, list] = await Promise.all([this.readInstalled(), this.readList()]);
+    if (installed.length === 0) return list;
+    const named = new Set(installed.map((s) => s.detail.name));
+    return {
+      servers: [...installed, ...list.servers.filter((s) => !named.has(s.detail.name))],
+      refused: list.refused.filter((s) => !named.has(s.detail.name)),
+      errors: list.errors,
+    };
+  }
+
+  /** The operator's list alone, read once for this instance and every view sharing it. */
+  private readList(): Promise<AggregatedServers> {
+    if (!this.list.read) this.list.read = this.readListOnce();
+    return this.list.read;
+  }
+
+  private async readListOnce(): Promise<AggregatedServers> {
     const file: CatalogFile =
       typeof this.location === "string" ? { path: this.location } : await this.location();
     if ("error" in file) {
-      return {
-        servers: installed,
-        refused: [],
-        errors: [{ file: file.source, message: file.error }],
-      };
+      return { servers: [], refused: [], errors: [{ file: file.source, message: file.error }] };
     }
-    const named = new Set(installed.map((s) => s.detail.name));
-    const { entries: listed, diagnostics } = readCatalogEntries(file.path);
-    const entries = listed.filter((e) => !named.has(e.detail.name));
+    const { entries, diagnostics } = readCatalogEntries(file.path);
 
     // A diagnostic carrying an entry `index` is one bad record inside an
     // otherwise-fine file: logged, like every other per-entry drop, and
@@ -284,7 +311,7 @@ export class ConnectorCatalog {
     // file that could not be read or parsed at all — that is the case
     // where "the catalog looks empty" needs a cause attached to it, so it
     // reaches callers as an error keyed on the file.
-    const out: AggregatedServers = { servers: [...installed], refused: [], errors: [] };
+    const out: AggregatedServers = { servers: [], refused: [], errors: [] };
     for (const d of diagnostics) {
       if (d.index === undefined) out.errors.push({ file: d.source, message: d.message });
       else if (d.collision) log.error(`[catalog] ${d.message}`);

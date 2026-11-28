@@ -275,7 +275,9 @@ precedence between them.
 One per install per owner, beside the owner's connectors: `name@catalog`, the
 digest of the artifact fetched, and exactly what it produced (connectors, each
 with its server record; skills; conversation starters). It is written last, and
-every install step before it converges when run again.
+every install step before it converges when run again. A plugin's server records
+are its owner's alone: what an owner's connection reads (display, placements,
+hooks, admin tools) comes from that owner's records, never another owner's.
 Uninstall removes what it lists; a connection that two installed plugins name
 stays until the last is removed, its `ServerDetail` re-read from the next
 remaining plugin in install order. Update replaces the digest and what the

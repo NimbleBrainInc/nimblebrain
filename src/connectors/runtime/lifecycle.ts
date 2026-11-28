@@ -1111,15 +1111,18 @@ export class ConnectorLifecycleManager {
         url: new URL(ref.url),
         // Resolved like the boot path, so Reconnect / `/v1/mcp-auth/initiate`
         // builds the same transport a restart would.
-        transportConfig: (await resolveRefTransport(ref, this.catalogReader())).transportConfig,
+        transportConfig: (
+          await resolveRefTransport(ref, this.catalogReader(), { kind: "workspace", wsId })
+        ).transportConfig,
         resolveTransportConfig: async () =>
-          (await resolveRefTransport(ref, this.catalogReader())).transportConfig,
+          (await resolveRefTransport(ref, this.catalogReader(), { kind: "workspace", wsId }))
+            .transportConfig,
         // Honor the per-call flag, same source the OAuth provider above and the
         // startup-time validateConnectorUrl use — not the manager default — so the
         // transport's SSRF guard agrees with what this install was authorized for.
         allowInsecure: opts.allowInsecureRemotes === true,
         authProvider: provider,
-        ...(await catalogTransportOptions(ref)),
+        ...(await catalogTransportOptions(ref, { kind: "workspace", wsId })),
       },
       this.eventSink,
       composeConnectorMcpContext(this.resolveConnectorMcpDeps(wsId), serverName),
@@ -2157,12 +2160,15 @@ export class ConnectorLifecycleManager {
         {
           type: "remote",
           url: new URL(ref.url),
-          transportConfig: (await resolveRefTransport(ref, this.catalogReader())).transportConfig,
+          transportConfig: (
+            await resolveRefTransport(ref, this.catalogReader(), { kind: "person", userId })
+          ).transportConfig,
           resolveTransportConfig: async () =>
-            (await resolveRefTransport(ref, this.catalogReader())).transportConfig,
+            (await resolveRefTransport(ref, this.catalogReader(), { kind: "person", userId }))
+              .transportConfig,
           allowInsecure: opts.allowInsecureRemotes === true,
           authProvider: provider,
-          ...(await catalogTransportOptions(ref)),
+          ...(await catalogTransportOptions(ref, { kind: "person", userId })),
         },
         this.eventSink,
         composeConnectorMcpContext(undefined, serverName),

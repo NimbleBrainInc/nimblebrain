@@ -57,6 +57,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
+import type { CatalogOwner } from "../connectors/catalog/binding.ts";
 import {
   isAgentCallable,
   isAppCallable,
@@ -760,7 +761,7 @@ async function getPrompt(
     { allowInputRequired: true },
   );
   if (!runtime || !isInputRequiredResult(result)) return result;
-  return relayInputRequired(result, source.name, runtime);
+  return relayInputRequired(result, source.name, runtime, { kind: "workspace", wsId });
 }
 
 /** The answer for a reference that has nothing to complete. */
@@ -1048,12 +1049,14 @@ async function toToolCallAnswer(
   result: ToolResult,
   connector: string,
   runtime: Runtime,
+  owner?: CatalogOwner,
 ): Promise<CallToolResult | InputRequiredResult> {
   if (!result.inputRequired) return toCallToolResult(result);
   return relayInputRequired(
     { resultType: "input_required", ...result.inputRequired },
     connector,
     runtime,
+    owner,
   );
 }
 
@@ -1066,10 +1069,11 @@ async function relayInputRequired(
   result: InputRequiredResult,
   connector: string,
   runtime: Runtime,
+  owner?: CatalogOwner,
 ): Promise<InputRequiredResult> {
   const { inputRequests, requestState } = result;
   if (!inputRequests) return result;
-  const label = (await runtime.connectorTitles()).get(connector) ?? connector;
+  const label = (await runtime.connectorTitles(owner)).get(connector) ?? connector;
   return {
     resultType: "input_required",
     inputRequests: relayInputRequests(inputRequests, label),
@@ -1222,7 +1226,13 @@ async function executeIdentityToolCall(
       ...(ask.caller ? { caller: ask.caller } : {}),
     }),
   );
-  return toToolCallAnswer(idResult, routed.source.name, runtime);
+  const caller = requestCtx.identity?.id;
+  return toToolCallAnswer(
+    idResult,
+    routed.source.name,
+    runtime,
+    caller ? { kind: "person", userId: caller } : undefined,
+  );
 }
 
 /**
@@ -1331,7 +1341,7 @@ async function executeWorkspaceToolCall(
       ...(ask.caller ? { caller: ask.caller } : {}),
     }),
   );
-  return toToolCallAnswer(result, source.name, runtime);
+  return toToolCallAnswer(result, source.name, runtime, { kind: "workspace", wsId });
 }
 
 /**
