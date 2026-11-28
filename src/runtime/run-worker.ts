@@ -3,7 +3,10 @@
  * (`ai.nimblebrain.tasks`, `contracts/tasks/CONTRACT.md` §5) says is owed.
  *
  * The bound implementation decides what runs and when it is due; the kernel
- * owns the clock, the work queue and the door. For every workspace it serves:
+ * owns the clock, the work queue and the door. It serves each workspace from
+ * the moment it exists (those listed at start, each one created later at its
+ * creation, a restored one at its restore; the listing again on every interval
+ * as the backstop) until it is deleted. For every workspace it serves:
  *
  * 1. **Due.** It calls private `due` on an interval and at once on the change
  *    hint (`tasks://due/<workspaceId>`, watched per workspace as `host`), with
@@ -179,6 +182,8 @@ export interface RunWorkerDeps {
   isMember(workspaceId: string, ownerId: string): Promise<boolean>;
   /** Every workspace the kernel serves now: read at start, on each interval, and on a hint for one not served. */
   workspaceIds(): Promise<string[]>;
+  /** Listen for each workspace created from now on; returns an unsubscribe. */
+  onWorkspaceCreated(listener: (workspaceId: string) => void): () => void;
   /** Put notices in the workspace's inbox, once each. */
   deliver(workspaceId: string, notices: readonly RunNotice[]): void;
   /** A run's end was recorded: refresh its owner's views, report it. */
@@ -201,7 +206,7 @@ export interface RunWorker {
   start(): Promise<void>;
   /** Stop: no more claims; runs in flight are stopped and report their end, within a grace period. */
   stop(): Promise<void>;
-  /** Serve a workspace now (one just created); the interval finds it otherwise. */
+  /** Serve a workspace now (one restored, or reached first); the interval finds it otherwise. */
   serve(workspaceId: string): void;
   /** Stop serving a workspace (being deleted): no more `due`, its runs stopped. */
   drop(workspaceId: string): Promise<void>;
@@ -1053,13 +1058,21 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
 
   return {
     async start() {
-      unsubscribe = deps.server.onResourceUpdated((uri) => {
-        const prefix = "tasks://due/";
-        if (!uri.startsWith(prefix)) return;
-        const workspaceId = uri.slice(prefix.length);
-        if (served.has(workspaceId)) poll(workspaceId);
-        else void refresh();
-      });
+      // A workspace is served from the moment it exists: one created from now
+      // on at its creation, every other by the listing below.
+      const unsubscribes = [
+        deps.onWorkspaceCreated((workspaceId) => serve(workspaceId)),
+        deps.server.onResourceUpdated((uri) => {
+          const prefix = "tasks://due/";
+          if (!uri.startsWith(prefix)) return;
+          const workspaceId = uri.slice(prefix.length);
+          if (served.has(workspaceId)) poll(workspaceId);
+          else void refresh();
+        }),
+      ];
+      unsubscribe = () => {
+        for (const off of unsubscribes) off();
+      };
       await refresh();
       const due = setInterval(() => {
         void refresh().then(() => {

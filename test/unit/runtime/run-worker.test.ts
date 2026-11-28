@@ -97,6 +97,8 @@ function harness(
   opts: {
     isMember?: () => Promise<boolean>;
     execute?: (request: TaskRequest) => Promise<TaskResult>;
+    workspaceIds?: () => Promise<string[]>;
+    onWorkspaceCreated?: (listener: (workspaceId: string) => void) => () => void;
   } = {},
 ) {
   const grants = createRunGrants(newRunGrantKey());
@@ -104,10 +106,17 @@ function harness(
   const spend = createSpendBalances();
   const q = fakeQueue();
   const ends: Array<{ runId: string; outcome: RunOutcome }> = [];
+  /** The workspace of each `due` call and each hint watch opened, in order. */
+  const dues: string[] = [];
+  const watches: string[] = [];
+  const connection = {};
   const server: TasksServer = {
     hostVersion: "1.0",
-    async call(tool, args) {
-      if (tool === "due") return { occurrences: [], cancel: [], nextCursor: null };
+    async call(tool, args, scope) {
+      if (tool === "due") {
+        dues.push(scope.workspaceId);
+        return { occurrences: [], cancel: [], nextCursor: null };
+      }
       if (tool === "begin_run") return handlers.begin_run(args);
       if (tool === "end_run") {
         ends.push({ runId: args.runId as string, outcome: args.outcome as RunOutcome });
@@ -115,10 +124,11 @@ function harness(
       }
       throw new Error(`unexpected call ${tool}`);
     },
-    async watch() {
-      return null;
+    async watch(_uri, scope) {
+      watches.push(scope.workspaceId);
+      return async () => {};
     },
-    connection: () => null,
+    connection: () => connection,
     onResourceUpdated: () => () => {},
   };
   const worker = createRunWorker({
@@ -130,13 +140,14 @@ function harness(
     execute: opts.execute ?? (async (request) => taskResult(request.runId ?? "run")),
     limitsOf: () => ({ maxIterations: 5, maxRunDurationMs: 600_000 }),
     isMember: opts.isMember ?? (async () => true),
-    workspaceIds: async () => [WS],
+    workspaceIds: opts.workspaceIds ?? (async () => [WS]),
+    onWorkspaceCreated: opts.onWorkspaceCreated ?? (() => () => {}),
     deliver: () => {},
     ended: () => {},
     metered: () => undefined,
     workerId: "worker-test",
   });
-  return { worker, grant, spend, ends, ...q };
+  return { worker, grant, spend, ends, dues, watches, ...q };
 }
 
 /** Let every pending microtask (and the fake queue's promises) run. */
@@ -322,5 +333,77 @@ describe("run worker — an end that is not acknowledged", () => {
     await advance(25_000);
     expect(h.completed).toContain("item-1");
     expect(h.spend.balance("acct")).toBeUndefined();
+  });
+});
+
+describe("run worker — a workspace created after start", () => {
+  /** A creation hook the test fires, recording the order of subscribe and list. */
+  function creationHook() {
+    const events: string[] = [];
+    let listener: ((workspaceId: string) => void) | null = null;
+    const unsubscribe = jest.fn(() => {
+      listener = null;
+    });
+    let releaseList: (ids: string[]) => void = () => {};
+    return {
+      events,
+      unsubscribe,
+      create: (workspaceId: string) => listener?.(workspaceId),
+      release: (ids: string[]) => releaseList(ids),
+      onWorkspaceCreated: (l: (workspaceId: string) => void) => {
+        events.push("subscribe");
+        listener = l;
+        return unsubscribe;
+      },
+      /** The first listing waits until released; later ones answer at once. */
+      workspaceIds: () => {
+        events.push("list");
+        if (events.filter((e) => e === "list").length > 1) return Promise.resolve([WS]);
+        return new Promise<string[]>((resolve) => {
+          releaseList = resolve;
+        });
+      },
+    };
+  }
+
+  const noRun: Handler = async () => ({ decision: "skip" });
+
+  it("subscribes before the first listing and serves one created during it exactly once", async () => {
+    const hook = creationHook();
+    const h = harness({ begin_run: noRun }, hook);
+    current = h.worker;
+    const starting = h.worker.start();
+    await flush();
+    expect(hook.events).toEqual(["subscribe", "list"]);
+
+    // Created while the first listing is pending, then listed by it too.
+    hook.create(WS);
+    await flush();
+    expect(h.watches).toEqual([WS]);
+    expect(h.dues).toEqual([WS]);
+
+    hook.release([WS]);
+    await starting;
+    await flush();
+    expect(h.watches).toEqual([WS]);
+    expect(h.dues).toEqual([WS]);
+  });
+
+  it("stop unsubscribes, and a creation after stop serves nothing", async () => {
+    const hook = creationHook();
+    const h = harness({ begin_run: noRun }, hook);
+    const starting = h.worker.start();
+    await flush();
+    hook.release([]);
+    await starting;
+    await h.worker.stop();
+    expect(hook.unsubscribe).toHaveBeenCalledTimes(1);
+
+    hook.create("ws-late");
+    // A listener still held past stop must not serve either.
+    h.worker.serve("ws-late");
+    await flush();
+    expect(h.watches).toEqual([]);
+    expect(h.dues).toEqual([]);
   });
 });
