@@ -121,8 +121,9 @@ interface Group<C extends ConnectorFacts> {
 
 /**
  * The connectors grouped by the record that names them, in install order,
- * then each connector no record names on its own. A record none of whose
- * connections is installed here is left out.
+ * then each connector no record names on its own. Each record lists every
+ * installed connection it names, so a connection two plugins share is listed
+ * under both. A record none of whose connections is installed here is left out.
  */
 function grouped<C extends ConnectorFacts>(
   connectors: readonly C[],
@@ -133,9 +134,7 @@ function grouped<C extends ConnectorFacts>(
   const groups: Group<C>[] = [];
   for (const record of records) {
     const names = record.connectors.map(connectionOf);
-    const mine = connectors.filter(
-      (c) => names.includes(c.serverName) && !claimed.has(c.serverName),
-    );
+    const mine = connectors.filter((c) => names.includes(c.serverName));
     if (mine.length === 0) continue;
     for (const c of mine) claimed.add(c.serverName);
     const first = mine[0] as C;

@@ -239,11 +239,10 @@ function safeReadDir(dir: string) {
 
 /**
  * Remove the files in one connection's `connector-skills/<serverName>/` that
- * no plugin in `keep` owns: what an earlier binding of the connection left
- * there (a skill written by the zip-scanning resolver, marked with that
- * plugin's name in its catalog index). A skill whose provenance names a
- * plugin in `keep` stays, so a skill rewritten in place is never lost and a
- * skill another installed plugin binds to the same connection is untouched.
+ * are not in `keep`, the names of the bound skills the owner's plugins have
+ * for that connection: what an earlier binding of the connection left there
+ * (a skill written by the zip-scanning resolver) goes, even when it names the
+ * same plugin, so a skill the current artifact no longer carries is retired.
  * Returns the names removed.
  */
 export function removeUnownedConnectorSkills(args: {
@@ -255,16 +254,10 @@ export function removeUnownedConnectorSkills(args: {
   const removed: string[] = [];
   for (const entry of safeReadDir(dir)) {
     if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) continue;
-    const file = join(dir, entry.name);
-    let owner: string | null = null;
-    try {
-      owner = managedSkillPlugin(parseSkillFile(file, { cap: false })?.manifest.provenance?.source);
-    } catch {
-      owner = null;
-    }
-    if (owner && args.keep.has(owner)) continue;
-    unlinkSync(file);
-    removed.push(entry.name.replace(/\.md$/i, ""));
+    const name = entry.name.replace(/\.md$/i, "");
+    if (args.keep.has(name)) continue;
+    unlinkSync(join(dir, entry.name));
+    removed.push(name);
   }
   try {
     if (existsSync(dir) && readdirSync(dir).length === 0) rmdirSync(dir);

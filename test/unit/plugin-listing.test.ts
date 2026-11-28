@@ -125,6 +125,42 @@ describe("projectPlugins", () => {
     ]);
   });
 
+  test("a connection two records share is listed under each, for workspace and personal owners", () => {
+    const records = [
+      record("one@test", ["com.notion/mcp"]),
+      record("two@test", ["com.notion/mcp"]),
+      record("suite@test", ["com.linear/mcp", "com.notion/mcp"]),
+    ];
+    const servers = (p: { servers: { serverName: string }[] }) =>
+      p.servers.map((s) => s.serverName);
+    const ws = projectPlugins(
+      facts({
+        workspace: [ready("com-notion-mcp"), ready("com-linear-mcp"), ready("hand-added")],
+        workspaceRecords: records,
+      }),
+    );
+    expectValid(ws);
+    expect(ws.plugins.map((p) => [p.id, servers(p)])).toEqual([
+      ["workspace:plugin:one@test", ["com-notion-mcp"]],
+      ["workspace:plugin:two@test", ["com-notion-mcp"]],
+      ["workspace:plugin:suite@test", ["com-notion-mcp", "com-linear-mcp"]],
+      ["workspace:hand-added", ["hand-added"]],
+    ]);
+    const mine = (serverName: string) => ({ ...ready(serverName), grantedWorkspaces: [WS] });
+    const person = projectPlugins(
+      facts({
+        personal: [mine("com-notion-mcp"), mine("com-linear-mcp")],
+        personalRecords: records,
+      }),
+    );
+    expectValid(person);
+    expect(person.plugins.map((p) => [p.id, servers(p)])).toEqual([
+      ["person:plugin:one@test", ["com-notion-mcp"]],
+      ["person:plugin:two@test", ["com-notion-mcp"]],
+      ["person:plugin:suite@test", ["com-notion-mcp", "com-linear-mcp"]],
+    ]);
+  });
+
   test("a one-connection record shows as its connection, and a record with none here is left out", () => {
     const out = projectPlugins(
       facts({

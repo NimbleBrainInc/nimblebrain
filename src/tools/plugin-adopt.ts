@@ -272,7 +272,7 @@ async function adoptForOwner(
       leave(result, owner, c, [entry.address], why),
     );
     if (typeof read === "string" || adopted.length === 0) continue;
-    await adoptInto(deps, identity, owner, entry, read, adopted, records);
+    await adoptInto(deps, identity, owner, entry, read, adopted);
     for (const c of adopted) {
       result.adopted.push({ owner, serverName: c.serverName, address: entry.address });
     }
@@ -374,7 +374,6 @@ async function adoptInto(
   entry: ListedEntry,
   read: { contents: PluginContents; digest: string },
   adopted: Candidate[],
-  records: InstalledPluginRecord[],
 ): Promise<void> {
   const servers = read.contents.servers.filter((s) => adopted.some((c) => c.registry === s.name));
   const keys = new Set(servers.map((s) => s.key));
@@ -387,8 +386,16 @@ async function adoptInto(
   };
   const skills = materializeSkills(deps.workDir, owner, entry.address, contents);
   const roots = managedSkillRoots(deps.workDir, owner);
-  const keep = new Set([entry.address, ...records.map((r) => r.address)]);
+  // Each adopted connection's skill directory keeps exactly the skills this
+  // plugin now binds to it. No other record names an adopted connection
+  // (`triage` adopts only connectors no record names), so none of its skills
+  // is there; an old binding's file goes even under this plugin's address.
   for (const c of adopted) {
+    const keep = new Set(
+      skills
+        .filter((s) => servers.some((v) => v.key === s.server && connectionOf(v) === c.serverName))
+        .map((s) => s.name),
+    );
     removeUnownedConnectorSkills({ roots, serverName: c.serverName, keep });
   }
   await deps.records.put(owner, {

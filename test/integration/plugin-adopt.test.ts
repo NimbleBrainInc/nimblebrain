@@ -161,13 +161,13 @@ function connectorSkillsDir(): string {
   return join(workDir, "workspaces", WS, "connector-skills");
 }
 
-async function boot(): Promise<Runtime> {
+async function boot(catalog = "test"): Promise<Runtime> {
   const rt = await Runtime.start({
     identityProvider: devProvider,
     languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
-    catalogs: [{ source: listingPath, policy: "available", name: "test" }],
+    catalogs: [{ source: listingPath, policy: "available", name: catalog }],
   });
   runtime = rt;
   return rt;
@@ -256,6 +256,21 @@ describe("adopting existing installs at boot", () => {
     expect(requests.length).toBe(fetched);
     expect((await workspaceRecord(again)).plugins).toEqual(ws.plugins);
     expect(readdirSync(dir)).toEqual(["notion.md"]);
+  });
+
+  test("an old binding's skill the artifact no longer carries is retired under the same address", async () => {
+    await seedPreRecordWorkspace([preRecordRef(NOTION, NOTION_SERVER)]);
+    writeListing([publish("notion", notionPlugin(), NOTION_CLAIM)]);
+    const rt = await boot("nimblebrain");
+
+    const ws = await workspaceRecord(rt);
+    expect(ws.connectors[0]?.installedBy).toBe("notion@nimblebrain");
+    expect(ws.plugins?.map((p) => p.address)).toEqual(["notion@nimblebrain"]);
+    const dir = join(connectorSkillsDir(), NOTION_SERVER);
+    expect(readdirSync(dir)).toEqual(["notion.md"]);
+    const skill = parseSkillFile(join(dir, "notion.md"), { cap: false });
+    expect(skill?.manifest.provenance?.source).toBe("plugin:notion@nimblebrain:notion");
+    expect(readFileSync(join(dir, "notion.md"), "utf-8")).toContain("from the plugin");
   });
 
   test("zero claimants: the connector stays as it was", async () => {
