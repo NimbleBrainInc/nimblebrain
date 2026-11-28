@@ -632,6 +632,8 @@ export class McpSource implements ToolSource {
    * terminal instead of reconnecting an orphaned instance.
    */
   private stopped = false;
+  /** Counts deliberate stops so a restart can detect one outside its own stop/start cycle. */
+  private stopGeneration = 0;
 
   /**
    * Listeners notified when this source's enumerable tool set may have
@@ -1758,12 +1760,8 @@ export class McpSource implements ToolSource {
    */
   private async reconnectOnDemand(): Promise<boolean> {
     if (this.client) return true;
-    // isStopped() is checked-then-acted-on (the restart drives stop()/start()), so a
-    // deliberate stop() interleaving after this check could be undone by the restart.
-    // The window is tiny and self-correcting (the completed stop leaves the next call
-    // client===null && stopped, which blocks revival), and HealthMonitor's reconnect
-    // path carries the identical check-then-restart shape — so this matches existing
-    // behavior rather than introducing a new race.
+    // A deliberate stop() that lands after this check is still honoured: the restart
+    // detects an outside stop through `stopGeneration` and stays stopped.
     if (this.isStopped()) return false;
     const now = Date.now();
     if (
@@ -1823,6 +1821,7 @@ export class McpSource implements ToolSource {
   }
 
   async stop(): Promise<void> {
+    this.stopGeneration++;
     // Tell our onclose handlers this is a deliberate teardown — see
     // `stopping` field. Without this, every graceful stop would emit a
     // `source.crashed` event when `transport.close()` triggers onclose.
@@ -3592,9 +3591,17 @@ export class McpSource implements ToolSource {
   }
 
   private async doRestart(): Promise<boolean> {
+    const ownStopGeneration = this.stopGeneration + 1;
     try {
       await this.stop();
+      if (this.stopGeneration !== ownStopGeneration) return false;
       await this.start();
+      if (this.stopGeneration !== ownStopGeneration) {
+        // The outside stop may have completed while start() was still connecting.
+        // Close anything that start() established after that teardown.
+        await this.stop();
+        return false;
+      }
       this.cachedTools = null;
       this.toolsFetchedAt = null;
       this.dead = false;
@@ -3604,6 +3611,7 @@ export class McpSource implements ToolSource {
       });
       return true;
     } catch (err) {
+      if (this.stopGeneration !== ownStopGeneration) return false;
       this.eventSink.emit({
         type: "connector.health",
         data: { source: this.name, event: "source.restart_failed", error: String(err) },
