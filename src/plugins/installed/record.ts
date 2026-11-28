@@ -66,6 +66,12 @@ export interface InstalledPluginRecord {
   skills: InstalledPluginSkill[];
   /** What a host offers someone who has the plugin and does not know what to ask. */
   starters: ConversationStarter[];
+  /**
+   * A `required` catalog lists it (ADR-0076), so it is in every workspace: no
+   * person uninstalls it, and the required reconcile removes it when its
+   * catalog no longer lists it. A workspace's records only.
+   */
+  required?: true;
 }
 
 /** A connector's lifecycle key, from its registry name. */

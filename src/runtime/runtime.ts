@@ -321,6 +321,10 @@ import {
 import { McpSource } from "../tools/mcp-source.ts";
 import { adoptExistingInstalls } from "../tools/plugin-adopt.ts";
 import { ungrantedPluginGuidance } from "../tools/plugin-request.ts";
+import {
+  type RequiredReconcileResult,
+  reconcileRequiredPlugins,
+} from "../tools/plugin-required.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { isReservedResourceScheme, readableRecordTemplates } from "../tools/resource-schemes.ts";
 import {
@@ -775,6 +779,12 @@ export type WorkspaceRestoreResult =
 const WORKSPACE_PURGE_INTERVAL_MS = 60 * 60_000;
 
 /**
+ * How often the required reconcile runs on its own: it notices a required
+ * catalog's listing that could not be read before, and retries what failed.
+ */
+const REQUIRED_RECONCILE_INTERVAL_MS = 5 * 60_000;
+
+/**
  * What narrows who may call a connector's tools: the catalog's `adminTools`,
  * and the lifecycle handlers its server binds, which only the host may call.
  */
@@ -906,6 +916,10 @@ export class Runtime {
   private readonly _tombstoneOps = new Map<string, Promise<void>>();
   /** The purge reconcile's pass in flight, and its timer. */
   private _purgePass: Promise<void> | null = null;
+  /** Required reconcile passes, run one after another (`reconcileRequiredPlugins`). */
+  private _requiredChain: Promise<unknown> = Promise.resolve();
+  private _requiredTimer: ReturnType<typeof setInterval> | null = null;
+  private _requiredQueued = false;
   private _purgeTimer: ReturnType<typeof setInterval> | null = null;
   /**
    * Every bound contract tool, by wire name (`<source>__<tool>`), that no call
@@ -1598,6 +1612,9 @@ export class Runtime {
       // Deleted workspaces whose window has passed are purged now and on an
       // interval: their purge needs the bound plugins and the connector machinery.
       rt.startPurgeReconcile();
+      // Every workspace holds every required catalog's items (ADR-0076): now,
+      // for each workspace created later, and on an interval.
+      rt.startRequiredReconcile();
 
       rt._bootReady.resolve();
       return rt;
@@ -6027,6 +6044,59 @@ export class Runtime {
     }
   }
 
+  /**
+   * One pass of the required reconcile (`src/tools/plugin-required.ts`): every
+   * item of every `required` catalog installed in each workspace (or the ones
+   * named), and every required item no catalog requires any more removed.
+   * Passes run one after another, never two at once. Never throws.
+   */
+  reconcileRequiredPlugins(
+    opts: { wsIds?: readonly string[]; fetchImpl?: typeof fetch } = {},
+  ): Promise<RequiredReconcileResult> {
+    const pass = this._requiredChain.then(async () => {
+      // Loaded on use: the connector tools import the runtime.
+      const { kernelConnectorOps } = await import("../tools/connector-tools.ts");
+      return reconcileRequiredPlugins(
+        {
+          runtime: this,
+          ops: kernelConnectorOps(this),
+          ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+        },
+        opts.wsIds ? { wsIds: opts.wsIds } : {},
+      );
+    });
+    this._requiredChain = pass.catch((err: unknown) => {
+      log.warn(`[plugins] required reconcile failed; the next pass retries: ${String(err)}`);
+    });
+    return pass;
+  }
+
+  /**
+   * Run the required reconcile at boot, for each workspace created, and every
+   * {@link REQUIRED_RECONCILE_INTERVAL_MS}. With no required catalog the boot
+   * pass alone runs: it removes what a required catalog dropped from the
+   * configuration left behind.
+   */
+  private startRequiredReconcile(): void {
+    void this.reconcileRequiredPlugins().catch(() => {});
+    const anyRequired = this._catalogListings.catalogs().some((c) => c.policy === "required");
+    if (!anyRequired) return;
+    this._workspaceStore.onCreated((ws) => {
+      void this.reconcileRequiredPlugins({ wsIds: [ws.id] }).catch(() => {});
+    });
+    this._requiredTimer = setInterval(() => {
+      // An interval pass already waiting covers the next tick too.
+      if (this._requiredQueued) return;
+      this._requiredQueued = true;
+      void this.reconcileRequiredPlugins()
+        .catch(() => {})
+        .finally(() => {
+          this._requiredQueued = false;
+        });
+    }, REQUIRED_RECONCILE_INTERVAL_MS);
+    this._requiredTimer.unref?.();
+  }
+
   /** The installed-plugin records of every owner (ADR-0077), stored beside each owner's connectors. */
   getPluginRecords(): PluginRecordStore {
     if (!this._pluginRecords) {
@@ -7284,6 +7354,9 @@ export class Runtime {
   async shutdown(): Promise<void> {
     if (this._purgeTimer) clearInterval(this._purgeTimer);
     this._purgeTimer = null;
+    if (this._requiredTimer) clearInterval(this._requiredTimer);
+    this._requiredTimer = null;
+    await this._requiredChain.catch(() => {});
     await this.telemetryManager.shutdown();
     // Detach the tool-set watches first: each holds a source, and through its
     // listener the reconcile deps that close over this runtime. The lifecycle

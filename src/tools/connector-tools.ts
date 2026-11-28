@@ -1598,6 +1598,53 @@ function pluginOwnerOf(
   return { kind: "workspace", wsId };
 }
 
+/**
+ * The connector install path as the kernel itself uses it, for the required
+ * reconcile (`src/tools/plugin-required.ts`): workspace owners only, admitted
+ * by the operator's catalog policy rather than a person's role, and past the
+ * workspace's connector allow-list, since a required item is in every
+ * workspace. Removing a connection goes the way a connector uninstall does.
+ */
+export function kernelConnectorOps(runtime: Runtime): ConnectorOps {
+  const workspace = async (wsId: string) => runtime.getWorkspaceStore().get(wsId);
+  const ctxFor = (wsId: string): ManageConnectorsContext => ({
+    runtime,
+    getIdentity: () => null,
+    getWorkspaceId: () => wsId,
+  });
+  const personal = () => errResult("Required items are installed into workspaces only.");
+  return {
+    admit: async (owner) => {
+      if (owner.kind === "person") return personal();
+      return (await workspace(owner.wsId))
+        ? null
+        : errResult(`Workspace "${owner.wsId}" not found.`);
+    },
+    existing: async (owner, serverName) => {
+      if (owner.kind === "person") return null;
+      const ws = await workspace(owner.wsId);
+      return ws?.connectors.find((r) => matchesServerName(r, serverName)) ?? null;
+    },
+    connect: async (owner, listing, opts) => {
+      if (owner.kind === "person") return personal();
+      const ws = await workspace(owner.wsId);
+      if (!ws) return errResult(`Workspace "${owner.wsId}" not found.`);
+      return handleInstallRemoteOAuth(ctxFor(owner.wsId), owner.wsId, ws, listing, {
+        ...opts,
+        bindSkills: false,
+      });
+    },
+    disconnect: async (owner, serverName) => {
+      if (owner.kind === "person") return personal();
+      const ws = await workspace(owner.wsId);
+      if (!ws) return errResult(`Workspace "${owner.wsId}" not found.`);
+      const instance = runtime.getLifecycle().getInstance(serverName, owner.wsId);
+      if (!instance) return errResult(`Connector "${serverName}" not installed in workspace.`);
+      return removeWorkspaceConnector(ctxFor(owner.wsId), owner.wsId, ws, serverName, instance.ref);
+    },
+  };
+}
+
 /** The connector install path, as plugin install uses it (`src/tools/plugin-install.ts`). */
 function pluginConnectorOps(ctx: ManageConnectorsContext, identity: UserIdentity): ConnectorOps {
   const identityStore = new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() });
@@ -3768,6 +3815,21 @@ async function handleUninstall(
       isError: true,
     };
   }
+  return removeWorkspaceConnector(ctx, wsId, ws, serverName, instance.ref);
+}
+
+/**
+ * Remove one workspace connector, its keys and its OAuth client when nothing
+ * else uses them: the uninstall itself, after the caller's admission.
+ */
+async function removeWorkspaceConnector(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  ws: Workspace,
+  serverName: string,
+  ref: ConnectorRef | undefined,
+): Promise<ToolResult> {
+  const instance = { ref };
   // Resolved BEFORE the uninstall, off the workspace record as it stands now:
   // `lifecycle.uninstall` drops the instance and `stripUninstalledConnectorEntry`
   // drops the row, and both are inputs here.
