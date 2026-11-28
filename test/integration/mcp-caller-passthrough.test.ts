@@ -7,7 +7,9 @@
  * request reaches the client as it is, and progress arrives under the client's
  * own token. Each relayed elicitation names the connector it came from: its
  * catalog title, else its server name. A `prompts/get` carries the same side of
- * the protocol, under a round sealed to the prompt.
+ * the protocol, under a round sealed to the prompt. A tool that declares an
+ * output schema asks the same way: its `input_required` answer carries no
+ * structured content, and still reaches the client.
  */
 import { afterAll, beforeAll, describe, expect, it, setSystemTime } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -109,6 +111,15 @@ function buildConnector(): Server {
   server.setRequestHandler("tools/list", async () => ({
     tools: [
       { name: "confirm", inputSchema: schema },
+      {
+        name: "confirm_typed",
+        inputSchema: schema,
+        outputSchema: {
+          type: "object" as const,
+          properties: { answered: { type: "boolean" } },
+          required: ["answered"],
+        },
+      },
       { name: "confirm_url", inputSchema: schema },
       { name: "needs_sampling", inputSchema: schema },
       { name: "count", inputSchema: schema },
@@ -144,6 +155,27 @@ function buildConnector(): Server {
           content: [
             { type: "text" as const, text: `answered:${JSON.stringify(answer)} state:${state}` },
           ],
+        };
+      }
+      case "confirm_typed": {
+        if (!ctx.mcpReq.inputResponses?.ok) {
+          return {
+            resultType: "input_required",
+            inputRequests: {
+              ok: {
+                method: "elicitation/create",
+                params: {
+                  message: "Read it?",
+                  requestedSchema: { type: "object", properties: { yes: { type: "boolean" } } },
+                },
+              },
+            },
+            requestState: CONNECTOR_STATE,
+          };
+        }
+        return {
+          content: [{ type: "text" as const, text: '{"answered":true}' }],
+          structuredContent: { answered: true },
         };
       }
       case "confirm_url":
@@ -335,6 +367,18 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
     try {
       const result = await c.callTool({ name: "fixture__confirm", arguments: {} });
       expect(text(result)).toBe(`answered:${JSON.stringify(ANSWER)} state:${CONNECTOR_STATE}`);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("relays the input request of a tool that declares an output schema, then its typed result", async () => {
+    const c = await client({ elicitation: true });
+    try {
+      const round = await firstRound(c, "fixture__confirm_typed");
+      expect(round.inputRequests?.ok?.method).toBe("elicitation/create");
+      const result = await c.callTool({ name: "fixture__confirm_typed", arguments: {} });
+      expect(result.structuredContent).toEqual({ answered: true });
     } finally {
       await c.close();
     }

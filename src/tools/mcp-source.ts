@@ -11,6 +11,7 @@ import type {
   RequestMethod,
   RequestOptions,
   ResultTypeMap,
+  Tool as SdkTool,
   ServerCapabilities,
   StandardSchemaV1,
   Task,
@@ -2995,6 +2996,12 @@ export class McpSource implements ToolSource {
    * over the SDK's own), its answers and the connector's echoed state on a
    * retry, and its progress callback. The SDK hands an `input_required` answer
    * back as it is (`allowInputRequired`) instead of trying to fulfil it here.
+   *
+   * The call names the tool without its output schema, so the SDK checks no
+   * output here: it checks every answer against that schema, an
+   * `input_required` one included, which has no structured content and would
+   * fail. The client checks the typed result against the schema it was
+   * served. The input schema stays, for `Mcp-Param-*` header mirroring.
    */
   private callToolForCaller(
     toolName: string,
@@ -3014,10 +3021,17 @@ export class McpSource implements ToolSource {
       },
       {
         allowInputRequired: true,
+        toolDefinition: this.relayedToolDefinition(toolName),
         ...(signal ? { signal } : {}),
         ...(onProgress ? { onprogress: onProgress, resetTimeoutOnProgress: true } : {}),
       },
     );
+  }
+
+  /** The connector's definition of `toolName`, without its output schema. */
+  private relayedToolDefinition(toolName: string): SdkTool {
+    const inputSchema = this.findTool(toolName)?.inputSchema ?? { type: "object" };
+    return { name: toolName, inputSchema: inputSchema as SdkTool["inputSchema"] };
   }
 
   /**
