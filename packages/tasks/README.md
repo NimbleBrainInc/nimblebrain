@@ -48,7 +48,7 @@ so the server listens on `127.0.0.1` unless `--host` names another address, and 
 does.
 
 `--retention-days <n>` sets how long an ended run's data is kept (default 180), judged on the
-`now` the host passes to `due`. The screen is `ui/`: `cd ui && bun install && bun run build`
+`now` the host stamps on `due`'s context. The screen is `ui/`: `cd ui && bun install && bun run build`
 writes `ui/dist/index.html`; `--screen <file>` serves another file.
 
 ## Data

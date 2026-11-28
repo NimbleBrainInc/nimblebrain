@@ -121,11 +121,7 @@ const model = createMockModel((options: LanguageModelV4CallOptions) => {
           type: "tool-call",
           toolCallId: "f1",
           toolName: "tasks__due",
-          input: JSON.stringify({
-            version: "1.0",
-            now: "2031-01-01T00:00:00Z",
-            until: "2031-01-01T00:00:00Z",
-          }),
+          input: JSON.stringify({ version: "1.0", until: "2031-01-01T00:00:00Z" }),
         },
       ],
     };
@@ -221,6 +217,20 @@ describe("a task from chat-equivalent calls", () => {
     await create("Echo", "say hello");
     const state = pluginState();
     expect(state).toMatch(/"grant":\s*"v1\./);
+  });
+
+  it("a write records the now the kernel stamped as it sent the call", async () => {
+    const before = Date.now();
+    const saved = answer<{ task: { createdAt?: string; updatedAt?: string } }>(
+      await tasks("create", { manifest: { name: "Clocked" }, body: "tick" }),
+    ).task;
+    const after = Date.now();
+    for (const stamp of [saved.createdAt, saved.updatedAt]) {
+      const ms = Date.parse(stamp ?? "");
+      expect(ms).toBeGreaterThanOrEqual(before);
+      expect(ms).toBeLessThanOrEqual(after);
+    }
+    await tasks("delete", { taskId: "clocked" });
   });
 
   it("run now answers at once with the run's id, and the worker runs it", async () => {
@@ -533,6 +543,13 @@ describe("the door", () => {
     const failed = results.filter((r) => r.status === "fail").map((r) => `${r.name}: ${r.detail}`);
     expect(failed).toEqual([]);
     expect(results.find((r) => r.name === "no private tool is listed")?.status).toBe("pass");
+    // The runtime stamps its own now, so the case that needs the runner's clock says why.
+    expect(results.filter((r) => r.status === "skip")).toEqual([
+      expect.objectContaining({
+        name: "a write records the call's now: createdAt, updatedAt, requestedAt",
+        detail: expect.stringContaining("--carriage none"),
+      }),
+    ]);
   }, 60_000);
 });
 

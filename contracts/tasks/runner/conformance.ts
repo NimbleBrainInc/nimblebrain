@@ -13,9 +13,12 @@
  * The runner plays the host. It states the host context on every call, stamps an opaque run
  * grant on a person's call to every tool the document marks `grant: true` (a different
  * string per definition and per call where a case needs to tell them apart), and it is the
- * host's clock: every `now` and `until` it sends, and every instant in an outcome, comes
- * from a fake clock that starts on 2031-03-01T00:00:00Z, never from the wall clock, so a
- * decision an implementation takes on its own clock shows.
+ * host's clock: the `now` it stamps on every call's host context (a person's calls too),
+ * every `until` it sends, and every instant in an outcome come from a fake clock that starts
+ * on 2031-03-01T00:00:00Z, never from the wall clock, so a decision or a record an
+ * implementation takes on its own clock shows. The clock stands where the last host call
+ * put it (`due`, `begin_run`, `offer_event` name their instant), and a person's call is
+ * stamped with it.
  *
  * Modes.
  *   --server <url>          the implementation's MCP endpoint. Without --public-only every
@@ -33,7 +36,9 @@
  *   --bearer-env <VAR>      send `Authorization: Bearer $VAR`; the value is never printed
  *   --carriage <c>          how each call's scope and principal are stated:
  *                             none   the connection fixes both (a runtime's /mcp/<wsId>,
- *                                    whose principal is a person); --public-only only
+ *                                    whose principal is a person, and whose host stamps
+ *                                    its own now, so the cases that need the runner's
+ *                                    clock skip); --public-only only
  *                             meta   the host context on each call,
  *                                    params._meta["ai.nimblebrain/context"]
  *   --protocol-version <v>  pin this MCP revision instead of negotiating
@@ -240,6 +245,12 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 const at = (ms: number) => new Date(ms).toISOString();
 
+/**
+ * Where the fake clock stands: the `now` stamped on a call whose context names none of its
+ * own. Each run starts it at `CLOCK_START`; a host call naming an instant moves it there.
+ */
+const hostClock = { now: CLOCK_START };
+
 // ── What the whole run watches ───────────────────────────────────────────
 
 /**
@@ -293,10 +304,15 @@ interface Context {
   /** The grant the host stamps on this person's calls to grant-marked tools. */
   grant?: string;
   unattended?: boolean;
+  /** The instant stamped as `now`, instead of where the fake clock stands. */
+  now?: number;
 }
 
-/** A per-call change to the context: `null` removes a field, `noGrant` stamps none. */
-type Over = { [K in keyof Context]?: Context[K] | null } & { noGrant?: boolean };
+/**
+ * A per-call change to the context: `null` removes a field, `noGrant` stamps no grant,
+ * `noNow` no `now`.
+ */
+type Over = { [K in keyof Context]?: Context[K] | null } & { noGrant?: boolean; noNow?: boolean };
 
 interface CallResult {
   isError?: boolean;
@@ -333,15 +349,15 @@ const RESOURCE_METHODS = new Set([
 function merged(ctx: Context, over: Over = {}): Context {
   const out: Record<string, unknown> = { ...ctx };
   for (const [k, v] of Object.entries(over)) {
-    if (k === "noGrant") continue;
+    if (k === "noGrant" || k === "noNow") continue;
     if (v === null) delete out[k];
     else if (v !== undefined) out[k] = v;
   }
   return out as Context;
 }
 
-/** The host context object as the host stamps it on a call to `tool`. */
-function contextObject(ctx: Context, tool?: string, noGrant = false): Obj {
+/** The host context object as the host stamps it on a call to `tool`, `now` included. */
+function contextObject(ctx: Context, tool?: string, noGrant = false, noNow = false): Obj {
   const stampGrant =
     !noGrant &&
     ctx.principal === "person" &&
@@ -354,6 +370,7 @@ function contextObject(ctx: Context, tool?: string, noGrant = false): Obj {
     ...(ctx.principal ? { principal: ctx.principal } : {}),
     ...(stampGrant ? { grant: ctx.grant } : {}),
     ...(ctx.unattended !== undefined ? { unattended: ctx.unattended } : {}),
+    ...(noNow ? {} : { now: at(ctx.now ?? hostClock.now) }),
   };
 }
 
@@ -418,7 +435,7 @@ function makeConn(opts: RunnerOptions, client: Client, ctx: Context, audit: Audi
       const c = merged(ctx, over);
       const meta =
         carriage === "meta"
-          ? { [HOST_CONTEXT_META_KEY]: contextObject(c, tool, over?.noGrant) }
+          ? { [HOST_CONTEXT_META_KEY]: contextObject(c, tool, over?.noGrant, over?.noNow) }
           : undefined;
       const r = (await client.callTool({
         name: `${prefix}${tool}`,
@@ -728,8 +745,10 @@ function hostOf(conn: Conn, audit: Audit): Host {
   const ws = conn.ctx.workspace ?? "";
   const host: Host = {
     conn,
-    due: (now, until, extra = {}) =>
-      okCall(conn, "due", { version: VERSION, now: at(now), until: at(until), ...extra }),
+    due: (now, until, extra = {}) => {
+      hostClock.now = now;
+      return okCall(conn, "due", { version: VERSION, until: at(until), ...extra });
+    },
     dueAll: async (now, until) => {
       const occurrences: Occurrence[] = [];
       let cancel: string[] = [];
@@ -743,8 +762,10 @@ function hostOf(conn: Conn, audit: Audit): Host {
       }
       return { occurrences, cancel };
     },
-    begin: (ref, token, now, attempt = 1) =>
-      okCall(conn, "begin_run", { version: VERSION, ref, attempt, token, now: at(now) }),
+    begin: (ref, token, now, attempt = 1) => {
+      hostClock.now = now;
+      return okCall(conn, "begin_run", { version: VERSION, ref, attempt, token });
+    },
     end: async (runId, token, o) => {
       const out = await okCall(conn, "end_run", { version: VERSION, runId, token, outcome: o });
       setOf(audit.ended, ws).add(runId);
@@ -820,6 +841,7 @@ interface FullCtx {
 
 /** A host and a person (with a grant) in a fresh workspace named for `label`. */
 function scenario(c: FullCtx, label: string, owner = c.opts.owner as string) {
+  hostClock.now = CLOCK_START;
   const workspace = `${c.opts.scratchWorkspace}-${label}`;
   if (!c.made.includes(workspace)) c.made.push(workspace);
   const host = hostOf(c.base.as({ workspace, owner, principal: "host", grant: null }), c.audit);
@@ -878,8 +900,8 @@ async function screenCases(h: Harness, conn: Conn): Promise<void> {
 /** Plausible arguments for every private tool, so only the principal decides the answer. */
 function privateArgs(now: number): Record<string, Obj> {
   return {
-    due: { version: VERSION, now: at(now), until: at(now + DAY) },
-    begin_run: { version: VERSION, ref: "ref", attempt: 1, token: 1, now: at(now) },
+    due: { version: VERSION, until: at(now + DAY) },
+    begin_run: { version: VERSION, ref: "ref", attempt: 1, token: 1 },
     end_run: {
       version: VERSION,
       runId: "run_absent",
@@ -889,7 +911,6 @@ function privateArgs(now: number): Record<string, Obj> {
     offer_event: {
       version: VERSION,
       taskId: "absent",
-      now: at(now),
       event: {
         id: "e1",
         source: "conformance",
@@ -1056,6 +1077,23 @@ async function scopeCases(c: FullCtx): Promise<void> {
       );
     }
   });
+  await h.run("a call with no now in its context is scope_missing and writes nothing", async () => {
+    const name = taskName(c.audit, "nowless");
+    const create = { manifest: { name }, body: "x" };
+    expectPublicError(
+      await person.call("create", create, { noNow: true }),
+      "scope_missing",
+      "create",
+    );
+    expectPublicError(await person.call("list", {}, { noNow: true }), "scope_missing", "list");
+    const args = privateArgs(CLOCK_START);
+    for (const tool of PRIVATE_TOOLS) {
+      const conn = tool === "offer_event" ? host.conn.as({ owner: c.opts.owner }) : host.conn;
+      expectCode(await conn.call(tool, args[tool] ?? {}, { noNow: true }), "scope_missing", tool);
+    }
+    const tasks = list((await okCall(person, "list", {})).tasks, "tasks");
+    assert(!tasks.some((t) => t.name === name), "a create with no now saved its task");
+  });
   await h.run("offer_event with no owner is scope_missing", async () => {
     const args = privateArgs(CLOCK_START).offer_event ?? {};
     expectCode(
@@ -1076,7 +1114,7 @@ async function scopeCases(c: FullCtx): Promise<void> {
     expectPublicError(await person.call("create", extra), "invalid_input", "create", '"create"');
     expectCode(await host.conn.call("due", { version: VERSION }), "invalid_input", "due");
     expectCode(
-      await host.conn.call("due", { version: "2.0", now: at(CLOCK_START), until: at(CLOCK_START) }),
+      await host.conn.call("due", { version: "2.0", until: at(CLOCK_START) }),
       "invalid_input",
       "due at another major",
     );
@@ -1271,6 +1309,33 @@ async function grantRunCases(c: FullCtx, host: Host, person: Conn): Promise<void
 
 // ── The clock rule and due ───────────────────────────────────────────────
 
+/**
+ * A write records the call's `now` (CONTRACT.md §6): a definition's `createdAt` and
+ * `updatedAt`, and a run's `requestedAt`, which `upcoming` shows as `queuedAt`. Those fields
+ * are optional in the public outputs, so each is judged where the implementation gives it.
+ */
+async function recordsCase(h: Harness, audit: Audit, person: Conn): Promise<void> {
+  await h.run("a write records the call's now: createdAt, updatedAt, requestedAt", async () => {
+    const created = CLOCK_START + 7 * MINUTE;
+    const asked = CLOCK_START + 9 * MINUTE;
+    const out = await okCall(person.as({ now: created }), "create", {
+      manifest: { name: taskName(audit, "stamped") },
+      body: "s",
+    });
+    const task = obj(out.task, "task");
+    const taskId = str(task.id, "task.id");
+    for (const field of ["createdAt", "updatedAt"]) {
+      if (task[field] !== undefined) eq(task[field], at(created), `task.${field}`);
+    }
+    const { runId } = await okCall(person.as({ now: asked }), "run", { taskId });
+    const queued = list((await okCall(person.as({ now: asked }), "upcoming", {})).queued, "queued");
+    const row = queued.find((q) => q.runId === runId);
+    if (row?.queuedAt !== undefined) eq(row.queuedAt, at(asked), "queued[].queuedAt");
+    await okCall(person, "cancel", { runId });
+    await okCall(person, "delete", { taskId });
+  });
+}
+
 async function clockCases(c: FullCtx): Promise<void> {
   const { h, audit } = c;
   const { host, person } = scenario(c, "clock");
@@ -1342,6 +1407,7 @@ async function clockCases(c: FullCtx): Promise<void> {
     const after = (await host.dueAll(t, t + DAY)).occurrences;
     assert(!after.some((o) => o.key === ten.key), "a disabled task's occurrence is listed");
   });
+  await recordsCase(h, audit, person);
 }
 
 /**
@@ -1402,22 +1468,30 @@ async function onceCases(c: FullCtx): Promise<void> {
     },
   );
   await h.run(
-    "a once at or before the latest now due gave is invalid_input at create and update",
+    "a once at or before the call's now is invalid_input at create and update, with no due",
     async () => {
-      const latest = t + 2 * HOUR + 2 * LATE;
-      const past = await person.call("create", {
-        manifest: { name: taskName(audit, "past-once"), schedule: { at: at(latest) } },
+      // A workspace no due has reached: the call's own now is what has passed.
+      const now = t + DAY;
+      const fresh = scenario(c, "once-ahead").person.as({ now });
+      const once = (label: string, when: number) => ({
+        manifest: { name: taskName(audit, label), schedule: { at: at(when) } },
         body: "p",
       });
-      expectPublicError(past, "invalid_input", "create");
-      const taskId = await createTask(
-        person,
-        { name: taskName(audit, "moved-once"), schedule: { at: at(latest + DAY) } },
-        "p",
+      expectPublicError(
+        await fresh.call("create", once("past-once", now - HOUR)),
+        "invalid_input",
+        "create",
       );
-      const moved = await person.call("update", {
+      expectPublicError(
+        await fresh.call("create", once("now-once", now)),
+        "invalid_input",
+        "create at the call's now",
+      );
+      const ahead = once("moved-once", now + HOUR);
+      const taskId = await createTask(fresh, ahead.manifest, ahead.body);
+      const moved = await fresh.call("update", {
         taskId,
-        manifest: { schedule: { at: at(latest - HOUR) } },
+        manifest: { schedule: { at: at(now - MINUTE) } },
       });
       expectPublicError(moved, "invalid_input", "update");
     },
@@ -1428,32 +1502,74 @@ async function pagingCases(c: FullCtx): Promise<void> {
   const { h, audit } = c;
   const { host, person } = scenario(c, "paging");
   const t = CLOCK_START;
+  await h.run("due pages by limit and cursor, repeating until, no repeats or skips", async () => {
+    // One run per task: a task with a run queued refuses another (§4).
+    for (let i = 0; i < 5; i++) {
+      const taskId = await createTask(person, { name: taskName(audit, `paging ${i}`) }, "p");
+      await okCall(person, "run", { taskId });
+    }
+    const keys: string[] = [];
+    let cursor: unknown;
+    let pages = 0;
+    do {
+      const page = await host.due(t, t + DAY, {
+        limit: 2,
+        ...(typeof cursor === "string" ? { cursor } : {}),
+      });
+      const occ = list(page.occurrences, "occurrences");
+      assert(occ.length <= 2, `a page of ${occ.length} over limit 2`);
+      keys.push(...occ.map((o) => String(o.key)));
+      cursor = page.nextCursor;
+      pages++;
+    } while (typeof cursor === "string" && pages < 50);
+    eq(cursor, null, "the last page's nextCursor");
+    eq(keys.length, new Set(keys).size, "an occurrence was listed twice");
+    eq(keys.length, 5, "occurrences listed");
+    assert(pages >= 3, `${pages} pages for 5 occurrences at limit 2`);
+  });
   await h.run(
-    "due pages by limit and cursor, repeating now and until, no repeats or skips",
+    "a later due page sent at a later now is judged at the first page's instant",
     async () => {
-      // One run per task: a task with a run queued refuses another (§4).
-      for (let i = 0; i < 5; i++) {
-        const taskId = await createTask(person, { name: taskName(audit, `paging ${i}`) }, "p");
-        await okCall(person, "run", { taskId });
+      // Five runs are queued (the last case's), so a page of one leaves a cursor; the once
+      // waits behind them, in its grace at the first page's now and far past it at the later.
+      const soon = t + MINUTE;
+      await createTask(
+        person,
+        { name: taskName(audit, "paged-once"), schedule: { at: at(soon) } },
+        "o",
+      );
+      // An until past both instants, so an anchor on either would be listed.
+      const until = t + 60 * DAY;
+      const first = await host.due(t, until, { limit: 1 });
+      const cursor = first.nextCursor;
+      assert(typeof cursor === "string", "a page of one over six occurrences left no cursor");
+      const later = t + 30 * DAY;
+      // Saved between the pages: if a later page lists it, its anchor is the listing's instant.
+      await createTask(
+        person.as({ now: later }),
+        { name: taskName(audit, "paged-interval"), schedule: { intervalMs: DAY } },
+        "i",
+      );
+      const rest: Occurrence[] = [];
+      let next: unknown = cursor;
+      for (let pages = 0; typeof next === "string" && pages < 50; pages++) {
+        const page = await okCall(
+          host.conn,
+          "due",
+          { version: VERSION, until: at(until), limit: 1, cursor: next },
+          { now: later },
+        );
+        rest.push(...list(page.occurrences, "occurrences").map(toOccurrence));
+        next = page.nextCursor;
       }
-      const keys: string[] = [];
-      let cursor: unknown;
-      let pages = 0;
-      do {
-        const page = await host.due(t, t + DAY, {
-          limit: 2,
-          ...(typeof cursor === "string" ? { cursor } : {}),
-        });
-        const occ = list(page.occurrences, "occurrences");
-        assert(occ.length <= 2, `a page of ${occ.length} over limit 2`);
-        keys.push(...occ.map((o) => String(o.key)));
-        cursor = page.nextCursor;
-        pages++;
-      } while (typeof cursor === "string" && pages < 50);
-      eq(cursor, null, "the last page's nextCursor");
-      eq(keys.length, new Set(keys).size, "an occurrence was listed twice");
-      eq(keys.length, 5, "occurrences listed");
-      assert(pages >= 3, `${pages} pages for 5 occurrences at limit 2`);
+      assert(
+        rest.some((o) => o.notBefore === at(soon)),
+        "the once in its grace at the first page's now was judged at the later page's",
+      );
+      const anchoredLater = rest.filter(
+        (o) => o.notBefore !== undefined && Date.parse(o.notBefore) >= later,
+      );
+      eq(anchoredLater, [], "occurrences anchored on the later page's now");
     },
   );
   await h.run("every page of a listing carries the whole cancel list", async () => {
@@ -1496,13 +1612,7 @@ async function fencingCases(c: FullCtx): Promise<void> {
     eq(await host.begin(ref, 3, t + 5000, 2), first, "the repeated answer");
   });
   await h.run("a lower token is token_stale and writes nothing", async () => {
-    const r = await host.conn.call("begin_run", {
-      version: VERSION,
-      ref,
-      attempt: 2,
-      token: 2,
-      now: at(t),
-    });
+    const r = await host.conn.call("begin_run", { version: VERSION, ref, attempt: 2, token: 2 });
     expectCode(r, "token_stale", "begin_run");
     eq(await host.begin(ref, 3, t), first, "the token 3 answer after the stale call");
   });
@@ -2101,13 +2211,14 @@ async function eventCases(c: FullCtx): Promise<void> {
   const { h, audit } = c;
   const { host, person } = scenario(c, "events");
   const t = CLOCK_START;
-  const offer = (taskId: string, ev: Obj, now: number) =>
-    okCall(host.conn.as({ owner: c.opts.owner }), "offer_event", {
+  const offer = (taskId: string, ev: Obj, now: number) => {
+    hostClock.now = now;
+    return okCall(host.conn.as({ owner: c.opts.owner }), "offer_event", {
       version: VERSION,
       taskId,
       event: ev,
-      now: at(now),
     });
+  };
   const debounceMs = 60_000;
   let taskId = "";
   let occ: Occurrence = { key: "", ref: "" };
@@ -2176,7 +2287,7 @@ async function eventRefusalCases(
     eq([out.accepted, out.outcome], [false, "denied"], "answer");
   });
   await h.run("an event for an absent task is task_not_found", async () => {
-    const args = { version: VERSION, taskId: "no-such-task", event: event("z", t), now: at(t) };
+    const args = { version: VERSION, taskId: "no-such-task", event: event("z", t) };
     expectCode(await host.conn.call("offer_event", args), "task_not_found", "offer_event");
   });
   await h.run(
@@ -2524,6 +2635,14 @@ async function publicSuite(h: Harness, opts: RunnerOptions, audit: Audit): Promi
     await h.run("the reads answer", async () => {
       for (const tool of ["runs", "upcoming", "stats", "batches"]) await okCall(conn, tool, {});
     });
+    if ((opts.carriage ?? "none") === "none") {
+      h.skip(
+        "a write records the call's now: createdAt, updatedAt, requestedAt",
+        "--carriage none: the host stamps its own now, not the runner's clock",
+      );
+    } else {
+      await recordsCase(h, audit, conn);
+    }
   } finally {
     await conn.close();
   }
@@ -2547,6 +2666,7 @@ export async function runConformance(opts: RunnerOptions): Promise<CaseResult[]>
   const results: CaseResult[] = [];
   const h = harness(opts, results);
   const audit = newAudit();
+  hostClock.now = CLOCK_START;
   if (opts.publicOnly) await publicSuite(h, opts, audit);
   else await fullSuite(h, opts, audit);
   return results;

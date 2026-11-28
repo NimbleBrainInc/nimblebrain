@@ -416,14 +416,13 @@ export const PRIVATE_SCHEMAS = {
     input: Type.Object(
       {
         version: Version,
-        now: Instant("The host's now: what new and changed schedules are anchored on."),
         until: Instant(
           "List occurrences due at or before this instant. The host calls due again before it.",
         ),
         cursor: Type.Optional(
           Type.String({
             description:
-              "From the previous page's nextCursor. A later page repeats the first page's now and until.",
+              "From the previous page's nextCursor, with the same until. A later page is judged at the first page's now, which the cursor carries.",
           }),
         ),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })),
@@ -454,7 +453,6 @@ export const PRIVATE_SCHEMAS = {
           description: "The claim's attempt: above 1, an earlier claim may have begun the run.",
         }),
         token: Token("The claim's fencing token, greater than every earlier claim's of this ref."),
-        now: Instant("The host's now: what lateness, budgets and backoff are judged against."),
       },
       CLOSED,
     ),
@@ -510,7 +508,6 @@ export const PRIVATE_SCHEMAS = {
         version: Version,
         taskId: Type.String({ minLength: 1, description: "The task the route names." }),
         event: OfferedEvent,
-        now: Instant("The host's now: what debounce and the fire ceiling are judged against."),
       },
       CLOSED,
     ),

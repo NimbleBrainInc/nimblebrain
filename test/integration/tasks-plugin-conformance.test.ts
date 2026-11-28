@@ -39,7 +39,7 @@ const HOST_META_KEY = "ai.nimblebrain/host";
 const PANEL_URI = "ui://tasks/panel";
 
 /** Every case of the full run: the runner's case list, all of which must pass. */
-const FULL_CASES = 83;
+const FULL_CASES = 86;
 /** Public-only mode against an implementation: it serves the private tools it implements. */
 const PUBLIC_ONLY_EXPECTED_FAILURE = "no private tool is listed";
 
@@ -288,11 +288,11 @@ describe("tasks plugin: transports and handshake", () => {
       const tools = (await client.listTools()).tools.map((t) => t.name).sort();
       expect(tools).toEqual([...PUBLIC_TOOLS, ...PRIVATE_TOOLS].sort());
       expect(tools).toHaveLength(20);
-      const meta = (principal: "host" | "person") => ({
-        "ai.nimblebrain/context": { workspaceId: WORKSPACE, ownerId: "usr_stdio", principal },
-      });
       const now = "2031-03-01T00:00:00.000Z";
-      const args = { version: "1.0", now, until: now };
+      const meta = (principal: "host" | "person") => ({
+        "ai.nimblebrain/context": { workspaceId: WORKSPACE, ownerId: "usr_stdio", principal, now },
+      });
+      const args = { version: "1.0", until: now };
       const due = await client.callTool({ name: "due", arguments: args, _meta: meta("host") });
       expect(due.isError).toBeFalsy();
       expect(due.structuredContent).toEqual(

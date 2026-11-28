@@ -253,7 +253,7 @@
       {
         "code": "scope_missing",
         "prefix": "[tasks] no ",
-        "meaning": "tools/call reached a public tool with no workspace or no authenticated identity in its scope."
+        "meaning": "tools/call reached a public tool with no workspace, no authenticated identity, or no now in its host context."
       },
       {
         "code": "invalid_input",
@@ -277,7 +277,7 @@
       },
       {
         "code": "scope_missing",
-        "meaning": "The call reached the server with no workspace in its scope, or offer_event with no owner. Nothing was read or written."
+        "meaning": "The call reached the server with no workspace or no now in its host context, or offer_event with no owner. Nothing was read or written."
       },
       {
         "code": "token_stale",
@@ -3928,7 +3928,6 @@
       "type": "object",
       "required": [
         "version",
-        "now",
         "until"
       ],
       "properties": {
@@ -3937,18 +3936,13 @@
           "description": "The version of this contract the host consumes. The answer holds nothing that version does not define (CONTRACT.md §15).",
           "type": "string"
         },
-        "now": {
-          "format": "date-time",
-          "description": "The host's now: what new and changed schedules are anchored on.",
-          "type": "string"
-        },
         "until": {
           "format": "date-time",
           "description": "List occurrences due at or before this instant. The host calls due again before it.",
           "type": "string"
         },
         "cursor": {
-          "description": "From the previous page's nextCursor. A later page repeats the first page's now and until.",
+          "description": "From the previous page's nextCursor, with the same until. A later page is judged at the first page's now, which the cursor carries.",
           "type": "string"
         },
         "limit": {
@@ -4002,8 +3996,7 @@
         "version",
         "ref",
         "attempt",
-        "token",
-        "now"
+        "token"
       ],
       "properties": {
         "version": {
@@ -4026,11 +4019,6 @@
           "minimum": 0,
           "description": "The claim's fencing token, greater than every earlier claim's of this ref.",
           "type": "integer"
-        },
-        "now": {
-          "format": "date-time",
-          "description": "The host's now: what lateness, budgets and backoff are judged against.",
-          "type": "string"
         }
       }
     },
@@ -4168,8 +4156,7 @@
       "required": [
         "version",
         "taskId",
-        "event",
-        "now"
+        "event"
       ],
       "properties": {
         "version": {
@@ -4232,11 +4219,6 @@
               "type": "string"
             }
           }
-        },
-        "now": {
-          "format": "date-time",
-          "description": "The host's now: what debounce and the fire ceiling are judged against.",
-          "type": "string"
         }
       }
     },

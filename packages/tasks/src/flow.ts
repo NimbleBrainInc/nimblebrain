@@ -80,30 +80,33 @@ interface Occurrence {
 
 const DUE_PAGE = 500;
 
-/** `due`: the occurrences owed in the workspace at or before `until`, judged at `now`. */
+/**
+ * `due`: the occurrences owed in the workspace at or before `until`, judged at the call's
+ * `now` on a first page and at the first page's `now`, which its cursor carries, on every
+ * later one, so one listing is judged at one instant.
+ */
 export function due(
   tx: Tx,
-  args: { now: string; until: string; cursor?: string; limit?: number },
+  callNow: string,
+  args: { until: string; cursor?: string; limit?: number },
   retentionMs: number,
 ): { occurrences: Occurrence[]; cancel: string[]; nextCursor: string | null } {
-  const now = Date.parse(args.now);
+  const position = args.cursor === undefined ? undefined : decodeCursor(args.cursor);
+  const now = position ? position.now : Date.parse(callNow);
   const until = Date.parse(args.until);
-  if (args.cursor === undefined) prune(tx, now, retentionMs);
-  const seen = tx.ws.state.hostNow;
-  if (seen === undefined || Date.parse(seen) < now) tx.ws.state.hostNow = iso(now);
+  if (position === undefined) prune(tx, now, retentionMs);
   for (const task of allTasks(tx.ws.state)) anchor(tx, task, now);
   const all = [...scheduledOccurrences(tx, until), ...requestedOccurrences(tx, until)].sort(
     (a, b) => sortKey(a).localeCompare(sortKey(b)),
   );
-  const after = args.cursor === undefined ? undefined : decodeCursor(args.cursor);
-  const rest = after === undefined ? all : all.filter((o) => sortKey(o) > after);
+  const rest = position === undefined ? all : all.filter((o) => sortKey(o) > position.after);
   const limit = args.limit ?? DUE_PAGE;
   const page = rest.slice(0, limit);
   const last = page[page.length - 1];
   return {
     occurrences: page,
     cancel: cancelList(tx),
-    nextCursor: rest.length > limit && last ? encodeCursor(sortKey(last)) : null,
+    nextCursor: rest.length > limit && last ? encodeCursor({ now, after: sortKey(last) }) : null,
   };
 }
 
@@ -112,12 +115,27 @@ function sortKey(o: Occurrence): string {
   return `${o.notBefore ?? "0000"}\u0000${o.key}`;
 }
 
-function encodeCursor(position: string): string {
-  return Buffer.from(position, "utf-8").toString("base64url");
+/** Where a listing stands: the instant its first page was judged at, and its last entry. */
+interface DuePosition {
+  now: number;
+  after: string;
 }
 
-function decodeCursor(cursor: string): string {
-  return Buffer.from(cursor, "base64url").toString("utf-8");
+function encodeCursor(position: DuePosition): string {
+  return Buffer.from(JSON.stringify(position), "utf-8").toString("base64url");
+}
+
+function decodeCursor(cursor: string): DuePosition {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf-8")) as unknown;
+    const { now, after } = (value ?? {}) as Partial<DuePosition>;
+    if (typeof now === "number" && Number.isFinite(now) && typeof after === "string") {
+      return { now, after };
+    }
+  } catch {
+    // not a cursor this implementation minted
+  }
+  throw privateError("invalid_input", "cursor is not one a due answer gave");
 }
 
 /**
@@ -276,7 +294,8 @@ export type BeginAnswer =
 /** `begin_run`: a claimed occurrence, answered skip or run, fenced per ref. */
 export function beginRun(
   tx: Tx,
-  args: { ref: string; attempt: number; token: number; now: string },
+  now: string,
+  args: { ref: string; attempt: number; token: number },
 ): BeginAnswer {
   const { state } = tx.ws;
   const fence = Object.hasOwn(state.fences, args.ref) ? state.fences[args.ref] : undefined;
@@ -293,9 +312,9 @@ export function beginRun(
     fence?.answer.decision === "run"
       ? { runId: fence.answer.runId, token: fence.token }
       : fence?.answer.interrupted;
-  if (held) return interrupt(tx, args, held.token, held.runId);
-  const answer = decide(tx, args.ref, args.token, Date.parse(args.now));
-  state.fences[args.ref] = { token: args.token, answer: fenceAnswer(answer), at: args.now };
+  if (held) return interrupt(tx, { ...args, now }, held.token, held.runId);
+  const answer = decide(tx, args.ref, args.token, Date.parse(now));
+  state.fences[args.ref] = { token: args.token, answer: fenceAnswer(answer), at: now };
   return answer;
 }
 
@@ -714,10 +733,10 @@ export type EventAnswer =
 /** `offer_event`: take a routed notification into the task's pending event occurrence. */
 export function offerEvent(
   tx: Tx,
-  ownerId: string,
-  args: { taskId: string; event: OfferedEvent; now: string },
+  caller: { ownerId: string; now: string },
+  args: { taskId: string; event: OfferedEvent },
 ): EventAnswer {
-  const task = findTask(tx.ws.state, ownerId, args.taskId);
+  const task = findTask(tx.ws.state, caller.ownerId, args.taskId);
   if (!task)
     throw privateError(
       "task_not_found",
@@ -727,7 +746,7 @@ export function offerEvent(
   if (refused) return refused;
   const seenKey = `${args.event.source}\u0000${args.event.id}`;
   if (task.eventsSeen?.[seenKey] !== undefined) return { accepted: true };
-  const now = Date.parse(args.now);
+  const now = Date.parse(caller.now);
   const pending = pendingEventRun(tx, task);
   if (pending) {
     joinPending(pending, args.event, now);
@@ -737,7 +756,7 @@ export function offerEvent(
     const run = newEventRun(task, args.event, now);
     tx.ws.state.open[run.id] = run;
   }
-  task.eventsSeen = { ...task.eventsSeen, [seenKey]: args.now };
+  task.eventsSeen = { ...task.eventsSeen, [seenKey]: caller.now };
   tx.changed();
   return { accepted: true };
 }

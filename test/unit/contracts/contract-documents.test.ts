@@ -189,9 +189,18 @@ describe("the tasks contract document", () => {
     }
     const due = schema("due_input");
     const at = "2026-01-01T09:00:00.000Z";
-    expect(due({ version: "1.0", now: at, until: at })).toBe(true);
-    expect(due({ version: "2.0", now: at, until: at })).toBe(false);
-    expect(due({ now: at, until: at })).toBe(false);
+    expect(due({ version: "1.0", until: at })).toBe(true);
+    expect(due({ version: "2.0", until: at })).toBe(false);
+    expect(due({ until: at })).toBe(false);
+  });
+
+  test("no private input takes a now: every call is judged at its context's", () => {
+    const at = "2026-01-01T09:00:00.000Z";
+    expect(schema("due_input")({ version: "1.0", now: at, until: at })).toBe(false);
+    for (const tool of names((t) => t.visibility === "private")) {
+      const props = (doc.$defs[`${tool}_input`]?.properties ?? {}) as Record<string, unknown>;
+      expect({ tool, now: "now" in props }).toEqual({ tool, now: false });
+    }
   });
 
   test("due answers occurrences that name no owner and the runs to cancel, closed", () => {

@@ -300,11 +300,6 @@ export interface WorkspaceState {
    * appended by a call that never committed, and are cut off on load.
    */
   log: { file: string; length: number };
-  /**
-   * The latest `now` a `due` gave for the workspace: an instant the host's clock has
-   * passed, so a write naming a once at or before it names a time already gone.
-   */
-  hostNow?: string;
 }
 
 export function emptyState(): WorkspaceState {
